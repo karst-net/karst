@@ -66,6 +66,7 @@ for it:
 | Project, CLI, daemon | **Karst** — `karst`, `karstd` | |
 | Handshake and encrypted transport | **PHREATIC** (was SPORE) | Cave passages below the water table, permanently submerged |
 | Relay protocol and service | **Ponor** | Where a surface stream vanishes into the karst system — precisely a relay's role |
+| Path discovery / NAT traversal (§6) | **AVEN** (added 2026-08-14) | A shaft connecting the cave system upward to the surface — what cavers look for to find a way out |
 | Network lock (§4.5) | **Bedrock** (was Mycelium Lock) | The rock karst forms in; anchoring trust |
 | Name service (§7) | **KarstDNS** (was MycoDNS) | |
 | Mesh DNS suffix | `.karst.` | |

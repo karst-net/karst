@@ -288,7 +288,7 @@ crates/
   karst-proto/      wire formats, fragmentation, codec, no_std-friendly
   karst-noise/      PHREATIC handshake state machine (sans-io)
   karst-transport/  UDP sockets, GSO/GRO, sendmmsg, endpoint mgmt
-  karst-disco/      NAT traversal: STUN-like probing, path selection
+  karst-disco/      NAT traversal: AVEN probing, path selection
   karst-relay-proto/ Ponor framing and handshake, both sides
   karst-dns/        KarstDNS resolver + split-DNS
   karst-tun/        platform TUN/TAP abstraction
@@ -805,9 +805,16 @@ egress.
 
 ---
 
-## 6. NAT traversal (`karst-disco`)
+## 6. NAT traversal (`karst-disco`, **AVEN** protocol)
 
 The hard, unglamorous part where most mesh VPNs actually fail. Budget generously.
+
+**Normative specification: [spec/aven-v1.md](spec/aven-v1.md).** This section is
+the summary; where the two disagree the spec governs. One point below is
+tightened by it: probes are authenticated with a **per-pair disco key derived
+separately from the PSK** (spec §5.1), and a node holding no disco key for a
+peer does not probe it at all — the pair stays on the relay rather than
+probing unauthenticated.
 
 - **Endpoint discovery:** local interface enumeration, STUN against our relays
   for the server-reflexive address, and peer-reported observed addresses.
@@ -2225,8 +2232,60 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   coturn added to the NAT matrix. **Designated slip candidate for this phase** —
   the co-located relay covers the base case, so TURN moves to Phase 6 if the NAT
   matrix work overruns, rather than compressing the matrix work.
-- `karst-disco`: STUN, candidate gathering, hole punching, port mapping,
-  path selection with hysteresis, seamless relay→direct upgrade.
+- ✅ **AVEN v1 specified and its codec built** — `spec/aven-v1.md` and
+  `crates/karst-disco/`, 51 tests. The NAT-traversal protocol gets a themed
+  name per ADR-0010's rule (an *aven* is the shaft connecting a cave system
+  upward to the surface); it is a rename away from anything else if the name
+  does not appeal.
+
+  **Sharing a socket with PHREATIC is the hard part, and it has no free
+  answer** (§4). Disco must run on the same UDP socket and port as the data
+  plane — a NAT binding proven on one port says nothing about another — so the
+  two protocols need demultiplexing. Neither obvious mechanism works.
+  `phreatic-v1.md` §5 begins every datagram with a **CSPRNG-drawn**
+  `reassembly_id`, so no fixed magic is reliable; and §2 makes reserved fields
+  **ignored on receipt rather than rejected**, deliberately, so no reserved-bit
+  pattern makes a datagram invalid PHREATIC either. What actually separates
+  them is that **both are authenticated**: each MAC is 16 bytes, so a
+  cross-protocol acceptance needs a forgery rather than a coincidence. The
+  magic is a hint that makes the common case cost one MAC instead of two, and a
+  receiver MUST fall through when it is wrong. Cost, stated: junk forces two
+  MACs instead of one.
+
+  **An absent disco key means no discovery, ever** (§5.1). This is the one
+  place §2.6's zero-PSK fallback is deliberately *not* mirrored: connectivity
+  survives without discovery because the relay carries it, so nothing is bought
+  by relaxing, and unauthenticated probing would let an attacker tell a node
+  where to send its traffic — which is the whole of what this protocol decides.
+
+  **The sender is named by an 8-byte rotating tag, not a node id** (§5.2).
+  A cleartext handle on every probe would give back what ADR-0005 spent a
+  design decision buying. The tag also keeps an unmatched datagram to one map
+  lookup rather than one MAC per peer, which at 200 peers would be a 200×
+  amplifier any unauthenticated source could pull.
+
+  **§7.1 is the rule the crate exists to enforce:** a `Pong` confirms the
+  endpoint its `Ping` was sent *to*, never the address the `Pong` arrived
+  *from*. `PathSet::on_pong` takes a transaction id and no source address, so
+  the mistake is not expressible rather than merely tested against — an
+  implementation with that parameter can be walked to any address an on-path
+  attacker likes by copying a genuine `Pong` and re-sending it.
+
+  **§8.1 came out of the implementation disagreeing with the spec.** The spec
+  says IPv6 wins *within the hysteresis margin* — a tie-break. The first
+  implementation made it a hard ordering, and the test written from the spec
+  caught it. The deeper problem surfaced in fixing it: "within the margin" is
+  **not transitive**, so a comparator written that way can rank A over B over C
+  over A, and a minimum over a non-transitive comparator returns whichever
+  element it saw first. Path selection would have varied between runs on
+  identical inputs. It is now a latency credit, which is a total order.
+
+  The hysteresis tests were checked against the defect rather than trusted:
+  dropping the three-consecutive-wins requirement fails exactly the three
+  hysteresis tests and nothing else.
+- `karst-disco`: hole punching and simultaneous open, symmetric-NAT port
+  prediction, port mapping (UPnP-IGD, NAT-PMP, PCP), candidate gathering from
+  live interfaces, and the datapath wiring for a seamless relay→direct upgrade.
 - Full NAT test matrix in CI (§6).
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is

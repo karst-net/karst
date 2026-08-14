@@ -2,4 +2,178 @@
 // Copyright the Karst contributors.
 
 #![forbid(unsafe_code)]
-#![doc = "NAT traversal: STUN-like probing, path selection"]
+//! AVEN v1 — NAT traversal: probing, reflexive discovery, path selection.
+//!
+//! Implements `spec/aven-v1.md`. **Sans-io**: this crate turns bytes into typed
+//! values and back, and decides which of several known paths to use. It opens
+//! no socket, reads no clock and enumerates no interface. Time arrives as a
+//! millisecond stamp, addresses arrive from the caller.
+//!
+//! The decoder is on the **pre-authentication path** — it parses arbitrary
+//! bytes from an unfiltered UDP port before any MAC is checked — so it is
+//! written to be panic-free: no indexing, no slicing, no `unwrap`.
+
+pub mod key;
+pub mod msg;
+pub mod path;
+
+pub use key::{DiscoKey, TagTable};
+pub use msg::{Endpoint, Message, TxId};
+pub use path::{PathKind, PathSet, Selection};
+
+pub mod consts {
+    //! Normative constants — `spec/aven-v1.md` §6 and §7.4.
+
+    /// Discriminates AVEN from PHREATIC on a shared socket — §4.
+    ///
+    /// A **hint, not a decision.** `phreatic-v1.md` §5 begins every datagram
+    /// with a CSPRNG-drawn `reassembly_id`, so one PHREATIC datagram in 2³²
+    /// starts with these bytes by chance. What actually separates the two
+    /// protocols is that both are authenticated; the magic only makes the
+    /// common case cost one MAC instead of two.
+    pub const MAGIC: [u8; 4] = *b"KAVN";
+
+    /// Protocol version.
+    pub const VERSION: u8 = 1;
+
+    /// magic, version, type, `peer_tag`, epoch.
+    pub const HEADER: usize = 4 + 1 + 1 + TAG_LEN + 4;
+
+    /// HMAC-SHA-512 truncated, as `phreatic-v1.md` §9.2's fragment MAC.
+    pub const MAC_LEN: usize = 16;
+
+    /// Sender tag — §5.2. Eight bytes, not a node id.
+    pub const TAG_LEN: usize = 8;
+
+    /// Per-pair disco key.
+    pub const KEY_LEN: usize = 32;
+
+    /// Probe transaction id.
+    pub const TX_ID_LEN: usize = 12;
+
+    /// Wire size of one endpoint — §6.2.
+    pub const ENDPOINT_LEN: usize = 1 + 16 + 2;
+
+    /// Most candidates one `CallMeMaybe` may carry.
+    ///
+    /// A receiver rejects a larger count rather than truncating: a truncating
+    /// receiver and a non-truncating sender disagree about what was said.
+    pub const MAX_CANDIDATES: usize = 16;
+
+    /// Largest legal datagram: a sixteen-candidate `CallMeMaybe`.
+    ///
+    /// Checked before anything else, so a length field never sizes an
+    /// allocation.
+    pub const DATAGRAM_MAX: usize = HEADER + 1 + MAX_CANDIDATES * ENDPOINT_LEN + MAC_LEN;
+
+    /// `Ping` on the wire.
+    pub const PING_LEN: usize = HEADER + TX_ID_LEN + MAC_LEN;
+    /// `Pong` on the wire.
+    pub const PONG_LEN: usize = HEADER + TX_ID_LEN + ENDPOINT_LEN + MAC_LEN;
+
+    // Asserted at compile time. Discovery has to be cheap relative to what it
+    // is discovering a path for, and it must never need fragmenting — AVEN has
+    // no reassembly layer and is not getting one.
+    const _: () = {
+        assert!(PING_LEN < 64);
+        assert!(DATAGRAM_MAX < 1232);
+    };
+
+    /// An outstanding `tx_id` expires after this — §7.1.
+    pub const TX_TIMEOUT_MS: u64 = 5_000;
+
+    /// Most outstanding probes per peer. They are state a peer's behaviour
+    /// causes us to allocate, so they are counted.
+    pub const MAX_OUTSTANDING: usize = 16;
+
+    /// A path with no `Pong` inside this window is not eligible — §8.
+    pub const PATH_STALE_MS: u64 = 15_000;
+
+    /// Keepalive on the chosen path — §7.4.
+    pub const KEEPALIVE_MS: u64 = 5_000;
+
+    /// Re-probe alternatives this often — §7.4.
+    pub const REPROBE_MS: u64 = 30_000;
+
+    /// Hysteresis: an alternative must beat the chosen path by at least this
+    /// much — §8.2.
+    pub const HYSTERESIS_MS: u64 = 20;
+
+    /// …or by this fraction, whichever is larger.
+    pub const HYSTERESIS_PERCENT: u64 = 20;
+
+    /// …sustained across this many consecutive measurements.
+    pub const HYSTERESIS_SAMPLES: u32 = 3;
+}
+
+/// Why a datagram was not accepted.
+///
+/// `spec/aven-v1.md` §10: every one of these is a **silent drop**. AVEN has no
+/// error messages, because emitting one would make a node an oracle for which
+/// peers it holds keys for — and because a log line per dropped datagram is a
+/// disk-filling primitive available to anyone who can reach an unfiltered UDP
+/// port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Error {
+    /// Not AVEN: wrong magic, or shorter than a header and MAC.
+    NotAven,
+    /// Longer than [`consts::DATAGRAM_MAX`]. Rejected before anything else.
+    TooLong(usize),
+    /// A version this implementation does not speak.
+    BadVersion(u8),
+    /// Not a type AVEN v1 defines.
+    UnknownType(u8),
+    /// The length is wrong for the type.
+    BadLength {
+        /// The type byte.
+        msg_type: u8,
+        /// The length that arrived.
+        got: usize,
+    },
+    /// `count` outside 1..=16, or an address family that is neither 4 nor 6,
+    /// or IPv4 padding that is not zero.
+    Malformed,
+    /// No disco key is held for this tag. Indistinguishable, to the sender,
+    /// from [`Self::BadMac`].
+    UnknownTag,
+    /// The MAC did not verify.
+    BadMac,
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotAven => f.write_str("not an AVEN datagram"),
+            Self::TooLong(n) => write!(f, "datagram of {n} bytes exceeds the cap"),
+            Self::BadVersion(v) => write!(f, "unsupported AVEN version {v}"),
+            Self::UnknownType(t) => write!(f, "unknown AVEN message type {t:#04x}"),
+            Self::BadLength { msg_type, got } => {
+                write!(f, "type {msg_type:#04x} cannot have length {got}")
+            }
+            Self::Malformed => f.write_str("malformed AVEN body"),
+            Self::UnknownTag => f.write_str("no disco key for this tag"),
+            Self::BadMac => f.write_str("MAC did not verify"),
+        }
+    }
+}
+
+impl core::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::consts::*;
+
+    #[test]
+    fn wire_sizes_match_the_spec() {
+        // spec/aven-v1.md §6.1. A change should show up as a diff against the
+        // specification rather than as drift.
+        assert_eq!(HEADER, 18);
+        assert_eq!(PING_LEN, 46);
+        assert_eq!(PONG_LEN, 65);
+        assert_eq!(ENDPOINT_LEN, 19);
+        assert_eq!(DATAGRAM_MAX, 339);
+        // The smallest CallMeMaybe, one candidate.
+        assert_eq!(HEADER + 1 + ENDPOINT_LEN + MAC_LEN, 54);
+    }
+}

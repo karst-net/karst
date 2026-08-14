@@ -794,6 +794,12 @@ dependencies = [
 [[package]]
 name = "karst-disco"
 version = "0.0.0"
+dependencies = [
+ "hmac",
+ "sha2",
+ "subtle",
+ "zeroize",
+]
 
 [[package]]
 name = "karst-dns"
