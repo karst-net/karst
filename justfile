@@ -26,13 +26,21 @@ test:
 # artefacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
-test-privileged: test-tun test-karstd
+test-privileged: test-tun test-karstd test-nat-matrix
 
 test-tun:
     @just _privileged karst-tun device
 
 test-karstd:
     @just _privileged karstd two_nodes
+
+# The NAT matrix (PLAN.md §6). These validate the *instrument*: that each
+# topology behaves the way its name says, using examples/natprobe.rs and no
+# Karst code. A matrix whose "symmetric" NAT is quietly endpoint-independent
+# would produce a confident direct-connection rate that means nothing.
+test-nat-matrix:
+    cargo build -p karst-disco --example natprobe
+    @just _privileged karst-disco nat_matrix
 
 _privileged package target:
     #!/usr/bin/env bash

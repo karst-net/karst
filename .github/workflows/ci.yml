@@ -104,17 +104,21 @@ jobs:
           # The whole workspace: two_nodes drives the `karst` CLI from another
           # package, which `cargo test -p karstd` alone would not build.
           cargo build --workspace
+          # The NAT matrix drives this as a helper inside each namespace.
+          cargo build -p karst-disco --example natprobe
           find_bin() {
             cargo test -p "$1" --test "$2" --no-run --message-format=json \
               | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
           }
           tun=$(find_bin karst-tun device)
           two=$(find_bin karstd two_nodes)
-          for b in "$tun" "$two"; do
+          nat=$(find_bin karst-disco nat_matrix)
+          for b in "$tun" "$two" "$nat"; do
             [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
           done
           echo "TUN_TEST_BIN=$tun" >> "$GITHUB_ENV"
           echo "TWO_NODE_TEST_BIN=$two" >> "$GITHUB_ENV"
+          echo "NAT_MATRIX_TEST_BIN=$nat" >> "$GITHUB_ENV"
       # Fixed interface and namespace names, so one at a time.
       - name: TUN devices
         run: sudo "$TUN_TEST_BIN" --ignored --test-threads=1
@@ -128,6 +132,13 @@ jobs:
       - name: Two daemons over a veth pair
         timeout-minutes: 15
         run: sudo "$TWO_NODE_TEST_BIN" --ignored --test-threads=1
+      # The NAT matrix validates itself: each topology is shown to behave the
+      # way its label says, with no Karst code involved. PLAN.md §6's ≥90%
+      # direct-connection criterion is measured through this, so an instrument
+      # that silently mislabels a NAT would make that number meaningless.
+      - name: NAT matrix (topology validation)
+        timeout-minutes: 10
+        run: sudo "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
 
   # Licence allowlist — a GPL dependency reaching the MIT/Apache crates would
   # break both App Store and kernel-datapath viability (ADR-0003, ADR-0007).

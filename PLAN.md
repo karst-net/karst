@@ -2356,7 +2356,41 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
 - `karst-disco`: symmetric-NAT port prediction, port mapping (UPnP-IGD,
   NAT-PMP, PCP), candidate gathering from live interfaces, and the datapath
   wiring for a seamless relay→direct upgrade.
-- Full NAT test matrix in CI (§6).
+- 🔶 **NAT matrix — the instrument, validated.** `crates/karst-disco/tests/
+  nat_matrix.rs` builds three network namespaces with a masquerading middle and
+  two distinct outer addresses, and establishes that each topology behaves the
+  way its label says. Five tests, run privileged in CI beside the TUN and
+  two-node jobs.
+
+  **This measures the network, not Karst**, using `examples/natprobe.rs` and no
+  product code at all. That ordering is the whole point: §6's ≥90%
+  direct-connection criterion is a number produced *by* this matrix, and a
+  "symmetric" NAT that is quietly endpoint-independent yields a confident
+  percentage that means nothing. Once the thing under test is a VPN rather than
+  a two-line probe, the mistake is invisible.
+
+  What is established: the topology translates at all; a cone NAT reuses one
+  external port across two destinations (endpoint-independent mapping); a
+  symmetric NAT does not; an unsolicited datagram does not cross
+  (endpoint-dependent filtering, which is what makes it a NAT rather than a
+  router); and UDP-blocked blocks UDP. **Checked against the defect**: swapping
+  the two NAT types fails exactly the two tests that distinguish them.
+
+  Two things sized honestly rather than papered over. `fully-random` allocates
+  ports randomly, so two destinations can collide by chance — about one run in
+  28,000, which over enough CI runs is a flake and not an impossibility; the
+  test retries three times and needs one pair to differ. And `nft` rejects a
+  chain named `fwd`, which is a reserved word.
+
+  **Four of the ten §6 rows exist so far.** Port-restricted cone, symmetric,
+  UDP-blocked and the plain-NAT baseline are what Linux conntrack gives
+  natively. Full-cone and address-restricted need endpoint-independent
+  *filtering*, which netfilter does not do without an out-of-tree module;
+  hairpinning, IPv6-only, NAT64/DNS64 and double-NAT are unbuilt. Those are
+  named here rather than quietly omitted, because a matrix that reports
+  four-for-four is not the same as one that reports four-of-ten.
+- Full NAT test matrix in CI (§6) — six rows still to build, and the criterion
+  cannot be measured until `karstd` carries disco.
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is
   automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind
