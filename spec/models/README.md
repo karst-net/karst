@@ -13,9 +13,10 @@ just verify-slow   # long-running broken-primitive variants (nightly)
 
 ## Status
 
-Karst has three protocols and each has its own model. They are not variants of
+Karst has four protocols and each has its own model. They are not variants of
 one another: PHREATIC is the UDP data plane, KARST-CONTROL the node↔server
-channel, Ponor the node↔relay one.
+channel, Ponor the node↔relay one, AVEN the peer↔peer path discovery that runs
+on the same socket as PHREATIC.
 
 ### Verifpal 0.80.0 — seconds
 
@@ -32,6 +33,7 @@ channel, Ponor the node↔relay one.
 | `phreatic.pv` | All primitives sound | ✅ **4/4**, seconds |
 | `karst-control.pv` | All primitives sound | ✅ **4/4**, seconds |
 | `ponor.pv` | All primitives sound, and a relay the client uses is hostile | ✅ **4/4**, seconds |
+| `aven.pv` | All primitives sound, and a peer of A's is compromised | ✅ **4/4**, seconds |
 | `phreatic-dh-broken.pv` | public `dlog` destructor | ✅ **4/4**, ~15 min |
 | `phreatic-kem-broken.pv` | public `break_kem` destructor | ❌ **does not terminate** — see below |
 
@@ -46,6 +48,10 @@ Queries, per model:
   relay admitting a client, a client authenticating the relay, and the same
   pair for a mesh peer. No secrecy query, because Ponor derives no keys; see
   `ponor.pv`'s header for what that means and does not mean.
+- **AVEN** — **injective** and non-injective agreement that a node confirms a
+  path only if the peer answered, no forgery of probes, and disco-key secrecy.
+  The attacker holds a *different* peer's disco key throughout, because a
+  tailnet is not a trust boundary.
 
 ### Models that must fail
 
@@ -58,6 +64,21 @@ demonstration into a decoration, and nothing else would notice.
 |---|---|---|
 | `karst-control-nofs.pv` | `ss_eph` from the key schedule | ❌ 2 secrecy, ✅ 2 authentication |
 | `ponor-norelayid.pv` | `relay_id` from the client's signature | ❌ 2 relay-authenticates-peer, ✅ 2 peer-authenticates-relay |
+| `aven-headeronly.pv` | `tx_id` and `observed` from the MAC | ❌ 2 agreement, ✅ 2 forgery and secrecy |
+
+`aven-headeronly.pv` is not a hypothetical. `phreatic-v1.md` §13.8 made exactly
+that trade on the data path — deliberately, after profiling showed the fragment
+MAC costing five times the AEAD it gated — and this variant is why the same
+optimisation must not be carried across to AVEN. With `tx_id` outside the MAC,
+an attacker rewrites it on a captured `Pong` and confirms a path the peer never
+answered from.
+
+Getting it to fail took two goes, and the first result is worth recording: the
+generator's `sed` stopped matching after an unrelated edit changed the
+indentation, so only the *verifier* side was weakened. The prober then rejected
+every genuine `Pong`, nothing was ever confirmed, and all four queries passed —
+**vacuously**. A must-fail model that passes is the signal to go and look, not
+to move on.
 
 `ponor-norelayid.pv` is worth reading the trace of. The attack ProVerif finds
 is that a **rogue relay copies an honest relay's `relay_random` into its own

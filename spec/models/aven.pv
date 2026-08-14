@@ -1,0 +1,190 @@
+(* SPDX-License-Identifier: CC-BY-4.0
+ *
+ * AVEN v1 — ProVerif model
+ * Models spec/aven-v1.md §5 and §7. Run: proverif aven.pv
+ *
+ * AVEN is the smallest of the four Karst protocols. It carries no user data,
+ * derives no keys, and its whole job is to decide *where to send*. That makes
+ * the property to check narrow and unusually concrete:
+ *
+ *   An attacker who does not hold the pair disco key must not be able to make
+ *   a node treat a path as working.
+ *
+ * WHAT IS MODELLED
+ *   The Ping/Pong exchange under a symmetric per-pair MAC, with a THIRD PEER
+ *   WHOSE KEY THE ATTACKER HOLDS. That last part is the configuration worth
+ *   testing: a node holds a disco key per peer, and "one of your peers is
+ *   hostile" is ordinary rather than exotic — a tailnet is not a trust
+ *   boundary, which is why PLAN.md §1.1 lists a malicious peer inside the
+ *   tailnet as in scope.
+ *
+ * WHAT IS NOT MODELLED, AND WHY
+ *   - The tx -> endpoint association of §7.1. That rule lives in the
+ *     receiver's bookkeeping, not on the wire: `PathSet::on_pong` takes a
+ *     transaction id and no source address, so the mistake is not expressible
+ *     in the implementation. A model of it would be a model of this file's own
+ *     process definition and would pass by construction — the "modelling
+ *     artifact" trap karst-control.pv §10 records. Stated here so the absence
+ *     is not read as an oversight.
+ *   - Path selection and hysteresis. Availability, not security.
+ *   - Ping replay protection (spec §7.5). Expressing it needs a table and a
+ *     lock, and adding them makes ProVerif answer "cannot be proved" on both
+ *     agreement queries — in the base model AND in the broken variant, where a
+ *     demonstration that cannot fail demonstrates nothing. The model is
+ *     therefore kept at the forgery-and-impersonation level, which it proves,
+ *     and §7.5 is carried by `PathSet::on_ping_received` and its tests.
+ *   - The magic prefix and PHREATIC demultiplexing (§4). A mis-delivered
+ *     datagram fails the other protocol's MAC, which is a property of both
+ *     MACs rather than of either protocol's message flow.
+ *
+ * VARIANT
+ *   aven-headeronly.pv authenticates only the header, leaving tx_id and the
+ *   observed address unauthenticated. It is expected to FAIL. That variant is
+ *   not hypothetical: phreatic-v1.md §13.8 made exactly that trade on the data
+ *   path, deliberately and for a measured 5x saving, and this model is why the
+ *   same optimisation must not be carried over here.
+ *)
+
+(* ─── Types ────────────────────────────────────────────────────────────── *)
+
+type key.
+
+free c: channel.
+
+free PING: bitstring.
+free PONG: bitstring.
+
+(* Sender tags — §5.2. Public values: the whole point is that they are opaque
+   rather than secret, and an attacker sees every one of them on the wire. *)
+free TAG_A: bitstring.
+free TAG_B: bitstring.
+free TAG_C: bitstring.
+
+(* ─── MAC ──────────────────────────────────────────────────────────────── *)
+
+(* HMAC-SHA-512 truncated to 16 bytes. Modelled as an unforgeable function of
+   the key and the message: with no key there is no way to build the term. *)
+fun mac(key, bitstring): bitstring.
+
+fun cat(bitstring, bitstring): bitstring [data].
+
+(* ─── Keys ─────────────────────────────────────────────────────────────── *)
+
+(* The honest pair. *)
+free kAB: key [private].
+
+(* A third peer of A's, whose disco key the attacker holds. A tailnet is not a
+   trust boundary (PLAN.md §1.1), so this is the ordinary case rather than the
+   exotic one. *)
+free kAC: key [private].
+
+(* ─── Events ───────────────────────────────────────────────────────────── *)
+
+event APinged(bitstring).                        (* tx *)
+event BAnswered(bitstring).                      (* tx *)
+event AConfirmed(bitstring, bitstring).          (* peer tag, tx *)
+
+(* ─── Queries ──────────────────────────────────────────────────────────── *)
+
+(* 1. A confirms a path as B's only if B really answered, INJECTIVELY.
+      Injective is the load-bearing part: it is what says a captured Pong
+      cannot be replayed to refresh a path's liveness, or to answer a second
+      probe that B never saw. §7.1 spends a transaction id exactly once for
+      this reason.
+
+      The attacker holds kAC throughout, so this query also says a compromised
+      peer of A's cannot impersonate a different peer of A's. *)
+query tx: bitstring;
+    inj-event(AConfirmed(TAG_B, tx)) ==> inj-event(BAnswered(tx)).
+
+(* 1b. The same, non-injectively: A never confirms a path as B's for a
+      transaction B never answered at all.
+
+      Weaker than query 1 and kept beside it deliberately. It is the query the
+      header-only variant makes **false, with a trace**; the injective form
+      there comes back "cannot be proved", which demonstrates nothing. A
+      variant that must fail has to actually fail. *)
+query tx: bitstring;
+    event(AConfirmed(TAG_B, tx)) ==> event(BAnswered(tx)).
+
+(* 2. B answers only probes A actually sent — no forgery.
+      Non-injective, and the distinction is the finding this model produced.
+
+      The INJECTIVE form of this query came back `is false`, with ProVerif
+      adding "but the non-injective form is true". That is exactly: **B
+      answered a Ping A really did send, more than once.** A replayed Ping,
+      with no rule against it — a reflector returning 65 bytes for 46, usable
+      by anyone who can capture one datagram and needing no key at all.
+
+      spec §7.5 is the fix, and it is a rule about the responder's memory
+      rather than about the wire, so it is not modelled here — see the header.
+      This query is stated in the form ProVerif proves. Claiming the injective
+      form would be claiming something no run of this file establishes. *)
+query tx: bitstring;
+    event(BAnswered(tx)) ==> event(APinged(tx)).
+
+(* 3. The disco key stays secret. It is netmap material (PLAN.md §2.6), so a
+      leak here is a leak of something the coordination server distributed. *)
+query attacker(new secretProbe).
+
+(* ─── A: the prober ────────────────────────────────────────────────────── *)
+
+(* Parameterised by which peer it is talking to, so the same process runs for
+   the honest peer B and for the attacker-controlled peer C. Running it for
+   both is what makes query 1 non-trivial: A must not confuse the two. *)
+let prober(peer_tag: bitstring, k: key) =
+    new tx: bitstring;
+    event APinged(tx);
+    out(c, (PING, TAG_A, tx, mac(k, cat(PING, cat(TAG_A, tx)))));
+
+    in(c, (=PONG, t: bitstring, tx2: bitstring, obs: bitstring, m: bitstring));
+    (* The MAC covers the transaction id and the observed address, not just
+       the header. The variant that drops them is what demonstrates why. *)
+    if t = peer_tag then
+    if tx2 = tx then
+    if m = mac(k, cat(PONG, cat(t, cat(tx2, obs)))) then
+    event AConfirmed(t, tx).
+
+(* ─── B: the responder ─────────────────────────────────────────────────── *)
+
+let responder(k: key) =
+    in(c, (=PING, t: bitstring, tx: bitstring, m: bitstring));
+    if t = TAG_A then
+    if m = mac(k, cat(PING, cat(TAG_A, tx))) then
+    (* §7.5. Without this the query below is false — non-injectively true but
+       injectively false, which is exactly "B answered a genuine Ping, more
+       than once". *)
+    event BAnswered(tx);
+
+    (* The reflexive address B observed. Fresh, because it is whatever the NAT
+       rewrote the source to; A may advertise it and MUST NOT treat it as a
+       path (§7.2). *)
+    new obs: bitstring;
+    out(c, (PONG, TAG_B, tx, obs, mac(k, cat(PONG, cat(TAG_B, cat(tx, obs)))))).
+
+(* ─── Secrecy witness ──────────────────────────────────────────────────── *)
+
+(* Something only a disco-key holder can construct, published under the MAC so
+   query 3 has a term to chase. *)
+let witness =
+    new secretProbe: bitstring;
+    out(c, mac(kAB, secretProbe)).
+
+(* ─── Main ─────────────────────────────────────────────────────────────── *)
+
+process
+    (* Tags are public: §5.2 makes them opaque, not secret. *)
+    out(c, TAG_A);
+    out(c, TAG_B);
+    out(c, TAG_C);
+
+    (* A peer of A's is compromised. Its disco key goes to the attacker, who
+       may then run that peer however it likes. *)
+    out(c, kAC);
+
+    (
+      ( !prober(TAG_B, kAB) )   (* A talking to the honest peer   *)
+    | ( !prober(TAG_C, kAC) )   (* A talking to the hostile peer  *)
+    | ( !responder(kAB) )       (* the honest peer                *)
+    | ( !witness )
+    )

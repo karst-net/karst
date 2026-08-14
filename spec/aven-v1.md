@@ -7,14 +7,16 @@
   in software under any licence. Independent implementations are wanted.
 
 > **Implementable.** §4–§8 are stable enough to build against and match
-> `crates/karst-disco/`. §11 lists what remains open, and the list is long:
+> `crates/karst-disco/`. §12 lists what remains open, and the list is long:
 > this is the first draft of the hardest unglamorous part of a mesh VPN.
 >
-> **No formal model yet.** §11.1 states the gate. AVEN carries no user data and
-> derives no session key, so the property to model is narrow — an attacker must
-> not be able to make a node send traffic to an address of the attacker's
-> choosing — but narrow is not the same as obvious, and the last two protocols
-> both had something a model found and review had not.
+> All four ProVerif queries verify (§11), against an attacker that holds **a
+> different peer's disco key** — because a tailnet is not a trust boundary
+> (PLAN.md §1.1).
+>
+> §7.4 is what the model found, and draft 0.1 did not have it: a `Ping` is
+> authenticated, so it cannot be forged — which is true, and is not the same as
+> saying a genuine one cannot be *replayed*.
 
 ---
 
@@ -272,7 +274,37 @@ It MAY also be sent on an established direct path when candidates change — a
 node that acquires a new interface should not have to wait for a relay round
 trip to say so.
 
-### 7.4 Rates
+### 7.4 Answering a probe at most once — the flaw modelling found
+
+**A responder MUST answer each `tx_id` at most once**, within a bounded window
+per peer. **A prober MUST use a fresh `tx_id` for every probe, including
+retransmissions** — which it needs anyway, or a retransmitted probe's round-trip
+measurement is meaningless.
+
+Recorded because draft 0.1 had neither rule and the reasoning that omitted them
+was plausible. A `Ping` is authenticated, so a forged one is impossible; that is
+true, and it is not the same as saying a *genuine* one cannot be reused.
+
+ProVerif's answer to `inj-event(BAnswered(tx)) ==> inj-event(APinged(tx))` was
+`is false`, with the note that the **non-injective form is true**. In words: the
+responder answered a `Ping` the prober really did send — more than once. An
+attacker that captures one `Ping` can replay it indefinitely, from any address,
+and the responder answers each copy to wherever the copy came from.
+
+That is a **reflector**, and it needs no key: 46 bytes in, 65 bytes out. The
+amplification factor of 1.4 is small enough that this is not a serious
+bandwidth attack, and saying so is part of reporting it accurately. What makes
+it worth fixing anyway is that it is free to fix, that it lets an unauthenticated
+attacker spend a peer's probe budget under someone else's name, and that a
+reflector in a protocol that runs on an open UDP port on every node in a network
+is not a thing to ship knowingly.
+
+The window is bounded, so the guarantee is **at most once within the window**
+rather than at most once ever. An unbounded cache would be a memory-exhaustion
+vector reachable by the same replay it exists to stop, which would be trading
+one flaw for a worse one.
+
+### 7.5 Rates
 
 | | |
 |---|---|
@@ -354,7 +386,7 @@ An on-path observer without the disco key sees:
   private RFC 1918 addresses that describe its LAN — travel unencrypted between
   peers, and over the relay where the relay operator can also read them.
 
-That last point is a genuine weakness and is recorded as such in §11.4 rather
+That last point is a genuine weakness and is recorded as such in §12.3 rather
 than defended. Encrypting the body under the disco key would close it and costs
 one AEAD; it is not in v1 because the key schedule for it was not designed in
 time, which is a reason and not a justification.
@@ -378,32 +410,75 @@ datagram is a disk-filling primitive available to anyone who can reach it.
 
 ---
 
-## 11. Open items — this draft is incomplete
+## 11. Formal verification
 
-1. **No formal model.** The property to check is narrow — an attacker who does
-   not hold the disco key must not be able to cause a node to select a path of
-   the attacker's choosing — and §7.1 is the rule the model should attack.
-   Required before Phase 4 exits.
-2. **No external review.**
-3. **Epoch rotation is specified only in outline.** The disco key rotates with
+`spec/models/aven.pv`, ProVerif 2.05, seconds:
+
+| Query | Result |
+|---|---|
+| A confirms a path as B's only if B answered, **injectively** | ✅ |
+| The same, non-injectively | ✅ |
+| B answers only probes A sent — no forgery | ✅ |
+| The disco key stays secret | ✅ |
+
+The attacker holds **a different peer of A's disco key** throughout. A tailnet
+is not a trust boundary — PLAN.md §1.1 lists a malicious peer inside one as in
+scope — so this is the ordinary configuration rather than an exotic one.
+
+Not modelled: §7.1's transaction-to-endpoint association, which lives in the
+receiver's bookkeeping rather than on the wire and is enforced by the
+implementation's types; path selection, which is availability rather than
+security; and §7.4's replay window, for the reason below.
+
+### 11.1 Why §7.4 is not in the model
+
+Expressing "answer each `tx_id` once" needs a table and a lock, and adding them
+makes ProVerif answer **cannot be proved** on both agreement queries — in the
+base model *and* in the broken variant, where a demonstration that cannot fail
+demonstrates nothing. That is an incompleteness of the analysis rather than a
+counterexample; there is no trace either way.
+
+So the model is kept at the forgery-and-impersonation level, which it proves,
+and §7.4 is carried by the implementation and its tests instead. Claiming
+otherwise would be claiming something no run of the model establishes.
+
+### 11.2 The broken variant
+
+`spec/models/aven-headeronly.pv` authenticates only the header, leaving `tx_id`
+and `observed` outside the MAC. Both agreement queries become **false**, with a
+trace: an attacker rewrites `tx_id` on a captured `Pong` and confirms a path the
+peer never answered from.
+
+This one is not hypothetical. `phreatic-v1.md` §13.8 made exactly that trade on
+the data path — deliberately, after profiling showed the fragment MAC costing
+five times the AEAD it gated — and the variant exists to record that the saving
+must not be carried across to AVEN, where the MAC's job is different.
+
+---
+
+## 12. Open items — this draft is incomplete
+
+1. **No external review.** A symbolic model says nothing about implementation
+   behaviour.
+2. **Epoch rotation is specified only in outline.** The disco key rotates with
    the PSK epoch, but nothing here says what a node does with in-flight probes
    across a rotation, or whether it accepts epoch *n−1* the way
    `phreatic-v1.md` §7.3 does for PSKs. It should, and the window is unwritten.
-4. **`CallMeMaybe` bodies are not encrypted** (§9). Local interface addresses,
+3. **`CallMeMaybe` bodies are not encrypted** (§9). Local interface addresses,
    including private ones, are visible to the relay operator and to anyone on
    the path. An AEAD under the disco key would close this.
-5. **Symmetric-NAT port prediction is unspecified.** PLAN.md §6 calls for
+4. **Symmetric-NAT port prediction is unspecified.** PLAN.md §6 calls for
    birthday-paradox port prediction; nothing here says how many ports to try,
-   at what rate, or how that interacts with §7.4's rate limit — which it
+   at what rate, or how that interacts with §7.5's rate limit — which it
    plainly does, since the technique is "send many probes at once".
-6. **No path-MTU interaction.** A direct path may have a smaller MTU than the
+5. **No path-MTU interaction.** A direct path may have a smaller MTU than the
    relay path, and AVEN reports nothing about it. PLAN.md schedules PMTU
    discovery for Phase 6; until then a path can be selected that black-holes
    full-size packets, which is a worse failure than not selecting it.
-7. **Nothing bounds the candidate set.** §6.1 caps a single `CallMeMaybe` at
+6. **Nothing bounds the candidate set.** §6.1 caps a single `CallMeMaybe` at
    sixteen, but a peer may send one every five seconds with sixteen different
    addresses each time. The per-peer candidate table needs a cap and an
    eviction rule.
-8. **No IPv4/IPv6 dual-stack policy for probing order.** §8 ranks paths once
+7. **No IPv4/IPv6 dual-stack policy for probing order.** §8 ranks paths once
    they work; it does not say whether to probe both families at once, and
    probing both doubles the traffic a node emits on first contact.

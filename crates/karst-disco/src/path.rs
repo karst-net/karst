@@ -16,12 +16,12 @@
 //! address an on-path attacker liked by copying a genuine `Pong` and re-sending
 //! it from somewhere else.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use crate::consts::{
-    HYSTERESIS_MS, HYSTERESIS_PERCENT, HYSTERESIS_SAMPLES, MAX_OUTSTANDING, PATH_STALE_MS,
-    TX_TIMEOUT_MS,
+    ANSWERED_WINDOW, HYSTERESIS_MS, HYSTERESIS_PERCENT, HYSTERESIS_SAMPLES, MAX_OUTSTANDING,
+    PATH_STALE_MS, TX_TIMEOUT_MS,
 };
 use crate::msg::TxId;
 
@@ -122,6 +122,9 @@ struct Outstanding {
 pub struct PathSet {
     paths: Vec<Path>,
     outstanding: HashMap<TxId, Outstanding>,
+    /// Transaction ids this node has already answered — §7.4. A bounded
+    /// window, oldest evicted first.
+    answered: VecDeque<TxId>,
     chosen: Option<SocketAddr>,
     /// Consecutive measurements in which one challenger has beaten the chosen
     /// path by the hysteresis margin — §8.2.
@@ -179,6 +182,34 @@ impl PathSet {
             },
         );
         Ok(())
+    }
+
+    /// Decide whether to answer an authenticated `Ping` — §7.4.
+    ///
+    /// Returns `false` for a transaction id already answered inside the
+    /// window, in which case the caller MUST NOT emit a `Pong`.
+    ///
+    /// This exists because `ProVerif` said so. Draft 0.1 of the specification
+    /// had no such rule, on the reasoning that a `Ping` is authenticated and so
+    /// cannot be forged — which is true, and is not the same as saying a
+    /// genuine one cannot be *reused*. The injective form of "the responder
+    /// answers only probes the prober sent" came back false while the
+    /// non-injective form came back true, which is precisely "answered a real
+    /// `Ping`, more than once": a keyless reflector for anyone able to capture
+    /// one datagram.
+    ///
+    /// The window is bounded, so this is "at most once within the window". An
+    /// unbounded cache would be a memory-exhaustion vector reachable by the
+    /// same replay it exists to stop.
+    pub fn on_ping_received(&mut self, tx: TxId) -> bool {
+        if self.answered.contains(&tx) {
+            return false;
+        }
+        if self.answered.len() >= ANSWERED_WINDOW {
+            self.answered.pop_front();
+        }
+        self.answered.push_back(tx);
+        true
     }
 
     /// Match an authenticated `Pong` against an outstanding probe.
@@ -398,10 +429,12 @@ mod tests {
         clippy::panic,
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::indexing_slicing
+        clippy::indexing_slicing,
+        clippy::cast_possible_truncation
     )]
 
     use super::*;
+    use crate::consts::ANSWERED_WINDOW;
 
     fn v4(a: u8) -> SocketAddr {
         SocketAddr::from(([10, 0, 0, a], 51820))
@@ -482,6 +515,46 @@ mod tests {
         // And the cap is a window, not a lifetime limit.
         s.on_ping_sent(tx(201), v4(1), TX_TIMEOUT_MS + 1)
             .expect("expired probes freed room");
+    }
+
+    // ── §7.4, the flaw modelling found ────────────────────────────────────
+
+    #[test]
+    fn a_probe_is_answered_once() {
+        // The reflector. A captured Ping replayed from anywhere must not
+        // produce a second Pong.
+        let mut s = PathSet::new();
+        assert!(s.on_ping_received(tx(1)));
+        assert!(!s.on_ping_received(tx(1)));
+        assert!(!s.on_ping_received(tx(1)));
+    }
+
+    #[test]
+    fn distinct_probes_are_each_answered() {
+        // The rule must not break ordinary probing, including the
+        // retransmissions §7.5 schedules — which carry fresh ids for exactly
+        // this reason.
+        let mut s = PathSet::new();
+        for i in 0..32 {
+            assert!(s.on_ping_received(tx(i)), "probe {i} was refused");
+        }
+    }
+
+    #[test]
+    fn the_answered_window_is_bounded() {
+        // An unbounded cache would be a memory-exhaustion vector reachable by
+        // the very replay it exists to stop.
+        let mut s = PathSet::new();
+        for i in 0..(ANSWERED_WINDOW + 8) {
+            let mut id = [0u8; 12];
+            id[0] = (i & 0xff) as u8;
+            id[1] = (i >> 8) as u8;
+            assert!(s.on_ping_received(TxId(id)));
+        }
+        // The oldest have been evicted, so they would be answered again. That
+        // is the stated limit of the guarantee — at most once *within the
+        // window* — and it is a deliberate trade, not an oversight.
+        assert!(s.on_ping_received(TxId([0u8; 12])));
     }
 
     // ── §8, selection ─────────────────────────────────────────────────────

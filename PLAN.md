@@ -2283,6 +2283,51 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   The hysteresis tests were checked against the defect rather than trusted:
   dropping the three-consecutive-wins requirement fails exactly the three
   hysteresis tests and nothing else.
+- ✅ **AVEN modelled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
+  attacker holds **a different peer of A's disco key** throughout, because a
+  tailnet is not a trust boundary (§1.1 lists a malicious peer inside one as in
+  scope).
+
+  **The model found a reflector, and draft 0.1 of the spec had no defence.**
+  The injective form of "the responder answers only probes the prober sent"
+  came back `is false`, with ProVerif noting the non-injective form is true —
+  which in words is: *the responder answered a `Ping` the prober really did
+  send, more than once.* A `Ping` is authenticated, so it cannot be forged;
+  that is true, and it is not the same as saying a genuine one cannot be
+  **replayed**. Anyone able to capture one datagram can replay it from any
+  address, and the responder answers each copy to wherever the copy came from.
+  46 bytes in, 65 out.
+
+  The amplification factor of 1.4 is small, and saying so is part of reporting
+  it accurately — this is not a bandwidth attack. It is fixed anyway because
+  the fix is free, because it lets an unauthenticated attacker spend a peer's
+  probe budget under someone else's name, and because a reflector in a protocol
+  running on an open UDP port on every node is not a thing to ship knowingly.
+  Spec §7.4 is the rule; `PathSet::on_ping_received` is the implementation, with
+  a bounded window so the cache cannot itself become the exhaustion vector.
+
+  **What the model does not claim** is stated in §11.1. Expressing the replay
+  rule needs a table and a lock, and adding them makes ProVerif answer "cannot
+  be proved" on both agreement queries — in the base model *and* in the broken
+  variant, where a demonstration that cannot fail demonstrates nothing. So the
+  model stays at the forgery-and-impersonation level, which it proves, and the
+  replay half is carried by the implementation and its tests.
+
+  **`aven-headeronly.pv` records a decision that must not be inherited.**
+  `phreatic-v1.md` §13.8 took the fragment MAC off the payload on the data
+  path — deliberately, after profiling showed it costing five times the AEAD it
+  gated. The variant shows what the same saving would cost here: with `tx_id`
+  outside the MAC, an attacker rewrites it on a captured `Pong` and confirms a
+  path the peer never answered from. Both agreement queries go false, with a
+  trace.
+
+  **The variant passed on the first attempt, and that was the bug.** An
+  unrelated edit changed the model's indentation and one of the generator's two
+  `sed` expressions stopped matching, so only the verifier side was weakened;
+  the prober then rejected every genuine `Pong`, nothing was confirmed, and all
+  four queries passed **vacuously**. A must-fail model that passes is a signal
+  to go and look. `spec/models/README.md` records it, because the failure mode
+  is silent and general.
 - `karst-disco`: hole punching and simultaneous open, symmetric-NAT port
   prediction, port mapping (UPnP-IGD, NAT-PMP, PCP), candidate gathering from
   live interfaces, and the datapath wiring for a seamless relay→direct upgrade.

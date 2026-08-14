@@ -22,7 +22,7 @@ pub use msg::{Endpoint, Message, TxId};
 pub use path::{PathKind, PathSet, Selection};
 
 pub mod consts {
-    //! Normative constants — `spec/aven-v1.md` §6 and §7.4.
+    //! Normative constants — `spec/aven-v1.md` §6 and §7.5.
 
     /// Discriminates AVEN from PHREATIC on a shared socket — §4.
     ///
@@ -86,13 +86,22 @@ pub mod consts {
     /// causes us to allocate, so they are counted.
     pub const MAX_OUTSTANDING: usize = 16;
 
+    /// How many recently answered `tx_id`s a responder remembers per peer —
+    /// §7.4.
+    ///
+    /// Bounded, so the guarantee is "answered at most once within the window"
+    /// rather than "at most once ever". An unbounded cache would be a
+    /// memory-exhaustion vector reachable by the very replay it exists to
+    /// stop, which is trading one flaw for a worse one.
+    pub const ANSWERED_WINDOW: usize = 64;
+
     /// A path with no `Pong` inside this window is not eligible — §8.
     pub const PATH_STALE_MS: u64 = 15_000;
 
-    /// Keepalive on the chosen path — §7.4.
+    /// Keepalive on the chosen path — §7.5.
     pub const KEEPALIVE_MS: u64 = 5_000;
 
-    /// Re-probe alternatives this often — §7.4.
+    /// Re-probe alternatives this often — §7.5.
     pub const REPROBE_MS: u64 = 30_000;
 
     /// Hysteresis: an alternative must beat the chosen path by at least this

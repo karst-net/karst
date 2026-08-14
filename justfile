@@ -113,9 +113,12 @@ verify:
     ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
     echo "── ProVerif (Ponor relay, spec/ponor-v1.md §5) ──"
     ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
+    echo "── ProVerif (AVEN path discovery, spec/aven-v1.md §7) ──"
+    ./spec/models/check-proverif.sh spec/models/aven.pv 600 4
     echo "── ProVerif (models that must FAIL) ──"
     ./spec/models/check-proverif.sh spec/models/karst-control-nofs.pv 600 2 2
     ./spec/models/check-proverif.sh spec/models/ponor-norelayid.pv 600 2 2
+    ./spec/models/check-proverif.sh spec/models/aven-headeronly.pv 600 2 2
 
 # Broken-primitive ProVerif variants: minutes to hours. Nightly, not per-commit.
 verify-slow:
