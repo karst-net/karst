@@ -1,0 +1,21 @@
+[package]
+name = "karst-node"
+description = "daemon state machine, config, IPC, netmap ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-crypto.workspace = true
+karst-noise.workspace = true
+karst-proto.workspace = true
+
+[dev-dependencies]
+karst-noise.workspace = true
+karst-crypto.workspace = true

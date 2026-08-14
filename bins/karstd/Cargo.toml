@@ -1,0 +1,53 @@
+[package]
+name = "karstd"
+description = "Karst node agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# A library beside the binary: the datapath is worth integration-testing, and a
+# `[[bin]]`-only package cannot be imported by `tests/`.
+[lib]
+name = "karstd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "karstd"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-control-client.workspace = true
+karst-crypto.workspace = true
+karst-node.workspace = true
+karst-noise.workspace = true
+karst-proto.workspace = true
+karst-transport.workspace = true
+karst-tun.workspace = true
+
+getrandom = "0.3"
+# The netmap's protobuf types come from karst-control-client, which generates
+# them from the same .proto the Go server compiles. `prost` is needed here only
+# to encode the assembled netmap for the on-disk cache.
+prost = "0.14"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+zeroize = { version = "1", default-features = false }
+# The control channel is the only async code in the daemon: tonic is async, and
+# reimplementing HTTP/2 to avoid a runtime would be a poor trade. It runs on a
+# current-thread runtime on its own thread, so no future touches the datapath.
+ml-dsa = "0.1"
+sha2 = { version = "0.10", default-features = false }
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
+
+[dev-dependencies]
+karst-noise.workspace = true
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }

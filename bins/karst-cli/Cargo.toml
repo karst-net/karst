@@ -1,0 +1,21 @@
+[package]
+name = "karst-cli"
+description = "Karst command-line interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# Depends on the karstd library, which is not published; this cannot be either.
+publish = false
+
+[[bin]]
+name = "karst"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+karstd.workspace = true

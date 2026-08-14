@@ -1,0 +1,766 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright the Karst contributors.
+
+//! Linux `ioctl` plumbing — **the only module in Karst that may use `unsafe`**
+//! outside the GSO paths (ADR-0003).
+//!
+//! Everything here is a thin, total wrapper over one syscall. The crate denies
+//! `unsafe_code`; this module carries the single `allow`, so the blast radius
+//! of a memory-safety mistake is this file. Each block states its argument.
+//!
+//! The `ifreq` layout is declared locally rather than taken from `libc`, whose
+//! union representation has changed shape across releases. A fixed 24-byte
+//! payload area matches the kernel's `sizeof(struct ifreq)` of 40 on every
+//! Linux ABI Karst targets, and a static assertion below holds it there.
+
+#![allow(unsafe_code)]
+
+use std::ffi::c_void;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+
+/// `IFNAMSIZ` — interface names are at most 15 bytes plus a NUL.
+pub(crate) const IF_NAME_SIZE: usize = 16;
+
+/// Payload area of `struct ifreq`, the union following the name.
+const IF_REQ_DATA: usize = 24;
+
+// `TUNSETIFF` = `_IOW('T', 202, int)`; the SIOC* codes are ABI-stable.
+const TUNSETIFF: u64 = 0x4004_54ca;
+const SIOCSIFFLAGS: u64 = 0x8914;
+const SIOCGIFFLAGS: u64 = 0x8913;
+const SIOCSIFMTU: u64 = 0x8922;
+const SIOCSIFADDR: u64 = 0x8916;
+const SIOCSIFNETMASK: u64 = 0x891c;
+const SIOCGIFINDEX: u64 = 0x8933;
+// `TUNSETOFFLOAD` = `_IOW('T', 208, unsigned int)`,
+// `TUNSETVNETHDRSZ` = `_IOW('T', 216, int)`.
+const TUNSETOFFLOAD: u64 = 0x4004_54d0;
+const TUNSETVNETHDRSZ: u64 = 0x4004_54d8;
+
+/// Layer-3 device: bare IP packets.
+pub(crate) const IFF_TUN: i16 = 0x0001;
+/// No 4-byte packet-information prefix, so a read yields exactly one IP packet.
+pub(crate) const IFF_NO_PI: i16 = 0x1000;
+/// Each read and write is prefixed by a `virtio_net_hdr`, which is what allows
+/// the kernel to hand over coalesced segments.
+pub(crate) const IFF_VNET_HDR: i16 = 0x4000;
+
+/// Offload capabilities for `TUNSETOFFLOAD`.
+pub(crate) const TUN_F_CSUM: u32 = 0x01;
+pub(crate) const TUN_F_TSO4: u32 = 0x02;
+pub(crate) const TUN_F_TSO6: u32 = 0x04;
+/// Interface is administratively up.
+const IFF_UP: i16 = 0x0001;
+/// Interface is operationally running.
+const IFF_RUNNING: i16 = 0x0040;
+
+/// `struct ifreq`, as the kernel expects it.
+#[repr(C)]
+pub(crate) struct IfReq {
+    name: [u8; IF_NAME_SIZE],
+    data: [u8; IF_REQ_DATA],
+}
+
+/// The kernel reads and writes exactly this many bytes. A mismatch would mean
+/// handing it a buffer smaller than it expects to fill.
+const _: () = assert!(size_of::<IfReq>() == 40);
+
+impl IfReq {
+    /// A request naming `name`, with a zeroed payload area.
+    pub(crate) const fn new(name: [u8; IF_NAME_SIZE]) -> Self {
+        Self {
+            name,
+            data: [0u8; IF_REQ_DATA],
+        }
+    }
+
+    /// The name field, as the kernel left it — it assigns one when the request
+    /// was empty.
+    pub(crate) fn name(&self) -> &[u8; IF_NAME_SIZE] {
+        &self.name
+    }
+
+    fn set_flags_field(&mut self, flags: i16) {
+        let bytes = flags.to_ne_bytes();
+        if let Some(head) = self.data.get_mut(..2) {
+            head.copy_from_slice(&bytes);
+        }
+    }
+
+    fn flags_field(&self) -> i16 {
+        self.data
+            .first_chunk::<2>()
+            .map_or(0, |b| i16::from_ne_bytes(*b))
+    }
+
+    fn set_int_field(&mut self, value: i32) {
+        let bytes = value.to_ne_bytes();
+        if let Some(head) = self.data.get_mut(..4) {
+            head.copy_from_slice(&bytes);
+        }
+    }
+
+    /// Write a `sockaddr_in` into the payload area: family, zero port, address,
+    /// then eight bytes of padding that are already zero.
+    fn set_sockaddr_in(&mut self, addr: Ipv4Addr) {
+        #[allow(clippy::cast_possible_truncation)]
+        let family = (libc::AF_INET as u16).to_ne_bytes();
+        if let Some(head) = self.data.get_mut(..2) {
+            head.copy_from_slice(&family);
+        }
+        if let Some(port) = self.data.get_mut(2..4) {
+            port.copy_from_slice(&0u16.to_be_bytes());
+        }
+        if let Some(ip) = self.data.get_mut(4..8) {
+            ip.copy_from_slice(&addr.octets());
+        }
+    }
+}
+
+/// Issue an `ioctl` carrying an `ifreq`.
+///
+/// `op` names the operation for the error message; a bare `EPERM` from an
+/// unnamed `ioctl` is one of the least actionable errors in systems
+/// programming.
+fn ifreq_ioctl(
+    fd: BorrowedFd<'_>,
+    request: u64,
+    req: &mut IfReq,
+    op: &'static str,
+) -> io::Result<()> {
+    // SAFETY: `fd` is open and valid for the duration of this call, guaranteed
+    // by `BorrowedFd`'s lifetime. `req` is a live, uniquely borrowed, correctly
+    // sized `#[repr(C)]` `struct ifreq` — the static assertion above pins its
+    // 40-byte layout — so the kernel may read and write it in place without
+    // exceeding the allocation. Every `request` used with this function is one
+    // whose kernel handler takes an `ifreq` pointer, so the kernel's view of the
+    // buffer matches ours. `ioctl` is variadic; the pointer is the single
+    // trailing argument. Errno is read immediately, with no intervening call
+    // that could overwrite it.
+    let rc = unsafe {
+        libc::ioctl(
+            fd.as_raw_fd(),
+            request as libc::Ioctl,
+            std::ptr::from_mut(req).cast::<c_void>(),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::new(
+            io::Error::last_os_error().kind(),
+            format!("{op}: {}", io::Error::last_os_error()),
+        ));
+    }
+    Ok(())
+}
+
+/// Register an open `/dev/net/tun` handle as a TUN interface.
+///
+/// Returns the name the kernel assigned, which differs from the request when
+/// the caller passed an empty name.
+pub(crate) fn set_iff(
+    fd: BorrowedFd<'_>,
+    name: [u8; IF_NAME_SIZE],
+    flags: i16,
+) -> io::Result<[u8; IF_NAME_SIZE]> {
+    let mut req = IfReq::new(name);
+    req.set_flags_field(flags);
+    ifreq_ioctl(fd, TUNSETIFF, &mut req, "TUNSETIFF (needs CAP_NET_ADMIN)")?;
+    Ok(*req.name())
+}
+
+/// Set the `virtio_net_hdr` size the device will use.
+pub(crate) fn set_vnet_hdr_size(fd: BorrowedFd<'_>, size: i32) -> io::Result<()> {
+    // SAFETY: `fd` is an open `/dev/net/tun` handle for the duration of the
+    // call. `TUNSETVNETHDRSZ` reads a single `int` through the pointer, which
+    // is exactly what `size` is, and it lives across the call. Nothing is
+    // written back.
+    let rc = unsafe {
+        libc::ioctl(
+            fd.as_raw_fd(),
+            TUNSETVNETHDRSZ as libc::Ioctl,
+            std::ptr::from_ref(&size).cast::<c_void>(),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Enable segmentation and checksum offload.
+///
+/// Best-effort by design: a kernel or device that declines simply means reads
+/// return one packet each, which is the unaccelerated path and still correct.
+pub(crate) fn set_offload(fd: BorrowedFd<'_>, features: u32) -> io::Result<()> {
+    // SAFETY: `fd` is an open `/dev/net/tun` handle for the duration of the
+    // call. `TUNSETOFFLOAD` takes its argument by value in the pointer slot —
+    // an `unsigned int` bit-set, not a pointer to be dereferenced — so no
+    // memory is read or written through it.
+    let rc = unsafe {
+        libc::ioctl(
+            fd.as_raw_fd(),
+            TUNSETOFFLOAD as libc::Ioctl,
+            libc::c_ulong::from(features),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A datagram socket used only as a handle for interface `ioctl`s. The kernel
+/// requires *some* socket; the family is irrelevant to the operations below,
+/// and `AF_INET` is available on every Linux configuration Karst supports.
+pub(crate) fn control_socket() -> io::Result<OwnedFd> {
+    // SAFETY: `socket` with constant, valid arguments has no preconditions. It
+    // returns either -1 or a fresh descriptor.
+    let raw = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a freshly created, open descriptor owned by nobody else,
+    // so transferring it to `OwnedFd` gives exactly one owner and one close.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+/// Set the interface MTU.
+pub(crate) fn set_mtu(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE], mtu: i32) -> io::Result<()> {
+    let mut req = IfReq::new(name);
+    req.set_int_field(mtu);
+    ifreq_ioctl(sock, SIOCSIFMTU, &mut req, "SIOCSIFMTU")
+}
+
+/// Bring the interface up, preserving flags the kernel already set.
+pub(crate) fn set_up(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) -> io::Result<()> {
+    let mut req = IfReq::new(name);
+    ifreq_ioctl(sock, SIOCGIFFLAGS, &mut req, "SIOCGIFFLAGS")?;
+    let flags = req.flags_field() | IFF_UP | IFF_RUNNING;
+    let mut req = IfReq::new(name);
+    req.set_flags_field(flags);
+    ifreq_ioctl(sock, SIOCSIFFLAGS, &mut req, "SIOCSIFFLAGS")
+}
+
+/// Assign an IPv4 address and netmask.
+pub(crate) fn set_ipv4(
+    sock: BorrowedFd<'_>,
+    name: [u8; IF_NAME_SIZE],
+    addr: Ipv4Addr,
+    netmask: Ipv4Addr,
+) -> io::Result<()> {
+    let mut req = IfReq::new(name);
+    req.set_sockaddr_in(addr);
+    ifreq_ioctl(sock, SIOCSIFADDR, &mut req, "SIOCSIFADDR")?;
+
+    let mut req = IfReq::new(name);
+    req.set_sockaddr_in(netmask);
+    ifreq_ioctl(sock, SIOCSIFNETMASK, &mut req, "SIOCSIFNETMASK")
+}
+
+/// `struct in6_ifreq` — the IPv6 path takes a different structure entirely,
+/// keyed by interface index rather than by name.
+#[repr(C)]
+struct In6IfReq {
+    addr: [u8; 16],
+    prefix_len: u32,
+    if_index: i32,
+}
+
+const _: () = assert!(size_of::<In6IfReq>() == 24);
+
+/// Look up an interface index by name.
+fn if_index(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) -> io::Result<i32> {
+    let mut req = IfReq::new(name);
+    ifreq_ioctl(sock, SIOCGIFINDEX, &mut req, "SIOCGIFINDEX")?;
+    Ok(req
+        .data
+        .first_chunk::<4>()
+        .map_or(0, |b| i32::from_ne_bytes(*b)))
+}
+
+/// Assign an IPv6 address.
+///
+/// A separate socket family and structure from the IPv4 case; there is no
+/// unified `ioctl` for both. `sock` must be an `AF_INET6` socket.
+pub(crate) fn set_ipv6(
+    sock6: BorrowedFd<'_>,
+    sock4: BorrowedFd<'_>,
+    name: [u8; IF_NAME_SIZE],
+    addr: std::net::Ipv6Addr,
+    prefix_len: u32,
+) -> io::Result<()> {
+    let mut req = In6IfReq {
+        addr: addr.octets(),
+        prefix_len,
+        if_index: if_index(sock4, name)?,
+    };
+    // SAFETY: identical argument to `ifreq_ioctl` — `sock6` is open for the
+    // call, and `req` is a live, uniquely borrowed `#[repr(C)]` `in6_ifreq`
+    // whose 24-byte layout the static assertion above pins. `SIOCSIFADDR` on an
+    // `AF_INET6` socket is the operation that takes this structure, so the
+    // kernel reads exactly the bytes we provided and writes none.
+    let rc = unsafe {
+        libc::ioctl(
+            sock6.as_raw_fd(),
+            SIOCSIFADDR as libc::Ioctl,
+            std::ptr::from_mut(&mut req).cast::<c_void>(),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::new(
+            io::Error::last_os_error().kind(),
+            format!("SIOCSIFADDR (IPv6): {}", io::Error::last_os_error()),
+        ));
+    }
+    Ok(())
+}
+
+/// An `AF_INET6` datagram socket, for the IPv6 address `ioctl`.
+pub(crate) fn control_socket_v6() -> io::Result<OwnedFd> {
+    // SAFETY: as `control_socket` — constant valid arguments, returns -1 or a
+    // fresh descriptor which we take sole ownership of.
+    let raw = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is fresh, open, and owned by nobody else.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+// ── routes, over rtnetlink ──────────────────────────────────────────────────
+
+/// `AF_NETLINK` protocol for routing.
+const NETLINK_ROUTE: i32 = 0;
+
+/// `rtmsg.rtm_family` is one byte, so the families are narrowed once, here.
+const AF_INET_U8: u8 = 2;
+const AF_INET6_U8: u8 = 10;
+/// The narrowing above must match what the C headers say, or every route would
+/// be filed under the wrong family.
+const _: () = assert!(AF_INET_U8 as i32 == libc::AF_INET);
+const _: () = assert!(AF_INET6_U8 as i32 == libc::AF_INET6);
+
+/// rtnetlink message types.
+const RTM_NEWROUTE: u16 = 24;
+const RTM_DELROUTE: u16 = 25;
+
+/// `nlmsghdr` flags.
+const NLM_F_REQUEST: u16 = 0x0001;
+const NLM_F_ACK: u16 = 0x0004;
+const NLM_F_REPLACE: u16 = 0x0100;
+const NLM_F_CREATE: u16 = 0x0400;
+
+/// `rtmsg` fields.
+const RT_TABLE_MAIN: u8 = 254;
+/// Set by boot-time configuration — the same value `ip route` uses by default,
+/// so a Karst route looks like any other in `ip route show`.
+const RTPROT_BOOT: u8 = 3;
+/// The destination is on-link, reachable directly over the device. That is what
+/// makes a gateway unnecessary: a tunnel peer is not behind a next hop, it *is*
+/// the far end of the interface.
+const RT_SCOPE_LINK: u8 = 253;
+const RTN_UNICAST: u8 = 1;
+
+/// `rtattr` types.
+const RTA_DST: u16 = 1;
+const RTA_OIF: u16 = 4;
+
+const NLMSG_ERROR: u16 = 2;
+const NLMSG_HDR_LEN: usize = 16;
+/// `sizeof(struct rtmsg)`. Used by the encoding tests, which navigate the
+/// message by offset rather than trusting it to be the right shape.
+#[cfg(test)]
+const RTMSG_LEN: usize = 12;
+
+/// Which way a route request goes.
+#[derive(Clone, Copy)]
+pub(crate) enum RouteOp {
+    Add,
+    Delete,
+}
+
+/// Build the rtnetlink request for one route.
+///
+/// Split out from the syscall and returning plain bytes, because this is the
+/// part that is easy to get wrong and impossible to see: a mis-sized attribute
+/// or a forgotten alignment byte produces `EINVAL` from the kernel with nothing
+/// to say which field was wrong. Encoded here, checked by tests that need no
+/// privileges.
+pub(crate) fn route_message(
+    op: RouteOp,
+    seq: u32,
+    dst: IpAddr,
+    prefix_len: u8,
+    if_index: u32,
+) -> Vec<u8> {
+    let (family, addr): (u8, Vec<u8>) = match dst {
+        // The families fit in a byte; `rtm_family` is one. Written as
+        // constants rather than a cast so the narrowing is checked once here
+        // rather than asserted at each use.
+        IpAddr::V4(a) => (AF_INET_U8, a.octets().to_vec()),
+        IpAddr::V6(a) => (AF_INET6_U8, a.octets().to_vec()),
+    };
+
+    let mut msg = Vec::with_capacity(64);
+    // nlmsghdr: length is filled in once the body is known.
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+    let (kind, flags) = match op {
+        // REPLACE as well as CREATE: re-adding a route a previous run left
+        // behind must succeed rather than fail with EEXIST, or a daemon restart
+        // would come up with no route to half its peers.
+        RouteOp::Add => (
+            RTM_NEWROUTE,
+            NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE,
+        ),
+        RouteOp::Delete => (RTM_DELROUTE, NLM_F_REQUEST | NLM_F_ACK),
+    };
+    msg.extend_from_slice(&kind.to_ne_bytes());
+    msg.extend_from_slice(&flags.to_ne_bytes());
+    msg.extend_from_slice(&seq.to_ne_bytes());
+    // Port ID 0 asks the kernel to fill in ours.
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+
+    // rtmsg.
+    msg.push(family);
+    msg.push(prefix_len); // rtm_dst_len
+    msg.push(0); // rtm_src_len
+    msg.push(0); // rtm_tos
+    msg.push(RT_TABLE_MAIN);
+    msg.push(RTPROT_BOOT);
+    msg.push(RT_SCOPE_LINK);
+    msg.push(RTN_UNICAST);
+    msg.extend_from_slice(&0u32.to_ne_bytes()); // rtm_flags
+
+    push_attr(&mut msg, RTA_DST, &addr);
+    push_attr(&mut msg, RTA_OIF, &if_index.to_ne_bytes());
+
+    let len = u32::try_from(msg.len()).unwrap_or(u32::MAX);
+    if let Some(head) = msg.get_mut(..4) {
+        head.copy_from_slice(&len.to_ne_bytes());
+    }
+    msg
+}
+
+/// Append one `rtattr`, padded to the 4-byte alignment netlink requires.
+///
+/// The length field counts the header *and* the unpadded payload; the padding
+/// that follows is not counted. Getting that backwards is the classic netlink
+/// mistake and yields `EINVAL` with no further explanation.
+fn push_attr(msg: &mut Vec<u8>, kind: u16, payload: &[u8]) {
+    let len = u16::try_from(4 + payload.len()).unwrap_or(u16::MAX);
+    msg.extend_from_slice(&len.to_ne_bytes());
+    msg.extend_from_slice(&kind.to_ne_bytes());
+    msg.extend_from_slice(payload);
+    let pad = (4 - (payload.len() % 4)) % 4;
+    msg.extend(std::iter::repeat_n(0u8, pad));
+}
+
+/// Read the kernel's answer to a route request.
+///
+/// Every request sets `NLM_F_ACK`, so exactly one `NLMSG_ERROR` comes back —
+/// with `error == 0` for success. Not waiting for it would make every failure
+/// silent: the route would simply not be there, and the symptom would be a peer
+/// that cannot be reached for no visible reason.
+pub(crate) fn route_ack(reply: &[u8], seq: u32) -> io::Result<()> {
+    let short = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "netlink reply is shorter than a header",
+        )
+    };
+    // Every read goes through `get`: this parses bytes the kernel wrote, and a
+    // panic on the control path would take the daemon down over a short read.
+    let kind = u16::from_ne_bytes(
+        *reply
+            .get(4..)
+            .ok_or_else(short)?
+            .first_chunk::<2>()
+            .ok_or_else(short)?,
+    );
+    let got_seq = u32::from_ne_bytes(
+        *reply
+            .get(8..)
+            .ok_or_else(short)?
+            .first_chunk::<4>()
+            .ok_or_else(short)?,
+    );
+    if got_seq != seq {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("netlink reply is for sequence {got_seq}, expected {seq}"),
+        ));
+    }
+    if kind != NLMSG_ERROR {
+        // An ack is the only reply a route request asks for. Anything else
+        // means the kernel answered a question we did not put.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected netlink message type {kind}"),
+        ));
+    }
+    let code = i32::from_ne_bytes(
+        *reply
+            .get(NLMSG_HDR_LEN..)
+            .and_then(<[u8]>::first_chunk::<4>)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "netlink error message carries no code",
+                )
+            })?,
+    );
+    if code == 0 {
+        return Ok(());
+    }
+    // The kernel reports errors as negative errno.
+    Err(io::Error::from_raw_os_error(-code))
+}
+
+/// Whether a netlink error means "that route was not there".
+///
+/// The kernel answers a delete for a route it does not hold with `ESRCH`, and
+/// occasionally `ENOENT`. Neither maps to `io::ErrorKind::NotFound` — `ESRCH`
+/// arrives as `Uncategorized` — so matching on the kind silently fails to
+/// recognise the one case a caller wants to tolerate. The raw errno is the only
+/// reliable answer.
+pub(crate) fn is_absent(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(libc::ESRCH | libc::ENOENT))
+}
+
+/// A netlink socket bound to this process.
+pub(crate) fn netlink_socket() -> io::Result<OwnedFd> {
+    // SAFETY: as `control_socket` — constant valid arguments, returns -1 or a
+    // fresh descriptor which we take sole ownership of.
+    let raw = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, NETLINK_ROUTE) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor this call owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+/// Send one route request and wait for its acknowledgement.
+pub(crate) fn route(
+    sock: BorrowedFd<'_>,
+    op: RouteOp,
+    seq: u32,
+    dst: IpAddr,
+    prefix_len: u8,
+    if_index: u32,
+) -> io::Result<()> {
+    let msg = route_message(op, seq, dst, prefix_len, if_index);
+
+    // SAFETY: `sock` is open for the call, and `msg` is a live slice of exactly
+    // `msg.len()` initialised bytes. `send` reads that many and writes none.
+    let sent = unsafe {
+        libc::send(
+            sock.as_raw_fd(),
+            msg.as_ptr().cast::<c_void>(),
+            msg.len(),
+            0,
+        )
+    };
+    if sent < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut reply = [0u8; 256];
+    // SAFETY: `reply` is a live, uniquely borrowed array of exactly 256 bytes,
+    // and the length passed is its true size. `recv` writes at most that many
+    // and returns how many it wrote.
+    let got = unsafe {
+        libc::recv(
+            sock.as_raw_fd(),
+            reply.as_mut_ptr().cast::<c_void>(),
+            reply.len(),
+            0,
+        )
+    };
+    if got < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let got = usize::try_from(got).unwrap_or(0);
+    route_ack(reply.get(..got).unwrap_or_default(), seq)
+}
+
+/// The kernel's index for a named interface.
+pub(crate) fn interface_index(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) -> io::Result<u32> {
+    if_index(sock, name).map(|i| u32::try_from(i).unwrap_or(0))
+}
+
+#[cfg(test)]
+mod route_tests {
+    #![allow(clippy::indexing_slicing, clippy::panic, clippy::expect_used)]
+
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn u16_at(msg: &[u8], at: usize) -> u16 {
+        u16::from_ne_bytes([msg[at], msg[at + 1]])
+    }
+    fn u32_at(msg: &[u8], at: usize) -> u32 {
+        u32::from_ne_bytes([msg[at], msg[at + 1], msg[at + 2], msg[at + 3]])
+    }
+
+    /// **The length field must cover the whole message.** The kernel reads it to
+    /// decide how much to parse; a wrong value yields `EINVAL` with nothing to
+    /// say which field was at fault.
+    #[test]
+    fn the_declared_length_matches_the_message() {
+        for (dst, prefix) in [
+            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)), 8u8),
+            (IpAddr::V6(Ipv6Addr::LOCALHOST), 128),
+        ] {
+            let msg = route_message(RouteOp::Add, 1, dst, prefix, 7);
+            assert_eq!(
+                u32_at(&msg, 0) as usize,
+                msg.len(),
+                "nlmsg_len disagrees with the bytes actually sent"
+            );
+        }
+    }
+
+    /// An IPv4 route: header, `rtmsg`, a 4-byte destination and a 4-byte
+    /// interface index, each in a 4-byte-aligned attribute.
+    #[test]
+    fn an_ipv4_route_has_the_expected_shape() {
+        let msg = route_message(
+            RouteOp::Add,
+            42,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 0)),
+            24,
+            9,
+        );
+        assert_eq!(msg.len(), NLMSG_HDR_LEN + RTMSG_LEN + 8 + 8);
+
+        assert_eq!(u16_at(&msg, 4), RTM_NEWROUTE);
+        assert_eq!(u32_at(&msg, 8), 42, "the sequence number must be carried");
+
+        let rt = NLMSG_HDR_LEN;
+        assert_eq!(msg[rt], AF_INET_U8);
+        assert_eq!(msg[rt + 1], 24, "rtm_dst_len is the prefix length");
+        assert_eq!(msg[rt + 4], RT_TABLE_MAIN);
+        assert_eq!(
+            msg[rt + 6],
+            RT_SCOPE_LINK,
+            "a tunnel peer is on-link, not behind a gateway"
+        );
+        assert_eq!(msg[rt + 7], RTN_UNICAST);
+
+        let a1 = rt + RTMSG_LEN;
+        assert_eq!(
+            u16_at(&msg, a1),
+            8,
+            "RTA_DST length covers header + 4 bytes"
+        );
+        assert_eq!(u16_at(&msg, a1 + 2), RTA_DST);
+        assert_eq!(&msg[a1 + 4..a1 + 8], &[192, 168, 1, 0]);
+
+        let a2 = a1 + 8;
+        assert_eq!(u16_at(&msg, a2), 8);
+        assert_eq!(u16_at(&msg, a2 + 2), RTA_OIF);
+        assert_eq!(u32_at(&msg, a2 + 4), 9, "the interface index");
+    }
+
+    /// A 16-byte address needs no padding, and the whole message stays aligned.
+    #[test]
+    fn an_ipv6_route_carries_a_sixteen_byte_destination() {
+        let addr = Ipv6Addr::new(0xfd7a, 0x5ea5, 0, 0, 0, 0, 0, 0);
+        let msg = route_message(RouteOp::Add, 1, IpAddr::V6(addr), 64, 3);
+        assert_eq!(msg.len(), NLMSG_HDR_LEN + RTMSG_LEN + 20 + 8);
+
+        let a1 = NLMSG_HDR_LEN + RTMSG_LEN;
+        assert_eq!(u16_at(&msg, a1), 20);
+        assert_eq!(&msg[a1 + 4..a1 + 20], &addr.octets());
+        assert_eq!(msg[NLMSG_HDR_LEN], AF_INET6_U8);
+        assert_eq!(msg.len() % 4, 0, "netlink messages are 4-byte aligned");
+    }
+
+    /// **Adding a route that already exists must succeed**, or a daemon restart
+    /// would come up missing routes it left behind and half its peers would be
+    /// unreachable for no visible reason.
+    #[test]
+    fn an_add_replaces_rather_than_failing_on_a_duplicate() {
+        let msg = route_message(RouteOp::Add, 1, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 1);
+        let flags = u16_at(&msg, 6);
+        assert_ne!(flags & NLM_F_CREATE, 0);
+        assert_ne!(flags & NLM_F_REPLACE, 0, "EEXIST must not be possible");
+        assert_ne!(flags & NLM_F_ACK, 0, "every request must be acknowledged");
+    }
+
+    /// A delete must not carry CREATE, or a request to remove a route would
+    /// add one.
+    #[test]
+    fn a_delete_does_not_create() {
+        let msg = route_message(RouteOp::Delete, 1, IpAddr::V4(Ipv4Addr::LOCALHOST), 32, 1);
+        assert_eq!(u16_at(&msg, 4), RTM_DELROUTE);
+        let flags = u16_at(&msg, 6);
+        assert_eq!(flags & NLM_F_CREATE, 0);
+        assert_eq!(flags & NLM_F_REPLACE, 0);
+        assert_ne!(flags & NLM_F_ACK, 0);
+    }
+
+    // ── the acknowledgement ─────────────────────────────────────────────────
+
+    fn ack(seq: u32, code: i32) -> Vec<u8> {
+        let mut m = Vec::new();
+        m.extend_from_slice(&36u32.to_ne_bytes());
+        m.extend_from_slice(&NLMSG_ERROR.to_ne_bytes());
+        m.extend_from_slice(&0u16.to_ne_bytes());
+        m.extend_from_slice(&seq.to_ne_bytes());
+        m.extend_from_slice(&0u32.to_ne_bytes());
+        m.extend_from_slice(&code.to_ne_bytes());
+        m
+    }
+
+    #[test]
+    fn a_zero_error_code_is_success() {
+        assert!(route_ack(&ack(5, 0), 5).is_ok());
+    }
+
+    /// **The kernel reports errors as negative errno**, and reading the sign
+    /// backwards would turn every failure into a success — a route that is
+    /// simply not there, with nothing to explain why.
+    #[test]
+    fn a_negative_code_is_the_errno() {
+        let err = route_ack(&ack(5, -libc::EPERM), 5).expect_err("EPERM must surface");
+        assert_eq!(err.raw_os_error(), Some(libc::EPERM));
+
+        // ESRCH is what a delete for a route the kernel does not hold returns.
+        // It does *not* map to `ErrorKind::NotFound` — it arrives as
+        // `Uncategorized` — so recognising it has to go through the raw errno.
+        let err = route_ack(&ack(5, -libc::ESRCH), 5).expect_err("ESRCH must surface");
+        assert_eq!(err.raw_os_error(), Some(libc::ESRCH));
+        assert!(
+            is_absent(&err),
+            "removing an absent route must be recognisable as absent"
+        );
+        assert!(is_absent(&std::io::Error::from_raw_os_error(libc::ENOENT)));
+        assert!(
+            !is_absent(&std::io::Error::from_raw_os_error(libc::EPERM)),
+            "a permissions failure is not an absent route"
+        );
+    }
+
+    /// A reply to somebody else's request must not be read as an answer to
+    /// ours: two route operations in flight would otherwise let one succeed on
+    /// the strength of the other's ack.
+    #[test]
+    fn a_reply_for_another_sequence_is_refused() {
+        assert!(route_ack(&ack(9, 0), 5).is_err());
+    }
+
+    #[test]
+    fn a_truncated_or_unexpected_reply_is_refused() {
+        assert!(route_ack(&[], 1).is_err());
+        assert!(route_ack(&ack(1, 0)[..10], 1).is_err());
+
+        // A well-formed message that is not an error report.
+        let mut other = ack(1, 0);
+        other[4] = 3; // RTM_GETROUTE-ish; anything that is not NLMSG_ERROR
+        other[5] = 0;
+        assert!(route_ack(&other, 1).is_err());
+    }
+}

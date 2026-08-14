@@ -1,0 +1,26 @@
+[package]
+name = "karst-crypto"
+description = "KEM/signature/AEAD traits, suite registry, zeroization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["ml-kem-rustcrypto"]
+# Default KEM backend. `ml-kem` is Apache-2.0 OR MIT, which preserves the
+# GPLv2 compatibility ADR-0007 deliberately kept for a future kernel datapath.
+ml-kem-rustcrypto = ["dep:ml-kem"]
+
+[dependencies]
+ml-kem = { version = "0.3", optional = true, default-features = false }
+rand_core = { version = "0.9", default-features = false }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+
+[dev-dependencies]
+rand = "0.9"
