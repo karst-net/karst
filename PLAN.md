@@ -2328,9 +2328,34 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   four queries passed **vacuously**. A must-fail model that passes is a signal
   to go and look. `spec/models/README.md` records it, because the failure mode
   is silent and general.
-- `karst-disco`: hole punching and simultaneous open, symmetric-NAT port
-  prediction, port mapping (UPnP-IGD, NAT-PMP, PCP), candidate gathering from
-  live interfaces, and the datapath wiring for a seamless relay→direct upgrade.
+- 🔶 **`karst-disco` probe scheduling** — `engine.rs`, 69 tests in the crate.
+  Sans-io and sans-clock like everything below it: `poll` takes a millisecond
+  stamp and a closure that mints transaction ids, so a test runs an hour of
+  scheduling in a loop with a counter for a CSPRNG and gets the same answer
+  every time.
+
+  **Simultaneous open is the one piece of hole punching that lives at this
+  layer.** A `CallMeMaybe`'s candidates are probed on the same poll rather than
+  on the backoff schedule, because the peer received ours at nearly the same
+  moment and is doing likewise — both NATs then see an outbound packet before
+  either sees an inbound one, which is the whole trick. A scheduler that
+  politely staggered these would defeat it.
+
+  **A mutation test found a weak test rather than a weak implementation**, which
+  is the more useful outcome. Flipping the immediate-probe flag off failed only
+  one case: for a brand-new candidate the probe is due immediately regardless,
+  so the obvious test passes whether the flag works or not. The flag only
+  matters for a candidate already waiting out a backoff — the common case,
+  where the first probe went to a stale address and the peer has just said
+  where it really is. That test now exists and the mutation fails two.
+
+  Two ordinary bugs, both caught by tests written from the spec: the re-probe
+  sweep fired on the very first poll and sent every candidate twice, and the
+  give-up condition was off by one against §7.5's "immediately, then
+  100/300/900".
+- `karst-disco`: symmetric-NAT port prediction, port mapping (UPnP-IGD,
+  NAT-PMP, PCP), candidate gathering from live interfaces, and the datapath
+  wiring for a seamless relay→direct upgrade.
 - Full NAT test matrix in CI (§6).
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is

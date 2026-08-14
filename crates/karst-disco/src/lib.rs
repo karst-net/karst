@@ -13,10 +13,12 @@
 //! bytes from an unfiltered UDP port before any MAC is checked — so it is
 //! written to be panic-free: no indexing, no slicing, no `unwrap`.
 
+pub mod engine;
 pub mod key;
 pub mod msg;
 pub mod path;
 
+pub use engine::{Action, Engine};
 pub use key::{DiscoKey, TagTable};
 pub use msg::{Endpoint, Message, TxId};
 pub use path::{PathKind, PathSet, Selection};
@@ -103,6 +105,16 @@ pub mod consts {
 
     /// Re-probe alternatives this often — §7.5.
     pub const REPROBE_MS: u64 = 30_000;
+
+    /// Backoff for a new candidate: probe now, then after each of these — §7.5.
+    ///
+    /// Four probes and then stop. A candidate that never answers is an address
+    /// a peer named, and it may not be a peer at all; probing it forever would
+    /// make any node able to point every one of its peers at a third party.
+    pub const PROBE_BACKOFF_MS: [u64; 3] = [100, 300, 900];
+
+    /// A `CallMeMaybe` per peer at most this often — §7.5.
+    pub const ADVERTISE_MIN_INTERVAL_MS: u64 = 5_000;
 
     /// Hysteresis: an alternative must beat the chosen path by at least this
     /// much — §8.2.
