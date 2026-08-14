@@ -144,6 +144,11 @@ jobs:
       # silently removes and which neither build nor vet can detect.
       - name: Upstream smoke test (proves fixtures survive)
         run: go test -count=1 -run Test_RegisterPeerByUser ./management/server/
+      # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
+      # the coordination server is a vulnerability in the component that holds
+      # every per-pair PSK.
+      - uses: golang/govulncheck-action@v1
+        with: { work-dir: server }
 
   # Cross-implementation vectors: the Go server generates them, the Rust node
   # must reproduce them. A drift in either is a handshake that never completes
@@ -234,18 +239,6 @@ jobs:
                     find server -type f -name 'karst_*.proto'
                   })
           exit "$fail"
-
-  go:
-    name: Go
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.24', cache-dependency-path: server/go.sum }
-      - run: cd server && go vet ./...
-      - run: cd server && go test ./...
-      - uses: golang/govulncheck-action@v1
-        with: { work-dir: server }
 
   # Fuzzing targets the pre-authentication path: the fragment codec and the
   # reassembler (THREAT-MODEL R1). Short smoke runs per PR; OSS-Fuzz runs
