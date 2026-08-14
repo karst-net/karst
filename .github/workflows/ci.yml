@@ -42,9 +42,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      # The gitleaks *action* requires a paid licence for organisation-owned
+      # repositories; the gitleaks *tool* is MIT and has no such condition.
+      # Running the binary directly keeps the scan free and pins the version,
+      # so a new upstream release cannot change what CI enforces overnight.
+      - name: Install gitleaks
         env:
-          GITLEAKS_ENABLE_SUMMARY: true
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/
+          gitleaks version
+      # Two scans: the working tree, and every commit reachable from it. A PSK
+      # committed and then removed is still a leaked PSK, which `detect`
+      # against the checkout alone would not see.
+      - name: No secrets in the working tree
+        run: gitleaks dir . --redact --verbose
+      - name: No secrets anywhere in history
+        run: gitleaks git . --redact --verbose
 
   rust:
     name: Rust
@@ -75,6 +92,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # `cargo build --workspace` below includes karst-control-client, whose
+      # build script compiles the .proto. Without protoc the whole job fails
+      # before a single TUN device is created.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build the privileged test binaries
@@ -165,12 +187,14 @@ jobs:
           cache-dependency-path: server/go.sum
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Before the first cargo step, not after: every karst-control-client
+      # target needs the generated gRPC client, including `--test vectors`.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Vectors match the Go implementation that generated them
         run: cd server && go test -count=1 -run TestVectors ./management/internals/karst/control/
       - name: The Rust node reproduces them
         run: cargo test -p karst-control-client --test vectors
-      - uses: arduino/setup-protoc@v3
-        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       # Vectors prove the two implementations agree on every derivation and
       # framing function. They cannot prove the two ends actually talk: that
       # needs sockets, HTTP/2, protobuf on the wire, and a real ML-KEM
@@ -246,6 +270,12 @@ jobs:
   fuzz:
     name: Fuzz smoke
     runs-on: ubuntu-latest
+    # rust-toolchain.toml pins 1.88 for the workspace, and that pin wins over
+    # whatever `dtolnay/rust-toolchain@nightly` makes default — cargo reads the
+    # file, not rustup's default. libFuzzer needs nightly, so the pin has to be
+    # overridden explicitly; RUSTUP_TOOLCHAIN is the one thing that outranks it.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -269,11 +299,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Verifpal is Rust as of v0.80 and declares rust-version 1.96, which the
+      # workspace's 1.88 pin cannot satisfy — and the pin applies here because
+      # cargo resolves rust-toolchain.toml from the working directory, not from
+      # --manifest-path. RUSTUP_TOOLCHAIN overrides it for this step alone;
+      # the workspace itself stays on 1.88.
+      #
+      # Pinned to a tag rather than tracking master: an upstream change would
+      # otherwise alter what our release gate means, without a commit here.
       - name: Build Verifpal
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          VERIFPAL_VERSION: v0.80.1
         run: |
-          git clone --depth 1 https://github.com/symbolicsoft/verifpal.git /tmp/verifpal
+          git clone --depth 1 --branch "$VERIFPAL_VERSION" \
+            https://github.com/symbolicsoft/verifpal.git /tmp/verifpal
           cargo build --release --manifest-path /tmp/verifpal/Cargo.toml
           sudo install /tmp/verifpal/target/release/verifpal /usr/local/bin/
+          verifpal --version || true
       - name: Verify all models
         run: |
           fail=0
@@ -285,8 +328,21 @@ jobs:
             echo "::endgroup::"
           done
           exit "$fail"
+      # ProVerif is not packaged in Debian or Ubuntu — `apt-get install proverif`
+      # cannot ever have worked. It ships through opam, which is how the version
+      # gets pinned: a solver change between releases can turn a proof into a
+      # non-termination, and a release gate that silently changes what it proves
+      # is worse than no gate.
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.2"
       - name: Install ProVerif
-        run: sudo apt-get update && sudo apt-get install -y proverif
+        run: opam install -y proverif.2.05
+      # opam installs into a switch that is only on PATH inside `opam exec`.
+      - name: ProVerif is on PATH
+        run: |
+          opam exec -- proverif -help | head -1
+          echo "$(opam var bin)" >> "$GITHUB_PATH"
       - name: ProVerif — base model (release gate, PLAN.md §2.5)
         timeout-minutes: 30
         run: ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
