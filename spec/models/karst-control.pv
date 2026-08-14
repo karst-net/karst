@@ -1,0 +1,209 @@
+(* SPDX-License-Identifier: CC-BY-4.0
+ *
+ * KARST-CONTROL v1 — ProVerif model
+ * Models ADR-0011. Run: proverif karst-control.pv
+ *
+ * This is the node<->server control channel, which is a *different* protocol
+ * from PHREATIC and is deliberately not covered by phreatic.pv. PHREATIC is
+ * IK: the responder identifies the initiator by looking up a hint in its
+ * roster. A registering node is by definition not yet in any roster, so its
+ * identity is presented and verified by signature instead.
+ *
+ * Why this needs a model at all: the netmap carries per-pair PSKs (PLAN.md
+ * §2.6), so the control channel is where the data plane's key material is
+ * distributed. A break here is a break of every session those PSKs protect.
+ *
+ * The construction mixes TWO ML-KEM encapsulations — one to the server's
+ * pinned static key, one to a per-connection ephemeral key. Each is claimed to
+ * do a distinct job. This model exists to check that claim rather than assert
+ * it; the variant karst-control-nofs.pv drops the ephemeral half and is
+ * expected to FAIL the forward-secrecy query.
+ *
+ * NOT modelled: the record layer's sequence numbers and replay window, gRPC
+ * framing, TLS. TLS is deliberately outside: the whole point of this layer is
+ * to hold up when a TLS terminator is hostile, so modelling it would assume
+ * away the threat.
+ *)
+
+(* ─── Types ────────────────────────────────────────────────────────────── *)
+
+type skem.        (* ML-KEM-768 decapsulation key *)
+type pkem.        (* ML-KEM-768 encapsulation key *)
+type rnd.         (* encapsulation randomness *)
+type sskey.       (* ML-DSA-65 signing key *)
+type spkey.       (* ML-DSA-65 verification key *)
+
+free c: channel.
+
+free LBL:    bitstring.   (* "karst-control-v1"      *)
+free SIGLBL: bitstring.   (* "karst-control-init-v1"  *)
+free HELLBL: bitstring.   (* "karst-control-hello-v1" *)
+
+(* ─── ML-KEM ───────────────────────────────────────────────────────────── *)
+
+fun pkem_of(skem): pkem.
+fun encap_ct(pkem, rnd): bitstring.
+fun encap_ss(pkem, rnd): bitstring [private].
+
+reduc forall sk: skem, r: rnd;
+    decap(sk, encap_ct(pkem_of(sk), r)) = encap_ss(pkem_of(sk), r).
+
+(* ─── ML-DSA ───────────────────────────────────────────────────────────── *)
+
+fun spk_of(sskey): spkey.
+fun sign(sskey, bitstring): bitstring.
+
+reduc forall sk: sskey, m: bitstring;
+    sigverify(spk_of(sk), m, sign(sk, m)) = true.
+
+(* ─── Hashing, KDF, AEAD ───────────────────────────────────────────────── *)
+
+fun cat(bitstring, bitstring): bitstring [data].
+fun p2b(pkem): bitstring [data, typeConverter].
+fun v2b(spkey): bitstring [data, typeConverter].
+
+fun H(bitstring): bitstring.
+
+(* HKDF-SHA-512 over (ss_static || ss_eph) with the transcript as salt. One
+   key per direction; modelled as two derivations from the same inputs. *)
+fun kdf_c2s(bitstring, bitstring): bitstring.
+fun kdf_s2c(bitstring, bitstring): bitstring.
+
+fun aead(bitstring, bitstring, bitstring): bitstring.
+reduc forall k: bitstring, m: bitstring, ad: bitstring;
+    adec(k, aead(k, m, ad), ad) = m.
+
+(* ─── Secrets and events ───────────────────────────────────────────────── *)
+
+(* The netmap the server sends down the channel. It contains per-pair PSKs,
+   which is precisely why this layer exists (ADR-0011). *)
+free nsk: sskey [private].   (* the honest node's identity *)
+free ssg: sskey [private].   (* the server's signing identity, pinned at enrolment *)
+
+free secretNetmap: bitstring [private].
+
+(* A request the node sends up, e.g. carrying an auth key. *)
+free secretAuthKey: bitstring [private].
+
+event NodeComplete(spkey, bitstring).
+event ServerComplete(spkey, bitstring).
+event NodeSentInit(bitstring).
+event ServerAcceptedInitBy(spkey, bitstring).
+
+(* ─── Queries ──────────────────────────────────────────────────────────── *)
+
+(* 1. The netmap — and so every PSK in it — stays secret.
+      This query spans all phases, so it also asserts FORWARD SECRECY:
+      phase 1 below hands the attacker the server's static decapsulation key
+      after the session has finished. Surviving that is what ct_eph buys. *)
+query attacker(secretNetmap).
+
+(* 2. Anything the node sends up is equally protected. *)
+query attacker(secretAuthKey).
+
+(* 3. The server authenticates the node: injective, so a captured ChannelInit
+      cannot be replayed onto a second connection. This is what server_random
+      is for — PHREATIC uses a timestamp instead because it must be
+      single-datagram and stateless, which a stream is not. *)
+query t: bitstring;
+    inj-event(ServerAcceptedInitBy(spk_of(nsk), t)) ==> inj-event(NodeSentInit(t)).
+
+(* 4. Key agreement: if the server completes believing it shares a channel key
+      with a node, that node completed with the same key. *)
+query k: bitstring;
+    event(ServerComplete(spk_of(nsk), k)) ==> event(NodeComplete(spk_of(nsk), k)).
+
+(* ─── Node (ADR-0011 §2, the Initiate side) ────────────────────────────── *)
+
+(* pinS is the node's PINNED copy of the server's static encapsulation key,
+   obtained out of band at enrolment. The node encapsulates to the pinned key,
+   never to whatever arrives on the wire — which is what makes an impostor
+   server derive a different key and fail closed. *)
+let node(nsk: sskey, pinS: pkem, pinV: spkey) =
+    in(c, (advertised: pkem, ephpk: pkem, nonce: bitstring, hsig: bitstring));
+
+    (* The ephemeral key MUST be authenticated. Without this check an attacker
+       replaces eph_kem_pk with the server's own static key, the node
+       encapsulates both ciphertexts to one long-term key, and forward secrecy
+       is gone the moment that key leaks. ProVerif found exactly that trace. *)
+    if sigverify(pinV, H(cat(HELLBL, cat(nonce, p2b(ephpk)))), hsig) = true then
+
+    new rs: rnd;
+    new re: rnd;
+
+    let cts = encap_ct(pinS,  rs) in    (* implicit server authentication *)
+    let cte = encap_ct(ephpk, re) in    (* forward secrecy *)
+
+    let tr = H(cat(SIGLBL, cat(nonce, cat(cts, cte)))) in
+    let sg = sign(nsk, tr) in
+
+    (* Keys are derived before anything is sent, matching channel.Initiate:
+       it computes both encapsulations and returns a live Channel, and only
+       then does the caller transmit. Emitting NodeComplete after the send
+       would make the agreement query fail on ordering alone, since the server
+       can complete before the node's next step runs. *)
+    let sss = encap_ss(pinS,  rs) in
+    let sse = encap_ss(ephpk, re) in
+    let salt = H(cat(LBL, cat(nonce, cat(cts, cte)))) in
+    let kUp = kdf_c2s(cat(sss, sse), salt) in
+    let kDn = kdf_s2c(cat(sss, sse), salt) in
+
+    event NodeComplete(spk_of(nsk), kUp);
+    event NodeSentInit(tr);
+    out(c, (cts, cte, spk_of(nsk), sg));
+
+    out(c, aead(kUp, secretAuthKey, salt));
+    in(c, ctDn: bitstring);
+    let netmap = adec(kDn, ctDn, salt) in
+    0.
+
+(* ─── Server (the Accept side) ─────────────────────────────────────────── *)
+
+let server(ssk: skem, ssg: sskey) =
+    new eph: skem;
+    new nonce: bitstring;
+
+    let hsig = sign(ssg, H(cat(HELLBL, cat(nonce, p2b(pkem_of(eph)))))) in
+    out(c, (pkem_of(ssk), pkem_of(eph), nonce, hsig));
+
+    in(c, (cts: bitstring, cte: bitstring, vk: spkey, sg: bitstring));
+
+    let tr = H(cat(SIGLBL, cat(nonce, cat(cts, cte)))) in
+    if sigverify(vk, tr, sg) = true then
+
+    let sss = decap(ssk, cts) in
+    let sse = decap(eph, cte) in
+    let salt = H(cat(LBL, cat(nonce, cat(cts, cte)))) in
+    let kUp = kdf_c2s(cat(sss, sse), salt) in
+    let kDn = kdf_s2c(cat(sss, sse), salt) in
+
+    event ServerAcceptedInitBy(vk, tr);
+    event ServerComplete(vk, kUp);
+
+    in(c, ctUp: bitstring);
+    let authkey = adec(kUp, ctUp, salt) in
+
+    (* The netmap goes down the channel. This is the message whose secrecy
+       matters most, because it carries the data plane's PSKs. *)
+    out(c, aead(kDn, secretNetmap, salt)).
+
+(* ─── Main ─────────────────────────────────────────────────────────────── *)
+
+process
+    new ssk: skem;          (* server static ML-KEM key, pinned by nodes *)
+
+    (* Public knowledge: the attacker sees both public keys. Pinning is an
+       integrity assumption, not a secrecy one. *)
+    out(c, pkem_of(ssk));
+    out(c, spk_of(nsk));
+    out(c, spk_of(ssg));
+
+    (
+      ( !node(nsk, pkem_of(ssk), spk_of(ssg)) )
+    | ( !server(ssk, ssg) )
+
+      (* Phase 1: the server's long-term static key is compromised *after*
+         every session above has run. Query 1 must still hold — that is the
+         forward-secrecy claim, and it is the reason ct_eph exists at all. *)
+    | ( phase 1; out(c, ssk) )
+    )

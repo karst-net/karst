@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: CC-BY-4.0
+//
+// PHREATIC v1 — Verifpal model (suite KARST_1)
+// Models spec/phreatic-v1.md §7. Run: verifpal verify phreatic.vp
+//
+// SCOPE — what this model can and cannot establish.
+//
+// CAN: transcript binding, mutual authentication, replay resistance,
+// confidentiality of transport data, and that the PSK is not recoverable.
+//
+// ALSO CAN, via companion models: the hybrid claim from ADR-0002 — "secure if
+// EITHER family holds" — is checked by annotating one family as broken:
+//   phreatic-kem-broken.vp   KEM_ENCAP[weak]  → ML-KEM totally broken
+//   phreatic-dh-broken.vp    PUBKEY[weak]     → X25519 private keys recovered
+// Both pass. All three models must pass for the suite to be green.
+//
+// CANNOT: quantitative or computational claims. Verifpal is symbolic — it says
+// nothing about concrete security margins, side channels, or implementation
+// behaviour. ProVerif with explicit equational theories remains a release gate
+// (spec/phreatic-v1.md §14 item 2); this is a design check, not a proof of the
+// implementation.
+//
+// Modelling notes:
+//  - Netmap-distributed public keys use guarded messages [x]: the coordination
+//    server is authenticated for key distribution (THREAT-MODEL §4, B2).
+//  - Fragmentation, cookies and the fragment MAC are NOT modelled. They are a
+//    DoS/availability mechanism, and Verifpal reasons about secrecy and
+//    authentication, not resource exhaustion. They are covered by the
+//    spoofed-source test suite instead.
+
+attacker[active]
+
+// ─── Long-term identity (spec §4) ────────────────────────────────────────────
+// a_kem/b_kem : ML-KEM-768 static      a_dh/b_dh : X25519 static
+// psk         : per-pair PSK from the netmap (§2.6)
+
+principal Alice[
+	knows public label, suite_id, psk_epoch, empty
+	knows private psk
+	knows private a_kem
+	knows private a_dh
+	S_a = PUBKEY(a_kem)
+	D_a = PUBKEY(a_dh)
+]
+
+principal Bob[
+	knows public label, suite_id, psk_epoch, empty
+	knows private psk
+	knows private b_kem
+	knows private b_dh
+	S_b = PUBKEY(b_kem)
+	D_b = PUBKEY(b_dh)
+]
+
+// Netmap distribution — guarded, i.e. authenticated out of band.
+Alice -> Bob: [S_a], [D_a]
+Bob -> Alice: [S_b], [D_b]
+
+// ─── HandshakeInit (spec §6.1, key schedule §7.1 steps 1–7) ──────────────────
+
+principal Alice[
+	generates e_kem_sk, e_dh_sk, r_s, ts
+	E_kem = PUBKEY(e_kem_sk)
+	E_dh  = PUBKEY(e_dh_sk)
+
+	// peer_id_hint = HASH("Karst peer-id v1" || S_a)  — §4, session-independent
+	hint = HASH(label, S_a)
+
+	// h0..h3 : transcript before any secret material.
+	// suite_id AND psk_epoch are both bound here — see spec §13.2.
+	h0 = HASH(label)
+	h1 = HASH(h0, suite_id, psk_epoch)
+	h2 = HASH(h1, HASH(S_b))
+	h3 = HASH(h2, E_kem, E_dh)
+
+	ss_s, ct_s = KEM_ENCAP(S_b, r_s)      // PQ auth of responder
+	ck1, k1 = HKDF(h0, ss_s, label)
+	h4 = HASH(h3, ct_s)
+
+	dh_es = DH_KEX(D_b, e_dh_sk)          // classical auth of responder
+	ck2, k2 = HKDF(ck1, dh_es, label)
+
+	enc_ident = AEAD_ENC(k2, CONCAT(hint, ts), h4)
+	h5 = HASH(h4, enc_ident)
+]
+
+Alice -> Bob: E_kem, E_dh, ct_s, enc_ident
+
+// ─── HandshakeResponse (spec §6.2, §7.1 steps 8–13) ──────────────────────────
+
+principal Bob[
+	ss_s_b = KEM_DECAP(b_kem, ct_s)
+	ckb1, kb1 = HKDF(HASH(label), ss_s_b, label)
+
+	hb0 = HASH(label)
+	hb1 = HASH(hb0, suite_id, psk_epoch)
+	hb2 = HASH(hb1, HASH(S_b))
+	hb3 = HASH(hb2, E_kem, E_dh)
+	hb4 = HASH(hb3, ct_s)
+
+	dh_es_b = DH_KEX(E_dh, b_dh)
+	ckb2, kb2 = HKDF(ckb1, dh_es_b, label)
+
+	// Fails closed if the transcript differs — this is the binding check.
+	ident_b = AEAD_DEC(kb2, enc_ident, hb4)?
+	hb5 = HASH(hb4, enc_ident)
+
+	generates e_dh_r_sk, r_e, r_ss
+	E_dh_r = PUBKEY(e_dh_r_sk)
+
+	ss_e,  ct_e  = KEM_ENCAP(E_kem, r_e)   // forward secrecy
+	ss_ss, ct_ss = KEM_ENCAP(S_a, r_ss)    // PQ auth of initiator
+	ckb3, kb3 = HKDF(ckb2, ss_e,  label)
+	ckb4, kb4 = HKDF(ckb3, ss_ss, label)
+
+	dh_ee_b = DH_KEX(E_dh, e_dh_r_sk)      // forward secrecy, classical
+	dh_se_b = DH_KEX(D_a,  e_dh_r_sk)      // classical auth of initiator
+	ckb5, kb5 = HKDF(ckb4, dh_ee_b, label)
+	ckb6, kb6 = HKDF(ckb5, dh_se_b, label)
+
+	// PSK mixed LAST — gates the final key (ADR-0004 §3)
+	ckb7, kb7 = HKDF(ckb6, psk, label)
+
+	hb6 = HASH(hb5, ct_e, ct_ss, E_dh_r)
+	enc_empty = AEAD_ENC(kb7, empty, hb6)
+
+	Tb_send, Tb_recv = HKDF(ckb7, empty, label)
+]
+
+Bob -> Alice: ct_e, ct_ss, E_dh_r, enc_empty
+
+// ─── Initiator completes, sends transport data (spec §8) ─────────────────────
+
+principal Alice[
+	ss_e_a  = KEM_DECAP(e_kem_sk, ct_e)
+	ss_ss_a = KEM_DECAP(a_kem, ct_ss)
+	cka3, ka3 = HKDF(ck2, ss_e_a,  label)
+	cka4, ka4 = HKDF(cka3, ss_ss_a, label)
+
+	dh_ee_a = DH_KEX(E_dh_r, e_dh_sk)
+	dh_se_a = DH_KEX(E_dh_r, a_dh)
+	cka5, ka5 = HKDF(cka4, dh_ee_a, label)
+	cka6, ka6 = HKDF(cka5, dh_se_a, label)
+	cka7, ka7 = HKDF(cka6, psk, label)
+
+	ha6 = HASH(h5, ct_e, ct_ss, E_dh_r)
+	_ = AEAD_DEC(ka7, enc_empty, ha6)?
+
+	Ta_send, Ta_recv = HKDF(cka7, empty, label)
+
+	generates payload
+	data = AEAD_ENC(Ta_send, payload, empty)
+]
+
+Alice -> Bob: data
+
+principal Bob[
+	recovered = AEAD_DEC(Tb_send, data, empty)?
+]
+
+queries[
+	// Transport confidentiality — the primary claim.
+	confidentiality? payload
+
+	// Mutual authentication, established once transport data flows.
+	authentication? Alice -> Bob: data
+	authentication? Bob -> Alice: enc_empty
+
+	// NOTE — deliberately absent: `authentication? Alice -> Bob: enc_ident`.
+	// It FAILS, and correctly so. k2 is derived from ss_s and dh_es, both
+	// computable by anyone holding Bob's *public* S_b and D_b, so any party can
+	// fabricate a well-formed HandshakeInit. This is inherited from Noise IK and
+	// is true of WireGuard too. Initiator authentication completes only after
+	// msg2, when the initiator must decapsulate ct_ss (to S_a) and compute
+	// dh_se (to D_a). See spec §12.5. Verifpal confirms the property that
+	// matters: `authentication? Alice -> Bob: data` passes.
+	//
+	// The corollary is a DoS requirement, not a secrecy one: a responder must
+	// not commit expensive state on msg1 alone. That is exactly what spec §9
+	// specifies, and this model is evidence the cookie mechanism is load-bearing
+	// rather than belt-and-braces.
+
+	// The PSK must never be recoverable from the wire (§2.6).
+	confidentiality? psk
+
+	// Session keys must not leak.
+	confidentiality? Ta_send
+
+	// Replay resistance: the initiator's timestamp must be fresh.
+	freshness? ts
+]

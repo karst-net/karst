@@ -1,0 +1,52 @@
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# First, deliberately. See SECURITY.md and docs/THREAT-MODEL.md §B7.
+# Belt and braces only — credentials should live outside the repo tree entirely.
+*creds*
+*credential*
+*secret*
+*.pem
+*.key
+*.p12
+*.pfx
+priv_key*
+.env
+.env.*
+!.env.example
+*.token
+netmap-cache*
+
+# ── Rust ────────────────────────────────────────────────────────────────────
+/target
+**/*.rs.bk
+*.pdb
+
+# ── Go ──────────────────────────────────────────────────────────────────────
+/server/bin/
+*.test
+*.out
+# `go build ./some/dir/` with no -o writes an executable named after the
+# directory into the *current* one, so a stray build from server/ leaves a
+# 39 MB binary next to the source. That is how server/testserver was very
+# nearly committed into the vendored-fork commit.
+/server/testserver
+/server/karst-control
+
+# ── Node ────────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ── Tooling ─────────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+/result
+.direnv/
+/LICENSES/*.txt
+CLAUDE.local.md
+
+# ── Fuzzing ─────────────────────────────────────────────────────────────────
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/

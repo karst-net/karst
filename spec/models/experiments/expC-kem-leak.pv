@@ -1,0 +1,235 @@
+(* Experiment C — ML-KEM broken, modelled as targeted leakage.
+ *
+ * Instead of a universally-quantified destructor
+ *     reduc forall p: pkem, r: rnd; break_kem(encap_ct(p,r)) = encap_ss(p,r).
+ * which forces ProVerif to unify against every ciphertext-shaped term, this
+ * simply publishes the KEM shared secrets the honest parties actually derive.
+ *
+ * That is a faithful model of "the attacker can break ML-KEM": it already can
+ * encapsulate to any public key itself, so the only extra power a break confers
+ * is recovering the secrets from OTHER parties' encapsulations — which is
+ * exactly what out(c, ...) grants here.
+ *
+ * Expected: confidentiality survives via X25519 + PSK (ADR-0002).
+ *)
+
+(* ─── Types ────────────────────────────────────────────────────────────── *)
+
+type skem.        (* ML-KEM-768 decapsulation key *)
+type pkem.        (* ML-KEM-768 encapsulation key *)
+type rnd.         (* encapsulation randomness *)
+type exponent.    (* X25519 scalar *)
+type G.           (* X25519 group element *)
+
+free c: channel.
+
+(* Public protocol constants *)
+free LBL:   bitstring.   (* "Karst PHREATIC v1" *)
+free SUITE: bitstring.   (* LE16(suite_id)      *)
+free EPOCH: bitstring.   (* LE32(psk_epoch) — bound at step 2, spec §13.2 *)
+free EMPTY: bitstring.
+
+(* ─── ML-KEM ───────────────────────────────────────────────────────────── *)
+
+fun pkem_of(skem): pkem.
+fun encap_ct(pkem, rnd): bitstring.
+fun encap_ss(pkem, rnd): bitstring [private].
+
+reduc forall sk: skem, r: rnd;
+    decap(sk, encap_ct(pkem_of(sk), r)) = encap_ss(pkem_of(sk), r).
+
+(* ─── X25519 ───────────────────────────────────────────────────────────── *)
+
+const g: G [data].
+fun exp(G, exponent): G.
+equation forall x: exponent, y: exponent;
+    exp(exp(g, x), y) = exp(exp(g, y), x).
+
+(* ─── Hashing, KDF, AEAD ───────────────────────────────────────────────── *)
+
+fun cat(bitstring, bitstring): bitstring [data].
+fun g2b(G): bitstring [data, typeConverter].
+fun p2b(pkem): bitstring [data, typeConverter].
+
+fun H(bitstring): bitstring.
+
+(* HKDF's two outputs: new chaining key, and a message key. *)
+fun mixck(bitstring, bitstring): bitstring.
+fun mixk (bitstring, bitstring): bitstring.
+
+fun aead(bitstring, bitstring, bitstring): bitstring.
+reduc forall k: bitstring, m: bitstring, ad: bitstring;
+    adec(k, aead(k, m, ad), ad) = m.
+
+(* ─── Secrets and events ───────────────────────────────────────────────── *)
+
+free psk: bitstring [private].          (* per-pair PSK, netmap-delivered *)
+free secretPayload: bitstring [private]. (* transported under the session key *)
+
+event InitiatorComplete(pkem, pkem, bitstring).
+event ResponderComplete(pkem, pkem, bitstring).
+event InitiatorSent(bitstring).
+event ResponderAccepted(bitstring).
+
+(* ─── Queries ──────────────────────────────────────────────────────────── *)
+
+(* 1. Transport confidentiality — the primary claim. *)
+query attacker(secretPayload).
+
+(* 2. The PSK must never be recoverable from the wire (§2.6). *)
+query attacker(psk).
+
+(* 3. Responder authenticates the initiator: injective agreement, so a
+      replayed transport message cannot be accepted twice. *)
+query m: bitstring;
+    inj-event(ResponderAccepted(m)) ==> inj-event(InitiatorSent(m)).
+
+(* 4. Session-key agreement: if the responder completes believing it shares a
+      key with the initiator, the initiator completed with the same key. *)
+query a: pkem, b: pkem, k: bitstring;
+    event(ResponderComplete(a, b, k)) ==> event(InitiatorComplete(a, b, k)).
+
+(* ─── Initiator (spec §6.1, key schedule §7.1) ─────────────────────────── *)
+
+let initiator(skI: skem, xI: exponent, pkR: pkem, DR: G) =
+    new ekI: skem;
+    new eI: exponent;
+    new rs: rnd;
+    new ts: bitstring;
+
+    let EK  = pkem_of(ekI) in
+    let ED  = exp(g, eI) in
+    let pkI = pkem_of(skI) in
+
+    (* peer_id_hint = HASH(label ‖ S_i) — §4, session-independent *)
+    let hint = H(cat(LBL, p2b(pkI))) in
+
+    let h0 = H(LBL) in
+    let h1 = H(cat(h0, cat(SUITE, EPOCH))) in       (* §13.2 *)
+    let h2 = H(cat(h1, H(p2b(pkR)))) in
+    let h3 = H(cat(h2, cat(p2b(EK), g2b(ED)))) in
+
+    let cts = encap_ct(pkR, rs) in
+    let sss = encap_ss(pkR, rs) in                   (* PQ auth of responder *)
+    out(c, sss);                                     (* ML-KEM BROKEN *)
+    let ck1 = mixck(h0, sss) in
+    let h4  = H(cat(h3, cts)) in
+
+    let dhes = exp(DR, eI) in                        (* classical auth of resp *)
+    let ck2  = mixck(ck1, g2b(dhes)) in
+    let k2   = mixk (ck1, g2b(dhes)) in
+
+    let encid = aead(k2, cat(hint, ts), h4) in
+    let h5    = H(cat(h4, encid)) in
+
+    out(c, (EK, ED, cts, encid));
+
+    in(c, (cte: bitstring, ctss: bitstring, EDR: G, encempty: bitstring));
+
+    let sse  = decap(ekI, cte)  in                   (* forward secrecy *)
+    let ssss = decap(skI, ctss) in                   (* PQ auth of initiator *)
+    out(c, sse); out(c, ssss);                       (* ML-KEM BROKEN *)
+    let ck3  = mixck(ck2, sse)  in
+    let ck4  = mixck(ck3, ssss) in
+
+    let dhee = exp(EDR, eI) in
+    let dhse = exp(EDR, xI) in                       (* classical auth of init *)
+    let ck5  = mixck(ck4, g2b(dhee)) in
+    let ck6  = mixck(ck5, g2b(dhse)) in
+
+    let ck7 = mixck(ck6, psk) in                     (* PSK mixed LAST *)
+    let k7  = mixk (ck6, psk) in
+
+    let h6 = H(cat(h5, cat(cte, cat(ctss, g2b(EDR))))) in
+    let ok = adec(k7, encempty, h6) in                (* fails closed *)
+
+    let Ts = mixk(ck7, EMPTY) in
+    event InitiatorComplete(pkI, pkR, Ts);
+
+    let data = aead(Ts, secretPayload, EMPTY) in
+    event InitiatorSent(data);
+    out(c, data).
+
+(* ─── Responder (spec §6.2) ────────────────────────────────────────────── *)
+
+let responder(skR: skem, xR: exponent, pkI: pkem, DI: G) =
+    (* Typed input: the attacker may still supply any term of these types. *)
+    in(c, (EK: pkem, ED: G, cts: bitstring, encid: bitstring));
+
+    let pkR = pkem_of(skR) in
+
+    let sss = decap(skR, cts) in
+    out(c, sss);                                     (* ML-KEM BROKEN *)
+    let ck1 = mixck(H(LBL), sss) in
+
+    let h0 = H(LBL) in
+    let h1 = H(cat(h0, cat(SUITE, EPOCH))) in
+    let h2 = H(cat(h1, H(p2b(pkR)))) in
+    let h3 = H(cat(h2, cat(p2b(EK), g2b(ED)))) in
+    let h4 = H(cat(h3, cts)) in
+
+    let dhes = exp(ED, xR) in
+    let ck2  = mixck(ck1, g2b(dhes)) in
+    let k2   = mixk (ck1, g2b(dhes)) in
+
+    (* Transcript binding check — fails closed on any tampering. *)
+    let ident = adec(k2, encid, h4) in
+    let h5 = H(cat(h4, encid)) in
+
+    new eR: exponent;
+    new re: rnd;
+    new rss: rnd;
+    let EDR = exp(g, eR) in
+
+    let cte  = encap_ct(EK,  re)  in
+    let sse  = encap_ss(EK,  re)  in
+    let ctss = encap_ct(pkI, rss) in
+    let ssss = encap_ss(pkI, rss) in
+    out(c, sse); out(c, ssss);                       (* ML-KEM BROKEN *)
+    let ck3  = mixck(ck2, sse)  in
+    let ck4  = mixck(ck3, ssss) in
+
+    let dhee = exp(ED, eR) in
+    let dhse = exp(DI, eR) in
+    let ck5  = mixck(ck4, g2b(dhee)) in
+    let ck6  = mixck(ck5, g2b(dhse)) in
+
+    let ck7 = mixck(ck6, psk) in
+    let k7  = mixk (ck6, psk) in
+
+    let h6 = H(cat(h5, cat(cte, cat(ctss, g2b(EDR))))) in
+    let encempty = aead(k7, EMPTY, h6) in
+
+    out(c, (cte, ctss, EDR, encempty));
+
+    let Tr = mixk(ck7, EMPTY) in
+
+    (* ResponderComplete is deliberately NOT emitted here. At this point the
+       responder has derived keys but has no assurance the initiator exists or
+       ever completed — it has seen only a HandshakeInit, which anyone holding
+       the responder's public keys can fabricate (§12.5). Placing the event
+       here makes query 4 FALSE, correctly: a 1-RTT protocol cannot give the
+       responder agreement before the initiator's first authenticated message.
+       Assurance arrives with the transport message below. See §12.6. *)
+
+    in(c, data: bitstring);
+    let recovered = adec(Tr, data, EMPTY) in
+    event ResponderComplete(pkI, pkR, Tr);
+    event ResponderAccepted(data).
+
+(* ─── Main ─────────────────────────────────────────────────────────────── *)
+
+process
+    new skI: skem;  new xI: exponent;
+    new skR: skem;  new xR: exponent;
+    let pkI = pkem_of(skI) in
+    let pkR = pkem_of(skR) in
+    let DI  = exp(g, xI) in
+    let DR  = exp(g, xR) in
+
+    (* Public keys are public. Their *distribution* is authenticated by the
+       coordination server (THREAT-MODEL §4, B2), which is modelled by the
+       processes using the real key terms rather than attacker-supplied ones. *)
+    out(c, (pkI, pkR, DI, DR));
+
+    ( (! initiator(skI, xI, pkR, DR)) | (! responder(skR, xR, pkI, DI)) )

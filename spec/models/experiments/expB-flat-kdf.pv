@@ -1,0 +1,132 @@
+(* Experiment B — diagnostic only, not a shipping model.
+ *
+ * Same protocol as phreatic.pv with ML-KEM broken, but the key schedule is
+ * FLATTENED: instead of seven nested mixck/mixk applications and a six-deep
+ * transcript hash chain, each key is one application of an n-ary KDF over all
+ * its inputs.
+ *
+ * Hypothesis under test: ProVerif's non-termination on the KEM-broken variant
+ * comes from term-depth explosion in the nested chaining key, not from the
+ * protocol logic. Making encap_ss attacker-derivable lets the attacker build
+ * candidate chaining values at every nesting level, so saturation never
+ * converges.
+ *
+ * Flattening is sound for SECRECY queries — a chained and a flat KDF over the
+ * same inputs are equivalent for what we are proving — but it discards the
+ * ordering, so it CANNOT check the "PSK mixed last" property. That is why this
+ * is a diagnostic and not a replacement.
+ *)
+
+type skem.
+type pkem.
+type rnd.
+type exponent.
+type G.
+
+free c: channel.
+free LBL: bitstring.
+free SUITE: bitstring.
+free EPOCH: bitstring.
+free EMPTY: bitstring.
+
+fun pkem_of(skem): pkem.
+fun encap_ct(pkem, rnd): bitstring.
+fun encap_ss(pkem, rnd): bitstring [private].
+
+(* Total ML-KEM break: anyone recovers the shared secret from any ciphertext. *)
+reduc forall p: pkem, r: rnd;
+    break_kem(encap_ct(p, r)) = encap_ss(p, r).
+
+reduc forall sk: skem, r: rnd;
+    decap(sk, encap_ct(pkem_of(sk), r)) = encap_ss(pkem_of(sk), r).
+
+const g: G [data].
+fun exp(G, exponent): G.
+equation forall x: exponent, y: exponent;
+    exp(exp(g, x), y) = exp(exp(g, y), x).
+
+fun g2b(G): bitstring [data, typeConverter].
+fun p2b(pkem): bitstring [data, typeConverter].
+
+(* FLAT: one transcript hash, one KDF per key. No nesting. *)
+fun h_init(bitstring, bitstring, bitstring, pkem, pkem, G, bitstring): bitstring.
+fun kdf_early(bitstring, bitstring, bitstring): bitstring.
+fun kdf_final(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring, bitstring): bitstring.
+
+fun aead(bitstring, bitstring, bitstring): bitstring.
+reduc forall k: bitstring, m: bitstring, ad: bitstring;
+    adec(k, aead(k, m, ad), ad) = m.
+
+free psk: bitstring [private].
+free secretPayload: bitstring [private].
+
+query attacker(secretPayload).
+query attacker(psk).
+
+let initiator(skI: skem, xI: exponent, pkR: pkem, DR: G) =
+    new ekI: skem;
+    new eI: exponent;
+    new rs: rnd;
+    new ts: bitstring;
+    let EK = pkem_of(ekI) in
+    let ED = exp(g, eI) in
+    let pkI = pkem_of(skI) in
+
+    let cts = encap_ct(pkR, rs) in
+    let sss = encap_ss(pkR, rs) in
+    let dhes = exp(DR, eI) in
+
+    let h = h_init(LBL, SUITE, EPOCH, pkR, EK, ED, cts) in
+    let k2 = kdf_early(h, sss, g2b(dhes)) in
+    let encid = aead(k2, ts, h) in
+    out(c, (EK, ED, cts, encid));
+
+    in(c, (cte: bitstring, ctss: bitstring, EDR: G, encempty: bitstring));
+    let sse = decap(ekI, cte) in
+    let ssss = decap(skI, ctss) in
+    let dhee = exp(EDR, eI) in
+    let dhse = exp(EDR, xI) in
+
+    let k7 = kdf_final(h, sss, g2b(dhes), sse, ssss, g2b(dhee), psk) in
+    let ok = adec(k7, encempty, h) in
+    let Ts = kdf_final(h, psk, sss, sse, ssss, g2b(dhse), EMPTY) in
+    out(c, aead(Ts, secretPayload, EMPTY)).
+
+let responder(skR: skem, xR: exponent, pkI: pkem, DI: G) =
+    in(c, (EK: pkem, ED: G, cts: bitstring, encid: bitstring));
+    let pkR = pkem_of(skR) in
+    let sss = decap(skR, cts) in
+    let dhes = exp(ED, xR) in
+
+    let h = h_init(LBL, SUITE, EPOCH, pkR, EK, ED, cts) in
+    let k2 = kdf_early(h, sss, g2b(dhes)) in
+    let ident = adec(k2, encid, h) in
+
+    new eR: exponent;
+    new re: rnd;
+    new rss: rnd;
+    let EDR = exp(g, eR) in
+    let cte = encap_ct(EK, re) in
+    let sse = encap_ss(EK, re) in
+    let ctss = encap_ct(pkI, rss) in
+    let ssss = encap_ss(pkI, rss) in
+    let dhee = exp(ED, eR) in
+    let dhse = exp(DI, eR) in
+
+    let k7 = kdf_final(h, sss, g2b(dhes), sse, ssss, g2b(dhee), psk) in
+    let encempty = aead(k7, EMPTY, h) in
+    out(c, (cte, ctss, EDR, encempty));
+    let Tr = kdf_final(h, psk, sss, sse, ssss, g2b(dhse), EMPTY) in
+    in(c, data: bitstring);
+    let recovered = adec(Tr, data, EMPTY) in
+    0.
+
+process
+    new skI: skem;  new xI: exponent;
+    new skR: skem;  new xR: exponent;
+    let pkI = pkem_of(skI) in
+    let pkR = pkem_of(skR) in
+    let DI = exp(g, xI) in
+    let DR = exp(g, xR) in
+    out(c, (pkI, pkR, DI, DR));
+    ( (! initiator(skI, xI, pkR, DR)) | (! responder(skR, xR, pkI, DI)) )
