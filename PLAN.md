@@ -229,6 +229,18 @@ does not ship — this is a hard gate, not a best-effort task.
 The **PSK-absent fallback (§2.6) must be modelled explicitly** — a
 downgrade-to-zero-PSK attack is the obvious thing an adversary would reach for.
 
+**The rule generalised, 2026-08-14: every Karst protocol gets a ProVerif model
+before it ships, and every model gets a deliberately-broken sibling.** All three
+now have one — PHREATIC, KARST-CONTROL and Ponor — and in each case the exercise
+paid for itself: `phreatic-v1.md` §13.3, `karst-control-v1.md` §9, and
+`ponor-v1.md` §12.2, where the field the plan expected to be load-bearing turned
+out not to be and a different one was.
+
+The siblings are as important as the models. `karst-control-nofs.pv` and
+`ponor-norelayid.pv` exist to **fail**, and CI asserts the number of failing
+queries rather than the absence of passing ones, so a change that quietly
+stopped them failing is caught rather than celebrated.
+
 ### 2.6 Assumption diversity: per-pair PSKs
 
 Everything above rests PQ confidentiality on lattices alone. Because symmetric
@@ -277,7 +289,7 @@ crates/
   karst-noise/      PHREATIC handshake state machine (sans-io)
   karst-transport/  UDP sockets, GSO/GRO, sendmmsg, endpoint mgmt
   karst-disco/      NAT traversal: STUN-like probing, path selection
-  karst-relay-proto/ Ponor relay framing (client side)
+  karst-relay-proto/ Ponor framing and handshake, both sides
   karst-dns/        KarstDNS resolver + split-DNS
   karst-tun/        platform TUN/TAP abstraction
   karst-node/       daemon: state machine, config, IPC, netmap ingest
@@ -725,6 +737,12 @@ as a stretch goal.
 Untrusted packet relays for peers that cannot establish a direct path (~5–15%
 of connections in practice, higher on mobile/CGNAT).
 
+**Normative specification: [spec/ponor-v1.md](spec/ponor-v1.md).** This section
+is the summary and the rationale; where the two disagree the spec governs. Two
+points below have been tightened by it and are marked in place: strict-mode
+admission is no longer a mode (spec §5.3), and relay identity does not rest on
+the TLS certificate (spec §4.2).
+
 The design owes a clear debt to Tailscale's **DERP** — mesh presence,
 home-relay selection, relay-first-then-upgrade — which is credited as prior art
 here and in `spec/phreatic-v1.md`. We borrow the design and **not** the protocol or
@@ -734,9 +752,14 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
 - Transport: HTTPS/TLS 1.3 with hybrid `X25519MLKEM768`, upgrading to a binary
   frame protocol. Port 443 so it survives restrictive networks. HTTP/3 +
   QUIC datagrams as a Phase 6 alternative for better loss behavior.
-- Relays are **addressed by node public key**, hold no long-term state, and
-  see only PHREATIC ciphertext. A relay operator learns who talks to whom, when,
-  and how much — and nothing else. Documented plainly in the security model.
+- Relays are **addressed by node ID** — the 32-byte hash of the identity key,
+  the same value as the KARST-CONTROL handle (spec §5.1). *Amended 2026-08-14:
+  this line previously said "by node public key", which was written before the
+  identity model settled; a 1952-byte ML-DSA key on every forwarded frame was
+  never the intent.* Relays hold no long-term state and see only PHREATIC
+  ciphertext. What the operator learns is enumerated in spec §11 rather than
+  summarised — "and nothing else" was too generous, since the traffic graph, the
+  timing and the exact packet sizes are all visible and none of it is padded.
 - Every connection begins over a relay and **upgrades to a direct path** when
   discovery succeeds, with no packet loss during the switch (the datapath
   keeps both paths warm and cuts over on receipt of the first direct packet).
@@ -744,10 +767,20 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
   by the control server so self-hosters can add their own.
 - Mesh mode: relays in a region gossip client presence so a peer connected to
   relay A in region X can be reached via relay B.
-- Abuse controls: per-key rate limits, per-connection byte accounting,
-  admission only for keys present in a signed tailnet roster. Strict mode is
-  **mandatory for community-pool relays** — an open relay is an abuse conduit
-  and hands its operator traffic they cannot inspect and did not agree to carry.
+- Abuse controls: per-key rate limits over **both bytes and frames** (a flood of
+  minimum-size frames is cheap in bandwidth and expensive in per-frame work, so
+  a bytes-only limit is one an attacker sizes around), per-connection byte
+  accounting, and admission only for keys present in a signed tailnet roster.
+  *Amended 2026-08-14: "strict mode is mandatory for community-pool relays" is
+  obsolete — spec §5.3 removed the mode.* Admission is now structural for every
+  relay: `ClientAuth` carries no public key, so a relay cannot verify a node it
+  has no roster entry for. An open relay is an abuse conduit that hands its
+  operator traffic they cannot inspect and did not agree to carry, and it is now
+  a configuration that cannot be reached rather than one that must be chosen
+  against.
+- Forwarding is scoped **per tailnet** (spec §5.4): source and destination must
+  be in the same one. Without that rule a multi-tenant relay is a
+  general-purpose message bus between any two keys it has ever been told about.
 - **Standard TURN (RFC 8656) as a pluggable sustained-fallback datapath.** The
   answer to regional coverage and SPOF without anyone donating bandwidth: point
   at coturn you already run, or rent commodity TURN for cents. Supplement, not
@@ -2034,8 +2067,159 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
 
 ### Phase 4 — Relays and NAT traversal (10 weeks · Mar–May 2027)
 
-- `karst-relay` server: framing, mesh mode, region map, rate limits, metrics;
-  co-located with the control server in the default deployment artefact.
+- ✅ **Ponor v1 specified** — `spec/ponor-v1.md`, normative, with framing,
+  mutual post-quantum authentication, admission, presence, mesh and relay
+  selection. §13 lists nine open items honestly; the two that matter are
+  roster freshness/revocation, which §5.3 makes load-bearing and then does not
+  specify, and §13.3 — that Ponor derives no session key, so the handshake's
+  authentication does not extend to the frames after it. §1.2's argument for
+  omitting an inner layer is about confidentiality and is correct; draft 0.1
+  applied it silently to integrity, which it does not cover. Recorded rather
+  than fixed, because fixing it means a session key and a record layer and that
+  case should be made deliberately.
+
+  Three decisions are worth surfacing out of it.
+
+  **There is no inner encryption layer, and that is a deliberate asymmetry with
+  KARST-CONTROL.** The payload is already PHREATIC ciphertext and TLS covers
+  the hop. `karst-control-v1.md` §1.2 justified its inner layer by the netmap
+  carrying PSKs past a TLS terminator the *server* was nonetheless trusted
+  with; there is no equivalent secret here, and a third layer would hide
+  metadata from a terminator but not from the relay, which is the party the
+  metadata is disclosed to. §1.2 of the new spec records this so the next
+  reader does not "fix" the inconsistency.
+
+  **The relay is not authenticated by its TLS certificate** (§4.2). It signs
+  with an ML-DSA-65 key published in the relay registry. Three reasons, of
+  which the third is the practical one: WebPKI is classical and this would
+  otherwise be the one hop in Karst with no PQ authentication; a certificate is
+  no evidence of identity behind a shared load balancer; and the realistic
+  self-hoster has an internal CA or a self-signed certificate, where pinning a
+  key distributed through the netmap works and pinning a chain does not.
+
+  **Admission control is structural rather than a mode** (§5.3). `ClientAuth`
+  carries **no public key** — the relay verifies against the key it holds in
+  its roster, so a relay with no entry for a node *cannot verify that node's
+  signature at all*. ADR-0008 §6 requires signed-roster admission for pool
+  relays and PLAN.md §5 had left it optional; carrying the key on the wire
+  would have made "verify the presented key and let it in" a two-line change
+  that looks like a convenience feature. It is now not expressible. The cost is
+  real and named: roster distribution becomes a hard operational dependency.
+- ✅ **`karst-relay-proto`** — the sans-io half, both roles, 35 tests.
+  Frame codec written to the pre-authentication discipline (panic-free, no
+  indexing, over-long frames rejected from four bytes of header before
+  anything is sized from an attacker's length field), and the two handshake
+  state machines with the client's verify-before-transmit ordering enforced by
+  the type rather than left to the caller.
+
+  **§10.1 came out of writing the code, not the spec, and is the more
+  interesting half of §5.3.** Uniform rejection *responses* are not enough: the
+  natural implementation returns on a failed roster lookup and pays for a full
+  ML-DSA-65 verification only on a hit, and that difference is a
+  roster-membership oracle readable from off the machine at one connection per
+  guess. The relay now verifies against a decoy key on a miss so both paths do
+  the same work. The claim is bounded in the spec rather than overstated — it
+  closes the lookup asymmetry, not every asymmetry.
+- ✅ **Ponor modelled — `spec/models/ponor.pv`, 4/4 in ProVerif 2.05**, seconds.
+  Injective authentication in both directions for both roles, against an
+  attacker that **operates a relay honest clients legitimately connect to** —
+  which is not a contrived adversary but the community pool ADR-0008 §6 offers.
+
+  **The broken variant this phase planned was the wrong one, and finding that
+  out was the point.** The plan named `role` as the field to unbind. Building it
+  showed role confusion is not reachable: `node_id` and `relay_id` are hashed
+  under different domain labels, so the client and mesh directories have
+  disjoint key spaces and a role-flipped `ClientAuth` names an id the other
+  directory cannot contain. Binding `role` is correct and costs a byte, but it
+  defends a misconfiguration, not an attack.
+
+  The load-bearing field is **`relay_id`**, and `ponor-norelayid.pv` fails two
+  queries to prove it. The trace: a rogue relay reads the honest relay's
+  `relay_random`, replays it inside its *own* hello to a client that has the
+  rogue legitimately pinned, and forwards the resulting signature to the honest
+  relay — which admits the honest node. The rogue impersonates its own clients
+  elsewhere. The client performs the §4.2 identity check in both versions;
+  **checking who you are talking to is not the same as binding it into what you
+  sign**, and that distinction is the whole of the difference.
+- ✅ **The model gates now have teeth on both sides.** `check-proverif.sh` takes
+  an expected count of *failing* queries, so the must-fail models are checked
+  for still failing. Without it, a change that quietly stopped
+  `karst-control-nofs.pv` or `ponor-norelayid.pv` from failing would turn each
+  demonstration into a decoration and nothing would notice.
+
+  Two gaps closed while wiring this up: **`karst-control.pv` was never in CI**
+  — `spec/karst-control-v1.md` §10's "all four queries verify" rested on
+  somebody remembering to run `just verify` — and neither must-fail model was
+  either. All five ProVerif models now run on every commit; the
+  broken-primitive variants stay nightly because they take minutes to hours.
+- ✅ **`karst-relay` runs.** TLS 1.3 on a real socket, the HTTP upgrade, the
+  Ponor handshake, forwarding, presence and rate limiting. 108 tests in the
+  crate, 515 across the workspace; `cargo deny check` clean on all four checks.
+
+  | Module | Section | What it is |
+  |---|---|---|
+  | `hub` | §7.2, §7.3, §7.5, §7.6, §8 | Forwarding, presence, mesh, queueing — sans-io |
+  | `limits` | §7.4 | Two token buckets, bytes and frames |
+  | `roster` | §5.3, §10.1 | Admission, and the decoy key |
+  | `sign` | §5.2, §5.5 | ML-DSA-65 identity, hedged |
+  | `tls` | §4.1, §4.2 | Post-quantum key exchange, enforced at startup |
+  | `http` | §4.1 | The upgrade, hand-rolled and bounded |
+  | `server` | — | The only module that touches a socket or a clock |
+  | `config` | — | TOML, `deny_unknown_fields` |
+
+  **The queues live in the hub, not in the I/O layer**, and that is the design
+  decision worth defending. §7.3 makes queue discipline a *correctness*
+  requirement — bounded, drop-oldest, never applying backpressure to the source
+  — and a rule that lives in the code that touches sockets is a rule nobody can
+  unit-test. `server` is left with genuinely nothing to decide.
+
+  **The roster format derives rather than repeats.** An entry names an
+  ML-DSA-65 public key and nothing else; both identifiers are computed from it
+  (§5.1, §5.2). Storing the id alongside the key would make a silent mismatch a
+  typo away, and its failure mode is a node that cannot connect for reasons no
+  log line explains.
+
+  **`X25519MLKEM768` is enforced, not documented.** `tls::provider` refuses to
+  start if the build does not offer it, because the group comes from a Cargo
+  feature and a feature is exactly what gets changed by somebody solving an
+  unrelated build problem. TLS 1.2 is disabled outright: it cannot express the
+  hybrid group, so leaving it on would leave §4.1 negotiable. And
+  `tests/listener.rs` asserts the group that was *actually negotiated* on a
+  live connection — the only place that claim can be checked.
+
+  Two rules tightened while implementing, both now in code and tests: **a
+  cross-tailnet destination is indistinguishable from an unknown one** (telling
+  them apart is a cross-tenant membership oracle on a shared relay), and **a
+  `Forward` from a mesh peer is re-checked against our own roster**, so a
+  compromised meshed relay cannot inject cross-tailnet traffic. §8 had left the
+  second implicit.
+
+  **Three test layers, because each sees what the others cannot.** Unit tests
+  use a stub signature scheme so they can be exhaustive. `tests/end_to_end.rs`
+  drives the whole stack with real ML-DSA-65, which is what catches a
+  mismatched context string or an identifier hashed under the wrong label — a
+  stub agrees with the code that calls it by construction.
+  `tests/listener.rs` adds the socket, which is what catches a frame split
+  across reads, two frames coalesced into one write, and bytes arriving in the
+  same segment as the HTTP head.
+
+  **The rogue-relay case was checked against the defect rather than trusted.**
+  Unbinding `relay_id` in the handshake makes exactly that one end-to-end case
+  fail and the other eight pass — the same result `ponor-norelayid.pv` gives,
+  now against the real signature scheme.
+
+  **`cargo deny check advisories` earned its place.** `rustls-pemfile` — the
+  obvious way to read a PEM file, and what most examples still show — is
+  deprecated with no safe upgrade (RUSTSEC-2025-0103). The gate failed the
+  build, and the dependency was replaced with `rustls-pki-types`' `PemObject`
+  rather than allowlisted.
+
+  Still open: **outbound mesh dialling** (the listener admits `role = MESH`
+  peers, so the receiving half is done, but nothing dials a configured peer
+  yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
+  reload without a restart — which §13.2 makes the consequential one.
+- `karst-relay`: outbound mesh dialling, region map, metrics; co-located with
+  the control server in the default deployment artefact.
 - **TURN fallback** (ADR-0008): client-side allocation, permissions, channel
   binding and credential refresh; control-server ephemeral credential minting;
   coturn added to the NAT matrix. **Designated slip candidate for this phase** —
