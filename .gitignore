@@ -42,7 +42,6 @@ dist/
 *.swp
 /result
 .direnv/
-/LICENSES/*.txt
 CLAUDE.local.md
 
 # ── Fuzzing ─────────────────────────────────────────────────────────────────

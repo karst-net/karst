@@ -116,8 +116,9 @@ harbour for good-faith research.
 | `spec/`, `docs/` | `CC-BY-4.0` + royalty-free implementation grant |
 
 The AGPL on the server does **not** affect your use of the client — they are
-separate programs communicating over a network protocol. See
-[LICENSING.md](LICENSING.md).
+separate programs communicating over a network protocol. Full texts are in
+[`LICENSES/`](LICENSES/), the authoritative summary is [LICENSE](LICENSE), and
+the reasoning is in [LICENSING.md](LICENSING.md).
 
 ## Prior art
 

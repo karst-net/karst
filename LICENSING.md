@@ -15,7 +15,8 @@ licenses; the rationale is recorded in
 | `spec/**`, `docs/**` | Creative Commons Attribution 4.0 | `CC-BY-4.0` |
 
 Every source file carries an SPDX identifier. When the file header and this
-table disagree, the file header wins.
+table disagree, the file header wins. The same table appears in
+[LICENSE](LICENSE), which is the file GitHub and most tooling read.
 
 ## The protocol is free to implement
 
@@ -78,8 +79,10 @@ review convention.
 
 ## Adding license texts
 
-Canonical texts belong in `LICENSES/` and must be fetched from
-[SPDX](https://spdx.org/licenses/) or gnu.org, never transcribed by hand:
+Canonical texts live in `LICENSES/`, named by SPDX identifier, and are
+committed. They must be fetched from [SPDX](https://spdx.org/licenses/) or
+gnu.org, never transcribed by hand — a license text retyped or reflowed is no
+longer the license it claims to be. `just licenses` does it:
 
 ```sh
 mkdir -p LICENSES

@@ -1,0 +1,77 @@
+Karst is open source throughout, but it is not licensed uniformly. Which
+license applies depends on which part of the tree a file is in.
+
+    crates/**                        MIT OR Apache-2.0, at your option
+    bins/**                          MIT OR Apache-2.0, at your option
+    server/**                        AGPL-3.0-or-later
+    web/**                           AGPL-3.0-or-later
+    spec/**, docs/**                 CC-BY-4.0
+
+Every source file carries an SPDX-License-Identifier in its first three lines.
+Where a file header and the table above disagree, THE FILE HEADER WINS.
+
+Full texts are in LICENSES/, named by SPDX identifier:
+
+    LICENSES/MIT.txt
+    LICENSES/Apache-2.0.txt
+    LICENSES/AGPL-3.0.txt
+    LICENSES/CC-BY-4.0.txt
+
+LICENSING.md explains the reasoning, and ADR-0007
+(docs/adr/0007-licensing.md) records what the arrangement costs.
+
+--------------------------------------------------------------------------
+
+THE AGPL ON THE SERVER DOES NOT AFFECT YOUR USE OF THE CLIENT
+
+This is the most common misreading of a split like this one, so to be explicit:
+
+  - karstd, karst and karst-relay are MIT/Apache-2.0. Running, embedding,
+    packaging, modifying or shipping them inside a proprietary product imposes
+    no copyleft obligation of any kind.
+
+  - The node agent and the coordination server are separate programs that
+    communicate over a network protocol. Running an AGPL server does not make
+    your client, your infrastructure, or anything else you run a derivative
+    work of it.
+
+  - The AGPL obligation is narrow: if you modify the coordination server or
+    the console and let others use it over a network, you must offer those
+    users the modified source. Running it unmodified obliges you to nothing
+    beyond preserving notices.
+
+The reason for that obligation is that the coordination server holds every
+per-pair PSK and computes every node's packet filter. If your operator runs a
+modified server you cannot inspect, you cannot verify the most
+security-critical component in the system. The AGPL turns "trust your
+operator" into "verify your operator."
+
+--------------------------------------------------------------------------
+
+THE PROTOCOL IS FREE TO IMPLEMENT
+
+The PHREATIC and KARST-CONTROL specifications in spec/ are published under
+CC-BY-4.0, with an irrevocable, royalty-free right to implement them in
+software under any license, open or proprietary. Independent implementations
+are welcome and actively wanted: a protocol with one implementation has not
+been meaningfully reviewed.
+
+--------------------------------------------------------------------------
+
+VENDORED CODE
+
+server/ is a pruned fork of NetBird (netbirdio/netbird, v0.76.3, f65f7b34)
+and carries its original licensing, which is itself split: management/,
+signal/, relay/ and combined/ are AGPL-3.0-or-later, and the remainder is
+BSD-3-Clause. See server/LICENSE-NETBIRD-BSD-3 and server/LICENSES/.
+
+Copyright is held by the Karst contributors and, for the vendored tree, by the
+NetBird authors. There is no CLA and no copyright assignment, so the project
+cannot unilaterally relicense. That constraint is intentional.
+
+--------------------------------------------------------------------------
+
+TRADEMARK
+
+The Karst name and logo are held separately from the copyright license.
+Anyone may fork the code; nobody may call their fork Karst.
