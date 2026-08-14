@@ -106,10 +106,16 @@ verify:
         echo "── $m ──"
         verifpal verify "spec/models/$m.vp" | tail -12
     done
-    echo "── ProVerif (base) ──"
-    proverif spec/models/phreatic.pv | sed -n '/Verification summary/,$p'
-    echo "── ProVerif (control channel, ADR-0011) ──"
-    proverif spec/models/karst-control.pv | sed -n '/Verification summary/,$p'
+    ./spec/models/gen-variants.sh
+    echo "── ProVerif (PHREATIC data plane) ──"
+    ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+    echo "── ProVerif (KARST-CONTROL control channel, ADR-0011) ──"
+    ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
+    echo "── ProVerif (Ponor relay, spec/ponor-v1.md §5) ──"
+    ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
+    echo "── ProVerif (models that must FAIL) ──"
+    ./spec/models/check-proverif.sh spec/models/karst-control-nofs.pv 600 2 2
+    ./spec/models/check-proverif.sh spec/models/ponor-norelayid.pv 600 2 2
 
 # Broken-primitive ProVerif variants: minutes to hours. Nightly, not per-commit.
 verify-slow:
@@ -120,8 +126,5 @@ verify-slow:
         echo "── $m ──"
         proverif "spec/models/$m.pv" | sed -n '/Verification summary/,$p'
     done
-    # Expected to FAIL its two secrecy queries: it is the demonstration that
-    # ct_eph is load-bearing. A run in which it passes means the model has
-    # stopped testing anything.
-    echo "── karst-control-nofs (EXPECTED FAILURES) ──"
-    proverif spec/models/karst-control-nofs.pv | sed -n '/Verification summary/,$p'
+    # The must-fail variants moved to `just verify`: both run in seconds, and
+    # a demonstration nobody runs per-commit is one that rots.

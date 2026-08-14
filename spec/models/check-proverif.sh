@@ -8,12 +8,20 @@
 # `is true` and compares against the expected number, and checks the exit
 # status of proverif rather than of a pipeline.
 #
-# Usage: check-proverif.sh <model.pv> <timeout_seconds> <expected_true_queries>
+# The fourth argument exists for the deliberately-broken variants, which are
+# only useful while they still FAIL. karst-control-nofs.pv and
+# ponor-norelayid.pv each drop one thing the design claims is load-bearing; if
+# a change to the base model quietly stops them failing, the demonstration has
+# become a decoration and nobody would notice. Asserting the exact number of
+# false queries is what makes that visible.
+#
+# Usage: check-proverif.sh <model.pv> <timeout_seconds> <expected_true> [expected_false]
 set -uo pipefail
 
 model="${1:?model path}"
 limit="${2:?timeout seconds}"
 expected="${3:?expected number of passing queries}"
+expected_false="${4:-0}"
 out="$(mktemp)"
 
 timeout "$limit" proverif "$model" > "$out" 2>&1
@@ -42,8 +50,13 @@ if [ -z "$summary" ]; then
     exit 1
 fi
 
-if [ "$false_count" -ne 0 ]; then
-    echo "::error::$model — $false_count query/queries returned false"
+if [ "$false_count" -ne "$expected_false" ]; then
+    if [ "$expected_false" -eq 0 ]; then
+        echo "::error::$model — $false_count query/queries returned false"
+    else
+        echo "::error::$model — expected $expected_false failing queries, saw $false_count."
+        echo "This model exists to fail. If it stopped failing, it stopped testing anything."
+    fi
     exit 1
 fi
 if [ "$true_count" -ne "$expected" ]; then
@@ -52,4 +65,8 @@ if [ "$true_count" -ne "$expected" ]; then
     exit 1
 fi
 
-echo "$model: $true_count/$expected queries verified."
+if [ "$expected_false" -eq 0 ]; then
+    echo "$model: $true_count/$expected queries verified."
+else
+    echo "$model: $true_count verified, $false_count failed as expected."
+fi

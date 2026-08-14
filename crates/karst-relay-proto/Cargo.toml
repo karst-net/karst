@@ -1,6 +1,6 @@
 [package]
 name = "karst-relay-proto"
-description = "Ponor relay framing (client side)"
+description = "Ponor relay framing and handshake (client and relay sides)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,4 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+sha2 = { version = "0.10", default-features = false }

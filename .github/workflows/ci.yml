@@ -354,9 +354,29 @@ jobs:
         run: |
           opam exec -- proverif -help | head -1
           echo "$(opam var bin)" >> "$GITHUB_PATH"
-      - name: ProVerif — base model (release gate, PLAN.md §2.5)
+      # All three protocols, every commit. karst-control.pv was previously in
+      # `just verify` only, so spec/karst-control-v1.md §10's "all four queries
+      # verify" rested on somebody remembering to run it — added here 2026-08-14
+      # alongside Ponor rather than left as a second gap.
+      - name: ProVerif — base models (release gate, PLAN.md §2.5)
         timeout-minutes: 30
-        run: ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+        run: |
+          ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+          ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
+          ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
+      # These are only useful while they still FAIL. A change that quietly
+      # stopped them failing would turn the demonstration into a decoration,
+      # so the expected number of false queries is asserted rather than the
+      # absence of true ones. Both run in seconds; no reason to defer them to
+      # the nightly job.
+      - name: ProVerif — models that must fail
+        run: |
+          ./spec/models/gen-variants.sh
+          # Drops ss_eph: forward secrecy goes, authentication stays.
+          ./spec/models/check-proverif.sh spec/models/karst-control-nofs.pv 600 2 2
+          # Drops relay_id from the client's signature: a rogue relay
+          # impersonates its own clients at another relay.
+          ./spec/models/check-proverif.sh spec/models/ponor-norelayid.pv 600 2 2
       # Broken-primitive variants add a public destructor and take minutes to
       # hours. Nightly, not per-PR — see spec/models/README.md.
       - name: ProVerif — broken-primitive variants

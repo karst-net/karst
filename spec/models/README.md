@@ -6,12 +6,16 @@ runs in seconds. **ProVerif** reasons over unbounded sessions with an explicit
 equational theory and is the release gate (PLAN.md §2.5).
 
 ```sh
-just verify        # Verifpal ×3 + ProVerif base model
-just verify-slow   # long-running ProVerif variants (nightly)
-./gen-variants.sh  # regenerate the .pv variants from phreatic.pv
+just verify        # Verifpal ×3 + every ProVerif model, including the must-fail ones
+just verify-slow   # long-running broken-primitive variants (nightly)
+./gen-variants.sh  # regenerate the generated .pv variants
 ```
 
 ## Status
+
+Karst has three protocols and each has its own model. They are not variants of
+one another: PHREATIC is the UDP data plane, KARST-CONTROL the node↔server
+channel, Ponor the node↔relay one.
 
 ### Verifpal 0.80.0 — seconds
 
@@ -26,11 +30,42 @@ just verify-slow   # long-running ProVerif variants (nightly)
 | Model | Assumption | Status |
 |---|---|---|
 | `phreatic.pv` | All primitives sound | ✅ **4/4**, seconds |
+| `karst-control.pv` | All primitives sound | ✅ **4/4**, seconds |
+| `ponor.pv` | All primitives sound, and a relay the client uses is hostile | ✅ **4/4**, seconds |
 | `phreatic-dh-broken.pv` | public `dlog` destructor | ✅ **4/4**, ~15 min |
 | `phreatic-kem-broken.pv` | public `break_kem` destructor | ❌ **does not terminate** — see below |
 
-Queries: transport confidentiality, PSK secrecy, **injective** agreement on the
-transport message, and session-key agreement.
+Queries, per model:
+
+- **PHREATIC** — transport confidentiality, PSK secrecy, **injective** agreement
+  on the transport message, session-key agreement.
+- **KARST-CONTROL** — netmap secrecy and request secrecy under post-session
+  compromise of the server's static key, **injective** agreement on
+  `ChannelInit`, channel-key agreement.
+- **Ponor** — **injective** authentication in both directions for both roles: a
+  relay admitting a client, a client authenticating the relay, and the same
+  pair for a mesh peer. No secrecy query, because Ponor derives no keys; see
+  `ponor.pv`'s header for what that means and does not mean.
+
+### Models that must fail
+
+These exist to demonstrate that a specific design decision is load-bearing.
+They are gated on the *number of failing queries*, not on the absence of
+passing ones — a change that quietly stopped them failing would turn each
+demonstration into a decoration, and nothing else would notice.
+
+| Model | Drops | Expected |
+|---|---|---|
+| `karst-control-nofs.pv` | `ss_eph` from the key schedule | ❌ 2 secrecy, ✅ 2 authentication |
+| `ponor-norelayid.pv` | `relay_id` from the client's signature | ❌ 2 relay-authenticates-peer, ✅ 2 peer-authenticates-relay |
+
+`ponor-norelayid.pv` is worth reading the trace of. The attack ProVerif finds
+is that a **rogue relay copies an honest relay's `relay_random` into its own
+hello**, so a client that connects to the rogue — legitimately, with the
+rogue's key pinned — produces a signature the honest relay accepts. The rogue
+then impersonates its own clients elsewhere. The client checks the relay's
+identity locally in both versions; what the variant removes is the *binding* of
+that identity into what the client signs, and the two are not the same thing.
 
 ## `phreatic-kem-broken.pv` does not terminate
 
