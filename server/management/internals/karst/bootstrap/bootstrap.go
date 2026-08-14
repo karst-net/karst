@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -170,8 +171,52 @@ func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
 	return k, nil
 }
 
+// migrateMu serialises first-start within a single process.
+//
+// Concurrent callers contend on the schema, and on SQLite that surfaces as
+// "database table is locked: sqlite_master" rather than as anything the
+// original "table already exists" tolerance recognised. Inside one process
+// there is no reason to race at all, so this removes the contention outright
+// instead of recovering from it. Cross-process contention — two replicas
+// against one database, the case the tolerance below was written for — a mutex
+// cannot help with, which is what the retry is for.
+var migrateMu sync.Mutex
+
 // loadOrCreateKeys reads the singleton row, creating it on first start.
+//
+// Retries because first-start contention is transient: the losing caller sees
+// a locked schema, and a moment later the winner has finished and the row is
+// simply there to be read. Bounded, and the last error is returned unchanged,
+// so a genuinely broken store still fails rather than hanging. Idempotent by
+// construction — every attempt either reads the winner's row or creates the
+// only one.
 func loadOrCreateKeys(db *gorm.DB) (*ServerKeys, error) {
+	migrateMu.Lock()
+	defer migrateMu.Unlock()
+
+	const attempts = 10
+	var err error
+	for i := range attempts {
+		var keys *ServerKeys
+		if keys, err = tryLoadOrCreateKeys(db); err == nil {
+			return keys, nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		// Jittered backoff. Without the jitter, contending callers retry in
+		// lockstep and collide again on exactly the same schedule. The byte is
+		// scaled across the jitter window rather than used as a duration —
+		// a raw byte is nanoseconds, which would be no jitter at all.
+		var j [1]byte
+		_, _ = rand.Read(j[:])
+		jitter := time.Duration(j[0]) * (3 * time.Millisecond) / 256
+		time.Sleep(time.Duration(i+1)*5*time.Millisecond + jitter)
+	}
+	return nil, err
+}
+
+func tryLoadOrCreateKeys(db *gorm.DB) (*ServerKeys, error) {
 	// Two replicas starting against a fresh database race here, and AutoMigrate
 	// is not safe against itself: the loser gets "table already exists". That
 	// is benign — the winner created exactly the table we wanted — so the
