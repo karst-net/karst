@@ -1,0 +1,272 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright the Karst contributors.
+
+package main
+
+import (
+	"context"
+	"crypto/mlkem"
+	"errors"
+	"fmt"
+	"net/netip"
+	"sync"
+
+	pb "google.golang.org/protobuf/proto"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/node"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	nbpeer "github.com/netbirdio/netbird/management/server/peer"
+	"github.com/netbirdio/netbird/shared/management/proto"
+)
+
+// The netmap fixture: the *real* LoginHandler and NetmapHandler over an
+// in-memory account.
+//
+// The account manager is stood in for, because standing up the fork's real one
+// needs a SQL fixture, a metrics registry and four managers — and what is under
+// test here is the node side of the wire, not the fork's business layer, which
+// has its own tests (TestRegistrationAgainstTheRealAccountManager).
+//
+// Everything else is production code: the node store, the PSK deriver, the ACL
+// compiler, the netmap assembly, the version hash and the request router. A
+// Rust node driven against this exercises the whole pipeline it would use
+// against a real deployment.
+
+// The account's overlay allocation, matching what the fork hands out: a /16 out
+// of 100.64.0.0/10 and a /64 ULA.
+const (
+	fixtureV4Bits = 16
+	fixtureV6Bits = 64
+)
+
+type memoryAccount struct {
+	mu    sync.Mutex
+	peers map[string]*nbpeer.Peer
+	order []string
+	next  int
+}
+
+func newMemoryAccount() *memoryAccount {
+	return &memoryAccount{peers: map[string]*nbpeer.Peer{}, next: 1}
+}
+
+// register adds a peer, assigning the next free address. Returns its assigned
+// IP so the login response can carry it.
+func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if p, ok := m.peers[handle]; ok {
+		return p
+	}
+	m.next++
+	p := &nbpeer.Peer{
+		ID:        fmt.Sprintf("peer-%d", m.next),
+		Key:       handle,
+		AccountID: "fixture-account",
+		UserID:    "fixture-user",
+		DNSLabel:  hostname,
+		IP:        netip.AddrFrom4([4]byte{100, 64, 0, byte(m.next)}),
+	}
+	m.peers[handle] = p
+	m.order = append(m.order, handle)
+	return p
+}
+
+// ── control.PeerLoginer ─────────────────────────────────────────────────────
+
+func (m *memoryAccount) GetAccountIDForPeerKey(_ context.Context, key string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.peers[key]; !ok {
+		return "", errors.New("no such peer")
+	}
+	return "fixture-account", nil
+}
+
+func (m *memoryAccount) GetPeerByPeerPubKey(_ context.Context, key string) (*nbpeer.Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.peers[key]
+	if !ok {
+		return nil, errors.New("no such peer")
+	}
+	return p, nil
+}
+
+func (m *memoryAccount) GetPeersFromAccount(_ context.Context, _, _, _ string) ([]*nbpeer.Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*nbpeer.Peer, 0, len(m.order))
+	for _, h := range m.order {
+		out = append(out, m.peers[h])
+	}
+	return out, nil
+}
+
+func (m *memoryAccount) AccountPrefixes(context.Context, string) (uint8, uint8, error) {
+	return fixtureV4Bits, fixtureV6Bits, nil
+}
+
+// ── the router ──────────────────────────────────────────────────────────────
+
+// Kinds must match bootstrap.KindLogin and KindNetmap: they are on the wire.
+const (
+	kindLogin  byte = 1
+	kindNetmap byte = 2
+)
+
+type router struct {
+	login  *control.LoginHandler
+	netmap *control.NetmapHandler
+	// account is consulted directly for registration, because the fixture
+	// stands in for the account manager the LoginHandler would call.
+	account *memoryAccount
+	nodes   *node.Store
+}
+
+func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, errors.New("empty request")
+	}
+	kind, body := payload[0], payload[1:]
+	switch kind {
+	case kindLogin:
+		return r.handleLogin(ctx, identityPub, body)
+	case kindNetmap:
+		return r.netmap.Handle(ctx, nodeID, identityPub, body)
+	default:
+		return nil, fmt.Errorf("unknown request kind %d", kind)
+	}
+}
+
+// buildNetmapServer assembles the fixture. `preload` peers are registered up
+// front so a node's first netmap is not empty.
+func buildNetmapServer(preload int) (*router, error) {
+	db, err := gorm.Open(sqlite.Open("file:karst-testserver?mode=memory&cache=shared"),
+		&gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		return nil, fmt.Errorf("db: %w", err)
+	}
+	nodes, err := node.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("node store: %w", err)
+	}
+
+	master, err := psk.GenerateSoftwareMaster()
+	if err != nil {
+		return nil, fmt.Errorf("psk master: %w", err)
+	}
+	deriver, err := psk.NewDeriver(master)
+	if err != nil {
+		return nil, fmt.Errorf("psk deriver: %w", err)
+	}
+
+	account := newMemoryAccount()
+
+	// A policy the Rust side can check it received: the preloaded peers may
+	// reach this node on 22, and nothing else may reach it at all.
+	doc, err := policy.Parse([]byte(`{
+	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22"] } ]
+	}`))
+	if err != nil {
+		return nil, fmt.Errorf("policy: %w", err)
+	}
+
+	r := &router{
+		netmap: &control.NetmapHandler{
+			Nodes: nodes, Peers: account, PSK: deriver, Epoch: 7, Policy: doc,
+		},
+		account: account,
+		nodes:   nodes,
+	}
+
+	// Preloaded peers, so the netmap has content on the first fetch.
+	for i := 0; i < preload; i++ {
+		k, err := generateIdentity()
+		if err != nil {
+			return nil, err
+		}
+		handle, err := nodes.Register(k, node.DataPlaneKeys{
+			KemPublicKey: kemKey(byte(0x40 + i)),
+			DhPublicKey:  pattern(32, byte(0x50+i)),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("preload peer: %w", err)
+		}
+		account.register(handle, fmt.Sprintf("preloaded-%d", i))
+	}
+	return r, nil
+}
+
+// handleLogin mirrors control.LoginHandler with the account manager stood in
+// for. The parts that matter to the node are identical: the node's data-plane
+// keys are registered through the real node.Store, and the handle it gets back
+// is derived from the identity it proved possession of during the handshake —
+// never from anything the request body claims.
+func (r *router) handleLogin(_ context.Context, identityPub, body []byte) ([]byte, error) {
+	req := &proto.KarstLoginRequest{}
+	if err := pb.Unmarshal(body, req); err != nil {
+		return nil, errors.New("malformed login request")
+	}
+	if req.GetMeta() == nil {
+		return nil, errors.New("peer system meta is required")
+	}
+
+	handle, err := r.nodes.Register(identityPub, node.DataPlaneKeys{
+		KemPublicKey: req.GetKemPublicKey(),
+		DhPublicKey:  req.GetDhPublicKey(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("register identity: %w", err)
+	}
+
+	hostname := req.GetMeta().GetHostname()
+	if hostname == "" {
+		hostname = "karst-node"
+	}
+	peer := r.account.register(handle, hostname)
+
+	return pb.Marshal(&proto.KarstLoginResponse{
+		NodeId:  []byte(handle),
+		PeerIp:  peer.IP.String(),
+		DnsName: peer.DNSLabel,
+	})
+}
+
+func generateIdentity() ([]byte, error) {
+	k, err := identity.Generate()
+	if err != nil {
+		return nil, fmt.Errorf("identity: %w", err)
+	}
+	return k.Public(), nil
+}
+
+// kemKey makes a real ML-KEM-768 encapsulation key. A 1184-byte pattern is not
+// one, and node.Register rejects it — deliberately, since a key that does not
+// parse is shipped to every peer and none of them can handshake with it.
+func kemKey(seed byte) []byte {
+	var s [64]byte
+	for i := range s {
+		s[i] = seed + byte(i)
+	}
+	dk, err := mlkem.NewDecapsulationKey768(s[:])
+	if err != nil {
+		fail("mlkem seed: %v", err)
+	}
+	return dk.EncapsulationKey().Bytes()
+}
+
+func pattern(n int, seed byte) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = seed + byte(i)
+	}
+	return out
+}

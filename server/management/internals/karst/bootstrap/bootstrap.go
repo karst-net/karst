@@ -1,0 +1,313 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright the Karst contributors.
+
+// Package bootstrap wires KarstControlService into the management daemon.
+//
+// It attaches through two seams the fork already provides — `SetNewServer` and
+// `RegisterGRPCExtension`, the latter documented as "a generic extension point
+// with no knowledge of any specific service" — so **no forked file is
+// modified**. That matters for the reason Spike 0001 §5.3 measured: 28% of
+// upstream commits land on the files we would otherwise diverge on, and every
+// line changed there is a future cherry-pick conflict on a security fix.
+package bootstrap
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
+	"gorm.io/gorm"
+
+	"github.com/netbirdio/netbird/management/internals/karst/channel"
+	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/node"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	nbserver "github.com/netbirdio/netbird/management/internals/server"
+	"github.com/netbirdio/netbird/management/server/account"
+	nbpeer "github.com/netbirdio/netbird/management/server/peer"
+	"github.com/netbirdio/netbird/management/server/store"
+	"github.com/netbirdio/netbird/shared/management/proto"
+)
+
+// EpochSeconds is the PSK rotation period (PLAN.md §2.6: "epochs rotate every
+// 86400 s").
+const EpochSeconds = 86400
+
+// CurrentEpoch is a pure function of the clock.
+//
+// Deriving it rather than storing it means every server instance computes the
+// same value, rotation happens on schedule with nothing to run, and a restart
+// cannot lose track of where it was. Two servers behind a load balancer agree
+// without coordinating.
+//
+// The cost is that the epoch is only as good as the clock. A server whose time
+// is badly wrong hands out PSKs from a different generation than its peers,
+// and because §7.3 accepts n and n-1, a skew beyond one epoch is what breaks
+// it — 24 hours of slack, which NTP failure would have to be severe to exceed.
+func CurrentEpoch(now time.Time) uint32 {
+	return uint32(now.UTC().Unix() / EpochSeconds)
+}
+
+// ServerKeys is the singleton row holding the server's long-lived secrets.
+//
+// These MUST persist. Nodes **pin** the public halves at enrolment, so
+// regenerating them on restart does not degrade gracefully — it breaks every
+// enrolled node at once, with each one reporting that the server failed to
+// authenticate. Losing this row is an outage that looks like an attack.
+type ServerKeys struct {
+	ID uint `gorm:"primaryKey"`
+	// 64-byte ML-KEM-768 seed. Secret.
+	KemSeed []byte `gorm:"not null"`
+	// 32-byte ML-DSA-65 seed. Secret.
+	IdentitySeed []byte `gorm:"not null"`
+	// 32-byte per-pair PSK master (§2.6). Secret, and the most valuable byte
+	// string in the deployment: it derives every PSK in the network.
+	PSKMaster []byte    `gorm:"not null"`
+	CreatedAt time.Time `json:"-"`
+}
+
+func (ServerKeys) TableName() string { return "karst_server_keys" }
+
+// Karst is the assembled service and the material a node must be given.
+type Karst struct {
+	Service   *control.Service
+	StaticKEM []byte
+	VerifyKey []byte
+	Epoch     uint32
+}
+
+// Install registers KarstControlService on the daemon's gRPC server.
+//
+// Returns the pins an operator must distribute with auth keys. Handing out
+// only the KEM half silently downgrades forward secrecy, so both are returned
+// together and logged together.
+func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
+	sql, ok := s.Store().(*store.SqlStore)
+	if !ok {
+		// Karst owns three tables of its own and reaches the database through
+		// the store's GORM handle. A non-SQL store would need its own
+		// implementation rather than a silent degradation.
+		return nil, errors.New("karst: the store is not SQL-backed")
+	}
+	db := sql.GetDB()
+
+	keys, err := loadOrCreateKeys(db)
+	if err != nil {
+		return nil, err
+	}
+
+	static, err := channel.NewStaticFromSeed(keys.KemSeed)
+	if err != nil {
+		return nil, fmt.Errorf("karst: restore static key: %w", err)
+	}
+	srvIdentity, err := identity.FromSeed(keys.IdentitySeed)
+	if err != nil {
+		return nil, fmt.Errorf("karst: restore server identity: %w", err)
+	}
+	master, err := psk.NewSoftwareMaster(keys.PSKMaster)
+	if err != nil {
+		return nil, fmt.Errorf("karst: psk master: %w", err)
+	}
+	deriver, err := psk.NewDeriver(master)
+	if err != nil {
+		return nil, fmt.Errorf("karst: psk deriver: %w", err)
+	}
+
+	nodes, err := node.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: node store: %w", err)
+	}
+
+	accounts := s.AccountManager()
+	peers := &storePeers{store: sql, accounts: accounts}
+	oidc := &control.OIDC{
+		Tokens:   s.AuthManager(),
+		Accounts: accounts,
+		Claimer:  s.SessionStore(),
+	}
+
+	epoch := CurrentEpoch(time.Now())
+	router := &handler{
+		login: &control.LoginHandler{Nodes: nodes, Accounts: accounts, OIDC: oidc},
+		netmap: &control.NetmapHandler{
+			Nodes:  nodes,
+			Peers:  peers,
+			PSK:    deriver,
+			Epoch:  epoch,
+			Policy: pol,
+		},
+	}
+
+	svc := control.New(static, identity.ControlSigner{Key: srvIdentity},
+		nodes.LookupFunc(), identity.ControlVerifier{}, router)
+
+	s.RegisterGRPCExtension(nbserver.GRPCExtension{
+		Register: func(reg grpc.ServiceRegistrar) {
+			proto.RegisterKarstControlServiceServer(reg, svc)
+			log.Info("KarstControlService registered on gRPC server")
+		},
+	})
+
+	k := &Karst{
+		Service:   svc,
+		StaticKEM: svc.Pins().StaticKEM,
+		VerifyKey: svc.Pins().VerifyKey,
+		Epoch:     epoch,
+	}
+
+	// The pins are public and must reach operators; the seeds never appear.
+	log.Infof("karst: server KEM pin  %s", base64.StdEncoding.EncodeToString(k.StaticKEM))
+	log.Infof("karst: server sign pin %s", base64.StdEncoding.EncodeToString(k.VerifyKey))
+	log.Infof("karst: psk epoch %d (rotates every %ds)", k.Epoch, EpochSeconds)
+
+	return k, nil
+}
+
+// loadOrCreateKeys reads the singleton row, creating it on first start.
+func loadOrCreateKeys(db *gorm.DB) (*ServerKeys, error) {
+	// Two replicas starting against a fresh database race here, and AutoMigrate
+	// is not safe against itself: the loser gets "table already exists". That
+	// is benign — the winner created exactly the table we wanted — so the
+	// error is only fatal if the table is *still* unusable afterwards, which
+	// the read below establishes. Treating it as fatal outright would mean a
+	// deployment with replicas crash-looping on first start.
+	migrateErr := db.AutoMigrate(&ServerKeys{})
+
+	var keys ServerKeys
+	err := db.Where("id = ?", 1).First(&keys).Error
+	switch {
+	case err == nil:
+		return &keys, nil
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		if migrateErr != nil {
+			// The table is genuinely unusable, and the migration is why.
+			return nil, fmt.Errorf("karst: migrate server keys: %w", migrateErr)
+		}
+		return nil, fmt.Errorf("karst: read server keys: %w", err)
+	}
+
+	kemSeed := make([]byte, 64)
+	idSeed := make([]byte, identity.SeedSize)
+	master := make([]byte, psk.MasterSize)
+	for _, b := range [][]byte{kemSeed, idSeed, master} {
+		if _, err := rand.Read(b); err != nil {
+			return nil, fmt.Errorf("karst: generate server keys: %w", err)
+		}
+	}
+
+	keys = ServerKeys{
+		ID:           1,
+		KemSeed:      kemSeed,
+		IdentitySeed: idSeed,
+		PSKMaster:    master,
+		CreatedAt:    time.Now().UTC(),
+	}
+	// A plain Create, not an upsert: two processes racing to initialise a
+	// fresh database must not both succeed with different keys, which would
+	// give half the nodes an unusable pin. The loser re-reads the winner's row.
+	if err := db.Create(&keys).Error; err != nil {
+		var existing ServerKeys
+		if reread := db.Where("id = ?", 1).First(&existing).Error; reread == nil {
+			return &existing, nil
+		}
+		return nil, fmt.Errorf("karst: create server keys: %w", err)
+	}
+	log.Warn("karst: generated new server keys; nodes must be given the pins below")
+	return &keys, nil
+}
+
+// storePeers adapts the fork's store and account manager to control.PeerLister.
+//
+// The peer listing lives on the *store*, not on the account manager — an
+// assumption control.PeerLister originally got wrong, and which its fake
+// happily satisfied because the fake was written against the invented
+// interface rather than the real one. The same class of gap that
+// TestRegistrationAgainstTheRealAccountManager exists to close for LoginPeer.
+type storePeers struct {
+	store    store.Store
+	accounts account.Manager
+}
+
+func (s *storePeers) GetAccountIDForPeerKey(ctx context.Context, key string) (string, error) {
+	return s.accounts.GetAccountIDForPeerKey(ctx, key)
+}
+
+func (s *storePeers) GetPeerByPeerPubKey(ctx context.Context, key string) (*nbpeer.Peer, error) {
+	return s.store.GetPeerByPeerPubKey(ctx, store.LockingStrengthShare, key)
+}
+
+// GetPeersFromAccount returns every peer in the account.
+//
+// Not filtered by what the requester may reach: §4.3 makes the server a
+// distributor of policy rather than an enforcement point, so reachability is
+// decided by the compiled packet filter in the datapath. Filtering here as
+// well would mean two places that must agree about access, which is one more
+// than can be kept correct.
+func (s *storePeers) GetPeersFromAccount(ctx context.Context, accountID, _, _ string) ([]*nbpeer.Peer, error) {
+	return s.store.GetAccountPeers(ctx, store.LockingStrengthShare, accountID, "", "")
+}
+
+// AccountPrefixes reports the prefix lengths of the account's overlay networks.
+//
+// Read from the account rather than assumed. The fork allocates a /16 out of
+// 100.64.0.0/10 and a /64 ULA today, and hard-coding those would be right until
+// the day an account is allocated differently — at which point every node would
+// come up with an interface whose prefix does not cover its peers, and the
+// symptom would be a network where nothing routes.
+func (s *storePeers) AccountPrefixes(ctx context.Context, accountID string) (uint8, uint8, error) {
+	network, err := s.store.GetAccountNetwork(ctx, store.LockingStrengthShare, accountID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("account network: %w", err)
+	}
+	v4, _ := network.Net.Mask.Size()
+	if v4 <= 0 {
+		// A zero-length mask would put every address in the world on-link. That
+		// is not a network to fall back to; it is one to refuse.
+		return 0, 0, fmt.Errorf("account %s has no usable IPv4 prefix", accountID)
+	}
+	// IPv6 is optional: an account allocated before ULA support has none, and a
+	// node with no IPv6 address does not need one.
+	v6, _ := network.NetV6.Mask.Size()
+	if v6 < 0 {
+		v6 = 0
+	}
+	return uint8(v4), uint8(v6), nil
+}
+
+// handler routes a decrypted request to the right sub-handler.
+//
+// The wire carries one opaque payload per request, so the first byte selects.
+// A oneof in the proto would be tidier and is the obvious later change; this
+// keeps the envelope free of message-type knowledge for now.
+type handler struct {
+	login  *control.LoginHandler
+	netmap *control.NetmapHandler
+}
+
+// Request kinds. Values are on the wire, so they may not be reordered.
+const (
+	KindLogin  byte = 1
+	KindNetmap byte = 2
+)
+
+func (h *handler) Handle(ctx context.Context, nodeID, identityPub, payload []byte) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, errors.New("karst: empty request")
+	}
+	kind, body := payload[0], payload[1:]
+	switch kind {
+	case KindLogin:
+		return h.login.Handle(ctx, nodeID, identityPub, body)
+	case KindNetmap:
+		return h.netmap.Handle(ctx, nodeID, identityPub, body)
+	default:
+		return nil, fmt.Errorf("karst: unknown request kind %d", kind)
+	}
+}

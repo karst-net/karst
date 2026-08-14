@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright the Karst contributors.
+//
+// Karst control-channel envelope and handshake — see ADR-0011.
+//
+// This is a *separate file* from management.proto on purpose. Upstream's proto
+// stays byte-identical to the fork point, so a cherry-picked security fix
+// applies without conflict. Everything Karst adds lives here.
+//
+// It replaces NetBird's EncryptedMessage, which fuses three roles into one
+// X25519 key — authentication handle, primary index, and transport encryption
+// key. Karst's identity is ML-DSA-65 plus a static ML-KEM-768 key and has no
+// such object, so the envelope names an opaque handle and carries the
+// cryptography separately.
+
+syntax = "proto3";
+
+// PeerSystemMeta is reused rather than redefined. It is upstream's message and
+// the business layer below the gRPC handlers consumes it directly, so
+// duplicating it would mean a translation layer whose only purpose is to
+// restate the same fields.
+import "management.proto";
+
+option go_package = "/proto";
+
+package management;
+
+// KarstLoginRequest registers a node or logs an existing one back in. It is
+// sent inside a KarstEnvelope, so it is already authenticated by the time the
+// server decodes it — the ML-DSA signature over the handshake transcript
+// verified before the channel existed.
+message KarstLoginRequest {
+  // Pre-shared auth key. Optional once the node is registered.
+  string setup_key = 1;
+  // Must be present: the business layer derives the peer's name and DNS label
+  // from the hostname and refuses a login without it.
+  PeerSystemMeta meta = 2;
+  repeated string dns_labels = 3;
+
+  // The node's PHREATIC data-plane keys. A Karst node holds three long-term
+  // keypairs (phreatic-v1.md §4): the ML-DSA-65 identity, which authenticates
+  // this control channel and is presented in ChannelInit, plus these two,
+  // which PHREATIC actually uses. The identity key is deliberately *not* used
+  // by PHREATIC.
+  //
+  // They are registered here because peers cannot handshake without them:
+  // "A node MUST know, for every peer it may communicate with, that peer's
+  // peer_id_hint, S_pk, D_pk and current per-pair PSK. These are distributed
+  // in the netmap."
+  bytes kem_public_key = 4;   // Static KEM S — ML-KEM-768, 1184 B
+  bytes dh_public_key = 5;    // Static DH D — X25519, 32 B
+
+  // OIDC ID token, for interactive registration (PLAN.md §4.2 step 2).
+  //
+  // An alternative to setup_key, not an addition: a node presents one or the
+  // other. A token that is present but does not validate is a hard failure —
+  // it must never fall through to the setup-key path, or an attacker with a
+  // stale token and a valid setup key would be recorded as whichever identity
+  // the token claimed.
+  //
+  // Single-use. The server registers each token so a captured one cannot
+  // enrol a second node.
+  string jwt_token = 6;
+}
+
+// KarstNetmapRequest asks for the caller's current view of the network.
+message KarstNetmapRequest {
+  // Version the node already holds; zero means "I have nothing".
+  //
+  // The version is a CONTENT HASH, not a counter: identical netmaps always
+  // yield the same version, so the server can answer "nothing changed" without
+  // keeping per-node history — which is what preserves the O(1) server state
+  // §2.6 chose. When it matches, the response sets `unchanged` and omits the
+  // peer list.
+  //
+  uint64 known_version = 1;
+
+  // What the node currently holds, one digest per peer.
+  //
+  // This is how delta push avoids per-node server history. The obvious design
+  // — remember what each node was last sent — costs O(nodes x history) state
+  // and gives up the O(1) property §2.6 chose deliberately. Instead the
+  // *request* carries the state: the node says what it has, and the server
+  // replies with only what differs.
+  //
+  // The saving is large because a digest is 8 bytes against roughly 2.4 KB for
+  // a peer entry (a 1184-byte KEM key, a 32-byte DH key, two 32-byte PSKs,
+  // addresses). At 200 peers that is a 1.6 KB request instead of a ~480 KB
+  // response.
+  //
+  // Empty means "send everything", which is also what a first connection does.
+  repeated KarstPeerDigest holds = 2;
+}
+
+// KarstPeerDigest is a node's summary of one peer entry it holds.
+message KarstPeerDigest {
+  bytes node_id = 1;
+  // Digest over the peer's routable content and the PSK epoch — never over the
+  // PSK bytes themselves, for the same reason the netmap version excludes
+  // them: a value the node computes and sends must not be a function of secret
+  // material.
+  //
+  // Because a PSK is determined by (pair, epoch, master), covering the epoch
+  // detects a rotation. It follows that **rotating the master key without
+  // advancing the epoch would leave every digest unchanged and every node
+  // holding a stale PSK**; the epoch must advance whenever the master does.
+  uint64 digest = 2;
+}
+
+// KarstNetmapPeer is one peer as the requesting node needs to see it.
+message KarstNetmapPeer {
+  bytes node_id = 1;
+  repeated string allowed_ips = 2;
+  string dns_name = 3;
+  string endpoint = 4;
+
+  // PHREATIC keys (phreatic-v1.md §4).
+  bytes kem_public_key = 5;   // S_pk, 1184 B
+  bytes dh_public_key = 6;    // D_pk, 32 B
+
+  // The per-pair PSK for (recipient, this peer) at psk_epoch (PLAN.md §2.6).
+  //
+  // THIS FIELD IS THE REASON THE CONTROL CHANNEL HAS ITS OWN CRYPTOGRAPHIC
+  // LAYER INSIDE TLS (ADR-0011). A netmap on the wire in plaintext hands every
+  // PSK in the network to anything that terminates TLS. It must never be
+  // logged; see package psk, where the type refuses to render.
+  //
+  // Empty means no PSK is available for this pair, and the node falls back to
+  // an all-zero PSK (§2.6). Such sessions are lattice-only and must be flagged
+  // in the crypto posture view.
+  bytes psk = 7;
+
+  // The same pair's PSK at psk_epoch - 1.
+  //
+  // phreatic-v1.md §7.3: "Responders MUST accept epoch n and n-1 and MUST
+  // reject any other." Shipping only the current epoch would mean that during
+  // a rotation, a node that has refetched cannot answer a peer that has not —
+  // and §7.3's fallback would turn that into a silently lattice-only session
+  // rather than a failure. Carrying both is what makes a rotation
+  // uninterrupted *and* undegraded.
+  //
+  // Empty when psk_epoch is 0, which has no predecessor.
+  bytes psk_previous = 8;
+}
+
+message KarstNetmapResponse {
+  uint64 version = 1;
+  // Selects which PSK generation these keys belong to; carried in PHREATIC
+  // msg1 so the two ends agree on a generation (phreatic-v1.md §13.2).
+  uint32 psk_epoch = 2;
+
+  bytes node_id = 3;
+  repeated string addresses = 4;
+  string dns_name = 5;
+
+  repeated KarstNetmapPeer peers = 6;
+
+  // The ACL-derived packet filter for this node (PLAN.md §4.3), compiled by
+  // the server and enforced by the Rust datapath on BOTH ingress and egress.
+  //
+  // Compiled per node rather than shipped whole: a node learns nothing about
+  // rules that do not involve it, so the netmap does not leak the shape of the
+  // rest of the network.
+  //
+  // An empty list means DEFAULT DENY, not "unfiltered". A node that reads it
+  // the other way inverts the policy — which is why `unchanged` exists as a
+  // separate flag rather than being inferred from emptiness.
+  repeated KarstFilterRule packet_filter = 9;
+
+  // The same policy compiled for the traffic this node *originates* (§4.3).
+  //
+  // Not derivable from packet_filter: Karst's ACLs are unidirectional grants,
+  // so a node's inbound rules say nothing about what it may send. Both are
+  // needed for "enforced on both ends".
+  //
+  // The receiver's check is the one carrying the security property — a
+  // compromised sender ignores its own filter. This one makes a denied flow
+  // fail locally and immediately instead of being dropped after a round trip,
+  // and keeps forbidden traffic away from a peer's crypto entirely.
+  //
+  // An empty list is DEFAULT DENY here too.
+  repeated KarstEgressRule egress_filter = 12;
+
+  // True when `peers` contains only entries that changed, and `removed_peers`
+  // names those to drop. False means `peers` is the complete set and anything
+  // absent from it should be discarded.
+  //
+  // A node MUST NOT infer this from whether `removed_peers` is empty: a delta
+  // with nothing removed and a full netmap that happens to list every peer are
+  // otherwise indistinguishable, and reading one as the other either strands
+  // removed peers or drops live ones.
+  bool delta = 10;
+
+  // Peers to forget. Only meaningful when `delta` is true.
+  repeated bytes removed_peers = 11;
+
+  // True when the node's known_version already matched: `peers` is empty and
+  // the node should keep what it has.
+  //
+  // Distinct from "an empty peer list", which is a real state — a node alone
+  // in its network — and which a node must act on by dropping every peer it
+  // holds. Conflating them would leave a removed peer configured forever.
+  bool unchanged = 7;
+}
+
+// KarstPortRange is inclusive at both ends. A single port is a range of one.
+message KarstPortRange {
+  uint32 first = 1;
+  uint32 last = 2;
+}
+
+// KarstFilterRule permits traffic from any of `srcs` to this node on `ports`.
+message KarstFilterRule {
+  // Node handles, or "*" for any source.
+  repeated string srcs = 1;
+  repeated KarstPortRange ports = 2;
+}
+
+// KarstEgressRule permits traffic from this node to any of `dsts` on `ports`.
+//
+// The mirror of KarstFilterRule. A separate message rather than the same one
+// with a renamed field, because a rule whose direction is implied by which
+// list it appears in is one substitution away from inverting a policy.
+message KarstEgressRule {
+  // Node handles, or "*" for any destination.
+  repeated string dsts = 1;
+  repeated KarstPortRange ports = 2;
+}
+
+message KarstLoginResponse {
+  // The server-assigned handle. Derived from the node's ML-DSA identity, and
+  // the value to put in KarstEnvelope.node_id on later connections.
+  bytes node_id = 1;
+  string peer_ip = 2;
+  string dns_name = 3;
+}
+
+// KarstControlService is a *parallel* service to ManagementService, not a
+// replacement for its handlers.
+//
+// Spike 0001 §5.2a found that NetBird's identity fusion lives entirely in the
+// gRPC layer: below it, the business layer is string-keyed. LoginPeer,
+// GetAccountIDForPeerKey and the login filter all take the peer handle as a
+// plain string and never perform a key operation on it. So Karst can reuse
+// that layer wholesale and leave the forked gRPC handlers untouched — which
+// matters, because those files are where upstream security fixes land and
+// every line we change there is a future cherry-pick conflict.
+service KarstControlService {
+  // Session carries the whole node<->server relationship on one stream.
+  //
+  // Bidirectional because the server must speak first: it contributes the
+  // freshness the node signs over (ADR-0011). A unary handshake would either
+  // lose that or need a round trip to fetch a challenge.
+  //
+  // Named Session rather than Connect because tonic generates a client method
+  // per RPC, and a `connect` method would collide with the generated client's
+  // own `connect` constructor. A protocol whose method names depend on the
+  // generator is fragile; this one does not have to be.
+  rpc Session(stream KarstClientMessage) returns (stream KarstServerMessage) {}
+}
+
+// KarstServerMessage is ChannelHello once, then envelopes.
+message KarstServerMessage {
+  oneof msg {
+    ChannelHello hello = 1;
+    KarstEnvelope envelope = 2;
+  }
+}
+
+// KarstClientMessage is ChannelInit once, then envelopes.
+message KarstClientMessage {
+  oneof msg {
+    ChannelInit init = 1;
+    KarstEnvelope envelope = 2;
+  }
+}
+
+// KarstEnvelope wraps every control-plane message once a channel is up.
+//
+// node_id is an authentication handle and a database index. It is *not* key
+// material and no key operation is defined on it. That separation is the whole
+// point of ADR-0011; do not add a field here that is both.
+message KarstEnvelope {
+  // Server-assigned, opaque. Empty only on the very first ChannelInit of a
+  // registration, before an ID exists.
+  bytes node_id = 1;
+
+  // ChaCha20-Poly1305 ciphertext of the inner message under the channel key.
+  bytes body = 2;
+
+  // Per-channel monotonic counter, and the AEAD nonce input. Never reused
+  // under one channel key; a receiver rejects any seq it has already accepted.
+  uint64 seq = 3;
+
+  // Envelope format version. 1 = the construction in ADR-0011.
+  uint32 version = 4;
+}
+
+// ChannelHello opens a channel. Server speaks first: it must contribute
+// freshness before the node signs anything, or the node's signature could be
+// replayed onto another connection.
+message ChannelHello {
+  // Identifies which pinned static server key the node should encapsulate to,
+  // so the server can rotate without breaking nodes mid-rotation.
+  bytes server_kem_pk_id = 1;
+
+  // Per-connection ephemeral ML-KEM-768 public key (1184 B).
+  //
+  // MUST be verified against `signature` before use. An earlier revision left
+  // it unsigned on the reasoning that substituting it makes the channel fail
+  // closed. That is true of authentication and false of forward secrecy:
+  // ProVerif found a trace where the attacker sends the server's own *static*
+  // public key as the ephemeral, the node encapsulates both ciphertexts to one
+  // long-term key, and every recorded session decrypts when that key later
+  // leaks. The node transmits before the channel dies, so "fails closed" does
+  // not save it. See spec/models/karst-control.pv.
+  bytes eph_kem_pk = 2;
+
+  // 32 bytes of server randomness. The stream affords a round trip, so
+  // freshness comes from the server rather than from a timestamp with a
+  // clock-skew window as in PHREATIC msg1 (spec §5).
+  bytes server_random = 3;
+
+  // ML-DSA-65 signature (3309 B) by the server's identity key over
+  //   H("karst-control-hello-v1" ‖ server_random ‖ eph_kem_pk)
+  //
+  // This is what makes the ephemeral key genuinely ephemeral, and so what
+  // makes forward secrecy real. The node pins the server's verification key at
+  // enrolment alongside its static KEM key, and MUST abort if this does not
+  // verify — before sending anything, because ChannelInit is followed
+  // immediately by a request that may carry an auth key.
+  bytes signature = 4;
+
+  uint32 version = 5;
+}
+
+// ChannelInit answers it and establishes the channel key.
+//
+//   (ss_s, ct_static) = ML-KEM-768.Encaps(server_static_kem_pk)
+//   (ss_e, ct_eph)    = ML-KEM-768.Encaps(eph_kem_pk)
+//   k = HKDF-SHA-512(ss_s || ss_e,
+//         "karst-control-v1" || server_random || ct_static || ct_eph)
+//
+// Both encapsulations are load-bearing and neither is redundant: ct_static
+// authenticates the server implicitly (only the real server can decapsulate
+// it), ct_eph provides forward secrecy against later compromise of the
+// server's static key. See ADR-0011 for why that matters here specifically —
+// the netmap carries per-pair PSKs.
+message ChannelInit {
+  // ML-KEM-768 ciphertext to the server's pinned static key (1088 B).
+  bytes ct_static = 1;
+
+  // ML-KEM-768 ciphertext to the ephemeral key from ChannelHello (1088 B).
+  bytes ct_eph = 2;
+
+  // ML-DSA-65 public key (1952 B). Present only when registering: a node that
+  // already exists is looked up by node_id and its stored key is used. A
+  // presented key is bound to the new node record on success.
+  bytes identity_pk = 3;
+
+  // Empty during first registration.
+  bytes node_id = 4;
+
+  // ML-DSA-65 signature (3309 B) over
+  //   "karst-control-init-v1" || server_random || ct_static || ct_eph || node_id
+  //
+  // Only the init is signed. Because the signature covers both ciphertexts and
+  // k derives from them, possession of k on later messages is already
+  // attributable to whoever signed this. Signing every message would cost
+  // 3309 B to prove what the AEAD proves for free.
+  bytes signature = 5;
+
+  uint32 version = 6;
+}
