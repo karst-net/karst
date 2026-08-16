@@ -154,6 +154,20 @@ impl PathSet {
         });
     }
 
+    /// Forget an unconfirmed candidate that was evicted from the probe queue.
+    ///
+    /// A confirmed path is evidence of reachability and is never removed by a
+    /// later advertisement. It ages out through normal path selection instead.
+    pub fn remove_unconfirmed_candidate(&mut self, addr: SocketAddr) {
+        if let Some(index) = self
+            .paths
+            .iter()
+            .position(|path| path.addr == addr && path.last_pong_ms.is_none())
+        {
+            self.paths.remove(index);
+        }
+    }
+
     /// Record that a `Ping` bearing `tx` was sent to `addr`.
     ///
     /// The association recorded here is the whole of §7.1's protection: the

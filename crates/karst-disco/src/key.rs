@@ -145,7 +145,14 @@ impl TagTable {
     /// 200 peers — but a silent overwrite would make one peer undiscoverable
     /// for an epoch with nothing to show for it, so the caller is told.
     pub fn insert(&mut self, tag: [u8; TAG_LEN], peer: PeerIndex) -> bool {
-        matches!(self.by_tag.insert(tag, peer), Some(prev) if prev != peer)
+        match self.by_tag.get(&tag).copied() {
+            Some(previous) if previous != peer => true,
+            Some(_) => false,
+            None => {
+                self.by_tag.insert(tag, peer);
+                false
+            }
+        }
     }
 
     /// Resolve a tag seen on the wire.
@@ -277,8 +284,9 @@ mod tests {
         let tag = [9u8; TAG_LEN];
         assert!(!t.insert(tag, PeerIndex(1)));
         assert!(t.insert(tag, PeerIndex(2)), "collision not reported");
-        // Re-registering the same peer is not a collision.
-        assert!(!t.insert(tag, PeerIndex(2)));
+        assert_eq!(t.get(&tag), Some(PeerIndex(1)), "collision overwrote owner");
+        // Re-registering the owning peer is not a collision.
+        assert!(!t.insert(tag, PeerIndex(1)));
     }
 
     #[test]

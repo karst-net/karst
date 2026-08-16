@@ -16,6 +16,7 @@
 
 pub mod config;
 pub mod control;
+pub mod disco;
 pub mod engine;
 pub mod filter;
 pub mod ipc;

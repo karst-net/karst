@@ -62,6 +62,15 @@ pub mod consts {
     /// receiver and a non-truncating sender disagree about what was said.
     pub const MAX_CANDIDATES: usize = 16;
 
+    /// Most candidate paths remembered for one peer.
+    ///
+    /// `MAX_CANDIDATES` limits one advertisement, not the number of distinct
+    /// addresses an authenticated but malicious peer can name over time. This
+    /// cap bounds the state and the scheduler work that peer can cause. When
+    /// full, the oldest unconfirmed candidate is evicted for the new one;
+    /// confirmed paths are retained for the staleness and hysteresis rules.
+    pub const MAX_PATHS_PER_PEER: usize = 64;
+
     /// Largest legal datagram: a sixteen-candidate `CallMeMaybe`.
     ///
     /// Checked before anything else, so a length field never sizes an

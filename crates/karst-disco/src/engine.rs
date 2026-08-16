@@ -23,7 +23,9 @@
 
 use std::net::SocketAddr;
 
-use crate::consts::{ADVERTISE_MIN_INTERVAL_MS, KEEPALIVE_MS, PROBE_BACKOFF_MS, REPROBE_MS};
+use crate::consts::{
+    ADVERTISE_MIN_INTERVAL_MS, KEEPALIVE_MS, MAX_PATHS_PER_PEER, PROBE_BACKOFF_MS, REPROBE_MS,
+};
 use crate::msg::{Endpoint, TxId};
 use crate::path::{PathKind, PathSet, ProbeError};
 
@@ -64,6 +66,9 @@ pub struct Engine {
     /// Our own candidates, as last advertised.
     local: Vec<Endpoint>,
     last_advertise_ms: Option<u64>,
+    /// Last authenticated candidate advertisement accepted from this peer.
+    /// This is separate from `last_advertise_ms`, which limits what *we* send.
+    last_remote_advertise_ms: Option<u64>,
     advertise_pending: bool,
     last_keepalive_ms: Option<u64>,
     last_reprobe_ms: Option<u64>,
@@ -84,6 +89,7 @@ impl Engine {
             queue: Vec::new(),
             local: Vec::new(),
             last_advertise_ms: None,
+            last_remote_advertise_ms: None,
             advertise_pending: false,
             last_keepalive_ms: None,
             last_reprobe_ms: None,
@@ -123,7 +129,6 @@ impl Engine {
     /// arrived in a `CallMeMaybe` is probed on this poll rather than on the
     /// backoff schedule, because the peer is probing ours at the same moment.
     pub fn add_peer_candidate(&mut self, addr: SocketAddr, now_ms: u64, immediate: bool) {
-        self.paths.add_candidate(addr, PathKind::direct_for(addr));
         if let Some(existing) = self.queue.iter_mut().find(|s| s.addr == addr) {
             if immediate {
                 existing.due_ms = now_ms;
@@ -135,6 +140,26 @@ impl Engine {
             }
             return;
         }
+
+        // A peer can name sixteen addresses per CallMeMaybe indefinitely. The
+        // queue is therefore a bounded resource, not a historical record.
+        // Evict the oldest unconfirmed candidate first; confirmed paths have
+        // demonstrated reachability and remain subject to normal staleness.
+        if self.queue.len() >= MAX_PATHS_PER_PEER {
+            let evict = self
+                .queue
+                .iter()
+                .position(|scheduled| {
+                    self.paths
+                        .paths()
+                        .iter()
+                        .any(|path| path.addr == scheduled.addr && path.last_pong_ms.is_none())
+                })
+                .unwrap_or(0);
+            let evicted = self.queue.remove(evict);
+            self.paths.remove_unconfirmed_candidate(evicted.addr);
+        }
+        self.paths.add_candidate(addr, PathKind::direct_for(addr));
         self.queue.push(Scheduled {
             addr,
             due_ms: now_ms,
@@ -143,16 +168,24 @@ impl Engine {
     }
 
     /// Handle an authenticated `CallMeMaybe` — §7.3.
-    pub fn on_call_me_maybe(&mut self, candidates: &[Endpoint], now_ms: u64) {
+    pub fn on_call_me_maybe(&mut self, candidates: &[Endpoint], now_ms: u64) -> bool {
+        if self
+            .last_remote_advertise_ms
+            .is_some_and(|last| now_ms.saturating_sub(last) < ADVERTISE_MIN_INTERVAL_MS)
+        {
+            return false;
+        }
+        self.last_remote_advertise_ms = Some(now_ms);
         for c in candidates {
             self.add_peer_candidate(c.0, now_ms, true);
         }
+        true
     }
 
     /// Note that a probe was answered, so its backoff resets.
     pub fn on_confirmed(&mut self, addr: SocketAddr) {
-        if let Some(s) = self.queue.iter_mut().find(|s| s.addr == addr) {
-            s.attempts = 0;
+        if let Some(scheduled) = self.queue.iter_mut().find(|s| s.addr == addr) {
+            scheduled.attempts = 0;
         }
     }
 
@@ -366,6 +399,37 @@ mod tests {
             vec![v4(7)],
             "the peer said where it is and we waited out a backoff anyway"
         );
+    }
+
+    #[test]
+    fn remote_candidate_advertisements_are_rate_limited() {
+        let mut e = Engine::new();
+        assert!(e.on_call_me_maybe(&[Endpoint(v4(7))], 0));
+        assert!(!e.on_call_me_maybe(&[Endpoint(v4(8))], ADVERTISE_MIN_INTERVAL_MS - 1));
+        assert!(e.on_call_me_maybe(&[Endpoint(v4(8))], ADVERTISE_MIN_INTERVAL_MS));
+    }
+
+    #[test]
+    fn candidates_are_bounded_per_peer() {
+        let mut e = Engine::new();
+        for batch in 0..5u16 {
+            let candidates: Vec<Endpoint> = (0..crate::consts::MAX_CANDIDATES)
+                .map(|n| {
+                    Endpoint(SocketAddr::from((
+                        [
+                            10,
+                            0,
+                            u8::try_from(batch).unwrap_or(0),
+                            u8::try_from(n).unwrap_or(0),
+                        ],
+                        10_000 + batch * 100 + u16::try_from(n).unwrap_or(0),
+                    )))
+                })
+                .collect();
+            assert!(e.on_call_me_maybe(&candidates, u64::from(batch) * ADVERTISE_MIN_INTERVAL_MS,));
+        }
+        assert_eq!(e.queue.len(), MAX_PATHS_PER_PEER);
+        assert!(e.paths().paths().len() <= MAX_PATHS_PER_PEER);
     }
 
     #[test]

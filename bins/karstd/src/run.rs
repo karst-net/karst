@@ -20,11 +20,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
 use karst_tun::{Tun, TunConfig};
 
 use crate::config::Config;
+use crate::disco;
 use crate::engine::{Engine, Output};
 use crate::ipc;
 use crate::random_seed;
@@ -132,6 +134,13 @@ pub fn run_with_control(
     // PLAN.md §3.4. Wrapping it in one here would undo all of that.
     let engine = Engine::new(config);
 
+    // AVEN state, shared between the receive loop and the timer that drives
+    // probing. Empty for now: the disco key is per-pair netmap material
+    // (aven-v1.md §5.1) and the netmap does not carry it yet, so every peer
+    // stays on its relay path — which is the correct behaviour for a node with
+    // no key rather than a degraded one. See PLAN.md Phase 4.
+    let disco = Mutex::new(disco::Disco::new(0));
+
     // Initial handshakes, before either thread starts.
     dispatch(
         engine.connect_all(now_ms(started), random_seed),
@@ -190,8 +199,7 @@ pub fn run_with_control(
                     let Some(datagram) = buf.get(..m.len) else {
                         continue;
                     };
-                    let out =
-                        engine.inbound(datagram, m.from, now_ms(started), &responder_randomness());
+                    let out = demultiplex(datagram, m.from, now_ms(started), &disco, &engine);
                     dispatch(out, &socket, &tun);
                 }
             }
@@ -244,7 +252,9 @@ pub fn run_with_control(
         // ── timers ─────────────────────────────────────────────────────────
         while !shutdown.requested() {
             std::thread::sleep(TICK);
-            dispatch(engine.poll(now_ms(started), random_seed), &socket, &tun);
+            let now = now_ms(started);
+            dispatch(engine.poll(now, random_seed), &socket, &tun);
+            dispatch(disco_poll(&disco, now), &socket, &tun);
         }
     });
 
@@ -253,6 +263,29 @@ pub fn run_with_control(
     // clean one.
     let _ = std::fs::remove_file(socket_path);
     Ok(())
+}
+
+/// Advance AVEN's timers and turn its probe intents into ordinary UDP output.
+///
+/// AVEN owns reachability discovery, while the run loop owns the shared socket;
+/// keeping the conversion here prevents the sans-io discovery crate from
+/// acquiring an I/O dependency. The peer set is empty until control-plane
+/// netmaps carry disco keys, but driving this now is important: adding a peer
+/// must not also require remembering to add a second timer path.
+fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64) -> Output {
+    let mut state = disco
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let datagrams = state.poll(now_ms, || {
+        let seed = random_seed();
+        let mut tx = [0u8; 12];
+        tx.copy_from_slice(&seed[..12]);
+        TxId(tx)
+    });
+    Output {
+        datagrams,
+        packets: Vec::new(),
+    }
 }
 
 /// Update the installed routes, recovering from a poisoned lock.
@@ -496,6 +529,42 @@ fn report(
 }
 
 /// Perform the I/O an engine asked for.
+/// Decide which protocol an arriving datagram belongs to, and handle it.
+///
+/// AVEN shares the datapath socket with PHREATIC — `aven-v1.md` §4, and it must,
+/// because a path is only useful if it is the one PHREATIC will take and a NAT
+/// binding proven on one port says nothing about another.
+///
+/// `Disco` is asked first and **falls through on anything it cannot
+/// authenticate**, not merely on a missing magic. That distinction is the whole
+/// of the demultiplexer's correctness: `phreatic-v1.md` §5 begins every datagram
+/// with a CSPRNG-drawn `reassembly_id`, so roughly one in 2^32 starts with
+/// AVEN's four bytes by chance, and a decision made on the magic alone would
+/// discard a real fragment about once a day on a busy node with nothing in any
+/// log to explain it.
+fn demultiplex(
+    datagram: &[u8],
+    from: std::net::SocketAddr,
+    now_ms: u64,
+    disco: &Mutex<disco::Disco>,
+    engine: &Engine,
+) -> Output {
+    let verdict = match disco.lock() {
+        Ok(mut d) => d.inbound(datagram, from, now_ms),
+        // A poisoned lock means another thread panicked holding it. Dropping
+        // the datagram would be a silent connectivity failure; the discovery
+        // state is a cache of reachability, so carrying on with it is safe.
+        Err(poisoned) => poisoned.into_inner().inbound(datagram, from, now_ms),
+    };
+    match verdict {
+        disco::Verdict::Handled(datagrams) => Output {
+            datagrams,
+            packets: Vec::new(),
+        },
+        disco::Verdict::NotAven => engine.inbound(datagram, from, now_ms, &responder_randomness()),
+    }
+}
+
 fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun) {
     match out.datagrams.len() {
         0 => {}

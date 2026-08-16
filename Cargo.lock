@@ -888,6 +888,7 @@ dependencies = [
  "getrandom 0.3.4",
  "karst-control-client",
  "karst-crypto",
+ "karst-disco",
  "karst-node",
  "karst-noise",
  "karst-proto",

@@ -105,6 +105,10 @@ impl std::error::Error for Error {}
 pub struct Identity {
     signing: ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa65>,
     public: Vec<u8>,
+    /// Secret material for deriving local-at-rest keys. This is derived once
+    /// from the seed rather than from `public`: an encryption key made from a
+    /// public verification key protects nothing from a reader of the cache.
+    cache_key: [u8; 32],
 }
 
 impl std::fmt::Debug for Identity {
@@ -121,9 +125,19 @@ impl Identity {
     /// Derive a key from a 32-byte seed.
     #[must_use]
     pub fn from_seed(seed: &[u8; IDENTITY_SEED_LEN]) -> Self {
+        use sha2::{Digest as _, Sha256};
+
         let signing = ml_dsa::ExpandedSigningKey::<ml_dsa::MlDsa65>::from_seed(&(*seed).into());
         let public = signing.verifying_key().encode().to_vec();
-        Self { signing, public }
+        let mut h = Sha256::new();
+        h.update(b"karst-netmap-cache-key-v1");
+        h.update(seed);
+        let cache_key: [u8; 32] = h.finalize().into();
+        Self {
+            signing,
+            public,
+            cache_key,
+        }
     }
 
     /// Load a seed, or create one on first run.
@@ -163,6 +177,13 @@ impl Identity {
     #[must_use]
     pub fn handle(&self) -> String {
         karst_control_client::handle(&self.public)
+    }
+}
+
+impl Drop for Identity {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.cache_key.zeroize();
     }
 }
 
@@ -600,20 +621,11 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
 
 /// The key sealing the on-disk netmap cache.
 ///
-/// Bound to the node's identity, so a cache copied to another machine is
-/// unreadable there — and separated from the identity's signing use by a domain
-/// label, so the two derivations cannot collide.
+/// Derived from the node's *secret* identity seed, so a cache copied to another
+/// machine is unreadable there. The domain label separates this local-at-rest
+/// use from the signing operation.
 fn cache_seal_key(identity: &Identity) -> [u8; 32] {
-    use sha2::{Digest as _, Sha256};
-    let mut h = Sha256::new();
-    h.update(b"karst-netmap-cache-key-v1");
-    h.update(&identity.public);
-    let out = h.finalize();
-    let mut key = [0u8; 32];
-    for (dst, src) in key.iter_mut().zip(out.iter()) {
-        *dst = *src;
-    }
-    key
+    identity.cache_key
 }
 
 /// A fresh nonce for each cache write.
@@ -766,6 +778,19 @@ mod tests {
 
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode & 0o077, 0, "identity key is mode {mode:04o}");
+    }
+
+    #[test]
+    fn cache_key_is_not_derivable_from_the_public_identity() {
+        use sha2::{Digest as _, Sha256};
+
+        let identity = Identity::from_seed(&[0x42; IDENTITY_SEED_LEN]);
+        let mut public_only = Sha256::new();
+        public_only.update(b"karst-netmap-cache-key-v1");
+        public_only.update(&identity.public);
+        let public_only: [u8; 32] = public_only.finalize().into();
+
+        assert_ne!(cache_seal_key(&identity), public_only);
     }
 
     /// An existing key file others can read is refused, for the same reason the
