@@ -350,6 +350,22 @@ relays hears the same mapping from both when its NAT has endpoint-independent
 mapping, and hears two different ones when it does not — and that disagreement
 is a signal in its own right, discussed in §7.6.
 
+**A candidate that cannot answer is still worth probing, and this is the reason
+§7.5's backoff sends four probes rather than one.** A probe leaves the local
+NAT addressed to the candidate's host, which is what installs that host in the
+local NAT's filter — and the filter is what decides whether the *peer's* probe
+is admitted, on whatever source port the peer's own NAT chose. So a node behind
+a symmetric NAT, whose every advertised address is a mapping toward somebody
+else and therefore a dead letter, is nonetheless reached directly by a peer
+whose NAT restricts by address rather than by port: the peer's useless probe
+opened the door that the node's probe then walked through.
+
+Implementations MUST NOT, therefore, suppress a probe on the grounds that the
+candidate is unlikely to be reachable. The probe's second effect does not
+depend on its first succeeding. `bins/karstd/tests/tailnet.rs` exercises
+exactly this pairing, and it is the reason a symmetric NAT is disqualifying
+only against another port-restricted one.
+
 ### 7.3 Candidate exchange
 
 `CallMeMaybe` is sent **over the relay**, which is what makes simultaneous open
@@ -696,6 +712,21 @@ must not be carried across to AVEN, where the MAC's job is different.
    birthday-paradox port prediction; nothing here says how many ports to try,
    at what rate, or how that interacts with §7.5's rate limit — which it
    plainly does, since the technique is "send many probes at once".
+
+   **The case that needs it is narrower than "symmetric NAT", and measurement
+   rather than argument established that.** A symmetric NAT facing a reachable
+   peer goes direct on §7.2's arrived-from rule, and a symmetric NAT facing an
+   address-restricted cone goes direct on the paragraph above. The unreachable
+   intersection is both ends symmetric — both mappings unpredictable *and* both
+   filters port-dependent. PLAN.md §"Phase 4" carries the seven topologies and
+   which five connect.
+
+   This narrowing is a reason to specify port prediction carefully rather than
+   quickly. It buys one row, against a technique that is loud by construction,
+   and §7.5 exists precisely so that AVEN cannot be turned into a packet
+   source. A design that spends the rate budget on the common case to reach an
+   uncommon one is a bad trade, and the specification should say which budget
+   it spends.
 5. **No path-MTU interaction.** A direct path may have a smaller MTU than the
    relay path, and AVEN reports nothing about it. PLAN.md schedules PMTU
    discovery for Phase 6; until then a path can be selected that black-holes

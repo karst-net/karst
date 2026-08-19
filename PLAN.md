@@ -2915,37 +2915,101 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- Full NAT test matrix in CI (§6) — hairpinning and NAT64/DNS64 still to
-  build. **The `karstd`-through-a-NAT half now covers the port-restricted cone
-  in both its one-sided and two-sided forms**, which is the shape most users
-  are behind; symmetric and CGNAT rows are what turn the criterion into a
-  number, and they are also the rows server-reflexive discovery does not help
-  with, so port prediction has to land before they can be expected to pass.
+- 🔶 **Full NAT test matrix in CI (§6) — seven `karstd` topologies now run end
+  to end, and five of them reach a direct path.** Hairpinning, NAT64/DNS64 and
+  double-NAT are still to build.
 
-  With nine matrix rows the instrument is good enough to measure against, and
-  three `karstd` rows now run across it, so **the remaining step is coverage
-  rather than capability**: the same fixture over the other topologies. Nothing
-  in the product blocks it.
+  | # | Node A is behind | Node B is behind | Result |
+  |---|---|---|---|
+  | 1 | *(nothing)* | *(nothing)* | direct |
+  | 2 | port-restricted cone | *(nothing)* | direct |
+  | 3 | port-restricted cone | port-restricted cone | direct |
+  | 4 | symmetric | *(nothing)* | direct |
+  | 5 | symmetric | address-restricted cone | direct |
+  | 6 | symmetric | symmetric | **relay** |
+  | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
 
-  Finding 23 is the caution to carry into that work. The instrument is only as
-  honest as its weakest topology, and a NAT that is missing a filter chain
+  Each row is a whole tailnet — Go control server, relay, two daemons, real TUN
+  devices — not a probe against a socket, and each ends with a TCP conversation
+  under a port-scoped ACL. Together they run in 284 seconds.
+
+  **Rows 4 and 5 are the ones that changed the picture, and both say the same
+  thing: "symmetric NAT" is a property of a *pair*, not of a node.** Row 4 goes
+  direct because B is publicly reachable, so A's probe crosses first and finding
+  20's rule makes B adopt the address it *arrived from* — which is the mapping
+  toward B, the one allocation that matters, and the one nobody could have
+  predicted. Row 5 goes direct because an address-restricted cone never asks
+  anyone to predict a port: it admits any port from an address it has already
+  sent to. Only row 6, where both filters are port-dependent and both mappings
+  are unpredictable, actually needs port prediction.
+
+  Row 5 also turned up a pleasing detail. A's reflexive address is a dead
+  letter as a destination — B's probe to it is dropped — and it is nonetheless
+  load-bearing, because sending to it is what puts A's outer address in B's
+  filter. A candidate that never answers can still do the work. That is an
+  argument for §7.2 keeping unanswered candidates that the specification did not
+  previously make.
+
+  **Rows 6 and 7 are assertions about staying put, and they are the ones worth
+  reading carefully.** Neither merely waits for a timeout: each establishes on
+  the relay, then holds the pair under observation for 75 seconds — several
+  `Reflect` round trips, a full probe backoff, and one re-probe of every
+  alternative — and fails if either node ever reports `direct`. The failure
+  being guarded against is not "no direct path". It is a node advertising an
+  address it is not reachable at, a peer believing it, and `karst status`
+  reporting success over a black hole.
+
+  All three new rows are checked against their own defect, which is the
+  discipline finding 23 bought:
+
+  | Row | Mutation | Result |
+  |---|---|---|
+  | 5 | B's NAT made port-restricted instead | fails — 212 s, never converges |
+  | 6 | `fully-random` removed from both NATs | fails — direct in 5 s |
+  | 7 | the UDP drop removed | fails — direct in 31 s |
+
+  Finding 23 remains the caution for every row added from here. The instrument
+  is only as honest as its weakest topology, and a NAT missing a filter chain
   reports a *product* failure — the fixture said "port-restricted cone" and
-  behaved like a symmetric one for two days' worth of debugging. Every row
-  added from here gets the same treatment §6's negative assertions already
-  get.
+  behaved like a symmetric one for two days' worth of debugging.
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is
   automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind
   a different symmetric CGNAT.
 
-  **Two of the three now hold, and the order they unblocked in was the one
-  predicted.** Candidate gathering and advertisement made a direct connection
-  possible at all; PHREATIC over the relay made "fallback" mean something, and
-  made the upgrade a transition between two working paths rather than between a
-  working path and nothing. What remains is the measurement, which needs the six
-  missing matrix rows — and a percentage produced before them would be measuring
-  four topologies and reporting ten, the same mistake the matrix work was built
-  to prevent one level down (§"NAT matrix — the instrument, validated").
+  **Two of the three hold. The third does not, and there is now a number rather
+  than an expectation.**
+
+  *Relay fallback is automatic and lossless* — row 7 above is the clean
+  statement of it. Every other row lets AVEN work and watches the relay lose to
+  it, which tests the upgrade rather than the fallback; row 7 drops every UDP
+  datagram in both directions, so there is no discovery to lose to. The pair
+  establishes, stays established for the whole observation window, and carries
+  TCP under the ACL with the drop counters at zero. `Engine::via` picks the
+  relay because no direct endpoint exists, and nothing above it knows the
+  difference.
+
+  *≥ 90% direct-connection rate* — **five of seven topologies, which is 71%,
+  or 83% over the six where a direct path exists at all.** Both figures are
+  below the criterion and both are reported rather than the flattering one
+  alone. Two further honesties belong with them. The denominator is a set of
+  topologies chosen here, not a population weighted by how common each NAT is
+  in the field, so this is a capability count and not the rate the criterion
+  means; producing the latter needs field data this project does not have.
+  And three shapes are still unbuilt — double NAT, hairpinning, NAT64/DNS64 —
+  of which double NAT is the one the third criterion names.
+
+  *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
+  CGNAT* — **no.** Row 6 is that case, it stays on the relay, and it stays
+  there for exactly one missing capability: port prediction. What the row does
+  establish is that the failure is graceful rather than silent, and rows 4 and
+  5 establish that it is narrow — a symmetric NAT is not by itself
+  disqualifying, and only the both-ends-symmetric intersection is unreachable
+  today.
+
+  The remaining work for this criterion is therefore no longer coverage. It is
+  one feature (`aven-v1.md` §12.4), one row's expectation flipping, and the
+  three unbuilt topologies.
 
 ### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
 

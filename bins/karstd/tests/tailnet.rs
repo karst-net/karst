@@ -273,6 +273,122 @@ enum Shape {
     /// relay path — and this row exists to hold that behaviour to *graceful*,
     /// which is the other half of the exit criterion.
     BothNat,
+    /// Node A behind a **symmetric** NAT; node B public.
+    ///
+    /// A's mapped port differs per destination, so its reflexive address — the
+    /// mapping toward the *reflector* — is worthless to B, and every candidate
+    /// A can name is either private or wrong. The direct path exists anyway,
+    /// and the reason is worth stating: B is publicly reachable, so A's probe
+    /// crosses first and B adopts the address it *arrived from*. That address
+    /// is the mapping toward B specifically, which is the only one that works.
+    ///
+    /// This is the row that separates "symmetric NAT" from "hopeless". Half of
+    /// the symmetric cases in §6's matrix have a reachable peer on the far
+    /// side, and those are direct today with nothing added.
+    SymmetricA,
+    /// **Both** nodes behind symmetric NATs — the CGNAT-to-CGNAT row the exit
+    /// criterion names.
+    ///
+    /// Neither reflexive address predicts the mapping the other side needs,
+    /// because a symmetric NAT allocates per destination and neither node has
+    /// ever sent to the other. Port prediction is the piece that would close
+    /// it (PLAN.md §6, `aven-v1.md` §12.4) and it is unbuilt, so the honest
+    /// expectation today is a permanent relay path.
+    ///
+    /// **The row is here while it still fails to go direct**, because the
+    /// assertion that matters in the meantime is the one that catches the worse
+    /// outcome: claiming `direct` on an address that does not carry traffic.
+    /// When port prediction lands, this row's expectation changes and nothing
+    /// else about it does.
+    BothSymmetric,
+    /// Node A behind a NAT that forwards **no UDP at all**; node B public.
+    ///
+    /// The corporate-firewall case, and the only row that tests the second exit
+    /// criterion on its own terms: AVEN cannot work, so the relay is not a
+    /// fallback that discovery happens to lose out to — it is the only path
+    /// there is, and traffic has to cross it losslessly and stay there.
+    UdpBlocked,
+    /// Node A behind a symmetric NAT; node B behind an **address-restricted**
+    /// cone.
+    ///
+    /// The row that shows [`Shape::BothSymmetric`] is a statement about a
+    /// *pair*, not about symmetric NATs. A's mapped port is unpredictable, so B
+    /// can never name it — but an address-restricted cone does not ask it to.
+    /// It admits any port from an address it has already sent to, and B has
+    /// sent to A's outer address, so A's probe is let in on the first attempt
+    /// from a port nobody predicted.
+    ///
+    /// **The reflector is load-bearing here in a way that is easy to miss.**
+    /// A's reflexive address is the mapping toward the reflector and is a dead
+    /// letter as a destination — B's probe to it is dropped. Its value is that
+    /// it makes B *send toward A's outer address at all*, which is what opens
+    /// B's filter. A useless candidate doing useful work, and the reason
+    /// §7.2's tiers keep addresses that have never answered.
+    SymmetricAndAddressRestricted,
+}
+
+/// How a NAT allocates external ports, and what it lets back through.
+///
+/// The distinction that matters to AVEN is whether one external port is reused
+/// across destinations. `crates/karst-disco/tests/nat_matrix.rs` pins each of
+/// these behaviours with a negative assertion before any of them is used to
+/// draw a conclusion about the product — finding 23 is what that discipline
+/// costs when it is skipped.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flavour {
+    /// Linux's default masquerade: one external port reused across
+    /// destinations, return traffic accepted per flow.
+    PortRestrictedCone,
+    /// `masquerade fully-random`: a fresh, unpredictable external port per
+    /// destination.
+    Symmetric,
+    /// A cone that drops every forwarded UDP datagram in both directions. TCP
+    /// still crosses, so Ponor and the control channel are unaffected.
+    UdpBlocked,
+    /// Endpoint-independent mapping **and** endpoint-independent *port*
+    /// filtering: any source port from an address this NAT has sent to is
+    /// admitted.
+    ///
+    /// Linux gives no such mode, so it is built rather than configured — a
+    /// static `dnat` for the datapath port, and a `seen` set of contacted
+    /// addresses driving the forward chain. The same construction as
+    /// `nat_matrix.rs`'s row of the same name, which pins that it admits a new
+    /// port and still refuses a new address.
+    AddressRestrictedCone,
+}
+
+/// What a topology is expected to reach, and how long it is given to get there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// A direct path in both directions, within `budget`.
+    Direct,
+    /// The relay, permanently. Traffic must still cross it, and the pair must
+    /// **not** claim a direct path it cannot actually use.
+    Relay,
+}
+
+impl Shape {
+    fn expect(self) -> Expect {
+        match self {
+            Self::Flat
+            | Self::NatA
+            | Self::BothNat
+            | Self::SymmetricA
+            | Self::SymmetricAndAddressRestricted => Expect::Direct,
+            Self::BothSymmetric | Self::UdpBlocked => Expect::Relay,
+        }
+    }
+
+    /// How long the pair is given to reach [`Expect::Direct`].
+    ///
+    /// Longer for the doubly-NATed row: it needs a `Reflect` round trip to each
+    /// node before either has anything worth advertising.
+    fn budget(self) -> Duration {
+        Duration::from_secs(match self {
+            Self::BothNat | Self::SymmetricAndAddressRestricted => 210,
+            _ => 150,
+        })
+    }
 }
 
 /// One end of a veth, and where it goes.
@@ -302,23 +418,58 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
     let cidr = format!("{IP_PUB}/24");
     must(&nsr(NS_PUB, &["ip", "addr", "add", &cidr, "dev", "ktn-br"]));
 
+    // Node A is behind a NAT in every shape but `Flat`; only the flavour
+    // changes.
     let ip_a = match shape {
         Shape::Flat => {
             public_leg("ktn-a", NS_A, IP_A_PUBLIC);
             IP_A_PUBLIC
         }
-        Shape::NatA | Shape::BothNat => {
-            nat_in_front_of("a", NS_NAT_A, NAT_A_OUTER, NAT_A_INNER, NS_A, IP_A_PRIVATE);
+        Shape::NatA
+        | Shape::BothNat
+        | Shape::SymmetricA
+        | Shape::BothSymmetric
+        | Shape::UdpBlocked
+        | Shape::SymmetricAndAddressRestricted => {
+            let flavour = match shape {
+                Shape::SymmetricA | Shape::BothSymmetric | Shape::SymmetricAndAddressRestricted => {
+                    Flavour::Symmetric
+                }
+                Shape::UdpBlocked => Flavour::UdpBlocked,
+                _ => Flavour::PortRestrictedCone,
+            };
+            nat_in_front_of(
+                "a",
+                NS_NAT_A,
+                NAT_A_OUTER,
+                NAT_A_INNER,
+                NS_A,
+                IP_A_PRIVATE,
+                flavour,
+            );
             IP_A_PRIVATE
         }
     };
     let ip_b = match shape {
-        Shape::Flat | Shape::NatA => {
+        Shape::Flat | Shape::NatA | Shape::SymmetricA | Shape::UdpBlocked => {
             public_leg("ktn-b", NS_B, IP_B_PUBLIC);
             IP_B_PUBLIC
         }
-        Shape::BothNat => {
-            nat_in_front_of("b", NS_NAT_B, NAT_B_OUTER, NAT_B_INNER, NS_B, IP_B_PRIVATE);
+        Shape::BothNat | Shape::BothSymmetric | Shape::SymmetricAndAddressRestricted => {
+            let flavour = match shape {
+                Shape::BothSymmetric => Flavour::Symmetric,
+                Shape::SymmetricAndAddressRestricted => Flavour::AddressRestrictedCone,
+                _ => Flavour::PortRestrictedCone,
+            };
+            nat_in_front_of(
+                "b",
+                NS_NAT_B,
+                NAT_B_OUTER,
+                NAT_B_INNER,
+                NS_B,
+                IP_B_PRIVATE,
+                flavour,
+            );
             IP_B_PRIVATE
         }
     };
@@ -347,14 +498,22 @@ fn public_leg(dev: &str, ns: &str, ip: &str) {
     must(&nsr(ns, &["ip", "route", "add", "default", "via", IP_PUB]));
 }
 
-/// Put a port-restricted cone NAT between a node and the public segment.
+/// Put a NAT of the given flavour between a node and the public segment.
 ///
 /// **No route from the public side into the private prefix**, which is what
 /// makes this a NAT rather than a router. An earlier version added one "so the
 /// relay's replies can get back" — they do not need it, because they return
 /// through conntrack's translation — and with it the far node reached the
 /// private address directly and reported a direct path no real NAT would allow.
-fn nat_in_front_of(tag: &str, nat_ns: &str, outer: &str, inner: &str, node_ns: &str, node: &str) {
+fn nat_in_front_of(
+    tag: &str,
+    nat_ns: &str,
+    outer: &str,
+    inner: &str,
+    node_ns: &str,
+    node: &str,
+    flavour: Flavour,
+) {
     must(&["ip", "netns", "add", nat_ns]);
     must(&nsr(nat_ns, &["ip", "link", "set", "lo", "up"]));
 
@@ -406,9 +565,91 @@ fn nat_in_front_of(tag: &str, nat_ns: &str, outer: &str, inner: &str, node_ns: &
         nat_ns,
         &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
     ));
+    nat_rules(nat_ns, &out_dev, &in_dev, node, flavour);
+}
+
+/// The datapath port every node listens on. A NAT that has to name a port
+/// names this one.
+const DATA_PORT: u16 = 51820;
+
+/// Build an address-restricted cone, which Linux does not offer as a mode.
+///
+/// Two halves, and both are needed. A static `dnat` makes the mapping
+/// endpoint-*independent* — `outer:51820` reaches the node whatever the source,
+/// which plain masquerade will not do, because masquerade's reverse translation
+/// only exists for a flow the inside started. A `seen` set then restores the
+/// restriction that gives the flavour its name: an address the node has sent to
+/// may come back **on any port**, and an address it has not may not come back
+/// at all.
+///
+/// The timeout on the set matters. Without one an address is admitted forever
+/// once contacted, which is a full cone wearing this row's name — and finding
+/// 23 is what a fixture that lies about its own shape costs.
+fn address_restricted(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str) {
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "pre",
+            "{ type nat hook prerouting priority -100 ; }",
+        ],
+    ));
+    let dnat = format!("iifname {out_dev} udp dport {DATA_PORT} dnat to {node}:{DATA_PORT}");
+    must(&nsr(
+        nat_ns,
+        &["nft", "add", "rule", "ip", "karst", "pre", &dnat],
+    ));
+
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "set",
+            "ip",
+            "karst",
+            "seen",
+            "{ type ipv4_addr ; flags timeout ; timeout 60s ; }",
+        ],
+    ));
+    // Not `fwd`: that is a reserved word in nft and the chain creation fails
+    // with a syntax error pointing at the name.
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "filt",
+            "{ type filter hook forward priority 0 ; }",
+        ],
+    ));
+    for rule in [
+        format!("iifname {in_dev} update @seen {{ ip daddr }} accept"),
+        format!("iifname {out_dev} ip saddr @seen accept"),
+        format!("iifname {out_dev} drop"),
+    ] {
+        must(&nsr(
+            nat_ns,
+            &["nft", "add", "rule", "ip", "karst", "filt", &rule],
+        ));
+    }
+}
+
+/// The translation and filtering rules, which are all that distinguishes one
+/// [`Flavour`] from another.
+fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, flavour: Flavour) {
     // Linux conntrack's default masquerade: one external port reused across
     // destinations, return traffic accepted per flow — a port-restricted cone,
     // which `karst-disco`'s NAT matrix pins as behaving the way that name says.
+    // `fully-random` is the one word that turns it symmetric, and the matrix
+    // pins that too, with an assertion that fails if the ports come out equal.
     must(&nsr(nat_ns, &["nft", "add", "table", "ip", "karst"]));
     must(&nsr(
         nat_ns,
@@ -422,11 +663,46 @@ fn nat_in_front_of(tag: &str, nat_ns: &str, outer: &str, inner: &str, node_ns: &
             "{ type nat hook postrouting priority 100 ; }",
         ],
     ));
-    let rule = format!("oifname {out_dev} masquerade");
+    let rule = match flavour {
+        Flavour::Symmetric => format!("oifname {out_dev} masquerade fully-random"),
+        Flavour::PortRestrictedCone | Flavour::UdpBlocked | Flavour::AddressRestrictedCone => {
+            format!("oifname {out_dev} masquerade")
+        }
+    };
     must(&nsr(
         nat_ns,
         &["nft", "add", "rule", "ip", "karst", "post", &rule],
     ));
+
+    if flavour == Flavour::AddressRestrictedCone {
+        address_restricted(nat_ns, out_dev, in_dev, node);
+    }
+
+    // The firewall that forwards TCP and nothing else. Dropping UDP in the
+    // **forward** hook rather than on one interface is deliberate: it blocks
+    // the datapath socket in both directions, so AVEN cannot probe, cannot be
+    // probed, and cannot reach the reflector either. That is the whole point of
+    // the row — the relay has to be the answer, not merely the current best.
+    if flavour == Flavour::UdpBlocked {
+        must(&nsr(
+            nat_ns,
+            &[
+                "nft",
+                "add",
+                "chain",
+                "ip",
+                "karst",
+                "crossing",
+                "{ type filter hook forward priority 0 ; }",
+            ],
+        ));
+        must(&nsr(
+            nat_ns,
+            &[
+                "nft", "add", "rule", "ip", "karst", "crossing", "meta", "l4proto", "udp", "drop",
+            ],
+        ));
+    }
 
     // **Drop unsolicited inbound on the outer interface**, which is what makes
     // this a NAT rather than a host that happens to masquerade — and it is
@@ -836,6 +1112,87 @@ fn two_nodes_behind_nats_punch_through_with_a_reflector() {
     run(Shape::BothNat);
 }
 
+/// **A symmetric NAT is not the end of the road when the peer is reachable.**
+///
+/// Node A is behind a NAT that allocates a fresh external port per destination,
+/// so nothing A knows about itself is useful: its interface addresses are
+/// private and its reflexive address is the mapping toward the *reflector*,
+/// which no peer shares. Every candidate A advertises is wrong.
+///
+/// The pair goes direct anyway, and the mechanism is finding 20's rule doing
+/// the work `CallMeMaybe` cannot: A probes B's public address, and B takes the
+/// address the probe **arrived from** in preference to anything A claimed. That
+/// address is the mapping toward B, the one allocation of A's NAT that is
+/// relevant, and it is knowable only by receiving a packet through it.
+///
+/// This row is why "symmetric NAT" is not a single number in §6. It is only
+/// fatal when *both* ends are behind one — see
+/// [`two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands`].
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_symmetric_nat_reaches_a_reachable_peer_directly() {
+    run(Shape::SymmetricA);
+}
+
+/// **The CGNAT-to-CGNAT row, asserting today's behaviour rather than the
+/// intended one.**
+///
+/// Both nodes are behind symmetric NATs, so each reflexive address predicts a
+/// mapping toward the reflector and neither predicts the mapping toward the
+/// other. Port prediction is the piece that closes this (`aven-v1.md` §12.4)
+/// and it is unbuilt, so the pair stays on the relay.
+///
+/// **The failure mode being guarded against is not "no direct path".** It is a
+/// node advertising a reflexive address, a peer believing it, and the pair
+/// reporting `direct` over an address that carries nothing — which looks like
+/// success in `karst status` and is a black hole in practice. The settle window
+/// exists for that, and the traffic assertion at the end is what makes the
+/// relay path a *degradation* rather than an outage.
+///
+/// When port prediction lands, the expectation in [`Shape::expect`] changes and
+/// nothing else here does.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands() {
+    run(Shape::BothSymmetric);
+}
+
+/// **The second exit criterion, on its own terms: no UDP at all.**
+///
+/// Every other row lets AVEN work and watches the relay lose to it. Here the
+/// NAT in front of A forwards TCP and drops every UDP datagram in both
+/// directions, so there is no discovery to lose to: no probe leaves, no probe
+/// arrives, and the reflector is unreachable, which also means A never learns a
+/// reflexive address to advertise.
+///
+/// What has to hold is that the tunnel does not notice. Ponor is TCP, PHREATIC
+/// rides it, and `Engine::via` picks the relay because no direct endpoint
+/// exists — so the pair establishes, stays established, and carries a TCP
+/// conversation under the ACL with nothing dropped.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_node_with_no_udp_at_all_still_carries_traffic_over_the_relay() {
+    run(Shape::UdpBlocked);
+}
+
+/// **A symmetric NAT reaches a peer behind a NAT, when that NAT restricts
+/// by address rather than by port.**
+///
+/// The row that keeps [`two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands`]
+/// from being read as "symmetric NAT means relayed". Nobody predicts A's mapped
+/// port here either; the difference is that B's NAT does not require anyone to.
+/// It admits any port from an address B has sent to, and B sends to A's outer
+/// address because A advertised a reflexive candidate — one that is itself a
+/// dead letter, and that earns its keep anyway.
+///
+/// Port prediction, when it lands, changes
+/// [`Shape::BothSymmetric`] and leaves this row exactly as it is.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_symmetric_nat_reaches_an_address_restricted_peer_directly() {
+    run(Shape::SymmetricAndAddressRestricted);
+}
+
 fn run(shape: Shape) {
     if !have_prerequisites() {
         eprintln!("skipping: needs root and a Go toolchain");
@@ -878,46 +1235,94 @@ fn run(shape: Shape) {
     // Both begin on the relay: neither has an address for the other, because
     // the server never learned one. This is finding 12's whole point — a peer
     // with no endpoint is reachable, not dropped.
-    let transports = |net: &Tailnet| {
-        (
-            field(&status(net, "a", NS_A), "transport"),
-            field(&status(net, "b", NS_B), "transport"),
-        )
-    };
-    let mut saw_relay = false;
-    wait_for(
-        &net,
-        "both nodes to reach a direct path",
-        // Longer for the doubly-NATed row: it needs a `Reflect` round trip to
-        // each node before either has anything to advertise, and §7.5 puts the
-        // repeat at thirty seconds.
-        Duration::from_secs(if shape == Shape::BothNat { 210 } else { 150 }),
-        || {
-            let (a, b) = transports(&net);
-            if a.as_deref() == Some("relay") || b.as_deref() == Some("relay") {
-                saw_relay = true;
-            }
-            a.as_deref() == Some("direct") && b.as_deref() == Some("direct")
-        },
-    );
-    assert!(
-        saw_relay,
-        "the pair never appeared on the relay, so this test did not observe \
-         the transition it exists to observe"
-    );
+    converge(&net, shape);
+    assert_endpoints(&net, shape);
+    exchange_tcp_under_the_acl(&mut net);
+}
 
-    // Both sessions are up, and each holds an address that can actually reach
-    // the other. **Behind a NAT that is not the address the peer advertised**:
-    // A's candidates are all private, so B must be pointing at the mapped
-    // address the NAT assigned — which is what hole punching produces, and the
-    // assertion that would still pass if AVEN had merely copied what it was
-    // told.
+/// Read both nodes' `transport` field at one moment.
+fn transports(net: &Tailnet) -> (Option<String>, Option<String>) {
+    (
+        field(&status(net, "a", NS_A), "transport"),
+        field(&status(net, "b", NS_B), "transport"),
+    )
+}
+
+/// Hold the pair to what its topology permits — and only to that.
+fn converge(net: &Tailnet, shape: Shape) {
+    match shape.expect() {
+        Expect::Direct => {
+            let mut saw_relay = false;
+            wait_for(
+                net,
+                "both nodes to reach a direct path",
+                shape.budget(),
+                || {
+                    let (a, b) = transports(net);
+                    if a.as_deref() == Some("relay") || b.as_deref() == Some("relay") {
+                        saw_relay = true;
+                    }
+                    a.as_deref() == Some("direct") && b.as_deref() == Some("direct")
+                },
+            );
+            assert!(
+                saw_relay,
+                "the pair never appeared on the relay, so this test did not \
+                 observe the transition it exists to observe"
+            );
+        }
+        Expect::Relay => {
+            wait_for(
+                net,
+                "both sessions to establish",
+                Duration::from_secs(60),
+                || {
+                    let (a, b) = transports(net);
+                    a.as_deref() == Some("relay") && b.as_deref() == Some("relay")
+                },
+            );
+            // **Then wait, and keep watching.** Establishing on the relay is
+            // the easy half; the assertion worth making is that discovery does
+            // not talk itself into a direct path it cannot use. Long enough for
+            // several `Reflect` round trips (§7.5, ten seconds), a candidate's
+            // whole probe backoff, and one re-probe of every alternative
+            // (thirty seconds) — so a wrong candidate has had every chance to
+            // be believed.
+            let settle = Instant::now();
+            while settle.elapsed() < Duration::from_secs(75) {
+                let (a, b) = transports(net);
+                assert_eq!(
+                    (a.as_deref(), b.as_deref()),
+                    (Some("relay"), Some("relay")),
+                    "the pair claimed a direct path {:?} into the settle window, \
+                     on a topology where no direct path exists — a node that \
+                     advertises an address it is not reachable at is worse than \
+                     one that stays relayed",
+                    settle.elapsed()
+                );
+                std::thread::sleep(Duration::from_secs(5));
+            }
+        }
+    }
+}
+
+/// Both sessions are up, and each holds an address that can actually reach the
+/// other.
+///
+/// **Behind a NAT that is not the address the peer advertised**: A's candidates
+/// are all private, so B must be pointing at the mapped address the NAT
+/// assigned — which is what hole punching produces, and the assertion that
+/// would still pass if AVEN had merely copied what it was told.
+fn assert_endpoints(net: &Tailnet, shape: Shape) {
     for (tag, ns) in [("a", NS_A), ("b", NS_B)] {
-        let s = status(&net, tag, ns);
+        let s = status(net, tag, ns);
         assert_eq!(field(&s, "state").as_deref(), Some("established"), "{s}");
     }
-    if shape == Shape::NatA || shape == Shape::BothNat {
-        let s = status(&net, "b", NS_B);
+    if matches!(
+        shape,
+        Shape::NatA | Shape::BothNat | Shape::SymmetricA | Shape::SymmetricAndAddressRestricted
+    ) {
+        let s = status(net, "b", NS_B);
         let endpoint = field(&s, "endpoint").unwrap_or_default();
         assert!(
             endpoint.starts_with(NAT_A_OUTER),
@@ -928,12 +1333,12 @@ fn run(shape: Shape) {
             "B is using A's private address, which cannot be reachable: {endpoint}"
         );
     }
-    if shape == Shape::BothNat {
+    if matches!(shape, Shape::BothNat | Shape::SymmetricAndAddressRestricted) {
         // And symmetrically, which is the half only this row can check: A must
         // hold B's *mapped* address, learned from a reflector rather than from
         // a probe that arrived — because no probe from B could arrive until A
         // had already advertised something reachable.
-        let s = status(&net, "a", NS_A);
+        let s = status(net, "a", NS_A);
         let endpoint = field(&s, "endpoint").unwrap_or_default();
         assert!(
             endpoint.starts_with(NAT_B_OUTER),
@@ -944,8 +1349,6 @@ fn run(shape: Shape) {
             "A is using B's private address, which cannot be reachable: {endpoint}"
         );
     }
-
-    exchange_tcp_under_the_acl(&mut net);
 }
 
 /// A request **and its reply**, under a policy that permits `*:22` and nothing

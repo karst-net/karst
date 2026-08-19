@@ -47,7 +47,22 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 **728 Rust tests** and **155 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-nine-row NAT matrix and three end-to-end tailnet topologies.
+nine-row NAT matrix and **seven end-to-end tailnet topologies** — each one a
+whole tailnet, and each ending in a TCP conversation under an ACL.
+
+| Node A is behind | Node B is behind | Result |
+|---|---|---|
+| *(nothing)* | *(nothing)* | direct |
+| port-restricted cone | *(nothing)* | direct |
+| port-restricted cone | port-restricted cone | direct |
+| symmetric | *(nothing)* | direct |
+| symmetric | address-restricted cone | direct |
+| symmetric | symmetric | relay — port prediction is unbuilt |
+| all UDP dropped | *(nothing)* | relay, and correctly so |
+
+**Five of seven, and the two that stay relayed are asserted to stay relayed.**
+A node that advertises an address it is not reachable at is worse than one that
+admits it is relayed, so those rows fail if either end ever reports `direct`.
 
 ### Formal models
 
@@ -84,8 +99,14 @@ A security project that advertises only its wins is not trustworthy.
   ciphertext — but it is a TLS dependency the other two protocols do not have.
 - **`CallMeMaybe` bodies are not encrypted** (`aven-v1.md` §12.3), so a relay
   operator sees the local interface addresses a node advertises.
-- **Symmetric-NAT-to-symmetric-NAT does not connect yet.** Server-reflexive
-  discovery closes the endpoint-independent cases; port prediction is unbuilt.
+- **Symmetric-NAT-to-symmetric-NAT does not connect yet.** A symmetric NAT on
+  *one* side is fine — the table above has two such rows going direct — but
+  when both ends are symmetric, neither can predict the other's port and the
+  pair stays relayed. Port prediction is unbuilt.
+- **The ≥90% direct-connection target is not met.** Five of seven topologies,
+  and that denominator is a set of shapes we chose rather than a population
+  weighted by how common each NAT is in the field. Three shapes are still
+  unbuilt: double NAT, hairpinning, NAT64/DNS64.
 - **Wire formats are not stable.** Adding the relay's reflector was a flag day
   (`ponor-v1.md` §13.10), and there will be others before 1.0.
 
