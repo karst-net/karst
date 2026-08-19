@@ -2,12 +2,15 @@ package auth_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -246,21 +249,54 @@ func TestAuthManager_EnsureUserAccessByJWTGroups(t *testing.T) {
 	})
 }
 
+// signingKey returns a throwaway RS256 key and the JWKS document describing it.
+//
+// **Generated per run rather than read from a file, and that is the fix for two
+// problems at once.**
+//
+// Upstream kept this key in `test_data/`, and vendoring "pruned to the
+// management server" deleted the directory while keeping the test that read
+// it. Both errors were discarded with `_`, so `os.ReadFile` failed silently,
+// `ParseRSAPrivateKeyFromPEM(nil)` returned nil, and signing with a nil key
+// segfaulted inside `crypto/rsa` — a missing file reported as a nil-pointer
+// dereference three frames deep in a dependency. A fixture that cannot go
+// missing cannot fail that way.
+//
+// The other problem is that the alternative — committing the key back — puts
+// an RSA private key in a public repository. It would be a throwaway used by
+// one test, and it would still trip secret scanning, and it would still be in
+// the history permanently. Generating it costs a few milliseconds per run.
+func signingKey(t *testing.T, keyID string) (*rsa.PrivateKey, []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	jwks := map[string]any{"keys": []map[string]any{{
+		"kty": "RSA",
+		"kid": keyID,
+		"use": "sig",
+		"alg": "RS256",
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	}}}
+	doc, err := json.Marshal(jwks)
+	require.NoError(t, err)
+	return key, doc
+}
+
 func TestAuthManager_ValidateAndParseToken(t *testing.T) {
+	keyId := "test-key"
+	key, jwks := signingKey(t, keyId)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Cache-Control", "max-age=30") // set a 30s expiry to these keys
-		http.ServeFile(w, r, "test_data/jwks.json")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwks)
 	}))
 	defer server.Close()
 
 	issuer := "http://issuer.local"
 	audience := "http://audience.local"
 	userIdClaim := "" // defaults to "sub"
-
-	// we're only testing with RSA256
-	keyData, _ := os.ReadFile("test_data/sample_key")
-	key, _ := jwt.ParseRSAPrivateKeyFromPEM(keyData)
-	keyId := "test-key"
 
 	// note, we can use a nil store because ValidateAndParseToken does not use it in it's flow
 	manager := auth.NewManager(nil, issuer, audience, server.URL, userIdClaim, []string{audience}, false, nil)

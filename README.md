@@ -46,7 +46,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | Console / portal (TypeScript) | **not started** |
 | **KarstDNS**, **Bedrock** network lock | **not started** — Phase 5 |
 
-**772 Rust tests** and **155 Go tests** run unprivileged; a further suite runs
+**772 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
 nine-row NAT matrix and **eight end-to-end tailnet topologies** — each one a
 whole tailnet, and each ending in a TCP conversation under an ACL.

@@ -47,8 +47,57 @@ carries both the new wording and the original, struck through.
 | 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
+| 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
 
 ## Closed
+
+### 26. Medium: vendoring pruned test fixtures a retained test still needed
+
+`server/management/server/auth` failed with a **segmentation fault** inside
+`crypto/rsa`, three frames deep in a dependency, on a test that had passed
+before the fork was vendored.
+
+The cause was two discarded errors and a missing directory:
+
+```go
+keyData, _ := os.ReadFile("test_data/sample_key")
+key, _ := jwt.ParseRSAPrivateKeyFromPEM(keyData)
+...
+tokenString, _ := token.SignedString(key)   // key is nil
+```
+
+`314ae66` vendored NetBird "pruned to the management server" and removed
+`test_data/`, while keeping the test that reads it. `ReadFile` failed, the
+error went to `_`, `ParseRSAPrivateKeyFromPEM(nil)` returned nil, its error
+went to `_` as well, and signing with a nil key faulted. The companion
+`jwks.json` was missing too, which is why the run also logged "could not get
+keys from location" — the HTTP fixture server was returning a 404 page where
+JSON was expected.
+
+**This was not caused by any Karst change**, and it was confirmed by running
+the same test on `main` before the branch's work, where it fails identically.
+It is recorded because it made the README's "155 Go tests" claim untrue and
+because it would have been inherited into any future baseline.
+
+**Fixed by removing the fixture rather than restoring it.** The test now
+generates a throwaway 2048-bit RSA key per run and serves the matching JWKS
+from its own `httptest` handler, so there is no file to go missing and the
+failure mode is gone rather than repaired.
+
+Restoring the fixtures was the first fix and it was the wrong one, for a
+reason that had nothing to do with the bug: it commits an **RSA private key to
+a public repository**. It would be a throwaway used by one test, and it would
+still trip secret scanning, and it would still be in the history permanently —
+history being the part that cannot be undone later. Generating the key costs a
+few milliseconds a run. It was caught before the commit was pushed, which is
+the only reason the choice was still available.
+
+The transferable lesson is about pruning rather than about this test. **A
+prune that removes data is a change to every test that reads it**, and neither
+the compiler nor a passing build catches it: the code still compiles, the file
+is merely absent at run time. A vendoring step that drops directories should
+be followed by running the suite it pruned, which is what would have caught
+this at the moment it was introduced.
 
 ### 24. Operational: Phase 4's third exit criterion was not achievable as written
 
