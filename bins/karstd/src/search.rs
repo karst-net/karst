@@ -29,8 +29,55 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 
 use karst_transport::{UdpTransport, MAX_DATAGRAM};
+
+/// The sockets the datapath must send from, published for the send path.
+///
+/// **Read on every direct datagram, so the empty case has to be free.** A
+/// search wins rarely and for few peers, and the overwhelming majority of nodes
+/// never run one at all — so the common path is a single relaxed load of
+/// [`Winners::count`] and no lock. The map is only touched once that says there
+/// is something in it.
+#[derive(Debug, Default)]
+pub struct Winners {
+    count: AtomicUsize,
+    map: RwLock<HashMap<SocketAddr, Arc<UdpTransport>>>,
+}
+
+impl Winners {
+    /// Nothing has won.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The socket a datagram to `to` must leave from, if a search won it.
+    #[must_use]
+    pub fn get(&self, to: SocketAddr) -> Option<Arc<UdpTransport>> {
+        if self.count.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
+        let map = self.map.read().ok()?;
+        map.get(&to).map(Arc::clone)
+    }
+
+    fn publish(&self, to: SocketAddr, sock: Arc<UdpTransport>) {
+        if let Ok(mut map) = self.map.write() {
+            map.insert(to, sock);
+            self.count.store(map.len(), Ordering::Relaxed);
+        }
+    }
+
+    fn withdraw(&self, to: SocketAddr) {
+        if let Ok(mut map) = self.map.write() {
+            map.remove(&to);
+            self.count.store(map.len(), Ordering::Relaxed);
+        }
+    }
+}
 
 /// Most scratch sockets held across **all** peers at once.
 ///
@@ -56,16 +103,20 @@ pub struct Arrival {
 
 /// One socket that has earned a mapping, and whether it has won.
 struct Pool {
-    sockets: Vec<UdpTransport>,
+    sockets: Vec<Arc<UdpTransport>>,
     /// Set once a datagram has arrived on one of them: this pool's peer talks
     /// on that socket and no other.
     winner: Option<usize>,
+    /// The address the winning socket was published under, so it can be
+    /// withdrawn again.
+    published: Option<SocketAddr>,
 }
 
 /// Every peer's scratch sockets.
 #[derive(Default)]
 pub struct SearchSockets {
     pools: HashMap<usize, Pool>,
+    winners: Arc<Winners>,
 }
 
 impl std::fmt::Debug for SearchSockets {
@@ -82,6 +133,12 @@ impl SearchSockets {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The published table the send path reads.
+    #[must_use]
+    pub fn winners(&self) -> Arc<Winners> {
+        Arc::clone(&self.winners)
     }
 
     /// Sockets open across every peer.
@@ -105,7 +162,7 @@ impl SearchSockets {
     #[must_use]
     pub fn winner(&self, route_index: usize) -> Option<&UdpTransport> {
         let pool = self.pools.get(&route_index)?;
-        pool.sockets.get(pool.winner?)
+        pool.sockets.get(pool.winner?).map(AsRef::as_ref)
     }
 
     /// Send one scratch datagram from a **new** socket, bound beside `local`.
@@ -120,6 +177,7 @@ impl SearchSockets {
         let pool = self.pools.entry(route_index).or_insert_with(|| Pool {
             sockets: Vec::new(),
             winner: None,
+            published: None,
         });
         // A pool that has already won needs no more mappings: the point of the
         // others was to find this one.
@@ -143,7 +201,7 @@ impl SearchSockets {
         // A send failure is per-socket and not fatal: an unreachable candidate
         // must not stop the rest of the round.
         let sent = sock.send_to(datagram, to).is_ok();
-        pool.sockets.push(sock);
+        pool.sockets.push(Arc::new(sock));
         sent
     }
 
@@ -182,7 +240,7 @@ impl SearchSockets {
     /// Called once a datagram has arrived: the others earned mappings nobody
     /// used, and holding them open is what makes the global cap bite for peers
     /// that have not connected yet.
-    pub fn keep_only(&mut self, route_index: usize, socket: usize) {
+    pub fn keep_only(&mut self, route_index: usize, socket: usize, dest: SocketAddr) {
         let Some(pool) = self.pools.get_mut(&route_index) else {
             return;
         };
@@ -192,6 +250,14 @@ impl SearchSockets {
         pool.sockets.swap(0, socket);
         pool.sockets.truncate(1);
         pool.winner = Some(0);
+        if let Some(sock) = pool.sockets.first() {
+            if let Some(old) = pool.published.replace(dest) {
+                if old != dest {
+                    self.winners.withdraw(old);
+                }
+            }
+            self.winners.publish(dest, Arc::clone(sock));
+        }
     }
 
     /// Drop every socket for a peer.
@@ -200,12 +266,21 @@ impl SearchSockets {
     /// away. **Including the winner**: if discovery has chosen a different
     /// path, this pool is holding descriptors for a path nothing is using.
     pub fn release(&mut self, route_index: usize) {
-        self.pools.remove(&route_index);
+        if let Some(pool) = self.pools.remove(&route_index) {
+            if let Some(dest) = pool.published {
+                // Withdrawn before the socket is dropped, or the send path
+                // would keep an `Arc` to a socket nothing is receiving on.
+                self.winners.withdraw(dest);
+            }
+        }
     }
 
     /// Drop every socket for every peer.
     pub fn release_all(&mut self) {
-        self.pools.clear();
+        let indices: Vec<usize> = self.pools.keys().copied().collect();
+        for index in indices {
+            self.release(index);
+        }
     }
 }
 
@@ -293,7 +368,7 @@ mod tests {
         for _ in 0..4 {
             assert!(s.send_scratch(0, b"x", to()));
         }
-        s.keep_only(0, 2);
+        s.keep_only(0, 2, to());
         assert_eq!(s.len_for(0), 1, "the losers should be closed");
         assert!(s.winner(0).is_some());
         assert!(
@@ -309,10 +384,10 @@ mod tests {
         // panic on the pre-authentication path's timer tick.
         let mut s = SearchSockets::new();
         assert!(s.send_scratch(0, b"x", to()));
-        s.keep_only(0, 99);
+        s.keep_only(0, 99, to());
         assert_eq!(s.len_for(0), 1);
         assert!(s.winner(0).is_none(), "nothing should have been declared");
-        s.keep_only(7, 0);
+        s.keep_only(7, 0, to());
     }
 
     #[test]

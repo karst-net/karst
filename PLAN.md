@@ -3243,6 +3243,21 @@ onwards, anchored on the week of 2026-08-10.
   malicious — so a peer of *K* nodes could point *K* × 512 datagrams at a victim
   from *K* innocent sources. Trading minutes against that is the right way round.
 
+  🔶 **Implemented and it does not yet carry the row.** `karst-disco`'s
+  scheduler, `karstd`'s scratch-socket pool and the datapath migration are all
+  built, gate-clean and unit-tested; the tailnet row still stays on the relay
+  after seven minutes. Row 8's expectation is deliberately **not** flipped —
+  an expectation that does not hold is worse than an honest one.
+
+  Two candidate causes, neither yet established. The search may not be starting
+  at all in that topology, which nothing currently reports; or the rotation
+  across a peer's candidates may be spending each round on an address that
+  cannot carry a mapping, since a peer advertises interface addresses beside
+  reflexive ones and nothing distinguishes them once they are in the path set.
+  The first thing this needs is **observability** — a counter for rounds run,
+  sockets held and probes sent, visible in `karst status` — because seven
+  minutes a run is far too slow a loop to debug blind.
+
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a
   socket is what earns a distinct external mapping toward the *one* address the

@@ -422,6 +422,11 @@ impl Shape {
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
             | Self::SameLan => Expect::Direct,
+            // §7.7's port search is implemented and does **not** yet carry
+            // this row. Left as `Relay` rather than flipped optimistically:
+            // an expectation that does not hold is worse than an honest one,
+            // and the settle window still catches the failure that matters —
+            // a node claiming `direct` over an address that carries nothing.
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }

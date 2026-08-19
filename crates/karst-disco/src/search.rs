@@ -35,7 +35,7 @@
 //! one: §8.3 makes a relay path a *working* path, so this is an upgrade, and
 //! latency-to-direct is a cost rather than a correctness property.
 
-use core::net::{IpAddr, SocketAddr};
+use core::net::SocketAddr;
 
 use crate::msg::TxId;
 
@@ -72,10 +72,20 @@ pub const PORT_MIN: u16 = 1024;
 /// [`Search::should_start`] — and dropped when a path is confirmed.
 #[derive(Debug, Clone)]
 pub struct Search {
-    /// The peer address whose *host* is being searched. Its port is what the
-    /// hard side aims its scratch sockets at; the search varies the port only
-    /// on the probing side.
-    toward: SocketAddr,
+    /// The peer addresses being searched, rotated one per round.
+    ///
+    /// **Not one address.** A peer advertises its interface addresses as well
+    /// as its reflexive ones (§7.2), and a node cannot tell from a candidate
+    /// alone which of them a NAT will carry. Mappings earned toward an
+    /// unroutable candidate are worthless — the peer's filter admits only the
+    /// exact destination a mapping was made toward — so a search that picked
+    /// wrong would spend every socket it has on nothing and look exactly like
+    /// a technique that does not work.
+    ///
+    /// Rotating spends one round per candidate instead. With two or three
+    /// candidates that is a small constant on a curve already measured in
+    /// minutes, and it removes the need to guess.
+    toward: Vec<SocketAddr>,
     /// Scratch sockets believed open.
     scratch: usize,
     /// When the last round ran.
@@ -96,6 +106,8 @@ pub struct Search {
     /// port answered, which is what §7.1 requires and what the address alone
     /// cannot say.
     in_flight: Vec<(TxId, u16)>,
+    /// The address the most recent round searched, for [`Self::answered`].
+    searching: Option<SocketAddr>,
     /// Ports already tried, so a round draws without replacement across the
     /// whole search rather than only within itself.
     ///
@@ -132,23 +144,29 @@ impl Search {
         exhausted && !have_direct_path
     }
 
-    /// Begin searching toward a peer address.
+    /// Begin searching toward a peer's candidate addresses.
     #[must_use]
-    pub fn new(toward: SocketAddr) -> Self {
+    pub fn new(toward: Vec<SocketAddr>) -> Self {
         Self {
             toward,
             scratch: 0,
             last_round_ms: None,
             rounds: 0,
+            searching: None,
             in_flight: Vec::new(),
             tried: Vec::new(),
         }
     }
 
-    /// The peer host being searched.
-    #[must_use]
-    pub const fn host(&self) -> IpAddr {
-        self.toward.ip()
+    /// The address this round is searching, if there is one at all.
+    fn current(&self) -> Option<SocketAddr> {
+        let n = self.toward.len();
+        if n == 0 {
+            return None;
+        }
+        // `rounds` has already been incremented for this round.
+        let at = (self.rounds as usize).saturating_sub(1) % n;
+        self.toward.get(at).copied()
     }
 
     /// Scratch sockets this search believes are open.
@@ -170,10 +188,11 @@ impl Search {
     /// a forged or replayed `Pong` unable to confirm anything.
     #[must_use]
     pub fn answered(&self, tx: &TxId) -> Option<SocketAddr> {
+        let searching = self.searching?;
         self.in_flight
             .iter()
             .find(|(sent, _)| sent == tx)
-            .map(|(_, port)| SocketAddr::new(self.toward.ip(), *port))
+            .map(|(_, port)| SocketAddr::new(searching.ip(), *port))
     }
 
     /// Run a round if one is due.
@@ -190,6 +209,7 @@ impl Search {
         }
         self.last_round_ms = Some(now_ms);
         self.rounds = self.rounds.saturating_add(1);
+        let toward = self.current()?;
 
         let open_scratch = SCRATCH_MAX
             .saturating_sub(self.scratch)
@@ -217,12 +237,13 @@ impl Search {
             }
             self.tried.push(port);
             self.in_flight.push((tx, port));
-            probes.push((SocketAddr::new(self.toward.ip(), port), tx));
+            probes.push((SocketAddr::new(toward.ip(), port), tx));
         }
 
+        self.searching = Some(toward);
         Some(Round {
             open_scratch,
-            toward: self.toward,
+            toward,
             probes,
         })
     }
@@ -258,6 +279,10 @@ mod tests {
         "203.0.113.7:51820".parse().expect("addr")
     }
 
+    fn one() -> Vec<SocketAddr> {
+        vec![peer()]
+    }
+
     /// A counter standing in for a CSPRNG, as `engine.rs`'s tests do.
     fn minter() -> impl FnMut() -> TxId {
         let mut n: u64 = 0;
@@ -286,7 +311,7 @@ mod tests {
         // advertisement, spent on one address instead of sixteen. Raising it
         // changes the amplification argument rather than a tuning constant.
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let round = s.poll(0, &mut m).expect("first round is due");
         assert_eq!(round.probes.len(), ROUND_PROBES);
         assert_eq!(ROUND_PROBES, 64);
@@ -295,7 +320,7 @@ mod tests {
     #[test]
     fn scratch_sockets_grow_each_round_and_stop_at_the_cap() {
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let mut now = 0;
         let mut seen = Vec::new();
         for _ in 0..6 {
@@ -321,7 +346,7 @@ mod tests {
     #[test]
     fn a_round_is_not_due_before_the_interval() {
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         assert!(s.poll(0, &mut m).is_some());
         assert!(s.poll(ROUND_INTERVAL_MS - 1, &mut m).is_none());
         assert!(s.poll(ROUND_INTERVAL_MS, &mut m).is_some());
@@ -347,7 +372,7 @@ mod tests {
             id[1] = n.wrapping_mul(7);
             TxId(id)
         };
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let mut all = Vec::new();
         let mut now = 0;
         for _ in 0..8 {
@@ -364,7 +389,7 @@ mod tests {
     #[test]
     fn every_probe_targets_the_peers_host_and_never_a_privileged_port() {
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let r = s.poll(0, &mut m).expect("due");
         for (addr, _) in &r.probes {
             assert_eq!(addr.ip(), peer().ip(), "probed a different host");
@@ -382,7 +407,7 @@ mod tests {
         // the round would spin: every port is already in `tried` after the
         // first. Falling short of the quota is the right degradation.
         let mut m = || TxId([7u8; TX_ID_LEN]);
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let first = s.poll(0, &mut m).expect("due");
         assert_eq!(first.probes.len(), 1, "one distinct port available");
         let second = s.poll(ROUND_INTERVAL_MS, &mut m).expect("due");
@@ -396,7 +421,7 @@ mod tests {
         // can — and a `tx` this search never sent must confirm nothing, or a
         // replayed `Pong` would install a path that was never probed.
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let round = s.poll(0, &mut m).expect("due");
         let (addr, tx) = round.probes.first().copied().expect("a probe");
         assert_eq!(s.answered(&tx), Some(addr));
@@ -409,7 +434,7 @@ mod tests {
         // thirty seconds, six times §7.1's five-second transaction timeout, so
         // keeping it would grow the table without bound for no benefit.
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let first = s.poll(0, &mut m).expect("due");
         let (_, stale) = first.probes.first().copied().expect("a probe");
         assert!(s.answered(&stale).is_some());
@@ -423,7 +448,7 @@ mod tests {
         // range. A derivation that clustered would make the measured 91% a
         // fiction while every test above still passed.
         let mut m = minter();
-        let mut s = Search::new(peer());
+        let mut s = Search::new(one());
         let mut lo = 0;
         let mut hi = 0;
         let mut now = 0;

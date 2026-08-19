@@ -185,12 +185,20 @@ pub fn run_with_control(
     };
     let relay_out = relay_out.as_ref();
 
+    // §7.7's scratch sockets. Owned by the timer thread, which is the only one
+    // that opens or closes them; the send path reads the published winners
+    // table instead, which costs one relaxed load when nothing has won.
+    let mut search_sockets = crate::search::SearchSockets::new();
+    let winners = search_sockets.winners();
+    let winners_refresh = Arc::clone(&winners);
+
     // Initial handshakes, before any thread starts.
     dispatch(
         engine.connect_all(now_ms(started), random_seed),
         &socket,
         &tun,
         relay_out,
+        &winners,
     );
 
     // The local settings the netmap does not supply. Cloned once here because
@@ -214,6 +222,7 @@ pub fn run_with_control(
         // ── host → tunnel ──────────────────────────────────────────────────
         let engine_host = &engine;
         let socket_host = &socket;
+        let winners_host = &*winners;
         let tun_host = &tun;
         scope.spawn(move || {
             // Big enough for a coalesced read: the kernel may hand back up to
@@ -232,7 +241,7 @@ pub fn run_with_control(
                     out.datagrams.extend(o.datagrams);
                     out.packets.extend(o.packets);
                 }
-                dispatch(out, socket_host, tun_host, relay_out);
+                dispatch(out, socket_host, tun_host, relay_out, winners_host);
             }
         });
 
@@ -247,9 +256,11 @@ pub fn run_with_control(
             let engine = &engine;
             let socket = &socket;
             let tun = &tun;
+            let winners_relay = &*winners;
             scope.spawn(move || {
                 relay_worker(
                     RelayContext {
+                        winners: winners_relay,
                         shutdown,
                         identity,
                         relay,
@@ -271,6 +282,7 @@ pub fn run_with_control(
         let disco_rx = &disco;
         let engine_rx = &engine;
         let socket_rx = &socket;
+        let winners_rx = &*winners;
         let tun_rx = &tun;
         scope.spawn(move || {
             // Allocated once. `recvmmsg` fills as many as have arrived, so a
@@ -291,7 +303,7 @@ pub fn run_with_control(
                         continue;
                     };
                     let out = demultiplex(datagram, m.from, now_ms(started), disco_rx, engine_rx);
-                    dispatch(out, socket_rx, tun_rx, relay_out);
+                    dispatch(out, socket_rx, tun_rx, relay_out, winners_rx);
                 }
             }
         });
@@ -357,6 +369,7 @@ pub fn run_with_control(
                     routes_refresh,
                     disco_refresh,
                     relay_out,
+                    &winners_refresh,
                 );
             });
         }
@@ -388,8 +401,21 @@ pub fn run_with_control(
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_interfaces(&gather_interfaces(config), listen_port);
             }
-            dispatch(engine.poll(now, random_seed), &socket, &tun, relay_out);
-            dispatch(disco_poll(&disco, now, relay_out), &socket, &tun, relay_out);
+            dispatch(
+                engine.poll(now, random_seed),
+                &socket,
+                &tun,
+                relay_out,
+                &winners,
+            );
+            dispatch(
+                disco_poll(&disco, now, relay_out, &mut search_sockets),
+                &socket,
+                &tun,
+                relay_out,
+                &winners,
+            );
+            drain_search_sockets(&mut search_sockets, &disco, &engine, now);
             apply_disco_paths(&disco, &engine);
         }
     });
@@ -410,7 +436,12 @@ pub fn run_with_control(
 /// Probes come back as ordinary UDP output. Candidate advertisements go over
 /// the relay (§7.3) and are handed to `advertise`, which belongs to the relay
 /// worker — the only thread that owns a Ponor connection.
-fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySender>) -> Output {
+fn disco_poll(
+    disco: &Mutex<disco::Disco>,
+    now_ms: u64,
+    relay: Option<&RelaySender>,
+    search: &mut crate::search::SearchSockets,
+) -> Output {
     let mut state = disco
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -421,6 +452,13 @@ fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySend
         TxId(tx)
     });
     drop(state);
+
+    // §7.7. Each of these must leave from a socket of its own — that is what
+    // earns a distinct external mapping toward the peer, and sending them all
+    // from the shared socket would earn exactly one.
+    for (route_index, datagram, to) in out.scratch {
+        let _ = search.send_scratch(route_index, &datagram, to);
+    }
 
     if let Some(relay) = relay {
         for (destination, payload) in out.relayed {
@@ -558,6 +596,8 @@ const RELAY_QUEUE: usize = 256;
 /// own threads borrow — the worker is a third datapath thread, not a side
 /// channel.
 struct RelayContext<'a> {
+    /// §7.7's published sockets, for the send path.
+    winners: &'a crate::search::Winners,
     shutdown: &'a Shutdown,
     identity: Arc<crate::control::Identity>,
     relay: crate::netmap::Relay,
@@ -798,7 +838,13 @@ async fn relay_receive_loop(context: &RelayContext<'_>, mut receiver: crate::rel
             // path to upgrade to. The engine has already chosen the transport,
             // so this only has to honour it — and the queue is non-blocking, so
             // handing work to the send task cannot stall this one.
-            dispatch(out, context.socket, context.tun, Some(context.relayed));
+            dispatch(
+                out,
+                context.socket,
+                context.tun,
+                Some(context.relayed),
+                context.winners,
+            );
         }
     }
 }
@@ -811,6 +857,46 @@ fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .path_changes();
     apply_path_changes(&changes, engine);
+}
+
+/// Feed anything that arrived on a §7.7 scratch socket into discovery, and
+/// migrate the peer's datapath to whichever socket it arrived on.
+///
+/// **The socket is the point, not the datagram.** A peer reached by the port
+/// search is reachable only through the mapping that one socket owns, so
+/// receiving on it is what identifies the mapping — and the datapath has to
+/// follow, or every subsequent datagram would leave from a mapping the peer's
+/// filter has never admitted.
+fn drain_search_sockets(
+    search: &mut crate::search::SearchSockets,
+    disco: &Mutex<disco::Disco>,
+    engine: &Engine,
+    now_ms: u64,
+) {
+    let arrivals = search.drain();
+    if arrivals.is_empty() {
+        return;
+    }
+    for arrival in arrivals {
+        let changes = {
+            let mut state = disco
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // The datagram is authenticated here exactly as one from the shared
+            // socket is: a scratch socket is not a trusted channel, it is only
+            // a different mapping.
+            let _ = state.inbound(&arrival.datagram, arrival.from, now_ms);
+            state.path_changes()
+        };
+        for change in &changes {
+            if let disco::PathChange::Install { peer, endpoint } = *change {
+                if peer == arrival.route_index {
+                    search.keep_only(arrival.route_index, arrival.socket, endpoint);
+                }
+            }
+        }
+        apply_path_changes(&changes, engine);
+    }
 }
 
 /// Perform the endpoint changes discovery asked for.
@@ -1192,11 +1278,28 @@ fn demultiplex(
 /// `Output` is entirely direct or entirely relayed, so the batch is built from
 /// the direct ones in place and a separate pass only runs when a relayed
 /// datagram is actually present.
-fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun, relay: Option<&RelaySender>) {
+fn dispatch(
+    out: Output,
+    socket: &UdpTransport,
+    tun: &Tun,
+    relay: Option<&RelaySender>,
+    winners: &crate::search::Winners,
+) {
     let mut direct: Vec<(&[u8], std::net::SocketAddr)> = Vec::with_capacity(out.datagrams.len());
     for (datagram, via) in &out.datagrams {
         match via {
-            Via::Direct(to) => direct.push((datagram.as_slice(), *to)),
+            // **§7.7's migration point.** A peer reached by the port search is
+            // reachable only through the mapping one scratch socket owns, so
+            // its traffic leaves from that socket and not the one §4 nominates.
+            // Sent individually rather than batched: a batch is one socket by
+            // construction, and these are rare enough that a syscall each costs
+            // nothing measurable.
+            Via::Direct(to) => match winners.get(*to) {
+                Some(won) => {
+                    let _ = won.send_to(datagram, *to);
+                }
+                None => direct.push((datagram.as_slice(), *to)),
+            },
             Via::Relay(destination) => {
                 if let Some(relay) = relay {
                     relay.send(*destination, datagram);
@@ -1271,6 +1374,7 @@ fn refresh_netmap(
     routes: &Mutex<Routes>,
     disco: &Mutex<disco::Disco>,
     relayed: Option<&RelaySender>,
+    winners: &crate::search::Winners,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1354,6 +1458,7 @@ fn refresh_netmap(
             socket,
             tun,
             relayed,
+            winners,
         );
     }
 }

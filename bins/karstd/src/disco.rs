@@ -936,14 +936,20 @@ impl Disco {
                 // The first candidate that is not the relay. They all failed —
                 // that is what `exhausted` means — and the search varies the
                 // port rather than the host, so any of them names the right one.
-                let toward = peer
+                // Every non-relay candidate, not the first. A peer advertises
+                // interface addresses beside reflexive ones and nothing here
+                // can tell which a NAT will carry; the search rotates rather
+                // than guesses, and guessing wrong spends every socket it has
+                // on an unroutable destination.
+                let toward: Vec<SocketAddr> = peer
                     .engine
                     .paths()
                     .paths()
                     .iter()
-                    .find(|p| p.kind != PathKind::Relay)
-                    .map(|p| p.addr);
-                if let Some(toward) = toward {
+                    .filter(|p| p.kind != PathKind::Relay)
+                    .map(|p| p.addr)
+                    .collect();
+                if !toward.is_empty() {
                     peer.search = Some(Search::new(toward));
                 }
             }
