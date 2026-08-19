@@ -92,15 +92,38 @@ fn start_server(peers: usize) -> TestServer {
     }
 }
 
-fn tempdir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("karstd-control-e2e-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("temp dir");
-    d
+/// A temporary directory that removes itself.
+///
+/// Fixtures here used to create one per process and never remove it, which
+/// accumulated thousands of directories in `/tmp` across repeated runs.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("karst-scratch-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        Self(dir)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn join(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn section(server: &TestServer, dir: &Path, cache: Option<&str>) -> ControlSection {
     ControlSection {
+        relay_ca_file: None,
         server: format!("http://{}", server.address),
         server_kem_pin: server.kem_pin.clone(),
         server_verify_pin: server.verify_pin.clone(),
@@ -119,6 +142,7 @@ fn keys(seed: u8) -> Arc<karst_noise::handshake::StaticKeys> {
 
 fn local(seed: u8) -> LocalSettings {
     LocalSettings {
+        relay_ca_file: None,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),
         interface: "karst0".to_owned(),
@@ -132,8 +156,9 @@ fn local(seed: u8) -> LocalSettings {
 #[ignore = "needs a Go toolchain; run with --ignored"]
 async fn a_node_registers_and_receives_a_routable_netmap() {
     let server = start_server(2);
-    let dir = tempdir("register");
-    let mut client = Client::new(&section(&server, &dir, None), &dir, &keys(0x31)).expect("client");
+    let dir = Scratch::new("register");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x31)).expect("client");
 
     let outcome = client.sync().await.expect("register and fetch");
     assert!(
@@ -147,6 +172,15 @@ async fn a_node_registers_and_receives_a_routable_netmap() {
 
     assert_eq!(config.peers.len(), 2);
     assert_eq!(config.psk_epoch, 7, "the epoch comes from the server");
+    assert_eq!(
+        config.relays.len(),
+        1,
+        "the relay registry was not retained"
+    );
+    let relay = config.relays.first().expect("the fixture relay");
+    assert_eq!(relay.address, "127.0.0.1:443");
+    assert_eq!(relay.region, "test");
+    assert_eq!(relay.identity_key.len(), 1952);
     for peer in &config.peers {
         assert!(
             !peer.psk_is_fallback,
@@ -187,8 +221,9 @@ async fn a_node_registers_and_receives_a_routable_netmap() {
 #[ignore = "needs a Go toolchain; run with --ignored"]
 async fn the_servers_policy_arrives_and_is_enforced() {
     let server = start_server(1);
-    let dir = tempdir("policy");
-    let mut client = Client::new(&section(&server, &dir, None), &dir, &keys(0x32)).expect("client");
+    let dir = Scratch::new("policy");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x32)).expect("client");
     client.sync().await.expect("sync");
     let config = client.to_config(local(0x32)).expect("config");
 
@@ -224,8 +259,9 @@ async fn the_servers_policy_arrives_and_is_enforced() {
 #[ignore = "needs a Go toolchain; run with --ignored"]
 async fn an_unchanged_netmap_is_answered_without_resending_it() {
     let server = start_server(2);
-    let dir = tempdir("unchanged");
-    let mut client = Client::new(&section(&server, &dir, None), &dir, &keys(0x33)).expect("client");
+    let dir = Scratch::new("unchanged");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x33)).expect("client");
 
     client.sync().await.expect("first fetch");
     let version = client.netmap().version;
@@ -248,8 +284,9 @@ async fn an_unchanged_netmap_is_answered_without_resending_it() {
 #[ignore = "needs a Go toolchain; run with --ignored"]
 async fn the_assembled_netmap_reproduces_the_servers_version() {
     let server = start_server(3);
-    let dir = tempdir("version");
-    let mut client = Client::new(&section(&server, &dir, None), &dir, &keys(0x34)).expect("client");
+    let dir = Scratch::new("version");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x34)).expect("client");
     client.sync().await.expect("fetch");
 
     assert_eq!(
@@ -265,14 +302,14 @@ async fn the_assembled_netmap_reproduces_the_servers_version() {
 #[tokio::test]
 #[ignore = "needs a Go toolchain; run with --ignored"]
 async fn a_cached_netmap_survives_the_server_going_away() {
-    let dir = tempdir("cache");
+    let dir = Scratch::new("cache");
     let version;
     let handle;
     {
         let server = start_server(2);
         let mut client = Client::new(
-            &section(&server, &dir, Some("netmap.bin")),
-            &dir,
+            &section(&server, dir.path(), Some("netmap.bin")),
+            dir.path(),
             &keys(0x35),
         )
         .expect("client");
@@ -285,6 +322,7 @@ async fn a_cached_netmap_survives_the_server_going_away() {
 
     // A fresh client with the same identity file and no reachable server.
     let dead = ControlSection {
+        relay_ca_file: None,
         server: "http://127.0.0.1:1".to_owned(),
         server_kem_pin: encode_hex(&[0x01; 1184]),
         server_verify_pin: encode_hex(&[0x02; 1952]),
@@ -292,7 +330,7 @@ async fn a_cached_netmap_survives_the_server_going_away() {
         setup_key: None,
         cache_file: Some(dir.join("netmap.bin")),
     };
-    let mut offline = Client::new(&dead, &dir, &keys(0x35)).expect("client");
+    let mut offline = Client::new(&dead, dir.path(), &keys(0x35)).expect("client");
     let loaded = offline
         .load_cache()
         .expect("a cache exists")

@@ -12,7 +12,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use crate::consts::{
     DATAGRAM_MAX, ENDPOINT_LEN, HEADER, MAC_LEN, MAGIC, MAX_CANDIDATES, PING_LEN, PONG_LEN,
-    TAG_LEN, TX_ID_LEN, VERSION,
+    REFLECTION_LEN, REFLECT_LEN, REFLECT_PAD_LEN, TAG_LEN, TX_ID_LEN, VERSION,
 };
 use crate::key::DiscoKey;
 use crate::Error;
@@ -26,6 +26,34 @@ pub struct TxId(pub [u8; TX_ID_LEN]);
 pub struct Endpoint(pub SocketAddr);
 
 impl Endpoint {
+    /// The nineteen bytes §6.2 defines.
+    ///
+    /// Public because `ponor-v1.md` §7.7's `ReflectOffer` carries an endpoint
+    /// in this encoding — the one place AVEN's wire shape appears inside
+    /// another protocol. Both ends of that frame must agree on it, and the
+    /// agreement is better held by one function than by two hand-written
+    /// layouts.
+    #[must_use]
+    pub fn to_wire(self) -> [u8; ENDPOINT_LEN] {
+        let mut v = Vec::with_capacity(ENDPOINT_LEN);
+        self.encode(&mut v);
+        let mut out = [0u8; ENDPOINT_LEN];
+        if let Some(chunk) = v.first_chunk::<ENDPOINT_LEN>() {
+            out = *chunk;
+        }
+        out
+    }
+
+    /// Parse §6.2's encoding.
+    ///
+    /// # Errors
+    /// [`Error::Malformed`] for an unknown family or a non-zero IPv4 tail —
+    /// rejected rather than ignored, so there is no covert channel in the
+    /// padding and no two encodings of one address.
+    pub fn from_wire(buf: &[u8; ENDPOINT_LEN]) -> Result<Self, Error> {
+        Self::decode(buf)
+    }
+
     fn encode(self, out: &mut Vec<u8>) {
         match self.0.ip() {
             IpAddr::V4(v4) => {
@@ -91,11 +119,37 @@ pub enum Message {
         /// Between 1 and [`MAX_CANDIDATES`] addresses.
         candidates: Vec<Endpoint>,
     },
+    /// `0x04` — "what address do you see me at?", sent to a relay's reflector.
+    ///
+    /// Keyed by a §5.3 reflect key, not a disco key. Carries nineteen zero
+    /// bytes of padding so that it is exactly as large as the `Reflection` it
+    /// asks for — §7.6's amplification factor is 1.0 because of that field and
+    /// for no other reason.
+    Reflect {
+        /// Matches the answering `Reflection`.
+        tx: TxId,
+    },
+    /// `0x05` — a reflector's answer: the source address the `Reflect` came
+    /// from.
+    ///
+    /// This is the one message in AVEN where the source address *is* the
+    /// content, which is why §7.6 has the reflector answer to it — the inverse
+    /// of §7.1's rule for `Pong`, and not a contradiction of it: a `Pong`
+    /// answers a question about the peer's address, a `Reflection` answers a
+    /// question about the sender's own.
+    Reflection {
+        /// The `Reflect` being answered.
+        tx: TxId,
+        /// Where the reflector saw it come from.
+        observed: Endpoint,
+    },
 }
 
 const T_PING: u8 = 0x01;
 const T_PONG: u8 = 0x02;
 const T_CALL_ME_MAYBE: u8 = 0x03;
+const T_REFLECT: u8 = 0x04;
+const T_REFLECTION: u8 = 0x05;
 
 /// A datagram's header fields, read before the key is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,8 +157,26 @@ pub struct Header {
     /// Whose datagram this claims to be — §5.2. Not a node id.
     pub tag: [u8; TAG_LEN],
     /// Which disco-key epoch it was authenticated under.
+    ///
+    /// Zero for the §5.3 reflect types, which name no epoch — see
+    /// [`Header::is_reflect`].
     pub epoch: u32,
     msg_type: u8,
+}
+
+impl Header {
+    /// Whether this datagram is keyed by a §5.3 **reflect** key rather than a
+    /// per-pair disco key.
+    ///
+    /// The receiver needs this before it has any key to try: the two tag
+    /// derivations use different labels and live in different tables, and
+    /// §5.3 requires the reflect tag to be tested *before* the §5.2 peer
+    /// table. This is what makes that ordering a single branch rather than two
+    /// lookups whose precedence is left unstated.
+    #[must_use]
+    pub const fn is_reflect(&self) -> bool {
+        matches!(self.msg_type, T_REFLECT | T_REFLECTION)
+    }
 }
 
 impl Message {
@@ -113,6 +185,8 @@ impl Message {
             Self::Ping { .. } => T_PING,
             Self::Pong { .. } => T_PONG,
             Self::CallMeMaybe { .. } => T_CALL_ME_MAYBE,
+            Self::Reflect { .. } => T_REFLECT,
+            Self::Reflection { .. } => T_REFLECTION,
         }
     }
 
@@ -130,7 +204,12 @@ impl Message {
 
         match self {
             Self::Ping { tx } => out.extend_from_slice(&tx.0),
-            Self::Pong { tx, observed } => {
+            // Identical bodies, deliberately merged: `Reflection` is a `Pong`
+            // for the reflect key space, with the same shape and a different
+            // type byte. Keeping them apart would be two copies of one layout
+            // free to drift, and `msg_type` already carries the only
+            // difference.
+            Self::Pong { tx, observed } | Self::Reflection { tx, observed } => {
                 out.extend_from_slice(&tx.0);
                 observed.encode(&mut out);
             }
@@ -144,6 +223,15 @@ impl Message {
                 for c in candidates.iter().take(take) {
                     c.encode(&mut out);
                 }
+            }
+            Self::Reflect { tx } => {
+                out.extend_from_slice(&tx.0);
+                // §7.6. Not filler: it makes the request the same size as the
+                // reply, which is the entire amplification argument. A
+                // reflector answers datagrams from anyone able to replay one,
+                // and a reply larger than its request is a contribution to
+                // somebody else's attack.
+                out.extend_from_slice(&[0u8; REFLECT_PAD_LEN]);
             }
         }
 
@@ -216,14 +304,22 @@ pub fn open(datagram: &[u8], key: &DiscoKey) -> Result<Message, Error> {
     }
 
     let body = signed.get(HEADER..).ok_or(Error::NotAven)?;
-    decode_body(header.msg_type, body, datagram.len())
+    decode_body(&header, body, datagram.len())
 }
 
-fn decode_body(msg_type: u8, body: &[u8], total: usize) -> Result<Message, Error> {
+fn decode_body(header: &Header, body: &[u8], total: usize) -> Result<Message, Error> {
+    let msg_type = header.msg_type;
     let bad_len = || Error::BadLength {
         msg_type,
         got: total,
     };
+    // §6.1: the reflect types name no epoch, because a reflect key's lifetime
+    // is a Ponor connection rather than a netmap version. Rejected rather than
+    // ignored, so each datagram has one encoding — the same rule §6.2 applies
+    // to an IPv4 tail.
+    if header.is_reflect() && header.epoch != 0 {
+        return Err(Error::Malformed);
+    }
     match msg_type {
         T_PING => {
             if total != PING_LEN {
@@ -268,6 +364,35 @@ fn decode_body(msg_type: u8, body: &[u8], total: usize) -> Result<Message, Error
                 candidates.push(Endpoint::decode(ep)?);
             }
             Ok(Message::CallMeMaybe { candidates })
+        }
+        T_REFLECT => {
+            if total != REFLECT_LEN {
+                return Err(bad_len());
+            }
+            let tx = body.first_chunk::<TX_ID_LEN>().ok_or_else(bad_len)?;
+            let pad = body.get(TX_ID_LEN..).ok_or_else(bad_len)?;
+            // Rejected rather than ignored, for the reason §6.2 gives about an
+            // IPv4 tail — but with a second one specific to this field. The
+            // padding exists to hold a size equality, and a receiver that
+            // accepted arbitrary bytes there would let a sender fill it with
+            // anything, which is the shape of a covert channel through a field
+            // whose only job is to be a certain number of bytes long.
+            if pad.iter().any(|b| *b != 0) {
+                return Err(Error::Malformed);
+            }
+            Ok(Message::Reflect { tx: TxId(*tx) })
+        }
+        T_REFLECTION => {
+            if total != REFLECTION_LEN {
+                return Err(bad_len());
+            }
+            let tx = body.first_chunk::<TX_ID_LEN>().ok_or_else(bad_len)?;
+            let rest = body.get(TX_ID_LEN..).ok_or_else(bad_len)?;
+            let ep = rest.first_chunk::<ENDPOINT_LEN>().ok_or_else(bad_len)?;
+            Ok(Message::Reflection {
+                tx: TxId(*tx),
+                observed: Endpoint::decode(ep)?,
+            })
         }
         other => Err(Error::UnknownType(other)),
     }
@@ -333,6 +458,130 @@ mod tests {
                 .map(|i| v4(i as u8, 1000 + i as u16))
                 .collect(),
         });
+    }
+
+    /// The reflect types carry epoch 0 — §6.1 — so they need their own
+    /// round-trip rather than sharing [`roundtrip`]'s epoch 7.
+    fn roundtrip_reflect(m: &Message) {
+        let k = key(1);
+        let bytes = m.encode(&k, &tag(), 0);
+        let header = peek(&bytes).expect("peek");
+        assert!(header.is_reflect(), "not routed to the reflect key space");
+        assert_eq!(open(&bytes, &k).expect("open"), *m);
+    }
+
+    #[test]
+    fn the_reflect_pair_round_trips() {
+        roundtrip_reflect(&Message::Reflect { tx: TxId([5; 12]) });
+        roundtrip_reflect(&Message::Reflection {
+            tx: TxId([6; 12]),
+            observed: v4(9, 51820),
+        });
+        roundtrip_reflect(&Message::Reflection {
+            tx: TxId([6; 12]),
+            observed: v6(51820),
+        });
+    }
+
+    #[test]
+    fn a_reflect_is_exactly_as_large_as_the_reflection_it_asks_for() {
+        // §7.6's amplification factor. This is the assertion the `pad` field
+        // exists for: without it a 46-byte request draws a 65-byte reply and
+        // every relay in a pool becomes a 1.4× amplifier for anyone who can
+        // replay one datagram.
+        let k = key(1);
+        let request = Message::Reflect { tx: TxId([0; 12]) }.encode(&k, &tag(), 0);
+        let reply = Message::Reflection {
+            tx: TxId([0; 12]),
+            observed: v4(1, 1),
+        }
+        .encode(&k, &tag(), 0);
+        assert_eq!(request.len(), reply.len());
+        assert_eq!(request.len(), REFLECT_LEN);
+        // And the same for the larger of the two address families, which is
+        // where an inequality would actually appear.
+        let reply6 = Message::Reflection {
+            tx: TxId([0; 12]),
+            observed: v6(1),
+        }
+        .encode(&k, &tag(), 0);
+        assert_eq!(request.len(), reply6.len());
+    }
+
+    #[test]
+    fn a_reflect_with_dirty_padding_is_refused() {
+        // The padding's only job is to be nineteen bytes long, so a receiver
+        // that accepted arbitrary bytes there would leave a covert channel in
+        // a field with no other content.
+        let k = key(1);
+        let mut d = Message::Reflect { tx: TxId([1; 12]) }.encode(&k, &tag(), 0);
+        let at = HEADER + TX_ID_LEN;
+        d[at + 3] = 0x01;
+        let mac = k.mac(&d[..REFLECT_LEN - MAC_LEN]);
+        d[REFLECT_LEN - MAC_LEN..].copy_from_slice(&mac);
+        assert_eq!(open(&d, &k), Err(Error::Malformed));
+    }
+
+    #[test]
+    fn a_reflect_type_with_a_non_zero_epoch_is_refused() {
+        // §6.1. A reflect key's lifetime is a Ponor connection, so there is no
+        // epoch to name; one encoding per datagram means rejecting the others.
+        let k = key(1);
+        for m in [
+            Message::Reflect { tx: TxId([1; 12]) },
+            Message::Reflection {
+                tx: TxId([1; 12]),
+                observed: v4(1, 1),
+            },
+        ] {
+            let d = m.encode(&k, &tag(), 1);
+            assert_eq!(open(&d, &k), Err(Error::Malformed), "{m:?}");
+        }
+    }
+
+    #[test]
+    fn the_reflect_tag_is_not_the_peer_tag() {
+        // §5.3 has the receiver test the reflect tag before the §5.2 peer
+        // table. That ordering is only meaningful because the two derivations
+        // cannot produce the same value for the same key material — different
+        // labels, so seeing one never reveals the other.
+        let k = key(1);
+        assert_ne!(k.reflect_tag(), k.tag(b"node-a", 0));
+        assert_ne!(k.reflect_tag(), k.tag(b"", 0));
+    }
+
+    #[test]
+    fn the_reflect_types_are_routed_to_the_reflect_key_space() {
+        // A receiver has to pick a key before it can verify anything, and the
+        // type byte is the only thing available at that point.
+        let k = key(1);
+        for (m, reflect) in [
+            (Message::Ping { tx: TxId([1; 12]) }, false),
+            (
+                Message::Pong {
+                    tx: TxId([1; 12]),
+                    observed: v4(1, 1),
+                },
+                false,
+            ),
+            (
+                Message::CallMeMaybe {
+                    candidates: vec![v4(1, 1)],
+                },
+                false,
+            ),
+            (Message::Reflect { tx: TxId([1; 12]) }, true),
+            (
+                Message::Reflection {
+                    tx: TxId([1; 12]),
+                    observed: v4(1, 1),
+                },
+                true,
+            ),
+        ] {
+            let d = m.encode(&k, &tag(), 0);
+            assert_eq!(peek(&d).expect("peek").is_reflect(), reflect, "{m:?}");
+        }
     }
 
     #[test]
@@ -441,7 +690,12 @@ mod tests {
         // The MAC is checked first, so this is a peer that holds the key and
         // sent something malformed — a bug or a version skew, not an attack.
         let k = key(1);
-        for (ty, len) in [(T_PING, PING_LEN), (T_PONG, PONG_LEN)] {
+        for (ty, len) in [
+            (T_PING, PING_LEN),
+            (T_PONG, PONG_LEN),
+            (T_REFLECT, REFLECT_LEN),
+            (T_REFLECTION, REFLECTION_LEN),
+        ] {
             for wrong in [len - 1, len + 1] {
                 let mut body = vec![0u8; wrong - HEADER - MAC_LEN];
                 let mut d = Vec::new();

@@ -12,8 +12,9 @@ pub mod psk;
 pub mod transport;
 
 pub use channel::{derive_keys, hello_signing_input, init_signing_input, Keys, Record};
-pub use handle::handle;
+pub use handle::{handle, handle_bytes};
 pub use netmap::{
     netmap_version, peer_digest, FilterRuleView, NetmapContent, PeerEntry, PeerPsks, PskChoice,
+    RelayView,
 };
 pub use psk::{pair as psk_pair, Psk};

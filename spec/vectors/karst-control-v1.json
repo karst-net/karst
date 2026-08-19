@@ -181,7 +181,7 @@
         "peers": null,
         "packet_filter": null,
         "egress_filter": null,
-        "version": 10291612180833131015
+        "version": 3776234293800280098
       },
       {
         "psk_epoch": 9,
@@ -205,7 +205,7 @@
         ],
         "packet_filter": null,
         "egress_filter": null,
-        "version": 14309308069436983092
+        "version": 11750341895774444707
       },
       {
         "psk_epoch": 9,
@@ -229,7 +229,7 @@
         ],
         "packet_filter": null,
         "egress_filter": null,
-        "version": 14309308069436983092
+        "version": 11750341895774444707
       },
       {
         "psk_epoch": 9,
@@ -265,7 +265,7 @@
           }
         ],
         "egress_filter": null,
-        "version": 17799130231726044224
+        "version": 17254876647279988417
       },
       {
         "psk_epoch": 9,
@@ -301,7 +301,7 @@
             ]
           }
         ],
-        "version": 14655118367262024037
+        "version": 13967365650829295164
       }
     ]
   }

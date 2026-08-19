@@ -87,7 +87,7 @@ func main() {
 	svc := control.New(static, identity.ControlSigner{Key: srvKey},
 		lookup, identity.ControlVerifier{}, handler)
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := net.Listen("tcp", listenAddr())
 	if err != nil {
 		fail("listen: %v", err)
 	}
@@ -112,6 +112,23 @@ func main() {
 }
 
 // netmapMode reads `--netmap N` from the command line.
+// listenAddr is where the fixture serves.
+//
+// Loopback by default, because the interop tests run it in the same namespace
+// they connect from and a fixture that listened on every interface by default
+// would be a surprise on a developer's machine. `--listen` widens it for the
+// end-to-end test, whose nodes live in a different network namespace and
+// cannot reach 127.0.0.1 here.
+func listenAddr() string {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--listen" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return "127.0.0.1:0"
+}
+
 func netmapMode() (int, bool) {
 	args := os.Args[1:]
 	for i, a := range args {

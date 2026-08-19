@@ -75,7 +75,7 @@ Be clear-eyed about this — it is more than it first appears:
   claim.
 
 PQ on the Go side is feasible: `crypto/mlkem` is in the Go standard library as
-of 1.24, and ML-DSA is available via Cloudflare CIRCL.
+of 1.24, and ML-DSA in `crypto/mldsa` as of 1.27.
 
 ### Licensing: resolving the collision with ADR-0007
 

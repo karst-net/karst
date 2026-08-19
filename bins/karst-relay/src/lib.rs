@@ -15,6 +15,7 @@ pub mod config;
 pub mod http;
 pub mod hub;
 pub mod limits;
+pub mod reflect;
 pub mod roster;
 pub mod server;
 pub mod sign;

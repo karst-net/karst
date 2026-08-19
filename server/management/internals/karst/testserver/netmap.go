@@ -6,9 +6,12 @@ package main
 import (
 	"context"
 	"crypto/mlkem"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"sync"
 
 	pb "google.golang.org/protobuf/proto"
@@ -148,6 +151,49 @@ func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte
 
 // buildNetmapServer assembles the fixture. `preload` peers are registered up
 // front so a node's first netmap is not empty.
+// relayEntry builds the Phase 4 relay registry row this server advertises.
+//
+// By default it is a placeholder with the right *shape*: the identity need only
+// have the ML-DSA-65 public-key width, because what the default exercises is
+// that the registry crosses the authenticated control channel and that the node
+// re-derives the relay id while decoding it.
+//
+// `--relay <addr> <hex-identity-pk>` replaces it with a real one, which is what
+// an end-to-end test needs: a node cannot connect to a relay whose advertised
+// key is a pattern of 0x91, and the relay id is *derived* from the key (§5.2)
+// so it cannot be supplied separately without inviting a mismatch.
+func relayEntry() *proto.KarstRelay {
+	address := "127.0.0.1:443"
+	key := pattern(1952, 0x91)
+
+	args := os.Args[1:]
+	for i, a := range args {
+		if a != "--relay" || i+2 >= len(args) {
+			continue
+		}
+		address = args[i+1]
+		decoded, err := hex.DecodeString(args[i+2])
+		if err != nil {
+			// A misspelled key would otherwise surface as a node that cannot
+			// connect to a relay that is running perfectly.
+			panic(fmt.Sprintf("--relay identity key is not hex: %v", err))
+		}
+		key = decoded
+		break
+	}
+
+	h := sha256.New()
+	_, _ = h.Write([]byte("karst-relay-id-v1"))
+	_, _ = h.Write(key)
+	return &proto.KarstRelay{
+		Address:       address,
+		TlsServerName: "relay.test",
+		RelayId:       h.Sum(nil),
+		IdentityKey:   key,
+		Region:        "test",
+	}
+}
+
 func buildNetmapServer(preload int) (*router, error) {
 	db, err := gorm.Open(sqlite.Open("file:karst-testserver?mode=memory&cache=shared"),
 		&gorm.Config{Logger: logger.Discard})
@@ -186,6 +232,7 @@ func buildNetmapServer(preload int) (*router, error) {
 		account: account,
 		nodes:   nodes,
 	}
+	r.netmap.Relays = []*proto.KarstRelay{relayEntry()}
 
 	// Preloaded peers, so the netmap has content on the first fetch.
 	for i := 0; i < preload; i++ {

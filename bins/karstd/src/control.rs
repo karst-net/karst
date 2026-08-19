@@ -28,6 +28,7 @@
 //! decrypt traffic.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use karst_control_client::cache::{self, SealKey};
@@ -105,6 +106,10 @@ impl std::error::Error for Error {}
 pub struct Identity {
     signing: ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa65>,
     public: Vec<u8>,
+    /// Secret material for deriving local-at-rest keys. This is derived once
+    /// from the seed rather than from `public`: an encryption key made from a
+    /// public verification key protects nothing from a reader of the cache.
+    cache_key: [u8; 32],
 }
 
 impl std::fmt::Debug for Identity {
@@ -121,9 +126,19 @@ impl Identity {
     /// Derive a key from a 32-byte seed.
     #[must_use]
     pub fn from_seed(seed: &[u8; IDENTITY_SEED_LEN]) -> Self {
+        use sha2::{Digest as _, Sha256};
+
         let signing = ml_dsa::ExpandedSigningKey::<ml_dsa::MlDsa65>::from_seed(&(*seed).into());
         let public = signing.verifying_key().encode().to_vec();
-        Self { signing, public }
+        let mut h = Sha256::new();
+        h.update(b"karst-netmap-cache-key-v1");
+        h.update(seed);
+        let cache_key: [u8; 32] = h.finalize().into();
+        Self {
+            signing,
+            public,
+            cache_key,
+        }
     }
 
     /// Load a seed, or create one on first run.
@@ -166,6 +181,13 @@ impl Identity {
     }
 }
 
+impl Drop for Identity {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.cache_key.zeroize();
+    }
+}
+
 impl Signer for Identity {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
         // The FIPS 204 context string must match the server's, or the signature
@@ -179,6 +201,18 @@ impl Signer for Identity {
 
     fn public_key(&self) -> Vec<u8> {
         self.public.clone()
+    }
+}
+
+// Ponor shares the node identity key but not the control-channel signature
+// context. A relay signature must never be reusable as a control signature.
+impl karst_relay_proto::Signer for Identity {
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_deterministic(message, b"ponor-v1")
+            .map_err(|_| "signing the relay handshake failed")?;
+        Ok(sig.encode().to_vec())
     }
 }
 
@@ -202,13 +236,33 @@ impl Verifier for ServerVerifier {
     }
 }
 
+/// Verifies a Ponor relay identity pinned by the netmap.
+#[derive(Debug)]
+pub struct RelayVerifier;
+
+impl karst_relay_proto::Verifier for RelayVerifier {
+    fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+        let Ok(pk) = <[u8; 1952]>::try_from(public_key) else {
+            return false;
+        };
+        let Ok(sg) = <[u8; 3309]>::try_from(signature) else {
+            return false;
+        };
+        let vk = ml_dsa::VerifyingKey::<ml_dsa::MlDsa65>::decode(&pk.into());
+        let Some(sig) = ml_dsa::Signature::<ml_dsa::MlDsa65>::decode(&sg.into()) else {
+            return false;
+        };
+        vk.verify_with_context(message, b"ponor-v1", &sig)
+    }
+}
+
 // ── the client ──────────────────────────────────────────────────────────────
 
 /// A node's relationship with its coordination server.
 pub struct Client {
     endpoint: String,
     pins: ServerPins,
-    identity: Identity,
+    identity: Arc<Identity>,
     setup_key: Option<String>,
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
@@ -233,6 +287,12 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
+    /// A shared signing identity for relay authentication.
+    #[must_use]
+    pub fn relay_identity(&self) -> Arc<Identity> {
+        Arc::clone(&self.identity)
+    }
+
     /// Build a client from the `[control]` section.
     ///
     /// # Errors
@@ -246,7 +306,10 @@ impl Client {
     ) -> Result<Self, Error> {
         use karst_crypto::kem::{Kem as _, MlKem768Backend as MlKem};
 
-        let identity = Identity::load_or_create(&resolve(&section.identity_key_file, config_dir))?;
+        let identity = Arc::new(Identity::load_or_create(&resolve(
+            &section.identity_key_file,
+            config_dir,
+        ))?);
         let pins = ServerPins {
             static_kem: decode_hex_any(&section.server_kem_pin, "server_kem_pin")?,
             verify_key: decode_hex_any(&section.server_verify_pin, "server_verify_pin")?,
@@ -354,7 +417,7 @@ impl Client {
             self.endpoint.clone(),
             &self.pins,
             self.node_id.clone(),
-            &self.identity,
+            &*self.identity,
             &ServerVerifier,
             // A node the server already knows must not present its key: that is
             // identity substitution, not re-registration.
@@ -550,6 +613,9 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         keys,
         listen: file.node.listen,
         interface: file.node.interface.clone(),
+        // Resolved against the config directory like every other path here, so
+        // a relative one means what an operator editing the file expects.
+        relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
     };
 
     // A current-thread runtime, created and dropped here. The datapath is
@@ -600,20 +666,11 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
 
 /// The key sealing the on-disk netmap cache.
 ///
-/// Bound to the node's identity, so a cache copied to another machine is
-/// unreadable there — and separated from the identity's signing use by a domain
-/// label, so the two derivations cannot collide.
+/// Derived from the node's *secret* identity seed, so a cache copied to another
+/// machine is unreadable there. The domain label separates this local-at-rest
+/// use from the signing operation.
 fn cache_seal_key(identity: &Identity) -> [u8; 32] {
-    use sha2::{Digest as _, Sha256};
-    let mut h = Sha256::new();
-    h.update(b"karst-netmap-cache-key-v1");
-    h.update(&identity.public);
-    let out = h.finalize();
-    let mut key = [0u8; 32];
-    for (dst, src) in key.iter_mut().zip(out.iter()) {
-        *dst = *src;
-    }
-    key
+    identity.cache_key
 }
 
 /// A fresh nonce for each cache write.
@@ -730,11 +787,7 @@ mod tests {
 
     use super::*;
 
-    fn tempdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("karstd-control-{}-{tag}", std::process::id()));
-        std::fs::create_dir_all(&d).expect("temp dir");
-        d
-    }
+    use crate::scratch::Scratch;
 
     /// **The identity must survive a restart.** The node's handle is derived
     /// from it, so a new key on every start would enrol a new node each time —
@@ -742,7 +795,7 @@ mod tests {
     /// old one.
     #[test]
     fn an_identity_is_created_once_and_reused() {
-        let dir = tempdir("identity");
+        let dir = Scratch::new("identity");
         let path = dir.join("identity.key");
         let _ = std::fs::remove_file(&path);
 
@@ -759,7 +812,7 @@ mod tests {
     #[test]
     fn a_created_identity_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempdir("mode");
+        let dir = Scratch::new("mode");
         let path = dir.join("mode.key");
         let _ = std::fs::remove_file(&path);
         Identity::load_or_create(&path).expect("create");
@@ -768,13 +821,26 @@ mod tests {
         assert_eq!(mode & 0o077, 0, "identity key is mode {mode:04o}");
     }
 
+    #[test]
+    fn cache_key_is_not_derivable_from_the_public_identity() {
+        use sha2::{Digest as _, Sha256};
+
+        let identity = Identity::from_seed(&[0x42; IDENTITY_SEED_LEN]);
+        let mut public_only = Sha256::new();
+        public_only.update(b"karst-netmap-cache-key-v1");
+        public_only.update(&identity.public);
+        let public_only: [u8; 32] = public_only.finalize().into();
+
+        assert_ne!(cache_seal_key(&identity), public_only);
+    }
+
     /// An existing key file others can read is refused, for the same reason the
     /// roster's is: a permissive mode is the difference between a secret and a
     /// published file.
     #[test]
     fn a_readable_identity_file_is_refused() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempdir("readable");
+        let dir = Scratch::new("readable");
         let path = dir.join("readable.key");
         std::fs::write(&path, encode_hex(&[0x11; IDENTITY_SEED_LEN])).expect("write");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
@@ -809,6 +875,7 @@ mod tests {
 
     fn section(dir: &Path, cache: Option<&str>) -> ControlSection {
         ControlSection {
+            relay_ca_file: None,
             server: "http://127.0.0.1:1".to_owned(),
             server_kem_pin: encode_hex(&[0x01; 1184]),
             server_verify_pin: encode_hex(&[0x02; 1952]),
@@ -827,19 +894,19 @@ mod tests {
     /// server that is behaving perfectly.
     #[test]
     fn a_pin_of_the_wrong_length_is_refused_at_startup() {
-        let dir = tempdir("pins");
+        let dir = Scratch::new("pins");
         let _ = std::fs::remove_file(dir.join("id.key"));
 
-        let mut short = section(&dir, None);
+        let mut short = section(dir.path(), None);
         short.server_verify_pin = encode_hex(&[0x02; 32]);
-        match Client::new(&short, &dir, &keys()) {
+        match Client::new(&short, dir.path(), &keys()) {
             Err(Error::Key(m)) => assert!(m.contains("server_verify_pin"), "{m}"),
             other => panic!("expected a key error, got {other:?}"),
         }
 
-        let mut short = section(&dir, None);
+        let mut short = section(dir.path(), None);
         short.server_kem_pin = encode_hex(&[0x01; 32]);
-        match Client::new(&short, &dir, &keys()) {
+        match Client::new(&short, dir.path(), &keys()) {
             Err(Error::Key(m)) => assert!(m.contains("server_kem_pin"), "{m}"),
             other => panic!("expected a key error, got {other:?}"),
         }
@@ -851,11 +918,15 @@ mod tests {
     fn the_cache_round_trips_and_is_not_plaintext() {
         use karst_control_client::transport::pb;
 
-        let dir = tempdir("cache");
+        let dir = Scratch::new("cache");
         let _ = std::fs::remove_file(dir.join("id.key"));
         let _ = std::fs::remove_file(dir.join("netmap.bin"));
-        let mut client =
-            Client::new(&section(&dir, Some("netmap.bin")), &dir, &keys()).expect("client");
+        let mut client = Client::new(
+            &section(dir.path(), Some("netmap.bin")),
+            dir.path(),
+            &keys(),
+        )
+        .expect("client");
 
         // A netmap with a recognisable PSK.
         let psk = vec![0xAB; 32];
@@ -873,6 +944,7 @@ mod tests {
                 dh_public_key: vec![0x12; 32],
                 psk: psk.clone(),
                 psk_previous: Vec::new(),
+                disco_key: vec![0xCD; 32],
             }],
             ..pb::KarstNetmapResponse::default()
         };
@@ -889,8 +961,12 @@ mod tests {
             "the PSK is on disk in plaintext"
         );
 
-        let mut reloaded =
-            Client::new(&section(&dir, Some("netmap.bin")), &dir, &keys()).expect("client");
+        let mut reloaded = Client::new(
+            &section(dir.path(), Some("netmap.bin")),
+            dir.path(),
+            &keys(),
+        )
+        .expect("client");
         let outcome = reloaded
             .load_cache()
             .expect("a cache exists")
@@ -914,18 +990,19 @@ mod tests {
     /// the node's key, so copying one to another machine gains nothing.
     #[test]
     fn a_cache_from_another_node_does_not_open() {
-        let dir = tempdir("foreign");
+        let dir = Scratch::new("foreign");
         let _ = std::fs::remove_file(dir.join("id.key"));
         let _ = std::fs::remove_file(dir.join("nm.bin"));
-        let client = Client::new(&section(&dir, Some("nm.bin")), &dir, &keys()).expect("client");
+        let client =
+            Client::new(&section(dir.path(), Some("nm.bin")), dir.path(), &keys()).expect("client");
         client.save_cache().expect("save");
 
         // A different node: new identity file, same cache.
-        let other = tempdir("foreign-other");
+        let other = Scratch::new("foreign-other");
         let _ = std::fs::remove_file(other.join("id.key"));
-        let mut moved = section(&other, None);
+        let mut moved = section(other.path(), None);
         moved.cache_file = Some(dir.join("nm.bin"));
-        let mut foreign = Client::new(&moved, &other, &keys()).expect("client");
+        let mut foreign = Client::new(&moved, other.path(), &keys()).expect("client");
 
         match foreign.load_cache() {
             Some(Err(Error::Cache(_))) => {}
@@ -937,11 +1014,15 @@ mod tests {
     /// reported as a failure.
     #[test]
     fn a_missing_cache_is_not_an_error() {
-        let dir = tempdir("cold");
+        let dir = Scratch::new("cold");
         let _ = std::fs::remove_file(dir.join("id.key"));
         let _ = std::fs::remove_file(dir.join("absent.bin"));
-        let mut client =
-            Client::new(&section(&dir, Some("absent.bin")), &dir, &keys()).expect("client");
+        let mut client = Client::new(
+            &section(dir.path(), Some("absent.bin")),
+            dir.path(),
+            &keys(),
+        )
+        .expect("client");
         assert!(
             client.load_cache().is_none(),
             "a cold start is not a failure"
@@ -952,9 +1033,10 @@ mod tests {
     /// must not leave PSKs on disk anyway.
     #[test]
     fn no_cache_file_means_nothing_is_written() {
-        let dir = tempdir("nocache");
+        let dir = Scratch::new("nocache");
         let _ = std::fs::remove_file(dir.join("id.key"));
-        let mut client = Client::new(&section(&dir, None), &dir, &keys()).expect("client");
+        let mut client =
+            Client::new(&section(dir.path(), None), dir.path(), &keys()).expect("client");
         client.save_cache().expect("a no-op save must succeed");
         assert!(client.load_cache().is_none());
     }

@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 
 use crate::consts::{
     ANSWERED_WINDOW, HYSTERESIS_MS, HYSTERESIS_PERCENT, HYSTERESIS_SAMPLES, MAX_OUTSTANDING,
-    PATH_STALE_MS, TX_TIMEOUT_MS,
+    MAX_PATHS_PER_PEER, PATH_STALE_MS, TX_TIMEOUT_MS,
 };
 use crate::msg::TxId;
 
@@ -111,6 +111,36 @@ pub enum ProbeError {
     TooManyOutstanding,
 }
 
+/// What admitting a candidate did to the bounded path set.
+///
+/// Returned rather than swallowed because the caller keeps a probe schedule
+/// alongside these paths, and a displaced address must leave both or the
+/// scheduler goes on probing something this set no longer knows about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    /// The address was already known. Nothing changed.
+    Known,
+    /// Recorded as a new, unconfirmed candidate.
+    Added {
+        /// The address dropped to make room, which the caller must also forget.
+        evicted: Option<SocketAddr>,
+    },
+    /// Refused: every slot holds a confirmed path that is still in use.
+    Full,
+}
+
+/// Whether a slot could be freed for a new path, and what it cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Room {
+    /// A slot is available. `evicted` names the path dropped for it, if any.
+    Available {
+        /// The displaced address, or `None` when there was already space.
+        evicted: Option<SocketAddr>,
+    },
+    /// Nothing could be freed without taking the path currently in use.
+    Full,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Outstanding {
     addr: SocketAddr,
@@ -138,20 +168,66 @@ impl PathSet {
         Self::default()
     }
 
-    /// Add a candidate, or return the existing one.
+    /// Add a candidate, or report that it is already known.
     ///
     /// A candidate is **not** a path until it answers a probe. Adding one
     /// changes nothing about selection.
-    pub fn add_candidate(&mut self, addr: SocketAddr, kind: PathKind) {
+    ///
+    /// **The cap lives here, in the type that owns the vector.** `§5.3`'s
+    /// sixteen-candidate limit bounds one `CallMeMaybe`, not the number of
+    /// distinct addresses an authenticated peer can name over a connection's
+    /// lifetime — and every address that ever answered a single `Ping` used to
+    /// be resident for good, because the only removal refused to touch a
+    /// confirmed path. A peer holding a disco key and a /64 could therefore
+    /// grow this set, and the per-tick selection scan over it, without limit.
+    pub fn add_candidate(&mut self, addr: SocketAddr, kind: PathKind) -> Admission {
         if self.paths.iter().any(|p| p.addr == addr) {
-            return;
+            return Admission::Known;
         }
+        let Room::Available { evicted } = self.make_room() else {
+            return Admission::Full;
+        };
         self.paths.push(Path {
             addr,
             kind,
             latency_ms: None,
             last_pong_ms: None,
         });
+        Admission::Added { evicted }
+    }
+
+    /// Free a slot for a new path, and say which address paid for it.
+    ///
+    /// The order is the whole of the policy. An unconfirmed candidate has
+    /// demonstrated nothing, so those go first and oldest-first. Only when
+    /// every slot holds a confirmed path is one of *those* dropped, and then
+    /// the stalest — a path that answered a minute ago is weaker evidence than
+    /// one that answered a second ago. The chosen path is never a victim:
+    /// dropping the path currently carrying traffic to make room for an address
+    /// that has answered nothing inverts the rule this set exists to enforce.
+    fn make_room(&mut self) -> Room {
+        if self.paths.len() < MAX_PATHS_PER_PEER {
+            return Room::Available { evicted: None };
+        }
+        let chosen = self.chosen;
+        let victim = self
+            .paths
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| Some(path.addr) != chosen)
+            // `None` sorts before `Some`, so ordering on `last_pong_ms` alone
+            // already puts every unconfirmed candidate ahead of every confirmed
+            // path and then orders the confirmed ones stalest-first. The index
+            // breaks ties among candidates, which all carry `None`.
+            .min_by_key(|(index, path)| (path.last_pong_ms, *index))
+            .map(|(index, _)| index);
+        match victim {
+            Some(victim) => Room::Available {
+                evicted: Some(self.paths.remove(victim).addr),
+            },
+            // Only reachable if the cap is one and that one slot is in use.
+            None => Room::Full,
+        }
     }
 
     /// Record that a `Ping` bearing `tx` was sent to `addr`.
@@ -227,9 +303,12 @@ impl PathSet {
         if let Some(path) = self.paths.iter_mut().find(|p| p.addr == sent.addr) {
             path.latency_ms = Some(rtt_ms);
             path.last_pong_ms = Some(now_ms);
-        } else {
-            // The candidate was forgotten between probe and answer. Re-adding
-            // it is right: something answered, so it works.
+        } else if matches!(self.make_room(), Room::Available { .. }) {
+            // The candidate was evicted between probe and answer. Re-adding it
+            // is right: something answered, so it works. It goes through the
+            // same cap as every other admission, because a peer that names a
+            // fresh address and answers one probe for each would otherwise grow
+            // this set through here instead.
             self.paths.push(Path {
                 addr: sent.addr,
                 kind: PathKind::direct_for(sent.addr),
@@ -708,9 +787,104 @@ mod tests {
     #[test]
     fn a_repeated_candidate_is_not_duplicated() {
         let mut s = PathSet::new();
-        s.add_candidate(v4(7), PathKind::DirectV4);
-        s.add_candidate(v4(7), PathKind::DirectV4);
+        assert_eq!(
+            s.add_candidate(v4(7), PathKind::DirectV4),
+            Admission::Added { evicted: None }
+        );
+        assert_eq!(s.add_candidate(v4(7), PathKind::DirectV4), Admission::Known);
         assert_eq!(s.paths().len(), 1);
+    }
+
+    // ── the cap ───────────────────────────────────────────────────────────
+
+    /// Fill the remaining slots with candidates that have never answered.
+    fn fill(s: &mut PathSet) {
+        for n in 0..MAX_PATHS_PER_PEER - s.paths().len() {
+            let addr = SocketAddr::from(([10, 0, 0, 1], 20_000 + n as u16));
+            assert_eq!(
+                s.add_candidate(addr, PathKind::DirectV4),
+                Admission::Added { evicted: None }
+            );
+        }
+        assert_eq!(s.paths().len(), MAX_PATHS_PER_PEER);
+    }
+
+    #[test]
+    fn an_unconfirmed_candidate_gives_way_before_a_confirmed_path() {
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 1_000, 10);
+        fill(&mut s);
+
+        let Admission::Added {
+            evicted: Some(evicted),
+        } = s.add_candidate(v4(9), PathKind::DirectV4)
+        else {
+            panic!("the candidate was refused");
+        };
+        assert_ne!(
+            evicted,
+            v4(7),
+            "a confirmed path was evicted before a candidate"
+        );
+        assert_eq!(s.paths().len(), MAX_PATHS_PER_PEER);
+    }
+
+    /// Among confirmed paths the stalest goes, and **insertion order must not
+    /// decide it**: the address that answered a minute ago is weaker evidence
+    /// than the one that answered a second ago, whichever arrived first.
+    #[test]
+    fn the_stalest_confirmed_path_is_the_one_evicted() {
+        let mut s = PathSet::new();
+        // Added first, answered most recently — so index order and staleness
+        // order disagree, which is the whole point of the case.
+        confirm(&mut s, 1, v4(7), 90_000, 10);
+        confirm(&mut s, 2, v4(8), 1_000, 10);
+        for n in 0..MAX_PATHS_PER_PEER - 2 {
+            let addr = SocketAddr::from(([10, 0, 0, 1], 20_000 + n as u16));
+            confirm(&mut s, 100 + n as u8, addr, 50_000, 10);
+        }
+        assert_eq!(s.paths().len(), MAX_PATHS_PER_PEER);
+
+        assert_eq!(
+            s.add_candidate(v4(9), PathKind::DirectV4),
+            Admission::Added {
+                evicted: Some(v4(8))
+            },
+            "eviction followed insertion order rather than staleness"
+        );
+    }
+
+    /// The chosen path is exempt, and the case that proves it is the one where
+    /// **every other rule says it should go**: it is confirmed, so no candidate
+    /// outranks it, and it is the stalest of the confirmed, so it is next in
+    /// line. A peer that could displace the path currently carrying traffic by
+    /// naming addresses would hold a disconnect primitive.
+    #[test]
+    fn the_chosen_path_is_never_the_victim() {
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 1_000, 10);
+        assert_eq!(s.select(1_010), Selection::Chose(v4(7)));
+
+        // Everything else answered far more recently, so the chosen path is
+        // the stalest thing in the set.
+        for n in 0..MAX_PATHS_PER_PEER - 1 {
+            let addr = SocketAddr::from(([10, 0, 0, 1], 20_000 + n as u16));
+            confirm(&mut s, 100 + n as u8, addr, 90_000, 10);
+        }
+        assert_eq!(s.paths().len(), MAX_PATHS_PER_PEER);
+
+        let Admission::Added {
+            evicted: Some(evicted),
+        } = s.add_candidate(v4(9), PathKind::DirectV4)
+        else {
+            panic!("the candidate was refused");
+        };
+        assert_ne!(
+            evicted,
+            v4(7),
+            "the path carrying traffic was evicted to admit a candidate"
+        );
+        assert_eq!(s.chosen(), Some(v4(7)));
     }
 
     #[test]

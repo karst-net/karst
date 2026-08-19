@@ -16,12 +16,18 @@
 
 pub mod config;
 pub mod control;
+pub mod disco;
 pub mod engine;
 pub mod filter;
+pub mod flow;
 pub mod ipc;
 pub mod netmap;
+pub mod relay;
+pub mod relay_tls;
 pub mod routing;
 pub mod run;
+#[cfg(test)]
+mod scratch;
 
 pub use config::{Config, ConfigError};
 pub use engine::Engine;

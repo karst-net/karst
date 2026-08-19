@@ -26,13 +26,27 @@ test:
 # artefacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
-test-privileged: test-tun test-karstd test-nat-matrix
+test-privileged: test-tun test-karstd test-nat-matrix test-tailnet
 
 test-tun:
     @just _privileged karst-tun device
 
 test-karstd:
     @just _privileged karstd two_nodes
+
+# The whole stack: coordination server, relay, and two daemons in namespaces,
+# from first enrolment to a direct path carrying TCP under an ACL.
+#
+# Needs a Go toolchain as well as CAP_NET_ADMIN, and `sudo` resets PATH, so the
+# environment is passed through explicitly rather than relying on it surviving.
+test-tailnet:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --workspace
+    bin=$(cargo test -p karstd --test tailnet --no-run --message-format=json 2>/dev/null \
+          | grep -o "\"executable\":\"[^\"]*tailnet[^\"]*\"" | head -1 | cut -d'"' -f4)
+    [ -n "$bin" ] || { echo "could not locate the tailnet test binary"; exit 1; }
+    sudo env "PATH=$PATH" "$bin" --ignored --test-threads=1 --nocapture
 
 # The NAT matrix (PLAN.md §6). These validate the *instrument*: that each
 # topology behaves the way its name says, using examples/natprobe.rs and no

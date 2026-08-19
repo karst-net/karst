@@ -33,14 +33,66 @@ use karst_proto::{fragment, split_datagram, MessageType};
 use karst_transport::source_key;
 
 use crate::config::Config;
-use crate::filter::Verdict;
+use crate::filter::{Direction, Verdict};
 use crate::routing::PeerIndex;
+
+/// How a datagram reaches its peer.
+///
+/// **The engine names a destination rather than an address**, because a peer
+/// with no working direct path is not unreachable — `aven-v1.md` §8.3 makes the
+/// relay a path like any other, and the last resort rather than a failure
+/// state. The two arms are the two transports a node has, and which one a peer
+/// gets is decided in exactly one place ([`Engine::via`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// Straight to the peer on the shared UDP socket.
+    Direct(SocketAddr),
+    /// Through the relay, addressed by the peer's Ponor node id.
+    ///
+    /// The relay reads the id and forwards the payload without looking inside
+    /// it: what it carries is a sealed PHREATIC datagram, and `ponor-v1.md`
+    /// §1.2 is explicit that no inner layer is added because there is nothing
+    /// left to protect from the relay that the payload does not already cover.
+    Relay([u8; karst_relay_proto::consts::ID_LEN]),
+}
+
+/// A full-size PHREATIC datagram must fit one Ponor frame, or the relay path
+/// would need a fragmentation layer that the direct path does not have — and
+/// two reassemblers for one protocol is how they drift apart.
+///
+/// Asserted rather than assumed: `PAYLOAD_MAX` was sized from
+/// `TRANSPORT_DATAGRAM_MAX` and the two live in different crates, so nothing
+/// but this would notice if either moved.
+const _: () =
+    assert!(karst_proto::consts::TRANSPORT_DATAGRAM_MAX <= karst_relay_proto::consts::PAYLOAD_MAX);
+
+/// How a peer's traffic currently leaves this node, for `karst status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Straight to the peer.
+    Direct,
+    /// Through the relay: working, slower, and visible to a third party.
+    Relay,
+    /// Nowhere. No address is known and no relay is configured, so the peer is
+    /// known about and cannot be sent to.
+    Unreachable,
+}
+
+impl std::fmt::Display for Transport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Direct => "direct",
+            Self::Relay => "relay",
+            Self::Unreachable => "none",
+        })
+    }
+}
 
 /// What the engine wants done, having processed an input.
 #[derive(Debug, Default)]
 pub struct Output {
-    /// Datagrams to put on the UDP socket.
-    pub datagrams: Vec<(Vec<u8>, SocketAddr)>,
+    /// Datagrams to send, each with the transport that carries it.
+    pub datagrams: Vec<(Vec<u8>, Via)>,
     /// Plaintext IP packets to write to the TUN device.
     pub packets: Vec<Vec<u8>>,
 }
@@ -154,6 +206,13 @@ impl Counters {
 struct PeerSlot {
     session: Mutex<Session>,
     endpoint: RwLock<Option<SocketAddr>>,
+    /// Connection tracking for this peer's ACL — see [`crate::flow`].
+    ///
+    /// **Per peer, like everything else here**, so the datapath keeps the
+    /// property §3.4 measured: two peers never contend. The critical section is
+    /// a hash lookup and is taken alongside the session lock this path already
+    /// takes, rather than being a new kind of contention.
+    flows: Mutex<crate::flow::Flows>,
 }
 
 /// Everything a packet's handling depends on, swapped as a unit.
@@ -176,6 +235,16 @@ struct Roster {
     /// `peer_id_hint` → index, so resolving an inbound handshake is a lookup
     /// rather than a scan of the roster (§4).
     by_hint: HashMap<[u8; 32], PeerIndex>,
+    /// Each peer's Ponor node id, when it has one. `None` for a static TOML
+    /// roster, which carries no server-assigned handles and therefore has no
+    /// relay path — the peer is direct-only or it is nothing.
+    relay_ids: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
+    /// The reverse mapping, for attributing a relay-delivered datagram to the
+    /// peer the relay says sent it.
+    by_relay_id: HashMap<[u8; karst_relay_proto::consts::ID_LEN], PeerIndex>,
+    /// Whether this node has a relay to send through at all. Without one a
+    /// peer's node id names a destination nothing can reach.
+    relay_configured: bool,
 }
 
 /// The node's datapath.
@@ -329,6 +398,17 @@ impl Engine {
             }
         }
 
+        // **A flow is a cached permission, so a new policy invalidates it.**
+        // Sessions and endpoints are carried across a reconfiguration on
+        // purpose — a peer that did not change should not rehandshake — but
+        // carrying the flow table too would mean a policy edit that revoked
+        // access left every connection it revoked still working. The cache is
+        // cheap to rebuild and the alternative is a revocation that does not
+        // revoke.
+        for slot in &next.peers {
+            Self::lock(&slot.flows).clear();
+        }
+
         *self
             .roster
             .write()
@@ -381,6 +461,97 @@ impl Engine {
         })
     }
 
+    /// How to reach a peer right now, or `None` if there is no way at all.
+    ///
+    /// **This is the whole of the relay→direct upgrade, and it is a two-line
+    /// rule on purpose.** A direct endpoint wins whenever there is one; the
+    /// relay carries the traffic whenever there is not. Nothing else has to
+    /// coordinate, because AVEN owns whether a direct endpoint exists at all:
+    /// it installs one on a confirmed path and withdraws it once it has given
+    /// up on every path ([`Self::set_endpoint`], [`Self::release_endpoint`]).
+    /// The upgrade and the fallback are the same decision read at different
+    /// moments.
+    ///
+    /// **That includes the endpoint the netmap supplied.** Discovery adopts it
+    /// at reconcile and can withdraw it, which is what stops a published
+    /// address that has gone stale from pre-empting the relay forever — it did,
+    /// and it was FINDINGS.md finding 15. A peer with no disco key is untouched
+    /// by any of this and keeps its configured endpoint, which is correct: no
+    /// key means no discovery, ever (`aven-v1.md` §5.1), so there is nothing to
+    /// learn from and nothing that could responsibly take it away.
+    ///
+    /// Deciding it here rather than at each call site is what keeps that true.
+    /// An earlier version asked `endpoint(peer)` in four places and dropped the
+    /// packet when it was `None`, and a relay path added to three of them would
+    /// have been a peer that could receive but not send.
+    fn via(&self, roster: &Roster, peer: PeerIndex) -> Option<Via> {
+        if let Some(addr) = self.endpoint(peer) {
+            return Some(Via::Direct(addr));
+        }
+        if !roster.relay_configured {
+            return None;
+        }
+        roster
+            .relay_ids
+            .get(peer)
+            .copied()
+            .flatten()
+            .map(Via::Relay)
+    }
+
+    /// Install an authenticated AVEN-selected endpoint for a roster peer.
+    ///
+    /// Unconditional: a probed and confirmed direct path is better evidence
+    /// than an address learned from a handshake, and displacing the second with
+    /// the first is the whole purpose of discovery.
+    ///
+    /// The index is bounds-checked, which is **not** the same as checking
+    /// identity — see [`Self::release_endpoint`] for the caller's obligation.
+    pub fn set_endpoint(&self, peer: PeerIndex, endpoint: SocketAddr) -> bool {
+        let roster = self.roster();
+        let Some(slot) = roster.peers.get(peer) else {
+            return false;
+        };
+        *slot
+            .endpoint
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(endpoint);
+        true
+    }
+
+    /// Withdraw the direct endpoint discovery has given up on, so the peer
+    /// falls back to the relay.
+    ///
+    /// **Conditional on `installed` still being the value in force**, and that
+    /// is the point of the method. This field has a second writer — [`inbound`]
+    /// learns an endpoint from a handshake that decrypted (§9.1) — and a
+    /// discovery result going stale is no reason to discard an address somebody
+    /// else has since established as working.
+    ///
+    /// Clearing it rather than keeping the dead address follows
+    /// `PathSet::select`'s own rule: continuing to send into a path that has
+    /// stopped answering is worse than admitting there is none. There is no
+    /// revert target because there is nothing left to revert *to* — the
+    /// netmap-configured endpoint is a candidate like any other, so by the time
+    /// discovery says this, it has been probed and given up on as well.
+    ///
+    /// [`inbound`]: Self::inbound
+    pub fn release_endpoint(&self, peer: PeerIndex, installed: SocketAddr) -> bool {
+        let roster = self.roster();
+        let Some(slot) = roster.peers.get(peer) else {
+            return false;
+        };
+        let mut current = slot
+            .endpoint
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != Some(installed) {
+            return false;
+        }
+        *current = None;
+        true
+    }
+
     /// Start handshakes with every peer that has a configured endpoint.
     ///
     /// A peer with no endpoint is not contacted: there is nowhere to send. It
@@ -390,7 +561,10 @@ impl Engine {
         let mut out = Output::default();
         let roster = self.roster();
         for index in 0..roster.peers.len() {
-            if self.endpoint(index).is_none() {
+            // A peer with neither a direct endpoint nor a relay path is not
+            // dialled: there is nowhere to send, and it is expected to contact
+            // us instead.
+            if self.via(&roster, index).is_none() {
                 continue;
             }
             let actions = roster
@@ -398,7 +572,7 @@ impl Engine {
                 .get(index)
                 .map(|p| Self::lock(&p.session).connect(now_ms, seed()))
                 .unwrap_or_default();
-            self.apply(&roster, index, actions, &mut out);
+            self.apply(&roster, index, actions, now_ms, &mut out);
         }
         out
     }
@@ -410,9 +584,8 @@ impl Engine {
         // must not stall the datapath for every peer while it walks the roster.
         let roster = self.roster();
         for index in 0..roster.peers.len() {
-            // A peer with no endpoint is never dialled — there is nowhere to
-            // send, and it is expected to contact us.
-            let reconnect = self.endpoint(index).is_some();
+            // As `connect_all`: reachable by either transport is enough.
+            let reconnect = self.via(&roster, index).is_some();
             let actions = roster
                 .peers
                 .get(index)
@@ -433,7 +606,7 @@ impl Engine {
                     actions
                 })
                 .unwrap_or_default();
-            self.apply(&roster, index, actions, &mut out);
+            self.apply(&roster, index, actions, now_ms, &mut out);
         }
         out
     }
@@ -460,10 +633,10 @@ impl Engine {
         // checking here means a denied flow costs nothing beyond a route
         // lookup. The receiver checks independently — this end is the fast,
         // local answer, not the one carrying the security property.
-        if !self.permit(&roster, Direction::Out, peer, packet) {
+        if !self.permit(&roster, Direction::Out, peer, packet, now_ms) {
             return out;
         }
-        let Some(endpoint) = self.endpoint(peer) else {
+        let Some(via) = self.via(&roster, peer) else {
             self.stats
                 .tx_dropped_no_session
                 .fetch_add(1, Ordering::Relaxed);
@@ -499,7 +672,7 @@ impl Engine {
             Some(frags) => {
                 self.stats.tx_packets.fetch_add(1, Ordering::Relaxed);
                 for f in frags {
-                    out.datagrams.push((f, endpoint));
+                    out.datagrams.push((f, via));
                 }
             }
             // No session yet. Dropping the packet is what WireGuard does too;
@@ -586,7 +759,7 @@ impl Engine {
                 // message is rejected inside `open`, which takes the replay
                 // window's own lock only after the AEAD has decided (§8).
                 match transport.open(&msg, now_ms) {
-                    Ok(payload) => self.deliver_to_host(&roster, peer, &payload, &mut out),
+                    Ok(payload) => self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out),
                     // Counted, not just dropped. A replay is expected traffic;
                     // a *sustained* rate here means the two ends disagree about
                     // their keys, which is otherwise indistinguishable from the
@@ -604,8 +777,149 @@ impl Engine {
             .get(peer)
             .map(|p| Self::lock(&p.session).deliver(&msg, now_ms))
             .unwrap_or_default();
-        self.apply(&roster, peer, actions, &mut out);
+        self.apply(&roster, peer, actions, now_ms, &mut out);
         out
+    }
+
+    /// A datagram arrived over the authenticated relay.
+    ///
+    /// Separate from [`Self::inbound`] rather than a flag on it, because the
+    /// two differ in what they may conclude from where a datagram came from:
+    ///
+    /// - **No endpoint is learned.** `inbound` learns one from a handshake that
+    ///   decrypted, which is how a peer whose NAT mapping moved becomes
+    ///   reachable again. A relay-delivered datagram carries no UDP source at
+    ///   all — the address it arrived from is the *relay's*. Learning it would
+    ///   point this peer's traffic at the relay's TLS port, which is not even a
+    ///   PHREATIC listener.
+    /// - **Attribution is by the relay-stamped source, not by address.**
+    ///   `peer_at(from)` guesses from the endpoint table; here the relay has
+    ///   already told us, having authenticated the sender under Ponor.
+    /// - **Reassembly is keyed apart from every UDP source.** Two transports
+    ///   feeding one reassembly key would let a peer interleave fragments
+    ///   across them, and let one relay-delivered stream collide with a
+    ///   direct one from the same peer mid-upgrade.
+    ///
+    /// A handshake must additionally name the same peer the relay says sent it.
+    /// Both bindings are independent — the relay authenticated a Ponor identity,
+    /// the AEAD resolves a `peer_id_hint` — and requiring them to agree is what
+    /// stops one admitted peer from replaying another's handshake under its own
+    /// relay identity.
+    pub fn inbound_from_relay(
+        &self,
+        source_id: [u8; karst_relay_proto::consts::ID_LEN],
+        datagram: &[u8],
+        now_ms: u64,
+        rand: &ResponderRandomness,
+    ) -> Output {
+        let mut out = Output::default();
+        let roster = self.roster();
+        let Some(peer) = roster.by_relay_id.get(&source_id).copied() else {
+            return out;
+        };
+        let Ok((hdr, payload)) = split_datagram(datagram) else {
+            self.stats.malformed.fetch_add(1, Ordering::Relaxed);
+            return out;
+        };
+
+        let claimed = payload.first().copied().unwrap_or(0);
+        let mac_ok = [claimed, 0x01, 0x02, 0x04].iter().any(|t| {
+            self.in_mac_key
+                .verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
+        });
+        if !mac_ok {
+            self.stats.mac_failures.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
+
+        let msg = {
+            let mut reasm = Self::lock(&self.reasm);
+            let Accept::Complete(msg) =
+                reasm.push(relay_source_key(&source_id), true, &hdr, payload, now_ms)
+            else {
+                return out;
+            };
+            msg.to_vec()
+        };
+
+        if msg.first() == Some(&0x01) {
+            self.accept_relayed_handshake(&roster, &msg, peer, now_ms, rand, &mut out);
+            return out;
+        }
+
+        if msg.first() == Some(&0x04) {
+            let transport = roster
+                .peers
+                .get(peer)
+                .and_then(|p| Self::lock(&p.session).transport());
+            if let Some(transport) = transport {
+                match transport.open(&msg, now_ms) {
+                    Ok(payload) => self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out),
+                    Err(_) => {
+                        self.stats.decrypt_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                return out;
+            }
+        }
+
+        let actions = roster
+            .peers
+            .get(peer)
+            .map(|p| Self::lock(&p.session).deliver(&msg, now_ms))
+            .unwrap_or_default();
+        self.apply(&roster, peer, actions, now_ms, &mut out);
+        out
+    }
+
+    /// Answer a `HandshakeInit` the relay delivered.
+    ///
+    /// The same work as [`Self::accept_handshake`] minus the endpoint learning,
+    /// plus the check that the peer the AEAD resolves is the peer the relay
+    /// named.
+    fn accept_relayed_handshake(
+        &self,
+        roster: &Roster,
+        msg: &[u8],
+        expected: PeerIndex,
+        now_ms: u64,
+        rand: &ResponderRandomness,
+        out: &mut Output,
+    ) {
+        let index = u32::try_from(expected).unwrap_or(u32::MAX).wrapping_add(1);
+        let by_hint = &roster.by_hint;
+        let peers = &roster.config.peers;
+        let mut matched: Option<PeerIndex> = None;
+
+        let result = karst_noise::handshake::respond(
+            &roster.config.keys,
+            &self.policy,
+            msg,
+            |hint, _epoch| {
+                let index = *by_hint.get(hint)?;
+                let peer = peers.get(index)?;
+                matched = Some(index);
+                Some((*peer.public).clone())
+            },
+            rand,
+            index,
+        );
+
+        let (Ok((msg2, pending)), Some(peer)) = (result, matched) else {
+            return;
+        };
+        // The two bindings must agree. Silent, like every other §11 discard:
+        // saying which check failed would distinguish "not a peer" from "not
+        // *that* peer", and the second is a roster-membership oracle.
+        if peer != expected {
+            return;
+        }
+        let actions = roster
+            .peers
+            .get(peer)
+            .map(|p| Self::lock(&p.session).adopt_responder(&pending.confirm(), &msg2, now_ms))
+            .unwrap_or_default();
+        self.apply(roster, peer, actions, now_ms, out);
     }
 
     /// Answer an inbound `HandshakeInit`.
@@ -670,20 +984,27 @@ impl Engine {
             .get(peer)
             .map(|p| Self::lock(&p.session).adopt_responder(&pending.confirm(), &msg2, now_ms))
             .unwrap_or_default();
-        self.apply(roster, peer, actions, out);
+        self.apply(roster, peer, actions, now_ms, out);
     }
 
     /// Turn a session's actions into I/O.
-    fn apply(&self, roster: &Roster, peer: PeerIndex, actions: Vec<Action>, out: &mut Output) {
-        let endpoint = self.endpoint(peer);
+    fn apply(
+        &self,
+        roster: &Roster,
+        peer: PeerIndex,
+        actions: Vec<Action>,
+        now_ms: u64,
+        out: &mut Output,
+    ) {
+        let via = self.via(roster, peer);
         for action in actions {
             match action {
                 Action::Send(d) => {
-                    if let Some(to) = endpoint {
+                    if let Some(to) = via {
                         out.datagrams.push((d, to));
                     }
                 }
-                Action::Deliver(packet) => self.deliver_to_host(roster, peer, &packet, out),
+                Action::Deliver(packet) => self.deliver_to_host(roster, peer, &packet, now_ms, out),
                 Action::Established | Action::Closed(_) => {}
             }
         }
@@ -696,7 +1017,14 @@ impl Engine {
     /// packet came from this peer; it did not entitle the peer to impersonate
     /// another. Without this check any peer on the roster could inject traffic
     /// appearing to come from any address in the network.
-    fn deliver_to_host(&self, roster: &Roster, peer: PeerIndex, packet: &[u8], out: &mut Output) {
+    fn deliver_to_host(
+        &self,
+        roster: &Roster,
+        peer: PeerIndex,
+        packet: &[u8],
+        now_ms: u64,
+        out: &mut Output,
+    ) {
         let Some(addrs) = karst_tun::ip::addresses(packet) else {
             self.stats.source_violations.fetch_add(1, Ordering::Relaxed);
             return;
@@ -713,7 +1041,7 @@ impl Engine {
         // A compromised peer will ignore its own egress filter, so this is the
         // check that stops it — which is why the same policy is enforced at
         // both ends rather than trusted to the sender.
-        if !self.permit(roster, Direction::In, peer, packet) {
+        if !self.permit(roster, Direction::In, peer, packet, now_ms) {
             return;
         }
         // §8: the transport layer pads and carries no length field, so the
@@ -733,25 +1061,75 @@ impl Engine {
         }
     }
 
+    /// Whether the ACL — rules *and* connection tracking — permits a packet.
+    ///
+    /// Exported for `tests/acl_flows.rs`, in the same spirit as
+    /// [`crate::run::bug_report_for_test`]: the property under test is a
+    /// conversation, and reaching the ingress check the ordinary way needs an
+    /// established session, a decrypted packet and a peer to have sent it. A
+    /// test that stood all that up would be testing the handshake.
+    ///
+    /// It has side effects, deliberately — a permitted packet opens a flow,
+    /// because that is what the real path does and a hook that skipped it would
+    /// not be testing the real path.
+    pub fn permits_for_test(
+        &self,
+        direction: Direction,
+        peer: PeerIndex,
+        packet: &[u8],
+        now_ms: u64,
+    ) -> bool {
+        let roster = self.roster();
+        self.permit(&roster, direction, peer, packet, now_ms)
+    }
+
     /// Evaluate the ACL and count the refusal.
     ///
     /// One function for both directions so the two can never drift into
     /// different treatments of the same verdict — in particular so that
     /// `Unclassifiable` cannot come to mean "permit" on one side.
-    fn permit(&self, roster: &Roster, dir: Direction, peer: PeerIndex, packet: &[u8]) -> bool {
+    fn permit(
+        &self,
+        roster: &Roster,
+        dir: Direction,
+        peer: PeerIndex,
+        packet: &[u8],
+        now_ms: u64,
+    ) -> bool {
         let verdict = match dir {
             Direction::In => roster.config.filter.ingress(peer, packet),
             Direction::Out => roster.config.filter.egress(peer, packet),
         };
         match verdict {
-            Verdict::Permit => return true,
+            Verdict::Permit => {
+                // **Recorded only here**, where a *rule* said yes. That is what
+                // makes a flow un-forgeable: a packet no rule permits never
+                // reaches this arm, so nothing an attacker sends can open one.
+                if let Some(slot) = roster.peers.get(peer) {
+                    Self::lock(&slot.flows).record(dir, packet, now_ms);
+                }
+                return true;
+            }
             Verdict::Denied => {
+                // No rule permits it. **That is not the end of the question**:
+                // Karst's ACLs are unidirectional grants (§4.3), so the reply
+                // to a permitted request never matches a rule and would be
+                // dropped here — which is finding 17, and is why no TCP
+                // connection could complete before this lookup existed.
+                if let Some(slot) = roster.peers.get(peer) {
+                    if Self::lock(&slot.flows).permits(dir, packet, now_ms) {
+                        return true;
+                    }
+                }
                 let counter = match dir {
                     Direction::In => &self.stats.acl_denied_in,
                     Direction::Out => &self.stats.acl_denied_out,
                 };
                 counter.fetch_add(1, Ordering::Relaxed);
             }
+            // Not offered to the flow table either. A packet whose ports cannot
+            // be read cannot be attributed to a flow, and guessing at two bytes
+            // would let a fragment claim any permission it liked.
             Verdict::Unclassifiable => {
                 self.stats
                     .acl_unclassifiable
@@ -797,18 +1175,14 @@ impl Engine {
                     .is_some_and(|p| Self::lock(&p.session).rekeying()),
                 allowed_ips: peer.allowed_ips.iter().map(ToString::to_string).collect(),
                 psk_is_fallback: peer.psk_is_fallback,
+                transport: match self.via(&roster, index) {
+                    Some(Via::Direct(_)) => Transport::Direct,
+                    Some(Via::Relay(_)) => Transport::Relay,
+                    None => Transport::Unreachable,
+                },
             })
             .collect()
     }
-}
-
-/// Which way a packet is going, for the ACL check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Direction {
-    /// From a peer, to this host.
-    In,
-    /// From this host, to a peer.
-    Out,
 }
 
 /// What a [`Engine::reconfigure`] actually did.
@@ -834,6 +1208,26 @@ pub struct Reconfigured {
 /// Reuse is keyed by `peer_id_hint`, a function of the peer's KEM public key —
 /// what a handshake authenticates, and so what makes two entries the *same*
 /// peer rather than two peers with one name.
+/// A reassembly key for a relay-delivered stream.
+///
+/// **Disjoint from every [`source_key`] by construction**, and that is the
+/// point rather than a nicety. A `SourceKey` is an IPv6-mapped address and a
+/// port, so the first byte of a UDP source is either an IPv6 prefix byte or the
+/// leading zero of a mapped IPv4 address. Prefixing with a byte no address
+/// encoding produces means a relayed stream and a direct stream from the same
+/// peer cannot land in the same reassembly slot — which matters exactly during
+/// an upgrade, when both are briefly in flight.
+fn relay_source_key(id: &[u8; karst_relay_proto::consts::ID_LEN]) -> karst_transport::SourceKey {
+    let mut key = [0u8; 18];
+    // 0xFF cannot begin a source key: an IPv6 address starting FF00::/8 is
+    // multicast, which is not a source address a datagram can arrive from.
+    key[0] = 0xFF;
+    if let (Some(dst), Some(src)) = (key.get_mut(1..18), id.get(..17)) {
+        dst.copy_from_slice(src);
+    }
+    key
+}
+
 fn build_roster(
     config: &Arc<Config>,
     policy: &SuitePolicy,
@@ -841,9 +1235,23 @@ fn build_roster(
 ) -> Roster {
     let mut peers = Vec::with_capacity(config.peers.len());
     let mut by_hint = HashMap::with_capacity(config.peers.len());
+    let mut relay_ids = Vec::with_capacity(config.peers.len());
+    let mut by_relay_id = HashMap::with_capacity(config.peers.len());
 
     for (index, peer) in config.peers.iter().enumerate() {
         let hint = peer_id_hint(&MlKem::public_key_bytes(&peer.public.kem_pk));
+        // The control plane renders node ids in base64; Ponor carries the
+        // digest. Converted once here rather than on every packet, and a handle
+        // that will not decode simply leaves the peer without a relay path
+        // instead of failing the whole roster — the direct path, if it has one,
+        // still works.
+        let relay_id = std::str::from_utf8(&peer.node_id)
+            .ok()
+            .and_then(karst_control_client::handle_bytes);
+        if let Some(id) = relay_id {
+            by_relay_id.insert(id, index);
+        }
+        relay_ids.push(relay_id);
         // The same peer as before keeps its session and its learned endpoint;
         // rebuilding would cost a rehandshake for a change that had nothing to
         // do with this peer.
@@ -863,6 +1271,7 @@ fn build_roster(
                     local_index,
                 )),
                 endpoint: RwLock::new(peer.endpoint),
+                flows: Mutex::new(crate::flow::Flows::new()),
             })
         };
         peers.push(slot);
@@ -870,9 +1279,12 @@ fn build_roster(
     }
 
     Roster {
+        relay_configured: !config.relays.is_empty(),
         config: Arc::clone(config),
         peers,
         by_hint,
+        relay_ids,
+        by_relay_id,
     }
 }
 
@@ -894,6 +1306,16 @@ pub struct PeerStatus {
     pub allowed_ips: Vec<String>,
     /// Whether the §7.3 zero-PSK fallback is in use.
     pub psk_is_fallback: bool,
+    /// How this peer's traffic currently leaves the node.
+    ///
+    /// **Not decoration, and not a bool.** A relayed peer works, and works more
+    /// slowly, by more hops, and through a third party that sees the timing and
+    /// volume of the traffic (`aven-v1.md` §9) — an operator asking "why is
+    /// this slow" cannot tell that from the outside. Neither can they tell it
+    /// from a peer with *no* path at all, which is a different problem with a
+    /// different fix, and which a `relayed: false` would have quietly merged
+    /// with the healthy case.
+    pub transport: Transport,
 }
 
 /// Eight bytes of `peer_id_hint`, hex.
@@ -990,5 +1412,62 @@ mod tests {
         assert_eq!(ip_total_length(&[]), None);
         assert_eq!(ip_total_length(&[0xFF; 64]), None);
         assert_eq!(ip_total_length(&[0x45]), None);
+    }
+
+    // ── the relay transport ───────────────────────────────────────────────
+
+    /// **The reassembler must never confuse a relayed stream with a direct
+    /// one.** Both carry PHREATIC fragments from the same peer, and during an
+    /// upgrade both are briefly in flight; a shared key would let fragments
+    /// from one interleave into the other's message.
+    ///
+    /// The property is structural rather than probabilistic: a `SourceKey`
+    /// begins with the first byte of an IPv6 address, and `0xFF` there is
+    /// multicast — not something a datagram can arrive *from*.
+    #[test]
+    fn a_relayed_stream_cannot_collide_with_any_udp_source() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+
+        let relayed = relay_source_key(&[0x11; 32]);
+        assert_eq!(relayed.first(), Some(&0xFF));
+
+        // Every address family, including the ones whose encodings are most
+        // likely to collide: IPv4-mapped (leading zeros) and a v6 address
+        // chosen to start as high as a unicast address can.
+        let sources = [
+            SocketAddr::from((Ipv4Addr::new(255, 255, 255, 255), 65535)),
+            SocketAddr::from((Ipv4Addr::new(0, 0, 0, 0), 0)),
+            SocketAddr::from((Ipv6Addr::from([0xFE; 16]), 51820)),
+            SocketAddr::from((Ipv6Addr::from([0xFF; 16]), 51820)),
+        ];
+        for source in sources {
+            assert_ne!(
+                source_key(source),
+                relayed,
+                "a relayed stream collided with the UDP source {source}"
+            );
+        }
+    }
+
+    /// Two peers on the relay get different reassembly keys, or one peer's
+    /// fragments would complete another's message.
+    #[test]
+    fn each_relayed_peer_has_its_own_reassembly_key() {
+        let mut a = [0x11; 32];
+        let mut b = [0x11; 32];
+        assert_ne!(
+            relay_source_key(&a),
+            relay_source_key(&{
+                b[0] = 0x12;
+                b
+            })
+        );
+        // And a difference beyond the truncation point is *not* distinguished,
+        // which is a real limit rather than an oversight: a `SourceKey` is 18
+        // bytes and a node id is 32, so the key carries the leading 17. Two ids
+        // agreeing on all of those are a 136-bit collision, and the cost of
+        // being wrong is one dropped message rather than a security property.
+        a[31] = 0x99;
+        assert_eq!(relay_source_key(&[0x11; 32]), relay_source_key(&a));
     }
 }

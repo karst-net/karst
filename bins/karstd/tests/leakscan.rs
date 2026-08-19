@@ -52,6 +52,12 @@ const PREVIOUS_PSK: [u8; 32] = [
     0x2F, 0x81, 0x44, 0xD9, 0x0B, 0x67, 0xC3, 0x1E, 0xAA, 0x50, 0x9D, 0x36, 0xF2, 0x78, 0x15, 0xBC,
     0x63, 0x0E, 0xD1, 0x8A, 0x47, 0x99, 0x22, 0xFB, 0x54, 0x3C, 0xE7, 0x60, 0x0D, 0xB8, 0x71, 0x2A,
 ];
+/// The AVEN authenticator is independent key material and must receive the
+/// same diagnostic treatment as either PHREATIC PSK.
+const DISCO_KEY: [u8; 32] = [
+    0x5A, 0x16, 0xE3, 0x48, 0x91, 0x2C, 0xB7, 0x04, 0x6D, 0xF0, 0x3A, 0x85, 0xCE, 0x19, 0x72, 0xDB,
+    0x24, 0xA8, 0x4F, 0x96, 0x31, 0xED, 0x08, 0xC5, 0x7B, 0x42, 0x9A, 0x65, 0xD0, 0x1E, 0xB4, 0x39,
+];
 
 /// Every rendering of a secret a diagnostic might plausibly use.
 ///
@@ -142,6 +148,7 @@ fn netmap_with_psks() -> Netmap {
             dh_public_key: dh.as_bytes().to_vec(),
             psk: PSK.to_vec(),
             psk_previous: PREVIOUS_PSK.to_vec(),
+            disco_key: DISCO_KEY.to_vec(),
         }
     };
 
@@ -175,6 +182,7 @@ fn netmap_with_psks() -> Netmap {
 
 fn local() -> LocalSettings {
     LocalSettings {
+        relay_ca_file: None,
         keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
             &[0x11; 64],
             &[0x12; 32],
@@ -257,9 +265,13 @@ fn no_psk_bytes_reach_any_diagnostic() {
         rendered.len()
     );
 
-    for (which, secret) in [("current", &PSK), ("previous", &PREVIOUS_PSK)] {
+    for (which, secret) in [
+        ("current", &PSK),
+        ("previous", &PREVIOUS_PSK),
+        ("discovery", &DISCO_KEY),
+    ] {
         if let Some(found) = leak(&rendered, secret) {
-            panic!("the {which} PSK reached a diagnostic as {found:?}");
+            panic!("the {which} key reached a diagnostic as {found:?}");
         }
     }
 }
@@ -281,6 +293,16 @@ fn the_previous_epochs_psk_is_covered_too() {
     assert!(leak(&every_diagnostic(&config, &netmap), &PREVIOUS_PSK).is_none());
 }
 
+#[test]
+fn the_discovery_key_is_covered_too() {
+    let netmap = netmap_with_psks();
+    let held = netmap.peer(b"alpha").expect("held");
+    assert!(held.disco_key.is_some(), "fixture has no discovery key");
+
+    let config = Arc::new(Config::from_netmap(local(), &netmap).expect("config"));
+    assert!(leak(&every_diagnostic(&config, &netmap), &DISCO_KEY).is_none());
+}
+
 /// **A scanner that cannot find a secret handed to it directly proves nothing
 /// about the secrets it did not find.** This is the check that gives the test
 /// above its meaning.
@@ -300,6 +322,13 @@ fn the_scanner_detects_a_planted_leak() {
         leak(&rendered, &PSK).is_some(),
         "the scanner missed a PSK written straight into the output, so it \
          proves nothing about the ones it did not find"
+    );
+
+    let disco = held.disco_key.as_ref().expect("a discovery key");
+    rendered.push_str(&format!("peer disco key: {:02x?}", disco.as_bytes()));
+    assert!(
+        leak(&rendered, &DISCO_KEY).is_some(),
+        "the scanner missed a discovery key written straight into the output"
     );
 }
 
@@ -380,6 +409,7 @@ fn a_lattice_only_node_is_reported_as_such() {
             dh_public_key: dh.as_bytes().to_vec(),
             psk: Vec::new(),
             psk_previous: Vec::new(),
+            disco_key: Vec::new(),
         }],
         ..pb::KarstNetmapResponse::default()
     };

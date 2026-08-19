@@ -70,6 +70,42 @@ pub struct Config {
     /// Rate limits and queueing.
     #[serde(default)]
     pub limits: Limits,
+
+    /// The AVEN reflector — `aven-v1.md` §7.6, `ponor-v1.md` §7.7.
+    ///
+    /// **Off unless configured**, which is the safe default here in the
+    /// ordinary sense: a reflector is a UDP service that answers datagrams, and
+    /// an operator who did not ask for one should not be running one.
+    #[serde(default)]
+    pub reflect: Option<Reflect>,
+}
+
+/// Where the reflector listens, and where clients are told to reach it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reflect {
+    /// The UDP address to bind. Its own socket, never the Ponor listener's:
+    /// AVEN needs a **UDP** mapping and Ponor's is TCP, which a NAT maps
+    /// separately.
+    pub listen: SocketAddr,
+
+    /// What to advertise in `ReflectOffer`, if not `listen`.
+    ///
+    /// Needed whenever `listen` is not reachable as written — an unspecified
+    /// address, a container's internal address, a host behind a NAT of its own.
+    /// A relay that advertised `0.0.0.0:3478` would send every client's
+    /// `Reflect` into the void with nothing in any log to explain the silence,
+    /// so [`Config::validate`] refuses that rather than shipping it.
+    #[serde(default)]
+    pub advertise: Option<SocketAddr>,
+}
+
+impl Reflect {
+    /// The address to put in `ReflectOffer`.
+    #[must_use]
+    pub fn advertised(&self) -> SocketAddr {
+        self.advertise.unwrap_or(self.listen)
+    }
 }
 
 /// §7.3 and §7.4.
@@ -171,6 +207,20 @@ impl Config {
                  default, or set it high for no practical limit"
                     .to_owned(),
             ));
+        }
+        if let Some(r) = &self.reflect {
+            let a = r.advertised();
+            if a.ip().is_unspecified() || a.port() == 0 {
+                // A client told to send `Reflect` to 0.0.0.0 sends it nowhere,
+                // and the symptom is a node that never gets a direct path with
+                // nothing in any log to explain why. Binding the unspecified
+                // address is fine and usual; advertising it is not.
+                return Err(Error::Invalid(format!(
+                    "config: reflect.advertise = {a} is not an address a client \
+                     can reach; set reflect.advertise to this relay's public \
+                     UDP address"
+                )));
+            }
         }
         for (name, path) in [
             ("roster", &self.roster),
@@ -286,6 +336,43 @@ tls_key = "/etc/karst/relay.key"
         assert_eq!(h.queue_depth, 7);
         // The mesh allowance is deliberately not the client's.
         assert_eq!(h.mesh_budget, Budget::unlimited());
+    }
+
+    #[test]
+    fn the_reflector_is_off_unless_configured() {
+        // A reflector answers UDP datagrams. An operator who did not ask for
+        // one should not be running one.
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.reflect.is_none());
+    }
+
+    #[test]
+    fn an_unreachable_advertised_reflector_address_is_refused() {
+        // Binding the unspecified address is usual; advertising it sends every
+        // client's `Reflect` into the void, and the symptom is a node that
+        // never gets a direct path with nothing in any log to say why.
+        let text = format!("{MINIMAL}\n[reflect]\nlisten = \"0.0.0.0:3478\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("unspecified advertise");
+        assert!(format!("{err}").contains("reflect.advertise"), "{err}");
+
+        // With an explicit advertise address it gets past this check and on to
+        // the file checks, which is what should stop it next.
+        let text = format!(
+            "{MINIMAL}\n[reflect]\nlisten = \"0.0.0.0:3478\"\n\
+             advertise = \"203.0.113.7:3478\"\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("files are missing");
+        assert!(format!("{err}").contains("roster"), "{err}");
+    }
+
+    #[test]
+    fn a_reflector_advertises_its_listen_address_by_default() {
+        let text = format!("{MINIMAL}\n[reflect]\nlisten = \"203.0.113.7:3478\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let r = c.reflect.expect("configured");
+        assert_eq!(r.advertised(), r.listen);
     }
 
     #[test]

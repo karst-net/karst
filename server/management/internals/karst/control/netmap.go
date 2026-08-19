@@ -54,6 +54,9 @@ type NetmapHandler struct {
 	PSK     *psk.Deriver
 	Epoch   uint32
 	DNSZone string
+	// Relays is the authenticated Ponor registry. Entries are static at this
+	// boundary until relay administration is moved into the control database.
+	Relays []*proto.KarstRelay
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
 	//
@@ -118,6 +121,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		NodeId:    []byte(self),
 		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
 		DnsName:   selfPeer.DNSLabel,
+		Relays:    h.Relays,
 	}
 
 	for _, p := range peers {
@@ -153,6 +157,15 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, fmt.Errorf("derive psk: %w", err)
 		}
 		entry.Psk = k.Bytes()
+
+		// AVEN path discovery has its own pair key. Reusing the PHREATIC PSK
+		// here would couple two independent authenticators and make a protocol
+		// change in either one a cross-protocol key-reuse bug.
+		disco, err := h.PSK.Disco(self, p.Key, h.Epoch)
+		if err != nil {
+			return nil, fmt.Errorf("derive disco key: %w", err)
+		}
+		entry.DiscoKey = disco.Bytes()
 
 		// And the previous epoch, because phreatic-v1.md §7.3 requires a
 		// responder to accept n and n-1. Without it, a rotation leaves every
@@ -433,6 +446,14 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 			writeField(h, []byte(dst))
 		}
 		writePorts(h, r.GetPorts())
+	}
+	writeField(h, []byte("karst-relays"))
+	for _, relay := range resp.GetRelays() {
+		writeField(h, []byte(relay.GetAddress()))
+		writeField(h, []byte(relay.GetTlsServerName()))
+		writeField(h, relay.GetRelayId())
+		writeField(h, relay.GetIdentityKey())
+		writeField(h, []byte(relay.GetRegion()))
 	}
 
 	sum := h.Sum(nil)

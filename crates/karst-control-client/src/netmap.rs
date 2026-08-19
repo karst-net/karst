@@ -174,6 +174,16 @@ pub struct FilterRuleView<'a> {
     pub ports: &'a [(u32, u32)],
 }
 
+/// One pinned Ponor relay entry as the version hash sees it.
+#[derive(Debug, Default)]
+pub struct RelayView<'a> {
+    pub address: &'a str,
+    pub tls_server_name: &'a str,
+    pub relay_id: &'a [u8],
+    pub identity_key: &'a [u8],
+    pub region: &'a str,
+}
+
 /// A whole netmap, for [`netmap_version`].
 ///
 /// Borrowed rather than owned, and listing only the fields the hash covers, so
@@ -190,6 +200,7 @@ pub struct NetmapContent<'a> {
     pub packet_filter: &'a [FilterRuleView<'a>],
     /// Whom this node may reach.
     pub egress_filter: &'a [FilterRuleView<'a>],
+    pub relays: &'a [RelayView<'a>],
 }
 
 /// The netmap's content hash — `NetmapVersion` in `control/netmap.go`.
@@ -238,6 +249,14 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     // not move, and the inverted policy is never delivered.
     push(&mut h, b"karst-egress-filter");
     push_rules(&mut h, content.egress_filter);
+    push(&mut h, b"karst-relays");
+    for relay in content.relays {
+        push(&mut h, relay.address.as_bytes());
+        push(&mut h, relay.tls_server_name.as_bytes());
+        push(&mut h, relay.relay_id);
+        push(&mut h, relay.identity_key);
+        push(&mut h, relay.region.as_bytes());
+    }
 
     let v = leading_u64(&h.finalize());
     // Zero means "I hold no netmap" on the request side, so it must never be a

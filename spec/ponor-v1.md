@@ -218,7 +218,10 @@ relay_id = SHA-256("karst-relay-id-v1" ‖ relay_identity_pk)
 ```
 
 The coordination server publishes `(relay_id, relay_identity_pk, endpoint,
-region)` in the relay registry and ships it in the netmap. A client MUST have
+tls_server_name, region)` in the relay registry and ships it in the netmap.
+`tls_server_name` is the DNS name used for TLS SNI and certificate validation;
+it is deliberately separate from `endpoint`, which may be an IP address or a
+load-balancer target. A client MUST have
 the relay's public key before connecting and MUST refuse to proceed without
 one. A relay it cannot verify is a relay it does not use.
 
@@ -338,6 +341,7 @@ mounted against a protocol that has no other negotiation to attack.
 | `0x0a` | `Close` | either | `reason` | 1 |
 | `0x0b` | `PeerPresent` | mesh → mesh | `node_id` | 32 |
 | `0x0c` | `Forward` | mesh → mesh | `src_id ‖ dst_id ‖ payload` | 65..1400 |
+| `0x0d` | `ReflectOffer` | relay → client | `reflect_key ‖ endpoint` | 51 |
 
 `version` is `0x01`. `role` is `0x01` (`CLIENT`) or `0x02` (`MESH`); any other
 value MUST be rejected.
@@ -499,6 +503,48 @@ try_for_ms)` before closing, and clients SHOULD wait `reconnect_in_ms` plus
 jitter before reconnecting and keep retrying for `try_for_ms`. Without the
 jitter a restart produces a synchronised reconnect storm, which is the failure
 mode where a relay that was merely restarting becomes a relay that is down.
+
+### 7.7 `ReflectOffer` — the UDP reflector
+
+A relay MAY run an AVEN reflector (`aven-v1.md` §7.6): a UDP service that tells
+a node the source address it is seen from, which is the piece a pair of
+NAT-bound nodes needs before either can be probed at all.
+
+A relay that runs one MUST send `ReflectOffer` **after `RelayAuth` and before
+any `RecvPacket`**, on a `role = CLIENT` connection only. The payload is a
+32-byte `reflect_key` drawn from a CSPRNG per connection, and the reflector's
+UDP endpoint in `aven-v1.md` §6.2's encoding.
+
+**The key travels inside TLS, after the client has verified `sig_relay`.** That
+ordering is the whole security argument: §7.1 already requires the client to
+authenticate the relay before sending anything but `ClientAuth`, so a key
+arriving after that point comes from the ML-DSA-65 identity the netmap pinned.
+No new trust anchor, no new key exchange, and nothing an impostor relay reaches.
+
+A relay MUST mint a distinct key per connection and MUST forget it when the
+connection closes. A key that outlived its connection would be a credential with
+no revocation and no expiry, held by a node the relay has stopped tracking.
+
+The endpoint is carried rather than inferred because **the reflector is a
+different socket from the Ponor listener** — a different port, and possibly a
+different address behind a load balancer that terminates TCP and not UDP. A
+client that assumed the Ponor address would reach the wrong host in exactly the
+deployment §4.2 was written for.
+
+A client MUST tolerate never receiving `ReflectOffer`: a relay without a
+reflector is conformant, and discovery degrades to §7.2 with the pair staying on
+the relay when that is not enough.
+
+**This is a flag day, and pretending otherwise would be worse than saying so.**
+§6 gives Ponor no forward-compatible extension point — an unrecognised frame
+type closes the connection, deliberately, because silently ignoring unknown
+frames is how a downgrade is mounted on a protocol with no other negotiation to
+attack. So a relay sending `0x0d` to an older client disconnects it, and there
+is no version field that could have prevented that: `RelayHello.version` is read
+by the client before it could signal anything, and `ClientAuth.version` is
+rejected by an older relay if a newer client bumps it. The change is made as a
+flag day because there is no deployed population to break. §13.10 records that
+the next such change will not have that excuse.
 
 ---
 
@@ -774,3 +820,12 @@ somewhere else.
    per tailnet; nothing says how a relay's capacity is divided between them, so
    one tailnet can consume a shared relay's entire budget within its per-node
    limits.
+10. **Ponor has no capability negotiation, and §7.7 spent the one free pass.**
+    Adding `ReflectOffer` was a flag day: relay and node must be upgraded
+    together, because §6 makes an unknown frame type fatal and neither version
+    byte can carry the signal (the client reads `RelayHello.version` before it
+    could act on one, and an older relay rejects a bumped `ClientAuth.version`).
+    That was acceptable exactly once, while nothing is deployed. Before 1.0 the
+    handshake needs a capability field — signed, so §13.7's downgrade gap does
+    not simply reappear one layer up — or every future optional frame is another
+    coordinated restart of every relay and every node at the same moment.

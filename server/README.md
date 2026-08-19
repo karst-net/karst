@@ -135,7 +135,7 @@ from forked code:
 |---|---|
 | `shared/management/proto/karst_control.proto` | Envelope, handshake and `KarstControlService` (ADR-0011). A separate file, so upstream's `management.proto` stays byte-identical to the fork point |
 | `management/internals/karst/channel/` | The control-channel handshake and record layer — ML-KEM-768 ×2, HKDF-SHA-512, ChaCha20-Poly1305 |
-| `management/internals/karst/identity/` | ML-DSA-65 node identities on `cloudflare/circl` |
+| `management/internals/karst/identity/` | ML-DSA-65 node identities on `crypto/mldsa` (Go 1.27) |
 | `management/internals/karst/control/` | The gRPC service, node-side client, login/netmap handlers, and OIDC registration |
 | `management/internals/karst/node/` | Node handles and the Karst-owned identity table |
 | `management/internals/karst/psk/` | Per-pair PSK derivation (§2.6); the key type refuses to print |

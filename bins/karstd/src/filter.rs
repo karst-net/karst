@@ -35,6 +35,19 @@ use karst_tun::ip;
 
 use crate::routing::PeerIndex;
 
+/// Which way a packet is going, for the ACL check and for connection tracking.
+///
+/// Lives here rather than in the engine because [`crate::flow`] needs it too:
+/// the direction is what decides which half of a packet is *this* node's, and
+/// so what makes one flow produce one key from either end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// From a peer, to this host.
+    In,
+    /// From this host, to a peer.
+    Out,
+}
+
 /// An inclusive port range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PortRange {
