@@ -15,9 +15,9 @@ followed it added sixteen more, and fifteen of those are closed — most found b
 building the thing the finding above them asked for, and the most recent found
 by counting what the test matrix did *not* cover.
 
-**One remains open: 27**, and like 24 before it, it is a decision rather than a
-defect — NAT64/DNS64 cannot be added to the matrix without taking on a
-dependency, and which one is a project choice. Finding 24 was not a code defect — it recorded that
+**No findings remain open.** Finding 27 was a decision rather than a defect and
+was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
+masquerade. Finding 24 was not a code defect — it recorded that
 Phase 4's third exit criterion could not be met by the mechanism the plan named
 for it. The recommended restatement was accepted on 2026-08-19 and PLAN.md now
 carries both the new wording and the original, struck through.
@@ -50,47 +50,48 @@ carries both the new wording and the original, struck through.
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 | 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
-| 27 | Operational | NAT64/DNS64 needs a dependency decision the matrix cannot make for itself | **Open** — needs a decision |
-
-## Open
-
-### 27. Operational: NAT64/DNS64 needs a dependency decision the matrix cannot make for itself
-
-PLAN.md §6 lists NAT64/DNS64 as a matrix row. It is the only unbuilt row that
-cannot be built with `nft` alone, because **Linux has no in-tree NAT64**.
-nftables translates addresses within a family; NAT64 (RFC 6146) translates
-between IPv4 and IPv6 headers, which is a different operation and is not in
-mainline. So the row costs a dependency, and which one is a project decision
-rather than a test-authoring one.
-
-| Option | What it is | Cost |
-|---|---|---|
-| `jool-dkms` 4.1.11 | The reference NAT64, an **out-of-tree kernel module** | Builds per kernel. Kernel headers are present here, so it would build on this machine — but every CI image and every contributor's kernel becomes a build dependency, and a DKMS failure surfaces as a test failure rather than as a missing package |
-| `tayga` 0.9.2 | **Userspace** NAT64 over a TUN device | No kernel dependency, no DKMS, installs as an ordinary package. Stateless (RFC 6145) with a configured address pool rather than stateful RFC 6146 |
-| DNS64 half | `bind9` or `unbound`, both packaged | Cheap either way, and separable from the NAT64 half |
-
-**Recommendation: `tayga`, and only if the row is judged worth a dependency at
-all.** The matrix's job is to characterise a *topology*, and what this row needs
-to establish is what a node observes when its datagrams cross a
-family-translating middlebox — which reflexive address it is given, and whether
-that address is usable by a peer. Stateless translation with a pool answers that
-as well as stateful translation does, and it costs an ordinary `apt install`
-rather than a kernel module in every CI image.
-
-**Against building it at all**, stated because it is the stronger argument than
-it first looks: this row measures a topology Karst may not need to traverse. An
-IPv6-only node reaching an IPv4-only relay is real, but the relay registry can
-name IPv6 relays, and `Nat::Ipv6Direct` already covers the case where both ends
-have IPv6. The row's unique content is *mixed-family* peer-to-peer, and the
-honest fallback there is the relay, which is already asserted to work by the
-UDP-blocked row.
-
-**Not built, pending that decision.** The row is cheap once the dependency is
-chosen — the topology is the existing three namespaces with an IPv6 inside and
-a translator in the middle — so this is a decision waiting on an answer, not
-work waiting on effort.
+| 27 | Operational | NAT64/DNS64 needs a dependency decision the matrix cannot make for itself | Resolved 2026-08-19 — built with `tayga` + masquerade |
 
 ## Closed
+
+### 27. Operational: NAT64/DNS64 needed a dependency decision the matrix could not make for itself
+
+**Resolved 2026-08-19 by building the row from `tayga` plus an ordinary
+nftables masquerade**, which needs no kernel module.
+
+**The recommendation below was wrong when first written, and the correction is
+the useful part.** It argued for `tayga` on the grounds that "stateless
+translation answers the question as well as stateful does". It does not. The two
+measure different topologies: stateful NAT64 shares one IPv4 address across many
+IPv6 clients and separates them by port, which is what carriers deploy and what
+makes the row interesting for traversal; stateless translation gives each client
+its own IPv4 address with ports preserved, which is barely distinguishable from
+the `Ipv6Direct` row already in the matrix. A `tayga`-only row would have
+reported a comfortable result about a topology nobody is on — the same failure
+as findings 23 and 25, arrived at a third way.
+
+The resolution keeps `tayga` and adds the missing half from a mechanism this
+matrix has already characterised: **`tayga` does the protocol translation,
+nftables does the port sharing.** No out-of-tree module, and the NAT semantics
+under test are the same masquerade every other row is built on rather than a
+second implementation taken on trust. It is also a real deployment shape;
+plenty of NAT64 sits in front of carrier NAT.
+
+**What the row establishes**, and it is good news that was not guaranteed: a
+NAT64 path built this way has **endpoint-independent mapping**. One socket
+addressing two different IPv4 hosts is seen at the same external port, so an
+IPv6-only node's reflexive address (`aven-v1.md` §7.6) is the address every peer
+sees and discovery works on it unchanged. Had it come out endpoint-dependent,
+every IPv6-only node would have been in §7.7's hard class. Making the masquerade
+`fully-random` fails the row, so the assertion is real.
+
+One fixture trap worth recording, because it presents as a product failure. RFC
+6052 §3.1 forbids pairing the well-known `64:ff9b::/96` prefix with private IPv4
+addresses, and `tayga` enforces it — every probe is silently dropped with a note
+in a log nobody is reading. The matrix's outer addresses are RFC 1918, so the
+row uses a translation prefix from its own ULA space, which is what the RFC says
+to do. This is the third time in this project that a fixture defect has
+presented as a traversal failure.
 
 ### 26. Medium: vendoring pruned test fixtures a retained test still needed
 
