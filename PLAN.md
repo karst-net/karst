@@ -3196,6 +3196,22 @@ onwards, anchored on the week of 2026-08-10.
   1024. A design that starts small and escalates spends more traffic to arrive
   at the same place, because the birthday curve is superlinear in *N·M*.
 
+  ✅ **Specified as `aven-v1.md` §7.7 on 2026-08-19**, and the design conclusion
+  is not the published one. The technique is held inside §7.5's **existing**
+  64-datagram budget rather than given a new one, spending it on a single
+  address instead of sixteen, with the hard side's socket count growing each
+  round while the easy side's spend stays flat. That reaches **91% in five and a
+  half minutes and 96% in seven**, against 64% in one round for the published
+  256×256 burst.
+
+  Slower, and correct for this protocol rather than for that one. §8.3 says a
+  relay path is a working path, so this is an *upgrade* and latency-to-direct is
+  a cost rather than a correctness property. The burst version spends eight to
+  sixteen times the allowance in one go, aimed at an address the node cannot
+  verify belongs to its peer — §1.1 allows an authenticated peer to be
+  malicious — so a peer of *K* nodes could point *K* × 512 datagrams at a victim
+  from *K* innocent sources. Trading minutes against that is the right way round.
+
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a
   socket is what earns a distinct external mapping toward the *one* address the

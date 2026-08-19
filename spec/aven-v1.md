@@ -562,6 +562,131 @@ its NAT is symmetric; a node that hears one from each has learned that it is
 not. Both are worth knowing and neither is worth guessing, which is why §7.2
 counts reports rather than taking the first.
 
+---
+
+### 7.7 Reaching a symmetric NAT from a cone
+
+§7.6 closes the NAT-to-NAT case wherever mapping is endpoint-independent. It
+leaves the pairing that is both common and hard: one node behind a **symmetric**
+NAT, the other behind a **port-restricted cone**. A CGNAT subscriber talking to
+somebody on an ordinary home router is exactly this, and neither §7.2 nor §7.6
+helps. The cone side's address is knowable and useless on its own, because the
+symmetric side's mapping toward it is a port nobody can predict; the symmetric
+side's reflexive address is the mapping toward the reflector, which the cone's
+filter refuses.
+
+Nothing here applies when **both** sides are symmetric. That case is not
+solvable by this or any related method and MUST fall back to the relay; §12.4
+carries the arithmetic.
+
+#### The mechanism
+
+Name the two sides by what their NATs do rather than by role: the **hard** side
+is behind endpoint-dependent mapping, the **easy** side behind
+endpoint-independent mapping.
+
+1. The hard side opens *N* sockets and sends one datagram from each to the easy
+   side's advertised address. Each socket earns a distinct external port. These
+   datagrams are **not expected to arrive** — the easy side's filter will refuse
+   them — and exist only to create the mappings.
+2. The easy side sends *M* probes to the hard side's external **address**, at
+   ports drawn without replacement from the ephemeral range. All *M* MUST be
+   sent from the **one** socket §4 already shares with PHREATIC, so the easy
+   side's endpoint-independent mapping presents a single source that the hard
+   side's filter is already expecting. Only the port then has to collide.
+3. When one does, the hard side receives a `Ping` on one of its *N* sockets and
+   answers normally. §7.1 applies unchanged.
+
+**Sending to many destination ports from one socket is not a substitute for many
+sockets**, and this is the requirement most likely to be got wrong. A
+port-restricted symmetric NAT admits a datagram only from the exact destination
+its mapping was created toward, so the collision has to land on a mapping some
+socket owns. One socket earns one mapping toward the one address that matters.
+
+#### It is bounded by §7.5's existing budget, not by a new one
+
+A node MUST NOT emit more probe traffic for this than §7.5 already permits it to
+emit to that peer: **at most the equivalent of `MAX_CANDIDATES` × four probes
+per advertisement interval**, which is 64 datagrams. This is normative and it is
+the whole security argument.
+
+The reason to state it as a limit rather than a target is worth spelling out,
+because the obvious design violates it. The published treatments of this
+technique optimise for time-to-direct and reach about 64% in a single round of
+256 against 256, or 95% at 512 against 512. Those work. They also spend eight to
+sixteen times the budget §7.5 allows, in one burst, aimed at a **single**
+address — and §7.5's limit exists precisely so that "probing it forever would
+make any node able to point every one of its peers at a third party" stays
+false. A node cannot verify that its peer's advertised address belongs to its
+peer: §1.1 allows an authenticated peer to be malicious, and §7.2 already treats
+`CallMeMaybe` candidates as the weakest tier for that reason. A peer of *K*
+nodes that names a victim would direct *K* × 512 datagrams at it, from *K*
+innocent sources, and the victim could not distinguish that from ordinary
+discovery.
+
+**Karst can afford the slower version because the pair is already connected.**
+§8.3 says a relay path is a working path and not a failure state. This is an
+*upgrade*, so latency to direct is a cost and not a correctness property, and
+trading it against the amplification budget is the right trade. That is a
+different conclusion from the published ones because it starts from a different
+premise about what the fallback is worth.
+
+#### Rates and growth
+
+Within that budget, a node SHOULD spend it as follows while a peer has no
+confirmed direct path:
+
+| | |
+|---|---|
+| Probes per interval, easy side | **64**, to ports drawn without replacement |
+| Interval | **30 s** — §7.5's re-advertisement cadence, reused |
+| Sockets held, hard side | **64 per elapsed interval, capped at 256** |
+| Stop | On a confirmed direct path, or when the peer stops advertising |
+
+Sockets are a bounded resource and the cap is what bounds them: 256 sockets per
+peer is already generous for a node with many peers, and an implementation
+SHOULD apply a global cap across peers as well as a per-peer one.
+
+Growth rather than a fixed *N* is what makes the budget work. Each round's
+probes are fresh, and the hard side's target set grows while the easy side's
+spend stays flat, so the per-round probability rises even though the traffic
+does not:
+
+| Elapsed | Sockets held | Chance this round | Cumulative |
+|---|---|---|---|
+| 0m30s | 64 | 6.2% | 6.2% |
+| 2m00s | 256 | 22.5% | 47.1% |
+| 3m30s | 256 | 22.5% | 75.3% |
+| 5m30s | 256 | 22.5% | **91.1%** |
+| 7m00s | 256 | 22.5% | **95.8%** |
+
+Derived from `1 − (1 − N/K)^M` over `K = 64511` usable ports, which
+`docs/measurements/hard-easy-2026-08-19.md` confirms against Linux's two
+symmetric modes at three points — 20% measured against 22% predicted, 60%
+against 64%, and 95% against 98%.
+
+#### The datapath has to follow the winning socket
+
+The collision lands on one of the hard side's *N* sockets, and that socket is
+the only one holding a mapping the peer can reach. An implementation MUST
+therefore either carry the peer's datapath on that socket or abandon the path;
+continuing to send from the socket §4 nominates would use a mapping the peer's
+filter has never admitted.
+
+This is the one place AVEN asks for something §4 does not already provide, and
+it is a real cost rather than a detail: §4's single shared socket exists so that
+a binding proven by discovery is the binding the datapath uses, and this
+preserves that invariant by moving the datapath rather than by weakening it. The
+scratch sockets MUST be closed once a path is confirmed or the attempt is
+abandoned.
+
+#### What an observer learns
+
+The easy side emits 64 datagrams per interval to one address across a spread of
+ports. That is indistinguishable from a slow port scan, and an implementation
+SHOULD expect some middleboxes to treat it as one. §9 gains nothing else: the
+probes carry no more than a `Ping` already does.
+
 ## 8. Path selection
 
 A node holds a set of known paths per peer and chooses one. Ordering,
@@ -752,6 +877,15 @@ must not be carried across to AVEN, where the MAC's job is different.
    pointed wherever it likes. **Explicit port mapping — PCP, NAT-PMP,
    UPnP-IGD — is deterministic where this is probabilistic, and is the better
    use of the same effort.** FINDINGS.md 24 carries the measurement.
+
+   **Partly resolved by §7.7**, which specifies the random-port search for the
+   hard/easy pairing and holds it inside §7.5's existing budget rather than
+   raising it. What stays open here is the hard/hard case, and it is open in the
+   sense of being *closed to this technique*: two randomising NATs square the
+   search space, so the birthday paradox's √N saving still leaves roughly
+   170,000 probes per side for 99.9% — about 28 minutes at 100 packets per
+   second — and 0.01% after twenty seconds of trying. That is not a rate to
+   specify; it is a case to relay.
 5. **No path-MTU interaction.** A direct path may have a smaller MTU than the
    relay path, and AVEN reports nothing about it. PLAN.md schedules PMTU
    discovery for Phase 6; until then a path can be selected that black-holes
