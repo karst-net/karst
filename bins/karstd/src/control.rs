@@ -772,7 +772,7 @@ fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Error> {
                 temp = Some((candidate, file));
                 break;
             }
-            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(source) => {
                 return Err(Error::Io {
                     path: candidate,

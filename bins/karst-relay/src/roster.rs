@@ -111,6 +111,11 @@ pub const MAX_AGE: Duration = Duration::from_secs(90);
 
 impl Source {
     /// Load the first roster and start its freshness lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the roster cannot be read, is not UTF-8, or does
+    /// not satisfy the roster format and validation rules.
     pub fn open(path: &Path) -> Result<(Self, FileRoster), Error> {
         let (roster, fingerprint) = load_with_fingerprint(path)?;
         Ok((
@@ -128,6 +133,11 @@ impl Source {
     /// A syntax or I/O failure leaves the last valid roster and its lease
     /// untouched. The caller therefore continues safely for at most
     /// [`MAX_AGE`], then replaces admission with an empty roster.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the current roster file cannot be read, is not
+    /// UTF-8, or does not satisfy the roster format and validation rules.
     pub fn reload(&mut self) -> Result<Option<FileRoster>, Error> {
         let (roster, fingerprint) = load_with_fingerprint(&self.path)?;
         if fingerprint == self.fingerprint {
