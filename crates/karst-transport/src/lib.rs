@@ -102,6 +102,19 @@ impl UdpTransport {
         self.socket.set_read_timeout(dur)
     }
 
+    /// Put the socket in non-blocking mode.
+    ///
+    /// For sockets that are polled opportunistically rather than waited on —
+    /// `aven-v1.md` §7.7's scratch sockets are polled from a timer tick, and a
+    /// blocking read on any one of a few hundred idle sockets would stall the
+    /// datapath behind it.
+    ///
+    /// # Errors
+    /// Any `fcntl` failure.
+    pub fn set_nonblocking(&self, on: bool) -> io::Result<()> {
+        self.socket.set_nonblocking(on)
+    }
+
     /// Send one datagram.
     ///
     /// Refuses anything over [`MAX_DATAGRAM`]. The fragmentation layer exists

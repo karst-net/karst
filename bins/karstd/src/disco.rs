@@ -161,15 +161,15 @@ pub struct Outbound {
     pub datagrams: Vec<(Vec<u8>, SocketAddr)>,
     /// Encoded `CallMeMaybe` messages, each addressed by Ponor node id.
     pub relayed: Vec<([u8; 32], Vec<u8>)>,
-    /// §7.7 scratch datagrams: each must leave from a **fresh** socket, which
-    /// is then kept open.
+    /// §7.7 scratch datagrams, each tagged with the peer's route index: every
+    /// one must leave from a **fresh** socket, which is then kept open.
     ///
     /// Separate from `datagrams` because the difference is the whole mechanism.
     /// A scratch datagram exists to earn one distinct external mapping toward
     /// the peer, so sending several from one socket earns one mapping and
     /// wastes the rest — and the caller cannot tell which is which from the
     /// address alone, since every one of them goes to the same place.
-    pub scratch: Vec<(Vec<u8>, SocketAddr)>,
+    pub scratch: Vec<(usize, Vec<u8>, SocketAddr)>,
 }
 
 /// A change the datapath must make to one peer's endpoint.
@@ -955,7 +955,7 @@ impl Disco {
                             &peer.our_tag,
                             self.epoch,
                         );
-                        out.scratch.push((bytes, round.toward));
+                        out.scratch.push((peer.route_index, bytes, round.toward));
                     }
                     for (addr, tx) in round.probes {
                         let bytes =
@@ -1111,7 +1111,7 @@ mod tests {
         let out = d.poll(now, &mut mint);
 
         assert!(
-            out.scratch.iter().all(|(_, to)| *to == addr(9)),
+            out.scratch.iter().all(|(_, _, to)| *to == addr(9)),
             "scratch datagrams must all go to the one address the peer named"
         );
         let probes: Vec<_> = out
