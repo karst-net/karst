@@ -325,6 +325,18 @@ enum Shape {
     /// B's filter. A useless candidate doing useful work, and the reason
     /// §7.2's tiers keep addresses that have never answered.
     SymmetricAndAddressRestricted,
+    /// Node A behind a symmetric NAT; node B behind a **port-restricted** cone.
+    ///
+    /// Tailscale's "hard/easy" pairing, and the common real one: a subscriber
+    /// on CGNAT talking to somebody on an ordinary home router. It is missing
+    /// from the first six rows and it is the case the literature's
+    /// birthday-paradox technique actually targets.
+    ///
+    /// Contrast with [`Shape::SymmetricAndAddressRestricted`], which differs by
+    /// one word in B's filter and goes direct. Here B's NAT checks the source
+    /// *port* as well as the address, and A's probe arrives from a port B never
+    /// sent to, so nothing crosses in either direction.
+    SymmetricAndPortRestricted,
 }
 
 /// How a NAT allocates external ports, and what it lets back through.
@@ -375,7 +387,9 @@ impl Shape {
             | Self::BothNat
             | Self::SymmetricA
             | Self::SymmetricAndAddressRestricted => Expect::Direct,
-            Self::BothSymmetric | Self::UdpBlocked => Expect::Relay,
+            Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
+                Expect::Relay
+            }
         }
     }
 
@@ -430,11 +444,13 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
         | Shape::SymmetricA
         | Shape::BothSymmetric
         | Shape::UdpBlocked
-        | Shape::SymmetricAndAddressRestricted => {
+        | Shape::SymmetricAndAddressRestricted
+        | Shape::SymmetricAndPortRestricted => {
             let flavour = match shape {
-                Shape::SymmetricA | Shape::BothSymmetric | Shape::SymmetricAndAddressRestricted => {
-                    Flavour::Symmetric
-                }
+                Shape::SymmetricA
+                | Shape::BothSymmetric
+                | Shape::SymmetricAndAddressRestricted
+                | Shape::SymmetricAndPortRestricted => Flavour::Symmetric,
                 Shape::UdpBlocked => Flavour::UdpBlocked,
                 _ => Flavour::PortRestrictedCone,
             };
@@ -455,7 +471,10 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
             public_leg("ktn-b", NS_B, IP_B_PUBLIC);
             IP_B_PUBLIC
         }
-        Shape::BothNat | Shape::BothSymmetric | Shape::SymmetricAndAddressRestricted => {
+        Shape::BothNat
+        | Shape::BothSymmetric
+        | Shape::SymmetricAndAddressRestricted
+        | Shape::SymmetricAndPortRestricted => {
             let flavour = match shape {
                 Shape::BothSymmetric => Flavour::Symmetric,
                 Shape::SymmetricAndAddressRestricted => Flavour::AddressRestrictedCone,
@@ -1191,6 +1210,21 @@ fn a_node_with_no_udp_at_all_still_carries_traffic_over_the_relay() {
 #[ignore = "needs root, network namespaces and a Go toolchain"]
 fn a_symmetric_nat_reaches_an_address_restricted_peer_directly() {
     run(Shape::SymmetricAndAddressRestricted);
+}
+
+/// **The hard/easy pairing, which is where the literature's technique lives.**
+///
+/// A is behind a symmetric NAT, B behind a port-restricted cone — a CGNAT
+/// subscriber talking to somebody on a home router. One word separates this
+/// from [`a_symmetric_nat_reaches_an_address_restricted_peer_directly`]: B's
+/// NAT checks the source port too.
+///
+/// Expected to stay relayed today, and this row exists to establish that it
+/// does before anything is built to change it.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay() {
+    run(Shape::SymmetricAndPortRestricted);
 }
 
 fn run(shape: Shape) {

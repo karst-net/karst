@@ -3,15 +3,17 @@
 # Karst implementation findings
 
 First reviewed 2026-08-15. Re-verified against the working tree on 2026-08-18,
-and again after the Phase 4 discovery work later that day.
+again after the Phase 4 discovery work later that day, and again on 2026-08-19
+after the NAT matrix was extended and measured.
 
 This report records defects found by tracing implementation paths and their
 tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
-All nine original findings are closed. The re-review and the Phase 4
-work that followed it added fourteen more, and all fourteen of those are closed —
-most of them found by building the thing the finding above them asked for.
+All nine original findings are closed. The re-review and the Phase 4 work that
+followed it added sixteen more, and fifteen of those are closed — most found by
+building the thing the finding above them asked for, and the most recent found
+by counting what the test matrix did *not* cover.
 
 **One remains open: 24**, and it is not a code defect. It records that Phase 4's
 third exit criterion cannot be met by the mechanism the plan names for it, with
@@ -44,6 +46,7 @@ decision rather than a fix.
 | 22 | High | A reflexive address refreshed at the NAT's own timeout is a coin flip | Fixed 2026-08-18 |
 | 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | **Open** — needs a decision |
+| 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 
 ## Open
 
@@ -85,10 +88,34 @@ hold even against a NAT that allocates sequentially:
    one §1.1 explicitly allows inside the tailnet — an *N*-fold amplifier aimed
    at any address it cares to name.
 
-**What is not affected.** A symmetric NAT is only disqualifying against another
-port-restricted one; rows 4 and 5 of the topology table go direct with a
-symmetric NAT on one side. The unreachable case is the intersection, and it is
-narrower than the criterion's wording suggests.
+**What is and is not affected.** A symmetric NAT goes direct against a
+publicly-reachable peer (row 4) and against an address-restricted cone (row 5).
+It fails against another symmetric NAT (row 6) **and against a port-restricted
+cone (row 8)** — and row 8 is the common real pairing, a CGNAT subscriber
+talking to somebody on a home router.
+
+**Those two failures are not the same, and an earlier version of this finding
+wrongly treated them as one.** Published analysis of the technique splits them:
+
+| Pairing | Technique | Result |
+|---|---|---|
+| hard ↔ easy (row 8) | 256 sockets one side, 256 random probes the other | **64%, under 2 seconds** |
+| hard ↔ hard (row 6) | same, both sides | **0.01% after 20 seconds**; 99.9% needs ~170,000 probes each side |
+
+So the recommendation below applies to **row 6 only**. Row 8 is winnable and the
+measurement above does not argue against it — that measurement shows there is no
+*sequential* structure to predict, which rules out the cheap heuristic and
+leaves the random-probe method, whose arithmetic is favourable precisely because
+only one side is randomising.
+
+Row 8 carries an architectural cost that belongs in the estimate. The technique
+needs the hard side to hold **many sockets simultaneously**, because a socket is
+what earns a distinct external mapping toward the one address the easy side is
+reachable at; many destination ports from one socket does not substitute,
+because a port-restricted symmetric NAT admits a packet only from the exact
+source its mapping was created toward. That is in tension with `aven-v1.md` §4's
+single shared socket, and it means the winning socket has to become the datapath
+socket — a `karstd` datapath change, not a `karst-disco` one.
 
 **Recommended resolution — a decision for the project, not for this report.**
 Restate the criterion around what is achievable and verifiable:
@@ -106,6 +133,34 @@ advertisable port instead of a guess. **The recommendation is to build port
 mapping and drop prediction**, rather than to build both.
 
 ## Closed
+
+### 25. Medium: the NAT matrix was missing the common symmetric/port-restricted pairing
+
+The tailnet fixture covered seven topologies and reported five direct. It had a
+symmetric NAT facing nothing, facing an address-restricted cone, and facing
+another symmetric NAT — but **not facing a port-restricted cone**, which is the
+single most likely real pairing: a CGNAT subscriber talking to somebody on an
+ordinary home router.
+
+The omission was not neutral. It let PLAN.md state that row 6 was the only case
+needing further work, which is wrong, and it inflated the direct-connection rate
+from 63% to 71% by leaving out a row that fails.
+
+It also hid the more useful half of the analysis. Row 6 (hard/hard) is not
+winnable; row 8 (hard/easy) is, at 64% in under two seconds by published
+analysis of the same technique. Treating them as one case meant the achievable
+one was being conceded along with the unachievable one.
+
+Fixed by adding `Shape::SymmetricAndPortRestricted` and the row
+`a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay`, which measures
+the failure rather than assuming it: the pair establishes on the relay and is
+held under observation for 75 seconds, failing if either end ever claims a
+direct path. The expectation flips when the technique is built.
+
+The general lesson is the one finding 23 already taught in a different form. A
+matrix is an argument about *coverage*, and a missing row is invisible from
+inside it — the seven that existed all passed, and the number they produced was
+wrong because of the one that did not exist.
 
 ### 8. Medium: cache-file permissions were not repaired or checked on overwrite
 

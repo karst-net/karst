@@ -2940,10 +2940,11 @@ onwards, anchored on the week of 2026-08-10.
   | 5 | symmetric | address-restricted cone | direct |
   | 6 | symmetric | symmetric | **relay** |
   | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
+  | 8 | symmetric | port-restricted cone | **relay** — and this one is winnable |
 
   Each row is a whole tailnet — Go control server, relay, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
-  under a port-scoped ACL. Together they run in 284 seconds.
+  under a port-scoped ACL.
 
   **Rows 4 and 5 are the ones that changed the picture, and both say the same
   thing: "symmetric NAT" is a property of a *pair*, not of a node.** Row 4 goes
@@ -2954,6 +2955,15 @@ onwards, anchored on the week of 2026-08-10.
   anyone to predict a port: it admits any port from an address it has already
   sent to. Only row 6, where both filters are port-dependent and both mappings
   are unpredictable, actually needs port prediction.
+
+  **Row 8 was missing from the first seven and it is the one that matters
+  most.** An earlier version of this section claimed row 6 was the only case
+  needing port prediction. That was wrong. Row 8 — symmetric facing a
+  port-restricted cone, which is a CGNAT subscriber talking to somebody on a
+  home router — differs from row 5 by one word in B's filter, and it fails:
+  B checks the source *port* as well as the address, and A's probe arrives from
+  a port B never sent to. It is also the common real-world pairing, and unlike
+  row 6 it is winnable. See the exit discussion below.
 
   Row 5 also turned up a pleasing detail. A's reflexive address is a dead
   letter as a destination — B's probe to it is dropped — and it is nonetheless
@@ -2976,7 +2986,7 @@ onwards, anchored on the week of 2026-08-10.
 
   | Row | Mutation | Result |
   |---|---|---|
-  | 5 | B's NAT made port-restricted instead | fails — 212 s, never converges |
+  | 5 | B's NAT made port-restricted instead | fails — 212 s, never converges (this is row 8) |
   | 6 | `fully-random` removed from both NATs | fails — direct in 5 s |
   | 7 | the UDP drop removed | fails — direct in 31 s |
 
@@ -3001,8 +3011,8 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *≥ 90% direct-connection rate* — **five of seven topologies, which is 71%,
-  or 83% over the six where a direct path exists at all.** Both figures are
+  *≥ 90% direct-connection rate* — **five of eight topologies, which is 63%,
+  or 71% over the seven where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is
@@ -3032,6 +3042,32 @@ onwards, anchored on the week of 2026-08-10.
   the residue. The remaining work for it is port mapping, row 6's expectation
   splitting into two rows — one with a mapping-capable NAT and one without —
   and the three unbuilt topologies.
+
+  **Row 8 is a separate and better-value target, and the literature agrees.**
+  Tailscale's published analysis splits the problem exactly where our
+  measurements do. For the hard/easy pairing — one symmetric NAT, one
+  endpoint-independent — 256 sockets on the hard side against 256 random probes
+  from the easy side reaches **64% success in under two seconds** at 100
+  probes/sec. For hard/hard it collapses to **0.01% after twenty seconds**;
+  99.9% would need 170,000 probes from each side, about 28 minutes. Tailscale
+  relays the hard/hard case, exactly as we do.
+
+  So the honest split is that row 6 should be conceded and **row 8 is winnable
+  and is the common pairing** — a CGNAT subscriber talking to somebody on a
+  home router.
+
+  It carries an architectural cost that must be stated before it is scheduled.
+  The technique needs the hard side to hold **many sockets at once**, because a
+  socket is what earns a distinct external mapping toward the *one* address the
+  easy side is reachable at. Sending to many destination ports from a single
+  socket does not substitute: a port-restricted symmetric NAT admits a packet
+  only from the exact source its mapping was created toward, so the collision
+  has to land on a mapping some socket owns. That is in direct tension with
+  `aven-v1.md` §4, which puts AVEN and PHREATIC on **one** shared socket
+  precisely so that a binding proven by discovery is the binding the datapath
+  uses — and it means the winning socket must become the datapath socket. That
+  is a change to `karstd`'s datapath, not to `karst-disco`, and should be costed
+  as one.
 
 ### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
 

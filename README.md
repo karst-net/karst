@@ -47,7 +47,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 **728 Rust tests** and **155 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-nine-row NAT matrix and **seven end-to-end tailnet topologies** — each one a
+nine-row NAT matrix and **eight end-to-end tailnet topologies** — each one a
 whole tailnet, and each ending in a TCP conversation under an ACL.
 
 | Node A is behind | Node B is behind | Result |
@@ -57,10 +57,11 @@ whole tailnet, and each ending in a TCP conversation under an ACL.
 | port-restricted cone | port-restricted cone | direct |
 | symmetric | *(nothing)* | direct |
 | symmetric | address-restricted cone | direct |
-| symmetric | symmetric | relay — port prediction is unbuilt |
+| symmetric | symmetric | relay — not winnable; see below |
+| symmetric | port-restricted cone | relay — winnable, unbuilt |
 | all UDP dropped | *(nothing)* | relay, and correctly so |
 
-**Five of seven, and the two that stay relayed are asserted to stay relayed.**
+**Five of eight, and the three that stay relayed are asserted to stay relayed.**
 A node that advertises an address it is not reachable at is worse than one that
 admits it is relayed, so those rows fail if either end ever reports `direct`.
 
@@ -99,11 +100,12 @@ A security project that advertises only its wins is not trustworthy.
   ciphertext — but it is a TLS dependency the other two protocols do not have.
 - **`CallMeMaybe` bodies are not encrypted** (`aven-v1.md` §12.3), so a relay
   operator sees the local interface addresses a node advertises.
-- **Symmetric-NAT-to-symmetric-NAT does not connect yet.** A symmetric NAT on
-  *one* side is fine — the table above has two such rows going direct — but
-  when both ends are symmetric, neither can predict the other's port and the
-  pair stays relayed. Port prediction is unbuilt.
-- **The ≥90% direct-connection target is not met.** Five of seven topologies,
+- **A symmetric NAT connects to some peers and not others.** Facing a
+  publicly-reachable peer or an address-restricted cone, it goes direct. Facing
+  a *port-restricted* cone or another symmetric NAT, it stays relayed. The
+  second of those is not winnable — published analysis of the technique puts it
+  at 0.01% after twenty seconds — and the first is, but is unbuilt.
+- **The ≥90% direct-connection target is not met.** Five of eight topologies,
   and that denominator is a set of shapes we chose rather than a population
   weighted by how common each NAT is in the field. Three shapes are still
   unbuilt: double NAT, hairpinning, NAT64/DNS64.
