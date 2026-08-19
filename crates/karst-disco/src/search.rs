@@ -82,6 +82,20 @@ pub struct Search {
     last_round_ms: Option<u64>,
     /// Rounds completed, for the caller's diagnostics.
     rounds: u32,
+    /// Which port each in-flight probe went to.
+    ///
+    /// **Separate from `PathSet`'s outstanding table on purpose.** §7.1 caps
+    /// that at `MAX_OUTSTANDING` — sixteen — because it is state an arbitrary
+    /// peer's behaviour can make a node allocate. A round is sixty-four probes,
+    /// so registering them there would either overflow the cap or force it up
+    /// for every peer, and the cap is a security property rather than a size.
+    ///
+    /// This table is bounded by the round instead: it holds one round's worth,
+    /// is replaced wholesale each round, and is only ever populated by probes
+    /// this node chose to send. A `Pong` whose `tx` is here identifies which
+    /// port answered, which is what §7.1 requires and what the address alone
+    /// cannot say.
+    in_flight: Vec<(TxId, u16)>,
     /// Ports already tried, so a round draws without replacement across the
     /// whole search rather than only within itself.
     ///
@@ -126,6 +140,7 @@ impl Search {
             scratch: 0,
             last_round_ms: None,
             rounds: 0,
+            in_flight: Vec::new(),
             tried: Vec::new(),
         }
     }
@@ -148,6 +163,19 @@ impl Search {
         self.rounds
     }
 
+    /// The address a `Pong` confirms, if its `tx` answers a probe of this
+    /// round — §7.1 applied to the search's own table.
+    ///
+    /// Returns `None` for a `tx` this search did not send, which is what makes
+    /// a forged or replayed `Pong` unable to confirm anything.
+    #[must_use]
+    pub fn answered(&self, tx: &TxId) -> Option<SocketAddr> {
+        self.in_flight
+            .iter()
+            .find(|(sent, _)| sent == tx)
+            .map(|(_, port)| SocketAddr::new(self.toward.ip(), *port))
+    }
+
     /// Run a round if one is due.
     ///
     /// `mint` supplies transaction ids, as [`crate::Engine::poll`] does; the
@@ -168,6 +196,10 @@ impl Search {
             .min(SCRATCH_PER_ROUND);
         self.scratch = self.scratch.saturating_add(open_scratch);
 
+        // Replaced rather than appended: a probe from a previous round has
+        // had thirty seconds to be answered, which is six times §7.1's
+        // five-second transaction timeout.
+        self.in_flight.clear();
         let mut probes = Vec::with_capacity(ROUND_PROBES);
         // Bounded rather than looping until `ROUND_PROBES` distinct ports are
         // found: once most of the range has been tried, an unbounded loop
@@ -184,6 +216,7 @@ impl Search {
                 continue;
             }
             self.tried.push(port);
+            self.in_flight.push((tx, port));
             probes.push((SocketAddr::new(self.toward.ip(), port), tx));
         }
 
@@ -354,6 +387,34 @@ mod tests {
         assert_eq!(first.probes.len(), 1, "one distinct port available");
         let second = s.poll(ROUND_INTERVAL_MS, &mut m).expect("due");
         assert!(second.probes.is_empty(), "that port was already tried");
+    }
+
+    #[test]
+    fn a_pong_confirms_the_port_its_probe_went_to_and_nothing_else() {
+        // §7.1 applied to the search's own table. The source address of a
+        // `Pong` cannot say which of sixty-four ports answered — only the `tx`
+        // can — and a `tx` this search never sent must confirm nothing, or a
+        // replayed `Pong` would install a path that was never probed.
+        let mut m = minter();
+        let mut s = Search::new(peer());
+        let round = s.poll(0, &mut m).expect("due");
+        let (addr, tx) = round.probes.first().copied().expect("a probe");
+        assert_eq!(s.answered(&tx), Some(addr));
+        assert_eq!(s.answered(&TxId([0xEE; TX_ID_LEN])), None, "never sent");
+    }
+
+    #[test]
+    fn last_rounds_probes_stop_confirming_once_a_new_round_runs() {
+        // The table is one round deep. A probe from the previous round has had
+        // thirty seconds, six times §7.1's five-second transaction timeout, so
+        // keeping it would grow the table without bound for no benefit.
+        let mut m = minter();
+        let mut s = Search::new(peer());
+        let first = s.poll(0, &mut m).expect("due");
+        let (_, stale) = first.probes.first().copied().expect("a probe");
+        assert!(s.answered(&stale).is_some());
+        let _ = s.poll(ROUND_INTERVAL_MS, &mut m).expect("due");
+        assert_eq!(s.answered(&stale), None, "a stale tx still confirmed");
     }
 
     #[test]
