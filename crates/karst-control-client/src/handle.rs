@@ -26,3 +26,39 @@ pub fn handle(identity_pk: &[u8]) -> String {
     h.update(identity_pk);
     Base64::encode_string(&h.finalize())
 }
+
+/// Decode the 32-byte identifier represented by a control-plane handle.
+///
+/// KARST-CONTROL carries this value in its base64 presentation because it is
+/// convenient for logs and JSON. Ponor and AVEN carry the digest itself to
+/// avoid paying 12 extra bytes on every relay frame and discovery message.
+/// Keeping the conversion here prevents either protocol from quietly treating
+/// the display spelling as a distinct identifier.
+#[must_use]
+pub fn handle_bytes(handle: &str) -> Option<[u8; 32]> {
+    let mut raw = [0u8; 32];
+    let decoded = Base64::decode(handle, &mut raw).ok()?;
+    (decoded.len() == raw.len()).then_some(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_handle_decodes_to_its_digest() {
+        let key = [0x42; 1952];
+        let rendered = handle(&key);
+        let mut h = Sha256::new();
+        h.update(HANDLE_CONTEXT);
+        h.update(key);
+        let expected: [u8; 32] = h.finalize().into();
+        assert_eq!(handle_bytes(&rendered), Some(expected));
+    }
+
+    #[test]
+    fn malformed_or_wrong_sized_handles_are_not_identifiers() {
+        assert_eq!(handle_bytes("not base64"), None);
+        assert_eq!(handle_bytes(&Base64::encode_string(&[0u8; 31])), None);
+    }
+}

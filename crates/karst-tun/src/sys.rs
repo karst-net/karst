@@ -590,6 +590,238 @@ pub(crate) fn interface_index(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) ->
     if_index(sock, name).map(|i| u32::try_from(i).unwrap_or(0))
 }
 
+// ── enumerating the host's own addresses ───────────────────────────────────
+//
+// AVEN needs the set of addresses a peer might reach this node on
+// (`spec/aven-v1.md` §7.3). That is a question about the *host*, not about the
+// tunnel, but it needs `AF_NETLINK` and therefore `unsafe`, and ADR-0003 keeps
+// every such call in this file.
+
+/// rtnetlink address-dump message types.
+const RTM_GETADDR: u16 = 22;
+const RTM_NEWADDR: u16 = 20;
+const NLM_F_DUMP: u16 = 0x0300;
+const NLMSG_DONE: u16 = 3;
+
+/// `sizeof(struct ifaddrmsg)`.
+const IFADDRMSG_LEN: usize = 8;
+
+/// `rtattr` types inside an `ifaddrmsg`.
+const IFA_ADDRESS: u16 = 1;
+const IFA_LOCAL: u16 = 2;
+const IFA_FLAGS: u16 = 8;
+
+/// `ifa_scope`. Anything above universe is link-, site- or host-local, and none
+/// of those is reachable by a peer.
+const RT_SCOPE_UNIVERSE: u8 = 0;
+
+/// `ifa_flags`. A tentative address has not finished duplicate-address
+/// detection and may yet be withdrawn; a deprecated one still works for
+/// established flows but must not be offered for new ones. Advertising either
+/// spends a peer's probe budget on an address that will not answer.
+const IFA_F_TENTATIVE: u32 = 0x40;
+const IFA_F_DEPRECATED: u32 = 0x20;
+
+/// Ask the kernel for every address on every interface.
+///
+/// `AF_UNSPEC` covers both families in one dump. Split out and returning plain
+/// bytes for the same reason `route_message` is: this is the part that is easy
+/// to get wrong and impossible to see.
+pub(crate) fn addr_dump_message(seq: u32) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(NLMSG_HDR_LEN + IFADDRMSG_LEN);
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+    msg.extend_from_slice(&RTM_GETADDR.to_ne_bytes());
+    msg.extend_from_slice(&(NLM_F_REQUEST | NLM_F_DUMP).to_ne_bytes());
+    msg.extend_from_slice(&seq.to_ne_bytes());
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+
+    // ifaddrmsg: family AF_UNSPEC, everything else zero for a dump.
+    msg.push(0); // ifa_family
+    msg.push(0); // ifa_prefixlen
+    msg.push(0); // ifa_flags
+    msg.push(0); // ifa_scope
+    msg.extend_from_slice(&0u32.to_ne_bytes()); // ifa_index
+
+    let len = u32::try_from(msg.len()).unwrap_or(u32::MAX);
+    if let Some(head) = msg.get_mut(..4) {
+        head.copy_from_slice(&len.to_ne_bytes());
+    }
+    msg
+}
+
+/// What one pass over a dump buffer produced.
+pub(crate) struct AddrBatch {
+    pub(crate) addrs: Vec<IpAddr>,
+    /// Whether `NLMSG_DONE` appeared, meaning no further `recv` is needed.
+    pub(crate) done: bool,
+}
+
+/// Parse one buffer of `RTM_NEWADDR` messages.
+///
+/// **Pure, so it can be tested without privileges or a network.** Every read
+/// goes through `get`: these are bytes the kernel wrote, but a malformed or
+/// truncated dump must degrade to "fewer candidates" rather than take the
+/// daemon down.
+///
+/// Addresses the kernel reports but a peer cannot use are dropped here rather
+/// than by the caller — scope, tentative and deprecated are facts about the
+/// address, not policy about what to do with it. Which of the remaining ones
+/// are *worth advertising* is AVEN's decision and is made in `karstd`.
+pub(crate) fn parse_addr_dump(buf: &[u8]) -> AddrBatch {
+    let mut addrs = Vec::new();
+    let mut done = false;
+    let mut rest = buf;
+
+    while rest.len() >= NLMSG_HDR_LEN {
+        let Some(len) = rest.first_chunk::<4>().map(|b| u32::from_ne_bytes(*b)) else {
+            break;
+        };
+        let len = usize::try_from(len).unwrap_or(0);
+        // A header shorter than a header, or longer than what arrived, means
+        // the stream is not walkable; stopping beats guessing a stride.
+        if len < NLMSG_HDR_LEN || len > rest.len() {
+            break;
+        }
+        let Some(msg) = rest.get(..len) else { break };
+        let kind = msg
+            .get(4..)
+            .and_then(<[u8]>::first_chunk::<2>)
+            .map_or(0, |b| u16::from_ne_bytes(*b));
+
+        if kind == NLMSG_DONE {
+            done = true;
+            break;
+        }
+        if kind == RTM_NEWADDR {
+            if let Some(addr) = parse_ifaddr(msg.get(NLMSG_HDR_LEN..).unwrap_or_default()) {
+                addrs.push(addr);
+            }
+        }
+
+        // Messages are padded to a 4-byte boundary.
+        let step = len.saturating_add(3) & !3usize;
+        let Some(next) = rest.get(step..) else { break };
+        rest = next;
+    }
+
+    AddrBatch { addrs, done }
+}
+
+/// One `ifaddrmsg` and its attributes, or `None` if it names nothing usable.
+fn parse_ifaddr(body: &[u8]) -> Option<IpAddr> {
+    let header = body.get(..IFADDRMSG_LEN)?;
+    let family = *header.first()?;
+    let scope = *header.get(3)?;
+    let mut flags = u32::from(*header.get(2)?);
+
+    // Only globally scoped addresses. This is what removes loopback (host
+    // scope) and IPv6 link-local (link scope) without special-casing either.
+    if scope != RT_SCOPE_UNIVERSE {
+        return None;
+    }
+
+    let mut address = None;
+    let mut local = None;
+    let mut attrs = body.get(IFADDRMSG_LEN..)?;
+    while attrs.len() >= 4 {
+        let len = usize::from(u16::from_ne_bytes(*attrs.first_chunk::<2>()?));
+        let kind = u16::from_ne_bytes(*attrs.get(2..)?.first_chunk::<2>()?);
+        if len < 4 || len > attrs.len() {
+            break;
+        }
+        let payload = attrs.get(4..len)?;
+        match kind {
+            IFA_ADDRESS => address = ip_from_bytes(family, payload),
+            IFA_LOCAL => local = ip_from_bytes(family, payload),
+            // Newer kernels carry the full 32-bit flags here; the byte in the
+            // header saturates and would hide IFA_F_TENTATIVE on some setups.
+            IFA_FLAGS => {
+                if let Some(b) = payload.first_chunk::<4>() {
+                    flags = u32::from_ne_bytes(*b);
+                }
+            }
+            _ => {}
+        }
+        let step = len.saturating_add(3) & !3usize;
+        attrs = attrs.get(step..)?;
+    }
+
+    if flags & (IFA_F_TENTATIVE | IFA_F_DEPRECATED) != 0 {
+        return None;
+    }
+
+    // `IFA_LOCAL` first: on a point-to-point interface `IFA_ADDRESS` holds the
+    // *peer's* address, and advertising that would name somebody else's host.
+    let addr = local.or(address)?;
+    let usable = match addr {
+        IpAddr::V4(v4) => !v4.is_loopback() && !v4.is_link_local() && !v4.is_unspecified(),
+        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_multicast() && !v6.is_unspecified(),
+    };
+    usable.then_some(addr)
+}
+
+fn ip_from_bytes(family: u8, payload: &[u8]) -> Option<IpAddr> {
+    match family {
+        AF_INET_U8 => payload
+            .first_chunk::<4>()
+            .map(|b| IpAddr::V4(Ipv4Addr::from(*b))),
+        AF_INET6_U8 => payload
+            .first_chunk::<16>()
+            .map(|b| IpAddr::V6(std::net::Ipv6Addr::from(*b))),
+        _ => None,
+    }
+}
+
+/// Dump every global-scope address the host holds.
+pub(crate) fn local_addresses(sock: BorrowedFd<'_>, seq: u32) -> io::Result<Vec<IpAddr>> {
+    let msg = addr_dump_message(seq);
+    // SAFETY: as `route` — `sock` is open for the call and `msg` is a live
+    // slice of exactly `msg.len()` initialised bytes, which `send` only reads.
+    let sent = unsafe {
+        libc::send(
+            sock.as_raw_fd(),
+            msg.as_ptr().cast::<c_void>(),
+            msg.len(),
+            0,
+        )
+    };
+    if sent < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 32 * 1024];
+    // A dump arrives in as many datagrams as it needs. The bound is a
+    // backstop, not an expectation: a host with more addresses than this can
+    // report is one where a truncated candidate list beats an unbounded loop.
+    for _ in 0..64 {
+        // SAFETY: `buf` is a live, uniquely borrowed allocation of exactly
+        // `buf.len()` bytes, and that length is what is passed. `recv` writes
+        // at most that many and returns how many it wrote.
+        let got = unsafe {
+            libc::recv(
+                sock.as_raw_fd(),
+                buf.as_mut_ptr().cast::<c_void>(),
+                buf.len(),
+                0,
+            )
+        };
+        if got < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let got = usize::try_from(got).unwrap_or(0);
+        if got == 0 {
+            break;
+        }
+        let batch = parse_addr_dump(buf.get(..got).unwrap_or_default());
+        out.extend(batch.addrs);
+        if batch.done {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod route_tests {
     #![allow(clippy::indexing_slicing, clippy::panic, clippy::expect_used)]
@@ -762,5 +994,209 @@ mod route_tests {
         other[4] = 3; // RTM_GETROUTE-ish; anything that is not NLMSG_ERROR
         other[5] = 0;
         assert!(route_ack(&other, 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod addr_tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::cast_possible_truncation
+    )]
+
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    /// Build one `RTM_NEWADDR` message the way the kernel lays it out.
+    fn newaddr(family: u8, scope: u8, attrs: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        let mut body = vec![family, 24, 0, scope];
+        body.extend_from_slice(&1u32.to_ne_bytes()); // ifa_index
+        for (kind, payload) in attrs {
+            let len = u16::try_from(4 + payload.len()).expect("small attribute");
+            body.extend_from_slice(&len.to_ne_bytes());
+            body.extend_from_slice(&kind.to_ne_bytes());
+            body.extend_from_slice(payload);
+            body.extend(std::iter::repeat_n(0u8, (4 - (payload.len() % 4)) % 4));
+        }
+        let mut msg = Vec::new();
+        let total = u32::try_from(NLMSG_HDR_LEN + body.len()).expect("small message");
+        msg.extend_from_slice(&total.to_ne_bytes());
+        msg.extend_from_slice(&RTM_NEWADDR.to_ne_bytes());
+        msg.extend_from_slice(&0u16.to_ne_bytes());
+        msg.extend_from_slice(&1u32.to_ne_bytes());
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg.extend_from_slice(&body);
+        msg
+    }
+
+    fn v4_attr(kind: u16, a: [u8; 4]) -> (u16, Vec<u8>) {
+        (kind, a.to_vec())
+    }
+
+    fn done() -> Vec<u8> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&(NLMSG_HDR_LEN as u32).to_ne_bytes());
+        msg.extend_from_slice(&NLMSG_DONE.to_ne_bytes());
+        msg.extend_from_slice(&0u16.to_ne_bytes());
+        msg.extend_from_slice(&1u32.to_ne_bytes());
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg
+    }
+
+    #[test]
+    fn the_request_asks_both_families_for_a_dump() {
+        let msg = addr_dump_message(7);
+        assert_eq!(msg.len(), NLMSG_HDR_LEN + IFADDRMSG_LEN);
+        assert_eq!(u32::from_ne_bytes(msg[0..4].try_into().unwrap()), 24);
+        assert_eq!(
+            u16::from_ne_bytes(msg[4..6].try_into().unwrap()),
+            RTM_GETADDR
+        );
+        assert_eq!(
+            u16::from_ne_bytes(msg[6..8].try_into().unwrap()),
+            NLM_F_REQUEST | NLM_F_DUMP
+        );
+        assert_eq!(u32::from_ne_bytes(msg[8..12].try_into().unwrap()), 7);
+        assert_eq!(msg[16], 0, "AF_UNSPEC, so one dump covers both families");
+    }
+
+    #[test]
+    fn a_global_ipv4_address_is_reported() {
+        let msg = newaddr(
+            AF_INET_U8,
+            RT_SCOPE_UNIVERSE,
+            &[v4_attr(IFA_LOCAL, [192, 168, 1, 20])],
+        );
+        let batch = parse_addr_dump(&msg);
+        assert_eq!(
+            batch.addrs,
+            vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20))]
+        );
+        assert!(!batch.done);
+    }
+
+    /// **`IFA_LOCAL` wins over `IFA_ADDRESS`.** On a point-to-point interface
+    /// `IFA_ADDRESS` holds the *peer's* address, and a node that advertised it
+    /// would be naming somebody else's host as a way to reach itself.
+    #[test]
+    fn the_local_address_wins_over_the_peer_address() {
+        let msg = newaddr(
+            AF_INET_U8,
+            RT_SCOPE_UNIVERSE,
+            &[
+                v4_attr(IFA_ADDRESS, [10, 9, 9, 1]),
+                v4_attr(IFA_LOCAL, [10, 9, 9, 2]),
+            ],
+        );
+        assert_eq!(
+            parse_addr_dump(&msg).addrs,
+            vec![IpAddr::V4(Ipv4Addr::new(10, 9, 9, 2))]
+        );
+    }
+
+    /// IPv6 carries no `IFA_LOCAL`, so `IFA_ADDRESS` is the address.
+    #[test]
+    fn a_global_ipv6_address_is_reported() {
+        let addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 5);
+        let msg = newaddr(
+            AF_INET6_U8,
+            RT_SCOPE_UNIVERSE,
+            &[(IFA_ADDRESS, addr.octets().to_vec())],
+        );
+        assert_eq!(parse_addr_dump(&msg).addrs, vec![IpAddr::V6(addr)]);
+    }
+
+    /// Scope is what removes loopback and IPv6 link-local without either being
+    /// special-cased. A link-local address is reachable from the link and
+    /// nowhere else, so advertising one spends a peer's probe budget for
+    /// certain failure.
+    #[test]
+    fn a_non_global_scope_is_not_a_candidate() {
+        for scope in [253u8, 254, 200] {
+            let msg = newaddr(AF_INET_U8, scope, &[v4_attr(IFA_LOCAL, [127, 0, 0, 1])]);
+            assert!(
+                parse_addr_dump(&msg).addrs.is_empty(),
+                "scope {scope} was offered as a candidate"
+            );
+        }
+    }
+
+    /// A tentative address has not finished duplicate-address detection and may
+    /// yet be withdrawn; a deprecated one must not be offered for new flows.
+    #[test]
+    fn tentative_and_deprecated_addresses_are_not_candidates() {
+        let addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 5);
+        for flag in [IFA_F_TENTATIVE, IFA_F_DEPRECATED] {
+            let msg = newaddr(
+                AF_INET6_U8,
+                RT_SCOPE_UNIVERSE,
+                &[
+                    (IFA_ADDRESS, addr.octets().to_vec()),
+                    (IFA_FLAGS, flag.to_ne_bytes().to_vec()),
+                ],
+            );
+            assert!(
+                parse_addr_dump(&msg).addrs.is_empty(),
+                "flag {flag:#x} was offered as a candidate"
+            );
+        }
+    }
+
+    #[test]
+    fn several_messages_in_one_buffer_are_all_read() {
+        let mut buf = newaddr(
+            AF_INET_U8,
+            RT_SCOPE_UNIVERSE,
+            &[v4_attr(IFA_LOCAL, [192, 168, 1, 20])],
+        );
+        buf.extend_from_slice(&newaddr(
+            AF_INET_U8,
+            RT_SCOPE_UNIVERSE,
+            &[v4_attr(IFA_LOCAL, [10, 0, 0, 3])],
+        ));
+        buf.extend_from_slice(&done());
+
+        let batch = parse_addr_dump(&buf);
+        assert_eq!(
+            batch.addrs,
+            vec![
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)),
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+            ]
+        );
+        assert!(batch.done, "NLMSG_DONE was not noticed, so the dump loops");
+    }
+
+    /// **Bytes from the kernel are still parsed defensively.** A truncated or
+    /// malformed dump must cost candidates, never the daemon — this is on the
+    /// control path of a process carrying traffic for a whole tailnet.
+    #[test]
+    fn malformed_input_is_rejected_not_panicked_on() {
+        let full = {
+            let mut b = newaddr(
+                AF_INET_U8,
+                RT_SCOPE_UNIVERSE,
+                &[v4_attr(IFA_LOCAL, [192, 168, 1, 20])],
+            );
+            b.extend_from_slice(&done());
+            b
+        };
+        for cut in 0..full.len() {
+            let _ = parse_addr_dump(&full[..cut]);
+        }
+        for byte in 0u8..=255 {
+            let _ = parse_addr_dump(&[byte; 64]);
+        }
+        // A length field claiming more than arrived, and one claiming less
+        // than a header — the two that walk a parser off the end or in circles.
+        let mut lying = full.clone();
+        lying[0..4].copy_from_slice(&9999u32.to_ne_bytes());
+        assert!(parse_addr_dump(&lying).addrs.is_empty());
+        let mut zero = full.clone();
+        zero[0..4].copy_from_slice(&0u32.to_ne_bytes());
+        assert!(parse_addr_dump(&zero).addrs.is_empty());
     }
 }

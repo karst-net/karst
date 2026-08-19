@@ -469,6 +469,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         peers: &entries,
         packet_filter: &rules,
         egress_filter: &egress,
+        relays: &[],
     })
 }
 

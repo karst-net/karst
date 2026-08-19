@@ -159,12 +159,7 @@ mod tests {
 
     use super::*;
 
-    fn tempdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("karst-ipc-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).expect("temp dir");
-        d
-    }
+    use crate::scratch::Scratch;
 
     #[test]
     fn commands_round_trip_through_their_wire_form() {
@@ -184,7 +179,8 @@ mod tests {
 
     #[test]
     fn a_request_reaches_the_daemon_and_the_reply_comes_back() {
-        let path = tempdir("rt").join("karstd.sock");
+        let dir = Scratch::new("rt");
+        let path = dir.join("karstd.sock");
         let listener = bind(&path).expect("bind");
 
         let server = std::thread::spawn(move || {
@@ -201,7 +197,8 @@ mod tests {
     /// other users.
     #[test]
     fn the_socket_is_not_readable_by_others() {
-        let path = tempdir("perm").join("karstd.sock");
+        let dir = Scratch::new("perm");
+        let path = dir.join("karstd.sock");
         let _listener = bind(&path).expect("bind");
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
         assert_eq!(
@@ -215,7 +212,7 @@ mod tests {
     /// would mean a crash requires manual cleanup before the tunnel returns.
     #[test]
     fn a_stale_socket_is_replaced_rather_than_fatal() {
-        let dir = tempdir("stale");
+        let dir = Scratch::new("stale");
         let path = dir.join("karstd.sock");
         drop(bind(&path).expect("first bind"));
         assert!(path.exists(), "the file survives the listener");
@@ -226,7 +223,8 @@ mod tests {
     /// that would silently steal the control interface from a running node.
     #[test]
     fn a_live_socket_is_not_stolen() {
-        let path = tempdir("live").join("karstd.sock");
+        let dir = Scratch::new("live");
+        let path = dir.join("karstd.sock");
         let first = bind(&path).expect("first bind");
         // Second bind must fail rather than unlink the live socket.
         assert!(
@@ -238,7 +236,8 @@ mod tests {
 
     #[test]
     fn an_unknown_command_gets_an_answer_not_silence() {
-        let path = tempdir("unknown").join("karstd.sock");
+        let dir = Scratch::new("unknown");
+        let path = dir.join("karstd.sock");
         let listener = bind(&path).expect("bind");
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -259,7 +258,8 @@ mod tests {
 
     #[test]
     fn a_missing_daemon_is_reported_as_such() {
-        let path = tempdir("absent").join("karstd.sock");
+        let dir = Scratch::new("absent");
+        let path = dir.join("karstd.sock");
         let err = request(&path, Command::Status).expect_err("no daemon");
         assert!(matches!(
             err.kind(),

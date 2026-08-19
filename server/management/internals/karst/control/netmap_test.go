@@ -245,6 +245,16 @@ func TestPSKAgreesWithTheOtherEnd(t *testing.T) {
 		if !bytes.Equal(p.GetPsk(), mirrored.Bytes()) {
 			t.Fatalf("PSK disagrees between the two ends of pair (%s, %s)", f.selfH, peer)
 		}
+		disco, err := f.deriver.Disco(peer, f.selfH, 3)
+		if err != nil {
+			t.Fatalf("derive disco key: %v", err)
+		}
+		if !bytes.Equal(p.GetDiscoKey(), disco.Bytes()) {
+			t.Fatalf("disco key disagrees between the two ends of pair (%s, %s)", f.selfH, peer)
+		}
+		if bytes.Equal(p.GetPsk(), p.GetDiscoKey()) {
+			t.Fatalf("PSK and disco key are equal for pair (%s, %s)", f.selfH, peer)
+		}
 	}
 }
 
@@ -411,6 +421,27 @@ func TestVersionChangesWithContent(t *testing.T) {
 
 		if requestNetmap(t, f, 0).GetVersion() == base {
 			t.Fatal("removing a peer did not change the version")
+		}
+	})
+
+	t.Run("relay registry changed", func(t *testing.T) {
+		saved := f.handler.Relays
+		defer func() { f.handler.Relays = saved }()
+		f.handler.Relays = []*proto.KarstRelay{{
+			Address:       "127.0.0.1:443",
+			TlsServerName: "relay.test",
+			RelayId:       bytes.Repeat([]byte{0x91}, 32),
+			IdentityKey:   bytes.Repeat([]byte{0x92}, 1952),
+			Region:        "test",
+		}}
+
+		if requestNetmap(t, f, 0).GetVersion() == base {
+			t.Fatal("changing the relay registry did not change the version")
+		}
+		if requestNetmap(t, f, base).GetUnchanged() {
+			// A node holding the pre-change version must receive the new relay
+			// key; treating it as unchanged pins it to a retired relay forever.
+			t.Fatal("a node holding the old relay registry was told nothing changed")
 		}
 	})
 }

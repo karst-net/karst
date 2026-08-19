@@ -2,7 +2,8 @@
 
 **A post-quantum mesh VPN with self-hosted coordination, admin console, and user management.**
 
-Status: draft v1 · Plan date: 2026-08-08 · Owner: TBD
+Status: draft v1 · Plan date: 2026-08-08 · Schedule re-anchored 2026-08-18 ·
+Owner: TBD
 
 ---
 
@@ -323,31 +324,49 @@ extra plumbing.
 | ML-KEM-768 | **`crypto/mlkem`** — Go standard library, FIPS 203 |
 | HKDF-SHA-512 | **`crypto/hkdf`** — standard library |
 | ChaCha20-Poly1305 | `golang.org/x/crypto` — already a direct dependency |
-| ML-DSA-65 | **`cloudflare/circl` v1.6.5** — see below |
+| ML-DSA-65 | **`crypto/mldsa`** — Go standard library, FIPS 204 (since 1.27) |
 | SLH-DSA-SHA2-192s | **`cloudflare/circl`** — no standard-library path exists |
 
-The KEM half needed no new dependency. ML-DSA did, and the reason is worth
-recording because it is temporary:
+The KEM half needed no new dependency. ML-DSA did, temporarily, and **that
+migration is now done — 2026-08-18, on Go 1.27rc3.**
 
-**Go 1.26 implements ML-DSA-44/65/87 — in `crypto/internal/fips140/mldsa`,
-ACVP-tested — but does not export it.** There is no public `crypto/mldsa`, and
-`internal/` cannot be imported from outside the standard library. The pattern
-is the one ML-KEM followed: `crypto/mlkem` is a thin public wrapper over
-`crypto/internal/fips140/mlkem`, shipped in 1.24 after the internal
-implementation landed. ML-DSA has completed the internal half, so a public
-package looks close — but it is not in the current stable and cannot be used.
+Go 1.26 implemented ML-DSA-44/65/87 in `crypto/internal/fips140/mldsa`,
+ACVP-tested, and did not export it; `internal/` cannot be imported from outside
+the standard library. So the control channel shipped on `cloudflare/circl`
+v1.6.5 behind `channel.Signer` and `channel.Verifier`, with
+`management/internals/karst/identity` written as a deliberately thin shim so
+that the swap would be one file.
 
-`cloudflare/circl` is therefore the choice, and it is **not purely a stopgap**:
-Bedrock needs SLH-DSA-SHA2-192s (ADR-0001) and the standard library has no
-SLH-DSA at all, not even internally. circl is a dependency either way.
+**It was one file, and the pre-planning is the whole reason.** Go 1.27 shipped
+the public `crypto/mldsa`; `identity.go` now wraps it and circl left the module
+entirely — nothing else imported it. It **returns for Bedrock**, which needs
+SLH-DSA-SHA2-192s (ADR-0001) and which the standard library has no
+implementation of, internal or otherwise. So this is a dependency deferred to
+Phase 5, not one avoided.
 
-The swap is pre-planned. `channel.Signer` and `channel.Verifier` are
-interfaces, and `management/internals/karst/identity` is a deliberately thin
-shim, so migrating ML-DSA to the standard library when it ships is one file.
+**The swap was checked for byte-compatibility rather than assumed.** Both
+libraries implement FIPS 204, which is a strong argument that a seed derives
+the same key under each and not a proof — and it matters more than usual here,
+because a node's handle is a hash of its public key. A disagreement would not
+have failed; it would have silently re-identified every enrolled node, and the
+symptom would have been a fleet that cannot authenticate for reasons no log
+line explains. The circl-derived public key digest was captured *before* the
+swap and is now pinned by `TestSeedIsStableAcrossTheCirclMigration`; a
+circl-produced signature is pinned beside it and must still verify. Both pass,
+and the Rust↔Go interop suite — where the `ml-dsa` crate checks the Go server's
+signatures — passes unchanged.
 
-This also removed a stale `replace` directive pinning circl to a 2023 codeberg
-fork that predates FIPS 204 — dead weight, since the prune had already left
-circl with zero packages in the build graph.
+Two operational notes came out of it. `go.mod` needs an explicit
+`toolchain go1.27rc3` line: with only `go 1.27` the toolchain tries to fetch a
+`go1.27.0` that does not exist and fails with "toolchain not available", which
+names the symptom and not the cause. And `crypto/mldsa` is **unavailable under
+FIPS 140-3 module v1.0.0**, where every constructor returns an error — the
+right failure, since a build that cannot do ML-DSA cannot run Karst's control
+plane, but one to know about before someone sets `GODEBUG=fips140=v1.0`.
+
+An earlier prune also removed a stale `replace` directive pinning circl to a
+2023 codeberg fork that predates FIPS 204 — dead weight even then, since the
+prune had already left circl with zero packages in the build graph.
 
 ### 3.3 Performance targets
 
@@ -923,11 +942,18 @@ It is correctly placed last, and the plan does not pretend otherwise.
 
 Assumes a team of **7–9 engineers**: 3 Rust (protocol/datapath), 2 Go
 (control), 2 frontend, 1 security/crypto, 1 SRE/release (shared). Dates are
-relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
+relative to a start of **2026-08-10**; adjust the anchor, keep the durations.
+
+**Phases 0–3 are complete and carry no dates.** They were scheduled against a
+2026-09-01 anchor that events overtook, and re-stating that schedule now would
+be describing a plan rather than what happened — the record of what was
+actually built and measured is in each phase's entries and in
+[`docs/measurements/`](docs/measurements/). Dates below apply to Phase 4
+onwards, anchored on the week of 2026-08-10.
 
 ---
 
-### Phase 0 — Foundations (3 weeks · Sep 2026)
+### Phase 0 — Foundations (3 weeks) — ✅ complete
 
 - Monorepo: Cargo workspace + Go module + pnpm workspace, unified via `just`.
   Nix flake for reproducible dev shells (optional to use, maintained).
@@ -961,7 +987,7 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   name; CI
   rejects a test commit carrying a GPL dependency and one missing a sign-off.
 
-### Phase 1 — Crypto core and protocol spec (6 weeks · Sep–Oct 2026)
+### Phase 1 — Crypto core and protocol spec (6 weeks) — ✅ complete
 
 - 🔶 `karst-crypto`: **suite registry, downgrade protection, `Kem` trait and a
   working ML-KEM-768 backend done** (21 tests). Backend is RustCrypto `ml-kem`,
@@ -1021,7 +1047,7 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   on 2026-08-10 (3 targets × 15 workers × 1921 s, ~6.7 billion executions),
   **zero crash artefacts**.
 
-### Phase 2 — Node agent, first packets (8 weeks · Nov–Dec 2026)
+### Phase 2 — Node agent, first packets (8 weeks) — ✅ complete
 
 - 🔶 **`karst-transport` — real UDP, first packets over the wire** (8 tests). A
   complete handshake and authenticated data exchange between two loopback
@@ -1254,7 +1280,7 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
     responder learns it from the handshake — `192.168.68.79:61449`, a
     translated port. Traffic then flows *both* ways through that mapping.
 
-### Phase 3 — Coordination server and netmap (8 weeks · Jan–Feb 2027)
+### Phase 3 — Coordination server and netmap (8 weeks) — ✅ complete
 
 - Go control server: schema, migrations, node registration, auth keys, OIDC
   login, netmap computation and delta streaming, IP allocation.
@@ -1297,7 +1323,8 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
 
   **ML-DSA-65 landed** in `server/management/internals/karst/identity/`, on
   `cloudflare/circl` v1.6.5 — see §3.2 for why the standard library could not
-  be used and why circl is a dependency regardless. **28 tests** now pass
+  be used at the time, and for the 2026-08-18 migration to `crypto/mldsa` that
+  replaced it. **28 tests** now pass
   across the two packages, including the channel driven end to end by real
   ML-DSA-65 rather than the Ed25519 stand-in.
 
@@ -2072,7 +2099,7 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   run finds zero PSK bytes. The log scan runs in CI, not as a one-time check —
   this is a regression that gets reintroduced, not one that gets fixed once.
 
-### Phase 4 — Relays and NAT traversal (10 weeks · Mar–May 2027)
+### Phase 4 — Relays and NAT traversal (10 weeks · Aug–Oct 2026) — 🔶 in progress
 
 - ✅ **Ponor v1 specified** — `spec/ponor-v1.md`, normative, with framing,
   mutual post-quantum authentication, admission, presence, mesh and relay
@@ -2353,9 +2380,236 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   sweep fired on the very first poll and sent every candidate twice, and the
   give-up condition was off by one against §7.5's "immediately, then
   100/300/900".
-- `karst-disco`: symmetric-NAT port prediction, port mapping (UPnP-IGD,
-  NAT-PMP, PCP), candidate gathering from live interfaces, and the datapath
-  wiring for a seamless relay→direct upgrade.
+- 🔶 **The node speaks Ponor, and the netmap carries what discovery needs.**
+  `bins/karstd/src/relay.rs` and `relay_tls.rs` are the node half of the
+  handshake `karst-relay` already answers: TLS 1.3 with `X25519MLKEM768`
+  enforced at startup, the HTTP upgrade, and the pinned ML-DSA-65 Ponor
+  identity. The control plane grew two things to feed it — a per-pair
+  `disco_key` and a relay registry — and both are now part of the netmap
+  version hash on both ends.
+
+  **The disco key is derived under its own label, not reused from the PSK**
+  (`psk.Disco`, `karst-disco-v1`). Reusing the PHREATIC PSK would have cost
+  nothing to write and would have coupled two independent authenticators, so a
+  change to either protocol becomes a cross-protocol key-reuse bug. The Go test
+  asserts the two are *unequal* for the same pair, not merely that each is
+  derived.
+
+  **A relay entry is checked against itself while the netmap is decoded.**
+  `ponor-v1.md` §5.2 defines `relay_id` as a digest of the pinned identity key,
+  so `Relay::from_wire` recomputes it and refuses a mismatch. The alternative is
+  a registry typo surfacing much later as a handshake failure with nothing in
+  any log to explain it.
+
+  **The registry is in the version hash, and the test that matters is the
+  negative one**: a node holding the pre-change version must not be told
+  "unchanged", or it stays pinned to a retired or compromised relay while every
+  poll says its netmap is current.
+
+  `tls_server_name` is carried separately from `address` and §4.2 was amended
+  to say so — a self-hoster reaches a relay by IP or through a load balancer
+  while the certificate names something else, and Ponor authenticates by the
+  ML-DSA key either way.
+- ✅ **AVEN closes end to end — two nodes rendezvous over the relay and confirm
+  a direct path.** `Disco::reconcile` loads per-peer disco keys from the netmap,
+  the node enumerates its own interfaces, the scheduler advertises them, the
+  relay carries the advertisement both ways, both ends probe on the same poll,
+  and a confirmed path is installed as the peer's endpoint.
+
+  **The test that matters is `tests/rendezvous.rs`**, and the reason it exists
+  is that every layer below it had passing unit tests for weeks while the slice
+  did nothing: the scheduler produced advertisements nobody carried, the relay
+  carried datagrams nobody produced, and selection ran over a candidate set that
+  was always empty. Each layer agreed with itself. Nothing looked at the join.
+
+  The fixture found its own version of the same mistake — the first draft
+  delivered relayed advertisements and dropped the probes that `poll` returned
+  alongside them, and the symptom was one node confirming a path while the other
+  silently did not. That is the shape of the whole bug class here, reproduced in
+  a test harness in about twenty lines.
+
+  **A relay-carried advertisement has its own entry point, and that is the
+  design decision worth defending.** `inbound_from_relay` is separate from
+  `inbound` rather than a flag on it, because the two differ in what they are
+  allowed to authorise: the AVEN tag proves *who wrote* a message and says
+  nothing about whether an arbitrary UDP source is a permitted delivery path for
+  a fresh endpoint list. It additionally requires the relay-stamped source id
+  and the tag to name the same peer, so one admitted peer cannot replay
+  another's authentic datagram under its own relay identity. A relay carrying a
+  `Ping` or `Pong` is refused outright.
+
+  **The case that pins that rule is an admitted peer, not a stranger.** The
+  first version of the test replayed under an id the node had never heard of,
+  which the lookup refuses on its own — so the test passed with the comparison
+  deleted. It now uses a peer the node holds a key for, which is the only
+  version that fails when the binding is removed.
+- ✅ **Candidate gathering, and where the policy lives.** `karst_tun::
+  local_addresses` dumps `RTM_GETADDR` and reports what the host holds; the
+  daemon decides what is worth advertising. The split is not cosmetic: scope,
+  tentative and deprecated are facts about an address — a peer cannot reach any
+  of them — while "is the node's own overlay address" is a fact about *this*
+  system, and only `karstd` knows what the tunnel is. Advertising a tunnel
+  address as a way to reach the tunnel is a loop.
+
+  It lives in `karst-tun` because it needs `AF_NETLINK`, and ADR-0003 puts every
+  `unsafe` call in that crate. Anywhere else would mean a second file carrying
+  an `unsafe` allow, which is the property that decision buys. The parser is a
+  pure function over bytes, tested against a truncation sweep and every
+  single-byte buffer, because a malformed dump must cost candidates rather than
+  the daemon.
+
+  **`IFA_LOCAL` is read in preference to `IFA_ADDRESS`.** On a point-to-point
+  interface the second holds the *peer's* address, and a node that advertised it
+  would name somebody else's host as a way to reach itself. It is one line and
+  it has its own test.
+
+  A private RFC 1918 address is deliberately kept: two nodes on the same LAN
+  behind the same NAT have no other way to find each other, and that is the case
+  direct paths help most. §12.3's cost — a `CallMeMaybe` body is not
+  encrypted, so the relay operator sees them — is a protocol gap to close, not a
+  reason to withhold the candidate that makes local discovery work.
+- ✅ **§7.2's reflexive addresses, and the rule the spec was missing.** A node
+  behind a NAT never sees its own mapped address; it learns one only from a peer
+  that answers a probe. Draft 0.1 said to collect them and said nothing about
+  what they compete with — and the list a node builds goes to *every* peer, so
+  one peer supplying sixteen fabricated `observed` values would decide what this
+  node tells everybody else about itself.
+
+  §7.2 now says interface addresses win the slots and reflexive addresses take
+  what is left, and that where several peers report, the most-reported wins. A
+  node behind one NAT hears the same mapping from everyone that answers it, so
+  agreement is evidence and a single liar is outvoted. With one peer there is
+  nothing to cross-check against, which is why the count orders the list rather
+  than deciding admission to it.
+- ✅ **§12.6 closed** — see the candidate-cap entry below. It is the only one of
+  the seven open items in that section that this phase resolved; the other six
+  stand.
+- 🔶 **Two defects found by review rather than by tests, both now closed.**
+  Recorded here because each was invisible to a passing suite, and because the
+  shape of both is the same: a boundary that could only express half of what it
+  needed to say.
+
+  **A released path had no way to reach the datapath.** `PathSet::select`
+  clears the chosen path as soon as nothing is usable, deliberately — but the
+  daemon read a *snapshot* of the chosen paths, and a snapshot can only say
+  "install this". A direct path that died left the datapath pointed at a dead
+  address for the lifetime of the process, which made AVEN a net connectivity
+  regression. `Disco::path_changes` now emits transitions, and the two
+  directions are deliberately asymmetric: an install displaces whatever was
+  there, because a confirmed path beats a learned address; a release is a
+  **compare-and-swap**, because the endpoint has a second writer and a peer that
+  has just handshaked from elsewhere is better evidence than discovery going
+  quiet.
+
+  **Confirmed paths were exempt from the candidate cap**, so every address that
+  ever answered a single `Ping` held a slot for good — sixteen fresh addresses
+  per interval from a peer with a /64, each answered once, growing the set and
+  the per-tick scan over it without limit. The cap now lives in `PathSet`, which
+  owns the vector, and eviction runs unconfirmed-first then stalest-confirmed,
+  never the path in use. **A length assertion was not enough to pin it**, and
+  the first version of the test made that mistake: exempting confirmed paths and
+  then refusing new ones bounds the length too, by locking the set to whichever
+  addresses answered first — which is a peer pinning us to addresses of its
+  choosing. Each clause of the policy now fails a test when removed.
+- ✅ **`crypto/mldsa`, and the shim that was built to be deleted was deleted.**
+  Go 1.27 shipped the public package ADR-0011 was waiting for; §3.2 has the
+  migration and its byte-compatibility check. Recorded under Phase 4 because it
+  happened here, not because it is Phase 4 work — it closes a dependency the
+  control plane took on in Phase 3 and always intended to give back.
+- `karst-disco`: symmetric-NAT port prediction and port mapping (UPnP-IGD,
+  NAT-PMP, PCP). Both extend candidate gathering rather than replacing it: port
+  prediction adds candidates a symmetric NAT would otherwise hide, and a mapped
+  port adds one the NAT is holding open on purpose.
+- ✅ **PHREATIC over the relay, and the upgrade is one rule.** `Output` names a
+  destination rather than an address, and `Engine::via` is the only place that
+  chooses: a direct endpoint if there is one, the relay otherwise.
+
+  **The upgrade and the fallback are that rule read at different moments**,
+  which is why it is two lines and not a state machine. AVEN already owns
+  whether a direct endpoint exists — it installs one on a confirmed path and
+  withdraws it when the path stops answering — so the two subsystems needed no
+  coordination at all. Deciding it in one place is what keeps that true: the
+  code before this asked `endpoint(peer)` in four separate places and dropped
+  the packet when it was `None`, and a relay arm added to three of them would
+  have been a peer that could receive but not send.
+
+  **`inbound_from_relay` is a separate entry point rather than a flag**, because
+  the two differ in what they may conclude from where a datagram arrived.
+  It learns no endpoint — the source address is the *relay's*, and installing it
+  would aim a peer's traffic at a TLS port that is not a PHREATIC listener. It
+  attributes by the relay-stamped source instead of guessing from the endpoint
+  table. And it reassembles under a key disjoint by construction from every UDP
+  source key, which matters exactly during an upgrade, when a relayed and a
+  direct stream from the same peer are briefly both in flight.
+
+  **A relayed handshake must name the peer the relay says sent it.** Ponor
+  authenticated a node id; the AEAD resolves a `peer_id_hint`; requiring the two
+  to agree is what stops one admitted peer replaying another's handshake under
+  its own relay identity. The test that pins it uses a peer this node holds a
+  key for — a stranger is refused a step earlier by the lookup, so a test using
+  one passes with the check deleted. That mistake was made twice in this phase,
+  once here and once in the AVEN equivalent, which is why it is written down.
+
+  **The connection is split so the directions cannot block each other.** They
+  share one TLS stream but must not share a scheduling point: a worker
+  alternating between reading and draining a send queue adds its polling
+  interval to every relayed packet, and once this path carries tunnel data that
+  interval *is* the tunnel's latency.
+
+  The queue from the datapath to the relay worker is bounded and **drops rather
+  than blocks** — these calls happen on the threads carrying the tunnel, and
+  waiting on a dead relay would turn a relay outage into a total outage, which
+  is the opposite of what a fallback path is for. §7.3 makes the same choice one
+  hop further on. The drops are counted and surfaced in `karst status`, because
+  the failure this replaces was silent.
+
+  `karst status` now reports `transport` per peer rather than an endpoint alone.
+  It is an enum and not a bool on purpose: "relayed" and "no path at all" are
+  different problems with different fixes, and a bool merges the second into the
+  healthy case.
+
+  **A relay with a self-signed certificate had no working configuration**, which
+  is FINDINGS.md finding 16 and was found by trying to write an integration test
+  against a real one. `ponor-v1.md` §4.2 names that deployment as the realistic
+  self-hosted case and `relay_tls` loaded the system trust store alone.
+  `[control] relay_ca_file` now supplements it. It cannot weaken relay
+  authentication, structurally rather than by promise: §4.2 already makes the
+  certificate insufficient on its own, and the netmap-pinned ML-DSA-65 identity
+  is what names the relay.
+
+- ✅ **The published endpoint is discovery's to withdraw** — FINDINGS.md finding
+  15, found while building the relay path and closed the same day. `via`
+  preferred any endpoint and a netmap-configured one exists from startup, so a
+  peer whose published address had gone stale was unreachable even with a relay
+  available and the peer connected to it.
+
+  **The root cause was ownership.** AVEN probed that endpoint and knew it did
+  not answer; `release_endpoint` withdrew only paths AVEN had *installed*, and
+  this one came from the control plane. The information existed and no code
+  could act on it. Discovery now adopts it at reconcile, which is what gives it
+  the standing to take it away — probing an address nobody owns produces a
+  measurement and no consequence.
+
+  **Release is gated on having given up, not on "nothing chosen".**
+  `Engine::exhausted` is §7.5's schedule run to its end. Before that, "nothing
+  chosen" means "not confirmed yet" — the state every peer is in for the second
+  of probing after every roster change — and withdrawing there would drop a
+  working endpoint onto the relay each time the netmap moved. Acting on it is
+  safe precisely because giving up is not permanent: the 30-second re-probe
+  sweep retries everything, so a peer that returns is found again without any
+  state remembering it was written off.
+
+  It also **removed** a rule rather than adding one. `PathChange::Release` had a
+  `fallback` naming the configured endpoint to revert to, which only made sense
+  while that endpoint was exempt from discovery. It is not — it is a candidate
+  like any other, so by the time a release fires it has been given up on as
+  well, and reverting would hand back an address discovery had just disproved.
+  A release now simply clears, and `via` falls through.
+
+  A peer with no disco key keeps its configured endpoint untouched, which is
+  §5.1 rather than an exception: no key means no discovery, ever, so there is
+  nothing to learn from and nothing that could responsibly take it away. That is
+  also what keeps a static TOML roster working.
 - 🔶 **NAT matrix — the instrument, validated.** `crates/karst-disco/tests/
   nat_matrix.rs` builds three network namespaces with a masquerading middle and
   two distinct outer addresses, and establishes that each topology behaves the
@@ -2382,21 +2636,318 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   test retries three times and needs one pair to differ. And `nft` rejects a
   chain named `fwd`, which is a reserved word.
 
-  **Four of the ten §6 rows exist so far.** Port-restricted cone, symmetric,
+  **Nine of the ten §6 rows exist.** Port-restricted cone, symmetric,
   UDP-blocked and the plain-NAT baseline are what Linux conntrack gives
-  natively. Full-cone and address-restricted need endpoint-independent
-  *filtering*, which netfilter does not do without an out-of-tree module;
-  hairpinning, IPv6-only, NAT64/DNS64 and double-NAT are unbuilt. Those are
-  named here rather than quietly omitted, because a matrix that reports
-  four-for-four is not the same as one that reports four-of-ten.
-- Full NAT test matrix in CI (§6) — six rows still to build, and the criterion
-  cannot be measured until `karstd` carries disco.
+  natively. Full-cone, address-restricted, IPv6-only and double-NAT were added
+  on 2026-08-18. Adding the first two **corrected a claim this section
+  previously made**: it said they
+  need endpoint-independent filtering "which netfilter does not do without an
+  out-of-tree module". Netfilter does not do it *by itself* — return traffic is
+  admitted per flow — but a static `dnat` on the mapped port supplies exactly
+  the missing half, and an `nft` set of contacted addresses narrows that to
+  address-restricted. Both rows are eleven lines of `nft` and no module. The
+  claim was never tested; it was inferred from conntrack's defaults and it was
+  wrong.
+
+  Where the construction over-approximates is stated in the code rather than
+  hidden: a real full cone opens when the inside first sends, and a static
+  `dnat` is open before that too. The matrix measures what happens *after* an
+  outbound datagram, where the two are identical — so no test asserts
+  reachability without a prior outbound, because that would be testing a port
+  forward.
+
+  **IPv6-only** is in the matrix precisely because it is the easy case: nothing
+  translates, so the address a peer sees is the address the node has and a
+  direct connection needs no hole punching. A rate measured only across NATs is
+  measured against a harder network than many users are on, and leaving the row
+  out would understate the result in a way that looks conservative and is simply
+  wrong.
+
+  **Double-NAT** is the row the exit criterion names by name — a subscriber
+  behind their own NAT, behind a carrier's symmetric one, on RFC 6598 shared
+  space. Its assertion is not that traffic crosses, which one NAT also manages,
+  but that the source is rewritten *twice*: a reflector inside the carrier
+  network sees the subscriber NAT's address, one beyond it sees the carrier's.
+  A topology that quietly collapsed to a single NAT would pass every
+  traffic-crosses check and misreport the difficulty of the whole matrix.
+
+  **The mutation check found the same class of bug twice, and both times in a
+  negative assertion.** The address-restricted row's "an uncontacted address
+  must not cross" passed with the filter removed: the sender was binding a port
+  the reflector already held, so the datagram never left. The double-NAT row's
+  "the carrier is symmetric" passed with the carrier made a cone: the two probes
+  bound `0.0.0.0:0`, so they had different source ports and the external ports
+  would have differed under any NAT at all.
+
+  Neither was a bug in the product and both would have made the matrix lie. The
+  generalisation is worth stating: **a positive assertion failing for a bad
+  fixture is loud, and a negative one is silent.** Negative assertions are the
+  ones to mutate, and every one in this file now has been.
+
+  Hairpinning and NAT64/DNS64 are unbuilt. Hairpinning needs a second host
+  inside the same NAT; NAT64 needs an out-of-tree translator — `jool-dkms` is
+  packaged but is a kernel module, which is a real CI dependency and a decision
+  rather than an afternoon. Both are named here rather than quietly omitted,
+  because a matrix that reports nine-for-nine is not the same as one that
+  reports nine-of-ten.
+- ✅ **The node's relay client, on a real socket** — `bins/karstd/tests/
+  relay_live.rs`. `karst-relay` runs in process as a library, with a
+  self-signed certificate the node trusts through `relay_ca_file`, and
+  `karstd`'s Ponor client connects to it: TLS, the HTTP upgrade, the handshake
+  with real ML-DSA-65 on both sides, and a packet forwarded between two
+  admitted nodes.
+
+  **None of that code had ever been on a socket.** The codec is tested in
+  `karst-relay-proto`, the node session against a stub signature scheme, the
+  relay's listener against a hand-rolled client — and a stub agrees with the
+  code that calls it by construction. What was untested was the pair, which is
+  where a mismatched identifier or a context string differing by one byte would
+  live. The first assertion in the file is that the control plane's handle and
+  the relay's node id are the same value; they are, and nothing but this
+  required them to be.
+
+  **Two comments in it overclaimed and were corrected by mutation testing**,
+  which is the part worth keeping. "`split` refuses an unestablished
+  connection, so this succeeding is the assertion" — it is not; `connect` loops
+  until established, so the check is unreachable and removing it changes
+  nothing. And a test named for a pinned *key* actually fails on the pinned
+  *id*: disabling the signature check leaves it green. That second one is not a
+  gap but §5.1 working — `relay_id` is derived from the key, so an entry naming
+  a different key necessarily names a different id and the two cannot be
+  separated. Both now say what they prove.
+
+  A third mutation was more instructive than the test: forcing the relay's
+  signature check to pass still refuses an unlisted node, and so does making
+  the roster return somebody else's entry. Admission needs **both** a roster
+  hit and a verified signature, and only breaking both together admits a
+  stranger — which is §5.3's structural admission, observed rather than
+  asserted.
+- **`cargo deny check advisories` was red** and is now green: RUSTSEC-2026-0258
+  in `h2` ≤ 0.4.15, reached through `tonic`. Pre-existing rather than
+  introduced here, and fixed by a lockfile bump to 0.4.16. Recorded because the
+  gate is only worth having if a red result is acted on the day it appears —
+  this one had been red without anyone running it.
+- ✅ **The whole stack ran, and it works: relay → direct, end to end.**
+  Two `karstd` daemons in separate network namespaces, a real `karst-relay`, a
+  real Go coordination server, real TUN devices. Nothing stubbed.
+
+  ```
+  A: endpoint = "-"                 state = "connecting"  transport = "relay"
+  B: endpoint = "-"                 state = "established" transport = "relay"
+  ...
+  A: endpoint = "10.99.0.2:51820"   state = "established" transport = "direct"
+  B: endpoint = "10.99.0.1:51820"   state = "established" transport = "direct"
+  ```
+
+  Enrolment, a netmap carrying disco keys and a relay registry, a Ponor
+  connection over TLS with a self-signed CA, a PHREATIC handshake **through the
+  relay**, an AVEN rendezvous over it, probes on the shared UDP socket, and the
+  upgrade. That is the Phase 4 headline and it had never been run.
+
+  It needed two small fixtures the tree lacked: `--listen` on the testserver
+  (its nodes live in another namespace and cannot reach its loopback) and
+  `--relay ADDR PK`, because the registry row it advertised was a placeholder
+  key and no node can connect to a relay whose advertised key is a pattern of
+  `0x91`.
+
+  **And it immediately found a High defect that every unit test passed.** The
+  packet filter was stateless, so a policy scoped to a destination port permitted
+  the request and denied the reply, and **no TCP connection could complete** —
+  FINDINGS.md finding 17. Both ends reported `established` and `direct`
+  throughout; the tunnel was working perfectly and carrying nothing. §4.3's own
+  example policy was the one that failed.
+
+  This is the argument for end-to-end tests stated as a result rather than a
+  principle. Nine matrix rows, six relay tests, four discovery tests and a
+  hundred and seventy unit tests did not find it, because none of them had a
+  *reply* — a reply only exists when something upstream holds a connection open.
+- ✅ **Connection tracking, so §4.3's ACLs work at all** — `crate::flow`, and
+  the fix for finding 17. A flow is recorded **only when a rule permits a
+  packet**, so an attacker cannot open one, and it then permits exactly the
+  reverse five-tuple.
+
+  **The stateless alternative was tempting and is wrong.** "Permit a packet
+  whose *source* port matches a rule" needs no state and makes TCP work; it also
+  hands a permitted peer every port on this node for the price of choosing its
+  source port — the old hole in "allow anything from port 53". A grant of
+  `A → B:22` must not become a grant of `B → A:*`. `tests/acl_flows.rs` is
+  written so that substituting the shortcut fails three of its five tests, and
+  the first two to fail are the security ones.
+
+  Per peer and behind its own lock, so §3.4's "two peers never contend" holds;
+  bounded at 4096 with a two-minute idle timeout, because flows are state a
+  peer's traffic makes this node allocate; and **cleared on reconfiguration**,
+  because a flow is a cached permission and an ACL edit that withdrew access
+  must not leave the connections it withdrew still running.
+
+  Verified back on the daemons that found it: `RECEIVED: hello over the tunnel`,
+  with `acl_denied_out = 0` at both ends where it had been 12.
+- ✅ **A node repeats its candidates while it has no path** — FINDINGS.md
+  finding 19, found from an asymmetry in the live run above: one daemon reached
+  `direct` and the other sat on `relay`. Advertisement was edge-triggered on the
+  candidate list *changing*, which on a stable host happens once, ever —
+  measured as one advertisement and then zero over a simulated hour. A peer that
+  missed it never learned where its counterpart was, and **that is what a node
+  joining an existing tailnet does**: it holds no disco key at the moment the
+  advertisement is relayed, so it drops it.
+
+  The reasoning was already one function above. The re-probe sweep repeats
+  itself and says why — *"without this a node that settles on a relay at boot
+  stays there until something else disturbs it"*. Telling a peer where you are
+  and asking where it is are the two halves of one job, and only one was being
+  repeated. `spec/aven-v1.md` §7.5 now makes it a MUST NOT.
+- ✅ **The live run is a test now** — `bins/karstd/tests/tailnet.rs`, wired into
+  `just test-privileged`. Four processes: the Go coordination server,
+  `karst-relay`, and two `karstd` daemons in separate namespaces with real TUN
+  devices. First enrolment to a direct path carrying TCP under a port-scoped
+  ACL, in **four seconds**.
+
+  It found a third defect before it first passed. **Nothing learned a candidate
+  from an incoming probe**, so only the node that probed first ever got a path:
+  the other answered, was confirmed, and then watched its peer stop advertising
+  with no candidate of its own and no prospect of one (FINDINGS.md finding 20).
+  The address an authenticated `Ping` arrived from is now a candidate — better
+  evidence than a `CallMeMaybe`, which is a claim, because that datagram
+  actually made the journey.
+
+  **Two things about the fixture are worth keeping.** Its timeout prints both
+  nodes' status and every log, because four processes in two namespaces fail in
+  ways no assertion message anticipates and the temporary directory is gone by
+  the time anyone reads the output — that diagnostic found the next two bugs in
+  one run each. And nodes are tracked by name rather than in a `Vec`: an earlier
+  version restarted "the last child spawned", which was the wrong daemon, and
+  the second copy collided with the first one's TUN device.
+
+  What it does **not** catch is finding 19, and the reason is worth stating: the
+  fixture drops nothing, and 19 is about an advertisement that was sent and
+  lost. That property lives in `karst-disco`'s unit tests, where loss can be
+  expressed. An end-to-end test is not a superset of the ones beneath it.
+- ✅ **Hole punching, measured through a real NAT** — `tailnet.rs` grew a second
+  topology: node A behind a port-restricted cone, node B and the servers on the
+  public side. Every address A can name is private and useless to B, so a direct
+  path can only come from the sequence AVEN exists for. Both ends reach
+  `transport = "direct"`, and the assertion that matters is **which** address B
+  ends up holding: the NAT's mapped one, never A's private one.
+
+  That assertion earned its place immediately. The first version of the
+  topology added a route from the public side into the private prefix — "so the
+  relay's replies can get back", which they do not need, because they return
+  through conntrack's translation. With it, B reached `10.98.1.2` *directly* and
+  reported a perfectly healthy direct path that no real NAT would have allowed.
+  The test was not a NAT test; it was a router test that said NAT on the label,
+  and only the mapped-address check told the difference.
+
+  **What the two rows pin, checked rather than assumed.** Removing finding 20's
+  probe-source rule fails the flat row and leaves the NAT row passing, because
+  behind a NAT the reflexive path reaches the same place. Removing §7.2's
+  reflexive addresses altogether fails **neither** — so the probe-source rule
+  subsumes it in both topologies, and `Pong.observed` is currently carried by
+  unit tests alone. That is worth knowing before anyone treats a green NAT row
+  as coverage of §7.2.
+- ✅ **Both nodes behind NATs, and it works** — `aven-v1.md` §7.6 and
+  `ponor-v1.md` §7.7, built to close FINDINGS.md finding 21. `tailnet.rs`'s third
+  topology is two nodes each behind their own port-restricted cone, which is two
+  laptops on two home networks: the ordinary deployment rather than an exotic
+  one, and the one that did not work.
+
+  **The bootstrap problem was the whole of it.** Neither node could learn its own
+  mapped address: interface addresses are private, `Pong.observed` needs a probe
+  to have crossed first and no probe could cross, and the relay could not say —
+  Ponor had no frame for an observed address and speaks **TCP**, whose NAT
+  binding is not the UDP one AVEN needs. The reflexive mechanism needed a
+  working path to bootstrap a working path.
+
+  A **reflector** breaks it from outside: a UDP service a relay MAY run, keyed
+  by a 32-byte `reflect_key` minted per Ponor connection and delivered inside
+  TLS *after* the relay's ML-DSA-65 signature has verified. No new trust anchor
+  and no new key exchange — the ordering is the entire security argument.
+
+  **Request and reply are the same size, and that is what `pad` is for.** The
+  natural encoding is `Ping`/`Pong`'s: 46 bytes in, 65 out, a factor of 1.4.
+  That is small, and small is not the same as one. A service every relay in a
+  public pool operates, answering datagrams anyone able to replay one can send,
+  must not amplify at all — so `Reflect` carries nineteen zero bytes reserving
+  the space its own answer occupies, and the equality is a compile-time
+  assertion rather than a comment.
+
+  **The reflector answers to the source address, which is the inverse of §7.1
+  and not a contradiction of it.** A `Pong` answers a question about the *peer's*
+  address, where trusting the source lets an on-path attacker redirect a probe.
+  A `Reflection` answers a question about the *sender's own* address, where the
+  source is the entire content of the answer.
+
+  Two defects came out of building it, both found by packet capture rather than
+  by reasoning, and both more transferable than the feature.
+
+  **A keepalive interval equal to the timeout it defends against is not a
+  keepalive** (finding 22). `Reflect` first refreshed every 30 seconds, matching
+  §7.5's other intervals; Linux's `nf_conntrack_udp_timeout` is also 30 seconds.
+  Each refresh raced the expiry, so the mapped port alternated between the
+  preserved one and a random one, the node advertised an address it was no
+  longer sending from, and the pair never converged. Now 10 seconds — and §7.5
+  states the rule rather than the number: *a reflexive address is only true
+  while the binding that produced it is alive, and nothing tells the node how
+  long that is.*
+
+  **A masquerade rule alone is not a NAT** (finding 23). The fixture's NAT
+  namespace had no filter chain, so a peer's probe to its outer address reached
+  the namespace itself, drew an ICMP unreachable, and *confirmed a conntrack
+  entry* that occupied the reply tuple the inside host needed — after which
+  masquerade could not keep port 51820 for that peer and allocated a random one.
+  A port-restricted cone behaved like a symmetric NAT, which would have been
+  read as a product limitation. §6's matrix already pins the forwarded half of
+  the rule; the tailnet fixture lacked the equivalent for traffic addressed to
+  the NAT's own address.
+
+  Verified end to end and **checked against the defect**: the row converges in
+  ten seconds, each node holding the other's *mapped* address rather than its
+  private one, and removing `[reflect]` from the relay's configuration fails
+  that row **and only that row** — every other topology reaches a direct path
+  without it.
+
+  What it does **not** close is stated in §7.6: a server-reflexive address is
+  the mapping toward the reflector, so this covers endpoint-independent mapping
+  and not symmetric-to-symmetric, which still needs port prediction.
+
+  One debt recorded rather than hidden: adding `ReflectOffer` was a **flag day**.
+  §6 gives Ponor no forward-compatible extension point — an unrecognised frame
+  type closes the connection, deliberately — and neither version byte can carry
+  the signal. Acceptable exactly once, while nothing is deployed;
+  `ponor-v1.md` §13.10 records that the next such change will not have that
+  excuse.
+- Full NAT test matrix in CI (§6) — hairpinning and NAT64/DNS64 still to
+  build. **The `karstd`-through-a-NAT half now covers the port-restricted cone
+  in both its one-sided and two-sided forms**, which is the shape most users
+  are behind; symmetric and CGNAT rows are what turn the criterion into a
+  number, and they are also the rows server-reflexive discovery does not help
+  with, so port prediction has to land before they can be expected to pass.
+
+  With nine matrix rows the instrument is good enough to measure against, and
+  three `karstd` rows now run across it, so **the remaining step is coverage
+  rather than capability**: the same fixture over the other topologies. Nothing
+  in the product blocks it.
+
+  Finding 23 is the caution to carry into that work. The instrument is only as
+  honest as its weakest topology, and a NAT that is missing a filter chain
+  reports a *product* failure — the fixture said "port-restricted cone" and
+  behaved like a symmetric one for two days' worth of debugging. Every row
+  added from here gets the same treatment §6's negative assertions already
+  get.
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is
   automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind
   a different symmetric CGNAT.
 
-### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · May–Jul 2027)
+  **Two of the three now hold, and the order they unblocked in was the one
+  predicted.** Candidate gathering and advertisement made a direct connection
+  possible at all; PHREATIC over the relay made "fallback" mean something, and
+  made the upgrade a transition between two working paths rather than between a
+  working path and nothing. What remains is the measurement, which needs the six
+  missing matrix rows — and a percentage produced before them would be measuring
+  four topologies and reporting ten, the same mistake the matrix work was built
+  to prevent one level down (§"NAT matrix — the instrument, validated").
+
+### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
 
 - KarstDNS: stub resolver, split DNS, all platform integrations (§7).
 - Bedrock: SLH-DSA roots, quorum signing, hash-chained log,
@@ -2410,10 +2961,11 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   deprovision a user — entirely from the console and installers, following
   only the published docs.
 
-### Phase 6 — Hardening and beta (8 weeks · Aug–Sep 2027)
+### Phase 6 — Hardening and beta (8 weeks · Dec 2026–Feb 2027)
 
 - **External cryptographic review** of PHREATIC and its implementation
-  (budget 4–6 weeks lead time; book this in Phase 3, not Phase 6).
+  (budget 4–6 weeks lead time; book this now, not at the start of Phase 6 —
+  Phase 3 has already passed and the booking did not happen in it).
 - **External penetration test** of the control plane and console.
 - Subnet routers, exit nodes, advertised routes, ACL-gated SSH.
 - Observability: Prometheus, OTel traces, per-node diagnostics bundle,
@@ -2426,7 +2978,7 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
 - **Exit:** all high/critical audit findings remediated and re-tested;
   30 days of beta with a defined stability bar met.
 
-### Phase 7 — GA and mobile (12 weeks · Oct–Dec 2027)
+### Phase 7 — GA and mobile (12 weeks · Feb–May 2027)
 
 - iOS and Android clients via UniFFI over the Rust core.
 - Performance tuning: io_uring, path MTU discovery, QUIC relay transport.
@@ -2445,9 +2997,14 @@ relative to a start of **2026-09-01**; adjust the anchor, keep the durations.
   Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
 - v1.0 GA.
 
-**Total: ~65 weeks (~15 months) to GA**, Sep 2026 → Dec 2027. Self-hosted
-Linux-to-Linux mesh with a working console is usable at end of Phase 5
-(**~10 months**), and that is the milestone worth optimizing for.
+**Total from here: ~40 weeks (~9 months) to GA**, 2026-08-10 → May 2027, being
+Phases 4–7. Self-hosted Linux-to-Linux mesh with a working console is usable at
+end of Phase 5 (**~20 weeks**, Dec 2026), and that is the milestone worth
+optimizing for.
+
+The original figure was ~65 weeks across all eight phases. Phases 0–3 are done
+and the remainder is what is left to schedule; the 65-week number is not
+restated as elapsed time, because it was never a measurement.
 
 ---
 
@@ -2554,5 +3111,7 @@ The plan is decision-complete; what remains is execution.
 4. Run the **NetBird fork-evaluation spike** (ADR-0009) early in Phase 0; its
    outcome restructures Phases 3 and 5.
 4. Draft `spec/phreatic-v1.md` far enough to model in Verifpal.
-5. Book an external cryptographic reviewer for Q3 2027 now — lead times are
-   long and this is a hard gate on GA.
+5. Book an external cryptographic reviewer for **Q4 2026** now — Phase 6 opens
+   in December, lead times are long, and this is a hard gate on GA. The date
+   moved forward by three quarters when the schedule was re-anchored; the
+   booking is the item most likely to be left on the old one.

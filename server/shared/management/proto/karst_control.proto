@@ -141,6 +141,27 @@ message KarstNetmapPeer {
   //
   // Empty when psk_epoch is 0, which has no predecessor.
   bytes psk_previous = 8;
+
+  // The per-pair AVEN path-discovery key for (recipient, this peer) at
+  // psk_epoch. It is domain-separated from psk and authenticated inside the
+  // same protected control-plane envelope. Empty means discovery is disabled
+  // for this peer; a node must keep using its relay path in that case.
+  bytes disco_key = 9;
+}
+
+// KarstRelay is an authenticated Ponor relay registry entry. The node pins the
+// ML-DSA key and checks the derived relay id during the Ponor handshake; TLS
+// alone is deliberately not relay authentication (ponor-v1.md §4.2).
+message KarstRelay {
+  string address = 1;
+  bytes relay_id = 2;       // SHA-256 relay handle, 32 B
+  bytes identity_key = 3;   // ML-DSA-65 public key, 1952 B
+  string region = 4;
+  // DNS name used solely for TLS SNI and certificate validation. It is
+  // separate from `address`: self-hosters often reach a relay through an IP or
+  // load-balancer address while the certificate names the shared control host.
+  // Ponor still authenticates the relay by `identity_key`, never this name.
+  string tls_server_name = 5;
 }
 
 message KarstNetmapResponse {
@@ -166,6 +187,10 @@ message KarstNetmapResponse {
   // the other way inverts the policy — which is why `unchanged` exists as a
   // separate flag rather than being inferred from emptiness.
   repeated KarstFilterRule packet_filter = 9;
+
+  // Authenticated relay choices for this node. Replaced wholesale on every
+  // non-unchanged response, just like packet_filter.
+  repeated KarstRelay relays = 13;
 
   // The same policy compiled for the traffic this node *originates* (§4.3).
   //

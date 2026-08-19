@@ -197,6 +197,23 @@ pub struct ControlSection {
     /// Absent means no cache: the node fetches a full netmap on every start and
     /// cannot come up at all while the server is unreachable.
     pub cache_file: Option<PathBuf>,
+    /// Extra PEM certificate authorities to trust for relay TLS, in addition to
+    /// the operating system's.
+    ///
+    /// **`ponor-v1.md` §4.2 names three realistic self-hosted deployments, and
+    /// the system trust store covers only one of them.** An internal CA can be
+    /// installed as a system root; a *self-signed* relay certificate cannot be,
+    /// not without making that one host a trust anchor for every TLS connection
+    /// the machine makes. This narrows that to the relay connection alone.
+    ///
+    /// It does not weaken relay authentication and cannot: §4.2 makes the
+    /// certificate insufficient on its own, and the ML-DSA-65 identity pinned
+    /// by the netmap is what actually names the relay. What this changes is
+    /// only which certificates the *hop* will accept.
+    ///
+    /// Absent means the system roots alone, which is the right default for a
+    /// relay with a public certificate.
+    pub relay_ca_file: Option<PathBuf>,
 }
 
 fn default_interface() -> String {
@@ -243,6 +260,8 @@ impl fmt::Debug for PeerSection {
 pub struct Peer {
     /// Name, for logs.
     pub name: String,
+    /// Server-assigned node handle, used to bind AVEN tags to this peer.
+    pub node_id: Vec<u8>,
     /// Cryptographic material.
     ///
     /// Shared rather than owned so a `Session` can hold it without borrowing
@@ -255,6 +274,8 @@ pub struct Peer {
     pub allowed_ips: Vec<Prefix>,
     /// Whether the PSK is the all-zero fallback (§7.3).
     pub psk_is_fallback: bool,
+    /// AVEN key for this pair. Static TOML peers have none and stay direct-only.
+    pub disco_key: Option<[u8; 32]>,
 }
 
 impl fmt::Debug for Peer {
@@ -284,6 +305,18 @@ pub struct Config {
     pub addresses: Vec<InterfaceAddress>,
     /// PSK epoch.
     pub psk_epoch: u32,
+    /// This node's server-assigned handle. Empty for a static TOML roster.
+    pub node_id: Vec<u8>,
+    /// Authenticated relay choices from the netmap.
+    pub relays: Vec<crate::netmap::Relay>,
+    /// Extra trust anchors for relay TLS, from `[control] relay_ca_file`.
+    ///
+    /// Local configuration rather than netmap content, deliberately: which
+    /// certificates this host will accept is a property of this host, and a
+    /// server that could add trust anchors to its nodes would be a server that
+    /// could redirect the hop. The relay's *identity* comes from the netmap and
+    /// is post-quantum; this is only the TLS layer beneath it.
+    pub relay_ca_file: Option<PathBuf>,
     /// The roster.
     pub peers: Vec<Peer>,
     /// Cryptokey routing table over the roster.
@@ -394,6 +427,9 @@ impl Config {
             interface: file.node.interface,
             addresses,
             psk_epoch: file.node.psk_epoch,
+            node_id: Vec::new(),
+            relays: Vec::new(),
+            relay_ca_file: None,
             peers,
             routes,
             skipped: Vec::new(),
@@ -487,6 +523,9 @@ impl Config {
             interface: local.interface,
             addresses,
             psk_epoch: netmap.psk_epoch,
+            node_id: netmap.node_id.clone(),
+            relays: netmap.relays.clone(),
+            relay_ca_file: local.relay_ca_file,
             peers,
             routes,
             skipped,
@@ -529,6 +568,8 @@ pub struct LocalSettings {
     pub listen: SocketAddr,
     /// TUN interface name.
     pub interface: String,
+    /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
+    pub relay_ca_file: Option<PathBuf>,
 }
 
 impl fmt::Debug for LocalSettings {
@@ -652,6 +693,7 @@ impl Peer {
 
         Ok(Self {
             name,
+            node_id: entry.node_id.clone(),
             public: Arc::new(PeerPublic {
                 kem_pk,
                 dh_pk: DhPublic::from(dh),
@@ -660,6 +702,7 @@ impl Peer {
             endpoint,
             allowed_ips,
             psk_is_fallback,
+            disco_key: entry.disco_key.as_ref().map(|key| *key.as_bytes()),
         })
     }
 
@@ -714,6 +757,7 @@ impl Peer {
 
         Ok(Self {
             name,
+            node_id: Vec::new(),
             public: Arc::new(PeerPublic {
                 kem_pk,
                 dh_pk: DhPublic::from(dh),
@@ -722,6 +766,7 @@ impl Peer {
             endpoint: section.endpoint,
             allowed_ips,
             psk_is_fallback,
+            disco_key: None,
         })
     }
 }
@@ -852,15 +897,7 @@ mod tests {
         path
     }
 
-    pub(super) fn tempdir() -> PathBuf {
-        let base = std::env::temp_dir().join(format!(
-            "karstd-test-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::create_dir_all(&base).expect("create temp dir");
-        base
-    }
+    pub(super) use crate::scratch::Scratch;
 
     fn keys_hex() -> String {
         encode_hex(&[0x11u8; PRIVATE_KEY_LEN])
@@ -901,8 +938,8 @@ allowed_ips = ["10.99.0.2/32"]
 
     #[test]
     fn loads_a_valid_roster() {
-        let dir = tempdir();
-        let path = roster(&dir, "");
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
         let cfg = Config::load(&path).expect("valid roster must load");
 
         assert_eq!(cfg.listen.port(), 51820);
@@ -923,8 +960,8 @@ allowed_ips = ["10.99.0.2/32"]
     /// classical half of the handshake is carrying no shared secret.
     #[test]
     fn an_absent_psk_is_reported_as_the_fallback() {
-        let dir = tempdir();
-        let cfg = Config::load(&roster(&dir, "")).expect("load");
+        let dir = Scratch::new("cfg");
+        let cfg = Config::load(&roster(dir.path(), "")).expect("load");
         assert!(cfg.peers.first().expect("one peer").psk_is_fallback);
         assert_eq!(cfg.peers.first().expect("one peer").public.psk, [0u8; 32]);
     }
@@ -933,9 +970,9 @@ allowed_ips = ["10.99.0.2/32"]
     /// `chmod 644` from quietly publishing the node's identity.
     #[test]
     fn refuses_a_key_file_others_can_read() {
-        let dir = tempdir();
-        let path = roster(&dir, "");
-        write(&dir, "node.key", &keys_hex(), 0o644);
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
+        write(dir.path(), "node.key", &keys_hex(), 0o644);
         match Config::load(&path) {
             Err(ConfigError::Permissions { mode, .. }) => assert_eq!(mode, 0o644),
             other => panic!("expected a permissions error, got {other:?}"),
@@ -945,11 +982,11 @@ allowed_ips = ["10.99.0.2/32"]
     /// A config carrying PSKs is as sensitive as the key file itself.
     #[test]
     fn refuses_a_readable_config_when_it_carries_psks() {
-        let dir = tempdir();
+        let dir = Scratch::new("cfg");
         let psk = encode_hex(&[0x44u8; 32]);
-        let path = roster(&dir, &format!("psk = \"{psk}\""));
+        let path = roster(dir.path(), &format!("psk = \"{psk}\""));
         write(
-            &dir,
+            dir.path(),
             "karstd.toml",
             &std::fs::read_to_string(&path).expect("read back"),
             0o640,
@@ -962,11 +999,11 @@ allowed_ips = ["10.99.0.2/32"]
 
     #[test]
     fn rejects_unknown_fields_rather_than_ignoring_them() {
-        let dir = tempdir();
-        let path = roster(&dir, "");
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
         let text = std::fs::read_to_string(&path).expect("read");
         let path = write(
-            &dir,
+            dir.path(),
             "typo.toml",
             &text.replace("psk_epoch", "psk_epock"),
             0o600,
@@ -979,11 +1016,11 @@ allowed_ips = ["10.99.0.2/32"]
 
     #[test]
     fn rejects_a_peer_with_no_allowed_ips() {
-        let dir = tempdir();
-        let path = roster(&dir, "");
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
         let text = std::fs::read_to_string(&path).expect("read");
         let path = write(
-            &dir,
+            dir.path(),
             "empty.toml",
             &text.replace(r#"allowed_ips = ["10.99.0.2/32"]"#, "allowed_ips = []"),
             0o600,
@@ -993,10 +1030,10 @@ allowed_ips = ["10.99.0.2/32"]
 
     #[test]
     fn rejects_two_peers_claiming_one_range() {
-        let dir = tempdir();
+        let dir = Scratch::new("cfg");
         let (kem, dh) = peer_keys();
         let path = roster(
-            &dir,
+            dir.path(),
             &format!(
                 r#"
 [[peer]]
@@ -1012,10 +1049,10 @@ allowed_ips = ["10.99.0.2/32"]
 
     #[test]
     fn rejects_duplicate_peer_names() {
-        let dir = tempdir();
+        let dir = Scratch::new("cfg");
         let (kem, dh) = peer_keys();
         let path = roster(
-            &dir,
+            dir.path(),
             &format!(
                 r#"
 [[peer]]
@@ -1034,9 +1071,9 @@ allowed_ips = ["10.99.0.3/32"]
 
     #[test]
     fn rejects_a_key_of_the_wrong_length() {
-        let dir = tempdir();
-        let path = roster(&dir, "");
-        write(&dir, "node.key", "aabbcc", 0o600);
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
+        write(dir.path(), "node.key", "aabbcc", 0o600);
         assert!(matches!(Config::load(&path), Err(ConfigError::Hex { .. })));
     }
 
@@ -1061,9 +1098,9 @@ allowed_ips = ["10.99.0.3/32"]
     /// report that formatted a config — THREAT-MODEL R5.
     #[test]
     fn debug_output_never_contains_key_material() {
-        let dir = tempdir();
+        let dir = Scratch::new("cfg");
         let psk = encode_hex(&[0x44u8; 32]);
-        let path = roster(&dir, &format!("psk = \"{psk}\""));
+        let path = roster(dir.path(), &format!("psk = \"{psk}\""));
         let cfg = Config::load(&path).expect("load");
         let rendered = format!("{cfg:?}");
         assert!(!rendered.contains(&psk), "PSK leaked into Debug output");
@@ -1099,6 +1136,7 @@ mod netmap_tests {
             dh_public_key: dh.as_bytes().to_vec(),
             psk: vec![0x44; 32],
             psk_previous: vec![0x45; 32],
+            disco_key: vec![0x46; 32],
         }
     }
 
@@ -1133,6 +1171,7 @@ mod netmap_tests {
 
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
+            relay_ca_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             interface: "karst0".to_owned(),
@@ -1313,9 +1352,9 @@ mod netmap_tests {
     /// loading it as one would produce a node with no peers that looks fine.
     #[test]
     fn a_control_configuration_is_not_loadable_as_a_roster() {
-        let dir = tests::tempdir();
+        let dir = tests::Scratch::new("cfg");
         tests::write(
-            &dir,
+            dir.path(),
             "node.key",
             &encode_hex(&[0x11u8; PRIVATE_KEY_LEN]),
             0o600,
@@ -1331,7 +1370,7 @@ server_kem_pin = "aabb"
 server_verify_pin = "ccdd"
 identity_key_file = "identity.key"
 "#;
-        let path = tests::write(&dir, "control.toml", toml, 0o600);
+        let path = tests::write(dir.path(), "control.toml", toml, 0o600);
         match Config::load(&path) {
             Err(ConfigError::Unusable(m)) => assert!(m.contains("from_netmap"), "{m}"),
             other => panic!("expected a refusal, got {other:?}"),

@@ -31,13 +31,98 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use karst_control_client::netmap::{
-    netmap_version, peer_digest, FilterRuleView, NetmapContent, PeerEntry,
+    netmap_version, peer_digest, FilterRuleView, NetmapContent, PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize;
 
 /// Length of a per-pair PSK.
 pub const PSK_LEN: usize = 32;
+
+const RELAY_ID_LEN: usize = 32;
+const RELAY_IDENTITY_KEY_LEN: usize = 1952;
+
+/// A validated relay registry entry, pinned for the Ponor handshake.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Relay {
+    pub address: String,
+    /// DNS name for TLS SNI and certificate validation; Ponor identity remains
+    /// pinned by `identity_key` and `relay_id`.
+    pub tls_server_name: String,
+    pub relay_id: [u8; RELAY_ID_LEN],
+    pub identity_key: Vec<u8>,
+    pub region: String,
+}
+
+impl fmt::Debug for Relay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Relay")
+            .field("address", &self.address)
+            .field("tls_server_name", &self.tls_server_name)
+            .field("region", &self.region)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Relay {
+    fn from_wire(relay: &pb::KarstRelay) -> Result<Self, Error> {
+        if relay.address.parse::<std::net::SocketAddr>().is_err() {
+            return Err(Error::Relay("address is not a socket address".to_owned()));
+        }
+        if relay.tls_server_name.is_empty()
+            || !relay.tls_server_name.is_ascii()
+            || relay
+                .tls_server_name
+                .bytes()
+                .any(|b| b.is_ascii_whitespace())
+        {
+            return Err(Error::Relay(
+                "tls_server_name is not a usable ASCII DNS name".to_owned(),
+            ));
+        }
+        let relay_id: [u8; RELAY_ID_LEN] = relay
+            .relay_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::Relay("relay_id is not 32 bytes".to_owned()))?;
+        if relay.identity_key.len() != RELAY_IDENTITY_KEY_LEN {
+            return Err(Error::Relay(
+                "identity_key is not an ML-DSA-65 public key".to_owned(),
+            ));
+        }
+        // ponor-v1.md §5.2 defines the relay ID as a digest of its pinned
+        // identity key. Checking that relation while the authenticated netmap
+        // is decoded makes a malformed registry entry fail closed here rather
+        // than later as an inexplicable handshake failure.
+        let mut h = Sha256::new();
+        h.update(b"karst-relay-id-v1");
+        h.update(&relay.identity_key);
+        let derived: [u8; RELAY_ID_LEN] = h.finalize().into();
+        if relay_id != derived {
+            return Err(Error::Relay(
+                "relay_id does not match identity_key".to_owned(),
+            ));
+        }
+        Ok(Self {
+            address: relay.address.clone(),
+            tls_server_name: relay.tls_server_name.clone(),
+            relay_id,
+            identity_key: relay.identity_key.clone(),
+            region: relay.region.clone(),
+        })
+    }
+
+    fn to_wire(&self) -> pb::KarstRelay {
+        pb::KarstRelay {
+            address: self.address.clone(),
+            tls_server_name: self.tls_server_name.clone(),
+            relay_id: self.relay_id.to_vec(),
+            identity_key: self.identity_key.clone(),
+            region: self.region.clone(),
+        }
+    }
+}
 
 /// Why a netmap could not be applied or decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +136,14 @@ pub enum Error {
         /// What arrived.
         len: usize,
     },
+    /// A discovery-key field was present but not 32 bytes.
+    DiscoKeyLength {
+        /// Which peer, as a lossy handle.
+        peer: String,
+        /// What arrived.
+        len: usize,
+    },
+    Relay(String),
     /// The assembled state does not hash to the version the server reported.
     ///
     /// See [`Netmap::apply`] for why this is worth detecting rather than
@@ -70,6 +163,13 @@ impl fmt::Display for Error {
             Self::PskLength { peer, len } => {
                 write!(f, "peer {peer}: psk is {len} bytes, expected {PSK_LEN}")
             }
+            Self::DiscoKeyLength { peer, len } => {
+                write!(
+                    f,
+                    "peer {peer}: disco key is {len} bytes, expected {PSK_LEN}"
+                )
+            }
+            Self::Relay(message) => write!(f, "invalid relay: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
                 "assembled netmap hashes to {local:016x} but the server called it \
@@ -107,6 +207,30 @@ impl fmt::Debug for Psk {
     }
 }
 
+/// A per-pair AVEN key. It is separate from the PHREATIC PSK and must not
+/// render or remain in memory after its peer is dropped.
+pub struct DiscoKey([u8; PSK_LEN]);
+
+impl DiscoKey {
+    /// The bytes for the AVEN authenticator.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; PSK_LEN] {
+        &self.0
+    }
+}
+
+impl Drop for DiscoKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl fmt::Debug for DiscoKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("disco_key(redacted)")
+    }
+}
+
 /// One peer as this node holds it.
 pub struct Peer {
     /// The server-assigned handle. The map key, and what the packet filter
@@ -127,6 +251,8 @@ pub struct Peer {
     /// PSK for the previous epoch, so a rotation is answerable in both
     /// directions (§7.3). Absent when the epoch is 0.
     pub psk_previous: Option<Psk>,
+    /// AVEN path-discovery key. Absent means keep the relay path.
+    pub disco_key: Option<DiscoKey>,
 }
 
 impl fmt::Debug for Peer {
@@ -144,6 +270,10 @@ impl fmt::Debug for Peer {
                 "psk_previous",
                 &self.psk_previous.as_ref().map(|_| "psk(redacted)"),
             )
+            .field(
+                "disco_key",
+                &self.disco_key.as_ref().map(|_| "disco_key(redacted)"),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -152,6 +282,7 @@ impl Peer {
     fn from_wire(p: pb::KarstNetmapPeer) -> Result<Self, Error> {
         let psk = optional_psk(&p.psk, &p.node_id)?;
         let psk_previous = optional_psk(&p.psk_previous, &p.node_id)?;
+        let disco_key = optional_disco_key(&p.disco_key, &p.node_id)?;
         Ok(Self {
             node_id: p.node_id,
             allowed_ips: p.allowed_ips,
@@ -161,6 +292,7 @@ impl Peer {
             dh_public_key: p.dh_public_key,
             psk,
             psk_previous,
+            disco_key,
         })
     }
 
@@ -177,6 +309,11 @@ impl Peer {
                 .psk_previous
                 .as_ref()
                 .map(|p| p.0.to_vec())
+                .unwrap_or_default(),
+            disco_key: self
+                .disco_key
+                .as_ref()
+                .map(|k| k.0.to_vec())
                 .unwrap_or_default(),
         }
     }
@@ -219,6 +356,21 @@ fn optional_psk(bytes: &[u8], node_id: &[u8]) -> Result<Option<Psk>, Error> {
     Ok(Some(Psk(key)))
 }
 
+fn optional_disco_key(bytes: &[u8], node_id: &[u8]) -> Result<Option<DiscoKey>, Error> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    let mut key = [0u8; PSK_LEN];
+    let Some(src) = bytes.get(..PSK_LEN).filter(|_| bytes.len() == PSK_LEN) else {
+        return Err(Error::DiscoKeyLength {
+            peer: lossy(node_id),
+            len: bytes.len(),
+        });
+    };
+    key.copy_from_slice(src);
+    Ok(Some(DiscoKey(key)))
+}
+
 /// What applying a response did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -258,6 +410,8 @@ pub struct Netmap {
     /// derivable from `packet_filter`: Karst's ACLs are unidirectional grants,
     /// so a node's inbound rules say nothing about what it may send.
     pub egress_filter: Vec<pb::KarstEgressRule>,
+    /// Pinned relay choices, replaced wholesale with every netmap.
+    pub relays: Vec<Relay>,
     /// Peers, keyed by handle. Ordered, so digests and the re-encoded form are
     /// deterministic rather than dependent on hash iteration order.
     peers: BTreeMap<Vec<u8>, Peer>,
@@ -295,6 +449,7 @@ impl Netmap {
             dns_name: String::new(),
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
+            relays: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -371,6 +526,11 @@ impl Netmap {
         // failure would be an outage, not an opening.
         self.packet_filter = resp.packet_filter;
         self.egress_filter = resp.egress_filter;
+        self.relays = resp
+            .relays
+            .iter()
+            .map(Relay::from_wire)
+            .collect::<Result<_, _>>()?;
 
         let outcome = if resp.delta {
             let changed = resp.peers.len();
@@ -473,6 +633,17 @@ impl Netmap {
                 ports,
             })
             .collect();
+        let relays: Vec<RelayView<'_>> = self
+            .relays
+            .iter()
+            .map(|r| RelayView {
+                address: &r.address,
+                tls_server_name: &r.tls_server_name,
+                relay_id: &r.relay_id,
+                identity_key: &r.identity_key,
+                region: &r.region,
+            })
+            .collect();
 
         netmap_version(&NetmapContent {
             psk_epoch: self.psk_epoch,
@@ -482,6 +653,7 @@ impl Netmap {
             peers: &entries,
             packet_filter: &rules,
             egress_filter: &egress,
+            relays: &relays,
         })
     }
 
@@ -525,6 +697,7 @@ impl Netmap {
             peers: self.peers.values().map(Peer::to_wire).collect(),
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
+            relays: self.relays.iter().map(Relay::to_wire).collect(),
             delta: false,
             removed_peers: Vec::new(),
             unchanged: false,
@@ -554,6 +727,7 @@ mod tests {
             dh_public_key: vec![0x22; 32],
             psk: vec![0x33; PSK_LEN],
             psk_previous: vec![0x44; PSK_LEN],
+            disco_key: vec![0x55; PSK_LEN],
         }
     }
 
@@ -569,6 +743,12 @@ mod tests {
         projected.dns_name = resp.dns_name.clone();
         projected.packet_filter = resp.packet_filter.clone();
         projected.egress_filter = resp.egress_filter.clone();
+        projected.relays = resp
+            .relays
+            .iter()
+            .map(Relay::from_wire)
+            .collect::<Result<_, _>>()
+            .expect("test relay must be valid");
         if resp.delta {
             for p in held.peers.values() {
                 projected
@@ -610,6 +790,20 @@ mod tests {
         let resp = sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &map);
         map.apply(resp).expect("a full netmap must apply");
         map
+    }
+
+    fn wire_relay(identity_byte: u8) -> pb::KarstRelay {
+        let identity_key = vec![identity_byte; RELAY_IDENTITY_KEY_LEN];
+        let mut h = Sha256::new();
+        h.update(b"karst-relay-id-v1");
+        h.update(&identity_key);
+        pb::KarstRelay {
+            address: "127.0.0.1:443".to_owned(),
+            tls_server_name: "relay.test".to_owned(),
+            relay_id: h.finalize().to_vec(),
+            identity_key,
+            region: "test".to_owned(),
+        }
     }
 
     // ── the three shapes ────────────────────────────────────────────────────
@@ -815,6 +1009,33 @@ mod tests {
         assert_ne!(plain.version, filtered.version);
     }
 
+    /// Relay pins are mutable control-plane state. If they were omitted from
+    /// the version, a node would keep attempting a retired or compromised
+    /// relay while every poll said its netmap was current.
+    #[test]
+    fn changing_only_the_relay_registry_changes_the_version() {
+        let mut without = Netmap::new();
+        without
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &without))
+            .expect("apply");
+
+        let mut with = Netmap::new();
+        let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        resp.relays = vec![wire_relay(0x91)];
+        with.apply(sealed(resp, &with)).expect("apply");
+
+        assert_eq!(with.relays.len(), 1);
+        assert_ne!(without.version, with.version);
+
+        let before = with.version;
+        let mut renamed = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        renamed.relays = vec![wire_relay(0x91)];
+        let relay = renamed.relays.first_mut().expect("one relay");
+        relay.tls_server_name = "replacement-relay.test".to_owned();
+        with.apply(sealed(renamed, &with)).expect("apply");
+        assert_ne!(with.version, before, "TLS name must move the version");
+    }
+
     // ── digests ─────────────────────────────────────────────────────────────
 
     #[test]
@@ -879,10 +1100,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_disco_key_of_the_wrong_length_is_refused() {
+        let mut wire = wire_peer("aaa", "100.64.0.2");
+        wire.disco_key = vec![0x55; 16];
+        match Peer::from_wire(wire) {
+            Err(Error::DiscoKeyLength { len, .. }) => assert_eq!(len, 16),
+            other => panic!("expected a length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_relay_with_an_unpinned_identity_is_refused() {
+        let relay = pb::KarstRelay {
+            address: "127.0.0.1:443".to_owned(),
+            tls_server_name: "relay.test".to_owned(),
+            relay_id: vec![0x11; RELAY_ID_LEN],
+            identity_key: vec![0x22; 32],
+            region: "test".to_owned(),
+        };
+        assert!(matches!(Relay::from_wire(&relay), Err(Error::Relay(_))));
+    }
+
+    #[test]
+    fn a_relay_without_a_tls_server_name_is_refused() {
+        let mut relay = wire_relay(0x91);
+        relay.tls_server_name.clear();
+        assert!(matches!(Relay::from_wire(&relay), Err(Error::Relay(_))));
+    }
+
+    #[test]
+    fn a_relay_id_must_be_derived_from_its_pinned_key() {
+        let relay = pb::KarstRelay {
+            address: "127.0.0.1:443".to_owned(),
+            tls_server_name: "relay.test".to_owned(),
+            relay_id: vec![0x11; RELAY_ID_LEN],
+            identity_key: vec![0x22; RELAY_IDENTITY_KEY_LEN],
+            region: "test".to_owned(),
+        };
+        assert!(
+            matches!(Relay::from_wire(&relay), Err(Error::Relay(message)) if message.contains("does not match"))
+        );
+    }
+
     /// THREAT-MODEL R5. A `Debug` that printed a PSK would put it in every log
     /// line and bug report that formatted a netmap.
     #[test]
-    fn debug_output_never_contains_psk_bytes() {
+    fn debug_output_never_contains_secret_bytes() {
         let map = loaded();
         let peer = map.peer(b"aaa").expect("held");
         let rendered = format!("{map:?} {peer:?}");
@@ -890,7 +1154,12 @@ mod tests {
             !rendered.contains("33, 33") && !rendered.contains("3333"),
             "PSK bytes leaked into Debug output: {rendered}"
         );
+        assert!(
+            !rendered.contains("55, 55") && !rendered.contains("5555"),
+            "disco key bytes leaked into Debug output: {rendered}"
+        );
         assert!(rendered.contains("psk(redacted)"));
+        assert!(rendered.contains("disco_key(redacted)"));
         assert!(rendered.contains("aaa"), "but it must still be useful");
     }
 

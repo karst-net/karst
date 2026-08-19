@@ -17,6 +17,7 @@ use crate::consts::{KEY_LEN, MAC_LEN, TAG_LEN};
 type HmacSha512 = Hmac<Sha512>;
 
 const TAG_LABEL: &[u8] = b"aven-tag-v1";
+const REFLECT_TAG_LABEL: &[u8] = b"aven-reflect-v1";
 
 /// A per-pair disco key from the netmap.
 ///
@@ -69,6 +70,32 @@ impl DiscoKey {
         mac.update(TAG_LABEL);
         mac.update(&epoch.to_be_bytes());
         mac.update(sender_id);
+        let full = mac.finalize().into_bytes();
+        let mut out = [0u8; TAG_LEN];
+        if let Some(head) = full.get(..TAG_LEN) {
+            out.copy_from_slice(head);
+        }
+        out
+    }
+
+    /// The tag carried by `Reflect` and `Reflection` under this key — §5.3.
+    ///
+    /// A **reflect key** is a different secret from a disco key with the same
+    /// construction: 32 bytes, HMAC-SHA-512, truncated MACs. It is minted by a
+    /// relay per Ponor connection and delivered inside TLS, so this type is
+    /// reused rather than duplicated — what differs is where the bytes come
+    /// from and which label derives the tag.
+    ///
+    /// Unlike [`DiscoKey::tag`] this binds neither a sender id nor an epoch.
+    /// There is no second direction to disambiguate — only a node sends
+    /// `Reflect`, only a reflector sends `Reflection`, and the type byte
+    /// already separates them — and the key is per-connection and random, so it
+    /// rotates whenever the connection does, which is the property the epoch
+    /// buys in §5.2.
+    #[must_use]
+    pub fn reflect_tag(&self) -> [u8; TAG_LEN] {
+        let mut mac = Self::keyed(&self.0);
+        mac.update(REFLECT_TAG_LABEL);
         let full = mac.finalize().into_bytes();
         let mut out = [0u8; TAG_LEN];
         if let Some(head) = full.get(..TAG_LEN) {

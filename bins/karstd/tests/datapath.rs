@@ -41,10 +41,29 @@ fn seed() -> [u8; 32] {
     [0x5A; 32]
 }
 
-fn tempdir(tag: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!("karstd-datapath-{}-{tag}", std::process::id()));
-    std::fs::create_dir_all(&base).expect("temp dir");
-    base
+/// A temporary directory that removes itself.
+///
+/// Fixtures here used to create one per process and never remove it, which
+/// accumulated thousands of directories in `/tmp` across repeated runs.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("karst-scratch-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        Self(dir)
+    }
+
+    fn join(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn write600(path: &Path, contents: &str) {
@@ -72,7 +91,7 @@ fn private_of(n: u8) -> String {
 
 /// Write a config for one node of a two-node network.
 fn config_for(tag: &str, me: u8, peer: u8, listen: &str, peer_endpoint: Option<&str>) -> Config {
-    let dir = tempdir(tag);
+    let dir = Scratch::new(tag);
     let key = dir.join("node.key");
     write600(&key, &private_of(me));
 
@@ -104,7 +123,7 @@ dh_public_key = "{dh}"
 
 /// A roster with two peers, for testing that they do not contend.
 fn config_for_two_peers(tag: &str) -> Config {
-    let dir = tempdir(tag);
+    let dir = Scratch::new(tag);
     let key = dir.join("node.key");
     write600(&key, &private_of(0xA1));
 
@@ -700,7 +719,7 @@ fn an_empty_policy_denies_the_traffic_no_policy_permits() {
 
 /// Rebuild a config with an extra peer, keeping the first one identical.
 fn config_with_two_peers(tag: &str, me: u8, first: u8, second: u8) -> Config {
-    let dir = tempdir(tag);
+    let dir = Scratch::new(tag);
     let key = dir.join("node.key");
     write600(&key, &private_of(me));
 
@@ -860,7 +879,7 @@ fn a_peer_whose_key_changed_gets_a_fresh_session() {
 /// a fleet-wide reconnect — the outage the two-epoch rule exists to avoid.
 #[test]
 fn a_psk_epoch_rotation_does_not_interrupt_a_live_session() {
-    let dir = tempdir("recfg-epoch");
+    let dir = Scratch::new("recfg-epoch");
     let key = dir.join("node.key");
     write600(&key, &private_of(0xA1));
     let (kem, dh) = public_of(0xB1);

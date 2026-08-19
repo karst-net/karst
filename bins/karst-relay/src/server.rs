@@ -34,14 +34,15 @@ use std::time::{Duration, Instant};
 use karst_relay_proto::consts::{
     FRAME_HEADER, FRAME_PAYLOAD_MAX, HANDSHAKE_TIMEOUT_SECS, IDLE_TIMEOUT_SECS,
 };
-use karst_relay_proto::{frame::decode, Admitted, Reason, RelayHandshake};
+use karst_relay_proto::{frame::decode, Admitted, Frame, Reason, RelayHandshake};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Notify;
 
 use crate::config::Config;
 use crate::http;
 use crate::hub::{ConnId, Hub};
+use crate::reflect::Reflector;
 use crate::roster::FileRoster;
 use crate::sign::{Identity, PonorVerifier};
 use crate::tls;
@@ -88,6 +89,14 @@ pub struct Ctx {
     tls: Arc<rustls::ServerConfig>,
     started: Instant,
     next_conn: AtomicU64,
+    /// `None` unless the operator configured one — `config::Reflect`.
+    ///
+    /// Its own lock rather than a field in [`Shared`]: the reflector is driven
+    /// by a UDP task that runs at AVEN's rate on every client at once, and the
+    /// hub's lock is on the forwarding path. Sharing one would make a reflect
+    /// datagram contend with every packet the relay carries, to protect two
+    /// structures that never refer to each other.
+    reflect: Option<Mutex<Reflector>>,
 }
 
 impl std::fmt::Debug for Ctx {
@@ -123,6 +132,10 @@ impl Ctx {
             tls,
             started: Instant::now(),
             next_conn: AtomicU64::new(1),
+            reflect: cfg
+                .reflect
+                .as_ref()
+                .map(|r| Mutex::new(Reflector::new(r.advertised()))),
         })
     }
 
@@ -148,6 +161,50 @@ impl Ctx {
         for h in handles {
             h.notify_one();
         }
+    }
+
+    fn with_reflector<T>(&self, f: impl FnOnce(&mut Reflector) -> T) -> Option<T> {
+        let lock = self.reflect.as_ref()?;
+        let mut g = match lock.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Some(f(&mut g))
+    }
+
+    /// The `ReflectOffer` to send this client, if this relay has a reflector.
+    ///
+    /// Mints on the way out, so the key exists only for a connection that has
+    /// actually reached this point — past TLS, past the upgrade, past the
+    /// handshake.
+    fn reflect_offer(&self, admitted: &Admitted) -> Option<Vec<u8>> {
+        // Clients only. §7.7 offers nothing to a mesh peer: a relay does not
+        // discover paths, and a key minted for one would be a credential with
+        // no user.
+        let Admitted::Client { node_id, .. } = admitted else {
+            return None;
+        };
+        let now = self.now_ms();
+        let key = self.with_reflector(|r| r.mint(*node_id, now))?;
+        let key = match key {
+            Ok(k) => k,
+            Err(e) => {
+                // Loud, and not fatal. A relay that cannot mint a reflect key
+                // can still carry this node's traffic, which is the service it
+                // exists for; refusing the connection would turn a degraded
+                // reflector into an outage.
+                eprintln!("karst-relay: {e}");
+                return None;
+            }
+        };
+        let endpoint = self.with_reflector(|r| r.wire_endpoint())?;
+        Some(
+            Frame::ReflectOffer {
+                reflect_key: key,
+                endpoint,
+            }
+            .to_vec(),
+        )
     }
 
     fn with_hub<T>(&self, f: impl FnOnce(&mut Hub) -> T) -> T {
@@ -182,8 +239,54 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
 
     let ctx = Ctx::new(cfg, identity, roster, tls_config);
 
+    if let Some(r) = &cfg.reflect {
+        // Bound before the TCP listener, and fatal if it fails. A relay
+        // configured with a reflector that silently is not running hands every
+        // client a `ReflectOffer` naming an address nothing answers, and the
+        // symptom is nodes that never leave the relay — which looks exactly
+        // like having no reflector configured at all.
+        let socket = UdpSocket::bind(r.listen).await?;
+        eprintln!(
+            "karst-relay: reflector on {} (advertising {})",
+            socket.local_addr()?,
+            r.advertised()
+        );
+        tokio::spawn(reflect_loop(socket, Arc::clone(&ctx)));
+    }
+
     let listener = TcpListener::bind(cfg.listen).await?;
     serve_on(listener, ctx).await
+}
+
+/// Answer `Reflect` datagrams — `aven-v1.md` §7.6.
+///
+/// Every decision is [`Reflector::handle`]'s; this is the socket around it.
+/// The buffer is one AVEN datagram wide, so an over-long datagram is truncated
+/// by the kernel and fails to parse rather than being read into memory this
+/// task sized from an attacker's send.
+pub async fn reflect_loop(socket: UdpSocket, ctx: Arc<Ctx>) {
+    let mut buf = [0u8; karst_disco::consts::DATAGRAM_MAX];
+    loop {
+        let Ok((n, from)) = socket.recv_from(&mut buf).await else {
+            // A UDP receive error is per-datagram — ICMP unreachable from an
+            // earlier send, most often. Continuing is right; returning would
+            // end the reflector for every client because one of them went
+            // away.
+            continue;
+        };
+        let Some(datagram) = buf.get(..n) else {
+            continue;
+        };
+        let now = ctx.now_ms();
+        let Some(Ok(reply)) = ctx.with_reflector(|r| r.handle(datagram, from, now)) else {
+            // §10: every failure is a silent drop, with no log line at default
+            // verbosity. This runs on an unfiltered UDP port, where a line per
+            // dropped datagram is a disk-filling primitive available to anyone
+            // who can reach it.
+            continue;
+        };
+        let _ = socket.send_to(&reply, from).await;
+    }
 }
 
 /// Serve on an already-bound listener.
@@ -241,6 +344,16 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
         // Either the peer stalled or it was refused. Both close silently.
         return;
     };
+    let mut tls_stream = tls_stream;
+    // §7.7: after `RelayAuth`, before any `RecvPacket`. Sent here rather than
+    // through the hub's queue because the ordering is the security argument —
+    // the client has verified `sig_relay` by now, so the key it is about to
+    // receive comes from the ML-DSA-65 identity the netmap pinned.
+    if let Some(offer) = ctx.reflect_offer(&admitted) {
+        if tls_stream.write_all(&offer).await.is_err() {
+            return;
+        }
+    }
     drive(tls_stream, buf, admitted, peer, ctx).await;
 }
 
@@ -390,7 +503,7 @@ async fn drive(
     // Best effort: a peer that is already gone cannot be told anything.
     let _ = tls.shutdown().await;
 
-    {
+    let released = {
         let mut g = match ctx.shared.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -399,7 +512,18 @@ async fn drive(
         // Emits the mesh gossip that retracts this node's presence — and only
         // if this connection still owns the id, so a replaced connection
         // closing later does not evict its successor.
-        g.hub.disconnect(id);
+        g.hub.disconnect(id)
+    };
+    // §7.7: the key's lifetime is the connection.
+    //
+    // Gated on what `disconnect` actually released, for the same reason it
+    // gates its own gossip: a replaced connection closing later must not
+    // retire its *successor's* key. `mint` keys by node, so the successor
+    // overwrote this entry when it connected — releasing unconditionally would
+    // take a live key away from a node that is still connected, and nothing
+    // would report it but a node that quietly stopped getting reflections.
+    if let Some(node_id) = released {
+        ctx.with_reflector(|r| r.release(&node_id));
     }
     ctx.wake_dirty();
     let _ = peer;

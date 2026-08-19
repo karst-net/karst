@@ -52,7 +52,10 @@ const Size = 32
 // level; HKDF-SHA-512 expands from it.
 const MasterSize = 32
 
-const label = "karst-psk-v1"
+const (
+	label      = "karst-psk-v1"
+	discoLabel = "karst-disco-v1"
+)
 
 var (
 	ErrMasterSize = errors.New("psk: master key must be 32 bytes")
@@ -157,6 +160,18 @@ func NewDeriver(master Custodian) (*Deriver, error) {
 // different keys per pair and a handshake failure that looks like a key
 // mismatch rather than a sorting bug.
 func (d *Deriver) Pair(a, b string, epoch uint32) (Key, error) {
+	return d.pair(label, a, b, epoch)
+}
+
+// Disco derives the AVEN discovery key shared by two node handles at an
+// epoch. It deliberately uses a separate transcript label from Pair: a key
+// which authenticates path-discovery messages must never also authenticate a
+// PHREATIC handshake.
+func (d *Deriver) Disco(a, b string, epoch uint32) (Key, error) {
+	return d.pair(discoLabel, a, b, epoch)
+}
+
+func (d *Deriver) pair(domain string, a, b string, epoch uint32) (Key, error) {
 	var k Key
 	if a == "" || b == "" {
 		return k, ErrNoPeer
@@ -174,8 +189,8 @@ func (d *Deriver) Pair(a, b string, epoch uint32) (Key, error) {
 
 	// Length-prefixed, so that ("ab","c") and ("a","bc") cannot collide into
 	// the same PSK. Handles are fixed-width today; this does not depend on it.
-	info := make([]byte, 0, len(label)+len(lo)+len(hi)+12)
-	info = append(info, label...)
+	info := make([]byte, 0, len(domain)+len(lo)+len(hi)+12)
+	info = append(info, domain...)
 	info = appendField(info, []byte(lo))
 	info = appendField(info, []byte(hi))
 	var e [4]byte

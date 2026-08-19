@@ -7,9 +7,9 @@
 //! into the destination's queue rather than twice.
 
 use crate::consts::{
-    CLIENT_AUTH_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, PAYLOAD_MAX, PAYLOAD_MIN,
-    PEER_GONE_LEN, RANDOM_LEN, RELAY_AUTH_LEN, RELAY_HELLO_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN,
-    VERSION,
+    CLIENT_AUTH_LEN, ENDPOINT_LEN, FRAME_HEADER, FRAME_PAYLOAD_MAX, ID_LEN, PAYLOAD_MAX,
+    PAYLOAD_MIN, PEER_GONE_LEN, RANDOM_LEN, REFLECT_KEY_LEN, REFLECT_OFFER_LEN, RELAY_AUTH_LEN,
+    RELAY_HELLO_LEN, RESTARTING_LEN, SIG_LEN, TOKEN_LEN, VERSION,
 };
 use crate::Error;
 
@@ -185,6 +185,25 @@ pub enum Frame<'a> {
         /// Opaque PHREATIC datagram.
         payload: &'a [u8],
     },
+    /// `0x0d` relay → client. The key and address of this relay's AVEN
+    /// reflector — §7.7, `aven-v1.md` §7.6.
+    ///
+    /// **Optional in both directions.** A relay without a reflector never sends
+    /// one; a client that never receives one degrades to `aven-v1.md` §7.2 and
+    /// stays on the relay when that is not enough.
+    ReflectOffer {
+        /// 32 bytes from a CSPRNG, minted for this connection and forgotten
+        /// when it closes. Sent only after `RelayAuth`, so a client that
+        /// follows §7.1 has already authenticated whoever minted it.
+        reflect_key: [u8; REFLECT_KEY_LEN],
+        /// Where to send `Reflect`, in `aven-v1.md` §6.2's encoding.
+        ///
+        /// Carried rather than inferred from the Ponor connection: the
+        /// reflector is a different socket, on a different port and possibly a
+        /// different host behind a load balancer that terminates TCP and not
+        /// UDP — which is the deployment §4.2 exists for.
+        endpoint: [u8; ENDPOINT_LEN],
+    },
 }
 
 const T_RELAY_HELLO: u8 = 0x01;
@@ -199,6 +218,7 @@ const T_RESTARTING: u8 = 0x09;
 const T_CLOSE: u8 = 0x0a;
 const T_PEER_PRESENT: u8 = 0x0b;
 const T_FORWARD: u8 = 0x0c;
+const T_REFLECT_OFFER: u8 = 0x0d;
 
 /// Split a fixed-size prefix off a slice without indexing.
 fn take<const N: usize>(buf: &[u8]) -> Option<(&[u8; N], &[u8])> {
@@ -222,6 +242,7 @@ impl Frame<'_> {
             Self::Close(_) => T_CLOSE,
             Self::PeerPresent { .. } => T_PEER_PRESENT,
             Self::Forward { .. } => T_FORWARD,
+            Self::ReflectOffer { .. } => T_REFLECT_OFFER,
         }
     }
 
@@ -294,6 +315,13 @@ impl Frame<'_> {
                 out.extend_from_slice(&dst_id);
                 out.extend_from_slice(payload);
             }
+            Self::ReflectOffer {
+                reflect_key,
+                endpoint,
+            } => {
+                out.extend_from_slice(&reflect_key);
+                out.extend_from_slice(&endpoint);
+            }
         }
 
         // The length is written after the fact so no variant has to know its
@@ -340,6 +368,7 @@ impl Frame<'_> {
             Self::Close(_) => 1,
             Self::PeerPresent { .. } => ID_LEN,
             Self::Forward { payload, .. } => 2 * ID_LEN + payload.len(),
+            Self::ReflectOffer { .. } => REFLECT_OFFER_LEN,
         };
         FRAME_HEADER + payload
     }
@@ -512,6 +541,18 @@ fn decode_payload(frame_type: u8, p: &[u8]) -> Result<Frame<'_>, Error> {
                 payload,
             })
         }
+        T_REFLECT_OFFER => {
+            if n != REFLECT_OFFER_LEN {
+                return Err(bad_len(frame_type, n));
+            }
+            let (reflect_key, rest) =
+                take::<REFLECT_KEY_LEN>(p).ok_or_else(|| bad_len(frame_type, n))?;
+            let (endpoint, _) = take::<ENDPOINT_LEN>(rest).ok_or_else(|| bad_len(frame_type, n))?;
+            Ok(Frame::ReflectOffer {
+                reflect_key: *reflect_key,
+                endpoint: *endpoint,
+            })
+        }
         other => Err(Error::UnknownFrameType(other)),
     }
 }
@@ -589,6 +630,10 @@ mod tests {
                 dst_id: id(10),
                 payload: &payload,
             },
+            Frame::ReflectOffer {
+                reflect_key: [0x11; REFLECT_KEY_LEN],
+                endpoint: [0x22; ENDPOINT_LEN],
+            },
         ] {
             roundtrip(&f);
         }
@@ -610,6 +655,14 @@ mod tests {
         assert_eq!(f.to_vec().len(), FRAME_HEADER + CLIENT_AUTH_LEN);
         let f = Frame::RelayAuth { signature: &SIG };
         assert_eq!(f.to_vec().len(), FRAME_HEADER + RELAY_AUTH_LEN);
+        let f = Frame::ReflectOffer {
+            reflect_key: [0; REFLECT_KEY_LEN],
+            endpoint: [0; ENDPOINT_LEN],
+        };
+        assert_eq!(f.to_vec().len(), FRAME_HEADER + REFLECT_OFFER_LEN);
+        // spec/ponor-v1.md §6.1 says 51. Written as a literal so a change to
+        // either constant shows up as a diff against the specification.
+        assert_eq!(REFLECT_OFFER_LEN, 51);
     }
 
     #[test]
@@ -655,6 +708,7 @@ mod tests {
     fn every_wrong_length_is_rejected() {
         // Walk each fixed-length frame one byte short and one byte long.
         for (ty, len) in [
+            (T_REFLECT_OFFER, REFLECT_OFFER_LEN),
             (T_RELAY_HELLO, RELAY_HELLO_LEN),
             (T_CLIENT_AUTH, CLIENT_AUTH_LEN),
             (T_RELAY_AUTH, RELAY_AUTH_LEN),

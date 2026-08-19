@@ -16,7 +16,7 @@
 //! separation, and why this file is small enough to replace.
 
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ use karst_tun::{Tun, TunConfig};
 
 use crate::config::Config;
 use crate::disco;
-use crate::engine::{Engine, Output};
+use crate::engine::{Engine, Output, Via};
 use crate::ipc;
 use crate::random_seed;
 
@@ -103,6 +103,7 @@ pub fn run_with_socket(
 ///
 /// # Errors
 /// As [`run`].
+#[allow(clippy::too_many_lines)]
 pub fn run_with_control(
     config: &Arc<Config>,
     shutdown: &Shutdown,
@@ -135,17 +136,58 @@ pub fn run_with_control(
     let engine = Engine::new(config);
 
     // AVEN state, shared between the receive loop and the timer that drives
-    // probing. Empty for now: the disco key is per-pair netmap material
-    // (aven-v1.md §5.1) and the netmap does not carry it yet, so every peer
-    // stays on its relay path — which is the correct behaviour for a node with
-    // no key rather than a degraded one. See PLAN.md Phase 4.
-    let disco = Mutex::new(disco::Disco::new(0));
+    // probing. A static roster has no server-issued handles or disco keys, so
+    // reconciliation leaves it empty; a netmap roster immediately seeds its
+    // direct endpoints as unconfirmed candidates.
+    let disco = Mutex::new(disco::Disco::new(config.psk_epoch));
+    // The port the socket is *actually* bound to, which is not always the
+    // configured one: a node listening on port 0 gets an ephemeral port, and a
+    // candidate naming port 0 names nothing.
+    let listen_port = socket
+        .local_addr()
+        .map_or(config.listen.port(), |a| a.port());
+    {
+        let mut state = disco
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.reconcile(config, now_ms(started));
+        state.set_interfaces(&gather_interfaces(config), listen_port);
+    }
 
-    // Initial handshakes, before either thread starts.
+    let relay = config.relays.first().cloned();
+    let relay_node_id = config.node_id.clone();
+    let relay_ca = config.relay_ca_file.clone();
+    // Present only when a relay is configured. `None` means anything the engine
+    // routes over the relay is dropped where it is produced — which is correct
+    // and already consistent: `Engine::via` returns a relay destination only
+    // when `config.relays` is non-empty, so the two agree by construction.
+    //
+    // Built **before** the first handshakes, because for a peer with no
+    // configured endpoint those handshakes are themselves relayed, and a queue
+    // that did not exist yet would drop the one datagram that starts the
+    // conversation.
+    let relay_dropped = Arc::new(AtomicU64::new(0));
+    let (relay_out, relay_in) = match relay {
+        Some(_) => {
+            let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
+            (
+                Some(RelaySender {
+                    queue: tx,
+                    dropped: Arc::clone(&relay_dropped),
+                }),
+                Some(rx),
+            )
+        }
+        None => (None, None),
+    };
+    let relay_out = relay_out.as_ref();
+
+    // Initial handshakes, before any thread starts.
     dispatch(
         engine.connect_all(now_ms(started), random_seed),
         &socket,
         &tun,
+        relay_out,
     );
 
     // The local settings the netmap does not supply. Cloned once here because
@@ -155,7 +197,14 @@ pub fn run_with_control(
         keys: Arc::clone(&config.keys),
         listen: config.listen,
         interface: config.interface.clone(),
+        relay_ca_file: config.relay_ca_file.clone(),
     };
+    // The control client owns the ML-DSA identity. Clone its `Arc` before the
+    // refresh worker takes ownership of the client, so the relay reader can
+    // authenticate independently without reading the secret file again.
+    let relay_identity = control_client
+        .as_ref()
+        .map(crate::control::Client::relay_identity);
 
     std::thread::scope(|scope| {
         // ── host → tunnel ──────────────────────────────────────────────────
@@ -176,9 +225,40 @@ pub fn run_with_control(
                     out.datagrams.extend(o.datagrams);
                     out.packets.extend(o.packets);
                 }
-                dispatch(out, &socket, &tun);
+                dispatch(out, &socket, &tun, relay_out);
             }
         });
+
+        // ── the relay ─────────────────────────────────────────────────────
+        // Both protocols and both directions. AVEN's rendezvous made this
+        // connection necessary; PHREATIC's fallback is what makes a peer with
+        // no direct path reachable rather than merely known about.
+        if let (Some(identity), Some(relay), Some(relay_in), Some(relayed)) =
+            (relay_identity, relay, relay_in, relay_out)
+        {
+            let disco = &disco;
+            let engine = &engine;
+            let socket = &socket;
+            let tun = &tun;
+            scope.spawn(move || {
+                relay_worker(
+                    RelayContext {
+                        shutdown,
+                        identity,
+                        relay,
+                        node_id: relay_node_id,
+                        relay_ca_file: relay_ca,
+                        disco,
+                        engine,
+                        socket,
+                        tun,
+                        relayed,
+                        started,
+                    },
+                    relay_in,
+                );
+            });
+        }
 
         // ── tunnel → host ──────────────────────────────────────────────────
         scope.spawn(|| {
@@ -200,7 +280,7 @@ pub fn run_with_control(
                         continue;
                     };
                     let out = demultiplex(datagram, m.from, now_ms(started), &disco, &engine);
-                    dispatch(out, &socket, &tun);
+                    dispatch(out, &socket, &tun, relay_out);
                 }
             }
         });
@@ -216,7 +296,7 @@ pub fn run_with_control(
                         // rather than waited on.
                         let _ = stream.set_nonblocking(false);
                         let handled = ipc::serve(&mut stream, |command| {
-                            report(command, config, &engine, tun.mtu(), started)
+                            report(command, config, &engine, tun.mtu(), started, &relay_dropped)
                         });
                         if matches!(handled, Ok(Some(ipc::Command::Down))) {
                             shutdown.request();
@@ -242,19 +322,34 @@ pub fn run_with_control(
             let tun = &tun;
             let local = &local;
             let routes = &routes;
+            let disco = &disco;
             scope.spawn(move || {
                 refresh_netmap(
-                    client, shutdown, engine, socket, tun, started, local, routes,
+                    client, shutdown, engine, socket, tun, started, local, routes, disco, relay_out,
                 );
             });
         }
 
         // ── timers ─────────────────────────────────────────────────────────
+        let mut next_scan = Instant::now() + INTERFACE_SCAN;
         while !shutdown.requested() {
             std::thread::sleep(TICK);
             let now = now_ms(started);
-            dispatch(engine.poll(now, random_seed), &socket, &tun);
-            dispatch(disco_poll(&disco, now), &socket, &tun);
+            // Interfaces change — a laptop moves between networks, a VPN comes
+            // up, DHCP renews. Re-enumerating on a slow timer rather than on
+            // every tick keeps a netlink dump off the 100 ms path, and
+            // `set_interfaces` schedules an advertisement only when the list
+            // actually moved, so a stable host pays nothing for this.
+            if Instant::now() >= next_scan {
+                next_scan = Instant::now() + INTERFACE_SCAN;
+                disco
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .set_interfaces(&gather_interfaces(config), listen_port);
+            }
+            dispatch(engine.poll(now, random_seed), &socket, &tun, relay_out);
+            dispatch(disco_poll(&disco, now, relay_out), &socket, &tun, relay_out);
+            apply_disco_paths(&disco, &engine);
         }
     });
 
@@ -265,26 +360,435 @@ pub fn run_with_control(
     Ok(())
 }
 
-/// Advance AVEN's timers and turn its probe intents into ordinary UDP output.
+/// Advance AVEN's timers and turn its intents into I/O.
 ///
 /// AVEN owns reachability discovery, while the run loop owns the shared socket;
 /// keeping the conversion here prevents the sans-io discovery crate from
-/// acquiring an I/O dependency. The peer set is empty until control-plane
-/// netmaps carry disco keys, but driving this now is important: adding a peer
-/// must not also require remembering to add a second timer path.
-fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64) -> Output {
+/// acquiring an I/O dependency.
+///
+/// Probes come back as ordinary UDP output. Candidate advertisements go over
+/// the relay (§7.3) and are handed to `advertise`, which belongs to the relay
+/// worker — the only thread that owns a Ponor connection.
+fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySender>) -> Output {
     let mut state = disco
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let datagrams = state.poll(now_ms, || {
+    let out = state.poll(now_ms, || {
         let seed = random_seed();
         let mut tx = [0u8; 12];
         tx.copy_from_slice(&seed[..12]);
         TxId(tx)
     });
+    drop(state);
+
+    if let Some(relay) = relay {
+        for (destination, payload) in out.relayed {
+            // A full queue drops rather than blocks. This is the timer thread:
+            // waiting on a relay that has gone away would stop PHREATIC's own
+            // timers, turning a relay outage into a tunnel outage. A dropped
+            // advertisement costs one rendezvous attempt, and the next one is
+            // five seconds away.
+            relay.send(destination, &payload);
+        }
+    }
+
     Output {
-        datagrams,
+        // **Always direct.** A probe exists to prove a NAT binding on the
+        // shared datapath socket (§4); one sent through the relay would prove
+        // the relay is reachable, which was never in doubt.
+        datagrams: out
+            .datagrams
+            .into_iter()
+            .map(|(d, to)| (d, Via::Direct(to)))
+            .collect(),
         packets: Vec::new(),
+    }
+}
+
+/// How often the host's interface addresses are re-enumerated.
+const INTERFACE_SCAN: Duration = Duration::from_secs(15);
+
+/// The addresses this node offers as candidates — `spec/aven-v1.md` §7.3.
+///
+/// `karst_tun::local_addresses` has already dropped what a peer could not
+/// reach at all — loopback, link-local, tentative, deprecated. What is left is
+/// a *policy* question and is decided here, in the daemon that knows what the
+/// tunnel is:
+///
+/// - **The node's own overlay addresses are removed.** They are reachable only
+///   *through* the tunnel, so advertising one as a way to reach the tunnel is a
+///   loop, and a peer that probed it would be sending discovery traffic into
+///   the thing being discovered.
+///
+/// A private RFC 1918 address is deliberately **kept**. Two nodes on the same
+/// LAN behind the same NAT have no other way to find each other, and that is
+/// the case direct paths help most. §12.3 records the cost honestly — a
+/// `CallMeMaybe` body is not encrypted, so the relay operator sees these — and
+/// that is a protocol gap to close, not a reason to withhold the candidate that
+/// makes local discovery work.
+///
+/// A failure here is not fatal. It costs candidates, which costs direct paths,
+/// and the relay carries the traffic meanwhile.
+fn gather_interfaces(config: &Config) -> Vec<std::net::IpAddr> {
+    let addresses = match karst_tun::local_addresses() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!(
+                "karstd: cannot enumerate local addresses ({e}); discovery will rely on \
+                       what peers report seeing"
+            );
+            return Vec::new();
+        }
+    };
+    addresses
+        .into_iter()
+        .filter(|ip| !config.addresses.iter().any(|own| own.addr == *ip))
+        .collect()
+}
+
+/// One datagram waiting for the relay worker to put it on the wire.
+///
+/// Carries both AVEN advertisements and PHREATIC data, because to the relay
+/// they are the same thing: opaque bytes for a named node. Ponor reads the
+/// destination id and nothing else.
+#[derive(Debug)]
+struct Relayed {
+    destination: [u8; karst_relay_proto::consts::ID_LEN],
+    payload: Vec<u8>,
+}
+
+/// The datapath's handle on the relay worker.
+///
+/// **Bounded, and it drops rather than blocks.** These calls happen on the
+/// threads that carry the tunnel, and waiting for a relay that has gone away
+/// would stop the TUN reader and PHREATIC's own timers — turning a relay outage
+/// into a total outage, which is precisely what the relay path exists to
+/// prevent. `ponor-v1.md` §7.3 makes the same choice one hop further on: the
+/// relay's own queues are bounded and never apply backpressure to their source.
+///
+/// A dropped datagram is a dropped datagram. PHREATIC retransmits handshakes
+/// and the traffic above the tunnel does its own recovery, which is the same
+/// contract a full socket buffer already has.
+#[derive(Debug)]
+struct RelaySender {
+    queue: tokio::sync::mpsc::Sender<Relayed>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl RelaySender {
+    fn send(&self, destination: [u8; karst_relay_proto::consts::ID_LEN], payload: &[u8]) {
+        let relayed = Relayed {
+            destination,
+            payload: payload.to_vec(),
+        };
+        if self.queue.try_send(relayed).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Reconnect delay bounds for the relay worker.
+const RELAY_BACKOFF_MIN: Duration = Duration::from_secs(1);
+const RELAY_BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// Wait out a reconnect delay, then double it.
+///
+/// Slept in `TICK`-sized pieces so a shutdown is noticed promptly rather than
+/// up to a minute later.
+fn sleep_backoff(shutdown: &Shutdown, backoff: &mut Duration) {
+    let deadline = Instant::now() + *backoff;
+    while Instant::now() < deadline && !shutdown.requested() {
+        std::thread::sleep(TICK);
+    }
+    *backoff = (*backoff * 2).min(RELAY_BACKOFF_MAX);
+}
+
+/// How many datagrams may wait for the relay worker.
+///
+/// Sized for a burst rather than a backlog. A relayed flow that outruns the TLS
+/// stream should lose datagrams promptly and let the layer above notice, not
+/// accumulate a queue whose only effect is latency — the classic bufferbloat
+/// failure, and worse here because everything in it is already a fallback path.
+const RELAY_QUEUE: usize = 256;
+
+/// Everything the relay worker needs from the rest of the daemon.
+///
+/// A struct rather than nine parameters, and it is the same set the engine's
+/// own threads borrow — the worker is a third datapath thread, not a side
+/// channel.
+struct RelayContext<'a> {
+    shutdown: &'a Shutdown,
+    identity: Arc<crate::control::Identity>,
+    relay: crate::netmap::Relay,
+    node_id: Vec<u8>,
+    disco: &'a Mutex<disco::Disco>,
+    engine: &'a Engine,
+    socket: &'a UdpTransport,
+    tun: &'a Tun,
+    /// Extra trust anchors for the TLS hop, from local configuration.
+    relay_ca_file: Option<std::path::PathBuf>,
+    /// Where a reply to a relayed datagram goes when it is itself relayed —
+    /// which every response to a relayed handshake is, until a direct path
+    /// exists. Sending is non-blocking, so the receive task may use it.
+    relayed: &'a RelaySender,
+    started: Instant,
+}
+
+/// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
+/// authenticated Ponor connection.
+///
+/// A dedicated current-thread runtime, because relay TCP reads must not occupy
+/// the UDP receive loop. A relay outage must not take the tunnel down, so every
+/// failure here is a reconnect rather than an error anyone else sees.
+///
+/// **The two directions run as separate tasks over a split connection.** They
+/// share one TLS stream but must not share a scheduling point: a worker that
+/// alternated between reading and draining the send queue would add its polling
+/// interval to the latency of every relayed packet, and once this path carries
+/// tunnel data rather than only rendezvous messages, that interval *is* the
+/// tunnel's latency.
+#[allow(clippy::needless_pass_by_value)] // owns data moved into the scoped worker
+fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver<Relayed>) {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        eprintln!("karstd: cannot start relay runtime; the relay path is disabled");
+        return;
+    };
+    let tls = match crate::relay_tls::client_config(context.relay_ca_file.as_deref()) {
+        Ok(tls) => tls,
+        // Named rather than swallowed. The likeliest cause is a mistyped or
+        // unreadable `relay_ca_file`, and "the relay path is disabled" without
+        // the reason is the kind of message that costs an afternoon.
+        Err(e) => {
+            eprintln!("karstd: {e}; the relay path is disabled");
+            return;
+        }
+    };
+
+    let mut outbound = outbound;
+    let mut backoff = RELAY_BACKOFF_MIN;
+    while !context.shutdown.requested() {
+        let session = crate::relay::Session::from_control_handle(
+            &context.node_id,
+            &context.relay,
+            random_seed(),
+        );
+        let Some(session) = session else {
+            eprintln!("karstd: invalid node handle; the relay path is disabled");
+            return;
+        };
+        let connected = runtime.block_on(crate::relay::Connection::connect(
+            session,
+            &*context.identity,
+            &crate::control::RelayVerifier,
+            Arc::clone(&tls),
+            &context.relay,
+        ));
+        let connection = match connected {
+            Ok(c) => c,
+            // **Said once per outage, not once per attempt.** A relay that
+            // cannot be reached produced no log line at all before this, so a
+            // node with a mistyped CA path, an unreachable relay or a roster it
+            // is absent from looked exactly like a node with nothing to say —
+            // and the symptom, a peer stuck on `state = "connecting"`, names
+            // none of those.
+            Err(e) => {
+                if backoff == RELAY_BACKOFF_MIN {
+                    eprintln!(
+                        "karstd: cannot reach relay {} ({e}); retrying",
+                        context.relay.address
+                    );
+                }
+                sleep_backoff(context.shutdown, &mut backoff);
+                continue;
+            }
+        };
+        let Some((sender, receiver)) = connection.split() else {
+            // Unreachable through `connect`, which loops until established.
+            // Treated as a failed attempt rather than asserted, because this is
+            // a daemon carrying traffic and the alternative to being wrong here
+            // is a panic in a thread nothing restarts.
+            sleep_backoff(context.shutdown, &mut backoff);
+            continue;
+        };
+        // Reset only once a connection is actually established. Resetting on
+        // the *attempt* would make a relay that accepts and immediately closes
+        // — an overloaded one, or one mid-restart — into an unthrottled
+        // reconnect loop from every node at once, which is the load pattern
+        // most likely to keep it down.
+        if backoff != RELAY_BACKOFF_MIN {
+            eprintln!("karstd: relay {} reachable again", context.relay.address);
+        }
+        backoff = RELAY_BACKOFF_MIN;
+
+        runtime.block_on(async {
+            tokio::join!(
+                relay_send_loop(context.shutdown, sender, &mut outbound),
+                relay_receive_loop(&context, receiver),
+            )
+        });
+
+        // §7.7: the reflect key died with the connection. Keeping it would
+        // mean probing a reflector that has already forgotten this node, and
+        // advertising a mapping nothing is keeping alive.
+        context
+            .disco
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear_reflector(&context.relay.relay_id);
+    }
+}
+
+/// Drain the queue onto the relay until it breaks or the daemon stops.
+async fn relay_send_loop(
+    shutdown: &Shutdown,
+    mut sender: crate::relay::Sender,
+    outbound: &mut tokio::sync::mpsc::Receiver<Relayed>,
+) {
+    while !shutdown.requested() {
+        // A short timeout rather than a bare `recv`, so a quiet connection
+        // still notices a shutdown request.
+        let Ok(next) = tokio::time::timeout(TICK, outbound.recv()).await else {
+            continue;
+        };
+        let Some(next) = next else { return };
+        if sender
+            .send_packet(next.destination, &next.payload)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        // **Coalesce whatever else is already queued before flushing.** A
+        // flush per datagram is a TLS record and a syscall each; a burst of
+        // fragments belonging to one handshake should cost one of each.
+        while let Ok(more) = outbound.try_recv() {
+            if sender
+                .send_packet(more.destination, &more.payload)
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        if sender.flush().await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Deliver what the relay forwards to whichever protocol owns it.
+async fn relay_receive_loop(context: &RelayContext<'_>, mut receiver: crate::relay::Receiver) {
+    while !context.shutdown.requested() {
+        let received = tokio::time::timeout(
+            TICK,
+            receiver.receive(&*context.identity, &crate::control::RelayVerifier),
+        )
+        .await;
+        let events = match received {
+            Ok(Ok(events)) => events,
+            // A timeout is the normal case, not a failure: it is what lets this
+            // loop notice a shutdown on a connection that happens to be quiet.
+            Err(_) => continue,
+            Ok(Err(_)) => return,
+        };
+        for event in events {
+            // §7.7: this relay runs a reflector, and here is the key. Handed
+            // straight to discovery — the address inside is AVEN's encoding,
+            // and `karst-disco` owns that.
+            if let crate::relay::Event::Reflector { key, endpoint } = event {
+                let Ok(endpoint) = karst_disco::Endpoint::from_wire(&endpoint) else {
+                    // A relay this node authenticated sent an endpoint it
+                    // cannot parse. Nothing to do but ignore the offer; the
+                    // connection is still good for carrying traffic, which is
+                    // what it is chiefly for.
+                    continue;
+                };
+                let taken = context
+                    .disco
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .set_reflector(context.relay.relay_id, key, endpoint.0);
+                // Once per connection, not per datagram. A node that never
+                // learns its mapped address stays on the relay forever, and
+                // "the relay offered no reflector" and "the reflector never
+                // answered" are different problems that look identical from
+                // `karst status` — which is finding 18's lesson applied one
+                // subsystem over.
+                eprintln!(
+                    "karstd: relay {} offers a reflector at {} ({})",
+                    context.relay.address,
+                    endpoint.0,
+                    if taken {
+                        "accepted"
+                    } else {
+                        "declined, too many"
+                    }
+                );
+                continue;
+            }
+            let crate::relay::Event::Packet { source_id, payload } = event else {
+                continue;
+            };
+            let now = now_ms(context.started);
+            // **AVEN is asked first, exactly as on the UDP socket**, and for the
+            // same reason: the two protocols share this transport too, and only
+            // one of them can authenticate any given datagram. `Disco` reports
+            // whether the payload was its own; anything else is PHREATIC's.
+            let handled = context
+                .disco
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .inbound_from_relay(source_id, &payload, now);
+            if handled {
+                continue;
+            }
+            let out = context.engine.inbound_from_relay(
+                source_id,
+                &payload,
+                now,
+                &responder_randomness(),
+            );
+            // **The reply goes back over the relay**, and it has to: the
+            // response to a relayed `HandshakeInit` is what completes the
+            // handshake, and until it does there is no session and no direct
+            // path to upgrade to. The engine has already chosen the transport,
+            // so this only has to honour it — and the queue is non-blocking, so
+            // handing work to the send task cannot stall this one.
+            dispatch(out, context.socket, context.tun, Some(context.relayed));
+        }
+    }
+}
+
+/// Apply only AVEN-confirmed paths to the PHREATIC roster. Candidates never
+/// reach this boundary, so an unauthenticated endpoint cannot redirect data.
+fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) {
+    let changes = disco
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .path_changes();
+    apply_path_changes(&changes, engine);
+}
+
+/// Perform the endpoint changes discovery asked for.
+///
+/// The two directions are not symmetric. An install displaces whatever was
+/// there, because a confirmed direct path is better evidence than an address
+/// learned from a handshake. A release is conditional on the installed address
+/// still being in force, because a peer that rehandshakes teaches the datapath
+/// its own endpoint, and discovery giving up is no reason to throw that away.
+fn apply_path_changes(changes: &[disco::PathChange], engine: &Engine) {
+    for change in changes {
+        match *change {
+            disco::PathChange::Install { peer, endpoint } => {
+                let _ = engine.set_endpoint(peer, endpoint);
+            }
+            disco::PathChange::Release { peer, installed } => {
+                let _ = engine.release_endpoint(peer, installed);
+            }
+        }
     }
 }
 
@@ -412,7 +916,14 @@ fn stop(socket_path: &std::path::Path) -> ! {
 #[must_use]
 pub fn status_report(config: &Config, engine: &Engine, mtu: usize, uptime_secs: u64) -> String {
     let _ = uptime_secs;
-    report(ipc::Command::Status, config, engine, mtu, Instant::now())
+    report(
+        ipc::Command::Status,
+        config,
+        engine,
+        mtu,
+        Instant::now(),
+        &AtomicU64::new(0),
+    )
 }
 
 /// The `karst bugreport` body, for the leak scan.
@@ -429,7 +940,7 @@ pub fn bug_report_for_test(
     uptime_secs: u64,
 ) -> String {
     let _ = uptime_secs;
-    bug_report(config, engine, mtu, Instant::now())
+    bug_report(config, engine, mtu, Instant::now(), &AtomicU64::new(0))
 }
 
 fn report(
@@ -438,13 +949,14 @@ fn report(
     engine: &Engine,
     mtu: usize,
     started: Instant,
+    relay_dropped: &AtomicU64,
 ) -> String {
     use std::fmt::Write as _;
 
     match command {
         ipc::Command::Version => format!("version = \"{}\"\n", env!("CARGO_PKG_VERSION")),
         ipc::Command::Down => "stopping = true\n".to_owned(),
-        ipc::Command::BugReport => bug_report(config, engine, mtu, started),
+        ipc::Command::BugReport => bug_report(config, engine, mtu, started, relay_dropped),
         ipc::Command::Status => {
             let stats = engine.stats();
             let peers = engine.status();
@@ -478,6 +990,16 @@ fn report(
             let _ = writeln!(out, "acl_denied_in = {}", stats.acl_denied_in);
             let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
             let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
+            // **Silent loss is the failure this line exists to prevent.** The
+            // queue to the relay worker is bounded and drops rather than
+            // blocking, which is the right trade — but a node quietly shedding
+            // relayed traffic is indistinguishable from a node whose peers have
+            // gone away, and those call for opposite responses.
+            let _ = writeln!(
+                out,
+                "relay_dropped = {}",
+                relay_dropped.load(Ordering::Relaxed)
+            );
 
             // **Not a cosmetic line.** An operator debugging "why can I not
             // reach this host" has to be able to tell a node enforcing
@@ -522,6 +1044,11 @@ fn report(
                 let _ = writeln!(out, "state = \"{state}\"");
                 let _ = writeln!(out, "allowed_ips = {:?}", p.allowed_ips);
                 let _ = writeln!(out, "psk_fallback = {}", p.psk_is_fallback);
+                // §8.3: a relayed path is a working path, not a failure — but
+                // it is slower and it discloses traffic timing to the relay, so
+                // it is stated rather than left to be inferred from a latency
+                // measurement. "none" is a third answer and a different problem.
+                let _ = writeln!(out, "transport = \"{}\"", p.transport);
             }
             out
         }
@@ -558,20 +1085,48 @@ fn demultiplex(
     };
     match verdict {
         disco::Verdict::Handled(datagrams) => Output {
-            datagrams,
+            // A `Pong` answers the socket the `Ping` arrived on, and this
+            // function is only reached from that socket.
+            datagrams: datagrams
+                .into_iter()
+                .map(|(d, to)| (d, Via::Direct(to)))
+                .collect(),
             packets: Vec::new(),
         },
         disco::Verdict::NotAven => engine.inbound(datagram, from, now_ms, &responder_randomness()),
     }
 }
 
-fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun) {
-    match out.datagrams.len() {
+/// Perform the I/O the engine asked for.
+///
+/// The two transports are split here rather than in the engine, which names a
+/// destination and owns no socket. Direct datagrams keep the batched
+/// `sendmmsg` path they had; relayed ones are handed to the worker that owns
+/// the Ponor connection.
+///
+/// **The split is done without allocating on the common path.** Almost every
+/// `Output` is entirely direct or entirely relayed, so the batch is built from
+/// the direct ones in place and a separate pass only runs when a relayed
+/// datagram is actually present.
+fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun, relay: Option<&RelaySender>) {
+    let mut direct: Vec<(&[u8], std::net::SocketAddr)> = Vec::with_capacity(out.datagrams.len());
+    for (datagram, via) in &out.datagrams {
+        match via {
+            Via::Direct(to) => direct.push((datagram.as_slice(), *to)),
+            Via::Relay(destination) => {
+                if let Some(relay) = relay {
+                    relay.send(*destination, datagram);
+                }
+            }
+        }
+    }
+
+    match direct.len() {
         0 => {}
         // One datagram is the common case on a single flow; batching it would
-        // cost an extra `Vec` for nothing.
+        // cost an extra syscall's worth of setup for nothing.
         1 => {
-            if let Some((datagram, to)) = out.datagrams.first() {
+            if let Some((datagram, to)) = direct.first() {
                 // A send failure is per-datagram: a full buffer or an
                 // unreachable host must not take the daemon down. The protocol
                 // already retransmits.
@@ -580,14 +1135,9 @@ fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun) {
         }
         // A handshake is two fragments and a burst can be more. One syscall.
         _ => {
-            let batch: Vec<(&[u8], std::net::SocketAddr)> = out
-                .datagrams
-                .iter()
-                .map(|(d, to)| (d.as_slice(), *to))
-                .collect();
             let mut offset = 0;
-            while offset < batch.len() {
-                let Some(rest) = batch.get(offset..) else {
+            while offset < direct.len() {
+                let Some(rest) = direct.get(offset..) else {
                     break;
                 };
                 match socket.send_batch(rest) {
@@ -625,6 +1175,8 @@ fn refresh_netmap(
     started: Instant,
     local: &dyn Fn() -> crate::config::LocalSettings,
     routes: &Mutex<Routes>,
+    disco: &Mutex<disco::Disco>,
+    relayed: Option<&RelaySender>,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -672,7 +1224,21 @@ fn refresh_netmap(
         // somewhere for its packets to go by the time the datapath will accept
         // them.
         apply_routes(routes, tun, &updated);
+
+        // **The whole roster swap happens under the discovery lock**, and the
+        // ordering inside it is load-bearing. A roster index names a different
+        // peer after `reconfigure`, so endpoints discovery installed are
+        // withdrawn first, while the indices still mean what they meant when
+        // they were written. Holding the lock across all three steps is what
+        // stops the timer thread from applying a path in the middle and
+        // pointing one peer's traffic at another's address.
+        let mut discovery = disco
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply_path_changes(&discovery.release_all(), engine);
         let report = engine.reconfigure(&updated);
+        discovery.reconcile(&updated, now_ms(started));
+        drop(discovery);
         eprintln!(
             "karstd: netmap updated ({outcome:?}): {} added, {} removed, {} kept{}",
             report.added,
@@ -693,6 +1259,7 @@ fn refresh_netmap(
             engine.connect_all(now_ms(started), random_seed),
             socket,
             tun,
+            relayed,
         );
     }
 }
@@ -757,7 +1324,13 @@ fn announce(config: &Config, tun: &Tun, socket: &UdpTransport) -> io::Result<()>
 ///   nodes' reports, not enough to be a key.
 /// - **No setup key**, which is a bearer credential that enrols a node.
 /// - **No file contents**, only paths and the facts derived from them.
-fn bug_report(config: &Config, engine: &Engine, mtu: usize, started: Instant) -> String {
+fn bug_report(
+    config: &Config,
+    engine: &Engine,
+    mtu: usize,
+    started: Instant,
+    relay_dropped: &AtomicU64,
+) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
 
@@ -847,6 +1420,11 @@ fn bug_report(config: &Config, engine: &Engine, mtu: usize, started: Instant) ->
     let _ = writeln!(out, "acl_denied_in = {}", stats.acl_denied_in);
     let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
     let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
+    let _ = writeln!(
+        out,
+        "relay_dropped = {}",
+        relay_dropped.load(Ordering::Relaxed)
+    );
 
     for p in engine.status() {
         let _ = writeln!(out, "\n[[peer]]");
@@ -864,6 +1442,7 @@ fn bug_report(config: &Config, engine: &Engine, mtu: usize, started: Instant) ->
         let _ = writeln!(out, "allowed_ips = {:?}", p.allowed_ips);
         // Whether a PSK exists, never what it is.
         let _ = writeln!(out, "psk_fallback = {}", p.psk_is_fallback);
+        let _ = writeln!(out, "transport = \"{}\"", p.transport);
     }
 
     out
@@ -890,6 +1469,7 @@ mod route_tests {
             }
             peers.push(crate::config::Peer {
                 name: format!("p{index}"),
+                node_id: Vec::new(),
                 public: std::sync::Arc::new(karst_noise::handshake::PeerPublic {
                     kem_pk: {
                         use karst_crypto::kem::{Kem as _, MlKem768Backend as MlKem};
@@ -905,9 +1485,11 @@ mod route_tests {
                 endpoint: None,
                 allowed_ips: allowed,
                 psk_is_fallback: true,
+                disco_key: None,
             });
         }
         Config {
+            relay_ca_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
                 &[0x11; 64],
                 &[0x12; 32],
@@ -919,6 +1501,8 @@ mod route_tests {
                 .map(|a| a.parse().expect("interface address"))
                 .collect(),
             psk_epoch: 1,
+            node_id: Vec::new(),
+            relays: Vec::new(),
             peers,
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
             skipped: Vec::new(),
@@ -984,5 +1568,98 @@ mod route_tests {
     #[test]
     fn an_empty_roster_routes_nothing() {
         assert!(Routes::wanted(&config(&["100.64.0.1/16"], &[])).is_empty());
+    }
+
+    // ── endpoints discovery installs and withdraws ────────────────────────
+
+    use super::apply_path_changes;
+    use crate::disco::PathChange;
+    use crate::engine::Engine;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    fn addr(a: u8) -> SocketAddr {
+        SocketAddr::from(([203, 0, 113, a], 51820))
+    }
+
+    /// One peer whose netmap-configured endpoint is `configured`.
+    fn one_peer_engine(configured: Option<SocketAddr>) -> Engine {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["192.168.1.0/24"]]);
+        cfg.peers.first_mut().expect("one peer").endpoint = configured;
+        Engine::new(&Arc::new(cfg))
+    }
+
+    #[test]
+    fn a_confirmed_path_displaces_the_configured_endpoint() {
+        let engine = one_peer_engine(Some(addr(1)));
+        apply_path_changes(
+            &[PathChange::Install {
+                peer: 0,
+                endpoint: addr(9),
+            }],
+            &engine,
+        );
+        assert_eq!(engine.endpoint(0), Some(addr(9)));
+    }
+
+    /// A release clears the endpoint rather than reverting to the configured
+    /// one, so `Engine::via` falls through to the relay. Reverting would hand
+    /// the datapath back the address discovery had just given up on — the
+    /// configured endpoint is a candidate like any other.
+    #[test]
+    fn releasing_a_path_clears_the_endpoint_so_the_relay_takes_over() {
+        let engine = one_peer_engine(Some(addr(1)));
+        apply_path_changes(
+            &[
+                PathChange::Install {
+                    peer: 0,
+                    endpoint: addr(9),
+                },
+                PathChange::Release {
+                    peer: 0,
+                    installed: addr(9),
+                },
+            ],
+            &engine,
+        );
+        assert_eq!(engine.endpoint(0), None);
+    }
+
+    /// **The endpoint has a second writer**: `inbound` learns one from a
+    /// handshake that decrypted. A release must not clobber it, because
+    /// discovery going quiet is weaker evidence than a peer that has just
+    /// completed a handshake from somewhere else.
+    #[test]
+    fn a_release_does_not_clobber_an_endpoint_learned_since() {
+        let engine = one_peer_engine(Some(addr(1)));
+        apply_path_changes(
+            &[PathChange::Install {
+                peer: 0,
+                endpoint: addr(9),
+            }],
+            &engine,
+        );
+        // Stands in for the handshake learning a different address.
+        assert!(engine.set_endpoint(0, addr(7)));
+
+        apply_path_changes(
+            &[PathChange::Release {
+                peer: 0,
+                installed: addr(9),
+            }],
+            &engine,
+        );
+        assert_eq!(
+            engine.endpoint(0),
+            Some(addr(7)),
+            "a stale discovery result overwrote a freshly learned endpoint"
+        );
+    }
+
+    #[test]
+    fn a_release_for_an_index_outside_the_roster_changes_nothing() {
+        let engine = one_peer_engine(Some(addr(1)));
+        assert!(!engine.release_endpoint(9, addr(9)));
+        assert_eq!(engine.endpoint(0), Some(addr(1)));
     }
 }

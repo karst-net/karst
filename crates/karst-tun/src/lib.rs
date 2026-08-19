@@ -220,6 +220,37 @@ pub fn decode_name(raw: &[u8; 16]) -> String {
     String::from_utf8_lossy(raw.get(..end).unwrap_or_default()).into_owned()
 }
 
+/// Every global-scope unicast address this host currently holds.
+///
+/// **Not a tunnel operation, and here anyway.** AVEN needs the addresses a
+/// peer might reach this node on (`spec/aven-v1.md` §7.3), which needs
+/// `AF_NETLINK` and therefore `unsafe` — and ADR-0003 keeps every such call in
+/// this crate. Putting it anywhere else would mean a second file with an
+/// `unsafe` allow in it, which is the property that decision buys.
+///
+/// Loopback, link-local, tentative and deprecated addresses are already
+/// excluded: a peer cannot reach any of them, so their absence is a fact about
+/// the address rather than a policy choice. **The caller must still exclude
+/// its own overlay addresses** — this reports what the host has, including the
+/// tunnel's, and advertising a tunnel address as a way to reach the tunnel is
+/// a loop.
+///
+/// # Errors
+/// [`TunError::Netlink`] if the socket cannot be opened or the dump fails.
+#[cfg(target_os = "linux")]
+pub fn local_addresses() -> Result<Vec<std::net::IpAddr>, TunError> {
+    use std::os::fd::AsFd as _;
+
+    let sock = sys::netlink_socket().map_err(|source| TunError::Netlink {
+        op: "socket(AF_NETLINK)",
+        source,
+    })?;
+    sys::local_addresses(sock.as_fd(), 1).map_err(|source| TunError::Netlink {
+        op: "RTM_GETADDR",
+        source,
+    })
+}
+
 /// Check a requested MTU against what the protocol permits.
 ///
 /// # Errors

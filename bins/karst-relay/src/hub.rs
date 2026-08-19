@@ -514,10 +514,16 @@ impl Hub {
     }
 
     /// Forget a connection and correct the tables that referred to it.
-    pub fn disconnect(&mut self, id: ConnId) {
-        let Some(conn) = self.conns.remove(&id) else {
-            return;
-        };
+    ///
+    /// Returns the client whose mapping this actually released, which is
+    /// `None` for a mesh peer and for a connection that had already been
+    /// replaced. The caller needs that distinction to retire the same node's
+    /// reflect key (`ponor-v1.md` §7.7) without retiring its *successor's* —
+    /// and deriving it from `Admitted` at the call site would be a second copy
+    /// of the ownership rule below, free to drift from it.
+    pub fn disconnect(&mut self, id: ConnId) -> Option<[u8; ID_LEN]> {
+        let conn = self.conns.remove(&id)?;
+        let mut released = None;
 
         if let Some(node_id) = conn.node_id() {
             // Only if this connection is still the one that owns the id: a
@@ -526,6 +532,7 @@ impl Hub {
             // happen.
             if self.by_node.get(&node_id) == Some(&id) {
                 self.by_node.remove(&node_id);
+                released = Some(node_id);
                 self.gossip(
                     &Frame::PeerGone {
                         peer_id: node_id,
@@ -545,6 +552,7 @@ impl Hub {
                 self.presence.retain(|_, owner| *owner != relay_id);
             }
         }
+        released
     }
 
     /// The next frame to write to `id`, if any.

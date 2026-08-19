@@ -67,8 +67,18 @@ pub mod consts {
     /// `MAX_CANDIDATES` limits one advertisement, not the number of distinct
     /// addresses an authenticated but malicious peer can name over time. This
     /// cap bounds the state and the scheduler work that peer can cause. When
-    /// full, the oldest unconfirmed candidate is evicted for the new one;
-    /// confirmed paths are retained for the staleness and hysteresis rules.
+    /// full, `PathSet::add_candidate` evicts the oldest unconfirmed candidate,
+    /// falling back to the stalest confirmed path; the path currently in use is
+    /// never evicted.
+    ///
+    /// **A confirmed path is not exempt.** It is stronger evidence and is
+    /// preferred, but exempting it made "answer one probe" the price of a
+    /// permanent slot, which is no price at all to the malicious peer §1.1 puts
+    /// inside the tailnet.
+    ///
+    /// The relay path is the one addition outside this bound: `set_relay`
+    /// keeps at most one entry and it is the last resort every other path is
+    /// measured against, so a peer cannot multiply it.
     pub const MAX_PATHS_PER_PEER: usize = 64;
 
     /// Largest legal datagram: a sixteen-candidate `CallMeMaybe`.
@@ -81,6 +91,29 @@ pub mod consts {
     pub const PING_LEN: usize = HEADER + TX_ID_LEN + MAC_LEN;
     /// `Pong` on the wire.
     pub const PONG_LEN: usize = HEADER + TX_ID_LEN + ENDPOINT_LEN + MAC_LEN;
+
+    /// Zero padding in a `Reflect` — §6.1.
+    ///
+    /// Exactly the width of the `observed` endpoint the answer carries, so a
+    /// request and its reply are the same size. See [`REFLECT_LEN`].
+    pub const REFLECT_PAD_LEN: usize = ENDPOINT_LEN;
+
+    /// `Reflect` on the wire — §6.1.
+    pub const REFLECT_LEN: usize = HEADER + TX_ID_LEN + REFLECT_PAD_LEN + MAC_LEN;
+    /// `Reflection` on the wire — §6.1.
+    pub const REFLECTION_LEN: usize = HEADER + TX_ID_LEN + ENDPOINT_LEN + MAC_LEN;
+
+    /// Reflect key — §5.3. Same width as a disco key; a different secret.
+    pub const REFLECT_KEY_LEN: usize = KEY_LEN;
+
+    // §7.6's amplification argument, asserted rather than asserted-in-prose.
+    // A reflector answers a datagram it did not solicit, so a reply larger than
+    // its request is a contribution to somebody else's attack. `REFLECT_PAD_LEN`
+    // exists solely to hold this equality, and a change to either message that
+    // breaks it must not compile.
+    const _: () = {
+        assert!(REFLECT_LEN == REFLECTION_LEN);
+    };
 
     // Asserted at compile time. Discovery has to be cheap relative to what it
     // is discovering a path for, and it must never need fragmenting — AVEN has
@@ -124,6 +157,29 @@ pub mod consts {
 
     /// A `CallMeMaybe` per peer at most this often — §7.5.
     pub const ADVERTISE_MIN_INTERVAL_MS: u64 = 5_000;
+
+    /// Ask each reflector for our mapped address this often — §7.5, §7.6.
+    ///
+    /// Repeated rather than asked once, because a NAT rebinds: a mapping
+    /// learned at connect time and never refreshed becomes a candidate that
+    /// *used to be* true, which is worse than no candidate, since a stale
+    /// address consumes an advertisement slot and a peer's probe budget.
+    ///
+    /// **Ten seconds, not thirty, and the reason is the kernel rather than the
+    /// protocol.** Linux's `nf_conntrack_udp_timeout` is **30 seconds**, and
+    /// most consumer NATs are in the same range or shorter. Refreshing at the
+    /// timeout is a race with it: the binding sometimes survives and sometimes
+    /// is rebuilt with a different external port, so the address a node
+    /// advertises changes under it while peers are probing the old one. That
+    /// was observed rather than predicted — `tests/tailnet.rs`'s doubly-NATed
+    /// row never converged at thirty seconds, and a packet capture showed the
+    /// mapped port moving between reflections on an otherwise idle flow.
+    ///
+    /// This is the same argument [`KEEPALIVE_MS`] makes for a chosen path, one
+    /// step earlier: a reflexive address is only true while the binding that
+    /// produced it is alive, and the binding's lifetime is not something the
+    /// protocol is told.
+    pub const REFLECT_INTERVAL_MS: u64 = 10_000;
 
     /// Hysteresis: an alternative must beat the chosen path by at least this
     /// much — §8.2.
@@ -203,6 +259,8 @@ mod tests {
         assert_eq!(PONG_LEN, 65);
         assert_eq!(ENDPOINT_LEN, 19);
         assert_eq!(DATAGRAM_MAX, 339);
+        assert_eq!(REFLECT_LEN, 65);
+        assert_eq!(REFLECTION_LEN, 65);
         // The smallest CallMeMaybe, one candidate.
         assert_eq!(HEADER + 1 + ENDPOINT_LEN + MAC_LEN, 54);
     }

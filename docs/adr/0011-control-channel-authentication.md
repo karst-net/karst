@@ -213,12 +213,17 @@ ChaCha20-Poly1305 are all available without a new dependency —
 `crypto/mlkem` and `crypto/hkdf` are Go standard library and
 `golang.org/x/crypto` was already direct.
 
-ML-DSA-65 is not. **Go 1.26 implements it in `crypto/internal/fips140/mldsa`
-and does not export it**; there is no public `crypto/mldsa` and `internal/` is
-unimportable from outside std. `cloudflare/circl` v1.6.5 fills the gap and is
-needed for Bedrock's SLH-DSA-SHA2-192s regardless, since the standard library
-has no SLH-DSA at all. `Signer` and `Verifier` are interfaces precisely so this
-choice stays reversible; see PLAN.md §3.2.
+ML-DSA-65 was not. **Go 1.26 implemented it in `crypto/internal/fips140/mldsa`
+and did not export it**; there was no public `crypto/mldsa` and `internal/` is
+unimportable from outside std. `cloudflare/circl` v1.6.5 filled the gap.
+`Signer` and `Verifier` are interfaces precisely so this choice stayed
+reversible; see PLAN.md §3.2.
+
+**Updated 2026-08-18: reversed, as designed.** Go 1.27 shipped the public
+`crypto/mldsa` and `identity.go` now wraps it; circl left the module. The
+interfaces did their job — the change was one file and nothing above it moved.
+circl returns for Bedrock's SLH-DSA-SHA2-192s, which the standard library still
+has no implementation of.
 
 ---
 
