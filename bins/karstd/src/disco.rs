@@ -950,11 +950,28 @@ impl Disco {
                     .map(|p| p.addr)
                     .collect();
                 if !toward.is_empty() {
+                    // One line when a search begins, because "did it start at
+                    // all" is the first question every failure asks and the
+                    // answer is otherwise invisible. §7.7 runs on a
+                    // thirty-second cadence, so this is not a hot path.
+                    eprintln!(
+                        "karstd: aven port search starting for peer {} toward {:?}",
+                        peer.route_index, toward
+                    );
                     peer.search = Some(Search::new(toward));
                 }
             }
             if let Some(search) = peer.search.as_mut() {
                 if let Some(round) = search.poll(now_ms, &mut mint) {
+                    eprintln!(
+                        "karstd: aven port search peer {} round {} toward {} \
+                         scratch +{} probes {}",
+                        peer.route_index,
+                        search.rounds(),
+                        round.toward,
+                        round.open_scratch,
+                        round.probes.len()
+                    );
                     for _ in 0..round.open_scratch {
                         let bytes = Message::Ping { tx: mint() }.encode(
                             &peer.key,

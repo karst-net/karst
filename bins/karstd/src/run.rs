@@ -878,6 +878,10 @@ fn drain_search_sockets(
         return;
     }
     for arrival in arrivals {
+        eprintln!(
+            "karstd: aven port search arrival for peer {} on socket {} from {}",
+            arrival.route_index, arrival.socket, arrival.from
+        );
         let changes = {
             let mut state = disco
                 .lock()
@@ -891,6 +895,11 @@ fn drain_search_sockets(
         for change in &changes {
             if let disco::PathChange::Install { peer, endpoint } = *change {
                 if peer == arrival.route_index {
+                    eprintln!(
+                        "karstd: aven port search won for peer {peer} at {endpoint}; \
+                         datapath moved to socket {}",
+                        arrival.socket
+                    );
                     search.keep_only(arrival.route_index, arrival.socket, endpoint);
                 }
             }

@@ -427,6 +427,9 @@ impl Shape {
             // an expectation that does not hold is worse than an honest one,
             // and the settle window still catches the failure that matters —
             // a node claiming `direct` over an address that carries nothing.
+            // §7.7 is implemented and does not yet carry this row: the cone
+            // side searches toward the symmetric side's *private* address
+            // because that is the only candidate it ever learns. See PLAN.md.
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }

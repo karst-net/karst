@@ -3249,14 +3249,33 @@ onwards, anchored on the week of 2026-08-10.
   after seven minutes. Row 8's expectation is deliberately **not** flipped —
   an expectation that does not hold is worse than an honest one.
 
-  Two candidate causes, neither yet established. The search may not be starting
-  at all in that topology, which nothing currently reports; or the rotation
-  across a peer's candidates may be spending each round on an address that
-  cannot carry a mapping, since a peer advertises interface addresses beside
-  reflexive ones and nothing distinguishes them once they are in the path set.
-  The first thing this needs is **observability** — a counter for rounds run,
-  sockets held and probes sent, visible in `karst status` — because seven
-  minutes a run is far too slow a loop to debug blind.
+  **Diagnosed 2026-08-19, in one run, by logging what the search does.** Both
+  earlier guesses were wrong. The search starts promptly on both nodes and the
+  rotation across candidates works:
+
+  ```
+  A: port search starting for peer 0 toward [10.98.2.2:51820, 51.75.10.3:51820]
+  A: round 1 toward 10.98.2.2  round 2 toward 51.75.10.3  …
+  B: port search starting for peer 0 toward [10.98.1.2:51820]
+  B: round 1 toward 10.98.1.2  round 2 toward 10.98.1.2  …
+  ```
+
+  **The cone side never learns the symmetric side's outer address.** B's
+  candidate list holds one entry — `10.98.1.2`, A's *private* address — so the
+  easy side spends every round probing an unroutable host and the collision
+  cannot happen however many rounds run. A is doing its half correctly.
+
+  That is not a §7.7 defect. It is a gap in candidate exchange: a node behind a
+  **symmetric** NAT has a reflexive address (§7.6) that is real and knowable,
+  and it is not reaching the peer. Every other row hides this — `SymmetricA`
+  works because the public peer learns A's mapped address from the probe that
+  *arrives* (finding 20's rule) rather than from an advertisement, so the
+  advertisement path for a symmetric node has never been exercised.
+
+  Next is therefore to find out why, which is a question about §7.2 and §7.6
+  rather than about the port search. The instrumentation that produced this is
+  committed and stays: one line when a search starts, one per round, one per
+  arrival.
 
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a
