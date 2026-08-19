@@ -24,7 +24,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use base64ct::{Base64, Encoding as _};
 use karst_relay_proto::consts::{IDENTITY_PK_LEN, ID_LEN};
-use karst_relay_proto::{RelayEntry, Roster, RosterEntry, TailnetId};
+use karst_relay_proto::{AquiferId, RelayEntry, Roster, RosterEntry};
 use serde::Deserialize;
 
 use crate::hub::Id;
@@ -66,8 +66,8 @@ struct File {
 struct ClientRow {
     /// Standard base64 of the 1952-byte ML-DSA-65 identity key.
     identity_pk: String,
-    /// The tailnet this node belongs to. Forwarding is scoped by it (§5.4).
-    tailnet: String,
+    /// The aquifer this node belongs to. Forwarding is scoped by it (§5.4).
+    aquifer: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,7 +198,7 @@ impl FileRoster {
                     id,
                     RosterEntry {
                         identity_pk: pk,
-                        tailnet: TailnetId(row.tailnet.clone()),
+                        aquifer: AquiferId(row.aquifer.clone()),
                     },
                 )
                 .is_some()
@@ -333,14 +333,14 @@ mod tests {
     #[test]
     fn a_listed_client_is_found_by_its_derived_id() {
         let r = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"acme\"\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"acme\"\n",
             key(1)
         ))
         .expect("parses");
 
         let entry = r.client(&node_id(&pk(1))).expect("admitted");
         assert_eq!(entry.identity_pk, pk(1));
-        assert_eq!(entry.tailnet, TailnetId("acme".to_owned()));
+        assert_eq!(entry.aquifer, AquiferId("acme".to_owned()));
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
         // a client's id is not findable in the mesh directory even when the
         // same key appears in both sections.
         let r = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{k}\"\ntailnet = \"acme\"\n\n[[mesh]]\nidentity_pk = \"{k}\"\n",
+            "[[client]]\nidentity_pk = \"{k}\"\naquifer = \"acme\"\n\n[[mesh]]\nidentity_pk = \"{k}\"\n",
             k = key(1)
         ))
         .expect("parses");
@@ -361,29 +361,29 @@ mod tests {
     }
 
     #[test]
-    fn tailnets_are_carried_through() {
+    fn aquifers_are_carried_through() {
         let r = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n\n[[client]]\nidentity_pk = \"{}\"\ntailnet = \"b\"\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"a\"\n\n[[client]]\nidentity_pk = \"{}\"\naquifer = \"b\"\n",
             key(1),
             key(2)
         ))
         .expect("parses");
         assert_eq!(
-            r.client(&node_id(&pk(1))).expect("a").tailnet,
-            TailnetId("a".to_owned())
+            r.client(&node_id(&pk(1))).expect("a").aquifer,
+            AquiferId("a".to_owned())
         );
         assert_eq!(
-            r.client(&node_id(&pk(2))).expect("b").tailnet,
-            TailnetId("b".to_owned())
+            r.client(&node_id(&pk(2))).expect("b").aquifer,
+            AquiferId("b".to_owned())
         );
     }
 
     #[test]
     fn a_repeated_identity_is_an_error() {
-        // Silently keeping the last would make a tailnet reassignment depend
+        // Silently keeping the last would make an aquifer reassignment depend
         // on file order.
         let err = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{k}\"\ntailnet = \"a\"\n\n[[client]]\nidentity_pk = \"{k}\"\ntailnet = \"b\"\n",
+            "[[client]]\nidentity_pk = \"{k}\"\naquifer = \"a\"\n\n[[client]]\nidentity_pk = \"{k}\"\naquifer = \"b\"\n",
             k = key(1)
         ))
         .expect_err("duplicate");
@@ -395,7 +395,7 @@ mod tests {
         // Better here than as a verification failure per connection, which
         // looks identical to a wrong key and is untraceable to the file.
         let err = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"a\"\n",
             Base64::encode_string(&[0u8; 100])
         ))
         .expect_err("short key");
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn a_key_that_is_not_base64_is_refused_at_load() {
         let err = FileRoster::parse(
-            "[[client]]\nidentity_pk = \"not base64 at all!!\"\ntailnet = \"a\"\n",
+            "[[client]]\nidentity_pk = \"not base64 at all!!\"\naquifer = \"a\"\n",
         )
         .expect_err("bad base64");
         assert!(matches!(err, Error::BadKey(_)), "{err:?}");
@@ -448,12 +448,12 @@ mod tests {
     #[test]
     fn a_roster_does_not_print_its_contents() {
         let r = FileRoster::parse(&format!(
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"secret-tailnet\"\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"secret-aquifer\"\n",
             key(1)
         ))
         .expect("parses");
         let rendered = format!("{r:?}");
-        assert!(!rendered.contains("secret-tailnet"), "{rendered}");
+        assert!(!rendered.contains("secret-aquifer"), "{rendered}");
         assert!(!rendered.contains(&key(1)[..32]), "{rendered}");
         assert!(rendered.contains("clients: 1"), "{rendered}");
     }
@@ -466,7 +466,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n",
+                "[[client]]\nidentity_pk = \"{}\"\naquifer = \"a\"\n",
                 key(1)
             ),
         )
@@ -477,7 +477,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n\n[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n",
+                "[[client]]\nidentity_pk = \"{}\"\naquifer = \"a\"\n\n[[client]]\nidentity_pk = \"{}\"\naquifer = \"a\"\n",
                 key(1),
                 key(2)
             ),

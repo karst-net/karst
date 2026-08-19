@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! **A whole tailnet: coordination server, relay, and two daemons.**
+//! **A whole aquifer: coordination server, relay, and two daemons.**
 //!
 //! Everything else in this repository tests a layer, or two layers meeting.
 //! This starts four processes — the Go control server, `karst-relay`, and two
@@ -26,7 +26,7 @@
 //! Needs `CAP_NET_ADMIN` and a Go toolchain, so it is `#[ignore]`d. Run it with:
 //!
 //! ```text
-//! just test-tailnet
+//! just test-aquifer
 //! ```
 
 #![allow(
@@ -150,7 +150,7 @@ fn bin(name: &str) -> String {
 // ── the fixture ─────────────────────────────────────────────────────────────
 
 /// Tears down everything, however the test ended.
-struct Tailnet {
+struct Aquifer {
     dir: PathBuf,
     /// The relay and the coordination server, which run for the whole test.
     services: Vec<Child>,
@@ -161,7 +161,7 @@ struct Tailnet {
     nodes: Vec<(String, Child)>,
 }
 
-impl Drop for Tailnet {
+impl Drop for Aquifer {
     fn drop(&mut self) {
         for c in self
             .nodes
@@ -182,7 +182,7 @@ impl Drop for Tailnet {
     }
 }
 
-impl Tailnet {
+impl Aquifer {
     fn launch(&self, ns: &str, program: &str, args: &[&str], log: &str) -> Child {
         let path = self.dir.join(log);
         let out = std::fs::File::create(&path).expect("log file");
@@ -452,7 +452,7 @@ struct End<'a> {
 }
 
 /// Build the namespaces, and return the addresses the two nodes listen on.
-fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static str) {
+fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static str) {
     for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
@@ -559,7 +559,7 @@ fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static st
 /// on one home network are on one segment — and the distinction is the whole
 /// row. Across two subnets the NAT would merely *forward* between them, which
 /// works trivially and would prove nothing about the case being measured.
-fn build_same_lan(net: &mut Tailnet) -> (&'static str, &'static str) {
+fn build_same_lan(net: &mut Aquifer) -> (&'static str, &'static str) {
     must(&["ip", "netns", "add", NS_NAT_A]);
     must(&nsr(NS_NAT_A, &["ip", "link", "set", "lo", "up"]));
 
@@ -669,7 +669,7 @@ fn public_leg(dev: &str, ns: &str, ip: &str) {
 /// private address directly and reported a direct path no real NAT would allow.
 #[allow(clippy::too_many_arguments)]
 fn nat_in_front_of(
-    net: &mut Tailnet,
+    net: &mut Aquifer,
     tag: &str,
     nat_ns: &str,
     outer: &str,
@@ -927,7 +927,7 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
 /// Start `miniupnpd` on a NAT namespace whose outside address is globally
 /// routable-looking, so PCP and NAT-PMP are actually served.
 fn start_miniupnpd(
-    net: &mut Tailnet,
+    net: &mut Aquifer,
     tag: &str,
     nat_ns: &str,
     out_dev: &str,
@@ -1060,7 +1060,7 @@ struct Pins {
 /// Returns the certificate (which the nodes trust through `relay_ca_file`) and
 /// the relay's ML-DSA-65 public key in hex, which the coordination server
 /// publishes in its registry.
-fn start_relay(net: &mut Tailnet) -> (PathBuf, String) {
+fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
     // Self-signed, which §4.2 makes fine and finding 16 made expressible: this
     // is the deployment `ponor-v1.md` calls the realistic self-hosted one.
     let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
@@ -1078,7 +1078,7 @@ fn start_relay(net: &mut Tailnet) -> (PathBuf, String) {
         use std::fmt::Write as _;
         let _ = write!(
             roster,
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"t1\"\n\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"t1\"\n\n",
             Base64::encode_string(&node_public(seed))
         );
     }
@@ -1120,7 +1120,7 @@ fn start_relay(net: &mut Tailnet) -> (PathBuf, String) {
 }
 
 /// Build and start the Go coordination server, advertising the running relay.
-fn start_server(net: &mut Tailnet, relay_pk: &str) -> Pins {
+fn start_server(net: &mut Aquifer, relay_pk: &str) -> Pins {
     let server_bin = format!("{}/target/karst-testserver", repo());
     let build = Command::new("go")
         .args([
@@ -1195,8 +1195,8 @@ fn start_server(net: &mut Tailnet, relay_pk: &str) -> Pins {
 }
 
 /// Write both daemons' keys and configuration.
-fn write_node_configs(net: &Tailnet, pins: &Pins, ca: &Path, ips: (&str, &str)) {
-    let port_mapping = if std::env::var_os("KARST_TAILNET_DISABLE_PORT_MAPPING").is_some() {
+fn write_node_configs(net: &Aquifer, pins: &Pins, ca: &Path, ips: (&str, &str)) {
+    let port_mapping = if std::env::var_os("KARST_AQUIFER_DISABLE_PORT_MAPPING").is_some() {
         "false"
     } else {
         "true"
@@ -1235,7 +1235,7 @@ fn write_node_configs(net: &Tailnet, pins: &Pins, ca: &Path, ips: (&str, &str)) 
     }
 }
 
-fn start_node(net: &mut Tailnet, tag: &str, ns: &str) {
+fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
     let conf = net.dir.join(tag).join("karstd.toml");
     let sock = net.dir.join(format!("{tag}.sock"));
     let _ = std::fs::remove_file(&sock);
@@ -1254,7 +1254,7 @@ fn start_node(net: &mut Tailnet, tag: &str, ns: &str) {
 }
 
 /// `karst status` from inside a namespace.
-fn status(net: &Tailnet, tag: &str, ns: &str) -> String {
+fn status(net: &Aquifer, tag: &str, ns: &str) -> String {
     let sock = net.dir.join(format!("{tag}.sock"));
     let out = Command::new("ip")
         .args([
@@ -1279,7 +1279,7 @@ fn status(net: &Tailnet, tag: &str, ns: &str) -> String {
 /// status and every log, which is exactly what a person would go looking for.
 /// Finding 18 exists because a silent relay failure was diagnosed by adding a
 /// log line by hand; this is that lesson applied to the harness.
-fn wait_for(net: &Tailnet, what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
+fn wait_for(net: &Aquifer, what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if f() {
@@ -1535,8 +1535,8 @@ fn run(shape: Shape) {
         eprintln!("skipping: needs root and a Go toolchain");
         return;
     }
-    let mut net = Tailnet {
-        dir: std::env::temp_dir().join(format!("karst-tailnet-{}", std::process::id())),
+    let mut net = Aquifer {
+        dir: std::env::temp_dir().join(format!("karst-aquifer-{}", std::process::id())),
         services: Vec::new(),
         nodes: Vec::new(),
     };
@@ -1578,7 +1578,7 @@ fn run(shape: Shape) {
 }
 
 /// Read both nodes' `transport` field at one moment.
-fn transports(net: &Tailnet) -> (Option<String>, Option<String>) {
+fn transports(net: &Aquifer) -> (Option<String>, Option<String>) {
     (
         field(&status(net, "a", NS_A), "transport"),
         field(&status(net, "b", NS_B), "transport"),
@@ -1586,7 +1586,7 @@ fn transports(net: &Tailnet) -> (Option<String>, Option<String>) {
 }
 
 /// Hold the pair to what its topology permits — and only to that.
-fn converge(net: &Tailnet, shape: Shape) {
+fn converge(net: &Aquifer, shape: Shape) {
     match shape.expect() {
         Expect::Direct => {
             let mut saw_relay = false;
@@ -1650,7 +1650,7 @@ fn converge(net: &Tailnet, shape: Shape) {
 /// are all private, so B must be pointing at the mapped address the NAT
 /// assigned — which is what hole punching produces, and the assertion that
 /// would still pass if AVEN had merely copied what it was told.
-fn assert_endpoints(net: &Tailnet, shape: Shape) {
+fn assert_endpoints(net: &Aquifer, shape: Shape) {
     for (tag, ns) in [("a", NS_A), ("b", NS_B)] {
         let s = status(net, tag, ns);
         assert_eq!(field(&s, "state").as_deref(), Some("established"), "{s}");
@@ -1734,7 +1734,7 @@ fn assert_endpoints(net: &Tailnet, shape: Shape) {
 /// Split out because it is the half that finding 17 broke, and because it is
 /// the only part of this test that would still be worth running if discovery
 /// were removed entirely.
-fn exchange_tcp_under_the_acl(net: &mut Tailnet) {
+fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
     // `allowed_ips = ["100.64.0.3/32"]` — the address, without the prefix
     // length, which is what a socket wants.
     let ranges = field(&status(net, "a", NS_A), "allowed_ips").expect("the peer's ranges");

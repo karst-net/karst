@@ -86,7 +86,7 @@ async fn start_relay(tag: &str, nodes: &[&Identity]) -> Running {
         use std::fmt::Write as _;
         let _ = write!(
             roster_text,
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"t1\"\n\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"t1\"\n\n",
             Base64::encode_string(&public_of(id))
         );
     }

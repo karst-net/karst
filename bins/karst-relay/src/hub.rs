@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use karst_relay_proto::consts::ID_LEN;
-use karst_relay_proto::{Admitted, Frame, Reason, Roster, TailnetId};
+use karst_relay_proto::{Admitted, AquiferId, Frame, Reason, Roster};
 
 use crate::limits::{Budget, Meter};
 
@@ -36,7 +36,7 @@ pub struct ConnId(pub u64);
 pub enum Dropped {
     /// Over the peer's rate budget — §7.4.
     RateLimited,
-    /// The destination is not in the roster, or not in this tailnet — §5.4.
+    /// The destination is not in the roster, or not in this aquifer — §5.4.
     NotAdmitted,
     /// Nobody here or on the mesh holds the destination.
     NotHere,
@@ -120,9 +120,9 @@ impl Conn {
             Admitted::Client { .. } => None,
         }
     }
-    fn tailnet(&self) -> Option<&TailnetId> {
+    fn aquifer(&self) -> Option<&AquiferId> {
         match &self.peer {
-            Admitted::Client { tailnet, .. } => Some(tailnet),
+            Admitted::Client { aquifer, .. } => Some(aquifer),
             Admitted::Mesh { .. } => None,
         }
     }
@@ -316,7 +316,7 @@ impl Hub {
         roster: &impl Roster,
     ) -> Option<Dropped> {
         let conn = self.conns.get(&from)?;
-        let (Some(src_id), Some(src_tailnet)) = (conn.node_id(), conn.tailnet().cloned()) else {
+        let (Some(src_id), Some(src_aquifer)) = (conn.node_id(), conn.aquifer().cloned()) else {
             return None;
         };
 
@@ -325,13 +325,13 @@ impl Hub {
             return Some(Dropped::SelfAddressed);
         }
 
-        // §5.4. "Unknown" and "in another tailnet" deliberately produce the
+        // §5.4. "Unknown" and "in another aquifer" deliberately produce the
         // same outcome and the same NOT_ADMITTED code: distinguishing them
         // would tell one tenant whether an id exists in another, which is a
         // cross-customer membership oracle on a shared relay.
         let admitted = roster
             .client(&dst_id)
-            .is_some_and(|e| e.tailnet == src_tailnet);
+            .is_some_and(|e| e.aquifer == src_aquifer);
         if !admitted {
             self.reply(
                 from,
@@ -405,13 +405,13 @@ impl Hub {
         // The originating relay already checked §5.4, and we check it again
         // against our own roster. A meshed relay is other infrastructure, not
         // an oracle we have to believe: re-checking here is what stops a
-        // compromised mesh peer from injecting cross-tailnet traffic, and it
+        // compromised mesh peer from injecting cross-aquifer traffic, and it
         // costs one lookup we were going to do anyway.
-        let same_tailnet = match (roster.client(&src_id), roster.client(&dst_id)) {
-            (Some(s), Some(d)) => s.tailnet == d.tailnet,
+        let same_aquifer = match (roster.client(&src_id), roster.client(&dst_id)) {
+            (Some(s), Some(d)) => s.aquifer == d.aquifer,
             _ => false,
         };
-        if !same_tailnet {
+        if !same_aquifer {
             self.count_undeliverable(from);
             return Some(Dropped::NotAdmitted);
         }
@@ -610,26 +610,26 @@ mod tests {
     use karst_relay_proto::{RelayEntry, RosterEntry};
 
     struct TestRoster {
-        tailnets: HashMap<Id, &'static str>,
+        aquifers: HashMap<Id, &'static str>,
     }
 
     impl TestRoster {
         fn new() -> Self {
             Self {
-                tailnets: HashMap::new(),
+                aquifers: HashMap::new(),
             }
         }
-        fn with(mut self, id: Id, tailnet: &'static str) -> Self {
-            self.tailnets.insert(id, tailnet);
+        fn with(mut self, id: Id, aquifer: &'static str) -> Self {
+            self.aquifers.insert(id, aquifer);
             self
         }
     }
 
     impl Roster for TestRoster {
         fn client(&self, node_id: &Id) -> Option<RosterEntry> {
-            self.tailnets.get(node_id).map(|t| RosterEntry {
+            self.aquifers.get(node_id).map(|t| RosterEntry {
                 identity_pk: vec![0; 1952],
-                tailnet: TailnetId((*t).to_owned()),
+                aquifer: AquiferId((*t).to_owned()),
             })
         }
         fn mesh_peer(&self, _: &Id) -> Option<RelayEntry> {
@@ -644,10 +644,10 @@ mod tests {
         [b; ID_LEN]
     }
 
-    fn client(node: u8, tailnet: &str) -> Admitted {
+    fn client(node: u8, aquifer: &str) -> Admitted {
         Admitted::Client {
             node_id: id(node),
-            tailnet: TailnetId(tailnet.to_owned()),
+            aquifer: AquiferId(aquifer.to_owned()),
         }
     }
 
@@ -760,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn a_relay_does_not_forward_between_tailnets() {
+    fn a_relay_does_not_forward_between_aquifers() {
         // §5.4. Without this a multi-tenant relay is a general-purpose message
         // bus between any two keys it has ever been told about.
         let mut hub = Hub::new(Config::default());
@@ -785,21 +785,21 @@ mod tests {
     }
 
     #[test]
-    fn a_cross_tailnet_destination_is_indistinguishable_from_an_unknown_one() {
+    fn a_cross_aquifer_destination_is_indistinguishable_from_an_unknown_one() {
         // Both must yield NOT_ADMITTED. Telling them apart would let one
         // tenant probe whether an id exists in another, on a shared relay.
         let mut hub = Hub::new(Config::default());
         hub.admit(A, client(0xa1, "t1"), 0);
         let payload = [1u8; 10];
 
-        let other_tailnet = TestRoster::new().with(id(0xa1), "t1").with(id(0xff), "t2");
+        let other_aquifer = TestRoster::new().with(id(0xa1), "t1").with(id(0xff), "t2");
         hub.on_frame(
             A,
             &Frame::SendPacket {
                 dst_id: id(0xff),
                 payload: &payload,
             },
-            &other_tailnet,
+            &other_aquifer,
             0,
         )
         .expect("legal");
@@ -1059,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mesh_peer_cannot_inject_cross_tailnet_traffic() {
+    fn a_mesh_peer_cannot_inject_cross_aquifer_traffic() {
         // The originating relay checks §5.4, and so do we. A meshed relay is
         // other infrastructure, not an oracle we have to believe.
         let mut hub = Hub::new(Config::default());

@@ -177,7 +177,7 @@ Two consequences recorded above therefore change:
 **2. Delta netmap push is new work that this ADR did not cost.** NetBird pushes
 **full** network maps — it optimises fan-out, not payload. At Karst's ~3200 B
 per peer (32 B hint + 1184 B ML-KEM + 1952 B ML-DSA + 32 B PSK, roughly 100×
-NetBird's 32-byte WireGuard key), a 1,000-peer tailnet would push 3.2 MB to
+NetBird's 32-byte WireGuard key), a 1,000-peer aquifer would push 3.2 MB to
 every notified peer on every membership change. Delta push must be built.
 
 The risk profile also **inverted** against prediction: the identity refactor is

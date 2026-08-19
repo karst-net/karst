@@ -46,7 +46,7 @@ carries both the new wording and the original, struck through.
 | 20 | High | Discovery is asymmetric: only the node that probes first gets a path | Fixed 2026-08-18 |
 | 21 | High | Two nodes both behind NATs never get a direct path | Fixed 2026-08-18 |
 | 22 | High | A reflexive address refreshed at the NAT's own timeout is a coin flip | Fixed 2026-08-18 |
-| 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
+| 23 | Medium | The aquifer fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 | 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
@@ -197,7 +197,7 @@ hold even against a NAT that allocates sequentially:
    NOT emit more probe traffic to a peer than that peer has authenticated
    itself to it." A blast of *N* probes on the strength of one `CallMeMaybe`
    violates it, and relaxing it hands an authenticated-but-malicious peer — the
-   one §1.1 explicitly allows inside the tailnet — an *N*-fold amplifier aimed
+   one §1.1 explicitly allows inside the aquifer — an *N*-fold amplifier aimed
    at any address it cares to name.
 
 **What is and is not affected.** A symmetric NAT goes direct against a
@@ -246,7 +246,7 @@ mapping and drop prediction**, rather than to build both.
 
 ### 25. Medium: the NAT matrix was missing the common symmetric/port-restricted pairing
 
-The tailnet fixture covered seven topologies and reported five direct. It had a
+The aquifer fixture covered seven topologies and reported five direct. It had a
 symmetric NAT facing nothing, facing an address-restricted cone, and facing
 another symmetric NAT — but **not facing a port-restricted cone**, which is the
 single most likely real pairing: a CGNAT subscriber talking to somebody on an
@@ -335,7 +335,7 @@ README, 1.88 in `Cargo.toml`) and NetBird described as a possible fork
 
 ### 21. High: two nodes both behind NATs never got a direct path
 
-**Found 2026-08-18** by extending `tests/tailnet.rs` to the topology that is not
+**Found 2026-08-18** by extending `tests/aquifer.rs` to the topology that is not
 exotic: two laptops on two home networks. It is the ordinary deployment and it
 never left the relay. **Fixed the same day** by building `aven-v1.md` §7.6.
 
@@ -416,7 +416,7 @@ anyway.
   defends against is not a keepalive.** It is a race, and it fails
   intermittently, which is the hardest way for it to fail.
 
-### 23. Medium: the tailnet fixture's NAT masqueraded but did not filter
+### 23. Medium: the aquifer fixture's NAT masqueraded but did not filter
 
 **Found 2026-08-18** by packet capture, after finding 22's fix left the pair
 still on the relay. A fixture defect rather than a product one, and recorded
@@ -448,14 +448,14 @@ sending from a different port, and the two directions never met.
 - Why it matters beyond the fixture: **a masquerade rule alone is not a NAT.**
   `crates/karst-disco/tests/nat_matrix.rs` already pins the forwarded half of
   this — *"an unsolicited datagram does not cross"* is what makes a topology a
-  NAT rather than a router — and the tailnet fixture had been built without the
+  NAT rather than a router — and the aquifer fixture had been built without the
   equivalent for traffic addressed to the NAT's own address.
 - With it, the doubly-NATed row converges in ten seconds instead of never.
 
 ### 20. High: only the node that probed first ever got a direct path
 
 **Found and fixed 2026-08-18**, by codifying the live run as
-`bins/karstd/tests/tailnet.rs` — the third defect that test has produced, and
+`bins/karstd/tests/aquifer.rs` — the third defect that test has produced, and
 the second it produced before it first passed.
 
 Nothing learned a candidate from an incoming probe. A node acquired candidates
@@ -480,7 +480,7 @@ untouched and a peer that lies here spends probes and nothing else.
 
 Note the interaction with finding 19, because the two look similar and are not.
 This is about a node that has *no* candidate and no prospect of one; 19 is about
-an advertisement that was sent and lost. The tailnet test catches this one and
+an advertisement that was sent and lost. The aquifer test catches this one and
 does **not** catch 19, because the fixture drops nothing — 19 is carried by
 `karst-disco`'s unit tests, where loss can be expressed. Neither fix subsumes
 the other.
@@ -502,7 +502,7 @@ the relay indefinitely. The ways to miss it are all ordinary:
 
 - The peer had not yet been given the disco key — it enrolled later, so at the
   moment the advertisement was relayed it held no key for the sender and
-  dropped it. **This is what a node joining an existing tailnet does**, and it
+  dropped it. **This is what a node joining an existing aquifer does**, and it
   is exactly what was observed.
 - The peer restarted.
 - The relay was briefly unavailable.
@@ -993,7 +993,7 @@ was passing vacuously — one binding a port a reflector already held, one
 comparing ports across two different ephemeral source ports. Neither was a
 product bug and both would have made the matrix lie.
 
-`bins/karstd/tests/tailnet.rs` was run privileged and passes: the Go
+`bins/karstd/tests/aquifer.rs` was run privileged and passes: the Go
 coordination server, `karst-relay` and two daemons in separate namespaces, from
 first enrolment to a direct path carrying TCP under a port-scoped ACL — in two
 topologies, one flat and one with node A behind a port-restricted cone NAT.

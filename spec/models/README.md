@@ -51,7 +51,7 @@ Queries, per model:
 - **AVEN** — **injective** and non-injective agreement that a node confirms a
   path only if the peer answered, no forgery of probes, and disco-key secrecy.
   The attacker holds a *different* peer's disco key throughout, because a
-  tailnet is not a trust boundary.
+  aquifer is not a trust boundary.
 
 ### Models that must fail
 

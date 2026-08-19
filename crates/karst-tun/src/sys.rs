@@ -1408,7 +1408,7 @@ mod addr_tests {
 
     /// **Bytes from the kernel are still parsed defensively.** A truncated or
     /// malformed dump must cost candidates, never the daemon — this is on the
-    /// control path of a process carrying traffic for a whole tailnet.
+    /// control path of a process carrying traffic for a whole aquifer.
     #[test]
     fn malformed_input_is_rejected_not_panicked_on() {
         let full = {

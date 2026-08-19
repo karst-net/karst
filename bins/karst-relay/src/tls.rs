@@ -147,7 +147,7 @@ pub fn server_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, Error
         .map_err(Error::Rustls)?
         // The relay does not authenticate clients with certificates. It
         // authenticates them with §5.3's roster, after the upgrade, which is
-        // the only mechanism that can express "this node, in this tailnet".
+        // the only mechanism that can express "this node, in this aquifer".
         .with_no_client_auth()
         .with_single_cert(chain, private)
         .map_err(Error::Rustls)?;

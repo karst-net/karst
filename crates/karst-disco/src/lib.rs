@@ -76,7 +76,7 @@ pub mod consts {
     /// **A confirmed path is not exempt.** It is stronger evidence and is
     /// preferred, but exempting it made "answer one probe" the price of a
     /// permanent slot, which is no price at all to the malicious peer §1.1 puts
-    /// inside the tailnet.
+    /// inside the aquifer.
     ///
     /// The relay path is the one addition outside this bound: `set_relay`
     /// keeps at most one entry and it is the last resort every other path is
@@ -173,7 +173,7 @@ pub mod consts {
     /// timeout is a race with it: the binding sometimes survives and sometimes
     /// is rebuilt with a different external port, so the address a node
     /// advertises changes under it while peers are probing the old one. That
-    /// was observed rather than predicted — `tests/tailnet.rs`'s doubly-NATed
+    /// was observed rather than predicted — `tests/aquifer.rs`'s doubly-NATed
     /// row never converged at thirty seconds, and a packet capture showed the
     /// mapped port moving between reflections on an otherwise idle flow.
     ///

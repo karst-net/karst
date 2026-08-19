@@ -26,7 +26,7 @@ test:
 # artefacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
-test-privileged: test-tun test-karstd test-nat-matrix test-portmap test-tailnet
+test-privileged: test-tun test-karstd test-nat-matrix test-portmap test-aquifer
 
 test-tun:
     @just _privileged karst-tun device
@@ -39,13 +39,13 @@ test-karstd:
 #
 # Needs a Go toolchain as well as CAP_NET_ADMIN, and `sudo` resets PATH, so the
 # environment is passed through explicitly rather than relying on it surviving.
-test-tailnet:
+test-aquifer:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --workspace
-    bin=$(cargo test -p karstd --test tailnet --no-run --message-format=json 2>/dev/null \
-          | grep -o "\"executable\":\"[^\"]*tailnet[^\"]*\"" | head -1 | cut -d'"' -f4)
-    [ -n "$bin" ] || { echo "could not locate the tailnet test binary"; exit 1; }
+    bin=$(cargo test -p karstd --test aquifer --no-run --message-format=json 2>/dev/null \
+          | grep -o "\"executable\":\"[^\"]*aquifer[^\"]*\"" | head -1 | cut -d'"' -f4)
+    [ -n "$bin" ] || { echo "could not locate the aquifer test binary"; exit 1; }
     sudo env "PATH=$PATH" "$bin" --ignored --test-threads=1 --nocapture
 
 # The port-mapping codec against miniupnpd, an implementation we did not write
