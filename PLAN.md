@@ -2968,8 +2968,8 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- 🔶 **Full NAT test matrix in CI (§6) — nine `karstd` topologies run end to
-  end, six reach a direct path, and the instrument beneath them is now twelve
+- 🔶 **Full NAT test matrix in CI (§6) — ten `karstd` topologies run end to
+  end, seven reach a direct path, and the instrument beneath them is now twelve
   rows.** NAT64/DNS64 is the only one left unbuilt, and it is blocked on a
   dependency decision rather than on effort (finding 27).
 
@@ -3008,6 +3008,7 @@ onwards, anchored on the week of 2026-08-10.
   | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
   | 8 | symmetric | port-restricted cone | **relay** — and this one is winnable |
   | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
+  | 10 | the **same** NAT, one LAN | the same NAT, one LAN | direct — over private addresses |
 
   Each row is a whole tailnet — Go control server, relay, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
@@ -3031,6 +3032,20 @@ onwards, anchored on the week of 2026-08-10.
   B checks the source *port* as well as the address, and A's probe arrives from
   a port B never sent to. It is also the common real-world pairing, and unlike
   row 6 it is winnable. See the exit discussion below.
+
+  **Row 10 is where the hairpinning result pays off.** Two nodes on one home
+  network both learn a reflexive address, both advertise it, and both probe the
+  NAT's own outer address — which Linux does not loop back. They go direct over
+  the private segment instead, and the row asserts each holds the other's
+  `10.98.1.x` address rather than the NAT's, so a hairpinning NAT could not make
+  it pass for the wrong reason. Deleting the interface tier from `candidates()`
+  fails it after 152 seconds of trying.
+
+  That makes `aven-v1.md` §7.2's interface-address tier **load-bearing rather
+  than decorative**. It is the only tier that works on this topology, so a node
+  advertising reflexive addresses alone — the tempting simplification once §7.6
+  exists, since they work on every other row — would relay two machines on the
+  same desk through the internet.
 
   Row 5 also turned up a pleasing detail. A's reflexive address is a dead
   letter as a destination — B's probe to it is dropped — and it is nonetheless
@@ -3094,8 +3109,8 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *≥ 90% direct-connection rate* — **six of nine topologies, which is 67%,
-  or 75% over the eight where a direct path exists at all.** Both figures are
+  *≥ 90% direct-connection rate* — **seven of ten topologies, which is 70%,
+  or 78% over the nine where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is

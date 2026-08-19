@@ -48,12 +48,13 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 **772 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-twelve-row NAT matrix and **nine end-to-end tailnet topologies** — each one a
+twelve-row NAT matrix and **ten end-to-end tailnet topologies** — each one a
 whole tailnet, and each ending in a TCP conversation under an ACL.
 
 | Node A is behind | Node B is behind | Result |
 |---|---|---|
 | *(nothing)* | *(nothing)* | direct |
+| **same NAT, one LAN** | **same NAT, one LAN** | **direct** — over private addresses |
 | port-restricted cone | *(nothing)* | direct |
 | port-restricted cone | port-restricted cone | direct |
 | symmetric | *(nothing)* | direct |
@@ -63,7 +64,7 @@ whole tailnet, and each ending in a TCP conversation under an ACL.
 | symmetric | port-restricted cone | relay — winnable, unbuilt |
 | all UDP dropped | *(nothing)* | relay, and correctly so |
 
-**Six of nine, and the three that stay relayed are asserted to stay relayed.**
+**Seven of ten, and the three that stay relayed are asserted to stay relayed.**
 A node that advertises an address it is not reachable at is worse than one that
 admits it is relayed, so those rows fail if either end ever reports `direct`.
 
@@ -109,7 +110,7 @@ A security project that advertises only its wins is not trustworthy.
   makes even symmetric-to-symmetric direct. Without a mapping,
   symmetric-to-symmetric is not winnable: published analysis of the alternative
   puts it at 0.01% after twenty seconds.
-- **The ≥90% direct-connection target is not met.** Six of nine topologies,
+- **The ≥90% direct-connection target is not met.** Seven of ten topologies,
   and that denominator is a set of shapes we chose rather than a population
   weighted by how common each NAT is in the field. Three shapes are still
   unbuilt: double NAT, hairpinning, NAT64/DNS64.

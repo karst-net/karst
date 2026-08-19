@@ -64,6 +64,8 @@ const NAT_B_OUTER: &str = "51.75.10.3";
 const IP_A_PRIVATE: &str = "10.98.1.2";
 const NAT_A_INNER: &str = "10.98.1.1";
 const IP_B_PRIVATE: &str = "10.98.2.2";
+/// Node B's address when it shares node A's private segment — [`Shape::SameLan`].
+const IP_B_SAME_LAN: &str = "10.98.1.3";
 const NAT_B_INNER: &str = "10.98.2.1";
 
 const RELAY_PORT: u16 = 8443;
@@ -311,6 +313,24 @@ enum Shape {
     /// mapped address, A learns B from the probe that arrives through it, and
     /// the pair upgrades to a direct path without prediction.
     SymmetricAndMapped,
+    /// **Both nodes behind the same NAT, on one private segment.**
+    ///
+    /// Two laptops on one home network — as ordinary as [`Shape::BothNat`] and
+    /// missing from the matrix until now. The interesting part is that the
+    /// obvious path does *not* work: both nodes learn a reflexive address from
+    /// the relay, both advertise it, and both then probe **the NAT's own outer
+    /// address**, which Linux does not loop back.
+    /// `crates/karst-disco/tests/nat_matrix.rs` pins that separately —
+    /// `a_masquerading_nat_does_not_hairpin`.
+    ///
+    /// So this row goes direct over the **private** addresses, and that is what
+    /// it asserts: each node must end up holding the other's `10.98.1.x`
+    /// address, not the NAT's. It is the row that makes `aven-v1.md` §7.2's
+    /// interface-address tier load-bearing rather than decorative — on this
+    /// topology it is the only tier that works, and a node advertising only
+    /// reflexive addresses would relay two machines on the same desk through
+    /// the internet.
+    SameLan,
     /// Node A behind a NAT that forwards **no UDP at all**; node B public.
     ///
     /// The corporate-firewall case, and the only row that tests the second exit
@@ -400,7 +420,8 @@ impl Shape {
             | Self::BothNat
             | Self::SymmetricA
             | Self::SymmetricAndMapped
-            | Self::SymmetricAndAddressRestricted => Expect::Direct,
+            | Self::SymmetricAndAddressRestricted
+            | Self::SameLan => Expect::Direct,
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }
@@ -446,9 +467,20 @@ fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static st
     let cidr = format!("{IP_PUB}/24");
     must(&nsr(NS_PUB, &["ip", "addr", "add", &cidr, "dev", "ktn-br"]));
 
+    // One NAT with both nodes behind it is a different shape rather than a
+    // different flavour, so it gets its own builder instead of a third arm in
+    // each of the two matches below.
+    if shape == Shape::SameLan {
+        return build_same_lan(net);
+    }
+
     // Node A is behind a NAT in every shape but `Flat`; only the flavour
     // changes.
     let ip_a = match shape {
+        // Handled by `build_same_lan` above, which returns before this match.
+        // Spelled out rather than caught by a wildcard so that adding a shape
+        // is a compile error here, which is how every other arm behaves.
+        Shape::SameLan => unreachable!("same-LAN is built by its own function"),
         Shape::Flat => {
             public_leg("ktn-a", NS_A, IP_A_PUBLIC);
             IP_A_PUBLIC
@@ -484,6 +516,10 @@ fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static st
         }
     };
     let ip_b = match shape {
+        // Handled by `build_same_lan` above, which returns before this match.
+        // Spelled out rather than caught by a wildcard so that adding a shape
+        // is a compile error here, which is how every other arm behaves.
+        Shape::SameLan => unreachable!("same-LAN is built by its own function"),
         Shape::Flat | Shape::NatA | Shape::SymmetricA | Shape::UdpBlocked => {
             public_leg("ktn-b", NS_B, IP_B_PUBLIC);
             IP_B_PUBLIC
@@ -512,6 +548,91 @@ fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static st
         }
     };
     (ip_a, ip_b)
+}
+
+/// Both nodes on one private segment behind a single NAT.
+///
+/// The inside is a bridge rather than two routed subnets, because two laptops
+/// on one home network are on one segment — and the distinction is the whole
+/// row. Across two subnets the NAT would merely *forward* between them, which
+/// works trivially and would prove nothing about the case being measured.
+fn build_same_lan(net: &mut Tailnet) -> (&'static str, &'static str) {
+    must(&["ip", "netns", "add", NS_NAT_A]);
+    must(&nsr(NS_NAT_A, &["ip", "link", "set", "lo", "up"]));
+
+    // Outside: one leg to the public bridge, as every other NATed shape.
+    veth(
+        End {
+            dev: "ktn-ao",
+            ns: NS_NAT_A,
+            ip: Some(NAT_A_OUTER),
+        },
+        End {
+            dev: "ktn-aop",
+            ns: NS_PUB,
+            ip: None,
+        },
+    );
+    must(&nsr(
+        NS_PUB,
+        &["ip", "link", "set", "ktn-aop", "master", "ktn-br"],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "route", "add", "default", "via", IP_PUB],
+    ));
+
+    // Inside: a bridge holding both nodes.
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "link", "add", "ktn-lan", "type", "bridge"],
+    ));
+    must(&nsr(NS_NAT_A, &["ip", "link", "set", "ktn-lan", "up"]));
+    let inner = format!("{NAT_A_INNER}/24");
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "addr", "add", &inner, "dev", "ktn-lan"],
+    ));
+    for (ns, dev, br, ip) in [
+        (NS_A, "ktn-an", "ktn-ai", IP_A_PRIVATE),
+        (NS_B, "ktn-bn", "ktn-bi", IP_B_SAME_LAN),
+    ] {
+        veth(
+            End {
+                dev,
+                ns,
+                ip: Some(ip),
+            },
+            End {
+                dev: br,
+                ns: NS_NAT_A,
+                ip: None,
+            },
+        );
+        must(&nsr(
+            NS_NAT_A,
+            &["ip", "link", "set", br, "master", "ktn-lan"],
+        ));
+        must(&nsr(
+            ns,
+            &["ip", "route", "add", "default", "via", NAT_A_INNER],
+        ));
+    }
+
+    must(&nsr(
+        NS_NAT_A,
+        &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
+    ));
+    let _ = net;
+    nat_rules(
+        NS_NAT_A,
+        "ktn-ao",
+        "ktn-lan",
+        IP_A_PRIVATE,
+        NAT_A_OUTER,
+        Flavour::PortRestrictedCone,
+    );
+    (IP_A_PRIVATE, IP_B_SAME_LAN)
 }
 
 /// Attach a namespace directly to the public bridge.
@@ -1385,6 +1506,27 @@ fn a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay() {
     run(Shape::SymmetricAndPortRestricted);
 }
 
+/// **Two laptops on one home network.**
+///
+/// As ordinary as any row here, and missing until now. Both nodes learn a
+/// reflexive address from the relay, both advertise it, and both then probe the
+/// NAT's own outer address — which does not work, because Linux does not
+/// hairpin (`nat_matrix.rs`'s `a_masquerading_nat_does_not_hairpin` pins that
+/// with no Karst code involved).
+///
+/// The pair goes direct anyway, over the private segment, and the assertion is
+/// that each node holds the other's `10.98.1.x` address. That makes
+/// `aven-v1.md` §7.2's interface-address tier load-bearing rather than
+/// decorative: on this topology it is the **only** tier that works, so a node
+/// advertising reflexive addresses alone — the tempting simplification once
+/// §7.6 exists, since they work on every other row — would relay two machines
+/// on the same desk through the internet.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn two_nodes_on_one_home_network_go_direct_over_the_lan() {
+    run(Shape::SameLan);
+}
+
 fn run(shape: Shape) {
     if !have_prerequisites() {
         eprintln!("skipping: needs root and a Go toolchain");
@@ -1510,6 +1652,30 @@ fn assert_endpoints(net: &Tailnet, shape: Shape) {
         let s = status(net, tag, ns);
         assert_eq!(field(&s, "state").as_deref(), Some("established"), "{s}");
     }
+    if shape == Shape::SameLan {
+        // **The assertion the row exists for.** Both nodes advertise a
+        // reflexive address and both probe the NAT's outer address with it;
+        // neither can work, because Linux does not hairpin. So a direct path
+        // here is proof that the *interface* tier carried it — and holding the
+        // peer's `10.98.1.x` address is what distinguishes that from a hairpin
+        // that happened to work.
+        for (tag, ns, want) in [("a", NS_A, IP_B_SAME_LAN), ("b", NS_B, IP_A_PRIVATE)] {
+            let s = status(net, tag, ns);
+            let endpoint = field(&s, "endpoint").unwrap_or_default();
+            assert!(
+                endpoint.starts_with(want),
+                "node {tag} should hold its peer's private address {want}, not {endpoint}"
+            );
+            assert!(
+                !endpoint.starts_with(NAT_A_OUTER),
+                "node {tag} reached its peer at the NAT's outer address, which \
+                 would mean this NAT hairpins and the row measures something \
+                 else: {endpoint}"
+            );
+        }
+        return;
+    }
+
     if matches!(
         shape,
         Shape::NatA
