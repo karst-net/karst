@@ -2968,8 +2968,8 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- 🔶 **Full NAT test matrix in CI (§6) — eight `karstd` topologies run end to
-  end, five reach a direct path, and the instrument beneath them is now twelve
+- 🔶 **Full NAT test matrix in CI (§6) — nine `karstd` topologies run end to
+  end, six reach a direct path, and the instrument beneath them is now twelve
   rows.** NAT64/DNS64 is the only one left unbuilt, and it is blocked on a
   dependency decision rather than on effort (finding 27).
 
@@ -3007,6 +3007,7 @@ onwards, anchored on the week of 2026-08-10.
   | 6 | symmetric | symmetric | **relay** |
   | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
   | 8 | symmetric | port-restricted cone | **relay** — and this one is winnable |
+  | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
 
   Each row is a whole tailnet — Go control server, relay, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
