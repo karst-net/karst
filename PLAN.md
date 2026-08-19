@@ -3093,8 +3093,8 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *≥ 90% direct-connection rate* — **five of eight topologies, which is 63%,
-  or 71% over the seven where a direct path exists at all.** Both figures are
+  *≥ 90% direct-connection rate* — **six of nine topologies, which is 67%,
+  or 75% over the eight where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is
@@ -3104,7 +3104,22 @@ onwards, anchored on the week of 2026-08-10.
   of which double NAT is the one the third criterion names.
 
   *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
-  CGNAT* — **no, and the criterion is not achievable as written.** Row 6 is
+  CGNAT when at least one NAT offers an explicit port mapping* — **yes, as of
+  2026-08-19.** `bins/karstd/src/portmap.rs` asks the default gateway for a
+  mapping on the datapath port, PCP first and NAT-PMP on fallback, renews
+  against the granted lifetime and re-requests on an epoch restart; the mapped
+  address becomes a fourth and strongest candidate tier (`aven-v1.md` §7.2).
+  The row `a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly`
+  runs two symmetric NATs, one of them serving PCP through `miniupnpd`, and the
+  pair reaches a direct path in about ten seconds. **Checked against the
+  defect**: `KARST_TAILNET_DISABLE_PORT_MAPPING=1` fails that row and the other
+  eight still pass.
+
+  The original wording remains unachievable, and the paragraph below records
+  why it was restated rather than met.
+
+  *The original: a peer behind symmetric CGNAT reaches a peer behind a different
+  symmetric CGNAT, with no mapping on either side* — **no.** Row 6 is
   that case and it stays on the relay. The mechanism this plan named for it is
   port prediction, and FINDINGS.md 24 measures why that does not work: the
   symmetric NATs that matter scatter their external ports with no locality at

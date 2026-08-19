@@ -41,14 +41,14 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
 | `karstd` — node agent | TUN, datapath, stateful packet filter, discovery, relay client |
 | `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
-| `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself |
+| `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
 | `karst-control` — coordination server (Go) | Enrolment, netmap, policy, audit, relay registry |
 | Console / portal (TypeScript) | **not started** |
 | **KarstDNS**, **Bedrock** network lock | **not started** — Phase 5 |
 
 **772 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-nine-row NAT matrix and **eight end-to-end tailnet topologies** — each one a
+twelve-row NAT matrix and **nine end-to-end tailnet topologies** — each one a
 whole tailnet, and each ending in a TCP conversation under an ACL.
 
 | Node A is behind | Node B is behind | Result |
@@ -58,11 +58,12 @@ whole tailnet, and each ending in a TCP conversation under an ACL.
 | port-restricted cone | port-restricted cone | direct |
 | symmetric | *(nothing)* | direct |
 | symmetric | address-restricted cone | direct |
+| symmetric **with a port mapping** | symmetric | **direct** — PCP/NAT-PMP |
 | symmetric | symmetric | relay — not winnable; see below |
 | symmetric | port-restricted cone | relay — winnable, unbuilt |
 | all UDP dropped | *(nothing)* | relay, and correctly so |
 
-**Five of eight, and the three that stay relayed are asserted to stay relayed.**
+**Six of nine, and the three that stay relayed are asserted to stay relayed.**
 A node that advertises an address it is not reachable at is worse than one that
 admits it is relayed, so those rows fail if either end ever reports `direct`.
 
@@ -103,10 +104,12 @@ A security project that advertises only its wins is not trustworthy.
   operator sees the local interface addresses a node advertises.
 - **A symmetric NAT connects to some peers and not others.** Facing a
   publicly-reachable peer or an address-restricted cone, it goes direct. Facing
-  a *port-restricted* cone or another symmetric NAT, it stays relayed. The
-  second of those is not winnable — published analysis of the technique puts it
-  at 0.01% after twenty seconds — and the first is, but is unbuilt.
-- **The ≥90% direct-connection target is not met.** Five of eight topologies,
+  a *port-restricted* cone or another symmetric NAT, it stays relayed — unless
+  one side's gateway offers an explicit port mapping (PCP or NAT-PMP), which
+  makes even symmetric-to-symmetric direct. Without a mapping,
+  symmetric-to-symmetric is not winnable: published analysis of the alternative
+  puts it at 0.01% after twenty seconds.
+- **The ≥90% direct-connection target is not met.** Six of nine topologies,
   and that denominator is a set of shapes we chose rather than a population
   weighted by how common each NAT is in the field. Three shapes are still
   unbuilt: double NAT, hairpinning, NAT64/DNS64.
