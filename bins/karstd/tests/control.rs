@@ -145,6 +145,7 @@ fn local(seed: u8) -> LocalSettings {
         relay_ca_file: None,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),
+        port_mapping: true,
         interface: "karst0".to_owned(),
     }
 }

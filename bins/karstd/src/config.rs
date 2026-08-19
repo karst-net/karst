@@ -150,6 +150,10 @@ pub struct File {
 pub struct NodeSection {
     /// UDP address to bind.
     pub listen: SocketAddr,
+    /// Whether this node should ask its default gateway for an explicit port
+    /// mapping on the datapath port.
+    #[serde(default = "default_port_mapping")]
+    pub port_mapping: bool,
     /// TUN interface name.
     #[serde(default = "default_interface")]
     pub interface: String,
@@ -218,6 +222,9 @@ pub struct ControlSection {
 
 fn default_interface() -> String {
     karst_tun::DEFAULT_NAME.to_owned()
+}
+const fn default_port_mapping() -> bool {
+    true
 }
 const fn default_epoch() -> u32 {
     1
@@ -298,6 +305,8 @@ pub struct Config {
     pub keys: Arc<StaticKeys>,
     /// Where to bind.
     pub listen: SocketAddr,
+    /// Whether explicit NAT port mapping is enabled for this node.
+    pub port_mapping: bool,
     /// TUN interface name.
     pub interface: String,
     /// Interface addresses — host addresses, not networks. See
@@ -340,6 +349,7 @@ impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Config")
             .field("listen", &self.listen)
+            .field("port_mapping", &self.port_mapping)
             .field("interface", &self.interface)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
@@ -424,6 +434,7 @@ impl Config {
         Ok(Self {
             keys,
             listen: file.node.listen,
+            port_mapping: file.node.port_mapping,
             interface: file.node.interface,
             addresses,
             psk_epoch: file.node.psk_epoch,
@@ -520,6 +531,7 @@ impl Config {
         Ok(Self {
             keys: local.keys,
             listen: local.listen,
+            port_mapping: local.port_mapping,
             interface: local.interface,
             addresses,
             psk_epoch: netmap.psk_epoch,
@@ -566,6 +578,8 @@ pub struct LocalSettings {
     pub keys: Arc<StaticKeys>,
     /// Where to bind.
     pub listen: SocketAddr,
+    /// Whether explicit NAT port mapping is enabled for this node.
+    pub port_mapping: bool,
     /// TUN interface name.
     pub interface: String,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
@@ -576,6 +590,7 @@ impl fmt::Debug for LocalSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LocalSettings")
             .field("listen", &self.listen)
+            .field("port_mapping", &self.port_mapping)
             .field("interface", &self.interface)
             .finish_non_exhaustive()
     }
@@ -1174,6 +1189,7 @@ mod netmap_tests {
             relay_ca_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
+            port_mapping: true,
             interface: "karst0".to_owned(),
         }
     }

@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
+use karst_portmap::Protocol;
 use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
 use karst_tun::{Tun, TunConfig};
 
@@ -29,6 +30,7 @@ use crate::config::Config;
 use crate::disco;
 use crate::engine::{Engine, Output, Via};
 use crate::ipc;
+use crate::portmap;
 use crate::random_seed;
 
 /// How often timers are advanced. Handshake retransmission starts at 300 ms
@@ -140,6 +142,7 @@ pub fn run_with_control(
     // reconciliation leaves it empty; a netmap roster immediately seeds its
     // direct endpoints as unconfirmed candidates.
     let disco = Mutex::new(disco::Disco::new(config.psk_epoch));
+    let portmap = portmap::Shared::new(config.port_mapping);
     // The port the socket is *actually* bound to, which is not always the
     // configured one: a node listening on port 0 gets an ephemeral port, and a
     // candidate naming port 0 names nothing.
@@ -196,6 +199,7 @@ pub fn run_with_control(
     let local = || crate::config::LocalSettings {
         keys: Arc::clone(&config.keys),
         listen: config.listen,
+        port_mapping: config.port_mapping,
         interface: config.interface.clone(),
         relay_ca_file: config.relay_ca_file.clone(),
     };
@@ -208,24 +212,27 @@ pub fn run_with_control(
 
     std::thread::scope(|scope| {
         // ── host → tunnel ──────────────────────────────────────────────────
-        scope.spawn(|| {
+        let engine_host = &engine;
+        let socket_host = &socket;
+        let tun_host = &tun;
+        scope.spawn(move || {
             // Big enough for a coalesced read: the kernel may hand back up to
             // 64 KB behind one header.
             let mut buf = vec![0u8; 65_536 + 64];
             let mut packets: Vec<Vec<u8>> = Vec::new();
             while !shutdown.requested() {
-                let Ok(count) = tun.recv_segments(&mut buf, &mut packets) else {
+                let Ok(count) = tun_host.recv_segments(&mut buf, &mut packets) else {
                     continue;
                 };
                 // One `Output` per read rather than per packet, so a coalesced
                 // stream becomes one batched `sendmmsg`.
                 let mut out = Output::default();
                 for packet in packets.iter().take(count) {
-                    let o = engine.outbound(packet, now_ms(started));
+                    let o = engine_host.outbound(packet, now_ms(started));
                     out.datagrams.extend(o.datagrams);
                     out.packets.extend(o.packets);
                 }
-                dispatch(out, &socket, &tun, relay_out);
+                dispatch(out, socket_host, tun_host, relay_out);
             }
         });
 
@@ -261,7 +268,11 @@ pub fn run_with_control(
         }
 
         // ── tunnel → host ──────────────────────────────────────────────────
-        scope.spawn(|| {
+        let disco_rx = &disco;
+        let engine_rx = &engine;
+        let socket_rx = &socket;
+        let tun_rx = &tun;
+        scope.spawn(move || {
             // Allocated once. `recvmmsg` fills as many as have arrived, so a
             // busy link costs one syscall per 32 datagrams instead of 32.
             let mut buffers = vec![[0u8; MAX_DATAGRAM]; BATCH];
@@ -269,7 +280,7 @@ pub fn run_with_control(
             while !shutdown.requested() {
                 // A timeout here is normal and expected — it is what lets this
                 // thread observe a shutdown request.
-                let Ok(count) = socket.recv_batch(&mut buffers, &mut meta) else {
+                let Ok(count) = socket_rx.recv_batch(&mut buffers, &mut meta) else {
                     continue;
                 };
                 for i in 0..count {
@@ -279,14 +290,17 @@ pub fn run_with_control(
                     let Some(datagram) = buf.get(..m.len) else {
                         continue;
                     };
-                    let out = demultiplex(datagram, m.from, now_ms(started), &disco, &engine);
-                    dispatch(out, &socket, &tun, relay_out);
+                    let out = demultiplex(datagram, m.from, now_ms(started), disco_rx, engine_rx);
+                    dispatch(out, socket_rx, tun_rx, relay_out);
                 }
             }
         });
 
         // ── control socket ─────────────────────────────────────────────────
-        scope.spawn(|| {
+        let engine_ctl = &engine;
+        let tun_ctl = &tun;
+        let portmap_state = &portmap;
+        scope.spawn(move || {
             while !shutdown.requested() {
                 match control.accept() {
                     Ok((mut stream, _)) => {
@@ -296,7 +310,15 @@ pub fn run_with_control(
                         // rather than waited on.
                         let _ = stream.set_nonblocking(false);
                         let handled = ipc::serve(&mut stream, |command| {
-                            report(command, config, &engine, tun.mtu(), started, &relay_dropped)
+                            report(
+                                command,
+                                config,
+                                engine_ctl,
+                                tun_ctl.mtu(),
+                                started,
+                                &relay_dropped,
+                                Some(portmap_state.snapshot()),
+                            )
                         });
                         if matches!(handled, Ok(Some(ipc::Command::Down))) {
                             shutdown.request();
@@ -317,16 +339,35 @@ pub fn run_with_control(
         if let Some(client) = control_client {
             // Only `client` is moved; everything else is shared with the other
             // threads, so it is borrowed explicitly rather than captured.
-            let engine = &engine;
-            let socket = &socket;
-            let tun = &tun;
-            let local = &local;
-            let routes = &routes;
-            let disco = &disco;
+            let engine_refresh = &engine;
+            let socket_refresh = &socket;
+            let tun_refresh = &tun;
+            let local_refresh = &local;
+            let routes_refresh = &routes;
+            let disco_refresh = &disco;
             scope.spawn(move || {
                 refresh_netmap(
-                    client, shutdown, engine, socket, tun, started, local, routes, disco, relay_out,
+                    client,
+                    shutdown,
+                    engine_refresh,
+                    socket_refresh,
+                    tun_refresh,
+                    started,
+                    local_refresh,
+                    routes_refresh,
+                    disco_refresh,
+                    relay_out,
                 );
+            });
+        }
+
+        // ── explicit port mapping ──────────────────────────────────────────
+        if config.port_mapping {
+            let disco_pm = &disco;
+            let portmap_state = &portmap;
+            let listen = socket.local_addr().unwrap_or(config.listen);
+            scope.spawn(move || {
+                portmap::run(portmap_state, disco_pm, shutdown, listen, listen_port);
             });
         }
 
@@ -923,6 +964,7 @@ pub fn status_report(config: &Config, engine: &Engine, mtu: usize, uptime_secs: 
         mtu,
         Instant::now(),
         &AtomicU64::new(0),
+        Some(portmap::Snapshot::new(config.port_mapping)),
     )
 }
 
@@ -943,6 +985,7 @@ pub fn bug_report_for_test(
     bug_report(config, engine, mtu, Instant::now(), &AtomicU64::new(0))
 }
 
+#[allow(clippy::too_many_lines)]
 fn report(
     command: ipc::Command,
     config: &Config,
@@ -950,6 +993,7 @@ fn report(
     mtu: usize,
     started: Instant,
     relay_dropped: &AtomicU64,
+    portmap: Option<portmap::Snapshot>,
 ) -> String {
     use std::fmt::Write as _;
 
@@ -973,6 +1017,46 @@ fn report(
             let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
             let _ = writeln!(out, "addresses = {addrs:?}");
             let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+
+            let mapping = portmap.unwrap_or_else(|| portmap::Snapshot::new(config.port_mapping));
+            let _ = writeln!(out, "\n[portmap]");
+            let _ = writeln!(out, "portmap_enabled = {}", mapping.enabled);
+            let _ = writeln!(out, "portmap_state = \"{}\"", mapping.state);
+            let _ = writeln!(
+                out,
+                "portmap_gateway = \"{}\"",
+                mapping
+                    .gateway
+                    .map_or_else(|| "-".to_owned(), |addr| addr.to_string())
+            );
+            let _ = writeln!(
+                out,
+                "portmap_protocol = \"{}\"",
+                mapping.protocol.map_or("-", |protocol| match protocol {
+                    Protocol::NatPmp => "natpmp",
+                    Protocol::Pcp => "pcp",
+                })
+            );
+            let _ = writeln!(
+                out,
+                "portmap_internal = \"{}\"",
+                mapping
+                    .internal
+                    .map_or_else(|| "-".to_owned(), |addr| addr.to_string())
+            );
+            let _ = writeln!(
+                out,
+                "portmap_external = \"{}\"",
+                mapping
+                    .external
+                    .map_or_else(|| "-".to_owned(), |addr| addr.to_string())
+            );
+            if let Some(renews) = mapping.renews_in_seconds() {
+                let _ = writeln!(out, "portmap_renews_in_seconds = {renews}");
+            }
+            if let Some(reason) = mapping.reason {
+                let _ = writeln!(out, "portmap_reason = \"{reason}\"");
+            }
 
             let _ = writeln!(out, "\n[stats]");
             let _ = writeln!(out, "tx_packets = {}", stats.tx_packets);
@@ -1142,7 +1226,17 @@ fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun, relay: Option<&RelayS
                 };
                 match socket.send_batch(rest) {
                     // A short count is normal; resume from where it stopped.
-                    Ok(0) | Err(_) => break,
+                    Ok(0) | Err(_) => {
+                        // A peer may honestly advertise a private address and
+                        // a reachable public one in the same batch. If the
+                        // first `sendmmsg` target is unroutable here, the one
+                        // after it still has to be tried: one dead candidate
+                        // must not suppress the working one beside it.
+                        for (datagram, to) in rest {
+                            let _ = socket.send_to(datagram, *to);
+                        }
+                        break;
+                    }
                     Ok(n) => offset += n,
                 }
             }
@@ -1495,6 +1589,7 @@ mod route_tests {
                 &[0x12; 32],
             )),
             listen: "0.0.0.0:51820".parse().expect("addr"),
+            port_mapping: true,
             interface: "karst0".to_owned(),
             addresses: addresses
                 .iter()

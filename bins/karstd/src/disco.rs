@@ -206,6 +206,9 @@ pub struct Disco {
     /// reflexive address learned from a `Pong` can be folded in without
     /// re-reading the host's interfaces.
     interfaces: Vec<SocketAddr>,
+    /// An explicit external mapping the node's own gateway installed, when it
+    /// has one.
+    explicit_mapping: Option<SocketAddr>,
     /// Reflectors offered over Ponor, by relay node id — §7.6.
     ///
     /// Keyed by relay so a reconnect replaces its own entry: a relay mints a
@@ -234,8 +237,24 @@ impl Disco {
             relay_peers: HashMap::new(),
             epoch,
             interfaces: Vec::new(),
+            explicit_mapping: None,
             reflectors: HashMap::new(),
         }
+    }
+
+    /// Record the mapped external address this node's gateway is holding open.
+    ///
+    /// Unlike a reflexive address, this is not a side effect of other traffic:
+    /// the gateway reserved the port for this node deliberately. It is still a
+    /// candidate rather than a path — §7.2's rule is unchanged — but among the
+    /// reported addresses it is the strongest evidence this node can get about
+    /// itself.
+    pub fn set_explicit_mapping(&mut self, mapping: Option<SocketAddr>) {
+        if self.explicit_mapping == mapping {
+            return;
+        }
+        self.explicit_mapping = mapping;
+        self.republish();
     }
 
     /// Record the reflector a relay offered — `ponor-v1.md` §7.7.
@@ -379,13 +398,15 @@ impl Disco {
 
     /// The candidate list this node advertises, in the order it is offered.
     ///
-    /// **Interface addresses first, reflexive addresses after**, and the
-    /// ordering is the security property rather than a preference. An interface
-    /// address is something this node observed about itself; a reflexive
-    /// address is what a peer *claimed* it saw (§7.2). If the two competed for
-    /// the same sixteen slots on equal terms, a peer sending sixteen fabricated
-    /// `observed` values could push every real address out of the list this
-    /// node sends to *everybody else*.
+    /// **Explicit mappings first, then interface addresses, then reflexive
+    /// ones**, and the ordering is the security property rather than a
+    /// preference. A mapping the gateway is holding open on purpose is the
+    /// strongest evidence a node can gather about itself. An interface address
+    /// is something this node observed directly. A reflexive address is what a
+    /// peer *claimed* it saw (§7.2). If the weaker tiers competed with the
+    /// stronger on equal terms, a peer sending sixteen fabricated `observed`
+    /// values could push every real address out of the list this node sends to
+    /// *everybody else*.
     ///
     /// Among reflexive addresses, the most-reported wins. A node behind one NAT
     /// hears the same mapped address from every peer that answers it, so a
@@ -393,12 +414,13 @@ impl Disco {
     /// there is only one peer there is nothing to cross-check against anyway,
     /// which is why the count decides the order rather than admission.
     ///
-    /// **Three tiers, which are three grades of evidence.** An interface
-    /// address is something this node observed directly. A reflector's report
-    /// (§7.6) comes from a relay the netmap named and this node already trusts
-    /// to carry its traffic. A peer's `Pong.observed` comes from a party §1.1
-    /// explicitly allows to be malicious. The ordering is that ranking, and
-    /// nothing else decides it.
+    /// **Four tiers, which are four grades of evidence.** An explicit mapping
+    /// is the node's gateway naming the port it is keeping open on purpose. An
+    /// interface address is something this node observed directly. A
+    /// reflector's report (§7.6) comes from a relay the netmap named and this
+    /// node already trusts to carry its traffic. A peer's `Pong.observed`
+    /// comes from a party §1.1 explicitly allows to be malicious. The ordering
+    /// is that ranking, and nothing else decides it.
     ///
     /// A reflector's address is not listed again under the peer tier. It is one
     /// address; spending two of sixteen slots on it would cost a real
@@ -419,11 +441,27 @@ impl Disco {
             .filter(|a| !reflected.contains(a))
             .collect();
 
-        self.interfaces
-            .iter()
-            .copied()
-            .chain(reflected.into_iter().take(REFLEXIVE_MAX))
-            .chain(from_peers.into_iter().take(REFLEXIVE_MAX))
+        let mut ordered = Vec::new();
+        let mut push = |addr: SocketAddr| {
+            if !ordered.contains(&addr) {
+                ordered.push(addr);
+            }
+        };
+        if let Some(mapped) = self.explicit_mapping {
+            push(mapped);
+        }
+        for addr in self.interfaces.iter().copied() {
+            push(addr);
+        }
+        for addr in reflected.into_iter().take(REFLEXIVE_MAX) {
+            push(addr);
+        }
+        for addr in from_peers.into_iter().take(REFLEXIVE_MAX) {
+            push(addr);
+        }
+
+        ordered
+            .into_iter()
             .take(karst_disco::consts::MAX_CANDIDATES)
             .map(Endpoint)
             .collect()

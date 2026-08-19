@@ -203,6 +203,16 @@ pub const fn gateway_restarted(previous: u32, current: u32) -> bool {
     current < previous
 }
 
+/// The gateway's epoch, whether the reply was `PublicAddress` or `Map`.
+///
+/// Returns `None` when the datagram is too short to carry one, which is the
+/// same condition [`decode`] rejects on; it is separate so a caller can run the
+/// restart check on a response it is otherwise discarding.
+#[must_use]
+pub fn epoch(datagram: &[u8]) -> Option<u32> {
+    be32(datagram, 4)
+}
+
 /// Whether an address is one a mapping response should never name.
 ///
 /// A gateway that reports a private or unspecified external address has told

@@ -28,6 +28,7 @@ karst-crypto.workspace = true
 karst-disco.workspace = true
 karst-node.workspace = true
 karst-noise.workspace = true
+karst-portmap.workspace = true
 karst-proto.workspace = true
 karst-relay-proto.workspace = true
 karst-transport.workspace = true

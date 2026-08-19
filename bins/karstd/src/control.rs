@@ -623,6 +623,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let local = LocalSettings {
         keys,
         listen: file.node.listen,
+        port_mapping: file.node.port_mapping,
         interface: file.node.interface.clone(),
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
