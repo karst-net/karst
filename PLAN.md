@@ -2970,8 +2970,9 @@ onwards, anchored on the week of 2026-08-10.
   excuse.
 - 🔶 **Full NAT test matrix in CI (§6) — ten `karstd` topologies run end to
   end, seven reach a direct path, and the instrument beneath them is now twelve
-  rows.** NAT64/DNS64 is the only one left unbuilt, and it is blocked on a
-  dependency decision rather than on effort (finding 27).
+  rows.** The instrument is complete: NAT64/DNS64 landed
+  2026-08-19, built from `tayga` plus an ordinary masquerade rather than an
+  out-of-tree kernel module (finding 27).
 
   Three instrument rows added 2026-08-19:
 
@@ -2980,6 +2981,13 @@ onwards, anchored on the week of 2026-08-10.
   | `a_masquerading_nat_does_not_hairpin` | Linux does **not** loop a datagram addressed to its own external address back to the inside |
   | `a_nat_configured_for_hairpinning_rewrites_the_source_too` | …and when configured to, the source is the **external** address, as RFC 4787 REQ-9 requires |
   | `a_carrier_nat_admits_the_reply_it_opened_and_nothing_else` | The CGNAT row filters as well as maps — the half the double-NAT row left out |
+  | `a_nat64_path_carries_ipv6_to_ipv4_and_shares_one_port_space` | An IPv6-only node reaches IPv4, and the path maps **endpoint-independently** |
+
+  **The NAT64 result was not guaranteed and is good news.** One socket
+  addressing two IPv4 hosts is seen at the same external port, so an IPv6-only
+  node's reflexive address is the address every peer sees and §7.6 works on it
+  unchanged. Had it come out endpoint-*dependent*, every IPv6-only node would
+  have been in §7.7's hard class.
 
   **The hairpinning result has a direct consequence for the specification.**
   Two nodes on one home network both learn a reflexive address from the relay
