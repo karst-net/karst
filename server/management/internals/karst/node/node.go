@@ -104,14 +104,13 @@ const (
 	dhPublicKeySize  = 32
 )
 
-// Register records an identity, returning its handle.
+// ValidateRegistration checks the identity and data-plane keys without
+// persisting anything, and returns the handle Register will use.
 //
-// Idempotent: re-registering the same key is a no-op, which is what a node
-// re-running enrolment after losing its local state does. Registering a
-// *different* key under an existing handle is impossible without a SHA-256
-// collision, but it is checked rather than assumed — the cost is one
-// comparison and the alternative is a silent identity takeover.
-func (s *Store) Register(pub []byte, keys DataPlaneKeys) (string, error) {
+// Callers that must authorize an enrolment before making any durable change
+// use this before calling their business layer. Register repeats the check so
+// it remains safe when used directly.
+func ValidateRegistration(pub []byte, keys DataPlaneKeys) (string, error) {
 	if len(pub) != identity.PublicKeySize {
 		return "", fmt.Errorf("%w: %d bytes, want %d", ErrBadPublicKey, len(pub), identity.PublicKeySize)
 	}
@@ -134,11 +133,25 @@ func (s *Store) Register(pub []byte, keys DataPlaneKeys) (string, error) {
 	if len(keys.DhPublicKey) != dhPublicKeySize {
 		return "", fmt.Errorf("%w: dh key is %d bytes, want %d", ErrBadPublicKey, len(keys.DhPublicKey), dhPublicKeySize)
 	}
-	handle := Handle(pub)
+	return Handle(pub), nil
+}
+
+// Register records an identity, returning its handle.
+//
+// Idempotent: re-registering the same key is a no-op, which is what a node
+// re-running enrolment after losing its local state does. Registering a
+// *different* key under an existing handle is impossible without a SHA-256
+// collision, but it is checked rather than assumed — the cost is one
+// comparison and the alternative is a silent identity takeover.
+func (s *Store) Register(pub []byte, keys DataPlaneKeys) (string, error) {
+	handle, err := ValidateRegistration(pub, keys)
+	if err != nil {
+		return "", err
+	}
 	now := time.Now().UTC()
 
 	var existing Identity
-	err := s.db.Where("handle = ?", handle).First(&existing).Error
+	err = s.db.Where("handle = ?", handle).First(&existing).Error
 	switch {
 	case err == nil:
 		if !bytesEqual(existing.PublicKey, pub) {

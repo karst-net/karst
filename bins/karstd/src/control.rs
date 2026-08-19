@@ -363,15 +363,26 @@ impl Client {
     /// Load a cached netmap, so the node can come up while the server is
     /// unreachable.
     ///
-    /// A missing or unreadable cache is **not an error**: it means a cold
-    /// start, which is a normal state. It is reported so an operator can tell a
-    /// cold start from a cache that exists and cannot be opened — the second
-    /// means the sealing key changed, and every subsequent start will do the
-    /// same thing.
+    /// A missing cache is **not an error**: it means a cold start, which is a
+    /// normal state. A cache that exists but cannot be read, opened, or safely
+    /// permission-checked is reported so an operator can distinguish it from a
+    /// cold start.
     pub fn load_cache(&mut self) -> Option<Result<Outcome, Error>> {
         let path = self.cache_file.as_ref()?;
         let seal = self.seal.as_ref()?;
-        let sealed = std::fs::read(path).ok()?;
+        let sealed = match std::fs::read(path) {
+            Ok(sealed) => sealed,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(source) => {
+                return Some(Err(Error::Io {
+                    path: path.clone(),
+                    source,
+                }));
+            }
+        };
+        if let Err(err) = check_permissions(path) {
+            return Some(Err(err));
+        }
 
         let plain = match cache::open(seal, &sealed) {
             Ok(p) => p,
@@ -708,32 +719,95 @@ fn resolve(path: &Path, dir: &Path) -> PathBuf {
 }
 
 /// Write a file only its owner can read, creating it with those permissions
-/// **before** anything is written to it.
+/// **before** anything is written to it, then atomically replacing the old
+/// file.
 ///
 /// The order matters. Creating the file and then tightening the mode leaves a
 /// window in which the secret exists on disk and is world-readable, which is
-/// exactly the window an attacker with local access is waiting for.
+/// exactly the window an attacker with local access is waiting for. Writing a
+/// sibling temporary file also means a crash cannot truncate the previous
+/// cache, and replacement repairs a pre-existing permissive mode.
 fn write_secret(path: &Path, contents: &str) -> Result<(), Error> {
     write_secret_bytes(path, contents.as_bytes())
 }
 
 fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Error> {
     use std::io::Write as _;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        opts.mode(0o600);
-    }
-    let mut f = opts.open(path).map_err(|source| Error::Io {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file_name = path.file_name().ok_or_else(|| Error::Io {
         path: path.to_owned(),
-        source,
+        source: std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "secret path has no file name",
+        ),
     })?;
-    f.write_all(contents).map_err(|source| Error::Io {
-        path: path.to_owned(),
-        source,
-    })
+
+    // `create_new` makes a guessed temporary name harmless. It is deliberately
+    // in the destination directory: rename is atomic only within one
+    // filesystem.
+    let mut temp = None;
+    for _ in 0..16 {
+        let mut name = std::ffi::OsString::from(".");
+        name.push(file_name);
+        name.push(format!(".karst-tmp-{}-", std::process::id()));
+        let mut random = String::with_capacity(24);
+        for byte in nonce() {
+            use std::fmt::Write as _;
+            let _ = write!(random, "{byte:02x}");
+        }
+        name.push(random);
+        let candidate = parent.join(name);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            opts.mode(0o600);
+        }
+        match opts.open(&candidate) {
+            Ok(file) => {
+                temp = Some((candidate, file));
+                break;
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(Error::Io {
+                    path: candidate,
+                    source,
+                });
+            }
+        }
+    }
+    let Some((temp_path, mut file)) = temp else {
+        return Err(Error::Io {
+            path: path.to_owned(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "could not allocate secret temporary file",
+            ),
+        });
+    };
+
+    let result = file.write_all(contents).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(source) = result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(Error::Io {
+            path: temp_path,
+            source,
+        });
+    }
+    if let Err(source) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(Error::Io {
+            path: path.to_owned(),
+            source,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -848,6 +922,55 @@ mod tests {
         assert!(matches!(
             Identity::load_or_create(&path),
             Err(Error::Permissions { .. })
+        ));
+    }
+
+    /// Replacing a cache must not inherit an insecure mode from an older file.
+    /// The fresh sibling is created `0600`, then atomically renamed into place.
+    #[cfg(unix)]
+    #[test]
+    fn overwriting_a_readable_secret_repairs_its_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = Scratch::new("cache-permissions");
+        let path = dir.join("netmap.bin");
+        std::fs::write(&path, b"old secret").expect("seed cache");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        write_secret_bytes(&path, b"new secret").expect("atomic replacement");
+
+        assert_eq!(std::fs::read(&path).expect("read cache"), b"new secret");
+        let mode = std::fs::metadata(&path)
+            .expect("stat cache")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode & 0o077, 0, "cache mode is {mode:04o}");
+    }
+
+    /// A cache holding PSKs is subject to the same read-side permission check
+    /// as the identity key; otherwise a pre-existing `0644` cache leaks until
+    /// the next successful refresh happens to overwrite it.
+    #[cfg(unix)]
+    #[test]
+    fn a_readable_cache_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = Scratch::new("readable-cache");
+        let path = dir.join("netmap.bin");
+        let _ = std::fs::remove_file(dir.join("id.key"));
+        std::fs::write(&path, b"not important: permissions fail first").expect("seed cache");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).expect("chmod");
+        let mut client = Client::new(
+            &section(dir.path(), Some("netmap.bin")),
+            dir.path(),
+            &keys(),
+        )
+        .expect("client");
+
+        assert!(matches!(
+            client.load_cache(),
+            Some(Err(Error::Permissions { .. }))
         ));
     }
 

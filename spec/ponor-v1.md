@@ -250,8 +250,30 @@ unrecognised `relay_id` is rejected, not trusted. A missing relay public key
 stops the connection rather than falling back to the certificate.
 
 Cost, stated plainly: roster distribution becomes a hard operational
-dependency. A relay whose roster is stale rejects nodes that were legitimately
-added since. §13.2 lists the freshness and revocation semantics as open.
+dependency. The following freshness rule is therefore part of admission, not
+an implementation detail:
+
+- A relay MUST poll its trusted local roster source at least every **5 seconds**.
+  The distributor MUST publish it by atomic replacement in the roster's
+  directory; a replacement with unchanged membership is still a freshness
+  renewal.
+- A successfully parsed replacement becomes the complete roster atomically.
+  New handshakes use it immediately. Existing client and mesh connections that
+  are absent from it, or whose client tailnet changed, MUST receive
+  `Close(NOT_ADMITTED)` and be removed from presence before they can forward
+  another frame.
+- A malformed or unreadable replacement MUST NOT replace the last valid
+  roster, but it MUST NOT renew its lease either. If no valid replacement has
+  been accepted for **90 seconds**, the relay MUST replace its active roster
+  with the empty roster and disconnect every admitted connection. A later valid
+  replacement restores admission without a process restart.
+
+This is intentionally fail-closed after a bounded grace period. An
+uninterrupted stale roster is an uninterrupted authorization grant, so keeping
+it forever would make revocation advisory. The distributor's availability is
+therefore a data-plane dependency after 90 seconds; operators who need a
+longer outage budget must run redundant roster distribution, not relax the
+relay into failing open.
 
 ### 5.4 Tailnet scoping
 
@@ -765,12 +787,11 @@ somewhere else.
 
 1. **No external review.** As with the other two specs, the largest gap. A
    symbolic model says nothing about implementation behaviour.
-2. **Roster freshness and revocation are unspecified.** §5.3 makes the roster
-   load-bearing and then says nothing about how stale it may be, how a
-   revocation propagates, or what a relay does when it cannot reach the
-   coordination server. A relay that fails open on a stale roster undoes §5.3
-   entirely; one that fails closed is a coordination-server outage that becomes
-   a data-plane outage. This is the most consequential thing left open.
+2. **Roster provenance is not yet independently verifiable.** §5.3 now bounds
+   freshness and revocation at the trusted local roster source, but this draft
+   does not yet define a coordination-server signature, issued timestamp, or
+   key-rotation format for that file. Until it does, the roster distributor and
+   its file permissions are part of the relay's trusted computing base.
 3. **The handshake's authentication does not extend to the frames after it.**
    Ponor derives no session key, so once §7.1 completes there is nothing
    protecting the frame stream but TLS. An attacker past TLS — a hostile

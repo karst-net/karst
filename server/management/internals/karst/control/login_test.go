@@ -311,6 +311,80 @@ func TestBusinessLayerErrorPropagates(t *testing.T) {
 	}
 }
 
+// A refused enrolment must not create an identity row. In particular, the
+// control handshake proved the identity key before this point, but possession
+// of that key is not authorization to consume durable server state.
+func TestRejectedLoginDoesNotPersistAnIdentity(t *testing.T) {
+	accounts := &fakeAccounts{err: errors.New("invalid setup key")}
+	db, err := gorm.Open(sqlite.Open("file:login-rejected-identity?mode=memory&cache=shared"),
+		&gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	nodes, err := node.NewStore(db)
+	if err != nil {
+		t.Fatalf("node store: %v", err)
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	h := &control.LoginHandler{Nodes: nodes, Accounts: accounts}
+
+	if _, err := h.Handle(context.Background(), nil, key.Public(), loginRequest(t, "h")); err == nil {
+		t.Fatal("a rejected login reported success")
+	}
+	if _, err := nodes.Get(node.Handle(key.Public())); !errors.Is(err, node.ErrUnknownNode) {
+		t.Fatalf("rejected login persisted an identity: %v", err)
+	}
+}
+
+// The same ordering protects an established node: a rejected attempt to
+// rotate keys must leave the keys currently serving its peers untouched.
+func TestRejectedLoginDoesNotRotateDataPlaneKeys(t *testing.T) {
+	accounts := &fakeAccounts{err: errors.New("invalid setup key")}
+	db, err := gorm.Open(sqlite.Open("file:login-rejected-rotation?mode=memory&cache=shared"),
+		&gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	nodes, err := node.NewStore(db)
+	if err != nil {
+		t.Fatalf("node store: %v", err)
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	old := node.DataPlaneKeys{KemPublicKey: validKemKey(0x11), DhPublicKey: bytes.Repeat([]byte{0x22}, 32)}
+	handle, err := nodes.Register(key.Public(), old)
+	if err != nil {
+		t.Fatalf("seed identity: %v", err)
+	}
+
+	req := &proto.KarstLoginRequest{
+		SetupKey:     "REJECTED",
+		Meta:         &proto.PeerSystemMeta{Hostname: "h"},
+		KemPublicKey: validKemKey(0x33),
+		DhPublicKey:  bytes.Repeat([]byte{0x44}, 32),
+	}
+	payload, err := pb.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h := &control.LoginHandler{Nodes: nodes, Accounts: accounts}
+	if _, err := h.Handle(context.Background(), nil, key.Public(), payload); err == nil {
+		t.Fatal("a rejected login reported success")
+	}
+	got, err := nodes.Get(handle)
+	if err != nil {
+		t.Fatalf("get identity: %v", err)
+	}
+	if !bytes.Equal(got.KemPublicKey, old.KemPublicKey) || !bytes.Equal(got.DhPublicKey, old.DhPublicKey) {
+		t.Fatal("rejected login rotated data-plane keys")
+	}
+}
+
 // Garbage inside an otherwise valid envelope must not reach the business
 // layer. The envelope authenticates the sender; it says nothing about whether
 // the payload parses.

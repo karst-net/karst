@@ -28,22 +28,22 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use karst_relay_proto::consts::{
     FRAME_HEADER, FRAME_PAYLOAD_MAX, HANDSHAKE_TIMEOUT_SECS, IDLE_TIMEOUT_SECS,
 };
-use karst_relay_proto::{frame::decode, Admitted, Frame, Reason, RelayHandshake};
+use karst_relay_proto::{frame::decode, Admitted, Frame, Reason, RelayHandshake, Roster};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 
 use crate::config::Config;
 use crate::http;
 use crate::hub::{ConnId, Hub};
 use crate::reflect::Reflector;
-use crate::roster::FileRoster;
+use crate::roster::{FileRoster, Source as RosterSource};
 use crate::sign::{Identity, PonorVerifier};
 use crate::tls;
 
@@ -57,6 +57,8 @@ const CHUNK: usize = 8192;
 /// faster than the decoder consumes, which for a protocol with no frame larger
 /// than 4 KB means it is not speaking Ponor.
 const READ_BUF_MAX: usize = FRAME_HEADER + FRAME_PAYLOAD_MAX + 2 * CHUNK;
+/// How often the trusted roster file is polled for an atomic replacement.
+const ROSTER_POLL: Duration = Duration::from_secs(5);
 
 // Asserted at compile time rather than in a test, so a future change to any of
 // the three constants cannot produce a relay that stalls a valid peer.
@@ -84,7 +86,8 @@ struct Shared {
 /// fields stay private.
 pub struct Ctx {
     shared: Mutex<Shared>,
-    roster: Arc<FileRoster>,
+    roster: RwLock<Arc<FileRoster>>,
+    roster_updates: watch::Sender<u64>,
     identity: Arc<Identity>,
     tls: Arc<rustls::ServerConfig>,
     started: Instant,
@@ -122,12 +125,14 @@ impl Ctx {
         roster: Arc<FileRoster>,
         tls: Arc<rustls::ServerConfig>,
     ) -> Arc<Self> {
+        let (roster_updates, _) = watch::channel(0);
         Arc::new(Self {
             shared: Mutex::new(Shared {
                 hub: Hub::new(cfg.hub()),
                 wakers: HashMap::new(),
             }),
-            roster,
+            roster: RwLock::new(roster),
+            roster_updates,
             identity,
             tls,
             started: Instant::now(),
@@ -214,6 +219,36 @@ impl Ctx {
         };
         f(&mut g.hub)
     }
+
+    fn roster(&self) -> Arc<FileRoster> {
+        match self.roster.read() {
+            Ok(roster) => Arc::clone(&roster),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    /// Install a complete, already-validated roster and wake every connection.
+    ///
+    /// A reload is an admission boundary: existing clients removed from it (or
+    /// moved to another tailnet) are closed, not grandfathered in.
+    pub fn replace_roster(&self, roster: FileRoster) {
+        match self.roster.write() {
+            Ok(mut current) => *current = Arc::new(roster),
+            Err(poisoned) => *poisoned.into_inner() = Arc::new(roster),
+        }
+        self.roster_updates
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+    }
+
+    fn remains_admitted(&self, admitted: &Admitted) -> bool {
+        let roster = self.roster();
+        match admitted {
+            Admitted::Client { node_id, tailnet } => roster
+                .client(node_id)
+                .is_some_and(|entry| entry.tailnet == *tailnet),
+            Admitted::Mesh { relay_id } => roster.mesh_peer(relay_id).is_some(),
+        }
+    }
 }
 
 /// Run the relay until the process is asked to stop.
@@ -223,7 +258,8 @@ impl Ctx {
 /// load, a roster that will not parse, an address already in use.
 pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let identity = Arc::new(Identity::load_or_create(&cfg.identity_key)?);
-    let roster = Arc::new(FileRoster::load(&cfg.roster)?);
+    let (roster_source, roster) = RosterSource::open(&cfg.roster)?;
+    let roster = Arc::new(roster);
     let tls_config = tls::server_config(&cfg.tls_cert, &cfg.tls_key)?;
 
     let provider = tls::provider()?;
@@ -238,6 +274,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     let ctx = Ctx::new(cfg, identity, roster, tls_config);
+    tokio::spawn(roster_loop(roster_source, Arc::clone(&ctx)));
 
     if let Some(r) = &cfg.reflect {
         // Bound before the TCP listener, and fatal if it fails. A relay
@@ -256,6 +293,32 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
 
     let listener = TcpListener::bind(cfg.listen).await?;
     serve_on(listener, ctx).await
+}
+
+/// Keep admission current without making a relay restart an availability
+/// dependency. Invalid replacements never become active; a missing refresh
+/// eventually does, by replacing the roster with one that admits nobody.
+async fn roster_loop(mut source: RosterSource, ctx: Arc<Ctx>) {
+    let mut poll = tokio::time::interval(ROSTER_POLL);
+    poll.tick().await; // interval's first tick is immediate; do not reload twice at start.
+    let mut failed_closed = false;
+    loop {
+        poll.tick().await;
+        match source.reload() {
+            Ok(Some(roster)) => {
+                ctx.replace_roster(roster);
+                failed_closed = false;
+                eprintln!("karst-relay: roster reloaded");
+            }
+            Ok(None) => {}
+            Err(err) => eprintln!("karst-relay: roster reload failed: {err}"),
+        }
+        if source.expired() && !failed_closed {
+            eprintln!("karst-relay: roster lease expired; admitting nobody until a valid reload");
+            ctx.replace_roster(FileRoster::empty());
+            failed_closed = true;
+        }
+    }
 }
 
 /// Answer `Reflect` datagrams — `aven-v1.md` §7.6.
@@ -412,7 +475,8 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
     loop {
         let outcome = match decode(&buf) {
             Ok(Some((frame, used))) => {
-                let r = hs.on_client_auth(&frame, &*ctx.roster, &PonorVerifier, &*ctx.identity);
+                let roster = ctx.roster();
+                let r = hs.on_client_auth(&frame, &*roster, &PonorVerifier, &*ctx.identity);
                 Some((r, used))
             }
             Ok(None) => None,
@@ -452,7 +516,7 @@ async fn drive(
             Err(p) => p.into_inner(),
         };
         g.wakers.insert(id, Arc::clone(&notify));
-        g.hub.admit(id, admitted, ctx.now_ms())
+        g.hub.admit(id, admitted.clone(), ctx.now_ms())
     };
     // §7.6: newest wins. The old connection is told why and drains.
     if let Some(old) = replaced {
@@ -461,6 +525,7 @@ async fn drive(
     ctx.wake_dirty();
 
     let idle = Duration::from_secs(IDLE_TIMEOUT_SECS);
+    let mut roster_updates = ctx.roster_updates.subscribe();
     let mut deadline = tokio::time::Instant::now() + idle;
     let mut chunk = [0u8; CHUNK];
 
@@ -487,12 +552,21 @@ async fn drive(
                     break; // not speaking Ponor
                 }
                 deadline = tokio::time::Instant::now() + idle;
-                if !consume(&mut buf, id, &ctx) {
+                if !consume(&mut buf, id, &admitted, &ctx) {
                     break;
                 }
                 ctx.wake_dirty();
             }
             () = notify.notified() => {}
+            changed = roster_updates.changed() => {
+                if changed.is_err() || !ctx.remains_admitted(&admitted) {
+                    // A known member learning that it was revoked is allowed
+                    // this reason; §10's uniform silence is only for the
+                    // unauthenticated handshake.
+                    ctx.with_hub(|hub| hub.begin_close(id, Some(Reason::NotAdmitted)));
+                    ctx.wake_dirty();
+                }
+            }
             () = tokio::time::sleep_until(deadline) => {
                 // §7.5: three missed keepalives.
                 break;
@@ -532,8 +606,11 @@ async fn drive(
 /// Decode and dispatch every whole frame in `buf`.
 ///
 /// Returns whether the connection may continue.
-fn consume(buf: &mut Vec<u8>, id: ConnId, ctx: &Arc<Ctx>) -> bool {
+fn consume(buf: &mut Vec<u8>, id: ConnId, admitted: &Admitted, ctx: &Arc<Ctx>) -> bool {
     loop {
+        if !ctx.remains_admitted(admitted) {
+            return false;
+        }
         let now = ctx.now_ms();
         let step = match decode(buf) {
             Ok(Some((frame, used))) => {
@@ -541,7 +618,8 @@ fn consume(buf: &mut Vec<u8>, id: ConnId, ctx: &Arc<Ctx>) -> bool {
                     Ok(g) => g,
                     Err(p) => p.into_inner(),
                 };
-                Some((g.hub.on_frame(id, &frame, &*ctx.roster, now), used))
+                let roster = ctx.roster();
+                Some((g.hub.on_frame(id, &frame, &*roster, now), used))
             }
             Ok(None) => None,
             // §10: a malformed frame means tampering or a bug on an ordered,

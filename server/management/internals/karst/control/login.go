@@ -66,24 +66,24 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 		return nil, status.Error(codes.FailedPrecondition, "peer system meta is required")
 	}
 
-	// The node's PHREATIC keys are recorded here because peers cannot
-	// handshake without them, and the netmap is how they are distributed
-	// (phreatic-v1.md §4). Rejecting a login without them is deliberate: a
-	// node registered with no data-plane keys is one that every other node
-	// would silently skip when building its netmap, which presents as
-	// "the peer never appears" rather than as a registration error.
-	handle, err := h.Nodes.Register(identity, node.DataPlaneKeys{
+	// Validate before authorization, but do not persist yet. Invalid keys must
+	// not create a business-layer peer record; conversely, an authorization
+	// failure must not leave an orphan identity or rotate an existing node's
+	// data-plane keys (FINDINGS.md #2).
+	//
+	// The node's PHREATIC keys are recorded only after enrolment because peers
+	// cannot handshake without them, and the netmap is how they are distributed
+	// (phreatic-v1.md §4).
+	keys := node.DataPlaneKeys{
 		KemPublicKey: req.GetKemPublicKey(),
 		DhPublicKey:  req.GetDhPublicKey(),
-	})
+	}
+	handle, err := node.ValidateRegistration(identity, keys)
 	if err != nil {
-		if errors.Is(err, node.ErrKeyMismatch) {
-			return nil, status.Error(codes.PermissionDenied, "identity does not match this handle")
-		}
 		if errors.Is(err, node.ErrBadPublicKey) {
 			return nil, status.Errorf(codes.InvalidArgument, "data-plane keys: %v", err)
 		}
-		return nil, fmt.Errorf("register identity: %w", err)
+		return nil, fmt.Errorf("validate identity: %w", err)
 	}
 
 	// An ID token, when present, decides the user. It is checked *before*
@@ -111,6 +111,15 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Authorization succeeded. It is now safe to create the Karst-owned
+	// identity record or rotate its data-plane keys.
+	if _, err := h.Nodes.Register(identity, keys); err != nil {
+		if errors.Is(err, node.ErrKeyMismatch) {
+			return nil, status.Error(codes.PermissionDenied, "identity does not match this handle")
+		}
+		return nil, fmt.Errorf("register identity: %w", err)
 	}
 
 	resp := &proto.KarstLoginResponse{

@@ -19,7 +19,8 @@
 //! for reasons no log line explains.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use base64ct::{Base64, Encoding as _};
 use karst_relay_proto::consts::{IDENTITY_PK_LEN, ID_LEN};
@@ -85,6 +86,63 @@ pub struct FileRoster {
     clients: HashMap<Id, RosterEntry>,
     mesh: HashMap<Id, RelayEntry>,
     decoy: Vec<u8>,
+}
+
+/// A roster file watched by the relay's reload loop.
+///
+/// The source intentionally treats an atomically replaced file with identical
+/// content as a refresh. Revocation safety depends on the distribution agent
+/// proving that it is still alive, not merely on whether membership changed.
+#[derive(Debug)]
+pub struct Source {
+    path: PathBuf,
+    fingerprint: Fingerprint,
+    last_valid: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fingerprint {
+    contents: Vec<u8>,
+    modified: Option<SystemTime>,
+}
+
+/// A roster must be renewed within this interval or the relay fails closed.
+pub const MAX_AGE: Duration = Duration::from_secs(90);
+
+impl Source {
+    /// Load the first roster and start its freshness lease.
+    pub fn open(path: &Path) -> Result<(Self, FileRoster), Error> {
+        let (roster, fingerprint) = load_with_fingerprint(path)?;
+        Ok((
+            Self {
+                path: path.to_owned(),
+                fingerprint,
+                last_valid: Instant::now(),
+            },
+            roster,
+        ))
+    }
+
+    /// Parse a replacement only when the file changed.
+    ///
+    /// A syntax or I/O failure leaves the last valid roster and its lease
+    /// untouched. The caller therefore continues safely for at most
+    /// [`MAX_AGE`], then replaces admission with an empty roster.
+    pub fn reload(&mut self) -> Result<Option<FileRoster>, Error> {
+        let (roster, fingerprint) = load_with_fingerprint(&self.path)?;
+        if fingerprint == self.fingerprint {
+            return Ok(None);
+        }
+        self.fingerprint = fingerprint;
+        self.last_valid = Instant::now();
+        Ok(Some(roster))
+    }
+
+    /// Whether the last successfully parsed roster is too old to trust.
+    #[must_use]
+    pub fn expired(&self) -> bool {
+        self.last_valid.elapsed() >= MAX_AGE
+    }
 }
 
 impl std::fmt::Debug for FileRoster {
@@ -180,6 +238,15 @@ impl FileRoster {
     pub fn mesh_count(&self) -> usize {
         self.mesh.len()
     }
+}
+
+fn load_with_fingerprint(path: &Path) -> Result<(FileRoster, Fingerprint), Error> {
+    let contents = std::fs::read(path).map_err(Error::Io)?;
+    let text = std::str::from_utf8(&contents)
+        .map_err(|e| Error::Syntax(format!("roster: file is not UTF-8: {e}")))?;
+    let roster = FileRoster::parse(text)?;
+    let modified = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    Ok((roster, Fingerprint { contents, modified }))
 }
 
 impl Roster for FileRoster {
@@ -379,5 +446,36 @@ mod tests {
         assert!(!rendered.contains("secret-tailnet"), "{rendered}");
         assert!(!rendered.contains(&key(1)[..32]), "{rendered}");
         assert!(rendered.contains("clients: 1"), "{rendered}");
+    }
+
+    #[test]
+    fn a_changed_roster_reloads_without_restarting_the_relay() {
+        let dir = std::env::temp_dir().join(format!("karst-roster-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("roster.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n",
+                key(1)
+            ),
+        )
+        .expect("write first roster");
+        let (mut source, first) = Source::open(&path).expect("open");
+        assert_eq!(first.client_count(), 1);
+
+        std::fs::write(
+            &path,
+            format!(
+                "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n\n[[client]]\nidentity_pk = \"{}\"\ntailnet = \"a\"\n",
+                key(1),
+                key(2)
+            ),
+        )
+        .expect("replace roster");
+        let second = source.reload().expect("reload").expect("changed");
+        assert_eq!(second.client_count(), 2);
+        assert!(source.reload().expect("unchanged").is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

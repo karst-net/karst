@@ -204,6 +204,70 @@ per rekey.
 | `seq` | Monotonic per direction, and the nonce input |
 | `version` | 1 |
 
+### 5.4 Network-map delivery
+
+`KarstNetmapRequest` asks for the caller's current map. `known_version = 0`
+means that the caller holds no map; any other value is the content hash in
+§5.5. A matching value produces an `unchanged` response with no replacement
+content. A non-matching response is either a complete replacement or a delta;
+the `delta` flag, not an empty peer list, distinguishes those cases. On a
+complete replacement the node MUST discard every peer absent from `peers`; on a
+delta it MUST apply `peers` and `removed_peers` to the map it already holds.
+
+Each `KarstNetmapPeer` contains its routable identity material, current and
+previous PHREATIC PSKs, and these additional fields:
+
+| Field | Wire field | Meaning |
+|---|---:|---|
+| `disco_key` | 9 | 32-byte AVEN per-pair path-discovery key for this peer at `psk_epoch` |
+| `psk_previous` | 8 | PHREATIC PSK at `psk_epoch - 1`; empty at epoch zero |
+
+`disco_key` is derived independently of the PHREATIC PSK and travels only in
+the encrypted control-plane envelope. An empty value disables discovery for
+that peer; the node MUST retain or use a relay path rather than treating it as
+a zero key.
+
+`KarstNetmapResponse.relays` (wire field 13) is the ordered registry of Ponor
+relays available to the node. Each `KarstRelay` has `address`, 32-byte
+`relay_id`, the relay's 1952-byte ML-DSA-65 `identity_key`, optional `region`,
+and `tls_server_name`. The latter is used only for TLS SNI and certificate
+validation; the node MUST pin `identity_key` and check `relay_id` during the
+Ponor handshake (`ponor-v1.md` §4.2). A non-unchanged response replaces the
+registry wholesale, including with an empty registry.
+
+### 5.5 Network-map version
+
+`version` is the leading eight bytes, interpreted big-endian, of SHA-256 over
+the map's canonical content. Zero is remapped to one because zero means "I
+hold no netmap" in a request. Let `LP(x)` be a four-byte big-endian length of
+`x` followed by `x`. The hash input is, in order:
+
+```
+"karst-netmap-version-v1" || BE32(psk_epoch) ||
+LP(node_id) || LP(dns_name) || LP(addresses[0]) || ... ||
+each peer's LP(node_id, kem_public_key, dh_public_key, dns_name, endpoint,
+               allowed_ips[0], ...) ||
+each ingress filter rule's LP(sources..., BE32(first) || BE32(last), ...) ||
+LP("karst-egress-filter") ||
+each egress filter rule's LP(destinations..., BE32(first) || BE32(last), ...) ||
+LP("karst-relays") ||
+each relay's LP(address, tls_server_name, relay_id, identity_key, region)
+```
+
+Repeated values are encoded in their transmitted order; that order is therefore
+part of the map content. The PSK, previous PSK, and `disco_key` bytes are
+deliberately excluded: each is secret material determined by a pair and epoch,
+and `psk_epoch` already makes an epoch rotation move the version. Relay fields
+are included so that a node holding an old relay registry cannot be told that
+its map is unchanged. The `"karst-relays"` separator is load-bearing: it makes
+an empty relay registry part of the construction and prevents a future relay
+encoding from being ambiguous with the preceding egress-filter sequence.
+
+**Compatibility note (2026-08-18).** The relay separator and relay entries
+were added to this construction after the original vectors. Consequently all
+pre-change `netmap_version` values are intentionally incompatible; the
+regenerated vectors record the new construction.
+
 ---
 
 ## 6. Key schedule

@@ -9,29 +9,28 @@ This report records defects found by tracing implementation paths and their
 tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
-Six of the nine original findings are closed. The re-review and the Phase 4
-work that followed it added fourteen more, and eleven of those are closed too —
+All nine original findings are closed. The re-review and the Phase 4
+work that followed it added fourteen more, and all fourteen of those are closed —
 most of them found by building the thing the finding above them asked for.
 
-**Three remain open: 2, 8 and 13.** None of them blocks Phase 4: 13 is
-documentation debt this phase added to, and the other two are unrelated to it.
-Finding 21, which did block the phase's exit criterion, is closed.
+**No findings remain open.** Finding 21, which did block the phase's exit
+criterion, is closed.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | 1 | Critical | Netmap cache sealed with a public-derived key | Fixed 2026-08-15 |
-| 2 | High | Identity persistence precedes enrolment authorization | **Open** |
+| 2 | High | Identity persistence precedes enrolment authorization | Fixed 2026-08-18 |
 | 3 | High | AVEN candidate state unbounded | Fixed 2026-08-18 |
 | 4 | High | AVEN never selects a confirmed path | Fixed 2026-08-16 |
 | 5 | High | The AVEN integration is not driven by the daemon | Superseded by 10 |
 | 6 | Medium | `CallMeMaybe` accepted from any UDP source | Fixed 2026-08-16 |
 | 7 | Medium | Tag-collision handling overwrites the existing route | Fixed 2026-08-15 |
-| 8 | Medium | Cache-file permissions not repaired on overwrite | **Open** |
+| 8 | Medium | Cache-file permissions not repaired on overwrite | Fixed 2026-08-18 |
 | 9 | Operational | Public project status is materially stale | Fixed 2026-08-18 |
 | 10 | High | Nothing ever sends a `CallMeMaybe` | Fixed 2026-08-18 |
 | 11 | High | A released path never reached the datapath | Fixed 2026-08-18 |
 | 12 | Medium | No PHREATIC relay data path, so there is no upgrade | Fixed 2026-08-18 |
-| 13 | Medium | `karst-control-v1.md` does not describe the wire it now has | **Open** |
+| 13 | Medium | `karst-control-v1.md` does not describe the wire it now has | Fixed 2026-08-18 |
 | 14 | Low | Relay reconnect has no backoff once established | Fixed 2026-08-18 |
 | 15 | Medium | A stale configured endpoint pre-empts the relay | Fixed 2026-08-18 |
 | 16 | Medium | Relay TLS could not be configured for a self-signed relay | Fixed 2026-08-18 |
@@ -43,64 +42,44 @@ Finding 21, which did block the phase's exit criterion, is closed.
 | 22 | High | A reflexive address refreshed at the NAT's own timeout is a coin flip | Fixed 2026-08-18 |
 | 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
 
-## Open
-
-### 2. High: identity persistence and data-plane key rotation precede enrolment authorization
-
-`LoginHandler.Handle` writes or updates the identity/data-plane-key record
-before validating the OIDC token or setup key through `LoginPeer`.
-
-- Location: `server/management/internals/karst/control/login.go`, at the
-  `h.Nodes.Register` call
-- Persistence occurs before OIDC handling and `Accounts.LoginPeer`.
-- Impact: a client with invalid credentials can leave a durable orphan identity
-  record. This is a database-exhaustion path, bounded only by the cost of
-  generating ML-DSA-65 keypairs.
-- Scope, stated precisely: the handshake proves possession of the identity key
-  before `Handle` runs, so the data-plane-key rotation half of this is a node
-  changing its *own* advertised keys. That is a self-inflicted reachability
-  failure for a node whose enrolment is then refused, not a cross-node attack.
-  The orphan-record half needs no such qualification.
-- Root cause: identity registration and authorization are separate writes with
-  no transaction or cleanup on authentication failure.
-
-Authorize first, or use one transaction that commits identity material only
-with a successful peer enrolment. Failed enrolment must not leave an identity
-or changed data-plane keys behind.
-
-### 8. Medium: cache-file permissions are not repaired or checked on overwrite
-
-`write_secret_bytes` requests mode `0600` only while *creating* a file. When
-the configured cache file already exists with permissive permissions, opening
-it with `truncate(true)` preserves those permissions, and nothing calls
-`check_permissions` on the cache path the way `Identity::load_or_create` does
-on the key path.
-
-- Location: `bins/karstd/src/control.rs`, `write_secret_bytes`
-- Impact: a pre-existing world- or group-readable cache stays readable, and the
-  cache holds a per-pair PSK and AVEN disco key for every peer.
-
-Reject an insecure existing cache file, or write a fresh temporary file with
-mode `0600` and atomically rename it into place. The rename is the better
-answer: it also removes the window in which a crash mid-write leaves a
-truncated cache that the next start cannot open.
-
-### 13. Medium: `karst-control-v1.md` does not describe the wire it now has
-
-`disco_key` (field 9 of `KarstNetmapPeer`), the `KarstRelay` message, and the
-`karst-relays` term in the netmap version hash exist in the proto, the Go
-server and the Rust client. None appears in the normative specification.
-
-- `spec/vectors/karst-control-v1.json` was regenerated with five changed
-  version values and no accompanying note that the hash construction moved.
-- Impact: the vectors are the artefact a second implementation would be built
-  against, and a version-hash change with no specification change is the kind
-  of break that surfaces as "the server says unchanged forever".
-
-Add the fields and the hash term to §-level specification text, and note the
-version-hash break explicitly beside the regenerated vectors.
-
 ## Closed
+
+### 8. Medium: cache-file permissions were not repaired or checked on overwrite
+
+**Fixed 2026-08-18.** `write_secret_bytes` now writes a newly created `0600`
+temporary file beside the cache, synchronizes it, and atomically renames it
+over the old file. A failed write leaves the previous cache intact; a
+successful write repairs a pre-existing permissive mode. `load_cache` now
+checks the mode and refuses an existing group- or world-readable cache.
+
+`overwriting_a_readable_secret_repairs_its_permissions` and
+`a_readable_cache_is_refused` cover the write- and read-side cases.
+
+### 2. High: identity persistence and data-plane key rotation preceded enrolment authorization
+
+**Fixed 2026-08-18.** `LoginHandler.Handle` now validates identity and
+data-plane keys without writing, authenticates any OIDC token, and calls
+`LoginPeer` before `Nodes.Register` creates an identity or rotates its keys.
+The registration path repeats validation before it writes, so direct callers
+retain the same safety check.
+
+`TestRejectedLoginDoesNotPersistAnIdentity` and
+`TestRejectedLoginDoesNotRotateDataPlaneKeys` pin the two failure paths:
+invalid credentials cannot create an orphan record or replace the keys of an
+already registered node.
+
+### 13. Medium: `karst-control-v1.md` did not describe the wire it had
+
+**Fixed 2026-08-18.** `spec/karst-control-v1.md` §5.4 now specifies
+`disco_key` (field 9 of `KarstNetmapPeer`) and the `KarstRelay` registry
+(field 13 of `KarstNetmapResponse`), including relay pinning and replacement
+semantics. §5.5 gives the ordered, length-prefixed content-hash construction,
+including its `karst-relays` separator and relay fields.
+
+The vector generator and generated JSON now carry an explicit compatibility
+note: version values before the relay hash term are intentionally incompatible.
+That makes the five regenerated values an explained protocol change rather
+than unexplained fixture churn.
 
 ### 9. Operational: the public project status was materially stale
 
