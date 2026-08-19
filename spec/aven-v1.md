@@ -320,6 +320,15 @@ its counterpart to advertise a candidate that does not work, which wastes
 probes and nothing else — but only because nothing is trusted to it beyond
 advertisement.
 
+**An explicit port mapping learned from the node's own gateway outranks every
+reflexive tier, and it is still not a path.** PCP and NAT-PMP let the gateway
+say which external port it has reserved for this node's datapath socket, which
+is stronger evidence than any peer or reflector can supply: the gateway is
+holding that port open on purpose rather than reporting a side effect of other
+traffic. That does not license any stronger conclusion. A mapped address MAY be
+advertised and probed exactly like any other candidate, and MUST NOT be treated
+as authenticated, safe to bind, or otherwise privileged.
+
 **Reflexive addresses MUST NOT displace a node's own interface addresses in an
 advertisement, and a node MUST bound how many it carries.** The list a node
 sends goes to *every* peer, so without this rule one peer supplying sixteen
@@ -336,14 +345,15 @@ cross-check against, which is why this orders the list rather than deciding
 admission to it.
 
 **A reflexive address learned from a §7.6 reflector outranks one learned from a
-peer**, and sits below a node's own interface addresses. The three tiers are
-three grades of evidence, and the ordering is the grading: an interface address
-is something this node observed directly; a reflector's report comes from a
-party the netmap already names and the node already trusts to carry its traffic;
-a peer's `Pong.observed` comes from a party §1.1 explicitly allows to be
-malicious. A reflector is not trusted *more* than it needs to be — it can still
-only cause a wasted advertisement, because §7.2's first rule holds for it too:
-no reflexive address is ever a path.
+peer, and both sit below the node's own explicit mapping and interface
+addresses.** The four tiers are four grades of evidence, and the ordering is
+the grading: an explicit mapping is the gateway naming the port it is keeping
+open on purpose; an interface address is something this node observed directly;
+a reflector's report comes from a party the netmap already names and the node
+already trusts to carry its traffic; a peer's `Pong.observed` comes from a
+party §1.1 explicitly allows to be malicious. A reflector is not trusted *more*
+than it needs to be — it can still only cause a wasted advertisement, because
+§7.2's first rule holds for it too: no reported address is ever a path.
 
 Counting still applies within the reflector tier. A node connected to two
 relays hears the same mapping from both when its NAT has endpoint-independent

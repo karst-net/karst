@@ -17,7 +17,7 @@
 
 use std::ffi::c_void;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 /// `IFNAMSIZ` — interface names are at most 15 bytes plus a NUL.
@@ -371,8 +371,12 @@ const NLMSG_ERROR: u16 = 2;
 const NLMSG_HDR_LEN: usize = 16;
 /// `sizeof(struct rtmsg)`. Used by the encoding tests, which navigate the
 /// message by offset rather than trusting it to be the right shape.
-#[cfg(test)]
 const RTMSG_LEN: usize = 12;
+const RTATTR_LEN: usize = 4;
+
+const fn nl_align(n: usize) -> usize {
+    (n + 3) & !3
+}
 
 /// Which way a route request goes.
 #[derive(Clone, Copy)]
@@ -600,6 +604,7 @@ pub(crate) fn interface_index(sock: BorrowedFd<'_>, name: [u8; IF_NAME_SIZE]) ->
 /// rtnetlink address-dump message types.
 const RTM_GETADDR: u16 = 22;
 const RTM_NEWADDR: u16 = 20;
+const RTM_GETROUTE: u16 = 26;
 const NLM_F_DUMP: u16 = 0x0300;
 const NLMSG_DONE: u16 = 3;
 
@@ -614,6 +619,9 @@ const IFA_FLAGS: u16 = 8;
 /// `ifa_scope`. Anything above universe is link-, site- or host-local, and none
 /// of those is reachable by a peer.
 const RT_SCOPE_UNIVERSE: u8 = 0;
+
+/// `rtattr` types inside an `rtmsg`.
+const RTA_GATEWAY: u16 = 5;
 
 /// `ifa_flags`. A tentative address has not finished duplicate-address
 /// detection and may yet be withdrawn; a deprecated one still works for
@@ -820,6 +828,161 @@ pub(crate) fn local_addresses(sock: BorrowedFd<'_>, seq: u32) -> io::Result<Vec<
         }
     }
     Ok(out)
+}
+
+/// Ask the kernel for the main-table default route in every family.
+///
+/// `AF_UNSPEC` covers IPv4 and IPv6 in one dump; the parser below filters to
+/// default routes with an explicit next hop.
+pub(crate) fn default_route_message(seq: u32) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(NLMSG_HDR_LEN + RTMSG_LEN);
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+    msg.extend_from_slice(&RTM_GETROUTE.to_ne_bytes());
+    msg.extend_from_slice(&(NLM_F_REQUEST | NLM_F_DUMP).to_ne_bytes());
+    msg.extend_from_slice(&seq.to_ne_bytes());
+    msg.extend_from_slice(&0u32.to_ne_bytes());
+
+    msg.push(0); // AF_UNSPEC
+    msg.push(0); // dst len: default route only
+    msg.push(0); // src len
+    msg.push(0); // tos
+    msg.push(RT_TABLE_MAIN);
+    msg.push(0); // protocol
+    msg.push(0); // scope
+    msg.push(0); // type
+    msg.extend_from_slice(&0u32.to_ne_bytes()); // flags
+
+    let len = u32::try_from(msg.len()).unwrap_or(0);
+    if let Some(head) = msg.get_mut(..4) {
+        head.copy_from_slice(&len.to_ne_bytes());
+    }
+    msg
+}
+
+#[derive(Default)]
+pub(crate) struct RouteBatch {
+    pub gateways: Vec<IpAddr>,
+    pub done: bool,
+}
+
+fn parse_route(msg: &[u8]) -> Option<IpAddr> {
+    let rt = msg.get(..RTMSG_LEN)?;
+    let family = *rt.first()?;
+    let dst_len = *rt.get(1)?;
+    let table = *rt.get(4)?;
+    let kind = *rt.get(7)?;
+    if dst_len != 0 || table != RT_TABLE_MAIN || kind != RTN_UNICAST {
+        return None;
+    }
+
+    let mut at = RTMSG_LEN;
+    while let Some(head) = msg.get(at..at.checked_add(RTATTR_LEN)?) {
+        let len = usize::from(u16::from_ne_bytes(*head.first_chunk::<2>()?));
+        let kind = u16::from_ne_bytes(*head.get(2..4)?.first_chunk::<2>()?);
+        if len < RTATTR_LEN {
+            break;
+        }
+        let end = at.checked_add(len)?;
+        let body = msg.get(at + RTATTR_LEN..end)?;
+        if kind == RTA_GATEWAY {
+            return match (family, body.len()) {
+                (AF_INET_U8, 4) => Some(IpAddr::V4(Ipv4Addr::from(*body.first_chunk::<4>()?))),
+                (AF_INET6_U8, 16) => Some(IpAddr::V6(Ipv6Addr::from(*body.first_chunk::<16>()?))),
+                _ => None,
+            };
+        }
+        at = nl_align(end);
+    }
+    None
+}
+
+pub(crate) fn parse_route_dump(buf: &[u8]) -> RouteBatch {
+    let mut at = 0usize;
+    let mut out = RouteBatch::default();
+    while let Some(hdr) = buf.get(at..at.checked_add(NLMSG_HDR_LEN).unwrap_or(usize::MAX)) {
+        let len = hdr
+            .get(..4)
+            .and_then(<[u8]>::first_chunk::<4>)
+            .map(|b| u32::from_ne_bytes(*b) as usize);
+        let kind = hdr
+            .get(4..6)
+            .and_then(<[u8]>::first_chunk::<2>)
+            .map(|b| u16::from_ne_bytes(*b));
+        let (Some(len), Some(kind)) = (len, kind) else {
+            break;
+        };
+        if len < NLMSG_HDR_LEN {
+            break;
+        }
+        let Some(end) = at.checked_add(len) else {
+            break;
+        };
+        let Some(msg) = buf.get(at..end) else {
+            break;
+        };
+        match kind {
+            NLMSG_DONE => {
+                out.done = true;
+                break;
+            }
+            RTM_NEWROUTE => {
+                if let Some(gateway) = parse_route(msg.get(NLMSG_HDR_LEN..).unwrap_or_default()) {
+                    out.gateways.push(gateway);
+                }
+            }
+            _ => {}
+        }
+        at = nl_align(end);
+    }
+    out
+}
+
+/// The next hop of the main-table default route, if there is one.
+pub(crate) fn default_gateway(sock: BorrowedFd<'_>, seq: u32) -> io::Result<Option<IpAddr>> {
+    let msg = default_route_message(seq);
+
+    // SAFETY: as `route` — `sock` is open for the call and `msg` is a live
+    // slice of exactly `msg.len()` initialised bytes.
+    let sent = unsafe {
+        libc::send(
+            sock.as_raw_fd(),
+            msg.as_ptr().cast::<c_void>(),
+            msg.len(),
+            0,
+        )
+    };
+    if sent < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut buf = vec![0u8; 4096];
+    for _ in 0..64 {
+        // SAFETY: as `local_addresses` — `buf` is a live, uniquely borrowed
+        // allocation of exactly `buf.len()` bytes.
+        let got = unsafe {
+            libc::recv(
+                sock.as_raw_fd(),
+                buf.as_mut_ptr().cast::<c_void>(),
+                buf.len(),
+                0,
+            )
+        };
+        if got < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let got = usize::try_from(got).unwrap_or(0);
+        if got == 0 {
+            break;
+        }
+        let batch = parse_route_dump(buf.get(..got).unwrap_or_default());
+        if let Some(gateway) = batch.gateways.into_iter().next() {
+            return Ok(Some(gateway));
+        }
+        if batch.done {
+            break;
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1046,6 +1209,35 @@ mod addr_tests {
         msg
     }
 
+    fn newroute_default(family: u8, gateway: &[u8]) -> Vec<u8> {
+        let attr_len = u16::try_from(RTATTR_LEN + gateway.len()).expect("small attr");
+        let padded = nl_align(RTATTR_LEN + gateway.len());
+        let total = u32::try_from(NLMSG_HDR_LEN + RTMSG_LEN + padded).expect("small message");
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&total.to_ne_bytes());
+        msg.extend_from_slice(&RTM_NEWROUTE.to_ne_bytes());
+        msg.extend_from_slice(&0u16.to_ne_bytes());
+        msg.extend_from_slice(&1u32.to_ne_bytes());
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg.push(family);
+        msg.push(0); // dst len = default
+        msg.push(0);
+        msg.push(0);
+        msg.push(RT_TABLE_MAIN);
+        msg.push(0);
+        msg.push(0);
+        msg.push(RTN_UNICAST);
+        msg.extend_from_slice(&0u32.to_ne_bytes());
+        msg.extend_from_slice(&attr_len.to_ne_bytes());
+        msg.extend_from_slice(&RTA_GATEWAY.to_ne_bytes());
+        msg.extend_from_slice(gateway);
+        msg.extend(std::iter::repeat_n(
+            0u8,
+            padded - (RTATTR_LEN + gateway.len()),
+        ));
+        msg
+    }
+
     #[test]
     fn the_request_asks_both_families_for_a_dump() {
         let msg = addr_dump_message(7);
@@ -1061,6 +1253,50 @@ mod addr_tests {
         );
         assert_eq!(u32::from_ne_bytes(msg[8..12].try_into().unwrap()), 7);
         assert_eq!(msg[16], 0, "AF_UNSPEC, so one dump covers both families");
+    }
+
+    #[test]
+    fn the_default_route_request_asks_for_a_dump() {
+        let msg = default_route_message(9);
+        assert_eq!(msg.len(), NLMSG_HDR_LEN + RTMSG_LEN);
+        assert_eq!(u32::from_ne_bytes(msg[0..4].try_into().unwrap()), 28);
+        assert_eq!(
+            u16::from_ne_bytes(msg[4..6].try_into().unwrap()),
+            RTM_GETROUTE
+        );
+        assert_eq!(
+            u16::from_ne_bytes(msg[6..8].try_into().unwrap()),
+            NLM_F_REQUEST | NLM_F_DUMP
+        );
+        assert_eq!(u32::from_ne_bytes(msg[8..12].try_into().unwrap()), 9);
+        assert_eq!(msg[16], 0, "AF_UNSPEC covers IPv4 and IPv6 in one dump");
+        assert_eq!(msg[17], 0, "a default route has prefix length zero");
+    }
+
+    #[test]
+    fn a_default_ipv4_gateway_is_reported() {
+        let msg = newroute_default(AF_INET_U8, &[192, 0, 2, 1]);
+        let batch = parse_route_dump(&msg);
+        assert_eq!(
+            batch.gateways,
+            vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]
+        );
+        assert!(!batch.done);
+    }
+
+    #[test]
+    fn a_default_ipv6_gateway_is_reported() {
+        let gateway = Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 1);
+        let msg = newroute_default(AF_INET6_U8, &gateway.octets());
+        assert_eq!(parse_route_dump(&msg).gateways, vec![IpAddr::V6(gateway)]);
+    }
+
+    #[test]
+    fn a_route_without_a_gateway_is_not_reported() {
+        let mut msg = newroute_default(AF_INET_U8, &[192, 0, 2, 1]);
+        let a1 = NLMSG_HDR_LEN + RTMSG_LEN;
+        msg[a1 + 2..a1 + 4].copy_from_slice(&RTA_OIF.to_ne_bytes());
+        assert!(parse_route_dump(&msg).gateways.is_empty());
     }
 
     #[test]

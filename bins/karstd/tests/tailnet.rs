@@ -53,13 +53,13 @@ const NS_NAT_B: &str = "karst-tn-natb";
 
 /// Everything on the public segment hangs off a bridge in [`NS_PUB`], so the
 /// same wiring carries two, three or four participants.
-const IP_PUB: &str = "10.98.0.10";
+const IP_PUB: &str = "51.75.10.10";
 /// Where each node sits when it is *on* the public segment.
-const IP_A_PUBLIC: &str = "10.98.0.1";
-const IP_B_PUBLIC: &str = "10.98.0.20";
+const IP_A_PUBLIC: &str = "51.75.10.1";
+const IP_B_PUBLIC: &str = "51.75.10.20";
 /// The outside of each NAT.
-const NAT_A_OUTER: &str = "10.98.0.2";
-const NAT_B_OUTER: &str = "10.98.0.3";
+const NAT_A_OUTER: &str = "51.75.10.2";
+const NAT_B_OUTER: &str = "51.75.10.3";
 /// And the inside.
 const IP_A_PRIVATE: &str = "10.98.1.2";
 const NAT_A_INNER: &str = "10.98.1.1";
@@ -301,6 +301,16 @@ enum Shape {
     /// When port prediction lands, this row's expectation changes and nothing
     /// else about it does.
     BothSymmetric,
+    /// Node A behind a symmetric NAT that **also offers an explicit port
+    /// mapping**; node B behind a different symmetric NAT.
+    ///
+    /// This is the restated third exit criterion in one row. A's reflexive
+    /// address is still the mapping toward the reflector and still useless to
+    /// B, but A can now advertise something stronger than a reflexive report:
+    /// the port its own gateway is holding open on purpose. B probes that
+    /// mapped address, A learns B from the probe that arrives through it, and
+    /// the pair upgrades to a direct path without prediction.
+    SymmetricAndMapped,
     /// Node A behind a NAT that forwards **no UDP at all**; node B public.
     ///
     /// The corporate-firewall case, and the only row that tests the second exit
@@ -354,6 +364,9 @@ enum Flavour {
     /// `masquerade fully-random`: a fresh, unpredictable external port per
     /// destination.
     Symmetric,
+    /// A symmetric NAT that also runs `miniupnpd`, so the node behind it can
+    /// reserve its datapath port explicitly.
+    SymmetricWithPortMapping,
     /// A cone that drops every forwarded UDP datagram in both directions. TCP
     /// still crosses, so Ponor and the control channel are unaffected.
     UdpBlocked,
@@ -386,6 +399,7 @@ impl Shape {
             | Self::NatA
             | Self::BothNat
             | Self::SymmetricA
+            | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted => Expect::Direct,
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
@@ -399,7 +413,7 @@ impl Shape {
     /// node before either has anything worth advertising.
     fn budget(self) -> Duration {
         Duration::from_secs(match self {
-            Self::BothNat | Self::SymmetricAndAddressRestricted => 210,
+            Self::BothNat | Self::SymmetricAndMapped | Self::SymmetricAndAddressRestricted => 210,
             _ => 150,
         })
     }
@@ -414,7 +428,7 @@ struct End<'a> {
 }
 
 /// Build the namespaces, and return the addresses the two nodes listen on.
-fn build_topology(shape: Shape) -> (&'static str, &'static str) {
+fn build_topology(net: &mut Tailnet, shape: Shape) -> (&'static str, &'static str) {
     for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
@@ -443,10 +457,12 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
         | Shape::BothNat
         | Shape::SymmetricA
         | Shape::BothSymmetric
+        | Shape::SymmetricAndMapped
         | Shape::UdpBlocked
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted => {
             let flavour = match shape {
+                Shape::SymmetricAndMapped => Flavour::SymmetricWithPortMapping,
                 Shape::SymmetricA
                 | Shape::BothSymmetric
                 | Shape::SymmetricAndAddressRestricted
@@ -455,6 +471,7 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
                 _ => Flavour::PortRestrictedCone,
             };
             nat_in_front_of(
+                net,
                 "a",
                 NS_NAT_A,
                 NAT_A_OUTER,
@@ -473,14 +490,16 @@ fn build_topology(shape: Shape) -> (&'static str, &'static str) {
         }
         Shape::BothNat
         | Shape::BothSymmetric
+        | Shape::SymmetricAndMapped
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted => {
             let flavour = match shape {
-                Shape::BothSymmetric => Flavour::Symmetric,
+                Shape::SymmetricAndMapped | Shape::BothSymmetric => Flavour::Symmetric,
                 Shape::SymmetricAndAddressRestricted => Flavour::AddressRestrictedCone,
                 _ => Flavour::PortRestrictedCone,
             };
             nat_in_front_of(
+                net,
                 "b",
                 NS_NAT_B,
                 NAT_B_OUTER,
@@ -524,7 +543,9 @@ fn public_leg(dev: &str, ns: &str, ip: &str) {
 /// relay's replies can get back" — they do not need it, because they return
 /// through conntrack's translation — and with it the far node reached the
 /// private address directly and reported a direct path no real NAT would allow.
+#[allow(clippy::too_many_arguments)]
 fn nat_in_front_of(
+    net: &mut Tailnet,
     tag: &str,
     nat_ns: &str,
     outer: &str,
@@ -584,7 +605,10 @@ fn nat_in_front_of(
         nat_ns,
         &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
     ));
-    nat_rules(nat_ns, &out_dev, &in_dev, node, flavour);
+    nat_rules(nat_ns, &out_dev, &in_dev, node, outer, flavour);
+    if flavour == Flavour::SymmetricWithPortMapping {
+        start_miniupnpd(net, tag, nat_ns, &out_dev, &in_dev, node);
+    }
 }
 
 /// The datapath port every node listens on. A NAT that has to name a port
@@ -663,7 +687,7 @@ fn address_restricted(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str) {
 
 /// The translation and filtering rules, which are all that distinguishes one
 /// [`Flavour`] from another.
-fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, flavour: Flavour) {
+fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str, flavour: Flavour) {
     // Linux conntrack's default masquerade: one external port reused across
     // destinations, return traffic accepted per flow — a port-restricted cone,
     // which `karst-disco`'s NAT matrix pins as behaving the way that name says.
@@ -682,8 +706,20 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, flavour: Fla
             "{ type nat hook postrouting priority 100 ; }",
         ],
     ));
+    if flavour == Flavour::SymmetricWithPortMapping {
+        let fixed = format!(
+            "oifname {out_dev} ip saddr {node} udp sport {DATA_PORT} snat to {outer}:{DATA_PORT}"
+        );
+        must(&nsr(
+            nat_ns,
+            &["nft", "add", "rule", "ip", "karst", "post", &fixed],
+        ));
+    }
+
     let rule = match flavour {
-        Flavour::Symmetric => format!("oifname {out_dev} masquerade fully-random"),
+        Flavour::Symmetric | Flavour::SymmetricWithPortMapping => {
+            format!("oifname {out_dev} masquerade fully-random")
+        }
         Flavour::PortRestrictedCone | Flavour::UdpBlocked | Flavour::AddressRestrictedCone => {
             format!("oifname {out_dev} masquerade")
         }
@@ -762,6 +798,107 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, flavour: Fla
             &["nft", "add", "rule", "ip", "karst", "input", &rule],
         ));
     }
+}
+
+/// Start `miniupnpd` on a NAT namespace whose outside address is globally
+/// routable-looking, so PCP and NAT-PMP are actually served.
+fn start_miniupnpd(
+    net: &mut Tailnet,
+    tag: &str,
+    nat_ns: &str,
+    out_dev: &str,
+    in_dev: &str,
+    node: &str,
+) {
+    must(&nsr(nat_ns, &["nft", "add", "table", "inet", "miniupnpd"]));
+    for (chain, spec) in [
+        ("prerouting", "{ type nat hook prerouting priority -100 ; }"),
+        (
+            "postrouting",
+            "{ type nat hook postrouting priority 100 ; }",
+        ),
+        ("forward", "{ type filter hook forward priority 0 ; }"),
+        ("miniupnpd", ""),
+        ("prerouting-miniupnpd", ""),
+        ("postrouting-miniupnpd", ""),
+    ] {
+        let mut args = vec!["nft", "add", "chain", "inet", "miniupnpd", chain];
+        if !spec.is_empty() {
+            args.push(spec);
+        }
+        must(&nsr(nat_ns, &args));
+    }
+
+    // miniupnpd writes the mapping rules into these named subchains. The hook
+    // chains still need to jump to them, or the packets reach the NAT's outer
+    // interface, hit no DNAT, and die on the namespace itself instead of ever
+    // reaching the node behind it. That was measured in this row with a packet
+    // capture: probes to the mapped port arrived on `ktn-ao`, but no reply was
+    // possible because nothing forwarded them any further.
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            "miniupnpd",
+            "prerouting",
+            "jump prerouting-miniupnpd",
+        ],
+    ));
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            "miniupnpd",
+            "postrouting",
+            "jump postrouting-miniupnpd",
+        ],
+    ));
+    must(&nsr(
+        nat_ns,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            "miniupnpd",
+            "forward",
+            "jump miniupnpd",
+        ],
+    ));
+
+    let conf = net.dir.join(format!("miniupnpd-{tag}.conf"));
+    std::fs::write(
+        &conf,
+        format!(
+            "ext_ifname={out_dev}\n\
+             listening_ip={in_dev}\n\
+             enable_natpmp=yes\n\
+             enable_upnp=no\n\
+             secure_mode=no\n\
+             system_uptime=yes\n\
+             upnp_table_name=miniupnpd\n\
+             upnp_nat_table_name=miniupnpd\n\
+             upnp_forward_chain=miniupnpd\n\
+             upnp_nat_chain=prerouting-miniupnpd\n\
+             upnp_nat_postrouting_chain=postrouting-miniupnpd\n\
+             allow 1024-65535 {node}/32 1024-65535\n\
+             deny 0-65535 0.0.0.0/0 0-65535\n"
+        ),
+    )
+    .expect("write miniupnpd config");
+    net.spawn_service(
+        nat_ns,
+        "miniupnpd",
+        &["-d", "-f", &conf.to_string_lossy()],
+        &format!("miniupnpd-{tag}.log"),
+    );
+    std::thread::sleep(Duration::from_millis(800));
 }
 
 /// A veth pair, each end placed and optionally addressed.
@@ -935,6 +1072,11 @@ fn start_server(net: &mut Tailnet, relay_pk: &str) -> Pins {
 
 /// Write both daemons' keys and configuration.
 fn write_node_configs(net: &Tailnet, pins: &Pins, ca: &Path, ips: (&str, &str)) {
+    let port_mapping = if std::env::var_os("KARST_TAILNET_DISABLE_PORT_MAPPING").is_some() {
+        "false"
+    } else {
+        "true"
+    };
     for (tag, seed, ip) in [("a", SEED_A, ips.0), ("b", SEED_B, ips.1)] {
         let d = net.dir.join(tag);
         std::fs::create_dir_all(&d).expect("node dir");
@@ -945,6 +1087,7 @@ fn write_node_configs(net: &Tailnet, pins: &Pins, ca: &Path, ips: (&str, &str)) 
             format!(
                 "[node]\n\
                  listen = \"{ip}:51820\"\n\
+                 port_mapping = {port_mapping}\n\
                  interface = \"karst-tn{tag}\"\n\
                  private_key_file = \"{}\"\n\
                  psk_epoch = 7\n\n\
@@ -1153,6 +1296,21 @@ fn a_symmetric_nat_reaches_a_reachable_peer_directly() {
     run(Shape::SymmetricA);
 }
 
+/// **One mapped side is enough for the doubly-symmetric case.**
+///
+/// A and B are both behind symmetric NATs, so the reflexive addresses each
+/// learns from the reflector are still wrong for the peer. The difference from
+/// [`two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands`] is
+/// that A's NAT also runs `miniupnpd`, and the daemon asks it for an explicit
+/// mapping on the datapath port. B probes the mapped address A advertises, A
+/// learns B from the probe that arrives, and the pair upgrades without any port
+/// prediction at all.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly() {
+    run(Shape::SymmetricAndMapped);
+}
+
 /// **The CGNAT-to-CGNAT row, asserting today's behaviour rather than the
 /// intended one.**
 ///
@@ -1232,7 +1390,6 @@ fn run(shape: Shape) {
         eprintln!("skipping: needs root and a Go toolchain");
         return;
     }
-    let ips = build_topology(shape);
     let mut net = Tailnet {
         dir: std::env::temp_dir().join(format!("karst-tailnet-{}", std::process::id())),
         services: Vec::new(),
@@ -1240,6 +1397,7 @@ fn run(shape: Shape) {
     };
     let _ = std::fs::remove_dir_all(&net.dir);
     std::fs::create_dir_all(&net.dir).expect("temp dir");
+    let ips = build_topology(&mut net, shape);
     let (ca, relay_pk) = start_relay(&mut net);
     let pins = start_server(&mut net, &relay_pk);
     write_node_configs(&net, &pins, &ca, ips);
@@ -1354,7 +1512,11 @@ fn assert_endpoints(net: &Tailnet, shape: Shape) {
     }
     if matches!(
         shape,
-        Shape::NatA | Shape::BothNat | Shape::SymmetricA | Shape::SymmetricAndAddressRestricted
+        Shape::NatA
+            | Shape::BothNat
+            | Shape::SymmetricA
+            | Shape::SymmetricAndMapped
+            | Shape::SymmetricAndAddressRestricted
     ) {
         let s = status(net, "b", NS_B);
         let endpoint = field(&s, "endpoint").unwrap_or_default();
@@ -1367,7 +1529,10 @@ fn assert_endpoints(net: &Tailnet, shape: Shape) {
             "B is using A's private address, which cannot be reachable: {endpoint}"
         );
     }
-    if matches!(shape, Shape::BothNat | Shape::SymmetricAndAddressRestricted) {
+    if matches!(
+        shape,
+        Shape::BothNat | Shape::SymmetricAndMapped | Shape::SymmetricAndAddressRestricted
+    ) {
         // And symmetrically, which is the half only this row can check: A must
         // hold B's *mapped* address, learned from a reflector rather than from
         // a probe that arrived — because no probe from B could arrive until A
@@ -1382,6 +1547,15 @@ fn assert_endpoints(net: &Tailnet, shape: Shape) {
             !endpoint.starts_with(IP_B_PRIVATE),
             "A is using B's private address, which cannot be reachable: {endpoint}"
         );
+    }
+    if shape == Shape::SymmetricAndMapped {
+        let s = status(net, "a", NS_A);
+        let mapped = field(&s, "portmap_external").unwrap_or_default();
+        assert!(
+            mapped.starts_with(NAT_A_OUTER),
+            "A should report its explicit mapping on {NAT_A_OUTER}, not {mapped}:\n{s}"
+        );
+        assert_eq!(field(&s, "portmap_protocol").as_deref(), Some("pcp"), "{s}");
     }
 }
 

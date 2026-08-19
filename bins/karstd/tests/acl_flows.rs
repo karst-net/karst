@@ -71,6 +71,7 @@ fn config_for(
     let config = Config {
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
+        port_mapping: true,
         interface: format!("karst{own}"),
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,

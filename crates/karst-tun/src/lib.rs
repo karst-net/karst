@@ -251,6 +251,28 @@ pub fn local_addresses() -> Result<Vec<std::net::IpAddr>, TunError> {
     })
 }
 
+/// The next hop of the main-table default route, if this host has one.
+///
+/// Karst uses this as the well-known port-mapping gateway when explicit NAT
+/// traversal is enabled: NAT-PMP and PCP are spoken to the default gateway's
+/// next hop rather than discovered by multicast.
+///
+/// # Errors
+/// [`TunError::Netlink`] if the socket cannot be opened or the dump fails.
+#[cfg(target_os = "linux")]
+pub fn default_gateway() -> Result<Option<std::net::IpAddr>, TunError> {
+    use std::os::fd::AsFd as _;
+
+    let sock = sys::netlink_socket().map_err(|source| TunError::Netlink {
+        op: "socket(AF_NETLINK)",
+        source,
+    })?;
+    sys::default_gateway(sock.as_fd(), 2).map_err(|source| TunError::Netlink {
+        op: "RTM_GETROUTE",
+        source,
+    })
+}
+
 /// Check a requested MTU against what the protocol permits.
 ///
 /// # Errors

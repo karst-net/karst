@@ -913,6 +913,7 @@ dependencies = [
  "karst-disco",
  "karst-node",
  "karst-noise",
+ "karst-portmap",
  "karst-proto",
  "karst-relay",
  "karst-relay-proto",

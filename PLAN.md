@@ -3121,9 +3121,20 @@ onwards, anchored on the week of 2026-08-10.
   > without loss, and both nodes report the reason.
 
   That is achievable, verifiable against a third-party server, and honest about
-  the residue. The remaining work for it is port mapping, row 6's expectation
-  splitting into two rows — one with a mapping-capable NAT and one without —
-  and the three unbuilt topologies.
+  the residue. **`karstd` now does the PCP/NAT-PMP half of it end to end.** It
+  finds the default gateway, asks PCP first and falls back to NAT-PMP on the
+  explicit version errors RFC 6887 §9 names, advertises the mapped external
+  address as a top-tier candidate, renews on the granted lifetime, and reports
+  both the live mapping and the failure reason in `karst status`. The tailnet
+  matrix now splits the old doubly-symmetric row in two: with one mapping-
+  capable side it goes direct; with neither side mapped it stays on the relay.
+
+  **It does not close the whole space.** Port mapping helps only where a
+  gateway offers it; where neither side has one, the doubly-symmetric case is
+  still the relay row and that is the correct answer. And the current daemon
+  path speaks the two UDP protocols `karst-portmap` already implements — PCP
+  and NAT-PMP. A gateway that offers only UPnP-IGD remains outside this build,
+  which is the same crate boundary recorded when `karst-portmap` was added.
 
   **Row 8 is a separate and better-value target, and the literature agrees.**
   Tailscale's published analysis splits the problem exactly where our
