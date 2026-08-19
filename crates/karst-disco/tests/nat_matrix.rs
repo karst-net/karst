@@ -45,12 +45,29 @@ const NS_NAT: &str = "karst-nat-mid";
 const NS_OUTER: &str = "karst-nat-outer";
 /// The carrier's NAT, for the double-NAT row only.
 const NS_CGNAT: &str = "karst-nat-cgn";
+/// A second host behind the *same* NAT, for the hairpinning rows only.
+const NS_PEER: &str = "karst-nat-peer";
 
 const INNER_IP: &str = "10.10.1.2";
 const NAT_INNER_IP: &str = "10.10.1.1";
 const NAT_OUTER_IP: &str = "10.10.2.1";
 const OUTER_IP_A: &str = "10.10.2.2";
 const OUTER_IP_B: &str = "10.10.2.3";
+/// The second inside host, on the same private segment as [`INNER_IP`].
+const PEER_IP: &str = "10.10.1.3";
+/// Its own port, so the hairpin rows can address it the way they address
+/// [`INNER_PORT`].
+const PEER_PORT: u16 = 19101;
+
+/// A source port on the outer side that **no reflector is bound to**.
+///
+/// `PORT_A` and `PORT_B` are held by the reflectors for the whole of every row,
+/// so a probe that tries to bind one of them fails to start and sends nothing —
+/// and a test whose negative result depends on a datagram *not* arriving then
+/// passes for the most uninteresting reason available. That is not
+/// hypothetical: the carrier-filtering row below was written that way first and
+/// only the defect check found it.
+const UNSOLICITED_PORT: u16 = 19200;
 
 const PORT_A: u16 = 19001;
 const PORT_B: u16 = 19002;
@@ -175,7 +192,7 @@ fn run_in(ns: &str, args: &[&str]) -> String {
 }
 
 fn teardown() {
-    for ns in [NS_INNER, NS_NAT, NS_OUTER, NS_CGNAT] {
+    for ns in [NS_INNER, NS_NAT, NS_OUTER, NS_CGNAT, NS_PEER] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
 }
@@ -389,6 +406,129 @@ fn build_double_nat() {
             "post",
             "oifname kn-co masquerade fully-random",
         ],
+    ));
+}
+
+/// Two hosts behind the **same** NAT, each of which can only name the other by
+/// the NAT's external address.
+///
+/// The shape matters to Karst directly. Two nodes on one home network both
+/// learn a reflexive address from the relay (`aven-v1.md` §7.6), advertise it,
+/// and then probe each other *at the NAT's own outer address*. Whether that
+/// works is the hairpinning question, and it is not a property Karst can
+/// choose — so the matrix has to establish which way this fixture goes before
+/// any conclusion is drawn about the product.
+///
+/// The two inside hosts hang off a bridge rather than two routed subnets,
+/// because a hairpin is specifically about one NAT with one inside segment. Two
+/// subnets behind one router would make the datagram merely *forwarded*, which
+/// is a different and much easier thing that would pass while proving nothing.
+fn build_hairpin() {
+    teardown();
+
+    for ns in [NS_INNER, NS_PEER, NS_NAT, NS_OUTER] {
+        must(&["ip", "netns", "add", ns]);
+        must(&nsr(ns, &["ip", "link", "set", "lo", "up"]));
+    }
+
+    // The inside segment: a bridge in the NAT namespace holding both hosts.
+    must(&nsr(
+        NS_NAT,
+        &["ip", "link", "add", "kn-br", "type", "bridge"],
+    ));
+    must(&nsr(NS_NAT, &["ip", "link", "set", "kn-br", "up"]));
+    let nat_i_cidr = format!("{NAT_INNER_IP}/24");
+    must(&nsr(
+        NS_NAT,
+        &["ip", "addr", "add", &nat_i_cidr, "dev", "kn-br"],
+    ));
+
+    for (host_ns, host_dev, br_dev, addr) in [
+        (NS_INNER, "kn-i", "kn-ni", INNER_IP),
+        (NS_PEER, "kn-p", "kn-np", PEER_IP),
+    ] {
+        must(&[
+            "ip", "link", "add", host_dev, "type", "veth", "peer", "name", br_dev,
+        ]);
+        must(&["ip", "link", "set", host_dev, "netns", host_ns]);
+        must(&["ip", "link", "set", br_dev, "netns", NS_NAT]);
+        must(&nsr(
+            NS_NAT,
+            &["ip", "link", "set", br_dev, "master", "kn-br"],
+        ));
+        must(&nsr(NS_NAT, &["ip", "link", "set", br_dev, "up"]));
+        let cidr = format!("{addr}/24");
+        must(&nsr(
+            host_ns,
+            &["ip", "addr", "add", &cidr, "dev", host_dev],
+        ));
+        must(&nsr(host_ns, &["ip", "link", "set", host_dev, "up"]));
+        must(&nsr(
+            host_ns,
+            &["ip", "route", "add", "default", "via", NAT_INNER_IP],
+        ));
+    }
+
+    // The outside, exactly as [`build`] wires it.
+    must(&[
+        "ip", "link", "add", "kn-no", "type", "veth", "peer", "name", "kn-o",
+    ]);
+    must(&["ip", "link", "set", "kn-no", "netns", NS_NAT]);
+    must(&["ip", "link", "set", "kn-o", "netns", NS_OUTER]);
+    let nat_o_cidr = format!("{NAT_OUTER_IP}/24");
+    must(&nsr(
+        NS_NAT,
+        &["ip", "addr", "add", &nat_o_cidr, "dev", "kn-no"],
+    ));
+    must(&nsr(NS_NAT, &["ip", "link", "set", "kn-no", "up"]));
+    must(&nsr(NS_NAT, &["sysctl", "-qw", "net.ipv4.ip_forward=1"]));
+    for addr in [OUTER_IP_A, OUTER_IP_B] {
+        let cidr = format!("{addr}/24");
+        must(&nsr(NS_OUTER, &["ip", "addr", "add", &cidr, "dev", "kn-o"]));
+    }
+    must(&nsr(NS_OUTER, &["ip", "link", "set", "kn-o", "up"]));
+    must(&nsr(
+        NS_OUTER,
+        &["ip", "route", "add", "default", "via", NAT_OUTER_IP],
+    ));
+
+    apply_nat(Nat::PortRestrictedCone);
+}
+
+/// Turn hairpinning on, which Linux does not do by default.
+///
+/// Two rules, and **both** are required by RFC 4787 REQ-9. The `dnat` sends a
+/// datagram addressed to the NAT's own external address back to the mapping's
+/// owner. The `snat` rewrites the source to that same external address, which
+/// is the half that is easy to omit and that makes the difference between
+/// hairpinning and a leak: without it the receiver sees the *private* address
+/// of a peer it believes is on the public internet, replies to it directly, and
+/// the two ends disagree about what address the conversation is on.
+fn enable_hairpin(external_port: u16) {
+    must(&nsr(
+        NS_NAT,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "hairpre",
+            "{ type nat hook prerouting priority -100 ; }",
+        ],
+    ));
+    let dnat = format!(
+        "iifname kn-br ip daddr {NAT_OUTER_IP} udp dport {external_port} \
+         dnat to {INNER_IP}:{INNER_PORT}"
+    );
+    must(&nsr(
+        NS_NAT,
+        &["nft", "add", "rule", "ip", "karst", "hairpre", &dnat],
+    ));
+    let snat = format!("iifname kn-br oifname kn-br snat to {NAT_OUTER_IP}");
+    must(&nsr(
+        NS_NAT,
+        &["nft", "add", "rule", "ip", "karst", "post", &snat],
     ));
 }
 
@@ -618,6 +758,18 @@ fn observed_from(probe: &str, bind_port: u16, target_ip: &str, target_port: u16)
 /// separates the cone rows from one another: **who is allowed to use a mapping
 /// once it exists.**
 fn unsolicited_crosses(probe: &str, from_ip: &str, from_port: u16) -> bool {
+    unsolicited_crosses_at(probe, from_ip, from_port, INNER_PORT)
+}
+
+/// As [`unsolicited_crosses`], but for a mapping whose external port is not the
+/// inside one.
+///
+/// A cone preserves the port, so every row using the short form may assume it.
+/// A **symmetric** NAT does not, so the double-NAT row learns the mapped port
+/// from a reflection and passes it in — guessing [`INNER_PORT`] there addresses
+/// a mapping that does not exist, and the row then reports "nothing crossed"
+/// whatever the NAT would really have done.
+fn unsolicited_crosses_at(probe: &str, from_ip: &str, from_port: u16, mapped: u16) -> bool {
     let listen = nsx(
         NS_INNER,
         &[probe, "listen", &format!("0.0.0.0:{INNER_PORT}"), "2500"],
@@ -633,8 +785,17 @@ fn unsolicited_crosses(probe: &str, from_ip: &str, from_port: u16) -> bool {
     // pass would depend on scheduling rather than on the NAT.
     std::thread::sleep(std::time::Duration::from_millis(400));
     let from = format!("{from_ip}:{from_port}");
-    let to = format!("{NAT_OUTER_IP}:{INNER_PORT}");
-    let _ = run_in(NS_OUTER, &[probe, "open", &from, &to]);
+    let to = format!("{NAT_OUTER_IP}:{mapped}");
+    let sent = run_in(NS_OUTER, &[probe, "open", &from, &to]);
+    // **The sender has to have run.** `PORT_A` and `PORT_B` are held by
+    // reflectors for the whole of every row, so a caller passing one as
+    // `from_port` gets a bind failure, no datagram, and a confident `false` — a
+    // negative result manufactured by the fixture rather than by the NAT. The
+    // carrier row was written that way first and only its defect check found it.
+    assert!(
+        sent.contains("SENT"),
+        "the probe never left {from}: {sent:?}"
+    );
 
     let out = child.wait_with_output().expect("listener exit");
     String::from_utf8_lossy(&out.stdout).starts_with("RECV")
@@ -994,6 +1155,180 @@ fn an_ipv6_path_is_not_translated() {
 /// the subscriber NAT's shared-space address, two hops show the carrier's. A
 /// topology that quietly collapsed to one NAT would pass every
 /// traffic-crosses check and report the wrong difficulty for the whole matrix.
+/// **Two stages of translation filter as well as map, which is the half the
+/// row above leaves out.**
+///
+/// `a_subscriber_behind_a_carrier_nat_is_translated_twice` establishes that the
+/// carrier's *mapping* is endpoint-dependent — a different external port per
+/// destination. That alone does not say whether a punched hole admits anyone
+/// else, and the two answers lead to opposite conclusions about the exit
+/// criterion. A carrier that filtered by address only would make a CGNAT
+/// subscriber reachable the way row 5 of the topology table is reachable, from
+/// any port, and symmetric-CGNAT-to-anything would stop being the hard case.
+///
+/// So this asserts the pair that actually characterises the row: the mapping
+/// **does** carry the reply it was opened for, and **does not** carry a
+/// datagram from an address the inside never contacted. Both halves are needed;
+/// the negative one alone would also pass against a topology that carries
+/// nothing at all, which is the failure finding 23 was.
+#[test]
+#[ignore = "needs root and network namespaces"]
+fn a_carrier_nat_admits_the_reply_it_opened_and_nothing_else() {
+    if !have_net_admin() {
+        eprintln!("skipping: not root");
+        return;
+    }
+    let _lock = matrix_lock().lock().expect("matrix lock");
+    let _topology = Topology;
+    let probe = natprobe();
+    build_double_nat();
+    let _r = start_reflectors(&probe);
+
+    // The positive half: a mapping opened toward A carries A's reply back
+    // through both stages. `observed_from` returning at all is that assertion.
+    let opened = observed_from(&probe, INNER_PORT, OUTER_IP_A, PORT_A)
+        .expect("a reply from the address the mapping was opened toward should cross both stages");
+    assert_eq!(
+        ip_of(&opened),
+        NAT_OUTER_IP,
+        "after two translations the source should be the carrier's: {opened}"
+    );
+    let external = port_of(&opened);
+
+    // The negative half, through the helper the cone rows already exercise in
+    // both directions — `a_full_cone_admits_an_address_it_never_contacted`
+    // shows it can return true, so a false here is a fact about this topology
+    // rather than about the plumbing. The mapped port is passed in because the
+    // carrier is symmetric and did not preserve it.
+    assert!(
+        !unsolicited_crosses_at(&probe, OUTER_IP_B, UNSOLICITED_PORT, external),
+        "an outer host the inside never contacted reached it through two \
+         translations"
+    );
+}
+
+/// Run one host's hairpin attempt and return what the mapping's owner saw.
+///
+/// Returns `None` when nothing arrived, and `Some(source)` when it did — the
+/// source being the interesting half, because RFC 4787 REQ-9 requires a
+/// hairpinned datagram to arrive from the NAT's **external** address.
+fn hairpin_attempt(probe: &str, hairpin: bool) -> Option<String> {
+    // The mapping's owner opens it the way a real node does: an outbound
+    // datagram to a reflector, which reports the external address back.
+    let observed = observed_from(probe, INNER_PORT, OUTER_IP_A, PORT_A)
+        .expect("the inside host should be able to reach the reflector");
+    let external = port_of(&observed);
+    assert_eq!(
+        ip_of(&observed),
+        NAT_OUTER_IP,
+        "the reflector saw {observed}, which is not this NAT's outer address"
+    );
+
+    if hairpin {
+        enable_hairpin(external);
+    }
+
+    // The owner waits on the mapping; the second host addresses it by the
+    // NAT's external address, which is the only address it could have learned
+    // from a relay.
+    let listen = nsx(
+        NS_INNER,
+        &[probe, "listen", &format!("0.0.0.0:{INNER_PORT}"), "2500"],
+    );
+    let refs: Vec<&str> = listen.iter().map(String::as_str).collect();
+    let child = Command::new(refs[0])
+        .args(&refs[1..])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn the listener");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let target = format!("{NAT_OUTER_IP}:{external}");
+    let _ = run_in(
+        NS_PEER,
+        &[probe, "open", &format!("0.0.0.0:{PEER_PORT}"), &target],
+    );
+
+    let out = child.wait_with_output().expect("listener output");
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    text.strip_prefix("RECV ").map(str::to_owned)
+}
+
+/// **Linux does not hairpin, and a node cannot assume otherwise.**
+///
+/// Two hosts on one home network, each holding the other's reflexive address
+/// from a relay, probe each other at the NAT's external address — and nothing
+/// arrives. The datagram is addressed to an address the NAT owns, so it is
+/// delivered locally rather than translated, and the NAT has no listener.
+///
+/// The consequence for Karst is specific and load-bearing: **the interface-
+/// address tier of `aven-v1.md` §7.2 is what carries the same-LAN case.** If a
+/// node advertised only reflexive addresses — which is the tempting
+/// simplification once §7.6 exists, because they are the ones that work
+/// everywhere else — two machines on the same desk would be relayed through the
+/// internet. That tier is not a fallback; on this row it is the only thing that
+/// works.
+#[test]
+#[ignore = "needs root and network namespaces"]
+fn a_masquerading_nat_does_not_hairpin() {
+    if !have_net_admin() {
+        eprintln!("skipping: not root");
+        return;
+    }
+    let _lock = matrix_lock().lock().expect("matrix lock");
+    let _topology = Topology;
+    let probe = natprobe();
+    build_hairpin();
+    let _r = start_reflectors(&probe);
+
+    let got = hairpin_attempt(&probe, false);
+    assert!(
+        got.is_none(),
+        "the datagram came back from {got:?} — this NAT hairpins, and the row \
+         below is the one that should be asserting it"
+    );
+}
+
+/// **…and when it is configured to, the source address is the external one.**
+///
+/// This row exists twice over. It records that hairpinning is a configuration
+/// rather than an impossibility, so the row above is read as "not by default"
+/// rather than "never". And it is the defect check for that row: with these two
+/// rules added, the datagram arrives, so the row above is asserting the absence
+/// of something this fixture is demonstrably capable of.
+///
+/// The source assertion is the substantive one. RFC 4787 REQ-9 requires a
+/// hairpinned datagram to arrive from the NAT's **external** address, and a
+/// `dnat` without the matching `snat` delivers it from the sender's *private*
+/// address instead. A node that accepted that would learn a candidate its peer
+/// can never be reached at from anywhere else, and — worse for AVEN — would
+/// have `Pong.observed` report a private address as the peer's reflexive one.
+#[test]
+#[ignore = "needs root and network namespaces"]
+fn a_nat_configured_for_hairpinning_rewrites_the_source_too() {
+    if !have_net_admin() {
+        eprintln!("skipping: not root");
+        return;
+    }
+    let _lock = matrix_lock().lock().expect("matrix lock");
+    let _topology = Topology;
+    let probe = natprobe();
+    build_hairpin();
+    let _r = start_reflectors(&probe);
+
+    let got = hairpin_attempt(&probe, true).expect(
+        "with the hairpin rules in place the datagram should arrive; if it does \
+         not, the fixture cannot hairpin and the row above proves nothing",
+    );
+    assert_eq!(
+        ip_of(&got),
+        NAT_OUTER_IP,
+        "hairpinned datagram arrived from {got}, not from the NAT's external \
+         address — RFC 4787 REQ-9 requires the source to be rewritten too, and \
+         a private source here would be advertised as a reflexive address"
+    );
+}
+
 #[test]
 #[ignore = "needs root and network namespaces"]
 fn a_subscriber_behind_a_carrier_nat_is_translated_twice() {

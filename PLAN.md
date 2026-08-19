@@ -2968,9 +2968,34 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- 🔶 **Full NAT test matrix in CI (§6) — seven `karstd` topologies now run end
-  to end, and five of them reach a direct path.** Hairpinning, NAT64/DNS64 and
-  double-NAT are still to build.
+- 🔶 **Full NAT test matrix in CI (§6) — eight `karstd` topologies run end to
+  end, five reach a direct path, and the instrument beneath them is now twelve
+  rows.** NAT64/DNS64 is the only one left unbuilt, and it is blocked on a
+  dependency decision rather than on effort (finding 27).
+
+  Three instrument rows added 2026-08-19:
+
+  | Row | Establishes |
+  |---|---|
+  | `a_masquerading_nat_does_not_hairpin` | Linux does **not** loop a datagram addressed to its own external address back to the inside |
+  | `a_nat_configured_for_hairpinning_rewrites_the_source_too` | …and when configured to, the source is the **external** address, as RFC 4787 REQ-9 requires |
+  | `a_carrier_nat_admits_the_reply_it_opened_and_nothing_else` | The CGNAT row filters as well as maps — the half the double-NAT row left out |
+
+  **The hairpinning result has a direct consequence for the specification.**
+  Two nodes on one home network both learn a reflexive address from the relay
+  and then probe each other *at the NAT's own outer address* — which does not
+  work. So `aven-v1.md` §7.2's **interface-address tier is what carries the
+  same-LAN case**, and it is not a fallback there: it is the only thing that
+  works. A node that advertised only reflexive addresses — the tempting
+  simplification once §7.6 exists, since they work everywhere else — would relay
+  two machines on the same desk through the internet.
+
+  The carrier row closes a gap that mattered for how the exit criterion is read.
+  The double-NAT row pinned the carrier's *mapping* as endpoint-dependent and
+  said nothing about its *filtering*, and the two answers point opposite ways: a
+  carrier filtering by address alone would make a CGNAT subscriber reachable
+  from any port, and symmetric-CGNAT-to-anything would stop being the hard case.
+  It filters by port too, so it does not.
 
   | # | Node A is behind | Node B is behind | Result |
   |---|---|---|---|
