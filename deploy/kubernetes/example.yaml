@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: karstd-config
+type: Opaque
+# Create this Secret from a complete configuration and every file it refers to,
+# for example:
+# kubectl -n karst-system create secret generic karstd-config \
+#   --from-file=karstd.toml --from-file=node.key
+# The whole Secret is mounted at /etc/karst, so relative key paths work.
+stringData: {}
+---
+apiVersion: karst.io/v1alpha1
+kind: KarstNode
+metadata:
+  name: karst
+spec:
+  image: ghcr.io/karst-net/karstd:dev
+  configSecret:
+    name: karstd-config
+    key: karstd.toml
