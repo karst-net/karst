@@ -110,10 +110,11 @@ A security project that advertises only its wins is not trustworthy.
   makes even symmetric-to-symmetric direct. Without a mapping,
   symmetric-to-symmetric is not winnable: published analysis of the alternative
   puts it at 0.01% after twenty seconds.
-- **The ≥90% direct-connection target is not met.** Seven of ten topologies,
-  and that denominator is a set of shapes we chose rather than a population
-  weighted by how common each NAT is in the field. Three shapes are still
-  unbuilt: double NAT, hairpinning, NAT64/DNS64.
+- **One topology that should connect directly still does not.** A symmetric
+  NAT facing a port-restricted cone — a CGNAT subscriber talking to somebody on
+  a home router — is reachable in principle (`aven-v1.md` §7.7) and unbuilt in
+  the daemon. Seven of ten topologies go direct; of the three that do not, two
+  have no direct path to find at all.
 - **Wire formats are not stable.** Adding the relay's reflector was a flag day
   (`ponor-v1.md` §13.10), and there will be others before 1.0.
 

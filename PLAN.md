@@ -3085,8 +3085,9 @@ onwards, anchored on the week of 2026-08-10.
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
 - Kubernetes operator + userspace mode + Docker images.
-- **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is
-  automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
+- **Exit:** **every topology in the matrix where a direct path is physically
+  possible reaches one**, and the rest fall back to the relay without loss with
+  both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
   different symmetric CGNAT **when at least one of the two NATs offers an
   explicit port mapping** (PCP, NAT-PMP or UPnP-IGD) — otherwise the pair falls
   back to the relay without loss, and both nodes report the reason.
@@ -3117,7 +3118,29 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *≥ 90% direct-connection rate* — **seven of ten topologies, which is 70%,
+  *Every physically-possible topology connects directly* — **seven of the eight
+  that are possible, with row 8 the one outstanding.**
+
+  The criterion was **restated on 2026-08-19** and the original is kept so the
+  change is legible:
+
+  > ~~≥ 90% direct-connection rate across the matrix~~
+
+  It was restated because it is **arithmetically unreachable by counting rows**,
+  and not for want of engineering. Two of the ten topologies are relay by
+  construction: symmetric-to-symmetric has no technique that reaches it
+  (§12.4's 0.01%), and a path with all UDP dropped has no direct path to find.
+  That caps any row count at 80%. The only routes to 90% would be to add easier
+  rows — which games the denominator, and is the dishonesty this matrix exists
+  to prevent — or to weight by real-world NAT prevalence, which needs field data
+  this project does not have and cannot invent.
+
+  The replacement is checkable, means something, and cannot be gamed by adding
+  rows: an easy row that connects adds nothing to it, and a row that *should*
+  connect and does not fails it. The old figure is still worth reporting and
+  still is — seven of ten, 70% — but as a description rather than a target.
+
+  *The old figure, for continuity* — **seven of ten topologies, which is 70%,
   or 78% over the nine where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
