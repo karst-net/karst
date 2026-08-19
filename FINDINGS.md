@@ -13,8 +13,10 @@ All nine original findings are closed. The re-review and the Phase 4
 work that followed it added fourteen more, and all fourteen of those are closed —
 most of them found by building the thing the finding above them asked for.
 
-**No findings remain open.** Finding 21, which did block the phase's exit
-criterion, is closed.
+**One remains open: 24**, and it is not a code defect. It records that Phase 4's
+third exit criterion cannot be met by the mechanism the plan names for it, with
+the measurement that establishes this, and recommends a restatement. It needs a
+decision rather than a fix.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
@@ -41,6 +43,67 @@ criterion, is closed.
 | 21 | High | Two nodes both behind NATs never get a direct path | Fixed 2026-08-18 |
 | 22 | High | A reflexive address refreshed at the NAT's own timeout is a coin flip | Fixed 2026-08-18 |
 | 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
+| 24 | Operational | Phase 4's third exit criterion is not achievable as written | **Open** — needs a decision |
+
+## Open
+
+### 24. Operational: Phase 4's third exit criterion is not achievable as written
+
+PLAN.md's Phase 4 exit reads "a peer behind symmetric CGNAT reaches a peer
+behind a different symmetric CGNAT", and the planned mechanism is
+birthday-paradox port prediction (`aven-v1.md` §12.4). **Prediction requires the
+NAT's port allocation to be predictable, and measurement says the ones that
+matter are not.**
+
+One socket, twenty-four destinations, a fresh topology per flavour:
+
+| nftables rule | Distinct external ports | Adjacent steps within ±8 |
+|---|---|---|
+| `masquerade` | **1** of 24 | n/a — one mapping, reused |
+| `masquerade fully-random` | **24** of 24 | **0** of 23 |
+| `masquerade random` | **24** of 24 | **0** of 23 |
+
+The two symmetric flavours scatter across the whole ephemeral range with no
+locality whatever — sample deltas of −48061, +47375, +30529. There is no window
+of any practical width to probe. This is not a Linux quirk to be routed around
+either: RFC 6056 *recommends* unpredictable transport-port selection precisely
+so that off-path attackers cannot guess a flow, so the NATs that are hardest for
+us are the ones that are behaving correctly.
+
+Two further points make prediction weaker than it first appears, both of which
+hold even against a NAT that allocates sequentially:
+
+1. **A port-restricted symmetric NAT filters on source port as well as
+   destination.** Guessing the peer's external port correctly is not enough —
+   our probe still arrives from a source port the peer's NAT never saw, and is
+   dropped. The coincidence needed is two-sided, not one-sided, which is a
+   different and much worse probability than the birthday argument assumes.
+2. **§7.5's normative rate rule forbids the technique's shape.** "A node MUST
+   NOT emit more probe traffic to a peer than that peer has authenticated
+   itself to it." A blast of *N* probes on the strength of one `CallMeMaybe`
+   violates it, and relaxing it hands an authenticated-but-malicious peer — the
+   one §1.1 explicitly allows inside the tailnet — an *N*-fold amplifier aimed
+   at any address it cares to name.
+
+**What is not affected.** A symmetric NAT is only disqualifying against another
+port-restricted one; rows 4 and 5 of the topology table go direct with a
+symmetric NAT on one side. The unreachable case is the intersection, and it is
+narrower than the criterion's wording suggests.
+
+**Recommended resolution — a decision for the project, not for this report.**
+Restate the criterion around what is achievable and verifiable:
+
+> A peer behind symmetric CGNAT reaches a peer behind a different symmetric
+> CGNAT **when at least one of the two NATs offers an explicit port mapping
+> (PCP, NAT-PMP or UPnP-IGD)**; otherwise the pair falls back to the relay
+> without loss, and both nodes report the reason.
+
+Port mapping is already in the phase's work list, in the same bullet as
+prediction. It is deterministic where prediction is probabilistic, it is
+testable against a third-party server rather than one we wrote (`miniupnpd`
+speaks NAT-PMP and PCP and drives nftables), and it produces a stable
+advertisable port instead of a guess. **The recommendation is to build port
+mapping and drop prediction**, rather than to build both.
 
 ## Closed
 

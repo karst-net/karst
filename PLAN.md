@@ -2516,10 +2516,22 @@ onwards, anchored on the week of 2026-08-10.
   migration and its byte-compatibility check. Recorded under Phase 4 because it
   happened here, not because it is Phase 4 work — it closes a dependency the
   control plane took on in Phase 3 and always intended to give back.
-- `karst-disco`: symmetric-NAT port prediction and port mapping (UPnP-IGD,
-  NAT-PMP, PCP). Both extend candidate gathering rather than replacing it: port
-  prediction adds candidates a symmetric NAT would otherwise hide, and a mapped
-  port adds one the NAT is holding open on purpose.
+- `karst-disco`: **port mapping (PCP, NAT-PMP, UPnP-IGD). Port prediction is
+  recommended for removal** — see FINDINGS.md 24.
+
+  Both were listed here as complementary. Measurement says they are not: Linux's
+  symmetric modes scatter external ports across the whole ephemeral range with
+  no locality — 24 distinct ports over 24 destinations, not one adjacent pair
+  within ±8 — so there is no window for prediction to probe, and RFC 6056
+  recommends exactly that unpredictability. Prediction also collides with
+  `aven-v1.md` §7.5's normative rule against emitting more probe traffic to a
+  peer than it has authenticated to us, which is the rule that stops a malicious
+  peer using our probe budget against a third party.
+
+  Port mapping survives the same scrutiny. It extends candidate gathering with a
+  port the NAT is holding open **on purpose**, it is deterministic rather than
+  probabilistic, and it can be tested against a third-party server (`miniupnpd`
+  speaks NAT-PMP and PCP over nftables) rather than one we wrote.
 - ✅ **PHREATIC over the relay, and the upgrade is one rule.** `Output` names a
   destination rather than an address, and `Engine::via` is the only place that
   chooses: a direct endpoint if there is one, the relay otherwise.
@@ -3000,16 +3012,26 @@ onwards, anchored on the week of 2026-08-10.
   of which double NAT is the one the third criterion names.
 
   *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
-  CGNAT* — **no.** Row 6 is that case, it stays on the relay, and it stays
-  there for exactly one missing capability: port prediction. What the row does
-  establish is that the failure is graceful rather than silent, and rows 4 and
-  5 establish that it is narrow — a symmetric NAT is not by itself
-  disqualifying, and only the both-ends-symmetric intersection is unreachable
-  today.
+  CGNAT* — **no, and the criterion is not achievable as written.** Row 6 is
+  that case and it stays on the relay. The mechanism this plan named for it is
+  port prediction, and FINDINGS.md 24 measures why that does not work: the
+  symmetric NATs that matter scatter their external ports with no locality at
+  all, so there is nothing to predict. Rows 4 and 5 establish that the failure
+  is *narrow* — a symmetric NAT is not by itself disqualifying — and row 6
+  establishes that it is *graceful*. Neither makes the criterion true.
 
-  The remaining work for this criterion is therefore no longer coverage. It is
-  one feature (`aven-v1.md` §12.4), one row's expectation flipping, and the
-  three unbuilt topologies.
+  **The recommended restatement, which is a decision this plan should take
+  rather than quietly leave open:**
+
+  > A peer behind symmetric CGNAT reaches a peer behind a different symmetric
+  > CGNAT **when at least one of the two NATs offers an explicit port mapping**
+  > (PCP, NAT-PMP or UPnP-IGD); otherwise the pair falls back to the relay
+  > without loss, and both nodes report the reason.
+
+  That is achievable, verifiable against a third-party server, and honest about
+  the residue. The remaining work for it is port mapping, row 6's expectation
+  splitting into two rows — one with a mapping-capable NAT and one without —
+  and the three unbuilt topologies.
 
 ### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
 

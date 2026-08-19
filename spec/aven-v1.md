@@ -727,6 +727,21 @@ must not be carried across to AVEN, where the MAC's job is different.
    source. A design that spends the rate budget on the common case to reach an
    uncommon one is a bad trade, and the specification should say which budget
    it spends.
+
+   **Measurement since suggests prediction should not be specified at all.**
+   Linux's two symmetric modes allocate 24 distinct external ports across 24
+   destinations with no locality — sample steps of −48061 and +47375, and not
+   one adjacent pair within ±8. There is no window to probe. RFC 6056
+   *recommends* that unpredictability, so the NATs least tractable here are the
+   ones behaving correctly. Two further obstacles hold even against a
+   sequentially-allocating NAT: a port-restricted symmetric NAT also filters on
+   source port, so a correct guess still arrives from a port it never saw and is
+   dropped; and §7.5's rule that a node MUST NOT emit more probe traffic to a
+   peer than that peer has authenticated to it forbids the technique's shape,
+   since relaxing it hands the malicious peer of §1.1 an *N*-fold amplifier
+   pointed wherever it likes. **Explicit port mapping — PCP, NAT-PMP,
+   UPnP-IGD — is deterministic where this is probabilistic, and is the better
+   use of the same effort.** FINDINGS.md 24 carries the measurement.
 5. **No path-MTU interaction.** A direct path may have a smaller MTU than the
    relay path, and AVEN reports nothing about it. PLAN.md schedules PMTU
    discovery for Phase 6; until then a path can be selected that black-holes
