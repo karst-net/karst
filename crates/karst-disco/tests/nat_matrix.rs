@@ -90,6 +90,26 @@ const OUTER_IP6_A: &str = "fd00:2::2";
 /// their own NAT and the carrier's, and the thing that makes the row a *CGNAT*
 /// rather than two arbitrary NATs in a line.
 const NAT_CG_IP: &str = "100.64.0.2";
+
+/// The NAT64 row's IPv6-only inside.
+const NAT64_CLIENT_IP6: &str = "fd00:11::2";
+const NAT64_GW_IP6: &str = "fd00:11::1";
+/// The translation prefix.
+///
+/// **Not the well-known `64:ff9b::/96`.** RFC 6052 §3.1 forbids pairing that
+/// prefix with private IPv4 addresses, and `tayga` enforces it — every probe is
+/// dropped with a note in its log and the row looks like a product failure. A
+/// prefix from this fixture's own ULA space is what the RFC says to use, and
+/// the outer addresses here are RFC 1918.
+const NAT64_PREFIX: &str = "fd00:6464::/96";
+/// `OUTER_IP_A` and `OUTER_IP_B` embedded in that prefix — 10.10.2.2 and
+/// 10.10.2.3 are `0a0a:0202` and `0a0a:0203`.
+const NAT64_OUTER_A: &str = "fd00:6464::a0a:202";
+const NAT64_OUTER_B: &str = "fd00:6464::a0a:203";
+/// `tayga`'s own two addresses and the pool it draws client mappings from.
+const NAT64_TAYGA_V4: &str = "192.168.255.1";
+const NAT64_TAYGA_V6: &str = "fd00:64::1";
+const NAT64_POOL: &str = "192.168.255.0/24";
 const CGNAT_INNER_IP: &str = "100.64.0.1";
 /// A reflector inside the carrier network, so the test can see the address
 /// after *one* translation as well as after two.
@@ -532,6 +552,170 @@ fn enable_hairpin(external_port: u16) {
     ));
 }
 
+/// An IPv6-only inside, an IPv4-only outside, and `tayga` between them.
+///
+/// A **topology** rather than a NAT behaviour, so it gets its own builder like
+/// `build_double_nat` and no `Nat` variant — `apply_nat` configures a middle
+/// namespace, and there is nothing here it could configure.
+///
+/// Built from `tayga` plus nftables rather than from a stateful NAT64
+/// implementation, and the split is deliberate. `tayga` does the protocol
+/// translation; the **port sharing comes from the same masquerade every other
+/// row in this file is built on**, so the NAT semantics being measured are ones
+/// this matrix has already pinned rather than ones taken on trust from a second
+/// implementation. It also keeps an out-of-tree kernel module out of CI.
+/// FINDINGS.md 27 records the alternatives.
+///
+/// A stateless translator *alone* would be the wrong instrument: one IPv4
+/// address per client with ports preserved is barely distinguishable from
+/// [`Nat::Ipv6Direct`], and a row built that way would report a comfortable
+/// result about a topology nobody is on.
+///
+/// Returns the running translator, which must be kept alive for the row's
+/// duration and killed after it.
+fn build_nat64(dir: &std::path::Path) -> std::process::Child {
+    teardown();
+    for ns in [NS_INNER, NS_NAT, NS_OUTER] {
+        must(&["ip", "netns", "add", ns]);
+        must(&nsr(ns, &["ip", "link", "set", "lo", "up"]));
+    }
+
+    // Outside: IPv4 only, two addresses so endpoint-independence is observable.
+    must(&[
+        "ip", "link", "add", "kn-no", "type", "veth", "peer", "name", "kn-o",
+    ]);
+    must(&["ip", "link", "set", "kn-no", "netns", NS_NAT]);
+    must(&["ip", "link", "set", "kn-o", "netns", NS_OUTER]);
+    let nat_o = format!("{NAT_OUTER_IP}/24");
+    must(&nsr(NS_NAT, &["ip", "addr", "add", &nat_o, "dev", "kn-no"]));
+    must(&nsr(NS_NAT, &["ip", "link", "set", "kn-no", "up"]));
+    for addr in [OUTER_IP_A, OUTER_IP_B] {
+        let cidr = format!("{addr}/24");
+        must(&nsr(NS_OUTER, &["ip", "addr", "add", &cidr, "dev", "kn-o"]));
+    }
+    must(&nsr(NS_OUTER, &["ip", "link", "set", "kn-o", "up"]));
+    must(&nsr(
+        NS_OUTER,
+        &["ip", "route", "add", "default", "via", NAT_OUTER_IP],
+    ));
+
+    // Inside: IPv6 only. No IPv4 address at all on the client, which is what
+    // makes the row a NAT64 row rather than a dual-stack one.
+    must(&[
+        "ip", "link", "add", "kn-i", "type", "veth", "peer", "name", "kn-ni",
+    ]);
+    must(&["ip", "link", "set", "kn-i", "netns", NS_INNER]);
+    must(&["ip", "link", "set", "kn-ni", "netns", NS_NAT]);
+    let gw = format!("{NAT64_GW_IP6}/64");
+    let cl = format!("{NAT64_CLIENT_IP6}/64");
+    must(&nsr(
+        NS_NAT,
+        &["ip", "-6", "addr", "add", &gw, "dev", "kn-ni", "nodad"],
+    ));
+    must(&nsr(NS_NAT, &["ip", "link", "set", "kn-ni", "up"]));
+    must(&nsr(
+        NS_INNER,
+        &["ip", "-6", "addr", "add", &cl, "dev", "kn-i", "nodad"],
+    ));
+    must(&nsr(NS_INNER, &["ip", "link", "set", "kn-i", "up"]));
+    must(&nsr(
+        NS_INNER,
+        &["ip", "-6", "route", "add", "default", "via", NAT64_GW_IP6],
+    ));
+
+    must(&nsr(NS_NAT, &["sysctl", "-qw", "net.ipv4.ip_forward=1"]));
+    must(&nsr(
+        NS_NAT,
+        &["sysctl", "-qw", "net.ipv6.conf.all.forwarding=1"],
+    ));
+
+    start_translator(dir)
+}
+
+/// Configure and start `tayga` in the already-wired NAT namespace.
+fn start_translator(dir: &std::path::Path) -> std::process::Child {
+    // **The tun device name is per-process, not the literal `nat64`.**
+    // `tayga --mktun` creates a *persistent* device, so a fixed name is shared
+    // with any other tayga on the machine — including one left behind by a
+    // crashed run. This row failed reproducibly while a stray tayga from an
+    // unrelated experiment was alive and passed once it was gone; the exact
+    // interaction was never established, which is precisely why the shared name
+    // is removed rather than reasoned about.
+    let tun = format!("nat64-{}", std::process::id());
+    let data = dir.join("tayga-data");
+    std::fs::create_dir_all(&data).expect("tayga data dir");
+    let conf = dir.join("tayga.conf");
+    std::fs::write(
+        &conf,
+        format!(
+            "tun-device {tun}\n\
+             ipv4-addr {NAT64_TAYGA_V4}\n\
+             ipv6-addr {NAT64_TAYGA_V6}\n\
+             prefix {NAT64_PREFIX}\n\
+             dynamic-pool {NAT64_POOL}\n\
+             data-dir {}\n",
+            data.display()
+        ),
+    )
+    .expect("write tayga config");
+    let conf_path = conf.to_string_lossy().into_owned();
+
+    must(&nsr(NS_NAT, &["tayga", "--mktun", "-c", &conf_path]));
+    must(&nsr(NS_NAT, &["ip", "link", "set", &tun, "up"]));
+    must(&nsr(
+        NS_NAT,
+        &["ip", "addr", "add", NAT64_TAYGA_V4, "dev", &tun],
+    ));
+    must(&nsr(
+        NS_NAT,
+        &["ip", "route", "add", NAT64_POOL, "dev", &tun],
+    ));
+    must(&nsr(
+        NS_NAT,
+        &["ip", "-6", "route", "add", NAT64_PREFIX, "dev", &tun],
+    ));
+
+    // **The port sharing, and the reason this row is built this way.** `tayga`
+    // is stateless: it hands each IPv6 client its own address out of the pool,
+    // ports untouched. An ordinary masquerade behind it collapses the pool onto
+    // one address and shares it by port — which is what a carrier does, and
+    // which is a behaviour the other rows in this file already characterise.
+    must(&nsr(NS_NAT, &["nft", "add", "table", "ip", "karst"]));
+    must(&nsr(
+        NS_NAT,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "post",
+            "{ type nat hook postrouting priority 100 ; }",
+        ],
+    ));
+    must(&nsr(
+        NS_NAT,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "ip",
+            "karst",
+            "post",
+            "oifname kn-no masquerade",
+        ],
+    ));
+
+    let child = Command::new("ip")
+        .args(["netns", "exec", NS_NAT, "tayga", "-d", "-c", &conf_path])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn tayga");
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    child
+}
+
 fn nsr(ns: &str, args: &[&str]) -> Vec<&'static str> {
     // `must` needs &[&str]; leak the composed argv rather than fight lifetimes
     // in a test helper. Bounded by the number of setup commands.
@@ -580,6 +764,7 @@ fn apply_nat(nat: Nat) {
         }
         // Nothing to apply. The row's whole content is the absence of a NAT,
         // and adding an empty table would only make it look like there is one.
+        //
         Nat::Ipv6Direct => {}
         Nat::UdpBlocked => {
             must(&nsr(
@@ -1327,6 +1512,73 @@ fn a_nat_configured_for_hairpinning_rewrites_the_source_too() {
          address — RFC 4787 REQ-9 requires the source to be rewritten too, and \
          a private source here would be advertised as a reflexive address"
     );
+}
+
+/// Probe from the IPv6-only inside — the v4 helpers cannot bind there.
+fn observed_from6(probe: &str, bind_port: u16, target6: &str, target_port: u16) -> Option<String> {
+    let bind = format!("[{NAT64_CLIENT_IP6}]:{bind_port}");
+    let target = format!("[{target6}]:{target_port}");
+    let out = run_in(NS_INNER, &[probe, "probe", &bind, &target]);
+    out.strip_prefix("OBSERVED ").map(str::to_owned)
+}
+
+/// **An IPv6-only node reaches IPv4, and the path behaves like a cone.**
+///
+/// Two things are established and the second is the one that matters to AVEN.
+///
+/// The client has no IPv4 address at all, so reaching an IPv4-only host proves
+/// the translation happened; the reflector sees the NAT's outer v4 address,
+/// which is two translations — `tayga` into the pool, masquerade onto the one
+/// outer address.
+///
+/// Then the same socket addresses two *different* IPv4 hosts and is seen at the
+/// **same external port**. That is endpoint-independent mapping, so a NAT64
+/// client's reflexive address (`aven-v1.md` §7.6) is the same address every
+/// peer sees and discovery works on it unchanged. Had it come out
+/// endpoint-*dependent*, an IPv6-only node would have been in §7.7's hard
+/// class, and the row would be saying something very different about what
+/// Karst does for mobile networks.
+#[test]
+#[ignore = "needs root, network namespaces and tayga"]
+fn a_nat64_path_carries_ipv6_to_ipv4_and_shares_one_port_space() {
+    if !have_net_admin() {
+        eprintln!("skipping: not root");
+        return;
+    }
+    if !sh(&["sh", "-c", "command -v tayga"]) {
+        eprintln!("skipping: tayga is not installed");
+        return;
+    }
+    let _lock = matrix_lock().lock().expect("matrix lock");
+    let _topology = Topology;
+    let probe = natprobe();
+    let dir = std::env::temp_dir().join(format!("karst-nat64-{}", std::process::id()));
+    let tayga = build_nat64(&dir);
+    let _guard = Reflectors {
+        children: vec![tayga],
+    };
+    let _reflectors = start_reflectors(&probe);
+
+    let a = observed_from6(&probe, 19570, NAT64_OUTER_A, PORT_A)
+        .expect("an IPv6-only client should reach an IPv4 host through the translator");
+    assert_eq!(
+        ip_of(&a),
+        NAT_OUTER_IP,
+        "the reflector saw {a}, which is not the NAT's outer IPv4 address — one \
+         of the two translations did not happen"
+    );
+
+    let b = observed_from6(&probe, 19570, NAT64_OUTER_B, PORT_B)
+        .expect("the second destination should also be reachable");
+    assert_eq!(
+        port_of(&a),
+        port_of(&b),
+        "the same socket was seen at {a} and {b} — this NAT64 path allocates \
+         per destination, which would put every IPv6-only node in §7.7's hard \
+         class"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
