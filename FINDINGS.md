@@ -15,10 +15,10 @@ followed it added sixteen more, and fifteen of those are closed — most found b
 building the thing the finding above them asked for, and the most recent found
 by counting what the test matrix did *not* cover.
 
-**One remains open: 24**, and it is not a code defect. It records that Phase 4's
-third exit criterion cannot be met by the mechanism the plan names for it, with
-the measurement that establishes this, and recommends a restatement. It needs a
-decision rather than a fix.
+**No findings remain open.** Finding 24 was not a code defect — it recorded that
+Phase 4's third exit criterion could not be met by the mechanism the plan named
+for it. The recommended restatement was accepted on 2026-08-19 and PLAN.md now
+carries both the new wording and the original, struck through.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
@@ -45,12 +45,18 @@ decision rather than a fix.
 | 21 | High | Two nodes both behind NATs never get a direct path | Fixed 2026-08-18 |
 | 22 | High | A reflexive address refreshed at the NAT's own timeout is a coin flip | Fixed 2026-08-18 |
 | 23 | Medium | The tailnet fixture's NAT masqueraded but did not filter | Fixed 2026-08-18 |
-| 24 | Operational | Phase 4's third exit criterion is not achievable as written | **Open** — needs a decision |
+| 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 
-## Open
+## Closed
 
-### 24. Operational: Phase 4's third exit criterion is not achievable as written
+### 24. Operational: Phase 4's third exit criterion was not achievable as written
+
+**Resolved 2026-08-19 by restating the criterion**, not by building anything.
+The new wording admits an explicit port mapping on either side; the pair
+otherwise relays without loss and both nodes report why. The original wording is
+kept struck through in PLAN.md so the change is legible. The analysis that
+prompted it follows.
 
 PLAN.md's Phase 4 exit reads "a peer behind symmetric CGNAT reaches a peer
 behind a different symmetric CGNAT", and the planned mechanism is
@@ -131,8 +137,6 @@ testable against a third-party server rather than one we wrote (`miniupnpd`
 speaks NAT-PMP and PCP and drives nftables), and it produces a stable
 advertisable port instead of a guess. **The recommendation is to build port
 mapping and drop prediction**, rather than to build both.
-
-## Closed
 
 ### 25. Medium: the NAT matrix was missing the common symmetric/port-restricted pairing
 

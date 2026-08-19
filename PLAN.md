@@ -2530,8 +2530,49 @@ onwards, anchored on the week of 2026-08-10.
 
   Port mapping survives the same scrutiny. It extends candidate gathering with a
   port the NAT is holding open **on purpose**, it is deterministic rather than
-  probabilistic, and it can be tested against a third-party server (`miniupnpd`
-  speaks NAT-PMP and PCP over nftables) rather than one we wrote.
+  probabilistic, and it can be tested against a third-party server rather than
+  one we wrote.
+- ✅ **`karst-portmap` — the codec for both protocols, 41 unit tests and four
+  against a real gateway.** Sans-io like every other protocol crate: bytes to
+  typed values and back, plus the renewal arithmetic. No socket, no clock, no
+  gateway discovery.
+
+  **The integration test is the point of the crate, not an extra.** A
+  round-trip test proves the encoder and decoder agree with each other, which
+  is exactly what a shared misreading also produces — and a shared misreading is
+  the likely failure here, because these are byte-offset protocols with no
+  length fields and nothing self-describing. So `tests/gateway.rs` drives
+  **miniupnpd** in a namespace and asserts against what an implementation we did
+  not write says. Same argument as the NAT matrix, one layer up.
+
+  It earned its keep twice within an hour of existing.
+
+  It found a **wrong result-code table**: PCP code 4 was listed as "network
+  failure", which is 7 — 4 is `UNSUPP_OPCODE`. A gateway that does not implement
+  `MAP` would have been retried forever while a genuinely transient failure was
+  given up on after one attempt. Both the right and the wrong set look
+  reasonable in a diff, which is why it took a real gateway to surface.
+
+  And both mutations of the encoder are caught by it. Sending the wrong client
+  address in a PCP `MAP` draws a real `ADDRESS_MISMATCH` (code 12) from
+  miniupnpd — the RFC 6887 §8.1 check, performed by somebody else's code.
+  Transposing NAT-PMP's internal and suggested-external port fields fails the
+  mapping row, but only because the test deliberately asks for two *different*
+  numbers; requesting the same port on both sides makes a transposition
+  invisible.
+
+  One boundary worth recording. **UPnP-IGD is not in this crate**: it is SOAP
+  over HTTP over SSDP, three protocols and an XML parser, against two that are
+  a single UDP exchange of fixed-size messages. Putting it here would have made
+  the crate depend on an XML parser to serve the protocols that do not need one.
+
+  The security posture is stated in the crate documentation rather than assumed:
+  **nothing here is authenticated**. NAT-PMP has no security at all and PCP's
+  RFC 7652 authentication is neither deployed nor implemented. That is
+  survivable only because of what a mapping is used for — a forged response
+  makes a node advertise an address that does not work, which is the same bound
+  `aven-v1.md` §7.2 already places on a lying peer, and the reason that section
+  forbids treating any reported address as a path.
 - ✅ **PHREATIC over the relay, and the upgrade is one rule.** `Output` names a
   destination rather than an address, and `Engine::via` is the only place that
   chooses: a direct endpoint if there is one, the relay otherwise.
@@ -2996,8 +3037,24 @@ onwards, anchored on the week of 2026-08-10.
   behaved like a symmetric one for two days' worth of debugging.
 - Kubernetes operator + userspace mode + Docker images.
 - **Exit:** ≥ 90% direct-connection rate across the matrix; relay fallback is
-  automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind
-  a different symmetric CGNAT.
+  automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
+  different symmetric CGNAT **when at least one of the two NATs offers an
+  explicit port mapping** (PCP, NAT-PMP or UPnP-IGD) — otherwise the pair falls
+  back to the relay without loss, and both nodes report the reason.
+
+  The third criterion was **restated on 2026-08-19** and the original is kept
+  here so the change is legible rather than silent:
+
+  > ~~a peer behind symmetric CGNAT reaches a peer behind a different symmetric
+  > CGNAT~~
+
+  It was restated because it was measured to be unachievable, not because it was
+  inconvenient. FINDINGS.md 24 carries the measurement and the arithmetic;
+  the short version is that two randomising NATs square the search space, so the
+  birthday paradox's √N saving still leaves ~170,000 probes per side for a
+  99.9% success rate, and 0.01% after twenty seconds of trying. Tailscale
+  reaches the same conclusion and relays the same case. A criterion that no
+  implementation meets is not a standard, it is a wish.
 
   **Two of the three hold. The third does not, and there is now a number rather
   than an expectation.**

@@ -26,7 +26,7 @@ test:
 # artefacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
-test-privileged: test-tun test-karstd test-nat-matrix test-tailnet
+test-privileged: test-tun test-karstd test-nat-matrix test-portmap test-tailnet
 
 test-tun:
     @just _privileged karst-tun device
@@ -47,6 +47,13 @@ test-tailnet:
           | grep -o "\"executable\":\"[^\"]*tailnet[^\"]*\"" | head -1 | cut -d'"' -f4)
     [ -n "$bin" ] || { echo "could not locate the tailnet test binary"; exit 1; }
     sudo env "PATH=$PATH" "$bin" --ignored --test-threads=1 --nocapture
+
+# The port-mapping codec against miniupnpd, an implementation we did not write
+# (PLAN.md §6). A round-trip test proves the encoder and decoder agree with each
+# other; this proves they agree with RFC 6886 and RFC 6887. Needs `miniupnpd`.
+test-portmap:
+    cargo build -p karst-portmap --example pmprobe
+    @just _privileged karst-portmap gateway
 
 # The NAT matrix (PLAN.md §6). These validate the *instrument*: that each
 # topology behaves the way its name says, using examples/natprobe.rs and no

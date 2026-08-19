@@ -21,6 +21,7 @@ karst-disco = { path = "crates/karst-disco", version = "0.0.0" }
 karst-dns = { path = "crates/karst-dns", version = "0.0.0" }
 karst-node = { path = "crates/karst-node", version = "0.0.0" }
 karst-noise = { path = "crates/karst-noise", version = "0.0.0" }
+karst-portmap = { path = "crates/karst-portmap", version = "0.0.0" }
 karst-proto = { path = "crates/karst-proto", version = "0.0.0" }
 karst-relay-proto = { path = "crates/karst-relay-proto", version = "0.0.0" }
 karst-transport = { path = "crates/karst-transport", version = "0.0.0" }
