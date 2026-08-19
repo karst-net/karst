@@ -11,6 +11,12 @@ series behind it, and lab machines get reimaged.
 
 Produced by `scripts/soak.sh`; see that file for the sampling method.
 
+`hard-easy-2026-08-19.md` is a different kind of entry: a NAT-traversal
+experiment with its harness beside it (`hard-easy-birthday.py`), committed
+because it decided a design question — whether the birthday technique is worth
+its architectural cost — and because the two fixture defects it turned up on the
+way are worth more than the number it produced.
+
 ## Runs
 
 | File | Result |

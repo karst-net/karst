@@ -3113,6 +3113,22 @@ onwards, anchored on the week of 2026-08-10.
   and is the common pairing** — a CGNAT subscriber talking to somebody on a
   home router.
 
+  **Measured against our own NAT flavours on 2026-08-19, and it holds** —
+  `docs/measurements/hard-easy-2026-08-19.md`, with the harness beside it:
+
+  | N sockets (hard) | M probes (easy) | Packets | Measured | Trials | Predicted |
+  |---|---|---|---|---|---|
+  | 128 | 128 | 256 | **20%** | 40 | 22% |
+  | 256 | 256 | 512 | **60%** | 20 | 64% |
+  | 512 | 512 | 1024 | **95%** | 20 | 98% |
+
+  The blast takes about a millisecond. The arithmetic predicts the measurement
+  closely enough to design against, which makes one result actionable
+  immediately: **one large round beats several small ones.** Reaching 95% by
+  retrying 256×256 costs about 1536 datagrams; doing it once at 512×512 costs
+  1024. A design that starts small and escalates spends more traffic to arrive
+  at the same place, because the birthday curve is superlinear in *N·M*.
+
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a
   socket is what earns a distinct external mapping toward the *one* address the
@@ -3125,6 +3141,18 @@ onwards, anchored on the week of 2026-08-10.
   uses — and it means the winning socket must become the datapath socket. That
   is a change to `karstd`'s datapath, not to `karst-disco`, and should be costed
   as one.
+
+  **The open question is the rate budget, not the mechanism.** §7.5 says a node
+  MUST NOT emit more probe traffic to a peer than that peer has authenticated
+  itself to it; the existing budget is 16 candidates × 4 probes = 64 datagrams,
+  and 512 probes is eight times that on the strength of one `CallMeMaybe`. The
+  mitigating structure is that a blast goes to **one** address rather than
+  sixteen — but a node learns its *peer's* reflexive address from the peer,
+  which §1.1 allows to be malicious, so as specified nothing stops a peer naming
+  a third party and having a thousand datagrams sent at it. Closing that needs
+  the relay to vouch for the source address of the peer's own Ponor connection.
+  That is a protocol change and it should be designed before the datapath work,
+  not after.
 
 ### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
 
