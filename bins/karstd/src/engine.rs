@@ -331,7 +331,7 @@ impl Engine {
     ///
     /// A peer present in both rosters **keeps its live session and its learned
     /// endpoint**. Adding one peer must not cost a rehandshake with every
-    /// other: on a large tailnet a single enrolment would otherwise produce a
+    /// other: on a large aquifer a single enrolment would otherwise produce a
     /// fleet-wide reconnect, and each reconnect is two ML-KEM operations and a
     /// window where traffic is dropped for want of a session.
     ///

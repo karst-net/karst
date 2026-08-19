@@ -82,11 +82,11 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
 
     let mut roster_text = String::new();
-    for (id, tailnet) in nodes {
+    for (id, aquifer) in nodes {
         use std::fmt::Write as _;
         let _ = write!(
             roster_text,
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"{tailnet}\"\n\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
             Base64::encode_string(id.public_key())
         );
     }

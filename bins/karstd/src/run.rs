@@ -1735,7 +1735,7 @@ mod route_tests {
     }
 
     /// **The case routes exist for.** A subnet router advertises a range
-    /// nowhere near the tailnet's own prefix; without a route the kernel sends
+    /// nowhere near the aquifer's own prefix; without a route the kernel sends
     /// that traffic to the default gateway instead of the tunnel.
     #[test]
     fn a_peer_outside_the_prefix_needs_one() {

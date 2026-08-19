@@ -57,7 +57,7 @@ pub enum Reason {
     NotHere,
     /// Was here and has gone.
     Disconnected,
-    /// Not in the roster, or not in this tailnet.
+    /// Not in the roster, or not in this aquifer.
     NotAdmitted,
     /// A newer connection for this id has been accepted.
     Replaced,

@@ -230,7 +230,7 @@ impl Ctx {
     /// Install a complete, already-validated roster and wake every connection.
     ///
     /// A reload is an admission boundary: existing clients removed from it (or
-    /// moved to another tailnet) are closed, not grandfathered in.
+    /// moved to another aquifer) are closed, not grandfathered in.
     pub fn replace_roster(&self, roster: FileRoster) {
         match self.roster.write() {
             Ok(mut current) => *current = Arc::new(roster),
@@ -243,9 +243,9 @@ impl Ctx {
     fn remains_admitted(&self, admitted: &Admitted) -> bool {
         let roster = self.roster();
         match admitted {
-            Admitted::Client { node_id, tailnet } => roster
+            Admitted::Client { node_id, aquifer } => roster
                 .client(node_id)
-                .is_some_and(|entry| entry.tailnet == *tailnet),
+                .is_some_and(|entry| entry.aquifer == *aquifer),
             Admitted::Mesh { relay_id } => roster.mesh_peer(relay_id).is_some(),
         }
     }

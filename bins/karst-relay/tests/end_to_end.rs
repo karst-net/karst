@@ -18,8 +18,8 @@ use karst_relay::hub::{Config as HubConfig, ConnId, Hub};
 use karst_relay::roster::FileRoster;
 use karst_relay::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_relay_proto::{
-    frame::decode, Admitted, ClientHandshake, Error as ProtoError, Frame, RelayHandshake, Role,
-    TailnetId,
+    frame::decode, Admitted, AquiferId, ClientHandshake, Error as ProtoError, Frame,
+    RelayHandshake, Role,
 };
 
 fn identity(seed: u8) -> Identity {
@@ -29,10 +29,10 @@ fn identity(seed: u8) -> Identity {
 fn roster_for(entries: &[(&Identity, &str)], mesh: &[&Identity]) -> FileRoster {
     use std::fmt::Write as _;
     let mut text = String::new();
-    for (id, tailnet) in entries {
+    for (id, aquifer) in entries {
         let _ = write!(
             text,
-            "[[client]]\nidentity_pk = \"{}\"\ntailnet = \"{tailnet}\"\n\n",
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
             Base64::encode_string(id.public_key())
         );
     }
@@ -115,7 +115,7 @@ fn a_rostered_node_is_admitted_and_its_traffic_is_forwarded() {
         a,
         Admitted::Client {
             node_id: node_id(alice.public_key()),
-            tailnet: TailnetId("acme".to_owned()),
+            aquifer: AquiferId("acme".to_owned()),
         }
     );
 
@@ -344,7 +344,7 @@ fn a_captured_client_auth_does_not_replay_onto_a_second_connection() {
 }
 
 #[test]
-fn the_relay_will_not_forward_between_tailnets() {
+fn the_relay_will_not_forward_between_aquifers() {
     // §5.4, end to end: both nodes are admitted, and traffic still does not
     // cross. Admission and authorisation are different questions.
     let relay = identity(0x10);
@@ -391,6 +391,6 @@ fn the_relay_will_not_forward_between_tailnets() {
 
     assert!(
         hub.take_outbound(ConnId(2)).is_none(),
-        "traffic crossed a tailnet boundary"
+        "traffic crossed an aquifer boundary"
     );
 }

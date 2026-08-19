@@ -2045,7 +2045,7 @@ mod tests {
     fn a_node_does_not_answer_a_reflect() {
         // A node is not a reflector. Its own request replayed back at it —
         // authentic under the very key it holds — must produce nothing, or
-        // every node in the tailnet is a reflector for anyone who can capture
+        // every node in the aquifer is a reflector for anyone who can capture
         // one datagram.
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));

@@ -22,8 +22,8 @@ pub mod handshake;
 
 pub use frame::{Frame, Reason, Role};
 pub use handshake::{
-    client_auth_signing_input, relay_auth_signing_input, Admitted, ClientHandshake, RelayEntry,
-    RelayHandshake, Roster, RosterEntry, Signer, TailnetId, Verifier,
+    client_auth_signing_input, relay_auth_signing_input, Admitted, AquiferId, ClientHandshake,
+    RelayEntry, RelayHandshake, Roster, RosterEntry, Signer, Verifier,
 };
 
 pub mod consts {

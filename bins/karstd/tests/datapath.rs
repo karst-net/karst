@@ -754,7 +754,7 @@ allowed_ips = ["10.77.0.3/32"]
 }
 
 /// **The property live reconfiguration exists for.** Adding a peer must not
-/// cost a rehandshake with every other one — on a large tailnet a single
+/// cost a rehandshake with every other one — on a large aquifer a single
 /// enrolment would otherwise produce a fleet-wide reconnect, each costing two
 /// ML-KEM operations and a window where traffic is dropped for want of a
 /// session.

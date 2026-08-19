@@ -48,8 +48,8 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 **772 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-twelve-row NAT matrix and **ten end-to-end tailnet topologies** — each one a
-whole tailnet, and each ending in a TCP conversation under an ACL.
+twelve-row NAT matrix and **ten end-to-end aquifer topologies** — each one a
+whole aquifer, and each ending in a TCP conversation under an ACL.
 
 | Node A is behind | Node B is behind | Result |
 |---|---|---|

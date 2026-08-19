@@ -403,7 +403,7 @@ impl Client {
     ///
     /// The netmap carries a per-pair PSK for every peer, so a plaintext cache
     /// would hand an attacker with read access the assumption-diversity hedge
-    /// for the whole tailnet (PLAN.md §2.6).
+    /// for the whole aquifer (PLAN.md §2.6).
     ///
     /// # Errors
     ///

@@ -295,7 +295,7 @@ impl Engine {
     /// because it had not yet been given our disco key, because it restarted,
     /// because the relay was briefly down — would never hear where we are, and
     /// the pair would stay on the relay for good. That is not hypothetical; it
-    /// is what a node joining an existing tailnet does, and it was observed
+    /// is what a node joining an existing aquifer does, and it was observed
     /// between two real daemons before this existed.
     ///
     /// The re-probe sweep above exists for the same reason and says so:

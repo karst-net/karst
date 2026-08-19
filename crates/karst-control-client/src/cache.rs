@@ -7,7 +7,7 @@
 //! encrypted and unreadable without the node's sealed key."* The netmap
 //! carries a per-pair PSK for every peer, so a plaintext cache is a file that
 //! hands an attacker with read access the assumption-diversity hedge for the
-//! whole tailnet.
+//! whole aquifer.
 //!
 //! # The cache stores opaque bytes
 //!
@@ -81,7 +81,7 @@ impl Drop for SealKey {
     }
 }
 
-// The key protects every PSK in the tailnet. It does not print.
+// The key protects every PSK in the aquifer. It does not print.
 impl core::fmt::Debug for SealKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("SealKey(redacted)")

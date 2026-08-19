@@ -102,7 +102,7 @@ who can decrypt the payload already holds `ss1`. And it is actively harmful:
 the responder could no longer precompute a hint→key table and would have to
 recompute a MAC over every roster entry on every handshake, converting an O(1)
 lookup into **O(N) work per handshake after the cookie check** — a DoS
-amplifier that scales with tailnet size.
+amplifier that scales with aquifer size.
 
 `spec/phreatic-v1.md` carries this as an explicit "do not do this" note.
 
@@ -130,7 +130,7 @@ If ever wanted, it belongs in a post-handshake exchange, not msg1.
 
 The responder does **not** reply with an "unknown peer" error. Doing so would
 make every node a membership oracle for its own roster, answering "is key X in
-your tailnet?" to any prober. Hint misses are logged locally and dropped,
+your aquifer?" to any prober. Hint misses are logged locally and dropped,
 matching WireGuard's treatment of unknown peers.
 
 ---

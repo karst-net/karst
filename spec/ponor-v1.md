@@ -72,7 +72,7 @@ technical second. The prior art is credited; the protocol is ours.
 - **It does not authorise.** Whether two nodes may exchange traffic is an ACL
   question, decided by the packet filter at both endpoints
   (PLAN.md §4.3). Ponor enforces only that both ends are admitted members of the
-  same tailnet (§5.4) — an abuse control, not an access-control decision.
+  same aquifer (§5.4) — an abuse control, not an access-control decision.
 - **It is not a transport.** Ordering, retransmission and congestion control are
   TCP's. §13.5 records what that costs.
 - **It provides no forward secrecy of its own.** It performs no key agreement.
@@ -259,7 +259,7 @@ an implementation detail:
   renewal.
 - A successfully parsed replacement becomes the complete roster atomically.
   New handshakes use it immediately. Existing client and mesh connections that
-  are absent from it, or whose client tailnet changed, MUST receive
+  are absent from it, or whose client aquifer changed, MUST receive
   `Close(NOT_ADMITTED)` and be removed from presence before they can forward
   another frame.
 - A malformed or unreadable replacement MUST NOT replace the last valid
@@ -275,10 +275,10 @@ therefore a data-plane dependency after 90 seconds; operators who need a
 longer outage budget must run redundant roster distribution, not relax the
 relay into failing open.
 
-### 5.4 Tailnet scoping
+### 5.4 Aquifer scoping
 
-A roster entry names the tailnet the node belongs to. A relay MUST refuse to
-forward a frame unless the source and destination are in the **same** tailnet.
+A roster entry names the aquifer the node belongs to. A relay MUST refuse to
+forward a frame unless the source and destination are in the **same** aquifer.
 
 Without this rule a multi-tenant relay is a general-purpose message bus between
 any two keys it has ever been told about, which is both an abuse conduit and a
@@ -381,7 +381,7 @@ frame header and delivers nothing, which makes it a pure amplification unit.
 |---|---|
 | `0x00` | `NOT_HERE` — the destination is not connected to this relay or its mesh |
 | `0x01` | `DISCONNECTED` — the destination was here and has gone |
-| `0x02` | `NOT_ADMITTED` — the destination is not in the roster, or not in this tailnet |
+| `0x02` | `NOT_ADMITTED` — the destination is not in the roster, or not in this aquifer |
 | `0x03` | `REPLACED` — a newer connection for this ID has been accepted |
 | `0x04` | `RATE_LIMITED` — sustained excess; see §7.4 |
 | `0x05` | `SHUTTING_DOWN` |
@@ -390,7 +390,7 @@ frame header and delivers nothing, which makes it a pure amplification unit.
 `NOT_HERE` and `NOT_ADMITTED` are distinguishable, and that is a deliberate
 disclosure: it tells a *roster member* whether a peer it was given by the netmap
 is unknown to this relay. Both parties are already admitted members of the same
-tailnet, so the information does not cross a trust boundary — and without it, a
+aquifer, so the information does not cross a trust boundary — and without it, a
 stale netmap and a stale roster are indistinguishable from a routing failure,
 which is exactly the class of bug that goes undiagnosed for weeks.
 
@@ -440,7 +440,7 @@ relay, and a half-open handshake consumes one for free.
 On `SendPacket(dst_id, payload)` the relay:
 
 1. Checks the source's rate budget (§7.4). Over budget → drop the frame.
-2. Looks up `dst_id` in the roster. Absent, or a different tailnet → emit
+2. Looks up `dst_id` in the roster. Absent, or a different aquifer → emit
    `PeerGone(dst_id, NOT_ADMITTED)`, drop.
 3. Rejects `dst_id == src_id`. A node cannot relay to itself; the frame is
    dropped and the connection MAY be closed with `PROTOCOL_ERROR`.
@@ -632,7 +632,7 @@ whichever is larger) sustained across several measurements.
 
 RTT to a relay is noisy, the netmap must be updated on every change, and every
 peer must learn the new home before it is useful. Selection that tracks the
-instantaneous minimum produces flapping whose cost is paid by the whole tailnet,
+instantaneous minimum produces flapping whose cost is paid by the whole aquifer,
 not by the flapping node.
 
 ---
@@ -641,14 +641,14 @@ not by the flapping node.
 
 Handshake rejections MUST be **uniform**: the relay closes the connection
 without a `Close` frame and without distinguishing an unknown `node_id` from a
-bad signature from a wrong tailnet. Distinguishing them hands an unauthenticated
+bad signature from a wrong aquifer. Distinguishing them hands an unauthenticated
 caller a roster-membership oracle, which is the same reasoning as
 `karst-control-v1.md` §8 and as PHREATIC's silent dropping of `peer_id_hint`
 misses (`phreatic-v1.md` §4).
 
 The distinction drawn in §6.2 between `NOT_HERE` and `NOT_ADMITTED` is not in
 tension with this: those are sent to an **already-authenticated** member of the
-tailnet the query is about.
+aquifer the query is about.
 
 ### 10.1 Uniform in timing, not only in content
 
@@ -687,7 +687,7 @@ vague about this is not one.
 
 **Visible to the relay:**
 
-- Which node IDs are connected, and when — a presence log for the tailnet.
+- Which node IDs are connected, and when — a presence log for the aquifer.
 - Which node IDs exchange traffic with which, at what times, in what volumes,
   with what packet-size distribution and what timing.
 - The source IP address and port of every connected node.
@@ -697,8 +697,8 @@ vague about this is not one.
 - The content of any packet. Payloads are PHREATIC ciphertext.
 - The per-pair PSK, the netmap, or any control-plane secret. None of these
   traverse a relay.
-- Which *user* a node belongs to, or the tailnet's ACL structure — except as
-  can be inferred from the traffic graph above, which for a small tailnet is a
+- Which *user* a node belongs to, or the aquifer's ACL structure — except as
+  can be inferred from the traffic graph above, which for a small aquifer is a
   weak qualifier.
 
 **No padding is applied**, so packet sizes are exact. PLAN.md §1.3 declares
@@ -837,9 +837,9 @@ somewhere else.
    periodic full resync, so a missed `PeerGone` leaves a stale entry until the
    mesh connection is re-established. Bounded in impact (a dropped `Forward`)
    but unbounded in duration.
-9. **Multi-tailnet relays are specified but not sized.** §5.4 scopes forwarding
-   per tailnet; nothing says how a relay's capacity is divided between them, so
-   one tailnet can consume a shared relay's entire budget within its per-node
+9. **Multi-aquifer relays are specified but not sized.** §5.4 scopes forwarding
+   per aquifer; nothing says how a relay's capacity is divided between them, so
+   one aquifer can consume a shared relay's entire budget within its per-node
    limits.
 10. **Ponor has no capability negotiation, and §7.7 spent the one free pass.**
     Adding `ReflectOffer` was a flag day: relay and node must be upgraded

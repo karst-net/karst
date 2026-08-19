@@ -14,9 +14,9 @@
  *   The Ping/Pong exchange under a symmetric per-pair MAC, with a THIRD PEER
  *   WHOSE KEY THE ATTACKER HOLDS. That last part is the configuration worth
  *   testing: a node holds a disco key per peer, and "one of your peers is
- *   hostile" is ordinary rather than exotic — a tailnet is not a trust
+ *   hostile" is ordinary rather than exotic — an aquifer is not a trust
  *   boundary, which is why PLAN.md §1.1 lists a malicious peer inside the
- *   tailnet as in scope.
+ *   aquifer as in scope.
  *
  * WHAT IS NOT MODELLED, AND WHY
  *   - The tx -> endpoint association of §7.1. That rule lives in the
@@ -73,7 +73,7 @@ fun cat(bitstring, bitstring): bitstring [data].
 (* The honest pair. *)
 free kAB: key [private].
 
-(* A third peer of A's, whose disco key the attacker holds. A tailnet is not a
+(* A third peer of A's, whose disco key the attacker holds. An aquifer is not a
    trust boundary (PLAN.md §1.1), so this is the ordinary case rather than the
    exotic one. *)
 free kAC: key [private].

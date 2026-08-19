@@ -57,7 +57,7 @@ risks and the residual risk register. This section is the summary.
 | Active MITM at time of connection | **Yes** | Classical only; a CRQC-in-the-moment is a stated non-goal for v1 auth |
 | Compromised coordination server | **Yes** | Must not be able to silently add a node — see Bedrock (§4.5) |
 | Compromised relay | **Yes** | Relays are untrusted; they see ciphertext and metadata only |
-| Malicious peer inside the tailnet | **Yes** | Contained by ACL enforcement at both ends |
+| Malicious peer inside the aquifer | **Yes** | Contained by ACL enforcement at both ends |
 | Endpoint compromise / malicious admin with root | No | Out of scope |
 | Traffic-analysis / metadata-hiding beyond padding | No | Documented non-goal for v1 |
 
@@ -275,7 +275,7 @@ KEM whose public key is distributed out of band and never appears on the wire �
 concretely, a `KEY_DISTRIBUTION: InBand | OutOfBand` associated constant on the
 `Kem` trait, with the codec branching on it. No Classic McEliece implementation
 ships in v1; this is a Phase 1 design constraint that keeps the option open for
-small, fixed, server-class tailnets that want code-based security.
+small, fixed, server-class aquifers that want code-based security.
 
 ---
 
@@ -732,7 +732,7 @@ removes, and versioned policy history with one-click rollback.
   in the IdP must expire their node keys and drop their sessions within 60
   seconds. This gets its own integration test.
 
-### 4.5 Bedrock (tailnet-lock equivalent)
+### 4.5 Bedrock (aquifer-lock equivalent)
 
 Defends against a compromised coordination server injecting a rogue node.
 
@@ -789,7 +789,7 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
 - Abuse controls: per-key rate limits over **both bytes and frames** (a flood of
   minimum-size frames is cheap in bandwidth and expensive in per-frame work, so
   a bytes-only limit is one an attacker sizes around), per-connection byte
-  accounting, and admission only for keys present in a signed tailnet roster.
+  accounting, and admission only for keys present in a signed aquifer roster.
   *Amended 2026-08-14: "strict mode is mandatory for community-pool relays" is
   obsolete — spec §5.3 removed the mode.* Admission is now structural for every
   relay: `ClientAuth` carries no public key, so a relay cannot verify a node it
@@ -797,7 +797,7 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
   operator traffic they cannot inspect and did not agree to carry, and it is now
   a configuration that cannot be reached rather than one that must be chosen
   against.
-- Forwarding is scoped **per tailnet** (spec §5.4): source and destination must
+- Forwarding is scoped **per aquifer** (spec §5.4): source and destination must
   be in the same one. Without that rule a multi-tenant relay is a
   general-purpose message bus between any two keys it has ever been told about.
 - **Standard TURN (RFC 8656) as a pluggable sustained-fallback datapath.** The
@@ -859,7 +859,7 @@ with graceful, invisible relay fallback for the remainder.
 
 ## 7. KarstDNS
 
-- Assigns each node `<hostname>.<tailnet>.karst.` names, resolvable only inside
+- Assigns each node `<hostname>.<aquifer>.karst.` names, resolvable only inside
   the mesh.
 - The node agent runs a **local stub resolver on 100.100.100.100:53**,
   intercepting queries for the mesh suffix and forwarding others upstream.
@@ -1950,7 +1950,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **The point is what it does *not* disturb.** A peer present before and after
   keeps its live session and its learned endpoint. Adding one peer must not
-  cost a rehandshake with every other: on a large tailnet a single enrolment
+  cost a rehandshake with every other: on a large aquifer a single enrolment
   would otherwise produce a fleet-wide reconnect, each costing two ML-KEM
   operations and a window where traffic is dropped for want of a session. "The
   same peer" means the same **KEM public key** — what `peer_id_hint` derives
@@ -1998,7 +1998,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **Routes landed**, over rtnetlink in `karst-tun`. Assigning an address gives
   the kernel a connected route for that address's on-link prefix and nothing
-  else, so a peer *inside* the tailnet prefix was reachable for free and a peer
+  else, so a peer *inside* the aquifer prefix was reachable for free and a peer
   outside it — a subnet router advertising `192.168.1.0/24`, say — was not.
   Worse than unreachable: without a route the kernel sends that traffic to the
   **default gateway**, so it leaves the host in clear rather than being dropped.
@@ -2222,10 +2222,10 @@ onwards, anchored on the week of 2026-08-10.
   live connection — the only place that claim can be checked.
 
   Two rules tightened while implementing, both now in code and tests: **a
-  cross-tailnet destination is indistinguishable from an unknown one** (telling
+  cross-aquifer destination is indistinguishable from an unknown one** (telling
   them apart is a cross-tenant membership oracle on a shared relay), and **a
   `Forward` from a mesh peer is re-checked against our own roster**, so a
-  compromised meshed relay cannot inject cross-tailnet traffic. §8 had left the
+  compromised meshed relay cannot inject cross-aquifer traffic. §8 had left the
   second implicit.
 
   **Three test layers, because each sees what the others cannot.** Unit tests
@@ -2312,7 +2312,7 @@ onwards, anchored on the week of 2026-08-10.
   hysteresis tests and nothing else.
 - ✅ **AVEN modelled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
   attacker holds **a different peer of A's disco key** throughout, because a
-  tailnet is not a trust boundary (§1.1 lists a malicious peer inside one as in
+  aquifer is not a trust boundary (§1.1 lists a malicious peer inside one as in
   scope).
 
   **The model found a reflector, and draft 0.1 of the spec had no defence.**
@@ -2841,7 +2841,7 @@ onwards, anchored on the week of 2026-08-10.
   candidate list *changing*, which on a stable host happens once, ever —
   measured as one advertisement and then zero over a simulated hour. A peer that
   missed it never learned where its counterpart was, and **that is what a node
-  joining an existing tailnet does**: it holds no disco key at the moment the
+  joining an existing aquifer does**: it holds no disco key at the moment the
   advertisement is relayed, so it drops it.
 
   The reasoning was already one function above. The re-probe sweep repeats
@@ -2849,7 +2849,7 @@ onwards, anchored on the week of 2026-08-10.
   stays there until something else disturbs it"*. Telling a peer where you are
   and asking where it is are the two halves of one job, and only one was being
   repeated. `spec/aven-v1.md` §7.5 now makes it a MUST NOT.
-- ✅ **The live run is a test now** — `bins/karstd/tests/tailnet.rs`, wired into
+- ✅ **The live run is a test now** — `bins/karstd/tests/aquifer.rs`, wired into
   `just test-privileged`. Four processes: the Go coordination server,
   `karst-relay`, and two `karstd` daemons in separate namespaces with real TUN
   devices. First enrolment to a direct path carrying TCP under a port-scoped
@@ -2875,7 +2875,7 @@ onwards, anchored on the week of 2026-08-10.
   fixture drops nothing, and 19 is about an advertisement that was sent and
   lost. That property lives in `karst-disco`'s unit tests, where loss can be
   expressed. An end-to-end test is not a superset of the ones beneath it.
-- ✅ **Hole punching, measured through a real NAT** — `tailnet.rs` grew a second
+- ✅ **Hole punching, measured through a real NAT** — `aquifer.rs` grew a second
   topology: node A behind a port-restricted cone, node B and the servers on the
   public side. Every address A can name is private and useless to B, so a direct
   path can only come from the sequence AVEN exists for. Both ends reach
@@ -2898,7 +2898,7 @@ onwards, anchored on the week of 2026-08-10.
   unit tests alone. That is worth knowing before anyone treats a green NAT row
   as coverage of §7.2.
 - ✅ **Both nodes behind NATs, and it works** — `aven-v1.md` §7.6 and
-  `ponor-v1.md` §7.7, built to close FINDINGS.md finding 21. `tailnet.rs`'s third
+  `ponor-v1.md` §7.7, built to close FINDINGS.md finding 21. `aquifer.rs`'s third
   topology is two nodes each behind their own port-restricted cone, which is two
   laptops on two home networks: the ordinary deployment rather than an exotic
   one, and the one that did not work.
@@ -2949,7 +2949,7 @@ onwards, anchored on the week of 2026-08-10.
   masquerade could not keep port 51820 for that peer and allocated a random one.
   A port-restricted cone behaved like a symmetric NAT, which would have been
   read as a product limitation. §6's matrix already pins the forwarded half of
-  the rule; the tailnet fixture lacked the equivalent for traffic addressed to
+  the rule; the aquifer fixture lacked the equivalent for traffic addressed to
   the NAT's own address.
 
   Verified end to end and **checked against the defect**: the row converges in
@@ -3018,7 +3018,7 @@ onwards, anchored on the week of 2026-08-10.
   | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
   | 10 | the **same** NAT, one LAN | the same NAT, one LAN | direct — over private addresses |
 
-  Each row is a whole tailnet — Go control server, relay, two daemons, real TUN
+  Each row is a whole aquifer — Go control server, relay, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
   under a port-scoped ACL.
 
@@ -3159,7 +3159,7 @@ onwards, anchored on the week of 2026-08-10.
   The row `a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly`
   runs two symmetric NATs, one of them serving PCP through `miniupnpd`, and the
   pair reaches a direct path in about ten seconds. **Checked against the
-  defect**: `KARST_TAILNET_DISABLE_PORT_MAPPING=1` fails that row and the other
+  defect**: `KARST_AQUIFER_DISABLE_PORT_MAPPING=1` fails that row and the other
   eight still pass.
 
   The original wording remains unachievable, and the paragraph below records
@@ -3187,7 +3187,7 @@ onwards, anchored on the week of 2026-08-10.
   finds the default gateway, asks PCP first and falls back to NAT-PMP on the
   explicit version errors RFC 6887 §9 names, advertises the mapped external
   address as a top-tier candidate, renews on the granted lifetime, and reports
-  both the live mapping and the failure reason in `karst status`. The tailnet
+  both the live mapping and the failure reason in `karst status`. The aquifer
   matrix now splits the old doubly-symmetric row in two: with one mapping-
   capable side it goes direct; with neither side mapped it stays on the relay.
 
@@ -3245,7 +3245,7 @@ onwards, anchored on the week of 2026-08-10.
 
   🔶 **Implemented and it does not yet carry the row.** `karst-disco`'s
   scheduler, `karstd`'s scratch-socket pool and the datapath migration are all
-  built, gate-clean and unit-tested; the tailnet row still stays on the relay
+  built, gate-clean and unit-tested; the aquifer row still stays on the relay
   after seven minutes. Row 8's expectation is deliberately **not** flipped —
   an expectation that does not hold is worse than an honest one.
 

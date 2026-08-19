@@ -154,7 +154,7 @@ The agility layer (ADR-0006) must express a KEM whose public key is
 `Kem` trait carries a `KEY_DISTRIBUTION: InBand | OutOfBand` associated
 constant, and the handshake codec branches on it. No McEliece implementation
 ships in v1; this is a design constraint on Phase 1 so the option stays open
-for high-assurance deployments — small, fixed, server-class tailnets where
+for high-assurance deployments — small, fixed, server-class aquifers where
 50 peers × 524 KB = 26 MB is a non-issue and code-based security is worth it.
 
 ---

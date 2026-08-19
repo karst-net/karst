@@ -123,7 +123,7 @@ peer_id_hint = HASH("Karst peer-id v1" ‖ S_pk)[0..32]
 > `MAC(ss, S_pk)` or any session-dependent function gains nothing (an attacker
 > who can decrypt already holds `ss`) and converts the responder's O(1)
 > precomputed lookup into **O(N) work per handshake after the cookie check** — a
-> denial-of-service amplifier scaling with tailnet size. Implementations MUST
+> denial-of-service amplifier scaling with aquifer size. Implementations MUST
 > derive the hint as specified.
 
 A node MUST know, for every peer it may communicate with, that peer's

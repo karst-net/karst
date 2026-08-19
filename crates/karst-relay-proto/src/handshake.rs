@@ -124,17 +124,17 @@ pub trait Verifier {
     fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool;
 }
 
-/// A tailnet identifier. Forwarding is scoped by it — §5.4.
+/// An aquifer identifier. Forwarding is scoped by it — §5.4.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TailnetId(pub String);
+pub struct AquiferId(pub String);
 
 /// What the roster holds about an admitted node.
 #[derive(Debug, Clone)]
 pub struct RosterEntry {
     /// The node's ML-DSA-65 identity key.
     pub identity_pk: Vec<u8>,
-    /// The tailnet it belongs to. A relay MUST NOT forward between tailnets.
-    pub tailnet: TailnetId,
+    /// The aquifer it belongs to. A relay MUST NOT forward between aquifers.
+    pub aquifer: AquiferId,
 }
 
 /// What the configuration holds about a meshed relay.
@@ -182,8 +182,8 @@ pub enum Admitted {
     Client {
         /// Its 32-byte id.
         node_id: [u8; ID_LEN],
-        /// Its tailnet. Forwarding is scoped to it.
-        tailnet: TailnetId,
+        /// Its aquifer. Forwarding is scoped to it.
+        aquifer: AquiferId,
     },
     /// Another relay in the same region.
     Mesh {
@@ -433,7 +433,7 @@ impl RelayHandshake {
                     e.identity_pk,
                     Some(Admitted::Client {
                         node_id: peer_id,
-                        tailnet: e.tailnet,
+                        aquifer: e.aquifer,
                     }),
                 ),
                 None => (roster.decoy_key().to_vec(), None),
@@ -559,12 +559,12 @@ mod tests {
                 decoy: StubKey(0xde).public(),
             }
         }
-        fn with_client(mut self, id: [u8; ID_LEN], key: &StubKey, tailnet: &str) -> Self {
+        fn with_client(mut self, id: [u8; ID_LEN], key: &StubKey, aquifer: &str) -> Self {
             self.clients.insert(
                 id,
                 RosterEntry {
                     identity_pk: key.public(),
-                    tailnet: TailnetId(tailnet.to_owned()),
+                    aquifer: AquiferId(aquifer.to_owned()),
                 },
             );
             self
@@ -625,7 +625,7 @@ mod tests {
             RelayHandshake::new(self.relay_id, id(0x44))
         }
         fn roster(&self) -> TestRoster {
-            TestRoster::new().with_client(self.node_id, &self.node_key, "tailnet-a")
+            TestRoster::new().with_client(self.node_id, &self.node_key, "aquifer-a")
         }
     }
 
@@ -656,7 +656,7 @@ mod tests {
             admitted,
             Admitted::Client {
                 node_id: f.node_id,
-                tailnet: TailnetId("tailnet-a".to_owned()),
+                aquifer: AquiferId("aquifer-a".to_owned()),
             }
         );
     }
@@ -688,7 +688,7 @@ mod tests {
         let unknown = run(&f, &TestRoster::new());
 
         // Right id, wrong key.
-        let wrong_key = TestRoster::new().with_client(f.node_id, &StubKey(0xcc), "tailnet-a");
+        let wrong_key = TestRoster::new().with_client(f.node_id, &StubKey(0xcc), "aquifer-a");
         let bad_sig = run(&f, &wrong_key);
 
         // Right id and key, but registered as a mesh peer rather than a client.
@@ -772,7 +772,7 @@ mod tests {
         // signature a client produced does not verify for role = MESH.
         let f = Fixture::new();
         let roster = TestRoster::new()
-            .with_client(f.node_id, &f.node_key, "tailnet-a")
+            .with_client(f.node_id, &f.node_key, "aquifer-a")
             .with_mesh(f.node_id, &f.node_key);
         let v = StubVerifier::default();
 

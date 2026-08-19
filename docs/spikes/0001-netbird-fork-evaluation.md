@@ -131,7 +131,7 @@ Per remote peer, the netmap carries:
 
 **A ~100× increase in per-peer netmap payload.**
 
-| Tailnet size | NetBird | Karst |
+| Aquifer size | NetBird | Karst |
 |---|---|---|
 | 50 peers | 1.6 KB | 160 KB |
 | 200 peers | 6.4 KB | 640 KB |
@@ -139,7 +139,7 @@ Per remote peer, the netmap carries:
 
 NetBird's `NetworkMap` carries `repeated RemotePeerConfig remotePeers` with a
 `Serial` for ordering, which is the shape of **full-state push**. If a
-1,000-peer tailnet pushes a 3.2 MB netmap to every peer on every membership
+1,000-peer aquifer pushes a 3.2 MB netmap to every peer on every membership
 change, that is roughly 3.2 GB of fan-out per change. That does not work.
 
 **This is the finding most likely to change the plan.** Mitigations, in order
@@ -188,9 +188,9 @@ NetBird optimises **fan-out**, not payload: `affectedPeerIDsFromNetworkMap`,
 `syncPeerAffectedPeers` and `markConnectedAffectedPeers` compute *which* peers
 to notify, but each notified peer receives a full map. That bounds the damage —
 not every change notifies everyone — but a group or policy change can affect
-the whole tailnet.
+the whole aquifer.
 
-**§4's projection stands: at ~3200 B/peer, a 1,000-peer tailnet pushes 3.2 MB
+**§4's projection stands: at ~3200 B/peer, a 1,000-peer aquifer pushes 3.2 MB
 per notified peer.** Delta push must be built. Treat it as new work in a core
 path, not an adaptation.
 

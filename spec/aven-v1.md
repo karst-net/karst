@@ -11,7 +11,7 @@
 > this is the first draft of the hardest unglamorous part of a mesh VPN.
 >
 > All four ProVerif queries verify (§11), against an attacker that holds **a
-> different peer's disco key** — because a tailnet is not a trust boundary
+> different peer's disco key** — because an aquifer is not a trust boundary
 > (PLAN.md §1.1).
 >
 > §7.4 is what the model found, and draft 0.1 did not have it: a `Ping` is
@@ -372,7 +372,7 @@ opened the door that the node's probe then walked through.
 
 Implementations MUST NOT, therefore, suppress a probe on the grounds that the
 candidate is unlikely to be reachable. The probe's second effect does not
-depend on its first succeeding. `bins/karstd/tests/tailnet.rs` exercises
+depend on its first succeeding. `bins/karstd/tests/aquifer.rs` exercises
 exactly this pairing, and it is the reason a symmetric NAT is disqualifying
 only against another port-restricted one.
 
@@ -797,7 +797,7 @@ datagram is a disk-filling primitive available to anyone who can reach it.
 | B answers only probes A sent — no forgery | ✅ |
 | The disco key stays secret | ✅ |
 
-The attacker holds **a different peer of A's disco key** throughout. A tailnet
+The attacker holds **a different peer of A's disco key** throughout. An aquifer
 is not a trust boundary — PLAN.md §1.1 lists a malicious peer inside one as in
 scope — so this is the ordinary configuration rather than an exotic one.
 
@@ -898,7 +898,7 @@ must not be carried across to AVEN, where the MAC's job is different.
 
    Exempting confirmed paths is the tempting rule and it is wrong: it makes
    "answer one probe" the price of a permanent slot, which is no price at all to
-   the peer §1.1 places inside the tailnet. Refusing new candidates once the
+   the peer §1.1 places inside the aquifer. Refusing new candidates once the
    table is full is equally wrong — it bounds the memory and lets a peer pin the
    table to addresses of its choosing.
 

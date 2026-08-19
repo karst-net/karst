@@ -70,7 +70,7 @@ fallback traffic sits inside the included allowance at small scale.
 
 For the self-hosted-first target this dissolves most of Q4. What remains is
 real but narrower: a single relay is a single region, so a geographically
-spread tailnet gets poor fallback latency, and it is a single point of failure.
+spread aquifer gets poor fallback latency, and it is a single point of failure.
 
 ### 4. Standard TURN as a pluggable sustained-fallback datapath
 
