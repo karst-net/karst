@@ -195,6 +195,27 @@ impl Search {
             .map(|(_, port)| SocketAddr::new(searching.ip(), *port))
     }
 
+    /// Replace the addresses being searched.
+    ///
+    /// **A search must not hold the candidate list it started with.** It begins
+    /// as soon as §7.5's backoff gives up, and a reflexive address (§7.6) often
+    /// arrives *after* that — it takes a `Reflect` round trip and then a
+    /// `CallMeMaybe` to cross the relay. A search frozen at creation therefore
+    /// rotates forever over whatever was known at its worst moment, which in
+    /// the common hard/easy case is the peer's private address and nothing
+    /// else. That is not a subtle failure: it makes the whole technique look
+    /// like it does not work, which is exactly how it looked.
+    ///
+    /// Ports already tried are kept, because they were tried against a host
+    /// that is still in the list or against one that has gone — either way
+    /// re-trying them buys nothing.
+    pub fn retarget(&mut self, toward: Vec<SocketAddr>) {
+        if self.toward == toward {
+            return;
+        }
+        self.toward = toward;
+    }
+
     /// Run a round if one is due.
     ///
     /// `mint` supplies transaction ids, as [`crate::Engine::poll`] does; the

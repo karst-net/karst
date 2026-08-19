@@ -828,6 +828,11 @@ impl Disco {
             // provenance distinction this method exists to preserve.
             return false;
         };
+        eprintln!(
+            "karstd: aven received candidates from peer {}: {:?}",
+            peer.route_index,
+            candidates.iter().map(|c| c.0).collect::<Vec<_>>()
+        );
         peer.engine.on_call_me_maybe(&candidates, now_ms)
     }
 
@@ -911,6 +916,11 @@ impl Disco {
                         if candidates.is_empty() {
                             continue;
                         }
+                        eprintln!(
+                            "karstd: aven advertising to peer {}: {:?}",
+                            peer.route_index,
+                            candidates.iter().map(|c| c.0).collect::<Vec<_>>()
+                        );
                         let bytes = Message::CallMeMaybe { candidates }.encode(
                             &peer.key,
                             &peer.our_tag,
@@ -962,6 +972,20 @@ impl Disco {
                 }
             }
             if let Some(search) = peer.search.as_mut() {
+                // Re-read the candidates every poll. They grow after the search
+                // starts — a reflexive address needs a `Reflect` round trip and
+                // then a `CallMeMaybe` over the relay — and a search holding
+                // the list it began with searches the peer's private address
+                // for ever.
+                search.retarget(
+                    peer.engine
+                        .paths()
+                        .paths()
+                        .iter()
+                        .filter(|p| p.kind != PathKind::Relay)
+                        .map(|p| p.addr)
+                        .collect(),
+                );
                 if let Some(round) = search.poll(now_ms, &mut mint) {
                     eprintln!(
                         "karstd: aven port search peer {} round {} toward {} \
