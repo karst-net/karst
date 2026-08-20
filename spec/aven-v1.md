@@ -639,31 +639,78 @@ confirmed direct path:
 | | |
 |---|---|
 | Probes per interval, easy side | **64**, to ports drawn without replacement |
-| Interval | **30 s** — §7.5's re-advertisement cadence, reused |
-| Sockets held, hard side | **64 per elapsed interval, capped at 256** |
+| Interval | **15 s**, and it is a NAT-timeout figure rather than a pacing one — see below |
+| Sockets held, hard side | **64 per round, pool sized to `⌊L/T⌋ × 64`** — see below |
 | Stop | On a confirmed direct path, or when the peer stops advertising |
 
 Sockets are a bounded resource and the cap is what bounds them: 256 sockets per
 peer is already generous for a node with many peers, and an implementation
 SHOULD apply a global cap across peers as well as a per-peer one.
 
-Growth rather than a fixed *N* is what makes the budget work. Each round's
-probes are fresh, and the hard side's target set grows while the easy side's
-spend stays flat, so the per-round probability rises even though the traffic
-does not:
+#### What *N* actually is
 
-| Elapsed | Sockets held | Chance this round | Cumulative |
-|---|---|---|---|
-| 0m30s | 64 | 6.2% | 6.2% |
-| 2m00s | 256 | 22.5% | 47.1% |
-| 3m30s | 256 | 22.5% | 75.3% |
-| 5m30s | 256 | 22.5% | **91.1%** |
-| 7m00s | 256 | 22.5% | **95.8%** |
+The first draft of this section put *N* at 256 and derived a table from it.
+That was wrong three times over, and the corrections matter more than the
+numbers because each one is a thing an implementer would otherwise get wrong
+too.
 
-Derived from `1 − (1 − N/K)^M` over `K = 64511` usable ports, which
-`docs/measurements/hard-easy-2026-08-19.md` confirms against Linux's two
-symmetric modes at three points — 20% measured against 22% predicted, 60%
-against 64%, and 95% against 98%.
+**`N` is live scratch mappings, not sockets opened.** A mapping lives about as
+long as the NAT's UDP timeout — thirty seconds on Linux, often less. Sockets
+opened four rounds ago hold mappings three timeouts dead. The live set is
+therefore `S × ⌊L/T⌋`, capped by the pool: *S* sockets a round, *L* the mapping
+lifetime, *T* the round interval. At the thirty-second interval this section
+first specified, that is **64** — never the 256 the table assumed.
+
+**A mapping only counts if its socket is still open.** A pool that recycles
+must not close a socket whose mapping is still live, and one that never
+recycles fills up and then holds nothing but expired mappings. The pool size
+and `⌊L/T⌋ × S` are the same number and must be kept so.
+
+**Only the hard side's *scratch* mappings are targets.** It also sends probes,
+to random ports at the easy side's address, and those create mappings too — but
+a probe mapping accepts a reply only from the random port it was aimed at,
+while the easy side's probes come from its shared socket. Half of the hard
+side's external ports are therefore dead targets. They do not reduce *N*, which
+already counts only scratch, but an implementation that measures its own port
+usage will double-count if it forgets this.
+
+**And a node does not know which side it is.** Nothing in AVEN tells a node
+whether its own NAT has endpoint-dependent mapping — §7.6's two-reflector test
+would, and most nodes have one relay. So a node must fund *both* roles out of
+one budget: half its datagrams to scratch sockets, half to probes. That halves
+*N* and *M* together, and quarters the per-round probability.
+
+#### The corrected table
+
+`P(round) = 1 − (1 − N/K)^M` over `K = 64511` usable ports.
+
+| Budget/round | *T* | Role known | *N* | *M* | Per round | 8 min | 16 min |
+|---|---|---|---|---|---|---|---|
+| **64** | 15 s | no | 64 | 32 | 3.1% | **64%** | **87%** |
+| 64 | 15 s | yes | 128 | 64 | 11.9% | 98% | ~100% |
+| **128** | 15 s | no | 128 | 64 | 11.9% | **98%** | ~100% |
+| 256 | 10 s | no | 256 | 128 | 39.9% | ~100% | ~100% |
+
+So the honest figure at the budget §7.5 already grants, for a node that cannot
+tell which side it is, is **64% over eight minutes** — not the 91% first
+published. Reaching 98% costs twice the budget, or a way for a node to learn
+its own mapping behaviour.
+
+#### This section is not known to work
+
+**Stated plainly because the numbers above would otherwise imply otherwise.**
+The reference implementation spends the 128-datagram row's budget and has
+never been observed to complete this exchange: repeated eight-minute runs of
+the hard/easy topology produce no connection at all. A packet capture confirms
+the mechanism is behaving — probes leave the shared socket as required, and
+port coincidences occur at exactly the rate the arithmetic predicts, 12
+observed against 12.9 expected — and yet none of them completes.
+
+The model does not explain that, and neither does anything else yet. Until it
+does, an implementation SHOULD treat this section as unproven and MUST NOT
+rely on it: §8.3's relay path is the answer for this pairing today, as it is
+for the symmetric-to-symmetric one §12.4 concedes. FINDINGS.md 28 carries the
+measurements.
 
 #### The datapath has to follow the winning socket
 
