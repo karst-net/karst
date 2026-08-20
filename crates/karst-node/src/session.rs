@@ -130,7 +130,99 @@ enum State {
         /// minute of validity left. The rekey therefore lives alongside the
         /// session it will replace, and swaps in only once it completes.
         rekey: Option<Box<Handshake>>,
+        /// Keys derived as **responder** while `session` was still carrying
+        /// traffic — `phreatic-v1.md` §12.6.
+        ///
+        /// "The responder has no assurance until the first transport message":
+        /// a `HandshakeInit` is forgeable by anyone holding this node's public
+        /// keys (§12.5), so §12.6 forbids emitting a `HandshakeResponse` from
+        /// tearing down a working session. Until something authenticates under
+        /// these keys they are a claim, not a session. Without this slot a
+        /// single forged `HandshakeInit` — one datagram, no secrets, off-path
+        /// — silently breaks a live tunnel, which is the denial of service
+        /// §12.5 warns the unauthenticated handshake invites.
+        pending: Option<Arc<TransportSession>>,
+        /// The session a **rekey** replaced, kept for decryption only.
+        ///
+        /// The two ends switch at different moments: the initiator seals with
+        /// the new keys as soon as its rekey completes, while the responder
+        /// keeps using the old ones until a message proves the new ones. Every
+        /// datagram already in flight, in either direction, was sealed under
+        /// the keys that were current when it left. Dropping them at the swap
+        /// discards exactly that traffic — invisibly, since an AEAD failure is
+        /// a drop.
+        previous: Option<Arc<TransportSession>>,
     },
+}
+
+/// The keys an inbound transport message may have been sealed under.
+///
+/// Cloned out from under the session's lock — three `Arc` bumps at most — so
+/// the AEAD runs without holding it, which is the property PLAN.md §3.4
+/// measured and the reason [`Session::transport`] hands out an `Arc` too.
+#[derive(Debug, Clone)]
+pub struct Inbound {
+    current: Arc<TransportSession>,
+    pending: Option<Arc<TransportSession>>,
+    previous: Option<Arc<TransportSession>>,
+}
+
+/// Which keys opened a transport message.
+///
+/// The distinction is not bookkeeping: [`Opened::Pending`] is §12.6's "first
+/// authenticated transport message", the evidence a responder was waiting for,
+/// and the caller **must** answer it with [`Session::promote`].
+#[derive(Debug)]
+pub enum Opened {
+    /// The live session.
+    Current(Vec<u8>),
+    /// The session a rekey replaced, still inside its validity.
+    Previous(Vec<u8>),
+    /// Keys this node derived as responder and had no assurance about until
+    /// now. The peer completed that handshake, which a forged `HandshakeInit`
+    /// cannot fake.
+    Pending(Vec<u8>),
+}
+
+impl Opened {
+    /// The plaintext, whichever keys carried it.
+    #[must_use]
+    pub fn into_payload(self) -> Vec<u8> {
+        match self {
+            Self::Current(p) | Self::Previous(p) | Self::Pending(p) => p,
+        }
+    }
+}
+
+impl Inbound {
+    /// Try the live keys, then the ones a rekey replaced, then the ones
+    /// awaiting assurance.
+    ///
+    /// In that order because that is their frequency: the ordinary packet costs
+    /// one AEAD operation and the others are reached only when it fails. A
+    /// failed `open` leaves no state behind — the replay window is touched only
+    /// after the AEAD has decided (§8) — so trying several is safe.
+    ///
+    /// # Errors
+    /// [`TransportError`] from the live session when none of them opens it, so
+    /// an expired session is still reported as expired rather than as a forgery.
+    pub fn open(&self, datagram: &[u8], now_ms: u64) -> Result<Opened, TransportError> {
+        let first = match self.current.open(datagram, now_ms) {
+            Ok(payload) => return Ok(Opened::Current(payload)),
+            Err(e) => e,
+        };
+        if let Some(previous) = &self.previous {
+            if let Ok(payload) = previous.open(datagram, now_ms) {
+                return Ok(Opened::Previous(payload));
+            }
+        }
+        if let Some(pending) = &self.pending {
+            if let Ok(payload) = pending.open(datagram, now_ms) {
+                return Ok(Opened::Pending(payload));
+            }
+        }
+        Err(first)
+    }
 }
 
 /// A session with one peer.
@@ -400,12 +492,27 @@ impl Session {
                 session,
                 rekey,
                 initiated,
+                pending,
+                previous,
             } => {
                 // Expiry outranks everything: past `REJECT_AFTER_TIME` the keys
                 // must not be used, rekey in flight or not.
                 if session.expired(now_ms) {
                     self.state = State::Idle;
                     return vec![Action::Closed(CloseReason::Expired)];
+                }
+                // Let go of keys that can no longer be used. **This is hygiene
+                // rather than the refusal itself** — `TransportSession::open`
+                // rejects an expired session whoever holds it, which is why
+                // removing these two lines fails no test — but key material
+                // that cannot serve any purpose should not sit in memory
+                // waiting to be zeroized by a state change that may not come
+                // for minutes.
+                if pending.as_ref().is_some_and(|p| p.expired(now_ms)) {
+                    *pending = None;
+                }
+                if previous.as_ref().is_some_and(|p| p.expired(now_ms)) {
+                    *previous = None;
                 }
 
                 match rekey {
@@ -509,6 +616,16 @@ impl Session {
         // every session appear to expire 180 s after the *daemon* started,
         // whatever time it was actually created — so a node could not hold a
         // session beyond three minutes of uptime.
+        // **The keys being replaced are kept for decryption.** A rekey swaps
+        // the sending key here, but the peer has not switched yet — it does so
+        // only when a message under the new keys reaches it — and everything
+        // already in flight was sealed under the old ones. Dropping them at
+        // this instant discards that traffic silently, and leaves this node
+        // unable to read the peer's replies until it catches up.
+        let replaced = match &self.state {
+            State::Established { session, .. } => Some(Arc::clone(session)),
+            _ => None,
+        };
         self.state = State::Established {
             session: Arc::new(TransportSession::new(
                 &keys,
@@ -518,16 +635,25 @@ impl Session {
             )),
             rekey: None,
             initiated: true,
+            pending: None,
+            previous: replaced,
         };
         vec![Action::Established]
     }
 
     fn handle_transport(&mut self, datagram: &[u8], now_ms: u64) -> Vec<Action> {
-        let State::Established { session, .. } = &mut self.state else {
+        let Some(inbound) = self.inbound() else {
             return Vec::new();
         };
-        match session.open(datagram, now_ms) {
-            Ok(payload) => vec![Action::Deliver(payload)],
+        match inbound.open(datagram, now_ms) {
+            Ok(Opened::Pending(payload)) => {
+                // §12.6's first authenticated transport message: the peer
+                // completed the handshake this node answered, so the keys it
+                // was holding become the session.
+                self.promote(&inbound);
+                vec![Action::Deliver(payload)]
+            }
+            Ok(opened) => vec![Action::Deliver(opened.into_payload())],
             Err(TransportError::Expired) => {
                 self.state = State::Idle;
                 vec![Action::Closed(CloseReason::Expired)]
@@ -626,18 +752,96 @@ impl Session {
     ) -> Vec<Action> {
         self.answered = Some((init.to_vec(), msg2.to_vec()));
         let mut actions = self.emit(MessageType::HandshakeResponse, msg2);
+        let derived = Arc::new(TransportSession::new(
+            keys,
+            Role::Responder,
+            self.index,
+            now_ms,
+        ));
+        // §12.6: a working session is not torn down on the strength of a
+        // `HandshakeInit`, which anyone can fabricate. The keys wait beside it
+        // until a transport message authenticates under them — see
+        // [`Session::promote`] — and the session in use carries traffic
+        // meanwhile. Nothing is announced as established, because from this
+        // node's side nothing has changed yet.
+        if let State::Established { pending, .. } = &mut self.state {
+            *pending = Some(derived);
+            return actions;
+        }
         self.state = State::Established {
-            session: Arc::new(TransportSession::new(
-                keys,
-                Role::Responder,
-                self.index,
-                now_ms,
-            )),
+            session: derived,
             rekey: None,
             initiated: false,
+            pending: None,
+            previous: None,
         };
         actions.push(Action::Established);
         actions
+    }
+
+    /// The keys an inbound transport message may be sealed under.
+    #[must_use]
+    pub fn inbound(&self) -> Option<Inbound> {
+        match &self.state {
+            State::Established {
+                session,
+                pending,
+                previous,
+                ..
+            } => Some(Inbound {
+                current: Arc::clone(session),
+                pending: pending.clone(),
+                previous: previous.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Adopt the keys a responder was holding, because a transport message
+    /// authenticated under them — §12.6's "first authenticated transport
+    /// message".
+    ///
+    /// That message is the assurance: the peer decapsulated `ct_ss` and
+    /// computed `dh_se`, neither of which a forged `HandshakeInit` can produce.
+    /// The keys being replaced become [`Opened::Previous`] rather than being
+    /// dropped, because the peer may still have traffic in flight under them.
+    ///
+    /// **The keys adopted are the ones that opened the message, not whatever is
+    /// waiting when this is called.** The AEAD runs outside this session's
+    /// lock, so another handshake can land in between — a forged
+    /// `HandshakeInit` is one datagram and its timing is the attacker's to
+    /// choose. Adopting what happens to be there now would install keys nothing
+    /// has proven, by a race, which is the property §12.6 exists to keep;
+    /// refusing outright instead would drop a set that *was* proven and leave
+    /// this node sealing for a peer that has moved on.
+    pub fn promote(&mut self, proven: &Inbound) {
+        let Some(proven) = proven.pending.as_ref() else {
+            return;
+        };
+        let State::Established {
+            session,
+            rekey,
+            initiated,
+            pending,
+            previous,
+        } = &mut self.state
+        else {
+            return;
+        };
+        if Arc::ptr_eq(session, proven) {
+            return; // already adopted, by an earlier message under the same keys
+        }
+        // A newer handshake may be waiting behind this one. It stays waiting:
+        // it has proven nothing yet, and it may still.
+        if pending.as_ref().is_some_and(|p| Arc::ptr_eq(p, proven)) {
+            *pending = None;
+        }
+        *previous = Some(core::mem::replace(session, Arc::clone(proven)));
+        // The peer handshaked from its side, so this node is the responder for
+        // this session: any rekey of its own is abandoned, and only the
+        // initiator rekeys.
+        *rekey = None;
+        *initiated = false;
     }
 
     /// The response already sent for this exact `HandshakeInit`, if it is the

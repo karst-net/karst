@@ -11,4 +11,4 @@
 
 pub mod session;
 
-pub use session::{Action, CloseReason, Session};
+pub use session::{Action, CloseReason, Inbound, Opened, Session};

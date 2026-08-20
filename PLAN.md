@@ -2434,15 +2434,30 @@ onwards, anchored on the week of 2026-08-10.
   by having a session remember the `HandshakeInit` it answered and replay the
   same `HandshakeResponse` for a byte-identical repeat.
 
-  Still to come, and now the oldest thing in §9.1: **§12.6's rule that a
-  responder MUST NOT tear down a working session on emitting a
-  `HandshakeResponse` is still violated by a *fresh* `HandshakeInit`.** A
-  forgeable message can therefore still displace a live session — the DoS §12.5
-  warns about. Closing it needs the previous/current/next session lifetime
-  WireGuard uses; parking the new keys until a transport message authenticates
-  under them was tried and broke every rekey, because the initiator drops its
-  old keys the moment its rekey completes and the responder has to follow. That
-  is a design change with its own tests.
+  ✅ **§12.6 closed, 2026-08-21** — FINDINGS.md 33. A responder no longer tears
+  down a working session on emitting a `HandshakeResponse`, which §12.5 made a
+  one-datagram off-path teardown of anyone's live tunnel.
+
+  **The session now has three sets of keys, and each has its own reason.** The
+  live one carries traffic. Keys derived as **responder** wait in `pending`
+  until a transport message opens under them — §12.6's "first authenticated
+  transport message", which a forger cannot produce because it needs `ct_ss`
+  decapsulated and `dh_se` computed. Keys a **rekey** replaced stay as
+  `previous` for decryption until they expire, because the two ends switch at
+  different moments: the initiator seals with the new keys the instant its
+  handshake completes, while the responder keeps using the old ones until that
+  first message arrives, and everything already in flight was sealed under the
+  keys one end has just replaced.
+
+  A two-slot version was tried first and every rekey test caught it, which is
+  the argument for the third slot in one line.
+
+  **Adoption names the keys that opened the message.** The AEAD runs outside the
+  session's lock — PLAN.md §3.4's measurement is why — so a forged
+  `HandshakeInit` can replace what is waiting in between. Adopting whatever is
+  there installs keys nothing proved, by a race; refusing because the slot moved
+  drops keys that *were* proved and leaves the node sealing for a peer that has
+  gone. Both are tested.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

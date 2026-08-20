@@ -963,16 +963,27 @@ impl Engine {
         // Anything else — a handshake response — is rare and goes through the
         // session state machine as before.
         if msg.first() == Some(&0x04) {
-            let transport = roster
+            let inbound = roster
                 .peers
                 .get(peer)
-                .and_then(|p| Self::lock(&p.session).transport());
-            if let Some(transport) = transport {
+                .and_then(|p| Self::lock(&p.session).inbound());
+            if let Some(inbound) = inbound {
                 // Decryption happens with no lock held. A forged or replayed
                 // message is rejected inside `open`, which takes the replay
                 // window's own lock only after the AEAD has decided (§8).
-                match transport.open(&msg, now_ms) {
-                    Ok(payload) => self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out),
+                match inbound.open(&msg, now_ms) {
+                    Ok(opened) => {
+                        // §12.6: a message that opens under the keys this node
+                        // was holding as responder is the assurance it was
+                        // waiting for, and the only thing that adopts them.
+                        if matches!(opened, karst_node::Opened::Pending(_)) {
+                            if let Some(slot) = roster.peers.get(peer) {
+                                Self::lock(&slot.session).promote(&inbound);
+                            }
+                        }
+                        let payload = opened.into_payload();
+                        self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out);
+                    }
                     // Counted, not just dropped. A replay is expected traffic;
                     // a *sustained* rate here means the two ends disagree about
                     // their keys, which is otherwise indistinguishable from the
@@ -1061,13 +1072,22 @@ impl Engine {
         }
 
         if msg.first() == Some(&0x04) {
-            let transport = roster
+            let inbound = roster
                 .peers
                 .get(peer)
-                .and_then(|p| Self::lock(&p.session).transport());
-            if let Some(transport) = transport {
-                match transport.open(&msg, now_ms) {
-                    Ok(payload) => self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out),
+                .and_then(|p| Self::lock(&p.session).inbound());
+            if let Some(inbound) = inbound {
+                match inbound.open(&msg, now_ms) {
+                    Ok(opened) => {
+                        // §12.6, as on the direct path.
+                        if matches!(opened, karst_node::Opened::Pending(_)) {
+                            if let Some(slot) = roster.peers.get(peer) {
+                                Self::lock(&slot.session).promote(&inbound);
+                            }
+                        }
+                        let payload = opened.into_payload();
+                        self.deliver_to_host(&roster, peer, &payload, now_ms, &mut out);
+                    }
                     Err(_) => {
                         self.stats.decrypt_failures.fetch_add(1, Ordering::Relaxed);
                     }

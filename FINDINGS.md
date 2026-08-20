@@ -56,8 +56,53 @@ carries both the new wording and the original, struck through.
 | 30 | High | The on-demand relay thread died at startup, so §9.1's second rule never ran | Fixed 2026-08-20 |
 | 31 | Medium | A relay whose address blackholed packets stalled the relay path silently | Fixed 2026-08-20 |
 | 32 | Medium | A node held two Ponor connections to one relay and they displaced each other | Fixed 2026-08-20 |
+| 33 | High | A forgeable `HandshakeInit` tore down a working session — §12.6 | Fixed 2026-08-21 |
 
 ## Closed
+
+### 33. High: a forgeable `HandshakeInit` tore down a working session
+
+**Found 2026-08-20** while fixing finding 29, which is the same code path one
+step further in. Fixed 2026-08-21.
+
+`phreatic-v1.md` §12.6 is unambiguous, and ProVerif is what put it there — the
+agreement query is **false** if a responder claims completion on sending
+`HandshakeResponse` and **true** if it waits:
+
+> Therefore a responder MUST NOT, on emitting HandshakeResponse:
+> - tear down an existing working session with that peer; […]
+> All of these MUST wait for the first authenticated transport message.
+
+`adopt_responder` did exactly that: it installed the keys it had just derived,
+discarding whatever session was in use. §12.5 makes a `HandshakeInit` forgeable
+by anyone holding the responder's *public* keys, so this was a one-datagram,
+off-path, unauthenticated teardown of somebody else's live tunnel — the denial
+of service §12.5 warns the unauthenticated handshake invites, reachable by an
+attacker who needs no position on the path and no secrets.
+
+**The fix is the session lifetime WireGuard uses**, and the reason it has three
+slots rather than two is worth stating, because a two-slot version was tried
+first and every rekey test caught it. Keys derived as responder wait in
+`pending` and are adopted only when a transport message opens under them, which
+a forger cannot produce. But a rekeying **initiator** switches its sending key
+the moment its own handshake completes, so the responder goes on sealing under
+the old keys until that first message reaches it — and everything already in
+flight, in both directions, was sealed under keys one end has just replaced.
+So the replaced keys are kept as `previous`, for decryption only, until they
+expire. Three slots, each with a different reason to exist.
+
+**Adoption names the keys that opened the message**, not whatever is waiting
+when the caller gets round to it. The AEAD runs outside the session's lock, so
+a forged `HandshakeInit` — one datagram, timing of the attacker's choosing —
+can replace the waiting keys in between. Both careless readings have a victim:
+adopting what is there installs keys nothing proved, by a race; refusing
+because the slot moved drops a set that *was* proved and leaves the node
+sealing for a peer that has gone. Both are tests.
+
+What is *not* closed by this: §12.6's other two clauses — not recording the
+session as established in crypto-posture reporting, and not counting it against
+admission limits — are about reporting surfaces the node does not have yet.
+They belong with whatever builds them.
 
 ### 29. High: a retransmitted `HandshakeInit` wedged the pair
 
@@ -91,15 +136,12 @@ byte-identical repeat re-emits the cached response without deriving anything.
 That also makes a repeated `HandshakeInit` cost no ML-KEM decapsulation, which
 is the §12.5 posture applied to the cheapest case.
 
-**What this does not fix**, and it is the same code path: §12.6 says a responder
-MUST NOT "tear down an existing working session with that peer" on emitting a
-`HandshakeResponse`, and a *fresh* `HandshakeInit` — forged or genuine — still
-does. Closing that needs the previous/current/next session lifetime WireGuard
-uses: an attempt to park the new keys until a transport message authenticates
-under them broke every rekey test, because the initiator drops its old keys the
-moment its rekey completes and the responder must follow. It is a design change
-with its own tests, not a patch, and it is recorded in PLAN.md rather than
-attempted here.
+**The rest of the same code path is finding 33**, closed the following day: a
+*fresh* `HandshakeInit` still tore down a working session, which §12.6 forbids
+outright. The replay cache here stays, because it is the cheaper answer to the
+case it covers — a repeated `HandshakeInit` now costs no ML-KEM decapsulation
+at all — and because "the same question gets the same answer" is worth being
+true on its own.
 
 ### 30. High: the on-demand relay thread died at startup
 
