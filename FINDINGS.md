@@ -110,12 +110,38 @@ Multiply those together and the expected number of usable, timely coincidences
 over eight minutes is **well under one** — against a model that predicted 98%.
 The technique is not broken; §7.7's arithmetic counts the wrong population.
 
-**What this needs is a corrected model before any more code**: *N* is live
-*scratch* mappings, not external ports, and the probability must be integrated
-over the window in which both sides' mappings and probes actually overlap
-rather than assumed to coincide. That may well show the technique is not worth
-its cost at any budget this protocol can afford, which is a legitimate outcome
-and one §12.4 already reached for the hard/hard case.
+The model was corrected — `aven-v1.md` §7.7 carries the derivation — and it did
+not explain the failure either.
+
+**A second capture, taken inside the node rather than on the segment, changed
+the question.** It shows the exchange *working* at the network layer:
+
+| Measured inside node A | Value |
+|---|---|
+| Datagrams arriving from the peer's outer address | **22** |
+| Local port they arrive on | one scratch socket, `:36692` |
+| Datagrams the peer sent to one found port | **184** |
+
+The hole opens. The peer finds a live mapping and uses it repeatedly. A
+`Pong` (65 bytes) arrives seventeen seconds after the scratch `Ping` that
+earned it. **Everything the technique is supposed to do, happens.**
+
+And `SearchSockets::drain` logs **zero** arrivals across the same run. The
+datagrams reach the host and never reach the pool that owns the socket they
+landed on. Three further defects were fixed while establishing this — the
+reply was discarded rather than sent back out the receiving socket; the
+scratch `Ping`s' transaction ids were minted and never recorded, so the
+answers matched nothing; and the in-flight table was cleared per round when
+the answer arrives a round later — and the row still does not complete.
+
+**The gap is now precisely located and not explained**: between the kernel
+delivering a datagram to a socket this process owns, and `drain` reading it.
+That is a small enough surface to settle definitively, and it is where the
+next session should start rather than anywhere in the protocol.
+
+The branch `aven-77-align` carries all eight fixes. It is unmerged because it
+also regresses `a_symmetric_nat_reaches_an_address_restricted_peer_directly`,
+which passes without it.
 
 ## Closed
 

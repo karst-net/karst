@@ -422,8 +422,7 @@ impl Shape {
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
             | Self::SameLan => Expect::Direct,
-            // §7.7 does not carry this row and a packet capture says why: the
-            // arithmetic is right and the quantities are wrong. Finding 28.
+            // §7.7 does not carry this row. Finding 28.
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }

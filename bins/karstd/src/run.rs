@@ -894,16 +894,27 @@ fn drain_search_sockets(
             "karstd: aven port search arrival for peer {} on socket {} from {}",
             arrival.route_index, arrival.socket, arrival.from
         );
-        let changes = {
+        let (replies, changes) = {
             let mut state = disco
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             // The datagram is authenticated here exactly as one from the shared
             // socket is: a scratch socket is not a trusted channel, it is only
             // a different mapping.
-            let _ = state.inbound(&arrival.datagram, arrival.from, now_ms);
-            state.path_changes()
+            let replies = match state.inbound(&arrival.datagram, arrival.from, now_ms) {
+                disco::Verdict::Handled(out) => out,
+                disco::Verdict::NotAven => Vec::new(),
+            };
+            (replies, state.path_changes())
         };
+        // **Answered on the socket it arrived on**, which is the whole point of
+        // holding these sockets. The peer's filter admits this node at exactly
+        // one external port; a reply from the shared socket goes to a mapping
+        // the peer has never seen and the exchange stalls with probes arriving
+        // and nothing coming back.
+        for (datagram, to) in &replies {
+            search.send_on(arrival.route_index, arrival.socket, datagram, *to);
+        }
         for change in &changes {
             if let disco::PathChange::Install { peer, endpoint } = *change {
                 if peer == arrival.route_index {

@@ -1035,11 +1035,14 @@ impl Disco {
                     );
                     for (addr, count) in &round.scratch {
                         for _ in 0..*count {
-                            let bytes = Message::Ping { tx: mint() }.encode(
-                                &peer.key,
-                                &peer.our_tag,
-                                self.epoch,
-                            );
+                            let tx = mint();
+                            let bytes =
+                                Message::Ping { tx }.encode(&peer.key, &peer.our_tag, self.epoch);
+                            // Recorded, or the `Pong` it earns matches nothing.
+                            // This is the direction that completes: the peer
+                            // admits a scratch `Ping` and answers it, and that
+                            // answer is the confirmation.
+                            search.note_scratch(tx, *addr);
                             out.scratch.push((peer.route_index, bytes, *addr));
                         }
                     }

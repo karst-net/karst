@@ -151,7 +151,7 @@ pub struct Search {
     /// this node chose to send. A `Pong` whose `tx` is here identifies which
     /// port answered, which is what §7.1 requires and what the address alone
     /// cannot say.
-    in_flight: Vec<(TxId, SocketAddr)>,
+    in_flight: Vec<(TxId, SocketAddr, u64)>,
     /// Ports already tried, so a round draws without replacement across the
     /// whole search rather than only within itself.
     ///
@@ -229,8 +229,22 @@ impl Search {
     pub fn answered(&self, tx: &TxId) -> Option<SocketAddr> {
         self.in_flight
             .iter()
-            .find(|(sent, _)| sent == tx)
-            .map(|(_, addr)| *addr)
+            .find(|(sent, _, _)| sent == tx)
+            .map(|(_, addr, _)| *addr)
+    }
+
+    /// Record a scratch `Ping`'s transaction id against where it was sent.
+    ///
+    /// **The scratch direction is the one that completes**, and its ids need
+    /// recording just as the probes' do. A scratch datagram is a real `Ping`:
+    /// when the peer's filter admits one, the peer answers it, and that `Pong`
+    /// is the confirmation. Minting an id and not keeping it means the answer
+    /// arrives and matches nothing — the exchange succeeds on the wire and
+    /// fails in the state machine, which is indistinguishable from the
+    /// technique not working.
+    pub fn note_scratch(&mut self, tx: TxId, to: SocketAddr) {
+        let at = self.last_boundary.unwrap_or(0);
+        self.in_flight.push((tx, to, at));
     }
 
     /// Replace the addresses being searched.
@@ -283,10 +297,16 @@ impl Search {
             .scratch
             .saturating_add(scratch.iter().map(|(_, n)| *n).sum::<usize>());
 
-        // Replaced rather than appended: a probe from a previous round has
-        // had thirty seconds to be answered, which is six times §7.1's
-        // five-second transaction timeout.
-        self.in_flight.clear();
+        // **Aged out by the mapping lifetime, not by the round**, and the
+        // difference is the whole exchange. A scratch `Ping` is answered only
+        // once the peer's filter admits it, which happens on the *peer's*
+        // round — up to a full interval later, and measured at seventeen
+        // seconds in practice. Clearing per round threw the answer away a
+        // round before it arrived, so the exchange completed on the wire and
+        // failed in the state machine.
+        let keep = MAPPING_LIFETIME_MS / ROUND_INTERVAL_MS;
+        self.in_flight
+            .retain(|(_, _, at)| boundary.saturating_sub(*at) < keep);
         let mut probes = Vec::with_capacity(ROUND_PROBES);
         // Bounded rather than looping until `ROUND_PROBES` distinct ports are
         // found: once most of the range has been tried, an unbounded loop
@@ -306,7 +326,8 @@ impl Search {
                 break;
             };
             self.tried.push(port);
-            self.in_flight.push((tx, SocketAddr::new(host.ip(), port)));
+            self.in_flight
+                .push((tx, SocketAddr::new(host.ip(), port), boundary));
             probes.push((SocketAddr::new(host.ip(), port), tx));
         }
 
@@ -541,17 +562,25 @@ mod tests {
     }
 
     #[test]
-    fn last_rounds_probes_stop_confirming_once_a_new_round_runs() {
-        // The table is one round deep. A probe from the previous round has had
-        // thirty seconds, six times §7.1's five-second transaction timeout, so
-        // keeping it would grow the table without bound for no benefit.
+    fn a_probe_still_confirms_a_round_later_but_not_past_the_mapping_lifetime() {
+        // **The table is as deep as a mapping lives, not one round.** A scratch
+        // `Ping` is answered only when the peer's filter admits it, which
+        // happens on the *peer's* round — up to a full interval later, and
+        // seventeen seconds in a real capture. A one-round table discarded the
+        // answer a round before it arrived, so the exchange completed on the
+        // wire and failed in the state machine.
         let mut m = minter();
         let mut s = Search::new(one());
         let first = s.poll(0, &mut m).expect("due");
-        let (_, stale) = first.probes.first().copied().expect("a probe");
-        assert!(s.answered(&stale).is_some());
+        let (_, tx) = first.probes.first().copied().expect("a probe");
+        assert!(s.answered(&tx).is_some(), "same round");
         let _ = s.poll(ROUND_INTERVAL_MS, &mut m).expect("due");
-        assert_eq!(s.answered(&stale), None, "a stale tx still confirmed");
+        assert!(
+            s.answered(&tx).is_some(),
+            "a round later, still inside the mapping lifetime"
+        );
+        let _ = s.poll(MAPPING_LIFETIME_MS, &mut m).expect("due");
+        assert_eq!(s.answered(&tx), None, "past the lifetime, it is gone");
     }
 
     #[test]

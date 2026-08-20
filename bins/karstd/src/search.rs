@@ -220,6 +220,23 @@ impl SearchSockets {
         sent
     }
 
+    /// Send a datagram back out the socket something arrived on.
+    ///
+    /// **A reply must leave by the mapping it came in on.** The peer's filter
+    /// admits this node at exactly one external port — the one that socket
+    /// owns — so answering a `Ping` from the shared socket answers into a
+    /// mapping the peer has never seen, and the exchange never completes. The
+    /// first version of this discarded the reply altogether, which looked
+    /// identical from outside: probes arriving, nothing coming back.
+    pub fn send_on(&self, route_index: usize, socket: usize, datagram: &[u8], to: SocketAddr) {
+        let Some(pool) = self.pools.get(&route_index) else {
+            return;
+        };
+        if let Some(sock) = pool.sockets.get(socket) {
+            let _ = sock.send_to(datagram, to);
+        }
+    }
+
     /// Take whatever has arrived on any scratch socket.
     ///
     /// Non-blocking throughout, so this can be called from the daemon's timer
