@@ -104,10 +104,8 @@ impl UdpTransport {
 
     /// Put the socket in non-blocking mode.
     ///
-    /// For sockets that are polled opportunistically rather than waited on —
-    /// `aven-v1.md` §7.7's scratch sockets are polled from a timer tick, and a
-    /// blocking read on any one of a few hundred idle sockets would stall the
-    /// datapath behind it.
+    /// For sockets that are polled opportunistically rather than waited on,
+    /// where a blocking read would stall whatever is driving the poll.
     ///
     /// # Errors
     /// Any `fcntl` failure.

@@ -37,8 +37,7 @@ use karst_disco::consts::{MAGIC, TAG_LEN};
 use karst_disco::key::PeerIndex;
 use karst_disco::msg::{self, Endpoint, Message, TxId};
 use karst_disco::path::PongOutcome;
-use karst_disco::search::Search;
-use karst_disco::{DiscoKey, Engine, PathKind, TagTable};
+use karst_disco::{DiscoKey, Engine, TagTable};
 
 /// What to do with an arriving datagram.
 #[derive(Debug, PartialEq, Eq)]
@@ -140,12 +139,6 @@ struct Peer {
     /// One slot per peer, deliberately: this is the peer's claim about us, and
     /// a peer that lies should cost one vote rather than fill the list.
     reflexive: Option<SocketAddr>,
-    /// §7.7's port search, once the ordinary backoff has failed.
-    ///
-    /// `None` until then and again once a path is confirmed, because the search
-    /// is the expensive fallback and holding one open for a peer that is
-    /// already direct would keep its scratch sockets alive for nothing.
-    search: Option<Search>,
 }
 
 /// What one poll of discovery wants put on the wire.
@@ -161,15 +154,6 @@ pub struct Outbound {
     pub datagrams: Vec<(Vec<u8>, SocketAddr)>,
     /// Encoded `CallMeMaybe` messages, each addressed by Ponor node id.
     pub relayed: Vec<([u8; 32], Vec<u8>)>,
-    /// §7.7 scratch datagrams, each tagged with the peer's route index: every
-    /// one must leave from a **fresh** socket, which is then kept open.
-    ///
-    /// Separate from `datagrams` because the difference is the whole mechanism.
-    /// A scratch datagram exists to earn one distinct external mapping toward
-    /// the peer, so sending several from one socket earns one mapping and
-    /// wastes the rest — and the caller cannot tell which is which from the
-    /// address alone, since every one of them goes to the same place.
-    pub scratch: Vec<(usize, Vec<u8>, SocketAddr)>,
 }
 
 /// A change the datapath must make to one peer's endpoint.
@@ -379,7 +363,6 @@ impl Disco {
         // the same slot.
         self.relay_peers.insert(id, index);
         self.peers.push(Peer {
-            search: None,
             key,
             route_index,
             their_id: id,
@@ -677,28 +660,6 @@ impl Disco {
                 {
                     engine.on_confirmed(addr);
                     let _ = engine.paths_mut().select(now_ms);
-                } else if let Some(addr) = peer.search.as_ref().and_then(|s| s.answered(&tx)) {
-                    // §7.7. The search's sixty-four probes per round cannot live
-                    // in §7.1's outstanding table — that is capped at sixteen
-                    // because it is state a peer can make this node allocate —
-                    // so the search keeps its own, and a `Pong` matching it
-                    // confirms exactly the port that probe went to. Still §7.1's
-                    // rule: the address confirmed is the one probed, and a `tx`
-                    // neither table knows confirms nothing.
-                    let kind = if addr.is_ipv6() {
-                        PathKind::DirectV6
-                    } else {
-                        PathKind::DirectV4
-                    };
-                    engine.paths_mut().add_candidate(addr, kind);
-                    if engine.paths_mut().on_ping_sent(tx, addr, now_ms).is_ok() {
-                        if let PongOutcome::Confirmed { addr, .. } =
-                            engine.paths_mut().on_pong(tx, now_ms)
-                        {
-                            engine.on_confirmed(addr);
-                        }
-                    }
-                    let _ = engine.paths_mut().select(now_ms);
                 }
                 // `observed` is ours as seen by the peer — a candidate to
                 // advertise, never a path to ourselves (§7.2). Recorded in the
@@ -892,7 +853,6 @@ impl Disco {
         let mut out = Outbound {
             datagrams: self.poll_reflectors(now_ms, &mut mint),
             relayed: Vec::new(),
-            scratch: Vec::new(),
         };
         for peer in &mut self.peers {
             // A path can become stale without another packet arriving. Run
@@ -927,87 +887,6 @@ impl Disco {
                             self.epoch,
                         );
                         out.relayed.push((peer.their_id, bytes));
-                    }
-                }
-            }
-
-            // §7.7. Started only once the ordinary backoff has failed, and
-            // dropped as soon as anything is confirmed — the scratch sockets it
-            // implies are a real resource and a peer that is already direct has
-            // no use for them.
-            let direct = peer.engine.paths().chosen().is_some();
-            if direct {
-                peer.search = None;
-            } else if peer.search.is_none() && Search::should_start(peer.engine.exhausted(), direct)
-            {
-                // Search the address the peer advertised that we could not
-                // reach. The stalest candidate is as good as any: they all
-                // failed, and the search varies the port rather than the host.
-                // The first candidate that is not the relay. They all failed —
-                // that is what `exhausted` means — and the search varies the
-                // port rather than the host, so any of them names the right one.
-                // Every non-relay candidate, not the first. A peer advertises
-                // interface addresses beside reflexive ones and nothing here
-                // can tell which a NAT will carry; the search rotates rather
-                // than guesses, and guessing wrong spends every socket it has
-                // on an unroutable destination.
-                let toward: Vec<SocketAddr> = peer
-                    .engine
-                    .paths()
-                    .paths()
-                    .iter()
-                    .filter(|p| p.kind != PathKind::Relay)
-                    .map(|p| p.addr)
-                    .collect();
-                if !toward.is_empty() {
-                    // One line when a search begins, because "did it start at
-                    // all" is the first question every failure asks and the
-                    // answer is otherwise invisible. §7.7 runs on a
-                    // thirty-second cadence, so this is not a hot path.
-                    eprintln!(
-                        "karstd: aven port search starting for peer {} toward {:?}",
-                        peer.route_index, toward
-                    );
-                    peer.search = Some(Search::new(toward));
-                }
-            }
-            if let Some(search) = peer.search.as_mut() {
-                // Re-read the candidates every poll. They grow after the search
-                // starts — a reflexive address needs a `Reflect` round trip and
-                // then a `CallMeMaybe` over the relay — and a search holding
-                // the list it began with searches the peer's private address
-                // for ever.
-                search.retarget(
-                    peer.engine
-                        .paths()
-                        .paths()
-                        .iter()
-                        .filter(|p| p.kind != PathKind::Relay)
-                        .map(|p| p.addr)
-                        .collect(),
-                );
-                if let Some(round) = search.poll(now_ms, &mut mint) {
-                    eprintln!(
-                        "karstd: aven port search peer {} round {} toward {} \
-                         scratch +{} probes {}",
-                        peer.route_index,
-                        search.rounds(),
-                        round.toward,
-                        round.open_scratch,
-                        round.probes.len()
-                    );
-                    for _ in 0..round.open_scratch {
-                        let bytes = Message::Ping { tx: mint() }.encode(
-                            &peer.key,
-                            &peer.our_tag,
-                            self.epoch,
-                        );
-                        out.scratch.push((peer.route_index, bytes, round.toward));
-                    }
-                    for (addr, tx) in round.probes {
-                        let bytes =
-                            Message::Ping { tx }.encode(&peer.key, &peer.our_tag, self.epoch);
-                        out.datagrams.push((bytes, addr));
                     }
                 }
             }
@@ -1091,91 +970,6 @@ mod tests {
         msg.encode(key, &their_tag, epoch)
     }
 
-    /// Drive one peer until §7.5's backoff has given up, so §7.7 may start.
-    fn exhaust_backoff(d: &mut Disco, now: &mut u64) {
-        let mut n = 0u8;
-        let mut mint = || {
-            n = n.wrapping_add(1);
-            TxId([n; 12])
-        };
-        // Immediately, then 100/300/900 ms, then the engine gives up.
-        for step in [0u64, 100, 300, 900, 1_000] {
-            *now += step;
-            let _ = d.poll(*now, &mut mint);
-        }
-    }
-
-    #[test]
-    fn the_port_search_starts_only_after_the_ordinary_probes_give_up() {
-        // §7.7. The cheap four probes cover every topology the search does not
-        // and cost two orders of magnitude less, so starting early would spend
-        // the budget on peers that were about to connect anyway.
-        let (mut d, _key) = with_peer();
-        d.engine_mut(PeerIndex(0))
-            .expect("peer")
-            .add_peer_candidate(addr(9), 0, true);
-
-        let mut n = 0u8;
-        let mut mint = || {
-            n = n.wrapping_add(1);
-            TxId([n; 12])
-        };
-        let first = d.poll(0, &mut mint);
-        assert!(
-            first.scratch.is_empty(),
-            "a search began before the backoff had run"
-        );
-
-        let mut now = 0;
-        exhaust_backoff(&mut d, &mut now);
-        now += karst_disco::search::ROUND_INTERVAL_MS;
-        let out = d.poll(now, &mut mint);
-        assert!(
-            !out.scratch.is_empty(),
-            "the search never started once the probes were exhausted"
-        );
-    }
-
-    #[test]
-    fn a_round_earns_one_mapping_per_scratch_datagram_and_probes_one_host() {
-        // The two halves of §7.7 have different shapes and the difference is
-        // the mechanism. Every scratch datagram goes to the *same* address —
-        // each from its own socket, which is what earns a distinct mapping —
-        // while the probes go to one host across many ports.
-        let (mut d, _key) = with_peer();
-        d.engine_mut(PeerIndex(0))
-            .expect("peer")
-            .add_peer_candidate(addr(9), 0, true);
-        let mut now = 0;
-        exhaust_backoff(&mut d, &mut now);
-
-        let mut n = 0u8;
-        let mut mint = || {
-            n = n.wrapping_add(1);
-            TxId([n; 12])
-        };
-        now += karst_disco::search::ROUND_INTERVAL_MS;
-        let out = d.poll(now, &mut mint);
-
-        assert!(
-            out.scratch.iter().all(|(_, _, to)| *to == addr(9)),
-            "scratch datagrams must all go to the one address the peer named"
-        );
-        let probes: Vec<_> = out
-            .datagrams
-            .iter()
-            .filter(|(_, to)| to.ip() == addr(9).ip())
-            .collect();
-        assert!(
-            probes.len() > 1,
-            "expected a spread of probes, got {probes:?}"
-        );
-        let mut ports: Vec<u16> = probes.iter().map(|(_, to)| to.port()).collect();
-        ports.sort_unstable();
-        ports.dedup();
-        assert!(ports.len() > 1, "every probe went to the same port");
-    }
-
     /// **The bug this test was written to catch, and did.**
     ///
     /// §7.7's sixty-four probes a round cannot live in §7.1's outstanding
@@ -1184,66 +978,6 @@ mod tests {
     /// probes onto the wire without recording them anywhere, so a `Pong` that
     /// answered one confirmed nothing and the search could never succeed —
     /// invisible from every unit test of the scheduler, because the scheduler
-    /// was right.
-    #[test]
-    fn a_pong_answering_a_search_probe_confirms_the_port_it_went_to() {
-        let (mut d, key) = with_peer();
-        d.engine_mut(PeerIndex(0))
-            .expect("peer")
-            .add_peer_candidate(addr(9), 0, true);
-        let mut now = 0;
-        exhaust_backoff(&mut d, &mut now);
-        let mut n = 0u8;
-        let mut mint = || {
-            n = n.wrapping_add(1);
-            TxId([n; 12])
-        };
-        now += karst_disco::search::ROUND_INTERVAL_MS;
-        let round = d.poll(now, &mut mint);
-        assert!(!round.scratch.is_empty(), "search running");
-
-        // **Answer a real probe.** The transaction id is decoded out of a
-        // datagram the search actually emitted rather than guessed. A guessed
-        // one confirms nothing — that is exactly the property the search's own
-        // table provides — so guessing would make this pass for the wrong
-        // reason.
-        let (bytes, to) = round
-            .datagrams
-            .iter()
-            .find(|(_, to)| to.ip() == addr(9).ip() && to.port() != addr(9).port())
-            .expect("a search probe");
-        let Ok(Message::Ping { tx }) = msg::open(bytes, &key) else {
-            panic!("a search probe should be a Ping");
-        };
-
-        let pong = from_peer(
-            &key,
-            &Message::Pong {
-                tx,
-                observed: Endpoint(addr(1)),
-            },
-            7,
-        );
-        let _ = d.inbound(&pong, addr(9), now);
-
-        // The confirmed path is the **port the probe went to**, not the
-        // address the `Pong` came from — §7.1 unchanged.
-        let chosen = d
-            .engine_mut(PeerIndex(0))
-            .expect("peer")
-            .paths()
-            .chosen()
-            .expect("the search probe should have confirmed a path");
-        assert_eq!(
-            chosen, *to,
-            "confirmed {chosen}, but the probe went to {to}"
-        );
-        assert_ne!(
-            chosen,
-            addr(9),
-            "confirmed the advertised address rather than the searched port"
-        );
-    }
 
     #[test]
     fn a_ping_from_a_known_peer_is_answered() {

@@ -107,9 +107,10 @@ A security project that advertises only its wins is not trustworthy.
   publicly-reachable peer or an address-restricted cone, it goes direct. Facing
   a *port-restricted* cone or another symmetric NAT, it stays relayed — unless
   one side's gateway offers an explicit port mapping (PCP or NAT-PMP), which
-  makes even symmetric-to-symmetric direct. Without a mapping,
-  symmetric-to-symmetric is not winnable: published analysis of the alternative
-  puts it at 0.01% after twenty seconds.
+  makes even symmetric-to-symmetric direct. Random port search was specified,
+  built and measured for the first of those pairings and then **deliberately
+  not adopted**: 64% after eight minutes, for a pair already connected over the
+  relay, at the cost of a datapath change. `aven-v1.md` §7.7 records why.
 - **One topology that should connect directly still does not.** A symmetric
   NAT facing a port-restricted cone — a CGNAT subscriber talking to somebody on
   a home router — is reachable in principle (`aven-v1.md` §7.7) and unbuilt in

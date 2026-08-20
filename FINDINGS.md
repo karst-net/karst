@@ -15,7 +15,7 @@ followed it added sixteen more, and fifteen of those are closed — most found b
 building the thing the finding above them asked for, and the most recent found
 by counting what the test matrix did *not* cover.
 
-**One remains open: 28** — §7.7's scratch mappings are never refreshed, so they expire before the peer can find them. Finding 27 was a decision rather than a defect and
+**No findings remain open.** Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
 masquerade. Finding 24 was not a code defect — it recorded that
 Phase 4's third exit criterion could not be met by the mechanism the plan named
@@ -50,12 +50,17 @@ carries both the new wording and the original, struck through.
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 | 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
-| 28 | High | §7.7's scratch mappings expire before the peer can probe them | **Open** |
+| 28 | High | §7.7's port search does not work as specified | Resolved 2026-08-20 — technique not adopted |
 | 27 | Operational | NAT64/DNS64 needs a dependency decision the matrix cannot make for itself | Resolved 2026-08-19 — built with `tayga` + masquerade |
 
-## Open
+## Closed
 
-### 28. High: §7.7's scratch mappings expire before the peer can probe them
+### 28. High: §7.7's port search did not work as specified
+
+**Resolved 2026-08-20 by not adopting the technique.** The section is kept as
+an analysis and the implementation is removed; `aven-v1.md` §7.7 carries the
+decision and PLAN.md the cost argument. What follows is how it was reached,
+because the route matters more than the destination here.
 
 `aven-v1.md` §7.7 has the hard side "open *N* sockets and send one datagram from
 each" toward the easy side's address, and probe on a **thirty-second** cadence

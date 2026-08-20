@@ -3227,102 +3227,33 @@ onwards, anchored on the week of 2026-08-10.
   1024. A design that starts small and escalates spends more traffic to arrive
   at the same place, because the birthday curve is superlinear in *N·M*.
 
-  ✅ **Specified as `aven-v1.md` §7.7 on 2026-08-19**, and the design conclusion
-  is not the published one. The technique is held inside §7.5's **existing**
-  64-datagram budget rather than given a new one, spending it on a single
-  address instead of sixteen, with the hard side's socket count growing each
-  round while the easy side's spend stays flat. That reaches **91% in five and a
-  half minutes and 96% in seven**, against 64% in one round for the published
-  256×256 burst.
+  ❌ **Not adopted, 2026-08-19.** Specified, implemented, measured, and then
+  conceded to the relay — the same answer §12.4 reaches for
+  symmetric-to-symmetric, on evidence rather than by assumption.
 
-  Slower, and correct for this protocol rather than for that one. §8.3 says a
-  relay path is a working path, so this is an *upgrade* and latency-to-direct is
-  a cost rather than a correctness property. The burst version spends eight to
-  sixteen times the allowance in one go, aimed at an address the node cannot
-  verify belongs to its peer — §1.1 allows an authenticated peer to be
-  malicious — so a peer of *K* nodes could point *K* × 512 datagrams at a victim
-  from *K* innocent sources. Trading minutes against that is the right way round.
+  The corrected arithmetic is what decided it. `N` is live *mappings*, not
+  sockets opened, and a mapping lives about a NAT timeout. Only the hard side's
+  search mappings are targets, so half its external ports are dead. And a node
+  does not know which side it is — §7.6's two-reflector test would tell it and
+  most nodes have one relay — so it funds both roles from one budget, halving
+  *N* and *M* together. At the allowance §7.5 grants that is **64% after eight
+  minutes**, for a pair already talking over the relay the whole time.
 
-  🔶 **Implemented and it does not yet carry the row.** `karst-disco`'s
-  scheduler, `karstd`'s scratch-socket pool and the datapath migration are all
-  built, gate-clean and unit-tested; the aquifer row still stays on the relay
-  after seven minutes. Row 8's expectation is deliberately **not** flipped —
-  an expectation that does not hold is worse than an honest one.
+  What it costs is a **datapath change**: the collision lands on one of *N*
+  sockets, so the peer's traffic must migrate to whichever socket won, against
+  §4's single shared socket. A protocol change of that size for a probabilistic
+  gain on one pairing, at the edge of the amplification budget, is not a good
+  trade. Explicit port mapping is the better answer for the same pairing and is
+  already built.
 
-  **Diagnosed 2026-08-19, in one run, by logging what the search does.** Both
-  earlier guesses were wrong. The search starts promptly on both nodes and the
-  rotation across candidates works:
-
-  ```
-  A: port search starting for peer 0 toward [10.98.2.2:51820, 51.75.10.3:51820]
-  A: round 1 toward 10.98.2.2  round 2 toward 51.75.10.3  …
-  B: port search starting for peer 0 toward [10.98.1.2:51820]
-  B: round 1 toward 10.98.1.2  round 2 toward 10.98.1.2  …
-  ```
-
-  **The cone side never learns the symmetric side's outer address.** B's
-  candidate list holds one entry — `10.98.1.2`, A's *private* address — so the
-  easy side spends every round probing an unroutable host and the collision
-  cannot happen however many rounds run. A is doing its half correctly.
-
-  That is not a §7.7 defect. It is a gap in candidate exchange: a node behind a
-  **symmetric** NAT has a reflexive address (§7.6) that is real and knowable,
-  and it is not reaching the peer. Every other row hides this — `SymmetricA`
-  works because the public peer learns A's mapped address from the probe that
-  *arrives* (finding 20's rule) rather than from an advertisement, so the
-  advertisement path for a symmetric node has never been exercised.
-
-  **Resolved and superseded.** The candidate exchange was fine: A advertised
-  `[10.98.1.2, 51.75.10.2:53059]` and B received it. The search was holding the
-  list it was *created* with, and it is created the moment §7.5's backoff gives
-  up — before any reflexive address has crossed the relay. `Search::retarget`
-  fixes that and the cone side now aims at the symmetric side's outer address
-  on its second round.
-
-  That was necessary and not sufficient, and so were four further fixes. A
-  **packet capture** finally settled it where inference had not: the birthday
-  arithmetic is exactly right — 12 coincidences observed against 12.9
-  predicted — and §7.7 counts the wrong population.
-
-  Half the hard side's mappings are dead targets, because it opens scratch
-  sockets *and* sends probes, and only the scratch half can accept a reply from
-  the peer's shared socket. And alignment is partial: only 2 of 12 coincidences
-  fell inside a mapping lifetime, because a wall-clock boundary aligns round
-  *starts* while the datagrams spread over the seconds after. Together those put
-  the expected usable, timely coincidence over eight minutes well under one,
-  against a model predicting 98%.
-
-  **The next step is a corrected model, not more code.** It may show the
-  technique is not worth its cost at any budget this protocol can afford, which
-  is a legitimate outcome and the one §12.4 already reached for hard/hard.
-  Finding 28 carries the measurements.
-
-  It carries an architectural cost that must be stated before it is scheduled.
-  The technique needs the hard side to hold **many sockets at once**, because a
-  socket is what earns a distinct external mapping toward the *one* address the
-  easy side is reachable at. Sending to many destination ports from a single
-  socket does not substitute: a port-restricted symmetric NAT admits a packet
-  only from the exact source its mapping was created toward, so the collision
-  has to land on a mapping some socket owns. That is in direct tension with
-  `aven-v1.md` §4, which puts AVEN and PHREATIC on **one** shared socket
-  precisely so that a binding proven by discovery is the binding the datapath
-  uses — and it means the winning socket must become the datapath socket. That
-  is a change to `karstd`'s datapath, not to `karst-disco`, and should be costed
-  as one.
-
-  **The open question is the rate budget, not the mechanism.** §7.5 says a node
-  MUST NOT emit more probe traffic to a peer than that peer has authenticated
-  itself to it; the existing budget is 16 candidates × 4 probes = 64 datagrams,
-  and 512 probes is eight times that on the strength of one `CallMeMaybe`. The
-  mitigating structure is that a blast goes to **one** address rather than
-  sixteen — but a node learns its *peer's* reflexive address from the peer,
-  which §1.1 allows to be malicious, so as specified nothing stops a peer naming
-  a third party and having a thousand datagrams sent at it. Closing that needs
-  the relay to vouch for the source address of the peer's own Ponor connection.
-  That is a protocol change and it should be designed before the datapath work,
-  not after.
-
-### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
+  The implementation is removed rather than left dormant: it opened 128 sockets
+  per peer and spent budget for a technique now specified as not adopted.
+  `aven-v1.md` §7.7 keeps the analysis, and the branch `aven-77-align` keeps the
+  eight fixes for anyone who revisits it. **One thing is left unexplained and
+  recorded as a caution**: a capture inside a node shows the exchange working at
+  the network layer while the daemon records no arrival. An implementer who
+  reads the measurements and concludes the technique is ready has the same
+  surprise waiting.
 
 - KarstDNS: stub resolver, split DNS, all platform integrations (§7).
 - Bedrock: SLH-DSA roots, quorum signing, hash-chained log,

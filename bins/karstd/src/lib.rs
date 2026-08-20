@@ -29,7 +29,6 @@ pub mod routing;
 pub mod run;
 #[cfg(test)]
 mod scratch;
-pub mod search;
 
 pub use config::{Config, ConfigError};
 pub use engine::Engine;

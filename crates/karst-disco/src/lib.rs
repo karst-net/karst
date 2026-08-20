@@ -17,13 +17,11 @@ pub mod engine;
 pub mod key;
 pub mod msg;
 pub mod path;
-pub mod search;
 
 pub use engine::{Action, Engine};
 pub use key::{DiscoKey, TagTable};
 pub use msg::{Endpoint, Message, TxId};
 pub use path::{PathKind, PathSet, Selection};
-pub use search::{Round, Search};
 
 pub mod consts {
     //! Normative constants — `spec/aven-v1.md` §6 and §7.5.
