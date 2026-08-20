@@ -3279,11 +3279,23 @@ onwards, anchored on the week of 2026-08-10.
   fixes that and the cone side now aims at the symmetric side's outer address
   on its second round.
 
-  That was necessary and not sufficient. Row 8 still sees no arrival in seven
-  minutes, and the cause is **finding 28**: §7.7 opens a scratch socket, sends
-  one datagram, and never sends again, while Linux's conntrack UDP timeout is
-  thirty seconds and the round interval is thirty seconds. The mappings are
-  dead before the peer probes them. Finding 22 wrote the rule this breaks.
+  That was necessary and not sufficient, and so were four further fixes. A
+  **packet capture** finally settled it where inference had not: the birthday
+  arithmetic is exactly right — 12 coincidences observed against 12.9
+  predicted — and §7.7 counts the wrong population.
+
+  Half the hard side's mappings are dead targets, because it opens scratch
+  sockets *and* sends probes, and only the scratch half can accept a reply from
+  the peer's shared socket. And alignment is partial: only 2 of 12 coincidences
+  fell inside a mapping lifetime, because a wall-clock boundary aligns round
+  *starts* while the datagrams spread over the seconds after. Together those put
+  the expected usable, timely coincidence over eight minutes well under one,
+  against a model predicting 98%.
+
+  **The next step is a corrected model, not more code.** It may show the
+  technique is not worth its cost at any budget this protocol can afford, which
+  is a legitimate outcome and the one §12.4 already reached for hard/hard.
+  Finding 28 carries the measurements.
 
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a
