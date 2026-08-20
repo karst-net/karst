@@ -201,6 +201,15 @@ fn local() -> LocalSettings {
 /// Driving them all matters more than any one of them: a scan that renders
 /// nothing passes trivially, which is exactly how the server-side version of
 /// this test managed to pass while capturing zero bytes.
+/// A stand-in for the live packet device. The scan is about what the reports
+/// *say*, not about which device produced them.
+fn attachment() -> karstd::run::Attachment<'static> {
+    karstd::run::Attachment {
+        name: "karst0",
+        mtu: 1280,
+    }
+}
+
 fn every_diagnostic(config: &Arc<Config>, netmap: &Netmap) -> String {
     let engine = Engine::new(config);
 
@@ -223,8 +232,18 @@ fn every_diagnostic(config: &Arc<Config>, netmap: &Netmap) -> String {
     let _ = engine.poll(12, || [0x5A; 32]);
 
     let mut out = String::new();
-    out.push_str(&karstd::run::status_report(config, &engine, 1280, 0));
-    out.push_str(&karstd::run::bug_report_for_test(config, &engine, 1280, 0));
+    out.push_str(&karstd::run::status_report(
+        config,
+        &engine,
+        attachment(),
+        0,
+    ));
+    out.push_str(&karstd::run::bug_report_for_test(
+        config,
+        &engine,
+        attachment(),
+        0,
+    ));
 
     // The `Debug` implementations, which is where a secret most often escapes:
     // a derived one prints every field, and nobody notices until a support
@@ -374,7 +393,7 @@ fn the_bug_report_is_useful_and_says_what_it_omits() {
     let netmap = netmap_with_psks();
     let config = Arc::new(Config::from_netmap(local(), &netmap).expect("config"));
     let engine = Engine::new(&config);
-    let report = karstd::run::bug_report_for_test(&config, &engine, 1280, 0);
+    let report = karstd::run::bug_report_for_test(&config, &engine, attachment(), 0);
 
     assert!(report.contains("no key material"), "{report}");
     // The diagnostics a maintainer actually needs.
@@ -426,7 +445,7 @@ fn a_lattice_only_node_is_reported_as_such() {
 
     let config = Arc::new(Config::from_netmap(local(), &map).expect("config"));
     let engine = Engine::new(&config);
-    let report = karstd::run::bug_report_for_test(&config, &engine, 1280, 0);
+    let report = karstd::run::bug_report_for_test(&config, &engine, attachment(), 0);
 
     assert!(
         report.contains("peers_lattice_only = 1"),

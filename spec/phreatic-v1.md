@@ -829,7 +829,7 @@ them and rests on the spoofed-source test suite instead.
 | 6 | Padding bucket sizes for the transport phase | Metadata posture |
 | 7 | Suite `0x0003` key schedule with no DH contribution | Phase 7 |
 | 8 | Out-of-band-KEM variant (ADR-0004 §4) framing | Optional profile |
-| 9 | Rekey state machine — precise transition table | Implementation |
+| 9 | Rekey state machine — precise transition table, **including simultaneous open** | Implementation |
 | **10** | **§13.8 — fragment MAC no longer covers the payload.** The one change made on performance grounds; the argument is written out in §13.8 and needs an adversarial reading rather than a self-review | **External review** |
 
 Items 1 and 2 are gates, not tasks; item 2's base model now passes (§13.3).
@@ -844,3 +844,22 @@ the last person to check.
 Item 4 (`LOAD_THRESHOLD`) cannot be settled on paper — it needs measurement
 against a real responder under a spoofed-source flood, so it belongs with the
 Phase 1 DoS suite rather than here.
+
+**Item 9 grew a concrete gap on 2026-08-20.** Two nodes that each know the
+other's endpoint dial *simultaneously*, which is not an edge case but the
+standing behaviour of any pair with reachable addresses on both sides. Each is
+then initiator and responder at once, and this draft says nothing about it —
+§12.6 covers what a responder must not do to a **working** session and is
+silent on a handshake in flight. An implementation that resolves it by
+discarding its own outstanding handshake produces two ends that both report
+success and cannot decrypt each other (FINDINGS.md 34).
+
+Keeping both handshakes is correct and is what the implementation now does, but
+it leaves the pair with two coexisting sessions: each end seals with its own
+initiator keys and reads the peer's through the slot a rekey vacates. That
+works indefinitely and costs a second AEAD attempt per inbound datagram.
+Converging on one session needs a **tie-break both ends can evaluate without
+another round trip** — the two static public keys are the obvious candidate,
+since each end holds both — and that is a normative rule, so it belongs in this
+document rather than in an implementation. The transition table item 9 asks for
+should state it.

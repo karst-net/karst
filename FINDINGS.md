@@ -11,9 +11,10 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added sixteen more, and fifteen of those are closed — most found by
-building the thing the finding above them asked for, and the most recent found
-by counting what the test matrix did *not* cover.
+followed it added twenty-six more, and all of those are closed — most found by
+building the thing the finding above them asked for, several found by counting
+what the test matrix did *not* cover, and the last three found by writing a
+release gate for a feature nobody had ever run.
 
 **No findings remain open.** Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
@@ -56,14 +57,89 @@ carries both the new wording and the original, struck through.
 | 30 | High | The on-demand relay thread died at startup, so §9.1's second rule never ran | Fixed 2026-08-20 |
 | 31 | Medium | A relay whose address blackholed packets stalled the relay path silently | Fixed 2026-08-20 |
 | 32 | Medium | A node held two Ponor connections to one relay and they displaced each other | Fixed 2026-08-20 |
-| 33 | High | A forgeable `HandshakeInit` tore down a working session — §12.6 | Fixed 2026-08-21 |
+| 33 | High | A forgeable `HandshakeInit` tore down a working session — §12.6 | Fixed 2026-08-20 |
+| 34 | High | A simultaneous open left both ends `established` and unable to decrypt | Fixed 2026-08-20 |
+| 35 | Low | Userspace mode reported a host interface it had never created | Fixed 2026-08-20 |
 
 ## Closed
+
+### 34. High: a simultaneous open left both ends `established` and unable to decrypt
+
+**Found 2026-08-20** by ADR-0012's userspace release gate, which was written to
+test something else entirely and passed once, then failed three runs in a row.
+Fixed the same day.
+
+Two nodes that both know the other's endpoint both dial at startup —
+`connect_all` runs on every node, so a *simultaneous open* is not an unlucky
+case but the standing behaviour of any pair with a static endpoint on both
+sides, and of any pair that has learned each other's addresses. Each node is
+then initiator and responder at once, and the order the four messages land in
+is a race on the wire.
+
+`adopt_responder` replaced the whole session state, so a node that answered the
+peer's `HandshakeInit` while its **own** handshake was outstanding discarded
+that handshake. The peer's `HandshakeResponse` then arrived with nothing left
+to complete and was dropped as unsolicited. The two ends settled on key sets
+derived from different handshakes: **both reporting `established`, neither able
+to decrypt the other**, with every packet counted as a decryption failure at
+one end and nothing at all at the other.
+
+This is precisely the stall `State::Established::initiated` documents — *"9
+stalls in 7.8 hours, 253–765 seconds each, 13% of samples, with the session
+reporting `established` throughout"* — in the one place that rule does not
+reach. `initiated` stops two *rekeys* racing by making only the initiator
+rekey. It says nothing about the first handshake, and nothing had ever tested
+one: every handshake test in the tree is asymmetric, one side dialling and the
+other answering.
+
+The fix is small — carry the outstanding handshake across into the slot that
+already means "a handshake in flight beside a live session" — and §12.6 is
+untouched, because at that point there is no working session to protect.
+
+**The rekey race then returns through the same door.** After a simultaneous
+open both ends are initiators, so both rekey; and two sessions created in the
+same millisecond reach `REKEY_AFTER_TIME` in the same millisecond, so they
+rekey *together*. Completing one's own handshake was discarding the keys owed
+to the peer — finding 33's `pending` slot, cleared on every
+`handle_response` — which reproduced the same silent stall one rekey later.
+Those keys are an independent claim and now survive.
+
+`crates/karst-node/tests/simultaneous.rs` enumerates **all six** valid
+interleavings rather than sampling one, because the ordering is exactly what a
+real network picks at random and a test that chose one would have passed
+against the defect five times in six. Each of the two fixes has a test that
+fails without it and passes with it, and a control test pins the asymmetric
+case so "carry the handshake across" cannot quietly become "always keep one in
+flight" and undo `initiated`.
+
+**What this leaves open** is convergence, not correctness. After a simultaneous
+open each end seals with its own initiator keys and reads the peer's through
+`previous`, so both sessions coexist and every inbound packet costs a second
+AEAD attempt. Traffic flows and keeps flowing; the pair simply never agrees on
+one session. `phreatic-v1.md` §14 item 9 — *"rekey state machine: precise
+transition table"* — is where a tie-break belongs (the two static keys are
+known to both ends and would settle it deterministically), and it is a spec
+decision rather than an implementation one.
+
+### 35. Low: userspace mode reported a host interface it had never created
+
+**Found 2026-08-20** by the same gate, on its first run. Fixed the same day.
+
+`karst status` and `karst bugreport` printed `config.interface` — the *name in
+the configuration file*. Userspace mode creates no host interface at all, so a
+node running it reported `interface = "karst0"` and sent anyone diagnosing it
+to an `ip link` entry that does not exist. It also made the two modes
+indistinguishable in exactly the output that exists to tell them apart:
+`NetworkDevice::name()` already answers this correctly and only `announce()`
+was asking it.
+
+Both reports now take the live device's name and MTU together, because both
+belong to the device rather than to the configuration.
 
 ### 33. High: a forgeable `HandshakeInit` tore down a working session
 
 **Found 2026-08-20** while fixing finding 29, which is the same code path one
-step further in. Fixed 2026-08-21.
+step further in. Fixed 2026-08-20.
 
 `phreatic-v1.md` §12.6 is unambiguous, and ProVerif is what put it there — the
 agreement query is **false** if a responder claims completion on sending
@@ -1261,3 +1337,38 @@ by someone writing the test that looks at the *join* between layers rather than
 at a layer. `tests/rendezvous.rs` and `tests/relay_path.rs` are those tests. The
 caveat is a statement about missing tests, not a permanent property of the
 findings.
+
+### Validation, 2026-08-20 — the userspace release gate
+
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings`, **874 Rust tests in 55 suites**, `cargo deny
+check licenses advisories`, `go build ./...` and the Go `karst` packages: all
+clean.
+
+The privileged suites were **all** run for this pass, which the previous entry
+could not say: `karst-tun` device (9), `karstd` two-node (9, 219 s), the
+**eleven aquifer topologies (474 s)**, and the new
+`bins/karstd/tests/userspace.rs` (2). The aquifer matters here because the fix
+for finding 34 is in the session state machine, on every datapath in the tree.
+
+Nine defect injections, each restored afterwards:
+
+| Defect | Caught by |
+|---|---|
+| `Userspace::send` drops the packet | the gate — ADR-0012 requires this one |
+| `recv_segments` returns nothing | the gate — ADR-0012 requires this one |
+| the `setpriv` wrapper is removed | the gate *and* the instrument check |
+| `--bounding-set=-all` is removed | the gate's `CapBnd` assertion alone |
+| status reports `config.interface` | the gate's device-name assertion |
+| `tx_packets` is not counted | the gate's packet-count assertion |
+| the far end reflects instead of answering | the gate's payload comparison |
+| the outstanding handshake is discarded | three of the four simultaneous-open tests; the asymmetric control still passes |
+| `pending` is cleared on `handle_response` | `a_simultaneous_rekey_carries_traffic` alone |
+
+The last two rows are the point of the exercise: each fix has a test that fails
+without it, and the control test passes in both cases, so "keep the handshake"
+cannot silently become "always keep one in flight".
+
+The gate was also run **three times consecutively** after the fix. That is not
+ceremony: finding 34 presented as a first run that passed and three that
+failed, so a single green run would have proved nothing.

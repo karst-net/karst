@@ -46,10 +46,12 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | Console / portal (TypeScript) | **not started** |
 | **KarstDNS**, **Bedrock** network lock | **not started** — Phase 5 |
 
-**772 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
+**874 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-twelve-row NAT matrix and **ten end-to-end aquifer topologies** — each one a
-whole aquifer, and each ending in a TCP conversation under an ACL.
+twelve-row NAT matrix and **eleven end-to-end aquifer topologies** — each one a
+whole aquifer, and each ending in a TCP conversation under an ACL. That suite
+also carries ADR-0012's userspace release gate, which runs its daemon with **no
+capabilities at all** and reads the kernel's record back to prove it.
 
 | Node A is behind | Node B is behind | Result |
 |---|---|---|

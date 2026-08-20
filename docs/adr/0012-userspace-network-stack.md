@@ -42,6 +42,28 @@ binary. This sandbox has an empty effective capability set (including no
 required live TCP throughput or memory measurement. Those remain release
 gates, not estimates.
 
+**Gate 2 met, 2026-08-20** — `bins/karstd/tests/userspace.rs`. A `karstd` in
+userspace mode, running as uid 65534 with an **empty capability bounding set**,
+carries 64 KiB of TCP in each direction between a workload attached over the
+loopback SOCKS5 listener and a service on an ordinary mesh node's overlay
+address. The daemon's credentials are read back from `/proc/<pid>/status`
+rather than assumed, and a second test points the same launcher at TUN mode and
+requires it to fail with `TUNSETIFF (needs CAP_NET_ADMIN)` — without that, the
+claim would rest on `setpriv` having been asked correctly.
+
+Checked against seven injected defects, including the two this ADR names:
+dropping what `Userspace::send` is handed, and returning nothing from
+`recv_segments`. Each makes the gate fail.
+
+Writing it found three defects, two of them outside userspace mode —
+FINDINGS.md 34 and 35. The gate is the first thing in the tree that ran two
+daemons which **both** knew the other's endpoint, so it was the first thing to
+perform a simultaneous open; that had been silently broken. The lesson is the
+ADR's own: a mode that is built and unproven is not a mode that works.
+
+Gate 1 (throughput, latency, memory against the privileged baseline) is **not**
+met and is not estimated here.
+
 ## Decision
 
 Adopt **smoltcp** as the proposed userspace stack, isolated behind a new
@@ -112,11 +134,24 @@ Before accepting this proposal for implementation, the spike must record:
 
 1. Release-binary size delta, peak/resident memory, and TCP throughput/latency
    for the same Karst topology and payload as the privileged baseline, including
-   the exact commands and host details.
+   the exact commands and host details. — **size only; the rest outstanding.**
 2. A no-`CAP_NET_ADMIN` end-to-end TCP conversation through userspace mode,
    run as an unprivileged process. Deliberately breaking the userspace packet
-   bridge must make that test fail before it is relied upon.
+   bridge must make that test fail before it is relied upon. — **met
+   2026-08-20**, `bins/karstd/tests/userspace.rs`, `just test-userspace`.
 3. Confirmation that the existing privileged topology suite remains unchanged.
+   — **met 2026-08-20**: TUN (9), two-node (9) and the eleven aquifer
+   topologies all pass alongside it.
+
+### Attachment is outbound only
+
+Recorded because the gate above could easily be read as more than it is. A
+workload behind userspace mode can **dial** the mesh; nothing in the mesh can
+reach a service *inside* it, because SOCKS5 `CONNECT` is the only attachment
+and `Userspace::listen_tcp` is reachable from no configuration. A sidecar that
+can only make calls is half of the sidecar PLAN.md §9 promises, and the inbound
+half is a design decision — which overlay ports map to which local addresses —
+rather than a missing line of code.
 
 ### Reconsider if
 

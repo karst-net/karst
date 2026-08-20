@@ -26,13 +26,19 @@ test:
 # artefacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
-test-privileged: test-tun test-karstd test-nat-matrix test-portmap test-aquifer
+test-privileged: test-tun test-karstd test-userspace test-nat-matrix test-portmap test-aquifer
 
 test-tun:
     @just _privileged karst-tun device
 
 test-karstd:
     @just _privileged karstd two_nodes
+
+# ADR-0012's release gate. Root is for the *peer's* TUN device; the node under
+# test is launched with a non-root uid and an empty capability bounding set, and
+# the suite reads /proc back to prove it.
+test-userspace:
+    @just _privileged karstd userspace
 
 # The whole stack: coordination server, relay, and two daemons in namespaces,
 # from first enrolment to a direct path carrying TCP under an ACL.

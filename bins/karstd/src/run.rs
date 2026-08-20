@@ -455,7 +455,10 @@ pub fn run_with_control(
                                 command,
                                 config,
                                 engine_ctl,
-                                tun_ctl.mtu(),
+                                Attachment {
+                                    name: tun_ctl.name(),
+                                    mtu: tun_ctl.mtu(),
+                                },
                                 started,
                                 &relay_dropped,
                                 Some(portmap_state.snapshot()),
@@ -1793,13 +1796,18 @@ fn stop(socket_path: &std::path::Path) -> ! {
 /// looking at the same bytes.
 /// The `karst status` body, for tests that need to scan it.
 #[must_use]
-pub fn status_report(config: &Config, engine: &Engine, mtu: usize, uptime_secs: u64) -> String {
+pub fn status_report(
+    config: &Config,
+    engine: &Engine,
+    device: Attachment<'_>,
+    uptime_secs: u64,
+) -> String {
     let _ = uptime_secs;
     report(
         ipc::Command::Status,
         config,
         engine,
-        mtu,
+        device,
         Instant::now(),
         &AtomicU64::new(0),
         Some(portmap::Snapshot::new(config.port_mapping)),
@@ -1816,11 +1824,28 @@ pub fn status_report(config: &Config, engine: &Engine, mtu: usize, uptime_secs: 
 pub fn bug_report_for_test(
     config: &Config,
     engine: &Engine,
-    mtu: usize,
+    device: Attachment<'_>,
     uptime_secs: u64,
 ) -> String {
     let _ = uptime_secs;
-    bug_report(config, engine, mtu, Instant::now(), &AtomicU64::new(0))
+    bug_report(config, engine, device, Instant::now(), &AtomicU64::new(0))
+}
+
+/// The live packet device, as reporting sees it.
+///
+/// Name and MTU travel together because both belong to the **device** rather
+/// than to the configuration, and userspace mode is where that stops being a
+/// pedantic distinction: it creates no host interface at all, so reporting
+/// `config.interface` sends an operator to look at an `ip link` entry that does
+/// not exist — and makes the two modes indistinguishable in precisely the
+/// output that exists to tell them apart.
+#[derive(Debug, Clone, Copy)]
+pub struct Attachment<'a> {
+    /// The device's own name: a TUN interface, or `"userspace"`.
+    pub name: &'a str,
+    /// The tunnel MTU. §13.6 requires it be reportable, because a path that
+    /// black-holes full-size packets is otherwise very hard to diagnose.
+    pub mtu: usize,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1828,7 +1853,7 @@ fn report(
     command: ipc::Command,
     config: &Config,
     engine: &Engine,
-    mtu: usize,
+    device: Attachment<'_>,
     started: Instant,
     relay_dropped: &AtomicU64,
     portmap: Option<portmap::Snapshot>,
@@ -1838,7 +1863,7 @@ fn report(
     match command {
         ipc::Command::Version => format!("version = \"{}\"\n", env!("CARGO_PKG_VERSION")),
         ipc::Command::Down => "stopping = true\n".to_owned(),
-        ipc::Command::BugReport => bug_report(config, engine, mtu, started, relay_dropped),
+        ipc::Command::BugReport => bug_report(config, engine, device, started, relay_dropped),
         ipc::Command::Status => {
             let stats = engine.stats();
             let peers = engine.status();
@@ -1846,10 +1871,10 @@ fn report(
             let mut out = String::new();
             // Writing to a String is infallible; the `let _` keeps this
             // panic-free without an `unwrap` on every line.
-            let _ = writeln!(out, "interface = \"{}\"", config.interface);
+            let _ = writeln!(out, "interface = \"{}\"", device.name);
             // §13.6 requires the tunnel MTU be reportable: a path that
             // black-holes full-size packets is otherwise very hard to diagnose.
-            let _ = writeln!(out, "mtu = {mtu}");
+            let _ = writeln!(out, "mtu = {}", device.mtu);
             let _ = writeln!(out, "listen = \"{}\"", config.listen);
             let _ = writeln!(out, "uptime_seconds = {}", started.elapsed().as_secs());
             let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
@@ -2277,7 +2302,7 @@ fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::
 fn bug_report(
     config: &Config,
     engine: &Engine,
-    mtu: usize,
+    device: Attachment<'_>,
     started: Instant,
     relay_dropped: &AtomicU64,
 ) -> String {
@@ -2307,8 +2332,8 @@ fn bug_report(
     let _ = writeln!(out, "arch = \"{}\"", std::env::consts::ARCH);
 
     let _ = writeln!(out, "\n[interface]");
-    let _ = writeln!(out, "name = \"{}\"", config.interface);
-    let _ = writeln!(out, "mtu = {mtu}");
+    let _ = writeln!(out, "name = \"{}\"", device.name);
+    let _ = writeln!(out, "mtu = {}", device.mtu);
     let _ = writeln!(out, "listen = \"{}\"", config.listen);
     let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
     let _ = writeln!(out, "addresses = {addrs:?}");

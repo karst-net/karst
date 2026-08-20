@@ -622,9 +622,20 @@ impl Session {
         // already in flight was sealed under the old ones. Dropping them at
         // this instant discards that traffic silently, and leaves this node
         // unable to read the peer's replies until it catches up.
-        let replaced = match &self.state {
-            State::Established { session, .. } => Some(Arc::clone(session)),
-            _ => None,
+        // **Keys awaiting §12.6's assurance survive this too.** They are an
+        // independent claim — the peer's own handshake, answered but not yet
+        // proven — and completing a handshake of *ours* says nothing about it.
+        // Dropping them here breaks the simultaneous rekey, which is not a rare
+        // case but the expected one: two sessions created in the same second
+        // reach `REKEY_AFTER_TIME` in the same second, so both ends dial, both
+        // answer, and each then discards the answer it owes the other. The
+        // symptom is the one `initiated` documents — both ends reporting
+        // `established` while nothing decrypts.
+        let (replaced, waiting) = match &self.state {
+            State::Established {
+                session, pending, ..
+            } => (Some(Arc::clone(session)), pending.clone()),
+            _ => (None, None),
         };
         self.state = State::Established {
             session: Arc::new(TransportSession::new(
@@ -635,7 +646,7 @@ impl Session {
             )),
             rekey: None,
             initiated: true,
-            pending: None,
+            pending: waiting,
             previous: replaced,
         };
         vec![Action::Established]
@@ -768,9 +779,28 @@ impl Session {
             *pending = Some(derived);
             return actions;
         }
+        // Nothing is carrying traffic yet, so these keys become the session —
+        // but **a handshake this node started may still be outstanding**, and
+        // it is carried across rather than discarded.
+        //
+        // Dropping it is what breaks a *simultaneous open*, which every pair
+        // that knows both endpoints performs at startup: each side dials, each
+        // side then answers the other's `HandshakeInit`, and the answer
+        // overwrites the state holding its own attempt. The peer's
+        // `HandshakeResponse` then arrives with nothing left to complete, and
+        // the two ends settle on key sets that cannot read each other — both
+        // reporting `established`, nothing decrypting, exactly the stall
+        // `initiated` documents for the rekey race. It survives here in the
+        // slot that already means "a handshake in flight beside a live
+        // session"; §12.6 is untouched, because there is no working session to
+        // protect at this point.
+        let outstanding = match core::mem::replace(&mut self.state, State::Idle) {
+            State::Handshaking(hs) => Some(hs),
+            _ => None,
+        };
         self.state = State::Established {
             session: derived,
-            rekey: None,
+            rekey: outstanding,
             initiated: false,
             pending: None,
             previous: None,

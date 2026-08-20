@@ -2434,7 +2434,7 @@ onwards, anchored on the week of 2026-08-10.
   by having a session remember the `HandshakeInit` it answered and replay the
   same `HandshakeResponse` for a byte-identical repeat.
 
-  ✅ **§12.6 closed, 2026-08-21** — FINDINGS.md 33. A responder no longer tears
+  ✅ **§12.6 closed, 2026-08-20** — FINDINGS.md 33. A responder no longer tears
   down a working session on emitting a `HandshakeResponse`, which §12.5 made a
   one-datagram off-path teardown of anyone's live tunnel.
 
@@ -2458,6 +2458,22 @@ onwards, anchored on the week of 2026-08-10.
   there installs keys nothing proved, by a race; refusing because the slot moved
   drops keys that *were* proved and leaves the node sealing for a peer that has
   gone. Both are tested.
+
+  ✅ **Simultaneous open, 2026-08-20** — FINDINGS.md 34, found by ADR-0012's
+  userspace gate. Every handshake test in the tree was asymmetric: one side
+  dialled, the other answered. But `connect_all` runs on **both** nodes, so any
+  pair that knows both endpoints opens simultaneously, and answering the peer's
+  `HandshakeInit` was throwing away this node's own handshake in flight. The
+  peer's `HandshakeResponse` then had nothing to complete, and the pair settled
+  on key sets that could not read each other — the stall `initiated` documents,
+  in the one place that rule does not reach. The outstanding handshake now
+  survives; and because both ends are then initiators, both rekey together, so
+  the keys owed to the peer survive a completing handshake too.
+
+  `crates/karst-node/tests/simultaneous.rs` enumerates all six interleavings.
+  Sampling one would have passed against the defect five times in six — which
+  is roughly what happened before the diagnosis: the gate passed on its first
+  run and failed the next three.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are
@@ -3405,7 +3421,8 @@ onwards, anchored on the week of 2026-08-10.
   is only as honest as its weakest topology, and a NAT missing a filter chain
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
-- 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶.**
+- 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶** — proven
+  outbound, unmeasured for cost, and with no inbound attachment.
 
   Userspace mode landed 2026-08-20: ADR-0012 chooses **smoltcp**, isolated
   behind a `karst-tun` packet device and reached only through an explicit
@@ -3444,10 +3461,48 @@ onwards, anchored on the week of 2026-08-10.
   is noted in the file, because an ADR that arrives with its code has not
   constrained the decision it documents.
 
-  **Still outstanding, and it is the claim itself**: there is no test that a TCP
-  conversation crosses userspace mode with no `CAP_NET_ADMIN`. ADR-0012 lists
-  that as a release gate and reports the sandbox could not produce it. Until it
-  exists, userspace mode is built and unproven.
+  ✅ **The claim itself, proved 2026-08-20** — ADR-0012's gate 2,
+  `bins/karstd/tests/userspace.rs`, `just test-userspace`. A `karstd` in
+  userspace mode carries 64 KiB of TCP each way — fifty-odd tunnel MTUs, not
+  one — between a workload attached over the loopback SOCKS5 listener and a
+  service on an ordinary mesh node's overlay address. It runs as uid 65534 with
+  an **empty capability bounding set**, which is the strong form of the claim:
+  a capability that is not in the bounding set cannot be regained by any means
+  the process has. Root is still needed for the *peer's* TUN device, so the
+  suite is privileged; the node under test is not, and its credentials are read
+  back from `/proc/<pid>/status` rather than asserted in prose.
+
+  A second test points the same launcher at TUN mode and requires it to fail
+  with `TUNSETIFF (needs CAP_NET_ADMIN)`. Without it the whole gate would rest
+  on `setpriv` having been asked correctly — a misspelled argument would leave
+  it testing the privileged path twice and passing. Finding 23's lesson applied
+  to a privilege boundary instead of a NAT.
+
+  Seven injected defects, including the two the ADR names — dropping what
+  `Userspace::send` is handed, and returning nothing from `recv_segments`.
+
+  **Writing it found three defects, and two of them are not about userspace
+  mode at all.** This is the first thing in the tree that ran two daemons which
+  *both* knew the other's endpoint, so it was the first thing ever to perform a
+  **simultaneous open** — and that was broken: each node discarded its own
+  in-flight handshake when it answered the peer's, and the pair settled on key
+  sets that could not read each other while both reported `established`
+  (FINDINGS.md 34). The same door let the rekey race back in. Both are fixed,
+  with `crates/karst-node/tests/simultaneous.rs` enumerating all six
+  interleavings rather than sampling one. `phreatic-v1.md` §14 item 9 now names
+  the gap: the spec says nothing about simultaneous open, and the tie-break that
+  would converge the pair onto a single session is a normative rule, not an
+  implementation choice. The third defect was smaller and the gate found it on
+  its first run: userspace mode reported the interface name from the *config
+  file*, an `ip link` entry that does not exist (FINDINGS.md 35).
+
+  **Still outstanding, and it is now the honest boundary of the feature**:
+  attachment is outbound only. A workload behind userspace mode can dial the
+  mesh; nothing in the mesh can reach a service inside it, because SOCKS5
+  `CONNECT` is the whole attachment surface and `Userspace::listen_tcp` is
+  reachable from no configuration. That is half of §9's sidecar. ADR-0012's
+  gate 1 — throughput, latency and memory against the privileged baseline —
+  also remains unmeasured; only the binary-size delta exists.
 - **Exit:** **every topology in the matrix where a direct path is physically
   possible reaches one**, and the rest fall back to the relay without loss with
   both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
