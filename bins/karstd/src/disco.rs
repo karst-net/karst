@@ -117,6 +117,55 @@ fn rank(votes: HashMap<SocketAddr, usize>, interfaces: &[SocketAddr]) -> Vec<Soc
     ranked.into_iter().map(|(a, _)| a).collect()
 }
 
+/// Which of a peer's candidates §7.7 should spend its budget on.
+///
+/// **Private addresses are dropped once a routable one exists**, and this is
+/// worth more than it looks. The search's budget is split across its targets,
+/// so every unusable target quarters the odds — it halves the mappings earned
+/// toward the address that works *and* halves the probes aimed at it. Two
+/// candidates instead of one took a round's chance from 12% to 3%.
+///
+/// Dropping them is safe because the cheap path has already run. By the time a
+/// search starts, §7.5's four probes have failed against every candidate — and
+/// a peer on the same segment as us would have *succeeded* there, which is what
+/// `aquifer.rs`'s same-LAN row asserts. A private address that survived that is
+/// one we cannot reach, and spending the expensive budget on it is spending it
+/// on a proven negative.
+///
+/// When *every* candidate is private the list is kept whole: that is the
+/// same-segment case, where the private addresses are the only real ones.
+fn search_targets(engine: &Engine) -> Vec<SocketAddr> {
+    let all: Vec<SocketAddr> = engine
+        .paths()
+        .paths()
+        .iter()
+        .filter(|p| p.kind != PathKind::Relay)
+        .map(|p| p.addr)
+        .collect();
+    let routable: Vec<SocketAddr> = all
+        .iter()
+        .copied()
+        .filter(|a| !is_local_scope(*a))
+        .collect();
+    if routable.is_empty() {
+        all
+    } else {
+        routable
+    }
+}
+
+/// Whether an address can only be reached from the same network.
+fn is_local_scope(addr: SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
 /// One peer's discovery state.
 struct Peer {
     key: DiscoKey,
@@ -888,7 +937,12 @@ impl Disco {
     }
 
     /// Drive every peer's scheduler and encode what it asks for.
-    pub fn poll(&mut self, now_ms: u64, mut mint: impl FnMut() -> TxId) -> Outbound {
+    /// `wall_ms` is **wall-clock** milliseconds and is used for one thing:
+    /// §7.7's round boundary, which two nodes must agree on without
+    /// coordinating. Everything else runs on `now_ms`, which is monotonic and
+    /// must stay that way — a clock that steps backwards would expire probes
+    /// that are still in flight.
+    pub fn poll(&mut self, now_ms: u64, wall_ms: u64, mut mint: impl FnMut() -> TxId) -> Outbound {
         let mut out = Outbound {
             datagrams: self.poll_reflectors(now_ms, &mut mint),
             relayed: Vec::new(),
@@ -951,14 +1005,7 @@ impl Disco {
                 // can tell which a NAT will carry; the search rotates rather
                 // than guesses, and guessing wrong spends every socket it has
                 // on an unroutable destination.
-                let toward: Vec<SocketAddr> = peer
-                    .engine
-                    .paths()
-                    .paths()
-                    .iter()
-                    .filter(|p| p.kind != PathKind::Relay)
-                    .map(|p| p.addr)
-                    .collect();
+                let toward = search_targets(&peer.engine);
                 if !toward.is_empty() {
                     // One line when a search begins, because "did it start at
                     // all" is the first question every failure asks and the
@@ -977,32 +1024,24 @@ impl Disco {
                 // then a `CallMeMaybe` over the relay — and a search holding
                 // the list it began with searches the peer's private address
                 // for ever.
-                search.retarget(
-                    peer.engine
-                        .paths()
-                        .paths()
-                        .iter()
-                        .filter(|p| p.kind != PathKind::Relay)
-                        .map(|p| p.addr)
-                        .collect(),
-                );
-                if let Some(round) = search.poll(now_ms, &mut mint) {
+                search.retarget(search_targets(&peer.engine));
+                if let Some(round) = search.poll(wall_ms, &mut mint) {
                     eprintln!(
-                        "karstd: aven port search peer {} round {} toward {} \
-                         scratch +{} probes {}",
+                        "karstd: aven port search peer {} round {} scratch {:?} probes {}",
                         peer.route_index,
                         search.rounds(),
-                        round.toward,
-                        round.open_scratch,
+                        round.scratch,
                         round.probes.len()
                     );
-                    for _ in 0..round.open_scratch {
-                        let bytes = Message::Ping { tx: mint() }.encode(
-                            &peer.key,
-                            &peer.our_tag,
-                            self.epoch,
-                        );
-                        out.scratch.push((peer.route_index, bytes, round.toward));
+                    for (addr, count) in &round.scratch {
+                        for _ in 0..*count {
+                            let bytes = Message::Ping { tx: mint() }.encode(
+                                &peer.key,
+                                &peer.our_tag,
+                                self.epoch,
+                            );
+                            out.scratch.push((peer.route_index, bytes, *addr));
+                        }
                     }
                     for (addr, tx) in round.probes {
                         let bytes =
@@ -1101,7 +1140,7 @@ mod tests {
         // Immediately, then 100/300/900 ms, then the engine gives up.
         for step in [0u64, 100, 300, 900, 1_000] {
             *now += step;
-            let _ = d.poll(*now, &mut mint);
+            let _ = d.poll(*now, *now, &mut mint);
         }
     }
 
@@ -1120,7 +1159,7 @@ mod tests {
             n = n.wrapping_add(1);
             TxId([n; 12])
         };
-        let first = d.poll(0, &mut mint);
+        let first = d.poll(0, 0, &mut mint);
         assert!(
             first.scratch.is_empty(),
             "a search began before the backoff had run"
@@ -1129,7 +1168,7 @@ mod tests {
         let mut now = 0;
         exhaust_backoff(&mut d, &mut now);
         now += karst_disco::search::ROUND_INTERVAL_MS;
-        let out = d.poll(now, &mut mint);
+        let out = d.poll(now, now, &mut mint);
         assert!(
             !out.scratch.is_empty(),
             "the search never started once the probes were exhausted"
@@ -1155,7 +1194,7 @@ mod tests {
             TxId([n; 12])
         };
         now += karst_disco::search::ROUND_INTERVAL_MS;
-        let out = d.poll(now, &mut mint);
+        let out = d.poll(now, now, &mut mint);
 
         assert!(
             out.scratch.iter().all(|(_, _, to)| *to == addr(9)),
@@ -1199,7 +1238,7 @@ mod tests {
             TxId([n; 12])
         };
         now += karst_disco::search::ROUND_INTERVAL_MS;
-        let round = d.poll(now, &mut mint);
+        let round = d.poll(now, now, &mut mint);
         assert!(!round.scratch.is_empty(), "search running");
 
         // **Answer a real probe.** The transaction id is decoded out of a
@@ -1353,7 +1392,7 @@ mod tests {
         d.engine_mut(peer)
             .expect("peer")
             .add_peer_candidate(addr(7), 0, false);
-        let probes = d.poll(0, &mut mint).datagrams;
+        let probes = d.poll(0, 0, &mut mint).datagrams;
         assert_eq!(probes.len(), 1);
         assert_eq!(probes[0].1, addr(7));
 
@@ -1419,7 +1458,7 @@ mod tests {
         );
         assert!(matches!(d.inbound(&cmm, addr(9), 100), Verdict::Handled(_)));
 
-        let probes = d.poll(100, || TxId([1; 12])).datagrams;
+        let probes = d.poll(100, 100, || TxId([1; 12])).datagrams;
         assert!(
             probes.is_empty(),
             "UDP candidate advertisement was accepted"
@@ -1435,7 +1474,7 @@ mod tests {
             100,
         ));
         let mut n = 0u8;
-        let probes = d.poll(100, || {
+        let probes = d.poll(100, 100, || {
             n += 1;
             TxId([n; 12])
         });
@@ -1450,7 +1489,7 @@ mod tests {
         d.engine_mut(PeerIndex(0))
             .expect("peer")
             .add_peer_candidate(addr(9), 0, false);
-        let probe = d.poll(0, || TxId([1; 12])).datagrams;
+        let probe = d.poll(0, 0, || TxId([1; 12])).datagrams;
         let Some((bytes, _)) = probe.first() else {
             panic!("candidate was not probed");
         };
@@ -1477,7 +1516,7 @@ mod tests {
         );
         assert!(matches!(d.inbound(&cmm, addr(9), 100), Verdict::Handled(_)));
         let targets: Vec<SocketAddr> = d
-            .poll(100, || TxId([2; 12]))
+            .poll(100, 100, || TxId([2; 12]))
             .datagrams
             .into_iter()
             .map(|(_, target)| target)
@@ -1523,7 +1562,7 @@ mod tests {
             .expect("peer")
             .add_peer_candidate(addr(9), 0, false);
 
-        let probe = d.poll(0, || TxId([1; 12])).datagrams;
+        let probe = d.poll(0, 0, || TxId([1; 12])).datagrams;
         let Some((bytes, _)) = probe.first() else {
             panic!("candidate was not probed");
         };
@@ -1555,7 +1594,7 @@ mod tests {
             }]
         );
         assert!(d.path_changes().is_empty());
-        let _ = d.poll(20, || TxId([2; 12]));
+        let _ = d.poll(20, 20, || TxId([2; 12]));
         assert!(d.path_changes().is_empty(), "the same path was restated");
     }
 
@@ -1578,7 +1617,7 @@ mod tests {
         // of §7.5's schedule, so discovery has given up rather than merely not
         // yet confirmed.
         for now in [100, 300, 900, 1_500, 200_000] {
-            let _ = d.poll(now, || TxId([2; 12]));
+            let _ = d.poll(now, now, || TxId([2; 12]));
         }
         assert_eq!(
             d.path_changes(),
@@ -1610,14 +1649,14 @@ mod tests {
             n += 1;
             TxId([n; 12])
         };
-        let _ = d.poll(0, &mut mint);
+        let _ = d.poll(0, 0, &mut mint);
         assert!(
             d.path_changes().is_empty(),
             "the endpoint was withdrawn while it was still being probed"
         );
 
         for now in [100, 400, 1_300, 2_000] {
-            let _ = d.poll(now, &mut mint);
+            let _ = d.poll(now, now, &mut mint);
         }
         assert_eq!(
             d.path_changes(),
@@ -1641,7 +1680,7 @@ mod tests {
             "a confirmed endpoint was re-reported as a change"
         );
         for now in [100, 400, 1_300, 2_000] {
-            let _ = d.poll(now, || TxId([9; 12]));
+            let _ = d.poll(now, now, || TxId([9; 12]));
         }
         assert!(
             d.path_changes().is_empty(),
@@ -1682,7 +1721,7 @@ mod tests {
         d.engine_mut(index)
             .expect("peer")
             .add_peer_candidate(addr(9), at, false);
-        let probes = d.poll(at, || TxId([peer + 1; 12])).datagrams;
+        let probes = d.poll(at, at, || TxId([peer + 1; 12])).datagrams;
         let Some((bytes, _)) = probes.iter().find(|(_, to)| *to == addr(9)) else {
             panic!("candidate was not probed");
         };
@@ -1840,7 +1879,7 @@ mod tests {
         let (mut d, key) = with_peer();
         d.set_interfaces(&[ip(4)], 51820);
 
-        let out = d.poll(0, || TxId([1; 12]));
+        let out = d.poll(0, 0, || TxId([1; 12]));
         let Some((destination, payload)) = out.relayed.first() else {
             panic!("no advertisement was produced, so no peer ever learns where we are");
         };
@@ -1864,11 +1903,11 @@ mod tests {
         // nothing about re-enumeration.
         let (mut d, _) = with_peer();
         d.set_interfaces(&[ip(4)], 51820);
-        assert_eq!(d.poll(0, || TxId([1; 12])).relayed.len(), 1);
+        assert_eq!(d.poll(0, 0, || TxId([1; 12])).relayed.len(), 1);
 
         d.set_interfaces(&[ip(4)], 51820);
         assert!(
-            d.poll(1_000, || TxId([2; 12])).relayed.is_empty(),
+            d.poll(1_000, 1_000, || TxId([2; 12])).relayed.is_empty(),
             "re-enumerating the same interfaces produced a second advertisement"
         );
     }
@@ -1879,9 +1918,9 @@ mod tests {
     fn a_peer_with_no_path_is_told_again() {
         let (mut d, _) = with_peer();
         d.set_interfaces(&[ip(4)], 51820);
-        assert_eq!(d.poll(0, || TxId([1; 12])).relayed.len(), 1);
+        assert_eq!(d.poll(0, 0, || TxId([1; 12])).relayed.len(), 1);
         assert!(
-            !d.poll(60_000, || TxId([2; 12])).relayed.is_empty(),
+            !d.poll(60_000, 60_000, || TxId([2; 12])).relayed.is_empty(),
             "a peer that never answered was never told again"
         );
     }
@@ -1890,7 +1929,7 @@ mod tests {
     fn a_node_with_no_candidates_advertises_nothing() {
         // Sending an empty CallMeMaybe would spend a rendezvous saying nothing.
         let (mut d, _) = with_peer();
-        assert!(d.poll(0, || TxId([1; 12])).relayed.is_empty());
+        assert!(d.poll(0, 0, || TxId([1; 12])).relayed.is_empty());
     }
 
     /// **The asymmetry two real daemons found.** A node that only ever answers
@@ -1901,7 +1940,7 @@ mod tests {
     fn an_incoming_probe_is_itself_a_candidate() {
         let (mut d, key) = with_peer();
         // No candidates, no advertisement received — this node knows nothing.
-        assert!(d.poll(0, || TxId([1; 12])).datagrams.is_empty());
+        assert!(d.poll(0, 0, || TxId([1; 12])).datagrams.is_empty());
 
         let ping = from_peer(&key, &Message::Ping { tx: TxId([3; 12]) }, 7);
         assert!(matches!(
@@ -1910,7 +1949,7 @@ mod tests {
         ));
 
         let probes: Vec<SocketAddr> = d
-            .poll(100, || TxId([2; 12]))
+            .poll(100, 100, || TxId([2; 12]))
             .datagrams
             .into_iter()
             .map(|(_, to)| to)
@@ -1945,7 +1984,7 @@ mod tests {
     /// Take the one `Reflect` a poll produced and answer it as the reflector
     /// would, reporting `observed`.
     fn answer_reflect(d: &mut Disco, observed: SocketAddr, at: u64) -> Verdict {
-        let out = d.poll(at, || TxId([0x42; 12]));
+        let out = d.poll(at, at, || TxId([0x42; 12]));
         let (bytes, to) = out
             .datagrams
             .iter()
@@ -1988,7 +2027,7 @@ mod tests {
         // A mapping learned from any other socket is one no peer can use.
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
-        let out = d.poll(0, || TxId([1; 12]));
+        let out = d.poll(0, 0, || TxId([1; 12]));
         assert!(out.relayed.is_empty(), "a Reflect went over the relay");
         assert_eq!(out.datagrams.len(), 1);
         assert_eq!(out.datagrams[0].1, reflector_addr());
@@ -2029,7 +2068,7 @@ mod tests {
         // advertised address after it has changed.
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
-        let out = d.poll(0, || TxId([0x42; 12]));
+        let out = d.poll(0, 0, || TxId([0x42; 12]));
         let (bytes, _) = &out.datagrams[0];
         let key = DiscoKey::new(REFLECT_KEY);
         let Message::Reflect { tx } = msg::open(bytes, &key).expect("Reflect") else {
@@ -2073,7 +2112,7 @@ mod tests {
         // one datagram.
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
-        let out = d.poll(0, || TxId([0x42; 12]));
+        let out = d.poll(0, 0, || TxId([0x42; 12]));
         let ours = out.datagrams[0].0.clone();
         assert_eq!(d.inbound(&ours, reflector_addr(), 1), Verdict::NotAven);
     }
@@ -2153,7 +2192,7 @@ mod tests {
             "a dead relay's report survived it"
         );
         assert!(
-            d.poll(1000, || TxId([1; 12]))
+            d.poll(1000, 1000, || TxId([1; 12]))
                 .datagrams
                 .iter()
                 .all(|(_, to)| *to != reflector_addr()),
@@ -2193,7 +2232,7 @@ mod tests {
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
         let asked = |d: &mut Disco, t: u64| {
-            d.poll(t, || TxId([1; 12]))
+            d.poll(t, t, || TxId([1; 12]))
                 .datagrams
                 .iter()
                 .any(|(_, to)| *to == reflector_addr())
@@ -2216,7 +2255,7 @@ mod tests {
         let (mut d, _) = with_peer();
         assert!(d.set_reflector(RELAY_ID, REFLECT_KEY, reflector_addr()));
         let sent_at = |d: &mut Disco, t: u64| {
-            d.poll(t, || TxId([1; 12]))
+            d.poll(t, t, || TxId([1; 12]))
                 .datagrams
                 .iter()
                 .filter(|(_, to)| *to == reflector_addr())
@@ -2238,7 +2277,7 @@ mod tests {
         let mut tx = 0u8;
         for n in 0..50 {
             tx = tx.wrapping_add(1);
-            let _ = d.poll(n * interval, || TxId([tx; 12]));
+            let _ = d.poll(n * interval, n * interval, || TxId([tx; 12]));
         }
         let held = d
             .reflectors

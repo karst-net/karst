@@ -483,7 +483,7 @@ fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
     };
     let mut released = None;
     for now in [0, 100, 400, 1_300, 2_000, 3_000] {
-        let _ = disco.poll(now, &mut mint);
+        let _ = disco.poll(now, now, &mut mint);
         for change in disco.path_changes() {
             if let PathChange::Release { peer, installed } = change {
                 assert_eq!(peer, 0);

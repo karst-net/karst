@@ -99,7 +99,7 @@ fn step(
     now: u64,
     seed: u8,
 ) -> Delivered {
-    let out = from.poll(now, minter(seed));
+    let out = from.poll(now, now, minter(seed));
     let advertisements = out.relayed.len();
     let probes = out.datagrams.len();
 
@@ -205,7 +205,7 @@ fn a_node_learns_its_mapped_address_from_its_peer_and_advertises_it() {
 
     // A now offers both: the private address, which is what it can see, and
     // the mapped one, which only B could tell it.
-    let out = pair.a.poll(6_000, minter(0x50));
+    let out = pair.a.poll(6_000, 6_000, minter(0x50));
     let (_, payload) = out
         .relayed
         .first()
@@ -255,7 +255,7 @@ fn one_peer_cannot_replay_anothers_advertisement_under_its_own_identity() {
         .b
         .add_peer(DiscoKey::new([0xC3; KEY_LEN]), &pair.b_id, &c_id));
 
-    let out = pair.a.poll(0, minter(0x10));
+    let out = pair.a.poll(0, 0, minter(0x10));
     let (_, payload) = out.relayed.first().expect("A produced no advertisement");
 
     assert!(
@@ -286,7 +286,7 @@ fn a_node_that_advertises_nothing_produces_no_probes() {
     let delivered = step(&mut pair.a, &mut pair.b, pair.a_id, addr(1, 51820), 0, 0x10);
     assert_eq!(delivered.advertisements, 0);
     assert!(
-        pair.b.poll(10, minter(0x20)).datagrams.is_empty(),
+        pair.b.poll(10, 10, minter(0x20)).datagrams.is_empty(),
         "B probed an address it was never given"
     );
     assert!(pair.b.path_changes().is_empty());

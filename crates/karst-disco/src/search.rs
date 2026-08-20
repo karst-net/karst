@@ -47,8 +47,42 @@ use crate::msg::TxId;
 /// change to the amplification argument, not a tuning decision.
 pub const ROUND_PROBES: usize = 64;
 
-/// How often a round runs — §7.7, reusing §7.5's re-advertisement cadence.
-pub const ROUND_INTERVAL_MS: u64 = 30_000;
+/// How often a round runs — §7.7.
+///
+/// **Fifteen seconds, and the number is about NAT mapping lifetime rather than
+/// about pacing.** A scratch mapping lives about as long as
+/// `nf_conntrack_udp_timeout`, which is thirty seconds on Linux and commonly
+/// less elsewhere. The live set is therefore one round's sockets multiplied by
+/// how many rounds fit inside that lifetime — so a thirty-second round holds 64
+/// mappings and a fifteen-second one holds 128, which is the difference between
+/// 59% and 97% over seven minutes.
+///
+/// The first draft used thirty seconds and published a table for 256 sockets.
+/// That count was never reachable: mappings from four rounds ago are three
+/// timeouts dead. Finding 28.
+pub const ROUND_INTERVAL_MS: u64 = 15_000;
+
+/// How long a scratch mapping can be assumed to live, for the arithmetic above.
+///
+/// Not a tunable — it is what the environment does, and it is here so the
+/// relationship between it and [`ROUND_INTERVAL_MS`] is visible in one place
+/// rather than inferred from two comments.
+pub const MAPPING_LIFETIME_MS: u64 = 30_000;
+
+/// Sockets expected to be alive at once, given the two constants above.
+///
+/// This is the *N* in §7.7's arithmetic, and computing it rather than stating
+/// it is the correction finding 28 asked for.
+#[must_use]
+pub const fn live_sockets() -> usize {
+    let rounds = MAPPING_LIFETIME_MS / ROUND_INTERVAL_MS;
+    let live = SCRATCH_PER_ROUND * rounds as usize;
+    if live > SCRATCH_MAX {
+        SCRATCH_MAX
+    } else {
+        live
+    }
+}
 
 /// Scratch sockets the hard side adds per round.
 pub const SCRATCH_PER_ROUND: usize = 64;
@@ -88,8 +122,20 @@ pub struct Search {
     toward: Vec<SocketAddr>,
     /// Scratch sockets believed open.
     scratch: usize,
-    /// When the last round ran.
-    last_round_ms: Option<u64>,
+    /// The wall-clock round boundary the last round belonged to.
+    ///
+    /// **A boundary rather than an elapsed time, and that is the alignment.**
+    /// Two nodes both need their rounds to happen at nearly the same moment:
+    /// the hard side's mappings are only fresh for a NAT timeout, so a peer
+    /// probing half a round later finds mappings that have half expired, and a
+    /// peer probing a full round later finds none. Deriving the boundary from
+    /// wall-clock time makes any two nodes agree without exchanging anything —
+    /// no message, no negotiation, and no way for a peer to drive the rate.
+    ///
+    /// Clock skew of a second or two is irrelevant against a thirty-second
+    /// mapping lifetime, and every Karst node already validates TLS
+    /// certificates, which does not work with a badly wrong clock.
+    last_boundary: Option<u64>,
     /// Rounds completed, for the caller's diagnostics.
     rounds: u32,
     /// Which port each in-flight probe went to.
@@ -105,9 +151,7 @@ pub struct Search {
     /// this node chose to send. A `Pong` whose `tx` is here identifies which
     /// port answered, which is what §7.1 requires and what the address alone
     /// cannot say.
-    in_flight: Vec<(TxId, u16)>,
-    /// The address the most recent round searched, for [`Self::answered`].
-    searching: Option<SocketAddr>,
+    in_flight: Vec<(TxId, SocketAddr)>,
     /// Ports already tried, so a round draws without replacement across the
     /// whole search rather than only within itself.
     ///
@@ -120,12 +164,19 @@ pub struct Search {
 /// What a round asks the caller to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Round {
-    /// Open this many *more* scratch sockets, each sending one datagram to
-    /// [`Round::toward`]. They are not expected to arrive; they exist to earn
+    /// How many *more* scratch sockets to open toward each address, one
+    /// datagram each. They are not expected to arrive; they exist to earn
     /// mappings.
-    pub open_scratch: usize,
-    /// Where those scratch datagrams go.
-    pub toward: SocketAddr,
+    ///
+    /// **Split across every candidate rather than rotating between them**, and
+    /// the reason is freshness rather than fairness. Rotating puts all of a
+    /// round's sockets on one address and returns to it two rounds later, so
+    /// the mappings that matter are created half as often and are twice as old
+    /// when the peer probes them. It also requires the two nodes to rotate *in
+    /// step* — and they cannot, because each one's candidate list is about the
+    /// other and neither list's order means anything to the peer. Splitting
+    /// needs no agreement at all.
+    pub scratch: Vec<(SocketAddr, usize)>,
     /// Probe the peer's host at these ports, from the socket §4 already
     /// shares with PHREATIC — **not** from a scratch socket, because the
     /// receiving filter is expecting that one source.
@@ -150,23 +201,11 @@ impl Search {
         Self {
             toward,
             scratch: 0,
-            last_round_ms: None,
+            last_boundary: None,
             rounds: 0,
-            searching: None,
             in_flight: Vec::new(),
             tried: Vec::new(),
         }
-    }
-
-    /// The address this round is searching, if there is one at all.
-    fn current(&self) -> Option<SocketAddr> {
-        let n = self.toward.len();
-        if n == 0 {
-            return None;
-        }
-        // `rounds` has already been incremented for this round.
-        let at = (self.rounds as usize).saturating_sub(1) % n;
-        self.toward.get(at).copied()
     }
 
     /// Scratch sockets this search believes are open.
@@ -188,11 +227,10 @@ impl Search {
     /// a forged or replayed `Pong` unable to confirm anything.
     #[must_use]
     pub fn answered(&self, tx: &TxId) -> Option<SocketAddr> {
-        let searching = self.searching?;
         self.in_flight
             .iter()
             .find(|(sent, _)| sent == tx)
-            .map(|(_, port)| SocketAddr::new(searching.ip(), *port))
+            .map(|(_, addr)| *addr)
     }
 
     /// Replace the addresses being searched.
@@ -200,42 +238,50 @@ impl Search {
     /// **A search must not hold the candidate list it started with.** It begins
     /// as soon as §7.5's backoff gives up, and a reflexive address (§7.6) often
     /// arrives *after* that — it takes a `Reflect` round trip and then a
-    /// `CallMeMaybe` to cross the relay. A search frozen at creation therefore
-    /// rotates forever over whatever was known at its worst moment, which in
-    /// the common hard/easy case is the peer's private address and nothing
-    /// else. That is not a subtle failure: it makes the whole technique look
-    /// like it does not work, which is exactly how it looked.
-    ///
-    /// Ports already tried are kept, because they were tried against a host
-    /// that is still in the list or against one that has gone — either way
-    /// re-trying them buys nothing.
+    /// `CallMeMaybe` to cross the relay. A search frozen at creation rotates
+    /// for ever over whatever was known at its worst moment, which in the
+    /// common hard/easy case is the peer's private address and nothing else.
     pub fn retarget(&mut self, toward: Vec<SocketAddr>) {
-        if self.toward == toward {
-            return;
+        if self.toward != toward {
+            self.toward = toward;
         }
-        self.toward = toward;
     }
 
     /// Run a round if one is due.
+    ///
+    /// `wall_ms` is **wall-clock** milliseconds, not a monotonic stamp. The
+    /// round boundary is derived from it so that two nodes run their rounds at
+    /// the same moment without coordinating; see [`Search::last_boundary`].
     ///
     /// `mint` supplies transaction ids, as [`crate::Engine::poll`] does; the
     /// probe ports are derived from them, so the search needs no randomness
     /// source of its own and a test can drive it with a counter. Each probe
     /// needs a `tx` regardless — §7.1 — so this costs nothing extra.
-    pub fn poll(&mut self, now_ms: u64, mint: &mut impl FnMut() -> TxId) -> Option<Round> {
-        if let Some(last) = self.last_round_ms {
-            if now_ms.saturating_sub(last) < ROUND_INTERVAL_MS {
-                return None;
-            }
+    pub fn poll(&mut self, wall_ms: u64, mint: &mut impl FnMut() -> TxId) -> Option<Round> {
+        let boundary = wall_ms / ROUND_INTERVAL_MS;
+        if self.last_boundary == Some(boundary) {
+            return None;
         }
-        self.last_round_ms = Some(now_ms);
+        self.last_boundary = Some(boundary);
         self.rounds = self.rounds.saturating_add(1);
-        let toward = self.current()?;
+        if self.toward.is_empty() {
+            return None;
+        }
 
-        let open_scratch = SCRATCH_MAX
+        let budget = SCRATCH_MAX
             .saturating_sub(self.scratch)
             .min(SCRATCH_PER_ROUND);
-        self.scratch = self.scratch.saturating_add(open_scratch);
+        let hosts = self.toward.len();
+        let each = budget / hosts;
+        let scratch: Vec<(SocketAddr, usize)> = self
+            .toward
+            .iter()
+            .map(|addr| (*addr, each))
+            .filter(|(_, n)| *n > 0)
+            .collect();
+        self.scratch = self
+            .scratch
+            .saturating_add(scratch.iter().map(|(_, n)| *n).sum::<usize>());
 
         // Replaced rather than appended: a probe from a previous round has
         // had thirty seconds to be answered, which is six times §7.1's
@@ -256,17 +302,15 @@ impl Search {
             if self.tried.contains(&port) {
                 continue;
             }
+            let Some(host) = self.toward.get(probes.len() % hosts).copied() else {
+                break;
+            };
             self.tried.push(port);
-            self.in_flight.push((tx, port));
-            probes.push((SocketAddr::new(toward.ip(), port), tx));
+            self.in_flight.push((tx, SocketAddr::new(host.ip(), port)));
+            probes.push((SocketAddr::new(host.ip(), port), tx));
         }
 
-        self.searching = Some(toward);
-        Some(Round {
-            open_scratch,
-            toward,
-            probes,
-        })
+        Some(Round { scratch, probes })
     }
 }
 
@@ -346,7 +390,8 @@ mod tests {
         let mut seen = Vec::new();
         for _ in 0..6 {
             let r = s.poll(now, &mut m).expect("due");
-            seen.push((r.open_scratch, s.scratch()));
+            let opened: usize = r.scratch.iter().map(|(_, n)| *n).sum();
+            seen.push((opened, s.scratch()));
             now += ROUND_INTERVAL_MS;
         }
         assert_eq!(
@@ -416,10 +461,13 @@ mod tests {
             assert_eq!(addr.ip(), peer().ip(), "probed a different host");
             assert!(addr.port() >= PORT_MIN, "privileged port {addr}");
         }
-        // And the scratch datagrams go to the address the peer advertised,
-        // port included — that is the one address the easy side is reachable
-        // at, and the mappings must be earned toward it.
-        assert_eq!(r.toward, peer());
+        // And the scratch datagrams go to the addresses the peer advertised,
+        // port included — those are where the easy side is reachable, and the
+        // mappings must be earned toward them.
+        assert!(
+            r.scratch.iter().all(|(addr, _)| *addr == peer()),
+            "scratch must go to the addresses the peer named"
+        );
     }
 
     #[test]
@@ -433,6 +481,49 @@ mod tests {
         assert_eq!(first.probes.len(), 1, "one distinct port available");
         let second = s.poll(ROUND_INTERVAL_MS, &mut m).expect("due");
         assert!(second.probes.is_empty(), "that port was already tried");
+    }
+
+    #[test]
+    fn two_nodes_run_their_rounds_in_the_same_boundary_without_coordinating() {
+        // **The alignment, which is the whole point of a wall-clock boundary.**
+        // The hard side's mappings live about a NAT timeout, so a peer probing
+        // half a round later finds them half expired and a peer probing a full
+        // round later finds none. Independent thirty-second timers give no
+        // guarantee at all; a shared boundary gives one for free.
+        let mut a = Search::new(one());
+        let mut b = Search::new(one());
+        let mut m1 = minter();
+        let mut m2 = minter();
+
+        // Two nodes whose clocks differ by a second and which poll at different
+        // moments inside the same boundary.
+        let base = 1_700_000_000_000u64;
+        let start = base - base % ROUND_INTERVAL_MS;
+        assert!(a.poll(start + 200, &mut m1).is_some(), "A runs");
+        assert!(b.poll(start + 1_400, &mut m2).is_some(), "B runs");
+        // Neither runs again inside the same boundary, however often polled.
+        for at in [start + 2_000, start + 9_000, start + ROUND_INTERVAL_MS - 1] {
+            assert!(a.poll(at, &mut m1).is_none(), "A ran twice in one boundary");
+            assert!(b.poll(at, &mut m2).is_none(), "B ran twice in one boundary");
+        }
+        // And both run again in the next one.
+        assert!(a.poll(start + ROUND_INTERVAL_MS, &mut m1).is_some());
+        assert!(b.poll(start + ROUND_INTERVAL_MS + 900, &mut m2).is_some());
+    }
+
+    #[test]
+    fn the_live_socket_count_is_derived_rather_than_asserted() {
+        // Finding 28: the first draft published a table for 256 sockets at a
+        // thirty-second round, and mappings from four rounds ago are three
+        // timeouts dead. The count now follows from the two constants that
+        // decide it, so it cannot drift from them again.
+        assert_eq!(live_sockets(), 128);
+        assert_eq!(ROUND_INTERVAL_MS, 15_000);
+        assert_eq!(MAPPING_LIFETIME_MS, 30_000);
+        assert!(
+            live_sockets() <= SCRATCH_MAX,
+            "the live set must fit the per-peer cap"
+        );
     }
 
     #[test]

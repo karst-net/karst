@@ -171,7 +171,13 @@ impl SearchSockets {
     /// both are ordinary, neither is fatal, and the search simply covers fewer
     /// ports this round.
     pub fn send_scratch(&mut self, route_index: usize, datagram: &[u8], to: SocketAddr) -> bool {
-        if self.total() >= GLOBAL_MAX {
+        // **The global cap applies to growth, not to replacement.** A pool at
+        // its live-set size recycles in place and adds nothing to the total, so
+        // refusing it here would freeze every peer that had already filled —
+        // holding descriptors for mappings that had all expired, which is the
+        // failure this recycling exists to prevent.
+        let full = self.len_for(route_index) >= karst_disco::search::live_sockets();
+        if !full && self.total() >= GLOBAL_MAX {
             return false;
         }
         let pool = self.pools.entry(route_index).or_insert_with(|| Pool {
@@ -184,8 +190,17 @@ impl SearchSockets {
         if pool.winner.is_some() {
             return false;
         }
-        if pool.sockets.len() >= karst_disco::search::SCRATCH_MAX {
-            return false;
+        // **Recycle rather than refuse.** A mapping lives about a NAT timeout;
+        // a socket lives until it is dropped. A pool that filled up and then
+        // stopped opening would hold `SCRATCH_MAX` sockets whose mappings had
+        // all expired — which is exactly what it did, and the search then had
+        // no live mappings at all however many rounds ran.
+        //
+        // Keeping the most recent `live_sockets()` and dropping the oldest
+        // makes the pool hold precisely the set §7.7's arithmetic assumes: the
+        // sockets opened within the last mapping lifetime, and no others.
+        while pool.sockets.len() >= karst_disco::search::live_sockets() {
+            pool.sockets.remove(0);
         }
         // Bound on the same address as the datapath socket, ephemeral port.
         // The address matters — a mapping earned from a different interface is
@@ -327,16 +342,21 @@ mod tests {
     }
 
     #[test]
-    fn the_per_peer_cap_is_the_one_the_spec_names() {
+    fn a_full_pool_recycles_rather_than_refusing() {
+        // A mapping lives about a NAT timeout; a socket lives until dropped.
+        // A pool that stopped opening once full would hold a cap's worth of
+        // sockets whose mappings had all expired, which is no live mappings at
+        // all — the failure that made §7.7 look like it did not work.
+        let live = karst_disco::search::live_sockets();
         let mut s = SearchSockets::new();
-        for _ in 0..karst_disco::search::SCRATCH_MAX {
-            assert!(s.send_scratch(0, b"x", to()));
+        for _ in 0..live * 3 {
+            assert!(s.send_scratch(0, b"x", to()), "recycling should keep going");
         }
-        assert!(
-            !s.send_scratch(0, b"x", to()),
-            "one peer went past SCRATCH_MAX"
+        assert_eq!(
+            s.len_for(0),
+            live,
+            "the pool should hold exactly the live set"
         );
-        assert_eq!(s.len_for(0), karst_disco::search::SCRATCH_MAX);
     }
 
     #[test]
@@ -344,22 +364,25 @@ mod tests {
         // `SCRATCH_MAX` bounds one peer and says so; a node with two hundred
         // peers would still run out. Losing every descriptor to chase a direct
         // path for one peer takes the tunnel down for all of them.
+        let live = karst_disco::search::live_sockets();
         let mut s = SearchSockets::new();
-        let mut opened = 0;
         for peer in 0..40 {
-            for _ in 0..karst_disco::search::SCRATCH_MAX {
-                if s.send_scratch(peer, b"x", to()) {
-                    opened += 1;
-                }
+            for _ in 0..live {
+                let _ = s.send_scratch(peer, b"x", to());
             }
         }
-        assert_eq!(s.total(), GLOBAL_MAX);
-        assert_eq!(opened, GLOBAL_MAX);
+        assert_eq!(s.total(), GLOBAL_MAX, "the global cap should bind");
         assert!(
-            opened < 40 * karst_disco::search::SCRATCH_MAX,
-            "the loop never pressed against the global cap, so this proves \
-             nothing about it"
+            GLOBAL_MAX < 40 * live,
+            "the loop must press against the global cap or this proves nothing"
         );
+        // And a peer that already filled keeps recycling, because replacement
+        // adds nothing to the total.
+        assert!(
+            s.send_scratch(0, b"x", to()),
+            "a full pool must recycle even at the global cap"
+        );
+        assert_eq!(s.total(), GLOBAL_MAX, "recycling must not grow the total");
     }
 
     #[test]

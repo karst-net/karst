@@ -436,6 +436,18 @@ pub fn run_with_control(
 /// Probes come back as ordinary UDP output. Candidate advertisements go over
 /// the relay (§7.3) and are handed to `advertise`, which belongs to the relay
 /// worker — the only thread that owns a Ponor connection.
+/// Wall-clock milliseconds, for §7.7's round boundary only.
+///
+/// Everything else in the daemon runs on a monotonic stamp and must: a clock
+/// that steps backwards would expire probes still in flight. This is used
+/// solely to give two nodes a boundary they agree on without exchanging
+/// anything, and a second of skew is irrelevant against a NAT's timeout.
+fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 fn disco_poll(
     disco: &Mutex<disco::Disco>,
     now_ms: u64,
@@ -445,7 +457,7 @@ fn disco_poll(
     let mut state = disco
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let out = state.poll(now_ms, || {
+    let out = state.poll(now_ms, wall_ms(), || {
         let seed = random_seed();
         let mut tx = [0u8; 12];
         tx.copy_from_slice(&seed[..12]);
