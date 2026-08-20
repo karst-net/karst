@@ -387,7 +387,20 @@ impl Engine {
             .cloned()
     }
 
-    fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+    /// The relay registry the netmap currently carries.
+    ///
+    /// Read from the engine rather than from the configuration the daemon
+    /// started with, because a netmap refresh replaces it: a node measuring
+    /// alternatives against a registry that has been withdrawn would be dialling
+    /// relays its peers are no longer told about.
+    #[must_use]
+    pub fn relays(&self) -> Vec<crate::netmap::Relay> {
+        self.roster().config.relays.clone()
+    }
+
+    /// The relay this node holds — §9.1.
+    #[must_use]
+    pub fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
         *self
             .home_relay
             .read()

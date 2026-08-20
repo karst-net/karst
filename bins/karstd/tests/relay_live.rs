@@ -284,10 +284,14 @@ async fn a_relay_answers_a_latency_probe_and_the_round_trip_is_measured() {
         .split()
         .expect("established");
 
-    let mut probes = karstd::home::RttProbes::default();
+    // Keyed by the relay it is sent to, as the daemon holds it: with
+    // alternatives being measured there is more than one connection in flight,
+    // and a round trip belongs to the relay that answered it.
+    let mut probes = karstd::home::Probes::default();
+    let relay_id = running.relay.relay_id;
     let token = [0xA7; karstd::relay::PING_TOKEN_LEN];
     let sent_at = 1_000;
-    assert!(probes.sent(token, sent_at));
+    assert!(probes.sent(relay_id, token, sent_at));
     tx.ping(token).await.expect("ping");
     tx.flush().await.expect("flush");
 
@@ -308,11 +312,11 @@ async fn a_relay_answers_a_latency_probe_and_the_round_trip_is_measured() {
         unreachable!()
     };
     assert_eq!(
-        probes.resolve(token, sent_at + 7),
+        probes.resolve(relay_id, token, sent_at + 7),
         Some(7),
         "the answered token did not resolve to the round trip"
     );
-    assert_eq!(probes.in_flight(), 0);
+    assert_eq!(probes.in_flight(relay_id), 0);
 }
 
 /// A node the relay has no roster entry for is refused.

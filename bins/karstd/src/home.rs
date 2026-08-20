@@ -85,6 +85,24 @@ impl Selector {
         self.chosen
     }
 
+    /// Adopt a relay this node is already connected to, without evidence.
+    ///
+    /// **A daemon holds a relay before anything has been measured** — it has to,
+    /// since peers need somewhere to reach it from the moment it starts — and
+    /// [`Self::select`]'s first selection is immediate precisely because there
+    /// is normally nothing to defend. Left unsaid, those two facts combine into
+    /// a node that takes whatever the first round happens to like best,
+    /// hysteresis and all, and every restart is a coin toss whose cost is a
+    /// netmap update for the whole aquifer.
+    ///
+    /// So the relay actually held is declared here, and from the first round on
+    /// it is an incumbent like any other: it keeps its place until something
+    /// beats it by §9.2's margin, sustained.
+    pub fn hold(&mut self, relay: RelayId) {
+        self.chosen = Some(relay);
+        self.streak.clear();
+    }
+
     /// Whether `challenger` beats `incumbent` by §9.2's margin.
     ///
     /// **"Whichever is larger" means the required improvement is the larger of
@@ -140,6 +158,87 @@ impl Selector {
             return (self.chosen, true);
         }
         (self.chosen, false)
+    }
+}
+
+/// Which alternative relay is being measured, and for how long.
+///
+/// **§9.2's hysteresis decides the shape of this, not the other way round.** A
+/// challenger has to beat the incumbent on [`HYSTERESIS_SAMPLES`] *consecutive*
+/// rounds, and [`Selector::select`] consumes each round as it goes — so a relay
+/// measured once every ten minutes can never accumulate a streak at all, and a
+/// rotation that visited a different candidate each round would leave every
+/// alternative permanently unadoptable while looking busy.
+///
+/// So a candidate is measured on consecutive rounds, enough of them for the
+/// hysteresis to be able to act, and then the connection is let go. One
+/// candidate at a time: measuring alternatives costs a Ponor connection each —
+/// TLS and an ML-DSA-65 handshake — and a node that held one to every relay in
+/// the registry would be paying the cost §9.1 exists to avoid.
+#[derive(Debug, Default)]
+pub struct Rotation {
+    /// The candidate under measurement and the rounds left after this one.
+    measuring: Option<(RelayId, u32)>,
+    /// Rounds left before the next candidate is taken up.
+    resting: u32,
+    /// Where in the registry the next candidate comes from.
+    next: usize,
+}
+
+/// How many consecutive rounds one alternative is measured for.
+///
+/// One more than the hysteresis needs. **The extra round pays for the first
+/// measurement, which is spoiled by construction**: the probe is queued on a
+/// connection that is still being established, so its round trip includes a TCP
+/// handshake, a TLS 1.3 exchange and an ML-DSA-65 signature. That inflation is
+/// in the safe direction — it argues against switching — but without the extra
+/// round it would also make a genuinely faster relay unadoptable.
+pub const PROBE_ROUNDS: u32 = HYSTERESIS_SAMPLES + 1;
+
+/// Rounds between one candidate's measurement window and the next.
+///
+/// With [`PROBE_INTERVAL`] at a minute this puts each candidate's turn ten
+/// minutes apart. The rest is not idleness: it is the connection *not* being
+/// held, which is the whole cost being managed here.
+pub const REST_ROUNDS: u32 = 6;
+
+impl Rotation {
+    /// The alternative to measure this round, if any.
+    ///
+    /// `candidates` is the registry minus the relay this node already holds —
+    /// that one is measured on its own connection every round, and a node that
+    /// probed it twice would be comparing it against itself.
+    pub fn round(&mut self, candidates: &[RelayId]) -> Option<RelayId> {
+        if let Some((id, left)) = self.measuring {
+            // A candidate withdrawn from the registry mid-window, or adopted as
+            // the home relay, stops being an alternative at once.
+            let still_a_candidate = candidates.contains(&id);
+            if still_a_candidate && left > 0 {
+                self.measuring = Some((id, left - 1));
+                return Some(id);
+            }
+            self.measuring = None;
+            // A window that ran its course earns the rest that follows it. One
+            // cut short by the registry does not: there is nothing being held,
+            // so there is nothing to stand back from.
+            if still_a_candidate {
+                self.resting = REST_ROUNDS;
+            }
+        }
+        if self.resting > 0 {
+            self.resting -= 1;
+            return None;
+        }
+        let id = *candidates.get(self.next % candidates.len().max(1))?;
+        self.next = self.next.wrapping_add(1);
+        self.measuring = Some((id, PROBE_ROUNDS - 1));
+        Some(id)
+    }
+
+    /// The candidate under measurement, whose connection must be held.
+    #[must_use]
+    pub fn measuring(&self) -> Option<RelayId> {
+        self.measuring.map(|(id, _)| id)
     }
 }
 
@@ -212,6 +311,53 @@ impl RttProbes {
     #[must_use]
     pub fn in_flight(&self) -> usize {
         self.outstanding.len()
+    }
+}
+
+/// Outstanding probes on every connection this node is measuring.
+///
+/// **Per relay, not per node.** Once alternatives are measured there is more
+/// than one connection in flight at a time, and the two properties [`RttProbes`]
+/// carries are both per-connection: a round trip belongs to the relay it was
+/// sent to, and "two outstanding means this one is not answering" is a
+/// statement about one relay's silence. Sharing one table would let a busy
+/// relay's probes use up the allowance of a silent one, and would make a `Pong`
+/// resolvable against a token this node sent somewhere else.
+#[derive(Debug, Default)]
+pub struct Probes {
+    per_relay: HashMap<RelayId, RttProbes>,
+}
+
+impl Probes {
+    /// Note that `token` has just gone out to `relay`.
+    pub fn sent(&mut self, relay: RelayId, token: [u8; PING_TOKEN_LEN], now_ms: u64) -> bool {
+        self.per_relay.entry(relay).or_default().sent(token, now_ms)
+    }
+
+    /// The round trip a `Pong` from `relay` reports, if it answers a probe this
+    /// node sent *to that relay*.
+    pub fn resolve(
+        &mut self,
+        relay: RelayId,
+        token: [u8; PING_TOKEN_LEN],
+        now_ms: u64,
+    ) -> Option<u64> {
+        self.per_relay.get_mut(&relay)?.resolve(token, now_ms)
+    }
+
+    /// Forget one relay's probes, because its connection has gone.
+    ///
+    /// A token sent on a connection that no longer exists can never be
+    /// answered, and keeping it would spend the next connection's allowance on
+    /// the last one's losses.
+    pub fn reset(&mut self, relay: RelayId) {
+        self.per_relay.remove(&relay);
+    }
+
+    /// Probes awaiting an answer from `relay`.
+    #[must_use]
+    pub fn in_flight(&self, relay: RelayId) -> usize {
+        self.per_relay.get(&relay).map_or(0, RttProbes::in_flight)
     }
 }
 
@@ -384,6 +530,181 @@ mod tests {
         assert_eq!(s.chosen(), None);
         s.observe(id(2), 90);
         assert_eq!(s.select(), (Some(id(2)), true));
+    }
+
+    /// **A relay already held is defended from the first round.** The daemon
+    /// connects to one before anything has been measured, so without this the
+    /// immediate first selection would be made against a choice that had
+    /// already been acted on — and a single fast answer from any alternative
+    /// would take it, hysteresis and all.
+    #[test]
+    fn a_relay_already_held_is_an_incumbent_from_the_first_round() {
+        let mut s = Selector::new();
+        s.hold(id(1));
+        s.observe(id(1), 100);
+        s.observe(id(2), 10);
+        assert_eq!(
+            s.select(),
+            (Some(id(1)), false),
+            "switched on the first round, against a relay this node was already on"
+        );
+    }
+
+    // ── measuring alternatives ──────────────────────────────────────────
+
+    /// **The point of the whole rotation.** `select` consumes a round, and a
+    /// challenger absent from a round has its streak cleared — so a candidate
+    /// measured once and then left alone can never reach
+    /// `HYSTERESIS_SAMPLES` consecutive wins, however much faster it is.
+    #[test]
+    fn a_candidate_is_measured_on_consecutive_rounds() {
+        let mut r = Rotation::default();
+        let candidates = [id(2), id(3)];
+        let first = r.round(&candidates).expect("a candidate");
+        for round in 1..PROBE_ROUNDS {
+            assert_eq!(
+                r.round(&candidates),
+                Some(first),
+                "the rotation moved on after {round} round(s), so no streak can form"
+            );
+        }
+    }
+
+    /// The window is long enough for the hysteresis to act, proven against the
+    /// selector itself rather than by comparing two constants — including the
+    /// spoiled first measurement, which is why the window is one round longer
+    /// than the streak.
+    #[test]
+    fn a_faster_alternative_is_adopted_within_one_window() {
+        let mut s = Selector::new();
+        let mut r = Rotation::default();
+        s.observe(id(1), 90);
+        assert_eq!(s.select(), (Some(id(1)), true), "the incumbent is held");
+
+        let candidates = [id(2)];
+        let mut adopted = None;
+        for round in 0..PROBE_ROUNDS {
+            s.observe(id(1), 90);
+            if let Some(candidate) = r.round(&candidates) {
+                // The first probe rides a connection still being established,
+                // so its round trip carries a TCP, TLS and ML-DSA-65 handshake.
+                s.observe(candidate, if round == 0 { 400 } else { 10 });
+            }
+            if s.select().1 {
+                adopted = Some(round);
+            }
+        }
+        assert_eq!(
+            adopted,
+            Some(PROBE_ROUNDS - 1),
+            "a relay four times faster was not adopted in its own window"
+        );
+        assert_eq!(s.chosen(), Some(id(2)));
+    }
+
+    /// Each candidate gets a turn, and the connection is let go between them.
+    #[test]
+    fn candidates_take_turns_with_a_rest_between() {
+        let mut r = Rotation::default();
+        let candidates = [id(2), id(3)];
+        let mut seen = Vec::new();
+        let mut rests = 0;
+        for _ in 0..(2 * (PROBE_ROUNDS + REST_ROUNDS)) {
+            match r.round(&candidates) {
+                Some(id) => {
+                    if seen.last() != Some(&id) {
+                        seen.push(id);
+                    }
+                }
+                None => rests += 1,
+            }
+        }
+        assert_eq!(seen, vec![id(2), id(3)], "a candidate never had its turn");
+        assert_eq!(
+            rests,
+            2 * REST_ROUNDS,
+            "the connection was held when nothing was being measured"
+        );
+    }
+
+    /// Nothing is held while resting — that is the cost being managed.
+    #[test]
+    fn no_connection_is_wanted_between_windows() {
+        let mut r = Rotation::default();
+        let candidates = [id(2)];
+        for _ in 0..PROBE_ROUNDS {
+            assert!(r.round(&candidates).is_some());
+        }
+        assert_eq!(r.round(&candidates), None);
+        assert_eq!(r.measuring(), None, "a connection was kept for nothing");
+    }
+
+    /// A relay withdrawn from the registry — or adopted as this node's home —
+    /// stops being an alternative at once, rather than at the end of a window
+    /// it can no longer be measured on.
+    #[test]
+    fn a_candidate_that_stops_being_one_is_dropped_mid_window() {
+        let mut r = Rotation::default();
+        assert_eq!(r.round(&[id(2)]), Some(id(2)));
+        assert_eq!(r.round(&[]), None);
+        assert_eq!(r.measuring(), None);
+    }
+
+    /// A node with one relay in its registry has no alternatives, and must not
+    /// spend a connection discovering that every round.
+    #[test]
+    fn a_lone_relay_leaves_nothing_to_measure() {
+        let mut r = Rotation::default();
+        for _ in 0..10 {
+            assert_eq!(r.round(&[]), None);
+        }
+    }
+
+    /// **A `Pong` belongs to the relay it came from.** One table for the node
+    /// would let a relay resolve a token this node sent somewhere else, and
+    /// report whatever round trip that timing implied.
+    #[test]
+    fn a_probe_is_answered_only_by_the_relay_it_was_sent_to() {
+        let mut p = Probes::default();
+        let token = [7; PING_TOKEN_LEN];
+        assert!(p.sent(id(1), token, 100));
+        assert_eq!(
+            p.resolve(id(2), token, 105),
+            None,
+            "the wrong relay answered"
+        );
+        assert_eq!(p.resolve(id(1), token, 130), Some(30));
+    }
+
+    /// One relay's silence must not spend another's allowance: a relay that is
+    /// not answering is measured by that, and the node it is starving would
+    /// otherwise stop being measured at all.
+    #[test]
+    fn a_silent_relay_does_not_starve_the_others() {
+        let mut p = Probes::default();
+        for n in 0..10u8 {
+            let _ = p.sent(id(1), [n; PING_TOKEN_LEN], u64::from(n));
+        }
+        assert_eq!(p.in_flight(id(1)), 2);
+        assert!(
+            p.sent(id(2), [0xEE; PING_TOKEN_LEN], 50),
+            "a second relay could not be probed at all"
+        );
+        assert_eq!(p.in_flight(id(2)), 1);
+    }
+
+    /// A connection that has gone takes its outstanding probes with it. They
+    /// can never be answered, and keeping them would spend the next
+    /// connection's allowance on the last one's losses.
+    #[test]
+    fn a_lost_connection_clears_only_its_own_probes() {
+        let mut p = Probes::default();
+        assert!(p.sent(id(1), [1; PING_TOKEN_LEN], 0));
+        assert!(p.sent(id(2), [2; PING_TOKEN_LEN], 0));
+        p.reset(id(1));
+        assert_eq!(p.in_flight(id(1)), 0);
+        assert_eq!(p.in_flight(id(2)), 1, "an unrelated relay was reset");
+        assert_eq!(p.resolve(id(1), [1; PING_TOKEN_LEN], 10), None);
     }
 
     #[test]

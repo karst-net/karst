@@ -2252,9 +2252,11 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- 🔶 **§9.1 home-relay selection — the decision half.** `bins/karstd/src/home.rs`,
-  sans-io, 8 tests. A node used to hold `config.relays.first()`, which is a
-  choice made by the server's iteration order rather than by the network.
+- 🔶 **§9.1 home-relay selection.** `bins/karstd/src/home.rs`, sans-io. A node
+  used to hold `config.relays.first()`, which is a choice made by the server's
+  iteration order rather than by the network. It now measures, chooses, moves,
+  publishes, and uses what its peers publish — every part of §9.1 except an
+  end-to-end test of two nodes on two relays.
 
   **The hysteresis is AVEN's, and reusing it caught a bug.** §9.2 recommends
   "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
@@ -2361,22 +2363,53 @@ onwards, anchored on the week of 2026-08-10.
   direct path it would have opened is the one thing that makes an on-demand
   connection temporary.
 
-  Still to come: **only the relay currently held is measured**, so the selector
-  can confirm a choice but cannot yet be talked out of one. Measuring
-  alternatives means a Ponor connection to each — TLS and an ML-DSA-65 handshake
-  apiece — on a slow rotation, reusing the on-demand connections above when they
-  exist.
+  ✅ **Alternatives are measured, and the choice can move.** Each round the
+  daemon measures the relay it holds and **one** alternative, dialled for the
+  purpose and let go again; when §9.2's margin is sustained the home connection
+  follows the choice.
 
-  **That is also what the second rule is waiting for, and the two must land in
-  this order.** Every node today takes `config.relays.first()`, so a homogeneous
-  aquifer has one home relay and the second rule fires only where rosters differ
-  — a peer admitted to a relay this node is not on. Once nodes measure and
-  choose differently the rule is load-bearing, and a node that moved relay
-  before peers could follow it would simply vanish. So this is tested at the
-  seams it has — routing (`relay_path.rs`), the pool's lifetimes
-  (`ondemand.rs`), the queue split (`run.rs`), and a real relay's `PeerGone`
-  (`relay_live.rs`) — and **not yet end to end**, because a two-relay aquifer
-  cannot currently be made to put two nodes on two relays.
+  **§9.2's hysteresis decides the shape of the rotation, not the other way
+  round.** A challenger needs `HYSTERESIS_SAMPLES` *consecutive* winning rounds
+  and `select` consumes each round as it goes — so a candidate measured once
+  every ten minutes can never accumulate a streak, and a rotation that visited a
+  different relay each round would leave every alternative permanently
+  unadoptable while looking busy. So one candidate is measured on consecutive
+  rounds, `PROBE_ROUNDS` of them, and then rests. The window is one round longer
+  than the streak because **the first measurement is spoiled by construction**:
+  that probe rides a connection still being established, so its round trip
+  carries a TCP handshake, a TLS 1.3 exchange and an ML-DSA-65 signature.
+
+  **Probes are keyed by the relay they were sent to.** With more than one
+  connection in flight, one table for the node would let a busy relay's probes
+  spend the allowance that measures a silent one's silence — and would make a
+  `Pong` resolvable against a token this node sent somewhere else.
+
+  **A relay already held is an incumbent, and that was a real defect.** The
+  daemon connects to one before anything has been measured, and `select`'s first
+  selection is immediate because there is normally nothing to defend. Together
+  those meant the first round handed the node to whichever alternative happened
+  to answer faster once — every restart a coin toss, paid for in netmap updates
+  for the whole aquifer. Every unit test passed; the daemon-level test that
+  drives a round at a time is what caught it.
+
+  **A move keeps the old relay reachable meanwhile.** Peers go on dialling it
+  until the netmap reaches them, and in that window their packets are not late,
+  they are delivered nowhere. So the relay being left is handed to the
+  on-demand pool above, which holds it exactly as long as traffic keeps arriving
+  there and lets it go when none does — §9.2's argument one layer down. A relay
+  the netmap withdraws is released by `retain` and left for one the netmap still
+  carries, rather than stranding the node somewhere peers are no longer told to
+  look.
+
+  Still to come: **no test puts two nodes on two relays end to end.** That is
+  now expressible — before alternatives were measured every node took
+  `config.relays.first()`, so an aquifer had exactly one home relay — and it
+  needs the privileged harness to run a second relay and make the two differ in
+  latency per namespace. Until then this is tested at its seams: the rotation
+  and the margin (`home.rs`), the round the daemon actually runs and where the
+  home connection belongs (`run.rs`), routing between the two rules
+  (`relay_path.rs`), the pool's lifetimes (`ondemand.rs`), and a real relay
+  answering a real ping (`relay_live.rs`).
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

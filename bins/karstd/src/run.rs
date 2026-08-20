@@ -288,10 +288,14 @@ pub fn run_with_control(
     engine.set_home_relay(relay.as_ref().map(|r| r.relay_id));
 
     // §9.1. The probes are per-connection state and the selector is the node's;
-    // both are held here so the relay worker and the timer thread see the same
-    // ones, and so a reconnection clears the probes without clearing the choice.
-    let rtt_probes = Mutex::new(crate::home::RttProbes::default());
+    // both are held here so every relay worker and the timer thread see the same
+    // ones, and so a reconnection clears one relay's probes without clearing the
+    // choice or anything another relay is waiting on.
+    let rtt_probes = Mutex::new(crate::home::Probes::default());
     let home_selector = Mutex::new(crate::home::Selector::new());
+    // §9.2. Which alternative is being measured, and when the next one's turn
+    // comes. Only the timer thread touches it.
+    let mut rotation = crate::home::Rotation::default();
 
     // Initial handshakes, before any thread starts.
     dispatch(
@@ -328,6 +332,8 @@ pub fn run_with_control(
         .zip(relay_out)
         .map(|(identity, relayed)| RelayCommon {
             shutdown,
+            rtt: &rtt_probes,
+            home: &home_selector,
             identity,
             node_id: relay_node_id,
             relay_ca_file: relay_ca,
@@ -385,17 +391,12 @@ pub fn run_with_control(
         if let (Some(common), Some(relay), Some(relay_in), Some(on_demand_in)) =
             (relay_common.as_ref(), relay, relay_in, on_demand_in)
         {
-            let rtt_probes = &rtt_probes;
-            let home_selector = &home_selector;
             scope.spawn(move || {
                 relay_worker(
                     RelayContext {
                         common,
                         relay,
-                        role: RelayRole::Home {
-                            rtt: rtt_probes,
-                            home: home_selector,
-                        },
+                        role: RelayRole::Home,
                     },
                     relay_in,
                 );
@@ -536,7 +537,15 @@ pub fn run_with_control(
             dispatch(engine.poll(now, random_seed), &socket, &tun, relay_out);
             if Instant::now() >= next_probe {
                 next_probe = Instant::now() + crate::home::PROBE_INTERVAL;
-                probe_home_relay(&rtt_probes, &home_selector, relay_out, now, random_seed);
+                probe_relays(
+                    &rtt_probes,
+                    &home_selector,
+                    &mut rotation,
+                    &engine,
+                    relay_out,
+                    now,
+                    random_seed,
+                );
             }
             dispatch(
                 disco_poll(&disco, &engine, now, relay_out),
@@ -614,17 +623,22 @@ fn disco_poll(
 /// How often the host's interface addresses are re-enumerated.
 const INTERFACE_SCAN: Duration = Duration::from_secs(15);
 
-/// Measure the relay this node holds, and settle §9.1's choice.
+/// Measure the relay this node holds and one alternative, and settle §9.1's
+/// choice.
 ///
-/// **Only the relay currently held is measured**, so the selector can confirm a
-/// choice but cannot yet be talked out of one. Measuring alternatives means
-/// opening a Ponor connection to each — TLS and an ML-DSA-65 handshake apiece —
-/// and that cost deserves its own decision rather than arriving as a side
-/// effect of this loop. Until then the published value is the relay actually in
-/// use, which is the fact peers need; what is missing is the ability to move.
-fn probe_home_relay(
-    rtt: &Mutex<crate::home::RttProbes>,
+/// **Both halves are needed for §9.2 to be able to say anything.** The
+/// incumbent's number alone can only confirm the choice already made; a
+/// challenger needs its own, on the same rounds, or the sustained-margin rule
+/// has nothing to compare. So one alternative at a time is dialled and measured
+/// for a window long enough for the hysteresis to act ([`crate::home::Rotation`]),
+/// and let go again — a Ponor connection to every relay in the registry would
+/// cost a TLS and ML-DSA-65 handshake apiece and defeat the point of choosing
+/// one.
+fn probe_relays(
+    rtt: &Mutex<crate::home::Probes>,
     home: &Mutex<crate::home::Selector>,
+    rotation: &mut crate::home::Rotation,
+    engine: &Engine,
     relay: Option<&RelaySender>,
     now_ms: u64,
     rand: impl Fn() -> [u8; 32],
@@ -632,12 +646,33 @@ fn probe_home_relay(
     let Some(relay) = relay else {
         return;
     };
+    let registry: Vec<crate::home::RelayId> = engine.relays().iter().map(|r| r.relay_id).collect();
+
     // Settle whatever the last round measured before asking again, so the
     // choice reflects answers rather than questions.
+    // The relay the connection is actually on, which is what a `Pong` arriving
+    // on it will be credited to. Between a choice moving and the worker
+    // following it these differ for a round, and recording the probe against
+    // the wrong one would lose the measurement.
+    let held = engine.home_relay();
     let (chosen, changed) = {
         let mut home = home
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A relay the netmap has withdrawn is not somewhere peers are told to
+        // look, so it must not go on being held or measured.
+        home.retain(&registry);
+        // **The relay already held is an incumbent, not a blank slate.** A
+        // daemon connects to one before anything has been measured, and
+        // `select`'s first selection is immediate because there is normally
+        // nothing to defend — so without this the first round would hand the
+        // node to whichever alternative happened to answer faster once, and
+        // every restart would be a coin toss paid for in netmap updates.
+        if let Some(held) = held.filter(|_| home.chosen().is_none()) {
+            if registry.contains(&held) {
+                home.hold(held);
+            }
+        }
         home.select()
     };
     if changed {
@@ -647,6 +682,36 @@ fn probe_home_relay(
         );
     }
 
+    if let Some(held) = held {
+        send_probe(rtt, relay, None, held, now_ms, &rand);
+    }
+
+    // Everything but the relay already being measured on the home connection.
+    // Probing it twice would compare it against itself.
+    let candidates: Vec<crate::home::RelayId> = registry
+        .into_iter()
+        .filter(|id| Some(*id) != held)
+        .collect();
+    if let Some(candidate) = rotation.round(&candidates) {
+        send_probe(rtt, relay, Some(candidate), candidate, now_ms, &rand);
+    }
+}
+
+/// Mint a token, record it against `relay`, and send it — if that relay is
+/// answering at all.
+///
+/// `queue` is `None` for the home connection and `Some` for one the on-demand
+/// pool holds; `relay` is what the answer will be credited to, and the two are
+/// separate because the home queue's connection is named by the worker rather
+/// than by the caller.
+fn send_probe(
+    rtt: &Mutex<crate::home::Probes>,
+    sender: &RelaySender,
+    queue: Option<RelayId>,
+    relay: crate::home::RelayId,
+    now_ms: u64,
+    rand: &impl Fn() -> [u8; 32],
+) {
     let seed = rand();
     let Some(token) = seed
         .first_chunk::<{ crate::relay::PING_TOKEN_LEN }>()
@@ -658,13 +723,13 @@ fn probe_home_relay(
         let mut rtt = rtt
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        rtt.sent(token, now_ms)
+        rtt.sent(relay, token, now_ms)
     };
     // A relay with probes already outstanding is one that is not answering.
     // Sending more would measure this node's willingness to ask rather than
     // the relay's willingness to reply.
     if admitted {
-        relay.ping(token);
+        sender.ping(queue, token);
     }
 }
 
@@ -679,6 +744,8 @@ async fn write_relayed(
             payload,
         } => sender.send_packet(destination, &payload).await,
         Relayed::Ping(token) => sender.ping(token).await,
+        // The connection was the request. Nothing goes on the wire.
+        Relayed::Hold => Ok(()),
     }
 }
 
@@ -746,6 +813,11 @@ enum Relayed {
     /// is already waiting — a round trip taken past a full queue is the one the
     /// datapath would actually see, and one taken past it is not.
     Ping([u8; crate::relay::PING_TOKEN_LEN]),
+    /// Nothing to write: a request that this connection exist, and go on
+    /// existing while something keeps asking. It is how the relay this node is
+    /// *leaving* stays reachable across a §9.2 move, and how an alternative
+    /// under measurement is dialled before there is anything to send it.
+    Hold,
 }
 
 /// The datapath's handle on the relay worker.
@@ -770,13 +842,31 @@ struct RelaySender {
 }
 
 impl RelaySender {
-    /// Queue §9.1's latency probe.
+    /// Queue §9.1's latency probe for the relay this node holds, or for one
+    /// being measured as an alternative.
     ///
     /// Dropped rather than blocked on, like everything else here: a probe lost
     /// to a full queue is a measurement not taken, and the selector treats a
     /// relay that says nothing as absent from the round rather than as fast.
-    fn ping(&self, token: [u8; crate::relay::PING_TOKEN_LEN]) {
-        if self.queue.try_send(Relayed::Ping(token)).is_err() {
+    fn ping(&self, relay: Option<RelayId>, token: [u8; crate::relay::PING_TOKEN_LEN]) {
+        let queued = match relay {
+            None => self.queue.try_send(Relayed::Ping(token)).is_ok(),
+            Some(relay) => self
+                .on_demand
+                .try_send((relay, Relayed::Ping(token)))
+                .is_ok(),
+        };
+        if !queued {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Ask for a connection to `relay` to exist, without sending anything.
+    ///
+    /// Used where the connection itself is the point: the relay this node is
+    /// leaving after a §9.2 move, which peers still believe it is on.
+    fn hold(&self, relay: RelayId) {
+        if self.on_demand.try_send((relay, Relayed::Hold)).is_err() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -833,6 +923,12 @@ const RELAY_QUEUE: usize = 256;
 /// channel.
 struct RelayCommon<'a> {
     shutdown: &'a Shutdown,
+    /// §9.1's outstanding latency probes, keyed by the relay each was sent to.
+    /// Every connection this node holds may be being measured, so this is the
+    /// node's state rather than any one worker's.
+    rtt: &'a Mutex<crate::home::Probes>,
+    /// §9.1's choice, fed by those probes.
+    home: &'a Mutex<crate::home::Selector>,
     identity: Arc<crate::control::Identity>,
     node_id: Vec<u8>,
     disco: &'a Mutex<disco::Disco>,
@@ -848,21 +944,19 @@ struct RelayCommon<'a> {
     started: Instant,
 }
 
-/// Which of §9.1's two connections this worker is carrying, and the state that
-/// belongs to only one of them.
-enum RelayRole<'a> {
-    /// The relay this node chose and publishes. Kept up for as long as the
-    /// daemon runs, measured, and the only one whose answers move the choice.
-    Home {
-        /// §9.1's outstanding latency probes on this connection.
-        rtt: &'a Mutex<crate::home::RttProbes>,
-        /// §9.1's home-relay choice, fed by those probes.
-        home: &'a Mutex<crate::home::Selector>,
-    },
-    /// A relay a *peer* published, dialled because that peer is not on this
-    /// node's own relay. Nothing here is measured and nothing is published:
-    /// this connection is a way to reach one peer, not a candidate for
-    /// anything, and closing it when the traffic stops is what §9.1 asks for.
+/// Which of §9.1's connections this worker is carrying.
+///
+/// **Both are measured**, because §9.2 cannot move this node's choice without
+/// numbers for the alternatives; what differs is the lifetime. The home
+/// connection is held for as long as the daemon runs and follows the choice
+/// when it changes; the others are opened for a peer or for a measurement and
+/// let go when the traffic stops.
+#[derive(Debug)]
+enum RelayRole {
+    /// The relay this node chose and publishes.
+    Home,
+    /// A relay a *peer* published, or one being measured as an alternative.
+    /// Closing it when the traffic stops is what §9.1 asks for.
     OnDemand {
         /// Engine milliseconds at the last inbound traffic, shared with the hub
         /// that decides when this connection has been idle long enough.
@@ -873,14 +967,88 @@ enum RelayRole<'a> {
 struct RelayContext<'a> {
     common: &'a RelayCommon<'a>,
     relay: crate::netmap::Relay,
-    role: RelayRole<'a>,
+    role: RelayRole,
 }
 
 impl RelayContext<'_> {
     /// Whether this is the connection §9.1 keeps up.
     fn is_home(&self) -> bool {
-        matches!(self.role, RelayRole::Home { .. })
+        matches!(self.role, RelayRole::Home)
     }
+}
+
+/// The relay this connection should be on now, if that is not the one it is on.
+///
+/// Only the home connection follows the choice. An on-demand connection was
+/// opened to reach a particular relay — a peer's published home, or an
+/// alternative under measurement — and re-pointing it at the selector's answer
+/// would defeat both.
+fn moved_home(context: &RelayContext<'_>) -> Option<crate::netmap::Relay> {
+    if !context.is_home() {
+        return None;
+    }
+    let chosen = context
+        .common
+        .home
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .chosen();
+    home_target(
+        chosen,
+        context.relay.relay_id,
+        &context.common.engine.relays(),
+    )
+}
+
+/// Where the home connection belongs, given the choice and the registry.
+///
+/// Separated from the connection it moves so that it can be reasoned about: the
+/// three inputs are the whole of it, and each of the cases below is a state a
+/// running node reaches.
+fn home_target(
+    chosen: Option<RelayId>,
+    current: RelayId,
+    registry: &[crate::netmap::Relay],
+) -> Option<crate::netmap::Relay> {
+    match chosen {
+        // Where it already is.
+        Some(id) if id == current => None,
+        // §9.2 moved it. A choice the registry no longer carries cannot be
+        // dialled — `retain` keeps the selector from holding one, so this is
+        // belt and braces, and staying put is the right answer to it anyway.
+        Some(id) => registry.iter().find(|r| r.relay_id == id).cloned(),
+        // No choice at all: either nothing has been measured yet, or the
+        // netmap withdrew the relay this node was on and `retain` released it.
+        // The second is worth acting on — **a node left on a withdrawn relay is
+        // a node peers are no longer told to look for** — and the first is not,
+        // because the relay held is exactly where it should be until something
+        // has been measured.
+        None if registry.iter().any(|r| r.relay_id == current) => None,
+        None => registry.first().cloned(),
+    }
+}
+
+/// Move the home connection, keeping the relay it is leaving reachable.
+///
+/// **The old relay is where every peer still believes this node is**, and will
+/// go on believing until the netmap reaches them. The move is published at once
+/// (`refresh_netmap`), but between the two a peer dialling the old relay finds
+/// nobody there, and its packets are not late — they are delivered nowhere. So
+/// the old relay is held as an on-demand connection: traffic arriving there
+/// still lands, and the pool lets it go once none does. §9.2's argument, one
+/// layer down — the cost of a move is not paid by the node that moves.
+fn handover(
+    engine: &Engine,
+    relayed: &RelaySender,
+    old: &crate::netmap::Relay,
+    new: &crate::netmap::Relay,
+) {
+    eprintln!(
+        "karstd: moving home relay from {} to {}",
+        old.address, new.address
+    );
+    engine.set_home_relay(Some(new.relay_id));
+    relayed.hold(old.relay_id);
 }
 
 /// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
@@ -897,7 +1065,7 @@ impl RelayContext<'_> {
 /// tunnel data rather than only rendezvous messages, that interval *is* the
 /// tunnel's latency.
 #[allow(clippy::needless_pass_by_value)] // owns data moved into the scoped worker
-fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver<Relayed>) {
+fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver<Relayed>) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -919,6 +1087,28 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
     let mut outbound = outbound;
     let mut backoff = RELAY_BACKOFF_MIN;
     while !context.common.shutdown.requested() {
+        // §9.2's decision, carried out. The home connection follows the
+        // selector: this is the point where a choice that moved becomes a
+        // connection that moved, and it is here rather than anywhere else
+        // because a relay is changed by ending one connection and opening the
+        // next, which is exactly what this loop already does.
+        if let Some(next) = moved_home(&context) {
+            handover(
+                context.common.engine,
+                context.common.relayed,
+                &context.relay,
+                &next,
+            );
+            context.relay = next;
+        }
+        // Whatever was outstanding belonged to a connection that no longer
+        // exists, and can never be answered now.
+        context
+            .common
+            .rtt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .reset(context.relay.relay_id);
         let session = crate::relay::Session::from_control_handle(
             &context.common.node_id,
             &context.relay,
@@ -1015,6 +1205,14 @@ async fn relay_send_loop(
         // still notices a shutdown request.
         let Ok(next) = tokio::time::timeout(TICK, outbound.recv()).await else {
             if closing.load(Ordering::Relaxed) {
+                return;
+            }
+            // §9.2 moved the choice. End this connection so the worker can open
+            // the next one — checked on the idle path rather than per datagram,
+            // because a relay change is a thing that happens in minutes and a
+            // lock taken per packet is a thing that happens in nanoseconds.
+            if moved_home(context).is_some() {
+                closing.store(true, Ordering::Relaxed);
                 return;
             }
             continue;
@@ -1152,20 +1350,29 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
         );
         return;
     }
-    // §9.1's measurement, answered on the connection it was sent on.
-    // Nothing pings an on-demand connection, so a `Pong` arriving on one
-    // answers no question this node asked and measures nothing.
+    // §9.1's measurement, answered on the connection it was sent on — and
+    // credited to *this* relay. §9.2 needs numbers for the alternatives as well
+    // as for the incumbent, so this runs on every connection; what makes it
+    // safe is that the token was recorded against the relay it went to, so a
+    // relay echoing something it did not answer resolves nothing.
     if let crate::relay::Event::Pong { token } = event {
-        if let RelayRole::Home { rtt, home } = context.role {
-            let resolved = rtt
+        let resolved = context
+            .common
+            .rtt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resolve(
+                context.relay.relay_id,
+                token,
+                now_ms(context.common.started),
+            );
+        if let Some(measured) = resolved {
+            context
+                .common
+                .home
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .resolve(token, now_ms(context.common.started));
-            if let Some(measured) = resolved {
-                home.lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .observe(context.relay.relay_id, measured);
-            }
+                .observe(context.relay.relay_id, measured);
         }
         return;
     }
@@ -2357,5 +2564,457 @@ mod relay_queue_tests {
             matches!(home.try_recv(), Ok(Relayed::Packet { .. })),
             "the home connection's queue was consumed by a relay nothing has dialled"
         );
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    fn relay(tag: u8) -> crate::netmap::Relay {
+        use sha2::{Digest as _, Sha256};
+        let identity_key = vec![tag; 1952];
+        let mut h = Sha256::new();
+        h.update(b"karst-relay-id-v1");
+        h.update(&identity_key);
+        crate::netmap::Relay {
+            address: format!("198.51.100.{tag}:443"),
+            tls_server_name: "relay.test".to_owned(),
+            relay_id: h.finalize().into(),
+            identity_key,
+            region: "test".to_owned(),
+        }
+    }
+
+    /// An engine whose netmap carries `relays` and no peers.
+    fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
+        let config = Arc::new(crate::config::Config {
+            relay_ca_file: None,
+            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
+                &[0x11; 64],
+                &[0x12; 32],
+            )),
+            listen: "0.0.0.0:0".parse().expect("addr"),
+            port_mapping: false,
+            interface: "karst0".to_owned(),
+            network_mode: crate::config::NetworkMode::Tun,
+            userspace_socks5_listen: None,
+            addresses: vec!["100.64.0.1/16".parse().expect("address")],
+            psk_epoch: 1,
+            node_id: Vec::new(),
+            relays,
+            peers: Vec::new(),
+            routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            skipped: Vec::new(),
+            filter: crate::filter::PacketFilter::unrestricted(),
+        });
+        Engine::new(&config)
+    }
+
+    struct Queues {
+        sender: RelaySender,
+        home: tokio::sync::mpsc::Receiver<Relayed>,
+        on_demand: tokio::sync::mpsc::Receiver<(RelayId, Relayed)>,
+    }
+
+    fn queues() -> Queues {
+        let (queue, home) = tokio::sync::mpsc::channel(64);
+        let (on_demand_tx, on_demand) = tokio::sync::mpsc::channel(64);
+        Queues {
+            sender: RelaySender {
+                queue,
+                on_demand: on_demand_tx,
+                dropped: Arc::new(AtomicU64::new(0)),
+            },
+            home,
+            on_demand,
+        }
+    }
+
+    /// Distinct tokens, so two probes in one round are two probes.
+    fn seeds() -> impl Fn() -> [u8; 32] {
+        let n = std::sync::atomic::AtomicU8::new(0);
+        move || [n.fetch_add(1, Ordering::Relaxed); 32]
+    }
+
+    fn pinged_home(q: &mut Queues) -> bool {
+        matches!(q.home.try_recv(), Ok(Relayed::Ping(_)))
+    }
+
+    fn pinged_elsewhere(q: &mut Queues) -> Option<RelayId> {
+        match q.on_demand.try_recv() {
+            Ok((relay, Relayed::Ping(_))) => Some(relay),
+            _ => None,
+        }
+    }
+
+    /// One round measures the incumbent on the connection it is already on, and
+    /// one alternative on a connection dialled for it. Both are needed: §9.2
+    /// compares them against each other in the same round.
+    #[test]
+    fn a_round_measures_the_incumbent_and_one_alternative() {
+        let engine = engine(vec![relay(1), relay(2), relay(3)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &engine,
+            Some(&q.sender),
+            1_000,
+            seeds(),
+        );
+
+        assert!(
+            pinged_home(&mut q),
+            "the relay this node holds was not measured"
+        );
+        let candidate = pinged_elsewhere(&mut q).expect("no alternative was measured");
+        assert_ne!(
+            candidate,
+            relay(1).relay_id,
+            "the incumbent was measured twice, and would be compared against itself"
+        );
+        assert!([relay(2).relay_id, relay(3).relay_id].contains(&candidate));
+    }
+
+    /// A node whose registry holds one relay has no alternatives, and must not
+    /// spend a Ponor handshake every round establishing that.
+    #[test]
+    fn a_lone_relay_is_not_measured_against_itself() {
+        let engine = engine(vec![relay(1)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+
+        for round in 0..6 {
+            probe_relays(
+                &rtt,
+                &home,
+                &mut rotation,
+                &engine,
+                Some(&q.sender),
+                1_000 * (round + 1),
+                seeds(),
+            );
+            // Drain the home probe so the table does not fill.
+            let _ = q.home.try_recv();
+            rtt.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .reset(relay(1).relay_id);
+        }
+        assert_eq!(
+            pinged_elsewhere(&mut q),
+            None,
+            "a node with one relay dialled something"
+        );
+    }
+
+    /// **A relay that stops answering stops being asked.** The probe table is
+    /// per relay, so this is measured as that relay's silence rather than as a
+    /// node that ran out of patience with all of them.
+    #[test]
+    fn an_unanswered_relay_is_not_asked_forever() {
+        let engine = engine(vec![relay(1), relay(2)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+
+        let mut home_probes = 0;
+        for round in 0..6 {
+            probe_relays(
+                &rtt,
+                &home,
+                &mut rotation,
+                &engine,
+                Some(&q.sender),
+                1_000 * (round + 1),
+                seeds(),
+            );
+            while pinged_home(&mut q) {
+                home_probes += 1;
+            }
+        }
+        assert_eq!(
+            home_probes, 2,
+            "nothing answered, so only the outstanding allowance should have been spent"
+        );
+    }
+
+    /// The registry, not the configuration the daemon started with: a netmap
+    /// that withdraws a relay must stop this node measuring it, or the choice
+    /// could move onto somewhere peers are no longer told to look.
+    #[test]
+    fn a_withdrawn_relay_stops_being_a_candidate() {
+        let engine = engine(vec![relay(1), relay(2)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &engine,
+            Some(&q.sender),
+            1_000,
+            seeds(),
+        );
+        assert_eq!(pinged_elsewhere(&mut q), Some(relay(2).relay_id));
+
+        // The netmap drops it.
+        let smaller = Arc::new(crate::config::Config {
+            relays: vec![relay(1)],
+            ..engine_config(&engine)
+        });
+        let _ = engine.reconfigure(&smaller);
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &engine,
+            Some(&q.sender),
+            2_000,
+            seeds(),
+        );
+        assert_eq!(
+            pinged_elsewhere(&mut q),
+            None,
+            "a relay the netmap withdrew was still being measured"
+        );
+    }
+
+    // ── where the home connection belongs ───────────────────────────────
+
+    #[test]
+    fn a_choice_that_has_not_moved_moves_nothing() {
+        let registry = vec![relay(1), relay(2)];
+        assert!(
+            home_target(Some(relay(1).relay_id), relay(1).relay_id, &registry).is_none(),
+            "the connection was rebuilt for a choice that did not change"
+        );
+    }
+
+    #[test]
+    fn a_moved_choice_names_the_registry_entry_to_dial() {
+        let registry = vec![relay(1), relay(2)];
+        let target = home_target(Some(relay(2).relay_id), relay(1).relay_id, &registry)
+            .expect("a relay to move to");
+        assert_eq!(target.relay_id, relay(2).relay_id);
+        assert_eq!(
+            target.address,
+            relay(2).address,
+            "dialled without an address"
+        );
+    }
+
+    /// A choice naming a relay the registry does not carry cannot be dialled:
+    /// there is no address, TLS name or pinned key for it. Staying is the only
+    /// answer that keeps this node reachable.
+    #[test]
+    fn a_choice_the_registry_lost_leaves_the_connection_where_it_is() {
+        let registry = vec![relay(1)];
+        assert!(home_target(Some(relay(2).relay_id), relay(1).relay_id, &registry).is_none());
+    }
+
+    /// **A node must not be left on a withdrawn relay.** `retain` releases the
+    /// choice when the netmap drops it, and if nothing acted on that the node
+    /// would sit on a relay its peers are no longer told to look at — reachable
+    /// only by nodes that had not refreshed.
+    #[test]
+    fn a_withdrawn_relay_is_left_for_one_the_netmap_still_carries() {
+        let registry = vec![relay(2), relay(3)];
+        let target =
+            home_target(None, relay(1).relay_id, &registry).expect("somewhere still listed");
+        assert_eq!(target.relay_id, relay(2).relay_id);
+    }
+
+    /// Before anything has been measured the relay held is exactly where it
+    /// should be. Moving then would be churn for its own sake.
+    #[test]
+    fn nothing_measured_yet_moves_nothing() {
+        let registry = vec![relay(1), relay(2)];
+        assert!(home_target(None, relay(1).relay_id, &registry).is_none());
+    }
+
+    /// Deliver a `Pong` for whatever was just asked, at `rtt_ms`, exactly as
+    /// the receive loop does — token matched against the relay it went to, then
+    /// handed to the selector.
+    fn answer(
+        rtt: &Mutex<crate::home::Probes>,
+        home: &Mutex<crate::home::Selector>,
+        relay: RelayId,
+        item: &Relayed,
+        now_ms: u64,
+        rtt_ms: u64,
+    ) {
+        let Relayed::Ping(token) = *item else { return };
+        let measured = rtt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resolve(relay, token, now_ms + rtt_ms);
+        if let Some(measured) = measured {
+            home.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .observe(relay, measured);
+        }
+    }
+
+    /// **The whole of §9.2, driven a round at a time.** A relay four times
+    /// faster is adopted, and not before the margin has been sustained.
+    ///
+    /// This is the daemon's own loop rather than the selector's: `home.rs`
+    /// proves the rule and the rotation separately, and neither of them can see
+    /// whether this file measures the same candidate on consecutive rounds. It
+    /// did not have to — replacing the rotation with a fresh one each round
+    /// leaves every unit test passing and makes every alternative permanently
+    /// unadoptable, because a streak can never form.
+    #[test]
+    fn a_faster_relay_is_adopted_and_a_marginal_one_is_not() {
+        for (challenger_rtt, adopted) in [(10, true), (85, false)] {
+            let engine = engine(vec![relay(1), relay(2), relay(3)]);
+            engine.set_home_relay(Some(relay(1).relay_id));
+            let mut q = queues();
+            let rtt = Mutex::new(crate::home::Probes::default());
+            let home = Mutex::new(crate::home::Selector::new());
+            let mut rotation = crate::home::Rotation::default();
+            let mut measured = Vec::new();
+
+            let rounds = 2 * u64::from(crate::home::PROBE_ROUNDS + crate::home::REST_ROUNDS);
+            for round in 0..rounds {
+                let now = 1_000 * (round + 1);
+                probe_relays(
+                    &rtt,
+                    &home,
+                    &mut rotation,
+                    &engine,
+                    Some(&q.sender),
+                    now,
+                    seeds(),
+                );
+                while let Ok(item) = q.home.try_recv() {
+                    answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
+                }
+                while let Ok((id, item)) = q.on_demand.try_recv() {
+                    measured.push(id);
+                    // Only relay(2) is fast. The other candidate is no better
+                    // than the incumbent, so it must not move anything.
+                    let rtt_ms = if id == relay(2).relay_id {
+                        challenger_rtt
+                    } else {
+                        110
+                    };
+                    answer(&rtt, &home, id, &item, now, rtt_ms);
+                }
+            }
+
+            let chosen = home
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .chosen();
+            if adopted {
+                assert_eq!(
+                    chosen,
+                    Some(relay(2).relay_id),
+                    "a relay {challenger_rtt} ms against 100 ms was never adopted"
+                );
+            } else {
+                assert_eq!(
+                    chosen,
+                    Some(relay(1).relay_id),
+                    "switched on {challenger_rtt} ms against 100 ms, which is inside §9.2's margin"
+                );
+            }
+            // Each candidate's turn is a run of consecutive rounds, long
+            // enough for a margin to be sustained — and every candidate gets
+            // one. A rotation that did not carry across rounds would keep
+            // returning the first candidate and starve the rest, while looking
+            // busy; one that moved every round would leave every alternative
+            // permanently unadoptable.
+            let mut runs: Vec<(RelayId, usize)> = Vec::new();
+            for id in &measured {
+                match runs.last_mut() {
+                    Some((last, n)) if last == id => *n += 1,
+                    _ => runs.push((*id, 1)),
+                }
+            }
+            assert!(
+                runs.iter()
+                    .all(|(_, n)| *n >= karst_disco::consts::HYSTERESIS_SAMPLES as usize),
+                "a candidate was measured for too few consecutive rounds to sustain a \
+                 margin: {runs:?}"
+            );
+            if !adopted {
+                let took_a_turn: std::collections::BTreeSet<_> =
+                    runs.iter().map(|(id, _)| *id).collect();
+                assert_eq!(
+                    took_a_turn.len(),
+                    2,
+                    "a candidate never had a turn: {} of 2",
+                    took_a_turn.len()
+                );
+            }
+        }
+    }
+
+    /// **The relay this node is leaving stays reachable.** Peers go on dialling
+    /// it until the netmap reaches them, and in that window their packets are
+    /// not late — they are delivered nowhere. So the move hands the old relay
+    /// to the on-demand pool, which lets it go once nothing arrives there.
+    #[test]
+    fn a_move_keeps_the_old_relay_reachable_meanwhile() {
+        let engine = engine(vec![relay(1), relay(2)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+
+        handover(&engine, &q.sender, &relay(1), &relay(2));
+
+        assert_eq!(
+            engine.home_relay(),
+            Some(relay(2).relay_id),
+            "routing was not told where this node now is"
+        );
+        assert!(
+            matches!(q.on_demand.try_recv(), Ok((id, Relayed::Hold)) if id == relay(1).relay_id),
+            "the relay every peer still believes this node is on was dropped at once"
+        );
+    }
+
+    /// The engine's current configuration, so a test can change one field of it.
+    fn engine_config(engine: &Engine) -> crate::config::Config {
+        let relays = engine.relays();
+        crate::config::Config {
+            relay_ca_file: None,
+            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
+                &[0x11; 64],
+                &[0x12; 32],
+            )),
+            listen: "0.0.0.0:0".parse().expect("addr"),
+            port_mapping: false,
+            interface: "karst0".to_owned(),
+            network_mode: crate::config::NetworkMode::Tun,
+            userspace_socks5_listen: None,
+            addresses: vec!["100.64.0.1/16".parse().expect("address")],
+            psk_epoch: 1,
+            node_id: Vec::new(),
+            relays,
+            peers: Vec::new(),
+            routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            skipped: Vec::new(),
+            filter: crate::filter::PacketFilter::unrestricted(),
+        }
     }
 }
