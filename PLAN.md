@@ -2252,6 +2252,36 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
+- 🔶 **§9.1 home-relay selection — the decision half.** `bins/karstd/src/home.rs`,
+  sans-io, 8 tests. A node used to hold `config.relays.first()`, which is a
+  choice made by the server's iteration order rather than by the network.
+
+  **The hysteresis is AVEN's, and reusing it caught a bug.** §9.2 recommends
+  "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
+  for path selection. Written fresh, this read the rule as an **OR** — either
+  margin suffices — under which a 1 ms gain on a 3 ms path clears the 20% test
+  and a node switches on jitter, which is the exact behaviour §9.2 exists to
+  prevent. `karst_disco::margin` had it right; it is now public and there is one
+  implementation rather than two free to disagree.
+
+  Two properties the tests pin. **The first selection is immediate**, because
+  hysteresis defends an existing choice and making the first one wait three
+  rounds leaves a starting node without a relay when peers most need somewhere
+  to reach it. And **a relay that does not answer a round is absent from it**:
+  `select` consumes the round's measurements, so a relay that has stopped
+  responding cannot keep looking as fast as the day it died — while a single
+  missed datagram still leaves the incumbent in place, since silence is not
+  evidence against it.
+
+  §9.2's reasoning is the part worth carrying forward: the cost of flapping is
+  **not paid by the node that flaps**. Every change must reach the coordination
+  server and from there every peer.
+
+  What remains is publishing the choice. `KarstRelay` carries a region and a
+  TLS name but the netmap has **no field for a node's home relay**, so §9.1's
+  "publishes the choice to the coordination server" needs a proto change, the Go
+  server, and the client — control-plane work rather than daemon work, and not
+  started.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

@@ -20,6 +20,7 @@ pub mod disco;
 pub mod engine;
 pub mod filter;
 pub mod flow;
+pub mod home;
 pub mod ipc;
 pub mod netmap;
 pub mod portmap;

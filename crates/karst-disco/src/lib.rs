@@ -21,7 +21,7 @@ pub mod path;
 pub use engine::{Action, Engine};
 pub use key::{DiscoKey, TagTable};
 pub use msg::{Endpoint, Message, TxId};
-pub use path::{PathKind, PathSet, Selection};
+pub use path::{margin, PathKind, PathSet, Selection};
 
 pub mod consts {
     //! Normative constants — `spec/aven-v1.md` §6 and §7.5.

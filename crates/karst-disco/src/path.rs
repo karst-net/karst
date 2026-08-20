@@ -450,7 +450,8 @@ impl PathSet {
 ///
 /// 20 ms is meaningless on a 400 ms satellite path and enormous on a 2 ms LAN,
 /// so neither alone is a sensible rule.
-fn margin(latency_ms: u64) -> u64 {
+#[must_use]
+pub fn margin(latency_ms: u64) -> u64 {
     HYSTERESIS_MS.max(latency_ms.saturating_mul(HYSTERESIS_PERCENT) / 100)
 }
 
