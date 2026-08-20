@@ -122,6 +122,12 @@ pub struct PeerEntry<'a> {
     pub dh_public_key: &'a [u8],
     pub dns_name: &'a str,
     pub endpoint: &'a str,
+    /// The relay this peer holds a connection to — `ponor-v1.md` §9.1.
+    ///
+    /// Routable content, so it is covered by the digest: a peer that moved
+    /// relay whose digest did not change would never be delivered, and every
+    /// other node would keep dialling a relay it had left.
+    pub home_relay: &'a [u8],
     pub allowed_ips: &'a [String],
 }
 
@@ -150,6 +156,7 @@ pub fn peer_digest(entry: &PeerEntry<'_>, epoch: u32) -> u64 {
     push(&mut h, entry.dh_public_key);
     push(&mut h, entry.dns_name.as_bytes());
     push(&mut h, entry.endpoint.as_bytes());
+    push(&mut h, entry.home_relay);
     for ip in entry.allowed_ips {
         push(&mut h, ip.as_bytes());
     }
@@ -234,6 +241,7 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
         push(&mut h, p.dh_public_key);
         push(&mut h, p.dns_name.as_bytes());
         push(&mut h, p.endpoint.as_bytes());
+        push(&mut h, p.home_relay);
         for ip in p.allowed_ips {
             push(&mut h, ip.as_bytes());
         }

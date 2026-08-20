@@ -1224,6 +1224,7 @@ mod netmap_tests {
         let (_, kem_pk) = MlKem::keypair_from_seed(&[0x22; 64]);
         let dh = DhPublic::from(&x25519_dalek::StaticSecret::from([0x33u8; 32]));
         pb::KarstNetmapPeer {
+            home_relay: Vec::new(),
             node_id: id.as_bytes().to_vec(),
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: dns.to_owned(),

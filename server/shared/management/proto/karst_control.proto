@@ -90,6 +90,20 @@ message KarstNetmapRequest {
   //
   // Empty means "send everything", which is also what a first connection does.
   repeated KarstPeerDigest holds = 2;
+
+  // The relay this node has chosen to hold a connection to — ponor-v1.md §9.1.
+  //
+  // Reported on every netmap request rather than through a separate call: the
+  // node is already talking to the server on a cadence, and a dedicated RPC
+  // would be a second path to the same fact, free to disagree with this one.
+  //
+  // Empty means the node has no home relay — it is starting, or the netmap
+  // listed none. That is distinct from "unchanged": a node that has released
+  // its relay must be able to say so, or peers keep being told to reach it
+  // somewhere nothing is listening.
+  //
+  // 32 bytes, the SHA-256 relay handle of KarstRelay.relay_id.
+  bytes home_relay = 3;
 }
 
 // KarstPeerDigest is a node's summary of one peer entry it holds.
@@ -113,6 +127,18 @@ message KarstNetmapPeer {
   repeated string allowed_ips = 2;
   string dns_name = 3;
   string endpoint = 4;
+
+  // The relay this peer holds a connection to — ponor-v1.md §9.1.
+  //
+  // How a node reaches a peer it has no direct path to and that is not on its
+  // own relay's mesh: §9.1's second rule, an on-demand connection to the peer's
+  // published home relay. Without it a cross-region pair has no rendezvous at
+  // all, because §8 confines a mesh to one region on purpose.
+  //
+  // Empty means the peer has not reported one. A node MUST treat that as "no
+  // second option" rather than guessing, since a guess would send a handshake
+  // to a relay the peer is not connected to and wait out the timeout.
+  bytes home_relay = 10;
 
   // PHREATIC keys (phreatic-v1.md §4).
   bytes kem_public_key = 5;   // S_pk, 1184 B

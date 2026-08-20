@@ -336,6 +336,11 @@ func PeerDigest(p *proto.KarstNetmapPeer, epoch uint32) uint64 {
 	writeField(h, p.GetDhPublicKey())
 	writeField(h, []byte(p.GetDnsName()))
 	writeField(h, []byte(p.GetEndpoint()))
+	// The home relay is routable content: it is the second way a node reaches
+	// this peer (ponor-v1.md §9.1). Omitting it would leave the digest
+	// unchanged when a peer moved relay, the delta would never be sent, and
+	// every other node would keep dialling a relay the peer had left.
+	writeField(h, p.GetHomeRelay())
 	for _, ip := range p.GetAllowedIps() {
 		writeField(h, []byte(ip))
 	}
@@ -421,6 +426,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writeField(h, p.GetDhPublicKey())
 		writeField(h, []byte(p.GetDnsName()))
 		writeField(h, []byte(p.GetEndpoint()))
+		writeField(h, p.GetHomeRelay())
 		for _, ip := range p.GetAllowedIps() {
 			writeField(h, []byte(ip))
 		}

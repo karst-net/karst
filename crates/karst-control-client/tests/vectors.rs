@@ -67,6 +67,8 @@ struct VersionPeer {
     /// Carried by the vector but *not* hashed — see
     /// `the_version_ignores_the_psk_bytes`.
     psk: String,
+    #[serde(default)]
+    home_relay: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -89,6 +91,8 @@ struct DigestCase {
     dh_public_key: String,
     dns_name: String,
     endpoint: String,
+    #[serde(default)]
+    home_relay: String,
     allowed_ips: Option<Vec<String>>,
     digest: u64,
 }
@@ -345,6 +349,7 @@ fn peer_digest_matches() {
             dh_public_key: &unhex(&c.dh_public_key),
             dns_name: &c.dns_name,
             endpoint: &c.endpoint,
+            home_relay: &unhex(&c.home_relay),
             allowed_ips: &ips,
         };
         assert_eq!(
@@ -387,6 +392,7 @@ struct VersionInputs {
     ids: Vec<Vec<u8>>,
     kems: Vec<Vec<u8>>,
     dhs: Vec<Vec<u8>>,
+    homes: Vec<Vec<u8>>,
     ips: Vec<Vec<String>>,
     ports: Vec<Vec<(u32, u32)>>,
     egress_ports: Vec<Vec<(u32, u32)>>,
@@ -423,6 +429,7 @@ fn inputs(c: &VersionCase) -> VersionInputs {
         ids: peers.iter().map(|p| unhex(&p.node_id)).collect(),
         kems: peers.iter().map(|p| unhex(&p.kem_public_key)).collect(),
         dhs: peers.iter().map(|p| unhex(&p.dh_public_key)).collect(),
+        homes: peers.iter().map(|p| unhex(&p.home_relay)).collect(),
         ips: peers
             .iter()
             .map(|p| p.allowed_ips.clone().unwrap_or_default())
@@ -445,6 +452,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
             dh_public_key: &held.dhs[i],
             dns_name: &p.dns_name,
             endpoint: &p.endpoint,
+            home_relay: &held.homes[i],
             allowed_ips: &held.ips[i],
         })
         .collect();

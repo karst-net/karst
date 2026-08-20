@@ -242,6 +242,14 @@ pub struct Peer {
     pub dns_name: String,
     /// Where to reach it, if the server knows.
     pub endpoint: String,
+    /// The relay this peer holds a connection to — `ponor-v1.md` §9.1.
+    ///
+    /// §9.1's second rule: how to reach a peer with no direct path that is not
+    /// on this node's own relay or its mesh. Empty means the peer has not
+    /// reported one, which is "no second option" rather than an invitation to
+    /// guess — a guess sends a handshake to a relay the peer is not connected
+    /// to and then waits out the timeout.
+    pub home_relay: Vec<u8>,
     /// ML-KEM-768 encapsulation key, 1184 B.
     pub kem_public_key: Vec<u8>,
     /// X25519 static public key, 32 B.
@@ -288,6 +296,7 @@ impl Peer {
             allowed_ips: p.allowed_ips,
             dns_name: p.dns_name,
             endpoint: p.endpoint,
+            home_relay: p.home_relay,
             kem_public_key: p.kem_public_key,
             dh_public_key: p.dh_public_key,
             psk,
@@ -302,6 +311,7 @@ impl Peer {
             allowed_ips: self.allowed_ips.clone(),
             dns_name: self.dns_name.clone(),
             endpoint: self.endpoint.clone(),
+            home_relay: self.home_relay.clone(),
             kem_public_key: self.kem_public_key.clone(),
             dh_public_key: self.dh_public_key.clone(),
             psk: self.psk.as_ref().map(|p| p.0.to_vec()).unwrap_or_default(),
@@ -328,6 +338,7 @@ impl Peer {
                 dh_public_key: &self.dh_public_key,
                 dns_name: &self.dns_name,
                 endpoint: &self.endpoint,
+                home_relay: &self.home_relay,
                 allowed_ips: &self.allowed_ips,
             },
             epoch,
@@ -602,6 +613,7 @@ impl Netmap {
                 dh_public_key: &p.dh_public_key,
                 dns_name: &p.dns_name,
                 endpoint: &p.endpoint,
+                home_relay: &p.home_relay,
                 allowed_ips: &p.allowed_ips,
             })
             .collect();
@@ -719,6 +731,7 @@ mod tests {
 
     fn wire_peer(id: &str, ip: &str) -> pb::KarstNetmapPeer {
         pb::KarstNetmapPeer {
+            home_relay: Vec::new(),
             node_id: id.as_bytes().to_vec(),
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: id.to_owned(),

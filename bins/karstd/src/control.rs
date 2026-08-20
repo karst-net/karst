@@ -266,6 +266,13 @@ pub struct Client {
     setup_key: Option<String>,
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
+    /// The relay this node has chosen to hold — `ponor-v1.md` §9.1.
+    ///
+    /// Reported on every netmap request. Empty until something has been
+    /// chosen, and empty again if the choice is released — a node that has let
+    /// its relay go must be able to say so, or peers keep being sent somewhere
+    /// nothing is listening.
+    home_relay: Vec<u8>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
     dh_public: Vec<u8>,
@@ -341,6 +348,7 @@ impl Client {
             .map(|_| SealKey::new(cache_seal_key(&identity)));
 
         Ok(Self {
+            home_relay: Vec::new(),
             endpoint: section.server.clone(),
             pins,
             identity,
@@ -485,12 +493,25 @@ impl Client {
         Ok(())
     }
 
+    /// Report which relay this node now holds — `ponor-v1.md` §9.1.
+    ///
+    /// Takes effect on the next netmap request rather than sending one: the
+    /// node is already on a refresh cadence, and §9.2's hysteresis exists so
+    /// that this changes rarely enough for that to be soon enough.
+    pub fn set_home_relay(&mut self, relay_id: Option<[u8; 32]>) {
+        self.home_relay = relay_id.map(|id| id.to_vec()).unwrap_or_default();
+    }
+
     async fn fetch(&mut self, conn: &mut Connection) -> Result<Outcome, Error> {
         use prost::Message as _;
 
         let req = pb::KarstNetmapRequest {
             known_version: self.netmap.version,
             holds: self.netmap.holds(),
+            // §9.1. Reported on the request this node is already sending
+            // rather than through a call of its own: a second path to the same
+            // fact is a second path that can disagree with this one.
+            home_relay: self.home_relay.clone(),
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())
@@ -1062,6 +1083,7 @@ mod tests {
             addresses: vec!["100.64.0.1/16".to_owned()],
             dns_name: "self".to_owned(),
             peers: vec![pb::KarstNetmapPeer {
+                home_relay: Vec::new(),
                 node_id: b"aaa".to_vec(),
                 allowed_ips: vec!["100.64.0.2/32".to_owned()],
                 dns_name: "alpha".to_owned(),

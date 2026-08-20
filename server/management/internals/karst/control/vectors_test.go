@@ -73,6 +73,7 @@ type versionPeer struct {
 	DhPublicKey  string   `json:"dh_public_key"`
 	DNSName      string   `json:"dns_name"`
 	Endpoint     string   `json:"endpoint"`
+	HomeRelay    string   `json:"home_relay"`
 	AllowedIPs   []string `json:"allowed_ips"`
 	// Present so the vector proves the PSK bytes are NOT hashed: two cases
 	// differ only here and must produce the same version.
@@ -103,6 +104,7 @@ type digestCase struct {
 	DhPublicKey  string   `json:"dh_public_key"`
 	DNSName      string   `json:"dns_name"`
 	Endpoint     string   `json:"endpoint"`
+	HomeRelay    string   `json:"home_relay"`
 	AllowedIPs   []string `json:"allowed_ips"`
 	Digest       uint64   `json:"digest"`
 }
@@ -296,12 +298,20 @@ func TestVectors(t *testing.T) {
 		nodeID   string
 		dnsName  string
 		endpoint string
+		home     []byte
 		ips      []string
 	}{
-		{3, "node-one", "alpha", "", []string{"100.64.0.1/32"}},
-		{3, "node-one", "alpha", "", []string{"100.64.0.1/32", "fd00::1/128"}},
-		{4, "node-one", "alpha", "", []string{"100.64.0.1/32"}}, // epoch alone must change it
-		{3, "node-two", "", "1.2.3.4:51820", nil},
+		{3, "node-one", "alpha", "", nil, []string{"100.64.0.1/32"}},
+		{3, "node-one", "alpha", "", nil, []string{"100.64.0.1/32", "fd00::1/128"}},
+		{4, "node-one", "alpha", "", nil, []string{"100.64.0.1/32"}}, // epoch alone must change it
+		{3, "node-two", "", "1.2.3.4:51820", nil, nil},
+		// A non-empty home relay, so the vector proves the two languages agree
+		// on the *value* and not merely on the field's position. An empty one
+		// still shifts the hash through its length prefix, so without this case
+		// a side that hashed the field and a side that skipped it entirely
+		// would disagree — but a side that hashed it in the wrong place might
+		// not.
+		{3, "node-three", "gamma", "", pattern(32, 0x7A), []string{"100.64.0.3/32"}},
 	} {
 		p := &proto.KarstNetmapPeer{
 			NodeId:       []byte(tc.nodeID),
@@ -309,6 +319,7 @@ func TestVectors(t *testing.T) {
 			DhPublicKey:  pattern(32, 0xE0),
 			DnsName:      tc.dnsName,
 			Endpoint:     tc.endpoint,
+			HomeRelay:    tc.home,
 			AllowedIps:   tc.ips,
 		}
 		got.Cases.PeerDigest = append(got.Cases.PeerDigest, digestCase{
@@ -318,6 +329,7 @@ func TestVectors(t *testing.T) {
 			DhPublicKey:  hex.EncodeToString(p.GetDhPublicKey()),
 			DNSName:      tc.dnsName,
 			Endpoint:     tc.endpoint,
+			HomeRelay:    hex.EncodeToString(tc.home),
 			AllowedIPs:   tc.ips,
 			Digest:       control.PeerDigest(p, tc.epoch),
 		})
@@ -438,6 +450,7 @@ func TestVectors(t *testing.T) {
 				DhPublicKey:  hex.EncodeToString(p.GetDhPublicKey()),
 				DNSName:      p.GetDnsName(),
 				Endpoint:     p.GetEndpoint(),
+				HomeRelay:    hex.EncodeToString(p.GetHomeRelay()),
 				AllowedIPs:   p.GetAllowedIps(),
 			}
 			if i < len(tc.psks) {
