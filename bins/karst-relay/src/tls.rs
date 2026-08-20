@@ -25,7 +25,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rustls::crypto::CryptoProvider;
-use rustls::ServerConfig;
+use rustls::{ClientConfig, ServerConfig};
 use rustls_pki_types::pem::PemObject as _;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -152,6 +152,61 @@ pub fn server_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, Error
         .with_single_cert(chain, private)
         .map_err(Error::Rustls)?;
 
+    Ok(Arc::new(config))
+}
+
+/// A client configuration for dialling a mesh peer — §8.
+///
+/// **The certificate is not what authenticates the peer, and §4.2 says why.** A
+/// relay proves itself with an ML-DSA-65 signature over its registry key;
+/// `WebPKI` is classical, a certificate is no evidence of identity behind a
+/// shared load balancer, and the realistic self-hoster has an internal CA or a
+/// self-signed certificate. The same argument holds relay-to-relay: the mesh
+/// handshake verifies `sig_relay` against the roster's `identity_pk`, and that
+/// is the security property. TLS here is confidentiality and integrity for the
+/// hop.
+///
+/// **The trust anchor is therefore required and explicit, and there are no
+/// system roots.** Not pulling in a `WebPKI` bundle is deliberate twice over: it
+/// is a dependency this crate does not otherwise need, and a mesh that fell
+/// back to public roots would quietly accept any certificate a public CA had
+/// issued for that name — which is precisely the trust §4.2 declines to place
+/// in certificates. An operator running a self-signed relay points `ca` at that
+/// certificate.
+///
+/// # Errors
+/// [`Error::Io`] if the file is missing, [`Error::Pem`] if it holds no
+/// certificate, [`Error::Rustls`] if the configuration is not usable.
+pub fn client_config(ca: &Path) -> Result<Arc<ClientConfig>, Error> {
+    let provider = provider()?;
+    if !ca.exists() {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} not found", ca.display()),
+        )));
+    }
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(ca)
+        .map_err(|e| Error::Pem(format!("tls: {}: {e}", ca.display())))?
+        .collect::<Result<_, _>>()
+        .map_err(|e| Error::Pem(format!("tls: {}: {e}", ca.display())))?;
+    if certs.is_empty() {
+        return Err(Error::Pem(format!(
+            "tls: {} contains no certificate",
+            ca.display()
+        )));
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in certs {
+        roots
+            .add(cert)
+            .map_err(|e| Error::Pem(format!("tls: {}: {e}", ca.display())))?;
+    }
+
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(Error::Rustls)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     Ok(Arc::new(config))
 }
 

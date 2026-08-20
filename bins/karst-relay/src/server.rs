@@ -324,6 +324,17 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         tokio::spawn(metrics_loop(listener, Arc::clone(&ctx)));
     }
 
+    if let Some(mesh) = &cfg.mesh {
+        // A trust anchor that cannot be read is a relay that will never mesh,
+        // and finding that out at the first dial rather than at startup means
+        // finding it out from a log line nobody is reading.
+        let client_tls = crate::tls::client_config(&mesh.ca)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id());
+        eprintln!("karst-relay: mesh dialling enabled");
+        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, dialler));
+    }
+
     let listener = TcpListener::bind(cfg.listen).await?;
     serve_on(listener, ctx).await
 }
@@ -494,6 +505,17 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
 
 type Tls = tokio_rustls::server::TlsStream<TcpStream>;
 
+/// What the post-handshake loop needs of a stream.
+///
+/// **Generic so an outbound mesh connection can use it.** `serve` accepts a
+/// TLS *server* stream; a relay dialling a mesh peer holds a TLS *client*
+/// stream, and everything after the handshake — framing, the hub, the write
+/// queue — is identical. Duplicating the loop for the second type would give
+/// the mesh path its own copy of the queue draining and the close handling,
+/// free to drift from the one every client uses.
+pub trait Stream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Stream for T {}
+
 /// TLS, the HTTP upgrade, and the Ponor handshake.
 ///
 /// Returns the stream, whatever bytes arrived after the handshake, and who was
@@ -573,7 +595,7 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
 
 /// The steady state: read frames, hand them to the hub, write what it queues.
 async fn drive(
-    mut tls: Tls,
+    mut tls: impl Stream,
     mut buf: Vec<u8>,
     admitted: Admitted,
     peer: SocketAddr,
@@ -712,7 +734,7 @@ fn consume(buf: &mut Vec<u8>, id: ConnId, admitted: &Admitted, ctx: &Arc<Ctx>) -
 }
 
 /// Write everything the hub has queued for this connection.
-async fn flush(tls: &mut Tls, id: ConnId, ctx: &Arc<Ctx>) -> bool {
+async fn flush(tls: &mut impl Stream, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     loop {
         let next = ctx.with_hub(|hub| hub.take_outbound(id));
         let Some(bytes) = next else { return true };
@@ -722,7 +744,7 @@ async fn flush(tls: &mut Tls, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     }
 }
 
-async fn read_more(tls: &mut Tls, buf: &mut Vec<u8>) -> bool {
+async fn read_more(tls: &mut impl Stream, buf: &mut Vec<u8>) -> bool {
     let mut chunk = [0u8; CHUNK];
     match tls.read(&mut chunk).await {
         Ok(0) | Err(_) => false,
@@ -743,4 +765,182 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+/// The HTTP upgrade a dialling relay sends — §4.1, the same request a node
+/// sends, because a mesh connection is an ordinary Ponor connection.
+const MESH_UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
+     Host: relay\r\n\
+     Connection: Upgrade\r\n\
+     Upgrade: ponor\r\n\
+     Ponor-Version: 1\r\n\r\n";
+
+/// Dial the mesh peers this relay is responsible for — §8.
+///
+/// **Only one side of a pair dials**, and `mesh::Dialler` decides which; see
+/// its documentation for why, and for what happens if both do.
+pub async fn mesh_loop(
+    ctx: Arc<Ctx>,
+    client_tls: Arc<rustls::ClientConfig>,
+    mut dialler: crate::mesh::Dialler,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        dialler.set_peers(
+            ctx.roster
+                .read()
+                .map_or_else(|p| p.into_inner().mesh_dial_list(), |g| g.mesh_dial_list()),
+        );
+        let now = ctx.now_ms();
+        let connected = |id: &crate::mesh::Id| ctx.with_hub(|hub| hub.has_mesh(id));
+        for due in dialler.due(now, &connected) {
+            let ctx = Arc::clone(&ctx);
+            let tls = Arc::clone(&client_tls);
+            // Outcomes are reported through the hub rather than back into the
+            // dialler: the task outlives this iteration, and `due` has already
+            // marked the attempt so nothing dials it again meanwhile.
+            tokio::spawn(async move {
+                if let Err(e) = dial_mesh(&ctx, &tls, due.id, &due.addr, &due.name).await {
+                    eprintln!("karst-relay: mesh dial to {} failed: {e}", due.addr);
+                }
+            });
+        }
+    }
+}
+
+/// One outbound mesh connection, from TCP to the steady state.
+async fn dial_mesh(
+    ctx: &Arc<Ctx>,
+    tls: &Arc<rustls::ClientConfig>,
+    peer_id: crate::mesh::Id,
+    addr: &str,
+    name: &str,
+) -> Result<(), String> {
+    let entry = ctx
+        .roster
+        .read()
+        .map_or_else(
+            |p| p.into_inner().mesh_peer(&peer_id),
+            |g| g.mesh_peer(&peer_id),
+        )
+        .ok_or_else(|| "peer is not in the roster".to_owned())?;
+
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("connect: {e}"))?;
+    let remote = stream.peer_addr().map_err(|e| format!("peer_addr: {e}"))?;
+
+    // The name is only what TLS validates against the configured CA; §4.2 puts
+    // the identity check on the ML-DSA-65 signature below, not here. It comes
+    // from the roster rather than from the address, because a relay behind a
+    // load balancer is dialled at one and presents the other.
+    let server_name = rustls::pki_types::ServerName::try_from(name.to_owned())
+        .map_err(|e| format!("server name: {e}"))?;
+    let connector = tokio_rustls::TlsConnector::from(Arc::clone(tls));
+    let mut stream = connector
+        .connect(server_name, stream)
+        .await
+        .map_err(|e| format!("tls: {e}"))?;
+
+    stream
+        .write_all(MESH_UPGRADE.as_bytes())
+        .await
+        .map_err(|e| format!("upgrade: {e}"))?;
+
+    // Read until the end of the HTTP head, keeping whatever came after it: a
+    // relay may coalesce its `RelayHello` with the 101, and discarding the tail
+    // would lose the first frame of the handshake.
+    let mut buf = Vec::new();
+    let head_end = loop {
+        if let Some(at) = find_head_end(&buf) {
+            break at;
+        }
+        if buf.len() > 8192 {
+            return Err("upgrade response too large".to_owned());
+        }
+        let mut chunk = [0u8; 1024];
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("upgrade read: {e}"))?;
+        if n == 0 {
+            return Err("peer closed during upgrade".to_owned());
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    };
+    let head = String::from_utf8_lossy(buf.get(..head_end).unwrap_or_default()).into_owned();
+    if !head.starts_with("HTTP/1.1 101") {
+        return Err(format!(
+            "upgrade refused: {}",
+            head.lines().next().unwrap_or_default()
+        ));
+    }
+    let mut rest = buf.split_off(head_end);
+
+    let mut nonce = [0u8; 32];
+    getrandom::fill(&mut nonce).map_err(|e| format!("no entropy: {e}"))?;
+    let mut client = karst_relay_proto::ClientHandshake::new(
+        karst_relay_proto::Role::Mesh,
+        ctx.identity.relay_id(),
+        peer_id,
+        entry.identity_pk.clone(),
+        nonce,
+    );
+
+    let hello = next_frame(&mut stream, &mut rest).await?;
+    let (hello, _) = karst_relay_proto::frame::decode(&hello)
+        .map_err(|e| format!("hello: {e:?}"))?
+        .ok_or_else(|| "hello incomplete".to_owned())?;
+    let auth = client
+        .on_relay_hello(&hello, ctx.identity.as_ref())
+        .map_err(|e| format!("sign: {e:?}"))?;
+    stream
+        .write_all(&auth)
+        .await
+        .map_err(|e| format!("auth: {e}"))?;
+
+    let reply = next_frame(&mut stream, &mut rest).await?;
+    let (reply, _) = karst_relay_proto::frame::decode(&reply)
+        .map_err(|e| format!("relay auth: {e:?}"))?
+        .ok_or_else(|| "relay auth incomplete".to_owned())?;
+    client
+        .on_relay_auth(&reply, &crate::sign::PonorVerifier)
+        .map_err(|e| format!("verify: {e:?}"))?;
+    if !client.may_send() {
+        return Err("handshake did not establish".to_owned());
+    }
+
+    eprintln!("karst-relay: meshed with {addr}");
+    drive(
+        stream,
+        rest,
+        Admitted::Mesh { relay_id: peer_id },
+        remote,
+        Arc::clone(ctx),
+    )
+    .await;
+    Ok(())
+}
+
+/// The offset just past a complete HTTP head, if one has arrived.
+fn find_head_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
+}
+
+/// Read one complete Ponor frame, using anything already buffered first.
+async fn next_frame(stream: &mut impl Stream, buf: &mut Vec<u8>) -> Result<Vec<u8>, String> {
+    loop {
+        if let Ok(Some((_, used))) = karst_relay_proto::frame::decode(buf) {
+            return Ok(buf.drain(..used).collect());
+        }
+        let mut chunk = [0u8; 2048];
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("read: {e}"))?;
+        if n == 0 {
+            return Err("peer closed".to_owned());
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    }
 }

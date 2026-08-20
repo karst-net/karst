@@ -48,6 +48,24 @@ pub struct Peer {
     pub id: Id,
     /// Where to reach it. `host:port`, resolved by the caller.
     pub addr: String,
+    /// The name its certificate is issued for, when that differs from `addr`.
+    ///
+    /// **A relay behind a load balancer is dialled by address and presents a
+    /// name**, and the two are routinely different — which is one of §4.2's
+    /// own arguments for not resting relay identity on certificates. `None`
+    /// means the host part of `addr`, which is the ordinary case.
+    pub name: Option<String>,
+}
+
+impl Peer {
+    /// The name to validate the certificate against.
+    #[must_use]
+    pub fn server_name(&self) -> &str {
+        match &self.name {
+            Some(n) => n,
+            None => self.addr.rsplit_once(':').map_or(&self.addr, |(h, _)| h),
+        }
+    }
 }
 
 /// A dial the caller should attempt now.
@@ -57,6 +75,8 @@ pub struct Due {
     pub id: Id,
     /// Where.
     pub addr: String,
+    /// The name to validate its certificate against.
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,6 +160,7 @@ impl Dialler {
             out.push(Due {
                 id: peer.id,
                 addr: peer.addr.clone(),
+                name: peer.server_name().to_owned(),
             });
         }
         out
@@ -175,11 +196,31 @@ mod tests {
         Peer {
             id: id(n),
             addr: format!("relay{n}.test:8443"),
+            name: None,
         }
     }
 
     fn never(_: &Id) -> bool {
         false
+    }
+
+    #[test]
+    fn a_certificate_name_may_differ_from_the_address_dialled() {
+        // A relay behind a load balancer is reached at an address and presents
+        // a name. Defaulting to the host part covers the ordinary case without
+        // making every deployment state it twice.
+        let plain = Peer {
+            id: id(1),
+            addr: "10.0.0.5:8443".to_owned(),
+            name: None,
+        };
+        assert_eq!(plain.server_name(), "10.0.0.5");
+        let behind_lb = Peer {
+            id: id(1),
+            addr: "10.0.0.5:8443".to_owned(),
+            name: Some("relay-a.example".to_owned()),
+        };
+        assert_eq!(behind_lb.server_name(), "relay-a.example");
     }
 
     #[test]

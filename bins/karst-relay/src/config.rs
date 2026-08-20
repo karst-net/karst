@@ -90,6 +90,29 @@ pub struct Config {
     /// inherit. Bind it to a management address.
     #[serde(default)]
     pub metrics: Option<Metrics>,
+
+    /// Outbound mesh dialling — §8. Absent means this relay only accepts mesh
+    /// connections and never opens one.
+    #[serde(default)]
+    pub mesh: Option<Mesh>,
+}
+
+/// How this relay dials its mesh peers — §8.
+///
+/// *Which* peers, and their addresses, come from the roster: they are admission
+/// facts and belong with the identity keys they are checked against. This is
+/// only what dialling needs that admission does not.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mesh {
+    /// The certificate to trust when dialling a mesh peer.
+    ///
+    /// Required, with no fallback to system roots. §4.2 declines to trust
+    /// certificates for relay identity, and a mesh that fell back to public
+    /// roots would quietly accept anything a public CA had issued for the
+    /// name — which is the trust §4.2 declines to place. For a self-signed
+    /// peer, point this at that certificate.
+    pub ca: PathBuf,
 }
 
 /// Where the metrics endpoint listens.

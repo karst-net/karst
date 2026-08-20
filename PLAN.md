@@ -2257,8 +2257,10 @@ onwards, anchored on the week of 2026-08-10.
   co-location with the control server in the default deployment artefact are
   not.
 
-  🔶 **Mesh dialling — `mesh.rs`, sans-io, 8 tests.** Which peers are due, and
-  how long to wait after a failure. The I/O half is not written.
+  ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
+  how long to wait; `server.rs` dials them. **Two relays mesh and a packet
+  crosses between them**, which is the only test that exercises the outbound
+  half at all.
 
   **§8 says what a mesh connection is and not who opens it, and that gap has a
   failure mode.** If both ends dial, both succeed, and the hub — which keys a
@@ -2286,6 +2288,25 @@ onwards, anchored on the week of 2026-08-10.
   out, or every tick between a dial and its outcome starts another. And backoff
   **survives a roster reload**, or a relay refreshing on a timer retries a dead
   peer at full rate for ever, the reload undoing the state meant to slow it.
+
+  The I/O half needed the post-handshake loop **generalised over the stream
+  type**. `serve` accepts a TLS *server* stream and a dialling relay holds a
+  *client* one, while everything after the handshake — framing, the hub, the
+  write queue — is identical. A second copy for the outbound path would have
+  given mesh its own queue draining and close handling, free to drift from the
+  one every client uses.
+
+  **The trust anchor for dialling is required and there are no system roots.**
+  §4.2 declines to rest relay identity on certificates, so a mesh that fell back
+  to public roots would quietly accept anything a public CA had issued for the
+  name — the exact trust that section refuses. It also keeps a `WebPKI` bundle
+  out of a crate that does not otherwise need one. The certificate *name* is a
+  separate roster field from the dial address, because a relay behind a load
+  balancer is reached at one and presents the other.
+
+  Checked against two defects, both of which the end-to-end row catches and no
+  unit test could: making **both** sides dial fails it, and disabling the dialler
+  fails it.
 
   ✅ **Prometheus metrics**, on their own listener and off by default. Two
   decisions worth recording.

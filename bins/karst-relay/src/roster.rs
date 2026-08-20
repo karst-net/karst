@@ -85,6 +85,9 @@ struct MeshRow {
     /// never dialled.
     #[serde(default)]
     dial: Option<String>,
+    /// The name its certificate is issued for, when that differs from `dial`.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// A roster loaded from a file.
@@ -247,6 +250,7 @@ impl FileRoster {
                 dial.push(crate::mesh::Peer {
                     id,
                     addr: addr.clone(),
+                    name: row.name.clone(),
                 });
             }
             if mesh.insert(id, RelayEntry { identity_pk: pk }).is_some() {

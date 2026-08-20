@@ -44,6 +44,7 @@ struct Harness {
     addr: std::net::SocketAddr,
     metrics_addr: std::net::SocketAddr,
     ca: rustls::pki_types::CertificateDer<'static>,
+    ca_pem: String,
     relay: Arc<Identity>,
     _dir: TempDir,
 }
@@ -70,6 +71,21 @@ fn temp_dir(tag: &str) -> TempDir {
 
 /// Start a relay on an ephemeral port with the given nodes admitted.
 async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
+    let mut roster_text = String::new();
+    for (id, aquifer) in nodes {
+        use std::fmt::Write as _;
+        let _ = write!(
+            roster_text,
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
+            Base64::encode_string(id.public_key())
+        );
+    }
+    let (harness, _ctx, _dir) = start_with_ctx(tag, &roster_text).await;
+    harness
+}
+
+/// As [`start`], but keeping the context and directory a mesh test needs.
+async fn start_with_ctx(tag: &str, roster_text: &str) -> (Harness, Arc<Ctx>, std::path::PathBuf) {
     let dir = temp_dir(tag);
 
     // A self-signed certificate. §4.2 is the reason this is fine: relay
@@ -82,15 +98,6 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
     std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
 
-    let mut roster_text = String::new();
-    for (id, aquifer) in nodes {
-        use std::fmt::Write as _;
-        let _ = write!(
-            roster_text,
-            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
-            Base64::encode_string(id.public_key())
-        );
-    }
     let roster_path = dir.0.join("roster.toml");
     std::fs::write(&roster_path, roster_text).expect("write roster");
 
@@ -115,6 +122,7 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     let listener = TcpListener::bind(cfg.listen).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls_config);
+    let ctx_handle = Arc::clone(&ctx);
 
     // The metrics endpoint gets its own listener here as it does in `run`,
     // rather than being folded into the client one — which is the property
@@ -129,13 +137,19 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
         let _ = serve_on(listener, ctx).await;
     });
 
-    Harness {
-        addr,
-        metrics_addr,
-        ca: cert.cert.der().clone(),
-        relay: identity,
-        _dir: dir,
-    }
+    let path = dir.0.clone();
+    (
+        Harness {
+            addr,
+            metrics_addr,
+            ca: cert.cert.der().clone(),
+            ca_pem: cert.cert.pem(),
+            relay: identity,
+            _dir: dir,
+        },
+        ctx_handle,
+        path,
+    )
 }
 
 /// A client connection, past TLS and past the HTTP upgrade.
@@ -213,6 +227,71 @@ async fn connect(h: &Harness) -> (Conn, Option<rustls::NamedGroup>) {
     buf.drain(..head);
 
     (Conn { tls, buf }, group)
+}
+
+/// A relay that can also be meshed with another.
+///
+/// `start` builds one relay from a roster of clients. A mesh needs each relay
+/// to hold the *other's* identity key as well, and the dialling side needs its
+/// address and its certificate — none of which exists until both are running.
+/// So this keeps the parts and wires them in a second step.
+struct Meshable {
+    harness: Harness,
+    ctx: Arc<Ctx>,
+    dir: std::path::PathBuf,
+    clients: String,
+}
+
+async fn start_meshable(tag: &str, nodes: &[(&Identity, &str)]) -> Meshable {
+    let mut clients = String::new();
+    for (id, aquifer) in nodes {
+        use std::fmt::Write as _;
+        let _ = write!(
+            clients,
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
+            Base64::encode_string(id.public_key())
+        );
+    }
+    let (harness, ctx, dir) = start_with_ctx(tag, &clients).await;
+    Meshable {
+        harness,
+        ctx,
+        dir,
+        clients,
+    }
+}
+
+impl Meshable {
+    /// Roster `other` on both sides and start dialling it from whichever side
+    /// `mesh::Dialler` says is responsible.
+    fn mesh_with(&mut self, other: &Meshable) {
+        for (me, them) in [(&*self, other), (other, &*self)] {
+            let roster = format!(
+                "{}[[mesh]]\nidentity_pk = \"{}\"\ndial = \"{}\"\nname = \"relay.test\"\n",
+                me.clients,
+                Base64::encode_string(them.harness.relay.public_key()),
+                them.harness.addr
+            );
+            let path = me.dir.join("roster.toml");
+            std::fs::write(&path, roster).expect("write mesh roster");
+            let reloaded = FileRoster::load(&path).expect("mesh roster loads");
+            me.ctx.replace_roster(reloaded);
+        }
+
+        // The dialler decides which side acts; start one on both and let the
+        // rule pick, exactly as `run` does.
+        for (me, them) in [(&*self, other), (other, &*self)] {
+            let ca = me.dir.join("mesh-ca.pem");
+            std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
+            let tls = karst_relay::tls::client_config(&ca).expect("client tls");
+            let dialler = karst_relay::mesh::Dialler::new(me.harness.relay.relay_id());
+            tokio::spawn(karst_relay::server::mesh_loop(
+                Arc::clone(&me.ctx),
+                tls,
+                dialler,
+            ));
+        }
+    }
 }
 
 /// Complete the Ponor handshake as `node`.
@@ -615,4 +694,63 @@ async fn the_metrics_listener_answers_only_its_own_path() {
             "{path} was answered with {response}"
         );
     }
+}
+
+/// **Two relays mesh, and a packet crosses between them.**
+///
+/// The unit tests decide *when* to dial. This asserts the whole path: TLS out,
+/// the HTTP upgrade, a Ponor handshake with `role = MESH`, presence gossip, and
+/// a `Forward` delivered to a client on the other relay. It is the only place
+/// the outbound half is exercised at all — `serve` accepts a TLS *server*
+/// stream and a dialling relay holds a *client* one, so this is also what keeps
+/// the generalised connection loop honest.
+#[tokio::test]
+async fn two_relays_mesh_and_a_packet_crosses() {
+    let alice = identity(0x61);
+    let bob = identity(0x62);
+
+    // Two relays, each rostering both clients and each other.
+    let mut left = start_meshable("mesh-left", &[(&alice, "acme"), (&bob, "acme")]).await;
+    let right = start_meshable("mesh-right", &[(&alice, "acme"), (&bob, "acme")]).await;
+    left.mesh_with(&right);
+
+    // Alice on the left relay, Bob on the right.
+    let (mut a, _) = connect(&left.harness).await;
+    handshake(&left.harness, &mut a, &alice).await;
+    let (mut b, _) = connect(&right.harness).await;
+    handshake(&right.harness, &mut b, &bob).await;
+
+    // Presence has to propagate before the left relay knows where Bob is.
+    // Retried rather than slept on a fixed delay: §8 makes presence advisory
+    // and eventually consistent, so the test asserts convergence rather than
+    // a timing assumption.
+    let payload = [0x7e; 96];
+    let mut delivered = None;
+    for _ in 0..40 {
+        a.send(
+            &Frame::SendPacket {
+                dst_id: nid(&bob),
+                payload: &payload,
+            }
+            .to_vec(),
+        )
+        .await;
+        if let Ok(bytes) =
+            tokio::time::timeout(std::time::Duration::from_millis(250), b.frame()).await
+        {
+            delivered = Some(bytes);
+            break;
+        }
+    }
+
+    let bytes = delivered.expect("the packet never crossed the mesh");
+    let (frame, _) = decode(&bytes).expect("decodes").expect("complete");
+    assert_eq!(
+        frame,
+        Frame::RecvPacket {
+            src_id: nid(&alice),
+            payload: &payload,
+        },
+        "the far relay delivered something other than Alice's packet"
+    );
 }

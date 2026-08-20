@@ -613,6 +613,15 @@ impl Hub {
         out
     }
 
+    /// Whether a mesh connection to this relay already exists.
+    ///
+    /// Asked by the dialler rather than tracked there, so there is one answer
+    /// to the question instead of two that can disagree.
+    #[must_use]
+    pub fn has_mesh(&self, relay_id: &Id) -> bool {
+        self.by_mesh.contains_key(relay_id)
+    }
+
     /// Accounting for the operator — §7.4.
     #[must_use]
     pub fn stats(&self, id: ConnId) -> Option<ConnStats> {
