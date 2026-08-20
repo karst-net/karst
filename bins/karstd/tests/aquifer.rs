@@ -422,10 +422,8 @@ impl Shape {
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
             | Self::SameLan => Expect::Direct,
-            // §7.7's port search does not yet carry this row. Four defects in
-            // it are fixed and the arithmetic now says ~98% over eight
-            // minutes; the row still sees no arrival, and why is not
-            // established. See PLAN.md and finding 28.
+            // §7.7 does not carry this row and a packet capture says why: the
+            // arithmetic is right and the quantities are wrong. Finding 28.
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }

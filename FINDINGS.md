@@ -80,12 +80,42 @@ still not applied, because the scratch datagram reads as *establishing* a
 mapping rather than as *holding* one — and nothing in the section's shape
 prompts the question.
 
-**The fix is a specification change**, not a code one: §7.7 needs a refresh rule
-for scratch mappings, on the same argument §7.5 already makes, and the daemon
-then has to re-send on each socket rather than only on creation. Deliberately
-not made here, because the interval is a decision — it interacts with the
-sixty-datagram budget the section spends so carefully, since refreshing 256
-sockets is itself traffic.
+**A packet capture on the public segment settled it**, after five successive
+fixes made on inference had not. 2359 datagrams over eight minutes, both NATs
+in view:
+
+| Measured | Value |
+|---|---|
+| Coincidences — B aimed at a port A's NAT had used | **12** |
+| Predicted by the birthday arithmetic (769 × 1082 / 64511) | **12.9** |
+| Of those, inside a 30-second mapping lifetime | **2** |
+| B's probes leaving the shared socket, as §7.7 requires | 786 of 914 |
+
+**The arithmetic is exactly right and the quantities are wrong**, which is why
+no amount of fixing the mechanism helped. Two multipliers were missed.
+
+*Half of the hard side's mappings are dead targets.* A opens 64 scratch sockets
+toward `B:51820` **and** sends 64 probes to `B:<random>` each round. Both create
+mappings, but a probe mapping accepts a reply only from the random port it was
+aimed at — so B's probes, which correctly come from `B:51820`, can only ever be
+admitted by the *scratch* half. §7.7's *N* counts external ports; the usable set
+is half of them.
+
+*Alignment is partial.* Only 2 of 12 coincidences fell inside a mapping
+lifetime. A wall-clock boundary aligns the two nodes' round *starts*, but a
+round's 64 sockets and 64 probes are emitted over the seconds that follow, and
+the two sides drift within the boundary.
+
+Multiply those together and the expected number of usable, timely coincidences
+over eight minutes is **well under one** — against a model that predicted 98%.
+The technique is not broken; §7.7's arithmetic counts the wrong population.
+
+**What this needs is a corrected model before any more code**: *N* is live
+*scratch* mappings, not external ports, and the probability must be integrated
+over the window in which both sides' mappings and probes actually overlap
+rather than assumed to coincide. That may well show the technique is not worth
+its cost at any budget this protocol can afford, which is a legitimate outcome
+and one §12.4 already reached for the hard/hard case.
 
 ## Closed
 
