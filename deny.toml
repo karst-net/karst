@@ -9,6 +9,13 @@ allow = [
     "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
     "Unicode-DFS-2016", "Unicode-3.0", "CC0-1.0",
+    # 0BSD reaches the tree through `smoltcp`'s `heapless` and `managed`
+    # (ADR-0012). It is OSI-approved and strictly more permissive than MIT —
+    # the same grant with the attribution requirement removed — so it imposes
+    # nothing MIT does not already impose on a `MIT OR Apache-2.0` crate.
+    # Added deliberately rather than discovered: a new licence in the tree is a
+    # decision, and this list is where the decision is recorded.
+    "0BSD",
 ]
 confidence-threshold = 0.93
 

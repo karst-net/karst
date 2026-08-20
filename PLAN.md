@@ -3199,7 +3199,49 @@ onwards, anchored on the week of 2026-08-10.
   is only as honest as its weakest topology, and a NAT missing a filter chain
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
-- Kubernetes operator + userspace mode + Docker images.
+- 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶.**
+
+  Userspace mode landed 2026-08-20: ADR-0012 chooses **smoltcp**, isolated
+  behind a `karst-tun` packet device and reached only through an explicit
+  runtime mode. Workloads attach over a loopback **SOCKS5** listener that
+  accepts `CONNECT` to literal overlay addresses and refuses names — resolving
+  one through the host resolver would be an unreviewed path around Karst's
+  packet and policy boundary. The privileged path is untouched and the ten
+  aquifer topologies still pass.
+
+  **Four oversights corrected on review**, recorded because three of them are
+  the kind that pass every test that exists.
+
+  `cargo deny check licenses` was **failing**: smoltcp reaches `heapless` and
+  `managed`, which are 0BSD, and that was not on the allow list. Now allowed
+  deliberately with the reasoning written down — 0BSD is OSI-approved and
+  strictly more permissive than MIT, the same grant minus attribution — because
+  a new licence in the tree is a decision rather than a discovery.
+
+  The SOCKS5 negotiation had **no tests at all**, in a project that walks every
+  truncation of every codec. It parses bytes from a local process, so it now
+  has the same treatment `karst-portmap` gets: every prefix of a valid request
+  refused rather than read past, plus the version check, the method refusal,
+  `BIND`/`UDP ASSOCIATE`, and a browser's `GET ` pointed at the wrong port.
+
+  The connect wait was **unbounded**. The overlay address is the client's
+  choice, so a local process could hold a daemon thread per unreachable address
+  until shutdown simply by asking. It now times out and answers SOCKS reply
+  `0x04`, so the client can tell "unreachable" from "the proxy died".
+
+  The client buffer was unbounded too — same mistake in another shape, a fast
+  local writer choosing how much of the daemon's memory to spend. Reads now
+  stop while it is full.
+
+  The ADR was written and marked `Accepted` by its own author alongside the
+  implementation, rather than agreed before it. Accepted on merit; the ordering
+  is noted in the file, because an ADR that arrives with its code has not
+  constrained the decision it documents.
+
+  **Still outstanding, and it is the claim itself**: there is no test that a TCP
+  conversation crosses userspace mode with no `CAP_NET_ADMIN`. ADR-0012 lists
+  that as a release gate and reports the sandbox could not produce it. Until it
+  exists, userspace mode is built and unproven.
 - **Exit:** **every topology in the matrix where a direct path is physically
   possible reaches one**, and the rest fall back to the relay without loss with
   both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a

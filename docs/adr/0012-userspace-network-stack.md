@@ -2,10 +2,16 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-20
-- **Deciders:** TBD
+- **Deciders:** project maintainer, on review 2026-08-20
 - **Related:** ADR-0003 (greenfield Rust datapath), PLAN.md §9, Phase 4
 
 ---
+
+> **Review note, 2026-08-20.** This ADR was written and marked `Accepted` by
+> its own author *alongside* the implementation, rather than agreed before it —
+> the brief asked for the reverse. It is accepted now on its merits, and the
+> ordering is recorded because an ADR that arrives with its code has not
+> constrained the decision it documents.
 
 ## Context
 
