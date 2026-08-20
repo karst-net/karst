@@ -3272,10 +3272,18 @@ onwards, anchored on the week of 2026-08-10.
   *arrives* (finding 20's rule) rather than from an advertisement, so the
   advertisement path for a symmetric node has never been exercised.
 
-  Next is therefore to find out why, which is a question about §7.2 and §7.6
-  rather than about the port search. The instrumentation that produced this is
-  committed and stays: one line when a search starts, one per round, one per
-  arrival.
+  **Resolved and superseded.** The candidate exchange was fine: A advertised
+  `[10.98.1.2, 51.75.10.2:53059]` and B received it. The search was holding the
+  list it was *created* with, and it is created the moment §7.5's backoff gives
+  up — before any reflexive address has crossed the relay. `Search::retarget`
+  fixes that and the cone side now aims at the symmetric side's outer address
+  on its second round.
+
+  That was necessary and not sufficient. Row 8 still sees no arrival in seven
+  minutes, and the cause is **finding 28**: §7.7 opens a scratch socket, sends
+  one datagram, and never sends again, while Linux's conntrack UDP timeout is
+  thirty seconds and the round interval is thirty seconds. The mappings are
+  dead before the peer probes them. Finding 22 wrote the rule this breaks.
 
   It carries an architectural cost that must be stated before it is scheduled.
   The technique needs the hard side to hold **many sockets at once**, because a

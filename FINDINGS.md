@@ -15,7 +15,7 @@ followed it added sixteen more, and fifteen of those are closed — most found b
 building the thing the finding above them asked for, and the most recent found
 by counting what the test matrix did *not* cover.
 
-**No findings remain open.** Finding 27 was a decision rather than a defect and
+**One remains open: 28** — §7.7's scratch mappings are never refreshed, so they expire before the peer can find them. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
 masquerade. Finding 24 was not a code defect — it recorded that
 Phase 4's third exit criterion could not be met by the mechanism the plan named
@@ -50,7 +50,42 @@ carries both the new wording and the original, struck through.
 | 24 | Operational | Phase 4's third exit criterion is not achievable as written | Resolved 2026-08-19 — criterion restated |
 | 25 | Medium | The NAT matrix was missing the common symmetric/port-restricted pairing | Fixed 2026-08-19 |
 | 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
+| 28 | High | §7.7's scratch mappings expire before the peer can probe them | **Open** |
 | 27 | Operational | NAT64/DNS64 needs a dependency decision the matrix cannot make for itself | Resolved 2026-08-19 — built with `tayga` + masquerade |
+
+## Open
+
+### 28. High: §7.7's scratch mappings expire before the peer can probe them
+
+`aven-v1.md` §7.7 has the hard side "open *N* sockets and send one datagram from
+each" toward the easy side's address, and probe on a **thirty-second** cadence
+reused from §7.5. Those two numbers do not work together.
+
+Linux's `nf_conntrack_udp_timeout` is **30 seconds**, and most consumer NATs are
+at or below it. A scratch socket sends once and never again, so its mapping is
+dead or dying by the time the peer's next round probes for it. The technique
+cannot land however many rounds run, and it does not: `aquifer.rs`'s row 8 saw
+no arrival at all in seven minutes with both sides aiming correctly.
+
+**This is finding 22 one layer down, and the rule it wrote is the fix.** That
+finding was about the reflect interval — "a reflexive address is only true for
+as long as the binding that produced it is alive, and nothing tells the node how
+long that is" — and it set the refresh to well under the shortest timeout it
+expected to meet. A scratch mapping is the same object with the same lifetime,
+and §7.7 gave it no refresh at all.
+
+That the same mistake recurred in the same specification, written by the same
+hand that recorded finding 22, is the part worth keeping. The rule was known and
+still not applied, because the scratch datagram reads as *establishing* a
+mapping rather than as *holding* one — and nothing in the section's shape
+prompts the question.
+
+**The fix is a specification change**, not a code one: §7.7 needs a refresh rule
+for scratch mappings, on the same argument §7.5 already makes, and the daemon
+then has to re-send on each socket rather than only on creation. Deliberately
+not made here, because the interval is a decision — it interacts with the
+sixty-datagram budget the section spends so carefully, since refreshing 256
+sockets is itself traffic.
 
 ## Closed
 
