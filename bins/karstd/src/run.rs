@@ -1028,6 +1028,65 @@ fn home_target(
     }
 }
 
+/// How many attempts a relay gets before this node looks for another.
+///
+/// Three, which the backoff spreads over a few seconds. Fewer would abandon a
+/// relay over a dropped SYN; more would leave a node that a relay will not admit
+/// waiting on it, which is a wait with no end — §10.1 makes a roster miss
+/// deliberately indistinguishable from a relay that is simply down, so the only
+/// thing to do about either is to try somewhere else.
+const HOME_RELAY_ATTEMPTS: u32 = 3;
+
+/// The next relay to try after one that will not have this node.
+///
+/// **Registry order, wrapping.** A node with one relay has nowhere to go and
+/// must keep trying the one it has: the roster it is missing from may be
+/// updated, and abandoning the only relay would make that unrecoverable.
+fn next_relay(current: RelayId, registry: &[crate::netmap::Relay]) -> Option<crate::netmap::Relay> {
+    let at = registry.iter().position(|r| r.relay_id == current);
+    match at {
+        // Not in the registry at all — withdrawn while this node was on it.
+        // Start from the top rather than from a position that no longer means
+        // anything.
+        None => registry.first().cloned(),
+        Some(at) => registry
+            .get((at + 1) % registry.len())
+            .filter(|next| next.relay_id != current)
+            .cloned(),
+    }
+}
+
+/// Leave a relay this node cannot get onto, for the next one in the registry.
+///
+/// **A relay this node cannot get onto is not a relay it can be reached on**,
+/// and waiting for one is a wait with no end: §10.1 makes a roster miss
+/// deliberately indistinguishable from a relay that is down, so the only thing
+/// to do about either is to try somewhere else. Without this a node whose
+/// registry listed a relay it was not admitted to first would retry that one
+/// for the life of the process, and the relays it *was* admitted to would never
+/// be dialled — nothing measures a relay it has no connection to.
+fn abandon_relay(context: &mut RelayContext<'_>) {
+    let Some(next) = next_relay(context.relay.relay_id, &context.common.engine.relays()) else {
+        return;
+    };
+    eprintln!(
+        "karstd: giving up on relay {} for now; trying {}",
+        context.relay.address, next.address
+    );
+    // The selector is told as well, or it would go on naming the relay just
+    // abandoned and the next pass would move straight back to it. The abandoned
+    // one stays in the registry, so the rotation will measure it again and it
+    // can win its place back once it answers.
+    context
+        .common
+        .home
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .hold(next.relay_id);
+    context.common.engine.set_home_relay(Some(next.relay_id));
+    context.relay = next;
+}
+
 /// Move the home connection, keeping the relay it is leaving reachable.
 ///
 /// **The old relay is where every peer still believes this node is**, and will
@@ -1086,6 +1145,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
 
     let mut outbound = outbound;
     let mut backoff = RELAY_BACKOFF_MIN;
+    let mut failures = 0u32;
     while !context.common.shutdown.requested() {
         // §9.2's decision, carried out. The home connection follows the
         // selector: this is the point where a choice that moved becomes a
@@ -1140,6 +1200,14 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
                         context.relay.address
                     );
                 }
+                failures = failures.saturating_add(1);
+                if context.is_home() && failures >= HOME_RELAY_ATTEMPTS {
+                    failures = 0;
+                    abandon_relay(&mut context);
+                }
+                // The backoff deliberately survives the move: a node whose
+                // relays are all unreachable must slow down, not walk the
+                // registry at full speed.
                 sleep_backoff(context.common.shutdown, &mut backoff);
                 continue;
             }
@@ -1161,6 +1229,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             eprintln!("karstd: relay {} reachable again", context.relay.address);
         }
         backoff = RELAY_BACKOFF_MIN;
+        failures = 0;
 
         // Both directions stop together. Without this the receive loop would
         // outlive a send loop whose queue has been closed — which is exactly
@@ -1379,6 +1448,11 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
     let crate::relay::Event::Packet { source_id, payload } = event else {
         return;
     };
+    // §9.1's first rule, answered by the peer itself: it is on the relay this
+    // node holds, whatever it published and whatever that relay said earlier.
+    if context.is_home() {
+        context.common.engine.seen_on_home_relay(source_id);
+    }
     let now = now_ms(context.common.started);
     // **AVEN is asked first, exactly as on the UDP socket**, and for the
     // same reason: the two protocols share this transport too, and only
@@ -1459,17 +1533,57 @@ fn on_demand_hub<'scope>(
         // would never reach it while the first peer keeps talking.
         if Instant::now() >= next_sweep {
             next_sweep = Instant::now() + TICK;
+            // **The relay this node holds is never also in the pool.** A relay
+            // measured as an alternative and then adopted as the home relay
+            // would otherwise be reached by two connections at once, and a
+            // relay replaces an older connection for the same node id with the
+            // newer one — so the two would take turns, each killing the other,
+            // losing whatever was in flight. That is how a fragmented message
+            // loses its second fragment and a tunnel carries handshakes but no
+            // data.
+            if let Some(home) = common.engine.home_relay() {
+                if open.close(home) {
+                    eprintln!(
+                        "karstd: letting go of the on-demand connection to the relay this \
+                         node now holds"
+                    );
+                }
+            }
             let closed = open.expire(now_ms(common.started));
             if closed > 0 {
                 eprintln!("karstd: closed {closed} idle on-demand relay connection(s)");
             }
         }
-        let Ok(request) = runtime.block_on(tokio::time::timeout(TICK, requests.recv())) else {
+        // **The timeout is built inside the runtime, not passed into it.**
+        // `tokio::time::timeout` arms a timer as it is constructed, and doing
+        // that on a plain thread panics with "there is no reactor running" —
+        // which killed this thread the moment the daemon started and left every
+        // peer on another relay unreachable, while every test of the pool
+        // itself went on passing.
+        let Ok(request) =
+            runtime.block_on(async { tokio::time::timeout(TICK, requests.recv()).await })
+        else {
             continue;
         };
         let Some((relay_id, item)) = request else {
             return;
         };
+        // Anything addressed to the relay this node already holds goes on the
+        // connection it already has, rather than opening a second one to the
+        // same place. This is the same rule as the sweep above, applied to the
+        // request that would otherwise create the duplicate.
+        if common.engine.home_relay() == Some(relay_id) {
+            match item {
+                Relayed::Packet {
+                    destination,
+                    payload,
+                } => common.relayed.send_via(None, destination, &payload),
+                Relayed::Ping(token) => common.relayed.ping(None, token),
+                // The connection was the request, and it exists.
+                Relayed::Hold => {}
+            }
+            continue;
+        }
         let now = now_ms(common.started);
         if open.route(relay_id, now).is_none() {
             // The registry is the only place a relay id becomes something
@@ -1482,9 +1596,19 @@ fn on_demand_hub<'scope>(
                 common.relayed.dropped.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
+            // **Why, not just what.** All three of §9.1's on-demand reasons
+            // share this queue, and "dialling a relay" without the reason is
+            // the kind of line that looks like an explanation and answers
+            // nothing — an operator reading it cannot tell a peer being
+            // reached from a relay being measured.
             eprintln!(
-                "karstd: dialling {} for a peer that published it as its home relay",
-                relay.address
+                "karstd: dialling {} {}",
+                relay.address,
+                match item {
+                    Relayed::Packet { .. } => "to reach a peer that published it as its home relay",
+                    Relayed::Ping(_) => "to measure it against the relay this node holds",
+                    Relayed::Hold => "to stay reachable there while peers learn this node moved",
+                }
             );
             let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
             let last = Arc::new(AtomicU64::new(now));
@@ -2848,6 +2972,40 @@ mod probe_tests {
     fn nothing_measured_yet_moves_nothing() {
         let registry = vec![relay(1), relay(2)];
         assert!(home_target(None, relay(1).relay_id, &registry).is_none());
+    }
+
+    // ── a relay that will not have this node ────────────────────────────
+
+    /// **A node that cannot get onto its relay tries another.** §10.1 makes a
+    /// roster miss indistinguishable from a relay that is down, so there is
+    /// nothing to diagnose and nothing to wait for — and nothing else would
+    /// ever dial the alternatives, since a relay with no connection is a relay
+    /// with no measurements.
+    #[test]
+    fn a_relay_that_will_not_take_this_node_is_left_for_the_next() {
+        let registry = vec![relay(1), relay(2), relay(3)];
+        let next = next_relay(relay(1).relay_id, &registry).expect("somewhere else");
+        assert_eq!(next.relay_id, relay(2).relay_id);
+        let wrapped = next_relay(relay(3).relay_id, &registry).expect("back to the top");
+        assert_eq!(wrapped.relay_id, relay(1).relay_id);
+    }
+
+    /// A node with one relay has nowhere to go and must keep trying: the roster
+    /// it is missing from may be updated, and giving up on the only relay would
+    /// make that unrecoverable.
+    #[test]
+    fn a_registry_of_one_leaves_nowhere_to_go() {
+        assert!(next_relay(relay(1).relay_id, &[relay(1)]).is_none());
+        assert!(next_relay(relay(1).relay_id, &[]).is_none());
+    }
+
+    /// A relay withdrawn while this node was on it has no position in the
+    /// registry any more, so the search starts from the top rather than from
+    /// somewhere that no longer means anything.
+    #[test]
+    fn a_relay_the_registry_dropped_starts_from_the_top() {
+        let next = next_relay(relay(9).relay_id, &[relay(1), relay(2)]).expect("a relay");
+        assert_eq!(next.relay_id, relay(1).relay_id);
     }
 
     /// Deliver a `Pong` for whatever was just asked, at `rtt_ms`, exactly as

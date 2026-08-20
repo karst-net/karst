@@ -2401,15 +2401,48 @@ onwards, anchored on the week of 2026-08-10.
   carries, rather than stranding the node somewhere peers are no longer told to
   look.
 
-  Still to come: **no test puts two nodes on two relays end to end.** That is
-  now expressible — before alternatives were measured every node took
-  `config.relays.first()`, so an aquifer had exactly one home relay — and it
-  needs the privileged harness to run a second relay and make the two differ in
-  latency per namespace. Until then this is tested at its seams: the rotation
-  and the margin (`home.rs`), the round the daemon actually runs and where the
-  home connection belongs (`run.rs`), routing between the two rules
-  (`relay_path.rs`), the pool's lifetimes (`ondemand.rs`), and a real relay
-  answering a real ping (`relay_live.rs`).
+  ✅ **Two nodes on two relays, end to end.** `aquifer.rs`'s eleventh row runs
+  two relays and makes one unreachable from node B — which is what a relay a
+  node is not admitted to looks like from outside, since §10.1 makes a roster
+  miss indistinguishable from a relay that is down. B leaves the relay its
+  registry lists first and takes the other; A, still on the first and with no
+  way to know where B is, discovers B's absence by addressing it, reads the
+  relay B published, dials it, and carries a TCP conversation over it.
+
+  **A node that cannot get onto its relay now tries another.** Nothing measures
+  a relay it has no connection to, so without this a node whose registry listed
+  a relay it was not admitted to first would retry that one for the life of the
+  process and never reach the ones it *was* admitted to.
+
+  **That row found four defects, three of them in code that had already been
+  committed with passing tests** — FINDINGS.md 29–32. The on-demand relay
+  thread died at startup on every run (`tokio::time::timeout` arms its timer as
+  it is constructed, so building one outside a runtime panics), which means
+  §9.1's second rule had never once run in a daemon while its pool, its queue
+  split and its routing all had green tests. A relay whose address blackholed
+  packets stalled the relay path for two minutes with nothing logged. A node
+  held two Ponor connections to one relay — the measurement connection and the
+  home connection, after the measured relay was adopted — and a relay replaces
+  an older connection for the same node id with the newer, so the two took
+  turns and dropped a fragmented handshake between them.
+
+  The fourth was **not in this feature at all**: a retransmitted
+  `HandshakeInit` made the responder derive fresh keys and discard the session
+  the initiator had already completed under, wedging the pair with both ends
+  reporting `established`. Any path where a retransmission crosses the response
+  triggers it; a relayed path with a `PeerGone` detour makes it routine. Fixed
+  by having a session remember the `HandshakeInit` it answered and replay the
+  same `HandshakeResponse` for a byte-identical repeat.
+
+  Still to come, and now the oldest thing in §9.1: **§12.6's rule that a
+  responder MUST NOT tear down a working session on emitting a
+  `HandshakeResponse` is still violated by a *fresh* `HandshakeInit`.** A
+  forgeable message can therefore still displace a live session — the DoS §12.5
+  warns about. Closing it needs the previous/current/next session lifetime
+  WireGuard uses; parking the new keys until a transport message authenticates
+  under them was tried and broke every rekey, because the initiator drops its
+  old keys the moment its rekey completes and the responder has to follow. That
+  is a design change with its own tests.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

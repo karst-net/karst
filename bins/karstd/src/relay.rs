@@ -197,6 +197,13 @@ impl std::fmt::Display for ConnectError {
 
 impl std::error::Error for ConnectError {}
 
+/// How long a relay has to accept, negotiate TLS and complete Ponor.
+///
+/// Generous for a handshake that costs one round trip, a TLS 1.3 exchange and
+/// an ML-DSA-65 signature, and short enough that a relay which has silently
+/// gone away is noticed while a node still has time to try another.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 const UPGRADE_MAX: usize = 4096;
 const UPGRADE: &[u8] =
     b"GET /ponor HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: ponor\r\nPonor-Version: 1\r\n\r\n";
@@ -208,6 +215,35 @@ impl Connection {
     /// Any TCP, TLS, HTTP, framing, or Ponor authentication failure. The caller
     /// must discard the connection and may retry with exponential backoff.
     pub async fn connect(
+        session: Session,
+        signer: &impl Signer,
+        verifier: &impl Verifier,
+        tls: std::sync::Arc<rustls::ClientConfig>,
+        relay: &Relay,
+    ) -> Result<Self, ConnectError> {
+        // **Bounded, because the alternative is silence.** A relay whose
+        // address blackholes packets — a filter that drops rather than refuses,
+        // a host that has gone — leaves the TCP connect retrying SYNs for over
+        // two minutes, and one that accepts and then says nothing leaves the
+        // handshake waiting for ever. Either way the node's whole relay path is
+        // down, nothing is logged, and the caller cannot count a failure it has
+        // not been told about, so it never tries another relay. The timeout
+        // covers the handshake as well as the connect for exactly that reason.
+        match tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            Self::negotiate(session, signer, verifier, tls, relay),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ConnectError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the relay did not complete the Ponor handshake in time",
+            ))),
+        }
+    }
+
+    async fn negotiate(
         session: Session,
         signer: &impl Signer,
         verifier: &impl Verifier,

@@ -52,8 +52,113 @@ carries both the new wording and the original, struck through.
 | 26 | Medium | Vendoring pruned test fixtures a retained test still needed | Fixed 2026-08-19 |
 | 28 | High | §7.7's port search does not work as specified | Resolved 2026-08-20 — technique not adopted |
 | 27 | Operational | NAT64/DNS64 needs a dependency decision the matrix cannot make for itself | Resolved 2026-08-19 — built with `tayga` + masquerade |
+| 29 | High | A retransmitted `HandshakeInit` wedged the pair, both ends reporting `established` | Fixed 2026-08-20 |
+| 30 | High | The on-demand relay thread died at startup, so §9.1's second rule never ran | Fixed 2026-08-20 |
+| 31 | Medium | A relay whose address blackholed packets stalled the relay path silently | Fixed 2026-08-20 |
+| 32 | Medium | A node held two Ponor connections to one relay and they displaced each other | Fixed 2026-08-20 |
 
 ## Closed
+
+### 29. High: a retransmitted `HandshakeInit` wedged the pair
+
+**Found 2026-08-20** by `bins/karstd/tests/aquifer.rs`'s two-relay row, which
+was written to test relay selection and found this instead. Fixed the same day.
+
+An initiator retransmits the **identical** `HandshakeInit` until it hears back
+(§10). The responder answered each copy afresh: `respond()` derives new keys,
+`adopt_responder` installed them, and the session the initiator had already
+completed under the *first* answer was gone. Both ends then reported
+`established` — because both had keys — and neither could decrypt the other.
+Nothing re-handshaked, because neither end had any reason to. The pair stayed
+wedged until `REJECT_AFTER_TIME`.
+
+The symptom is asymmetric and misleading: one end counts every packet as a
+decryption failure, the other counts nothing at all, and `karst status` at both
+ends says `established` with a healthy transport. In the aquifer row A sent
+eight TCP retransmissions over fifteen seconds and B recorded eight decryption
+failures while reporting a live session.
+
+**It takes only a path where a retransmission crosses the response**, which is
+the ordinary case on a relayed path with a `PeerGone` detour in it — the first
+`HandshakeInit` goes to a relay the peer is not on, the retry goes to the right
+one, and the answers arrive out of order. On a single-relay LAN the response
+comes back in under a millisecond and the 300 ms retry never fires, which is why
+every existing row passed.
+
+The fix is that **the same question gets the same answer**: a session remembers
+the `HandshakeInit` it answered and the `HandshakeResponse` it sent, and a
+byte-identical repeat re-emits the cached response without deriving anything.
+That also makes a repeated `HandshakeInit` cost no ML-KEM decapsulation, which
+is the §12.5 posture applied to the cheapest case.
+
+**What this does not fix**, and it is the same code path: §12.6 says a responder
+MUST NOT "tear down an existing working session with that peer" on emitting a
+`HandshakeResponse`, and a *fresh* `HandshakeInit` — forged or genuine — still
+does. Closing that needs the previous/current/next session lifetime WireGuard
+uses: an attempt to park the new keys until a transport message authenticates
+under them broke every rekey test, because the initiator drops its old keys the
+moment its rekey completes and the responder must follow. It is a design change
+with its own tests, not a patch, and it is recorded in PLAN.md rather than
+attempted here.
+
+### 30. High: the on-demand relay thread died at startup
+
+**Found 2026-08-20** by the same two-relay row; fixed the same day.
+
+`tokio::time::timeout` arms a timer as it is *constructed*, so building one
+outside a runtime panics with "there is no reactor running". The on-demand
+relay hub built its receive timeout as an argument to `block_on` rather than
+inside it, so the thread panicked on its first iteration — at daemon startup,
+every time.
+
+Nothing noticed. The panic went to the daemon's log among ordinary lines, the
+thread was one of several in a scope, and every test of the machinery below it
+passed: the pool's lifetimes are sans-io and were unit-tested, the queue split
+was unit-tested, and no test ran the hub. §9.1's second rule had never worked
+in a running daemon, and the feature had already been committed.
+
+The lesson is the one findings 10, 12 and 19 keep teaching in different clothes:
+a component with tests either side of it is not a component that has been run.
+
+### 31. Medium: a relay whose address blackholed packets stalled the path silently
+
+**Found 2026-08-20** while building the two-relay row, which blocks one relay
+with a `drop` rule — the closest thing to what a relay that will not admit a
+node looks like from outside, since §10.1 makes a roster miss deliberately
+indistinguishable from a relay that is down.
+
+`Connection::connect` had no timeout of its own. A `drop` produces no RST, so
+the TCP connect retried SYNs for over two minutes; a relay that accepted and
+then said nothing would have waited for ever. In that window the node's relay
+path was down, **nothing was logged**, and the failure counter that would have
+moved it to another relay never incremented, because there was no failure to
+count.
+
+Now the whole negotiation — connect, TLS, HTTP upgrade and Ponor handshake — is
+bounded at ten seconds, which is generous for a handshake costing one round trip
+and an ML-DSA-65 signature.
+
+### 32. Medium: a node held two Ponor connections to one relay
+
+**Found 2026-08-20** by the two-relay row, as a fragmented handshake whose
+second fragment never arrived.
+
+A relay keys its clients by node id and a newer connection **replaces** an older
+one for the same id (§7.6, deliberately: the old one is often a half-open zombie
+after a suspend). So two connections from one node do not coexist — they take
+turns, each killing the other, and whatever was in flight on the loser is lost.
+A fragmented `HandshakeInit` loses its second fragment and reassembly never
+completes.
+
+The way a node ends up with two is ordinary once §9.2 measures alternatives: a
+relay is dialled on demand to be measured, and is then adopted as the home
+relay. The measurement connection and the home connection are both open, to the
+same place.
+
+The rule is now explicit — the relay this node holds is never also in the
+on-demand pool — and it is enforced in both directions: a request naming the
+home relay goes on the connection that already exists, and the sweep lets go of
+a pooled connection to a relay that has since become home.
 
 ### 28. High: §7.7's port search did not work as specified
 

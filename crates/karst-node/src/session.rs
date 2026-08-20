@@ -170,6 +170,21 @@ pub struct Session {
     in_mac_key: FragMacKey,
     /// Distinguishes successive outbound messages for reassembly.
     reassembly_id: u32,
+    /// The last `HandshakeInit` this session answered, and the
+    /// `HandshakeResponse` it sent for it.
+    ///
+    /// **The same question gets the same answer.** An initiator retransmits the
+    /// *identical* `HandshakeInit` until it hears back (§10), and answering the
+    /// retransmission afresh derives new keys — which discards the session the
+    /// initiator has already completed under the first answer. Both ends then
+    /// report `established`, neither can decrypt the other, and nothing
+    /// re-handshakes because neither has any reason to: the pair is wedged
+    /// until the keys expire. It takes only a path slow enough that a
+    /// retransmission crosses the response, which any relayed path can be.
+    ///
+    /// Replaying the response instead is also the cheaper answer — a repeated
+    /// `HandshakeInit` costs no ML-KEM decapsulation at all.
+    answered: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 impl core::fmt::Debug for Session {
@@ -216,6 +231,7 @@ impl Session {
             out_mac_key,
             in_mac_key,
             reassembly_id: 0,
+            answered: None,
         }
     }
 
@@ -603,10 +619,12 @@ impl Session {
     /// [`Action::Established`].
     pub fn adopt_responder(
         &mut self,
+        init: &[u8],
         keys: &TransportKeys,
         msg2: &[u8],
         now_ms: u64,
     ) -> Vec<Action> {
+        self.answered = Some((init.to_vec(), msg2.to_vec()));
         let mut actions = self.emit(MessageType::HandshakeResponse, msg2);
         self.state = State::Established {
             session: Arc::new(TransportSession::new(
@@ -620,6 +638,21 @@ impl Session {
         };
         actions.push(Action::Established);
         actions
+    }
+
+    /// The response already sent for this exact `HandshakeInit`, if it is the
+    /// retransmission of one this session has answered.
+    ///
+    /// Callers MUST try this before deriving anything: see [`Self::answered`]
+    /// for what answering a retransmission afresh costs. `None` means the
+    /// `HandshakeInit` is new and must be handled normally.
+    pub fn repeat_response(&mut self, init: &[u8]) -> Option<Vec<Action>> {
+        let (answered, response) = self.answered.as_ref()?;
+        if answered != init {
+            return None;
+        }
+        let response = response.clone();
+        Some(self.emit(MessageType::HandshakeResponse, &response))
     }
 
     /// Accept an inbound handshake into *this* session, becoming the responder.
@@ -645,6 +678,12 @@ impl Session {
         rand: &ResponderRandomness,
         now_ms: u64,
     ) -> Vec<Action> {
+        // The retransmission of a `HandshakeInit` already answered gets the
+        // answer already given, rather than a second set of keys — see
+        // [`Self::answered`].
+        if let Some(actions) = self.repeat_response(datagram) {
+            return actions;
+        }
         // An established session is not torn down by an inbound handshake:
         // otherwise anyone able to replay a recorded `HandshakeInit` could reset
         // a working tunnel at will. The new session simply replaces the old once
@@ -675,7 +714,7 @@ impl Session {
         // §12.6: no assurance until a transport message authenticates. The
         // session is usable for sending, but `Established` here means "keys
         // agreed", not "peer verified".
-        self.adopt_responder(&pending.confirm(), &msg2, now_ms)
+        self.adopt_responder(datagram, &pending.confirm(), &msg2, now_ms)
     }
 
     /// Dispatch an already-reassembled message.

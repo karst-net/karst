@@ -86,6 +86,18 @@ impl<T: Channel> Pool<T> {
         self.open.insert(relay, Open { channel, last });
     }
 
+    /// Let go of one relay's connection, if it is held.
+    ///
+    /// **A node must never hold two Ponor connections to one relay.** A relay
+    /// keys its clients by node id (§5.3) and a second connection for the same
+    /// id replaces the first, so two connections from one node do not coexist —
+    /// they take turns, and every message in flight on the loser is lost. The
+    /// case that produces it is ordinary: a relay measured as an alternative
+    /// and then adopted as the home relay, which is `home.rs`'s whole purpose.
+    pub fn close(&mut self, relay: RelayId) -> bool {
+        self.open.remove(&relay).is_some()
+    }
+
     /// Drop every connection nothing has crossed for the idle period, and every
     /// one whose worker has stopped.
     ///

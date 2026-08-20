@@ -407,6 +407,33 @@ impl Engine {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Record that a datagram from `peer_id` arrived on this node's own relay —
+    /// §9.1's first rule, answered in the affirmative.
+    ///
+    /// **The peer is there, and that outranks anything it published.** A
+    /// `PeerGone` is a fact with a lifetime: the peer may join this relay's
+    /// mesh, or dial this very relay on demand because *this* node is the one
+    /// it cannot reach directly — which is exactly what happens when two nodes
+    /// end up on two relays and only one of them can dial the other's. Without
+    /// this the pair would sit either side of a mark that expires in minutes,
+    /// each sending to a relay the other is not on, while both were meeting on
+    /// one relay the whole time.
+    ///
+    /// Cheap on the datapath: a relaxed load, and a store only when a mark is
+    /// actually in force.
+    pub fn seen_on_home_relay(&self, peer_id: [u8; karst_relay_proto::consts::ID_LEN]) {
+        let roster = self.roster();
+        let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
+            return;
+        };
+        let Some(slot) = roster.peers.get(peer) else {
+            return;
+        };
+        if slot.off_home.load(Ordering::Relaxed) != 0 {
+            slot.off_home.store(0, Ordering::Relaxed);
+        }
+    }
+
     /// Record that this node's own relay could not deliver to `peer_id` —
     /// §9.1's first rule, answered in the negative.
     ///
@@ -1072,6 +1099,21 @@ impl Engine {
         rand: &ResponderRandomness,
         out: &mut Output,
     ) {
+        // **The same `HandshakeInit` gets the same `HandshakeResponse`.** An
+        // initiator retransmits the identical message until it hears back
+        // (§10), and answering the retransmission afresh derives keys that
+        // displace the ones the initiator has already completed under — leaving
+        // a pair that both ends call `established` and neither can decrypt.
+        // Checked before the ML-KEM work, so a repeat costs nothing.
+        let repeated = roster
+            .peers
+            .get(expected)
+            .and_then(|p| Self::lock(&p.session).repeat_response(msg));
+        if let Some(actions) = repeated {
+            self.apply(roster, expected, actions, now_ms, out);
+            return;
+        }
+
         let index = u32::try_from(expected).unwrap_or(u32::MAX).wrapping_add(1);
         let by_hint = &roster.by_hint;
         let peers = &roster.config.peers;
@@ -1103,7 +1145,7 @@ impl Engine {
         let actions = roster
             .peers
             .get(peer)
-            .map(|p| Self::lock(&p.session).adopt_responder(&pending.confirm(), &msg2, now_ms))
+            .map(|p| Self::lock(&p.session).adopt_responder(msg, &pending.confirm(), &msg2, now_ms))
             .unwrap_or_default();
         self.apply(roster, peer, actions, now_ms, out);
     }
@@ -1124,6 +1166,24 @@ impl Engine {
         rand: &ResponderRandomness,
         out: &mut Output,
     ) {
+        // **The same `HandshakeInit` gets the same `HandshakeResponse`.** An
+        // initiator retransmits the identical message until it hears back
+        // (§10), and answering the retransmission afresh derives keys that
+        // displace the ones the initiator has already completed under — leaving
+        // a pair that both ends call `established` and neither can decrypt.
+        // Checked before the ML-KEM work, so a repeat costs nothing.
+        let repeated = self.peer_at(from).and_then(|peer| {
+            roster
+                .peers
+                .get(peer)
+                .and_then(|p| Self::lock(&p.session).repeat_response(msg))
+                .map(|actions| (peer, actions))
+        });
+        if let Some((peer, actions)) = repeated {
+            self.apply(roster, peer, actions, now_ms, out);
+            return;
+        }
+
         let index = self
             .peer_at(from)
             .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX).wrapping_add(1));
@@ -1168,7 +1228,7 @@ impl Engine {
         let actions = roster
             .peers
             .get(peer)
-            .map(|p| Self::lock(&p.session).adopt_responder(&pending.confirm(), &msg2, now_ms))
+            .map(|p| Self::lock(&p.session).adopt_responder(msg, &pending.confirm(), &msg2, now_ms))
             .unwrap_or_default();
         self.apply(roster, peer, actions, now_ms, out);
     }

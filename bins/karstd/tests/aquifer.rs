@@ -69,6 +69,8 @@ const IP_B_SAME_LAN: &str = "10.98.1.3";
 const NAT_B_INNER: &str = "10.98.2.1";
 
 const RELAY_PORT: u16 = 8443;
+/// A second relay on the same segment, for `ponor-v1.md` §9.1's two rules.
+const RELAY_PORT_2: u16 = 8444;
 /// The relay's AVEN reflector — `aven-v1.md` §7.6. Its own **UDP** socket,
 /// because a NAT maps TCP and UDP separately and the Ponor connection's
 /// mapping is not the one AVEN needs.
@@ -1055,24 +1057,38 @@ struct Pins {
     verify: String,
 }
 
-/// Write the relay's TLS material and roster, and start it.
+/// TLS material for the relays, written once and shared by all of them.
 ///
-/// Returns the certificate (which the nodes trust through `relay_ca_file`) and
-/// the relay's ML-DSA-65 public key in hex, which the coordination server
-/// publishes in its registry.
-fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
-    // Self-signed, which §4.2 makes fine and finding 16 made expressible: this
-    // is the deployment `ponor-v1.md` calls the realistic self-hosted one.
-    let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
-        .expect("self-signed certificate");
+/// **One certificate, however many relays.** A node trusts a single
+/// `relay_ca_file`, and what §4.2 pins is the relay's ML-DSA-65 identity rather
+/// than its certificate — the TLS hop underneath is an ordinary validated one.
+/// Two self-signed certificates would need the node to trust two anchors, which
+/// tests the CA file rather than anything in the protocol.
+fn relay_tls(net: &Aquifer) -> (PathBuf, PathBuf) {
     let cert_path = net.dir.join("relay.crt");
     let key_path = net.dir.join("relay.pem");
-    std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
-    write_secret(&key_path, &cert.signing_key.serialize_pem());
+    if !cert_path.exists() {
+        // Self-signed, which §4.2 makes fine and finding 16 made expressible:
+        // this is the deployment `ponor-v1.md` calls the realistic self-hosted
+        // one.
+        let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
+            .expect("self-signed certificate");
+        std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
+        write_secret(&key_path, &cert.signing_key.serialize_pem());
+    }
+    (cert_path, key_path)
+}
 
-    // The roster, from keys derived here rather than read back from a daemon
-    // that has not started. A relay cannot verify a node it has not been told
-    // about (§5.3), so it has to be told first.
+/// The roster both relays admit, written once.
+///
+/// From keys derived here rather than read back from a daemon that has not
+/// started. A relay cannot verify a node it has not been told about (§5.3), so
+/// it has to be told first.
+fn relay_roster(net: &Aquifer) -> PathBuf {
+    let roster_path = net.dir.join("roster.toml");
+    if roster_path.exists() {
+        return roster_path;
+    }
     let mut roster = String::new();
     for seed in [SEED_A, SEED_B] {
         use std::fmt::Write as _;
@@ -1082,21 +1098,59 @@ fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
             Base64::encode_string(&node_public(seed))
         );
     }
-    let roster_path = net.dir.join("roster.toml");
     std::fs::write(&roster_path, roster).expect("write roster");
 
-    let relay_key = net.dir.join("relay.key");
-    let relay_conf = net.dir.join("relay.toml");
+    // **Renewed, because a relay that is not told its roster is current stops
+    // admitting anyone** — `roster::MAX_AGE`, and deliberately so: a roster is
+    // a membership list, and one nobody is refreshing is one nobody is
+    // maintaining. A real deployment's control plane rewrites it; here a thread
+    // touches it, which moves the fingerprint's mtime and renews the lease.
+    //
+    // The thread ends when the file does, which is when the fixture's directory
+    // is removed. Rows that finish inside ninety seconds never needed this and
+    // never noticed it was missing.
+    let renewing = roster_path.clone();
+    std::thread::spawn(move || {
+        while renewing.exists() {
+            std::thread::sleep(Duration::from_secs(20));
+            let _ = filetime_now(&renewing);
+        }
+    });
+    roster_path
+}
+
+/// Touch a file, so a watcher that fingerprints mtime sees it as renewed.
+fn filetime_now(path: &Path) -> std::io::Result<()> {
+    let contents = std::fs::read(path)?;
+    std::fs::write(path, contents)
+}
+
+/// Start one relay on the public segment, and return its ML-DSA-65 public key
+/// in hex — which the coordination server publishes in its registry.
+///
+/// `reflect` gives it AVEN's §7.7 reflector. Only the first relay needs one:
+/// a second relay exists here to be *chosen* rather than to be discovered
+/// through, and a reflector on it would be a second vantage point the tests
+/// that use two relays do not exercise.
+fn spawn_relay(net: &mut Aquifer, tag: &str, port: u16, reflect: bool) -> String {
+    let (cert_path, key_path) = relay_tls(net);
+    let roster_path = relay_roster(net);
+    let relay_key = net.dir.join(format!("relay{tag}.key"));
+    let relay_conf = net.dir.join(format!("relay{tag}.toml"));
+    let reflect = if reflect {
+        format!("\n[reflect]\nlisten = \"{IP_PUB}:{REFLECT_PORT}\"\n")
+    } else {
+        String::new()
+    };
     std::fs::write(
         &relay_conf,
         format!(
-            "listen = \"{IP_PUB}:{RELAY_PORT}\"\n\
+            "listen = \"{IP_PUB}:{port}\"\n\
              identity_key = \"{}\"\n\
              roster = \"{}\"\n\
              tls_cert = \"{}\"\n\
              tls_key = \"{}\"\n\
-             \n[reflect]\n\
-             listen = \"{IP_PUB}:{REFLECT_PORT}\"\n",
+             {reflect}",
             relay_key.display(),
             roster_path.display(),
             cert_path.display(),
@@ -1114,13 +1168,30 @@ fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
         NS_PUB,
         &bin("karst-relay"),
         &["--config", &relay_conf.to_string_lossy()],
-        "relay.log",
+        &format!("relay{tag}.log"),
     );
-    (cert_path, relay_pk)
+    relay_pk
+}
+
+/// The relay every topology has: reflector and all.
+fn start_relay(net: &mut Aquifer) -> (PathBuf, String) {
+    let relay_pk = spawn_relay(net, "", RELAY_PORT, true);
+    (net.dir.join("relay.crt"), relay_pk)
 }
 
 /// Build and start the Go coordination server, advertising the running relay.
 fn start_server(net: &mut Aquifer, relay_pk: &str) -> Pins {
+    start_server_with(
+        net,
+        &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk.to_owned())],
+    )
+}
+
+/// The same, advertising a registry of several relays.
+///
+/// **Order is meaningful.** A node with nothing measured holds the first entry,
+/// so listing a relay first is how a test decides where both nodes begin.
+fn start_server_with(net: &mut Aquifer, relays: &[(String, String)]) -> Pins {
     let server_bin = format!("{}/target/karst-testserver", repo());
     let build = Command::new("go")
         .args([
@@ -1139,21 +1210,27 @@ fn start_server(net: &mut Aquifer, relay_pk: &str) -> Pins {
     );
 
     let listen = format!("{IP_PUB}:{SERVER_PORT}");
-    let relay_addr = format!("{IP_PUB}:{RELAY_PORT}");
+    let mut argv: Vec<String> = [
+        "netns",
+        "exec",
+        NS_PUB,
+        &server_bin,
+        "--netmap",
+        "0",
+        "--listen",
+        &listen,
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    for (address, key) in relays {
+        argv.push("--relay".to_owned());
+        argv.push(address.clone());
+        argv.push(key.clone());
+    }
+    let relay_addr = relays.first().map(|(a, _)| a.clone()).unwrap_or_default();
     let mut server = Command::new("ip")
-        .args([
-            "netns",
-            "exec",
-            NS_PUB,
-            &server_bin,
-            "--netmap",
-            "0",
-            "--listen",
-            &listen,
-            "--relay",
-            &relay_addr,
-            relay_pk,
-        ])
+        .args(&argv)
         .stdout(Stdio::piped())
         .stderr(Stdio::from(
             std::fs::File::create(net.dir.join("server.log")).expect("server log"),
@@ -1768,9 +1845,22 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
         .expect("run the client");
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("over the tunnel"),
-        "no TCP conversation across the tunnel: {} {}",
+        // **The counters, not just the traceback.** A timeout here says a
+        // packet did not arrive and nothing about which end stopped carrying
+        // it; `tx_packets` against `rx_packets` at both ends separates "never
+        // sent" from "sent and lost" from "arrived and dropped by the ACL",
+        // which are three different bugs that look identical from Python.
+        "no TCP conversation across the tunnel: {} {}\n── node A ──\n{}\n\
+         ── node B ──\n{}\n── a.log ──\n{}\n── b.log ──\n{}\n\
+         ── relay.log ──\n{}\n── relay2.log ──\n{}",
         String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&out.stderr),
+        status(net, "a", NS_A),
+        status(net, "b", NS_B),
+        net.log("a.log"),
+        net.log("b.log"),
+        net.log("relay.log"),
+        net.log("relay2.log"),
     );
 
     // Nothing was dropped by the ACL on the way. A reply denied here is exactly
@@ -1784,4 +1874,159 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
             "node {tag} denied its own traffic:\n{s}"
         );
     }
+}
+
+/// **Two nodes on two relays, reaching each other — `ponor-v1.md` §9.1 end to
+/// end.**
+///
+/// Every other row in this file has one relay, and with one relay §9.1's second
+/// rule can never fire: both nodes hold the same connection and the relay
+/// forwards between them. This row is the one that puts them on different
+/// relays and makes the pair depend on the published `home_relay` — the field
+/// that crosses the control plane, enters both content hashes, and until now
+/// was never *read* by anything that carried a packet.
+///
+/// **How the two are separated is itself the point.** Node B cannot reach relay
+/// 1 at all: a filter in its namespace drops the connection, which is what a
+/// relay a node is not admitted to looks like from the outside (§10.1 makes a
+/// roster miss deliberately indistinguishable from a relay that is down). So B
+/// has to leave the relay its registry lists first and take the other, which is
+/// the behaviour a per-region or per-tenant registry needs and which nothing
+/// else here exercises.
+///
+/// Then A — still on relay 1, and with no way to know where B is — has to
+/// discover B's absence by addressing it, read the relay B published, dial that
+/// relay on demand, and carry a TCP conversation over it.
+///
+/// The topology is [`Shape::UdpBlocked`] so that the pair *stays* relayed:
+/// on any shape where AVEN can work the direct path would displace the relay
+/// within seconds, and this row would stop testing the thing it is here for.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn two_nodes_on_two_relays_reach_each_other() {
+    if !have_prerequisites() {
+        eprintln!("skipping: needs root and a Go toolchain");
+        return;
+    }
+    let mut net = Aquifer {
+        dir: std::env::temp_dir().join(format!("karst-aquifer-{}", std::process::id())),
+        services: Vec::new(),
+        nodes: Vec::new(),
+    };
+    let _ = std::fs::remove_dir_all(&net.dir);
+    std::fs::create_dir_all(&net.dir).expect("temp dir");
+
+    let ips = build_topology(&mut net, Shape::UdpBlocked);
+    let (ca, relay_pk) = start_relay(&mut net);
+    let relay_pk_2 = spawn_relay(&mut net, "2", RELAY_PORT_2, false);
+    let pins = start_server_with(
+        &mut net,
+        &[
+            (format!("{IP_PUB}:{RELAY_PORT}"), relay_pk),
+            (format!("{IP_PUB}:{RELAY_PORT_2}"), relay_pk_2),
+        ],
+    );
+    write_node_configs(&net, &pins, &ca, ips);
+
+    // **Relay 1 is unreachable from node B, and only from node B.** Dropped in
+    // B's own namespace rather than at the relay, so that what B sees is a
+    // connection that will not complete — which is all §10.1 lets a node see of
+    // a relay that will not have it.
+    must(&nsr(NS_B, &["nft", "add", "table", "ip", "karst"]));
+    must(&nsr(
+        NS_B,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "out",
+            "{ type filter hook output priority 0 ; }",
+        ],
+    ));
+    must(&nsr(
+        NS_B,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "ip",
+            "karst",
+            "out",
+            "tcp",
+            "dport",
+            &RELAY_PORT.to_string(),
+            "drop",
+        ],
+    ));
+
+    start_node(&mut net, "a", NS_A);
+    wait_for(&net, "node A to come up", Duration::from_secs(30), || {
+        net.log("a.log").contains("up, mtu")
+    });
+    start_node(&mut net, "b", NS_B);
+
+    // B gives up on the relay it cannot reach and takes the other. Without
+    // this a node whose registry lists a relay it is not admitted to first
+    // would retry that one for the life of the process — nothing measures a
+    // relay it has no connection to, so the alternatives would never be tried.
+    wait_for(
+        &net,
+        "node B to leave the relay it cannot reach",
+        Duration::from_secs(120),
+        || net.log("b.log").contains("giving up on relay"),
+    );
+    wait_for(
+        &net,
+        "node B to see its peer",
+        Duration::from_secs(60),
+        || field(&status(&net, "b", NS_B), "name").is_some(),
+    );
+
+    // B publishes its move as soon as it happens, so restarting A here — the
+    // same trick every other row uses for peers — gives A a netmap whose entry
+    // for B already names relay 2. Without the restart A would wait out its own
+    // sixty-second refresh, which is a real property of the daemon and a poor
+    // use of a test's time.
+    net.stop_node("a", NS_A);
+    start_node(&mut net, "a", NS_A);
+
+    // **The assertion this row exists for.** A is on relay 1, B is on relay 2,
+    // and the only way a packet crosses is A reading what B published and
+    // dialling it.
+    wait_for(
+        &net,
+        "node A to dial the relay its peer published",
+        Duration::from_secs(90),
+        || {
+            net.log("a.log")
+                .contains("to reach a peer that published it as its home relay")
+        },
+    );
+    wait_for(
+        &net,
+        "both nodes to establish over two relays",
+        Duration::from_secs(90),
+        || {
+            let (a, b) = transports(&net);
+            a.as_deref() == Some("relay")
+                && b.as_deref() == Some("relay")
+                && field(&status(&net, "a", NS_A), "state").as_deref() == Some("established")
+                && field(&status(&net, "b", NS_B), "state").as_deref() == Some("established")
+        },
+    );
+
+    // And traffic crosses it, which is the difference between a path that is
+    // reported and a path that carries.
+    exchange_tcp_under_the_acl(&mut net);
+
+    // Node A never left the relay it started on: the second rule is about
+    // reaching a peer elsewhere, not about following it.
+    assert!(
+        !net.log("a.log").contains("giving up on relay"),
+        "node A moved relay too, so this row did not test two nodes on two \
+         relays:\n{}",
+        net.log("a.log")
+    );
 }

@@ -496,3 +496,48 @@ fn the_responder_stays_passive_across_successive_rekeys() {
         p.assert_traffic_flows(established_at + 20, "after a rekey");
     }
 }
+
+/// **A retransmitted `HandshakeInit` must not wedge the pair.**
+///
+/// An initiator retransmits the identical message until it hears back (§10), so
+/// on any path where a retransmission crosses the response — a relayed one, a
+/// lossy one, a slow one — the responder is asked the same question twice.
+/// Answering it afresh derives a second set of keys and discards the first, the
+/// set the initiator has already completed under. Both ends then report
+/// `established`, neither can decrypt the other, and neither has any reason to
+/// handshake again: the tunnel is wedged until the keys expire, with every
+/// datagram counted as a decryption failure at one end and nothing at all at
+/// the other.
+///
+/// Found by an aquifer row where the relay path was slow enough to make the
+/// crossing routine rather than rare.
+#[test]
+fn a_retransmitted_handshake_init_does_not_wedge_the_pair() {
+    let a_keys = keys(0x11, 0x12);
+    let b_keys = keys(0x21, 0x22);
+    let mut pair = Pair::new(
+        Arc::clone(&a_keys),
+        Arc::clone(&b_keys),
+        peer_of(&a_keys),
+        peer_of(&b_keys),
+    );
+
+    // A dials, and its `HandshakeInit` is delivered twice — which is what a
+    // retransmission is, byte for byte.
+    let msg1 = Pair::sends(pair.a.connect(0, [0x5A; 32]));
+    let (msg2, _) = pair.deliver_to_b(msg1.clone(), 0);
+    pair.deliver_to_a(msg2, 0);
+    assert!(pair.a.established(), "A must establish on the first answer");
+
+    let (msg2_again, _) = pair.deliver_to_b(msg1, 300);
+    assert!(
+        !msg2_again.is_empty(),
+        "the retransmission was ignored, so an initiator whose response was \
+         lost would never establish"
+    );
+    // A already has a session; the repeat must not disturb it either.
+    pair.deliver_to_a(msg2_again, 300);
+
+    pair.assert_traffic_flows(400, "after the retransmission");
+    pair.assert_traffic_flows(500, "and again");
+}

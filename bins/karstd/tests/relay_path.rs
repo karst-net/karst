@@ -667,6 +667,37 @@ fn a_published_relay_the_registry_does_not_carry_is_not_dialled() {
     assert_eq!(route(&a, 1_000), Route::Home);
 }
 
+/// **A peer heard from on this node's own relay is on it, whatever it
+/// published.** The refusal that sent its traffic elsewhere is a fact with a
+/// lifetime, and the peer arriving here is the evidence that ends it — most
+/// obviously when the peer has dialled this very relay on demand because
+/// *this* node is the one it cannot reach. Without this the pair sits either
+/// side of a mark for minutes, each sending to a relay the other is not on,
+/// while both are meeting on one relay the whole time.
+#[test]
+fn a_peer_heard_on_this_relay_is_reached_on_it_again() {
+    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    assert!(a.engine.relay_unreachable(id_of(0x02), 1_000));
+    assert_eq!(route(&a, 1_000), Route::Published(elsewhere().relay_id));
+
+    a.engine.seen_on_home_relay(id_of(0x02));
+    assert_eq!(
+        route(&a, 1_100),
+        Route::Home,
+        "the peer was here, and this node went on sending elsewhere"
+    );
+    assert_eq!(a.engine.relay_for(id_of(0x02)), None);
+}
+
+/// A peer nothing is marked against is unaffected — the common case, and the
+/// one that must not cost anything.
+#[test]
+fn hearing_from_an_unmarked_peer_changes_nothing() {
+    let (a, _b) = homed_pair(Some(elsewhere().relay_id));
+    a.engine.seen_on_home_relay(id_of(0x02));
+    assert_eq!(route(&a, 1_000), Route::Home);
+}
+
 /// **The refusal expires.** A peer's absence from this node's relay is a fact
 /// with a lifetime: it may join this relay's mesh or move onto it outright, and
 /// neither produces a message anyone sends here. Without this, a pair that
