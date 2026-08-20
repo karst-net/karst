@@ -91,6 +91,8 @@ pub struct Ctx {
     identity: Arc<Identity>,
     tls: Arc<rustls::ServerConfig>,
     started: Instant,
+    /// Which region this relay serves — §8.
+    region: String,
     next_conn: AtomicU64,
     /// `None` unless the operator configured one — `config::Reflect`.
     ///
@@ -136,6 +138,7 @@ impl Ctx {
             identity,
             tls,
             started: Instant::now(),
+            region: cfg.region.clone(),
             next_conn: AtomicU64::new(1),
             reflect: cfg
                 .reflect
@@ -217,6 +220,18 @@ impl Ctx {
     /// Takes the hub lock once and copies out, rather than holding it across a
     /// render: the lock is on the forwarding path, and a scrape must not make
     /// every client wait on string formatting.
+    /// Whether a mesh peer serves this relay's region — §8.
+    ///
+    /// A peer absent from the roster cannot be admitted at all, so `false` here
+    /// is a belt-and-braces answer rather than the load-bearing one.
+    fn same_region(&self, relay_id: &crate::mesh::Id) -> bool {
+        let roster = match self.roster.read() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        roster.mesh_region(relay_id) == Some(self.region.as_str())
+    }
+
     fn snapshot(&self) -> crate::metrics::Snapshot {
         let (local_clients, mesh_peers, remote_clients, totals) = self.with_hub(|hub| {
             (
@@ -330,7 +345,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // finding it out from a log line nobody is reading.
         let client_tls = crate::tls::client_config(&mesh.ca)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id());
+        let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id(), cfg.region.clone());
         eprintln!("karst-relay: mesh dialling enabled");
         tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, dialler));
     }
@@ -490,6 +505,15 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
         // Either the peer stalled or it was refused. Both close silently.
         return;
     };
+    // §8's regional boundary, on the accepting side. Guarding only the dialler
+    // would leave it holding on one side of every pair: an operator who put a
+    // foreign relay in the list would simply be meshed *by* it instead.
+    if let Admitted::Mesh { relay_id } = &admitted {
+        if !ctx.same_region(relay_id) {
+            eprintln!("karst-relay: refused a mesh peer from another region");
+            return;
+        }
+    }
     let mut tls_stream = tls_stream;
     // §7.7: after `RelayAuth`, before any `RecvPacket`. Sent here rather than
     // through the hub's queue because the ordering is the security argument —

@@ -265,9 +265,15 @@ impl Meshable {
     /// Roster `other` on both sides and start dialling it from whichever side
     /// `mesh::Dialler` says is responsible.
     fn mesh_with(&mut self, other: &Meshable) {
+        self.mesh_with_region(other, "default");
+    }
+
+    /// As [`Self::mesh_with`], but rostering the peer in a named region.
+    fn mesh_with_region(&mut self, other: &Meshable, region: &str) {
         for (me, them) in [(&*self, other), (other, &*self)] {
             let roster = format!(
-                "{}[[mesh]]\nidentity_pk = \"{}\"\ndial = \"{}\"\nname = \"relay.test\"\n",
+                "{}[[mesh]]\nidentity_pk = \"{}\"\ndial = \"{}\"\nname = \"relay.test\"\n\
+                 region = \"{region}\"\n",
                 me.clients,
                 Base64::encode_string(them.harness.relay.public_key()),
                 them.harness.addr
@@ -284,7 +290,8 @@ impl Meshable {
             let ca = me.dir.join("mesh-ca.pem");
             std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
             let tls = karst_relay::tls::client_config(&ca).expect("client tls");
-            let dialler = karst_relay::mesh::Dialler::new(me.harness.relay.relay_id());
+            let dialler =
+                karst_relay::mesh::Dialler::new(me.harness.relay.relay_id(), "default".to_owned());
             tokio::spawn(karst_relay::server::mesh_loop(
                 Arc::clone(&me.ctx),
                 tls,
@@ -753,4 +760,51 @@ async fn two_relays_mesh_and_a_packet_crosses() {
         },
         "the far relay delivered something other than Alice's packet"
     );
+}
+
+/// **§8's regional boundary, which is a bandwidth argument rather than a
+/// security one.**
+///
+/// Cross-region relay-to-relay forwarding would make every relay's bandwidth
+/// spendable by every other region's operator, so a relay refuses both to dial
+/// and to admit a mesh peer whose region differs. Enforced rather than trusted
+/// to the configuration: a foreign relay in the mesh list is then a mistake
+/// that shows up at once, not a slow bandwidth transfer nobody attributes to
+/// it.
+///
+/// It guards a misconfiguration, not a hostile operator — whoever writes one
+/// file writes the other — and the test says so because the code does.
+#[tokio::test]
+async fn a_mesh_peer_in_another_region_is_refused() {
+    let alice = identity(0x71);
+    let bob = identity(0x72);
+
+    let mut left = start_meshable("region-left", &[(&alice, "acme"), (&bob, "acme")]).await;
+    let right = start_meshable("region-right", &[(&alice, "acme"), (&bob, "acme")]).await;
+    // Both relays run in the default region; the roster claims otherwise.
+    left.mesh_with_region(&right, "us-east");
+
+    let (mut a, _) = connect(&left.harness).await;
+    handshake(&left.harness, &mut a, &alice).await;
+    let (mut b, _) = connect(&right.harness).await;
+    handshake(&right.harness, &mut b, &bob).await;
+
+    // Long enough for several dial attempts at the minimum backoff, so this is
+    // "refused" rather than "had not got round to it yet".
+    for _ in 0..12 {
+        a.send(
+            &Frame::SendPacket {
+                dst_id: nid(&bob),
+                payload: &[0x5c; 32],
+            }
+            .to_vec(),
+        )
+        .await;
+        if let Ok(bytes) =
+            tokio::time::timeout(std::time::Duration::from_millis(250), b.frame()).await
+        {
+            let (frame, _) = decode(&bytes).expect("decodes").expect("complete");
+            panic!("a packet crossed a regional boundary: {frame:?}");
+        }
+    }
 }

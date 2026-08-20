@@ -2308,6 +2308,23 @@ onwards, anchored on the week of 2026-08-10.
   unit test could: making **both** sides dial fails it, and disabling the dialler
   fails it.
 
+  ✅ **§8's regional boundary, enforced on both sides.** Mesh is within a
+  region because cross-region relay-to-relay forwarding would make every
+  relay's bandwidth spendable by every other region's operator. A relay refuses
+  both to dial and to admit a peer whose region differs — guarding only the
+  dialler would leave the boundary holding on one side of every pair, so an
+  operator who listed a foreign relay would simply be meshed *by* it instead.
+
+  Stated for what it is: a guard against **misconfiguration**, not against a
+  hostile operator, who writes both files. Its value is that a foreign relay in
+  the mesh list becomes a mistake visible at once rather than a slow bandwidth
+  transfer nobody attributes to it.
+
+  The default region is a name rather than empty, so a single-region deployment
+  works untouched and two relays that never heard of regions still mesh.
+  Removing both guards makes a packet cross the boundary, which is the row's
+  own defect check.
+
   ✅ **Prometheus metrics**, on their own listener and off by default. Two
   decisions worth recording.
 

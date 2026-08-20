@@ -88,6 +88,13 @@ struct MeshRow {
     /// The name its certificate is issued for, when that differs from `dial`.
     #[serde(default)]
     name: Option<String>,
+    /// Which region this peer serves — §8. Must match this relay's own.
+    #[serde(default = "default_region")]
+    region: String,
+}
+
+fn default_region() -> String {
+    "default".to_owned()
 }
 
 /// A roster loaded from a file.
@@ -100,6 +107,13 @@ struct MeshRow {
 pub struct FileRoster {
     clients: HashMap<Id, RosterEntry>,
     mesh: HashMap<Id, RelayEntry>,
+    /// Which region each mesh peer serves — §8.
+    ///
+    /// Separate from `dial` because a dial-in-only peer has no address and
+    /// still has a region: the boundary has to hold on the side that *accepts*
+    /// a connection as well as the side that opens one, or an operator who put
+    /// a foreign relay in the list simply gets meshed by it instead.
+    region: HashMap<Id, String>,
     /// Mesh peers with an address, for `mesh::Dialler`.
     ///
     /// Held here rather than on `RelayEntry`, which is a `karst-relay-proto`
@@ -198,6 +212,12 @@ impl FileRoster {
         self.dial.clone()
     }
 
+    /// The region a mesh peer serves, if it is in the roster at all.
+    #[must_use]
+    pub fn mesh_region(&self, id: &Id) -> Option<&str> {
+        self.region.get(id).map(String::as_str)
+    }
+
     /// An empty roster, which admits nobody.
     ///
     /// Stated as a test rather than a convenience: an absent configuration
@@ -208,6 +228,7 @@ impl FileRoster {
             clients: HashMap::new(),
             mesh: HashMap::new(),
             dial: Vec::new(),
+            region: HashMap::new(),
             decoy: fresh_decoy(),
         }
     }
@@ -243,6 +264,7 @@ impl FileRoster {
 
         let mut mesh = HashMap::new();
         let mut dial = Vec::new();
+        let mut region = HashMap::new();
         for (n, row) in file.mesh.iter().enumerate() {
             let pk = decode_key(&row.identity_pk, "mesh", n)?;
             let id = relay_id(&pk);
@@ -251,8 +273,10 @@ impl FileRoster {
                     id,
                     addr: addr.clone(),
                     name: row.name.clone(),
+                    region: row.region.clone(),
                 });
             }
+            region.insert(id, row.region.clone());
             if mesh.insert(id, RelayEntry { identity_pk: pk }).is_some() {
                 return Err(Error::Duplicate(format!(
                     "roster: mesh peer #{n} repeats an identity already listed"
@@ -264,6 +288,7 @@ impl FileRoster {
             clients,
             mesh,
             dial,
+            region,
             decoy: fresh_decoy(),
         })
     }

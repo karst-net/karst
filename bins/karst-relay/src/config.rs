@@ -95,6 +95,25 @@ pub struct Config {
     /// connections and never opens one.
     #[serde(default)]
     pub mesh: Option<Mesh>,
+
+    /// Which region this relay serves — §8, §9.
+    ///
+    /// **Mesh is within a region**, and §8 gives the reason: cross-region
+    /// relay-to-relay forwarding would make every relay's bandwidth spendable
+    /// by every other region's operator. A relay refuses to mesh with a peer
+    /// whose region differs, so a peer from the wrong region in the mesh list
+    /// is a startup-visible mistake rather than a slow bandwidth transfer.
+    ///
+    /// The default is deliberately a name rather than empty: a single-region
+    /// deployment then works untouched, and two relays that both left it alone
+    /// mesh with each other, which is what an operator who has never heard of
+    /// regions expects.
+    #[serde(default = "default_region")]
+    pub region: String,
+}
+
+fn default_region() -> String {
+    "default".to_owned()
 }
 
 /// How this relay dials its mesh peers — §8.

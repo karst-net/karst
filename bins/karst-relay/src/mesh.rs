@@ -55,6 +55,8 @@ pub struct Peer {
     /// own arguments for not resting relay identity on certificates. `None`
     /// means the host part of `addr`, which is the ordinary case.
     pub name: Option<String>,
+    /// Which region it serves — §8.
+    pub region: String,
 }
 
 impl Peer {
@@ -91,6 +93,7 @@ struct Attempt {
 #[derive(Debug)]
 pub struct Dialler {
     us: Id,
+    region: String,
     peers: Vec<Peer>,
     attempts: HashMap<Id, Attempt>,
 }
@@ -98,9 +101,10 @@ pub struct Dialler {
 impl Dialler {
     /// A dialler for a relay with this id.
     #[must_use]
-    pub fn new(us: Id) -> Self {
+    pub fn new(us: Id, region: String) -> Self {
         Self {
             us,
+            region,
             peers: Vec::new(),
             attempts: HashMap::new(),
         }
@@ -131,7 +135,7 @@ impl Dialler {
     pub fn responsible(&self) -> Vec<&Peer> {
         self.peers
             .iter()
-            .filter(|p| Self::dials(&self.us, &p.id))
+            .filter(|p| p.region == self.region && Self::dials(&self.us, &p.id))
             .collect()
     }
 
@@ -143,6 +147,9 @@ impl Dialler {
     pub fn due(&mut self, now_ms: u64, connected: &impl Fn(&Id) -> bool) -> Vec<Due> {
         let mut out = Vec::new();
         for peer in &self.peers {
+            if peer.region != self.region {
+                continue;
+            }
             if !Self::dials(&self.us, &peer.id) || connected(&peer.id) {
                 continue;
             }
@@ -197,6 +204,7 @@ mod tests {
             id: id(n),
             addr: format!("relay{n}.test:8443"),
             name: None,
+            region: "default".to_owned(),
         }
     }
 
@@ -213,12 +221,14 @@ mod tests {
             id: id(1),
             addr: "10.0.0.5:8443".to_owned(),
             name: None,
+            region: "default".to_owned(),
         };
         assert_eq!(plain.server_name(), "10.0.0.5");
         let behind_lb = Peer {
             id: id(1),
             addr: "10.0.0.5:8443".to_owned(),
             name: Some("relay-a.example".to_owned()),
+            region: "default".to_owned(),
         };
         assert_eq!(behind_lb.server_name(), "relay-a.example");
     }
@@ -235,8 +245,31 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_in_another_region_is_never_dialled() {
+        // §8: mesh is within a region, because cross-region relay-to-relay
+        // forwarding would make every relay's bandwidth spendable by every
+        // other region's operator. Enforced rather than trusted to the
+        // configuration, so a peer from the wrong region in the mesh list is a
+        // mistake that shows up at once instead of as a slow bandwidth
+        // transfer nobody attributes to it.
+        //
+        // It is a guard against misconfiguration, not against a hostile
+        // operator — whoever writes one file writes the other.
+        let mut d = Dialler::new(id(1), "eu-west".to_owned());
+        let mut far = peer(2);
+        far.region = "us-east".to_owned();
+        let mut near = peer(3);
+        near.region = "eu-west".to_owned();
+        d.set_peers(vec![far, near]);
+
+        assert_eq!(d.responsible().len(), 1, "only the same-region peer");
+        let due: Vec<Id> = d.due(0, &never).into_iter().map(|x| x.id).collect();
+        assert_eq!(due, vec![id(3)]);
+    }
+
+    #[test]
     fn a_relay_dials_only_the_peers_it_is_responsible_for() {
-        let mut d = Dialler::new(id(5));
+        let mut d = Dialler::new(id(5), "default".to_owned());
         d.set_peers(vec![peer(1), peer(3), peer(7), peer(9)]);
         let ids: Vec<Id> = d.responsible().into_iter().map(|p| p.id).collect();
         assert_eq!(ids, vec![id(7), id(9)], "only the higher ids");
@@ -246,7 +279,7 @@ mod tests {
     fn a_peer_already_connected_is_not_dialled() {
         // The hub owns this fact. Tracking it here as well would be a second
         // copy free to drift from the first.
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2), peer(3)]);
         let connected = |i: &Id| *i == id(2);
         let due: Vec<Id> = d.due(0, &connected).into_iter().map(|x| x.id).collect();
@@ -257,7 +290,7 @@ mod tests {
     fn a_dial_in_flight_is_not_dialled_again_on_the_next_tick() {
         // `due` runs on a timer. Without marking the attempt as it is handed
         // out, every tick between the dial and its outcome starts another one.
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2)]);
         assert_eq!(d.due(0, &never).len(), 1);
         assert!(d.due(1, &never).is_empty(), "dialled twice in one second");
@@ -266,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_failure_doubles_the_wait_and_a_success_clears_it() {
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2)]);
 
         assert_eq!(d.due(0, &never).len(), 1, "the first dial is immediate");
@@ -296,7 +329,7 @@ mod tests {
         // Without a cap, a peer down for an hour is one this relay stops
         // trying to reach — the region then needs a restart to reconverge,
         // which is the opposite of what a mesh is for.
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2)]);
         let mut now = 0;
         for _ in 0..20 {
@@ -315,7 +348,7 @@ mod tests {
         // A relay refreshes its roster on a timer. If a reload cleared the
         // backoff, a dead peer would be retried at full rate for ever and the
         // reload would be undoing the state meant to slow it down.
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2)]);
         let _ = d.due(0, &never);
         d.failed(&id(2), 0);
@@ -328,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_peer_removed_from_the_roster_is_forgotten() {
-        let mut d = Dialler::new(id(1));
+        let mut d = Dialler::new(id(1), "default".to_owned());
         d.set_peers(vec![peer(2), peer(3)]);
         let _ = d.due(0, &never);
         d.failed(&id(2), 0);
