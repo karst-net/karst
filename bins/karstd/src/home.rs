@@ -29,6 +29,8 @@ use std::collections::HashMap;
 
 use karst_disco::consts::HYSTERESIS_SAMPLES;
 
+use crate::relay::PING_TOKEN_LEN;
+
 /// A relay's 32-byte id.
 pub type RelayId = [u8; 32];
 
@@ -141,6 +143,78 @@ impl Selector {
     }
 }
 
+/// How often §9.1's latency probe runs.
+///
+/// **Minutes, not seconds.** §9.2's hysteresis means a change needs several
+/// consecutive wins, so the cadence sets how long a genuinely better relay
+/// waits — three rounds at this interval. Faster would spend a Ponor frame and
+/// a netmap update on noise the hysteresis is there to ignore; slower would
+/// leave a node on a relay that had become the wrong one for most of an hour.
+pub const PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Outstanding latency probes on one relay connection — `ponor-v1.md` §9.1.
+///
+/// **A token, not a timestamp of the last send.** A `Pong` carries back the
+/// token that went out, so a round trip is attributed to the request that
+/// caused it rather than to whichever ping happened most recently — which
+/// matters because a lost `Pong` followed by a fast one would otherwise report
+/// the slow path as fast, and §9.1's answer decides where every peer is told to
+/// look for this node.
+#[derive(Debug, Default)]
+pub struct RttProbes {
+    /// Tokens in flight and when each was sent.
+    outstanding: Vec<([u8; PING_TOKEN_LEN], u64)>,
+}
+
+/// Most probes in flight at once.
+///
+/// A relay that never answers must not make this node allocate without bound.
+/// Two is already generous: §9.1's cadence is far longer than any round trip
+/// worth measuring, so a third in flight means the first two are lost.
+const MAX_OUTSTANDING_PROBES: usize = 2;
+
+impl RttProbes {
+    /// Note that `token` has just gone out.
+    ///
+    /// Returns `false` when too many are already in flight, which the caller
+    /// should treat as "do not send" rather than as an error: a relay that is
+    /// not answering is measured by its silence, not by more pings.
+    pub fn sent(&mut self, token: [u8; PING_TOKEN_LEN], now_ms: u64) -> bool {
+        if self.outstanding.len() >= MAX_OUTSTANDING_PROBES {
+            return false;
+        }
+        self.outstanding.push((token, now_ms));
+        true
+    }
+
+    /// The round trip a `Pong` reports, if it answers a probe this node sent.
+    ///
+    /// `None` for a token that was never sent or has already been answered —
+    /// §7.4's rule for AVEN, applied here for the same reason: a relay that
+    /// replayed a `Pong` could otherwise report an arbitrarily good latency and
+    /// win an election it should not.
+    pub fn resolve(&mut self, token: [u8; PING_TOKEN_LEN], now_ms: u64) -> Option<u64> {
+        let at = self.outstanding.iter().position(|(t, _)| *t == token)?;
+        let (_, sent) = self.outstanding.remove(at);
+        // Everything older is lost: a relay answers in order or not at all, so
+        // holding an unanswered token past a later answer would let it be
+        // resolved by a much later `Pong` and reported as a fast round trip.
+        self.outstanding.retain(|(_, s)| *s > sent);
+        Some(now_ms.saturating_sub(sent))
+    }
+
+    /// Forget everything in flight, on reconnection.
+    pub fn reset(&mut self) {
+        self.outstanding.clear();
+    }
+
+    /// Probes awaiting an answer.
+    #[must_use]
+    pub fn in_flight(&self) -> usize {
+        self.outstanding.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
@@ -149,6 +223,63 @@ mod tests {
 
     fn id(n: u8) -> RelayId {
         [n; 32]
+    }
+
+    #[test]
+    fn a_pong_is_attributed_to_the_ping_that_caused_it() {
+        // The whole reason for a token. Matching on "the last ping I sent"
+        // would report a slow path as fast whenever a `Pong` was lost and the
+        // next one arrived quickly — and §9.1's answer decides where every peer
+        // is told to look for this node.
+        let mut p = RttProbes::default();
+        assert!(p.sent([1; PING_TOKEN_LEN], 0));
+        assert!(p.sent([2; PING_TOKEN_LEN], 100));
+        assert_eq!(p.resolve([2; PING_TOKEN_LEN], 130), Some(30));
+    }
+
+    #[test]
+    fn a_token_that_was_never_sent_measures_nothing() {
+        // §7.4's rule for AVEN, here for the same reason: a relay that
+        // volunteered or replayed a `Pong` could otherwise report an
+        // arbitrarily good latency and win an election it should not.
+        let mut p = RttProbes::default();
+        assert_eq!(p.resolve([9; PING_TOKEN_LEN], 10), None);
+        assert!(p.sent([1; PING_TOKEN_LEN], 0));
+        assert_eq!(p.resolve([1; PING_TOKEN_LEN], 5), Some(5));
+        assert_eq!(
+            p.resolve([1; PING_TOKEN_LEN], 6),
+            None,
+            "the same token answered twice"
+        );
+    }
+
+    #[test]
+    fn an_older_probe_cannot_be_resolved_after_a_newer_one() {
+        // A relay answers in order or not at all. Keeping an unanswered token
+        // past a later answer would let a much later `Pong` resolve it and
+        // report a fast round trip for a path that had stalled.
+        let mut p = RttProbes::default();
+        assert!(p.sent([1; PING_TOKEN_LEN], 0));
+        assert!(p.sent([2; PING_TOKEN_LEN], 100));
+        assert_eq!(p.resolve([2; PING_TOKEN_LEN], 110), Some(10));
+        assert_eq!(p.resolve([1; PING_TOKEN_LEN], 900), None);
+    }
+
+    #[test]
+    fn a_silent_relay_cannot_make_this_node_allocate() {
+        // Probes are state a relay's behaviour causes this node to hold. One
+        // that never answers is measured by its silence, not by more pings.
+        let mut p = RttProbes::default();
+        let mut admitted = 0;
+        for n in 0..50u8 {
+            if p.sent([n; PING_TOKEN_LEN], u64::from(n)) {
+                admitted += 1;
+            }
+        }
+        assert_eq!(admitted, 2, "an unanswering relay grew the probe table");
+        assert_eq!(p.in_flight(), 2);
+        p.reset();
+        assert_eq!(p.in_flight(), 0);
     }
 
     #[test]

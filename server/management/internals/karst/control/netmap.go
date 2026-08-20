@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash"
 	"sort"
@@ -80,6 +81,20 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// no business holding.
 	self := node.Handle(identity)
 
+	// §9.1's report, from the node that measured it. Recorded before the
+	// response is assembled so that a node whose relay just moved sees its own
+	// change reflected in the version it is handed, rather than one poll later.
+	//
+	// A malformed value is refused rather than ignored. Ignoring it would leave
+	// the node believing it had published a relay while every peer kept dialling
+	// the old one — an unreachable node with nothing anywhere saying why.
+	if err := h.Nodes.SetHomeRelay(self, req.GetHomeRelay()); err != nil {
+		if errors.Is(err, node.ErrBadHomeRelay) {
+			return nil, status.Error(codes.InvalidArgument, "malformed home relay id")
+		}
+		return nil, fmt.Errorf("record home relay: %w", err)
+	}
+
 	accountID, err := h.Peers.GetAccountIDForPeerKey(ctx, self)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
@@ -143,6 +158,9 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			DnsName:      p.DNSLabel,
 			KemPublicKey: id.KemPublicKey,
 			DhPublicKey:  id.DhPublicKey,
+			// Where to reach this peer when no direct path exists. Empty for a
+			// peer holding no relay, which is a peer reachable only directly.
+			HomeRelay: id.HomeRelay,
 		}
 
 		// The PSK is derived per (self, peer) pair and is the same value both

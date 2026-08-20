@@ -28,6 +28,9 @@ pub struct Session {
 }
 
 /// One consequence of an authenticated relay frame.
+/// Width of a Ponor ping token — `ponor-v1.md` §6.
+pub const PING_TOKEN_LEN: usize = 8;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Event {
     /// Bytes the client must write to complete the Ponor handshake.
@@ -38,6 +41,11 @@ pub enum Event {
         source_id: [u8; ID_LEN],
         /// The opaque PHREATIC or AVEN datagram.
         payload: Vec<u8>,
+    },
+    /// A `Pong` answering a `Ping` this node sent — §9.1.
+    Pong {
+        /// The token that went out, so the caller can attribute the round trip.
+        token: [u8; PING_TOKEN_LEN],
     },
     /// This relay runs an AVEN reflector — `ponor-v1.md` §7.7.
     ///
@@ -363,6 +371,19 @@ impl Sender {
         self.tls.write_all(&bytes).await.map_err(ConnectError::Io)
     }
 
+    /// Send §9.1's latency probe on this connection.
+    ///
+    /// On the established stream and behind whatever is already queued, so the
+    /// round trip measured is the one the datapath would see rather than one
+    /// taken past the traffic.
+    ///
+    /// # Errors
+    /// I/O failure on the TLS stream.
+    pub async fn ping(&mut self, token: [u8; PING_TOKEN_LEN]) -> Result<(), ConnectError> {
+        let bytes = Frame::Ping(&token).to_vec();
+        self.tls.write_all(&bytes).await.map_err(ConnectError::Io)
+    }
+
     /// Flush whatever the last sends buffered.
     ///
     /// # Errors
@@ -467,6 +488,15 @@ async fn write_handshake_events(
                     "relay packet arrived before handshake completion".to_owned(),
                 ));
             }
+            // Nothing has been pinged yet, so a `Pong` here answers a request
+            // this node did not make. Named rather than ignored: a relay that
+            // volunteers one is not following §9.1, and silently dropping it
+            // would hide that.
+            Event::Pong { .. } => {
+                return Err(ConnectError::Protocol(
+                    "relay answered a ping that was never sent".to_owned(),
+                ));
+            }
             // Only ever produced once the relay's signature has verified, so
             // reaching here means the handshake finished mid-buffer.
             reflector @ Event::Reflector { .. } => deferred.push(reflector),
@@ -569,6 +599,17 @@ impl Session {
                     endpoint: *endpoint,
                 }));
             }
+            // §9.1's measurement. A `Pong` carries back the token that went
+            // out, so the round trip is attributable to the request that
+            // caused it rather than to whichever reply arrived next — which
+            // matters here because the answer is what decides where every peer
+            // is told to look for this node.
+            if let Frame::Pong(token) = frame {
+                return Ok(token
+                    .first_chunk::<PING_TOKEN_LEN>()
+                    .copied()
+                    .map(|token| Event::Pong { token }));
+            }
             return self
                 .received(frame)
                 .map(|(source_id, payload)| Event::Packet { source_id, payload })
@@ -582,6 +623,19 @@ impl Session {
         let auth = self.on_hello(frame, signer)?;
         self.awaiting_auth = true;
         Ok(Some(Event::Send(auth)))
+    }
+
+    /// A `Ping` bearing `token` — `ponor-v1.md` §9.1's latency measurement.
+    ///
+    /// `None` before the relay is authenticated, for the same reason
+    /// [`Self::send_packet`] refuses: a measurement of an unauthenticated
+    /// connection measures whoever answered, and §9.1's whole purpose is to
+    /// decide which relay this node commits to.
+    #[must_use]
+    pub fn ping(&self, token: [u8; PING_TOKEN_LEN]) -> Option<Vec<u8>> {
+        self.handshake
+            .may_send()
+            .then(|| Frame::Ping(&token).to_vec())
     }
 
     /// Wrap an opaque datagram for a reachable peer. `None` means the relay is

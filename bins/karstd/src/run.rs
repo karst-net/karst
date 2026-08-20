@@ -277,6 +277,12 @@ pub fn run_with_control(
     };
     let relay_out = relay_out.as_ref();
 
+    // §9.1. The probes are per-connection state and the selector is the node's;
+    // both are held here so the relay worker and the timer thread see the same
+    // ones, and so a reconnection clears the probes without clearing the choice.
+    let rtt_probes = Mutex::new(crate::home::RttProbes::default());
+    let home_selector = Mutex::new(crate::home::Selector::new());
+
     // Initial handshakes, before any thread starts.
     dispatch(
         engine.connect_all(now_ms(started), random_seed),
@@ -354,9 +360,13 @@ pub fn run_with_control(
             let engine = &engine;
             let socket = &socket;
             let tun = &tun;
+            let rtt_probes = &rtt_probes;
+            let home_selector = &home_selector;
             scope.spawn(move || {
                 relay_worker(
                     RelayContext {
+                        rtt: rtt_probes,
+                        home: home_selector,
                         shutdown,
                         identity,
                         relay,
@@ -452,6 +462,7 @@ pub fn run_with_control(
             let local_refresh = &local;
             let routes_refresh = &routes;
             let disco_refresh = &disco;
+            let home_refresh = &home_selector;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -463,6 +474,7 @@ pub fn run_with_control(
                     local_refresh,
                     routes_refresh,
                     disco_refresh,
+                    home_refresh,
                     relay_out,
                 );
             });
@@ -480,6 +492,9 @@ pub fn run_with_control(
 
         // ── timers ─────────────────────────────────────────────────────────
         let mut next_scan = Instant::now() + INTERFACE_SCAN;
+        // §9.1. First probe promptly: a node that has just started has nothing
+        // published, and peers cannot reach it until it does.
+        let mut next_probe = Instant::now() + Duration::from_secs(2);
         while !shutdown.requested() {
             std::thread::sleep(TICK);
             let now = now_ms(started);
@@ -496,6 +511,10 @@ pub fn run_with_control(
                     .set_interfaces(&gather_interfaces(config), listen_port);
             }
             dispatch(engine.poll(now, random_seed), &socket, &tun, relay_out);
+            if Instant::now() >= next_probe {
+                next_probe = Instant::now() + crate::home::PROBE_INTERVAL;
+                probe_home_relay(&rtt_probes, &home_selector, relay_out, now, random_seed);
+            }
             dispatch(disco_poll(&disco, now, relay_out), &socket, &tun, relay_out);
             apply_disco_paths(&disco, &engine);
         }
@@ -556,6 +575,83 @@ fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySend
 /// How often the host's interface addresses are re-enumerated.
 const INTERFACE_SCAN: Duration = Duration::from_secs(15);
 
+/// Measure the relay this node holds, and settle §9.1's choice.
+///
+/// **Only the relay currently held is measured**, so the selector can confirm a
+/// choice but cannot yet be talked out of one. Measuring alternatives means
+/// opening a Ponor connection to each — TLS and an ML-DSA-65 handshake apiece —
+/// and that cost deserves its own decision rather than arriving as a side
+/// effect of this loop. Until then the published value is the relay actually in
+/// use, which is the fact peers need; what is missing is the ability to move.
+fn probe_home_relay(
+    rtt: &Mutex<crate::home::RttProbes>,
+    home: &Mutex<crate::home::Selector>,
+    relay: Option<&RelaySender>,
+    now_ms: u64,
+    rand: impl Fn() -> [u8; 32],
+) {
+    let Some(relay) = relay else {
+        return;
+    };
+    // Settle whatever the last round measured before asking again, so the
+    // choice reflects answers rather than questions.
+    let (chosen, changed) = {
+        let mut home = home
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        home.select()
+    };
+    if changed {
+        eprintln!(
+            "karstd: home relay is now {}",
+            chosen.map_or_else(|| "none".to_owned(), |id| hex_short(&id))
+        );
+    }
+
+    let seed = rand();
+    let Some(token) = seed
+        .first_chunk::<{ crate::relay::PING_TOKEN_LEN }>()
+        .copied()
+    else {
+        return;
+    };
+    let admitted = {
+        let mut rtt = rtt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        rtt.sent(token, now_ms)
+    };
+    // A relay with probes already outstanding is one that is not answering.
+    // Sending more would measure this node's willingness to ask rather than
+    // the relay's willingness to reply.
+    if admitted {
+        relay.ping(token);
+    }
+}
+
+/// Put one queued item on the wire.
+async fn write_relayed(
+    sender: &mut crate::relay::Sender,
+    item: Relayed,
+) -> Result<(), crate::relay::ConnectError> {
+    match item {
+        Relayed::Packet {
+            destination,
+            payload,
+        } => sender.send_packet(destination, &payload).await,
+        Relayed::Ping(token) => sender.ping(token).await,
+    }
+}
+
+/// The first four bytes of an id, for a log line.
+fn hex_short(id: &[u8]) -> String {
+    use std::fmt::Write as _;
+    id.iter().take(4).fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
 /// The addresses this node offers as candidates — `spec/aven-v1.md` §7.3.
 ///
 /// `karst_tun::local_addresses` has already dropped what a peer could not
@@ -600,9 +696,17 @@ fn gather_interfaces(config: &Config) -> Vec<std::net::IpAddr> {
 /// they are the same thing: opaque bytes for a named node. Ponor reads the
 /// destination id and nothing else.
 #[derive(Debug)]
-struct Relayed {
-    destination: [u8; karst_relay_proto::consts::ID_LEN],
-    payload: Vec<u8>,
+enum Relayed {
+    /// A PHREATIC or AVEN datagram for a peer.
+    Packet {
+        destination: [u8; karst_relay_proto::consts::ID_LEN],
+        payload: Vec<u8>,
+    },
+    /// §9.1's latency probe, addressed to the relay itself rather than through
+    /// it. It shares this queue so that it is measured behind whatever traffic
+    /// is already waiting — a round trip taken past a full queue is the one the
+    /// datapath would actually see, and one taken past it is not.
+    Ping([u8; crate::relay::PING_TOKEN_LEN]),
 }
 
 /// The datapath's handle on the relay worker.
@@ -624,8 +728,19 @@ struct RelaySender {
 }
 
 impl RelaySender {
+    /// Queue §9.1's latency probe.
+    ///
+    /// Dropped rather than blocked on, like everything else here: a probe lost
+    /// to a full queue is a measurement not taken, and the selector treats a
+    /// relay that says nothing as absent from the round rather than as fast.
+    fn ping(&self, token: [u8; crate::relay::PING_TOKEN_LEN]) {
+        if self.queue.try_send(Relayed::Ping(token)).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     fn send(&self, destination: [u8; karst_relay_proto::consts::ID_LEN], payload: &[u8]) {
-        let relayed = Relayed {
+        let relayed = Relayed::Packet {
             destination,
             payload: payload.to_vec(),
         };
@@ -665,6 +780,10 @@ const RELAY_QUEUE: usize = 256;
 /// own threads borrow — the worker is a third datapath thread, not a side
 /// channel.
 struct RelayContext<'a> {
+    /// §9.1's outstanding latency probes on this connection.
+    rtt: &'a Mutex<crate::home::RttProbes>,
+    /// §9.1's home-relay choice, fed by those probes.
+    home: &'a Mutex<crate::home::Selector>,
     shutdown: &'a Shutdown,
     identity: Arc<crate::control::Identity>,
     relay: crate::netmap::Relay,
@@ -802,22 +921,14 @@ async fn relay_send_loop(
             continue;
         };
         let Some(next) = next else { return };
-        if sender
-            .send_packet(next.destination, &next.payload)
-            .await
-            .is_err()
-        {
+        if write_relayed(&mut sender, next).await.is_err() {
             return;
         }
         // **Coalesce whatever else is already queued before flushing.** A
         // flush per datagram is a TLS record and a syscall each; a burst of
         // fragments belonging to one handshake should cost one of each.
         while let Ok(more) = outbound.try_recv() {
-            if sender
-                .send_packet(more.destination, &more.payload)
-                .await
-                .is_err()
-            {
+            if write_relayed(&mut sender, more).await.is_err() {
                 return;
             }
         }
@@ -875,6 +986,22 @@ async fn relay_receive_loop(context: &RelayContext<'_>, mut receiver: crate::rel
                         "declined, too many"
                     }
                 );
+                continue;
+            }
+            // §9.1's measurement, answered on the connection it was sent on.
+            if let crate::relay::Event::Pong { token } = event {
+                let resolved = context
+                    .rtt
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .resolve(token, now_ms(context.started));
+                if let Some(rtt) = resolved {
+                    let mut home = context
+                        .home
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    home.observe(context.relay.relay_id, rtt);
+                }
                 continue;
             }
             let crate::relay::Event::Packet { source_id, payload } = event else {
@@ -1384,6 +1511,7 @@ fn refresh_netmap(
     local: &dyn Fn() -> crate::config::LocalSettings,
     routes: &Mutex<Routes>,
     disco: &Mutex<disco::Disco>,
+    home: &Mutex<crate::home::Selector>,
     relayed: Option<&RelaySender>,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -1395,14 +1523,28 @@ fn refresh_netmap(
     };
 
     let mut next = Instant::now() + crate::control::REFRESH;
+    // What the server was last told, so a change can be published without
+    // waiting for the refresh timer.
+    let mut published: Option<[u8; 32]> = None;
     while !shutdown.requested() {
         // A short sleep rather than one long one, so a shutdown is noticed
         // promptly rather than a minute later.
         std::thread::sleep(TICK);
-        if Instant::now() < next {
+        let chosen = home
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .chosen();
+        // **A move is published at once rather than on the timer.** Between the
+        // node changing relay and its peers hearing about it, every peer is
+        // dialling a relay this node has left, so the packets are not merely
+        // late — they are delivered nowhere. A whole refresh interval of that
+        // is the one case where waiting for the next tick is not free.
+        if Instant::now() < next && chosen == published {
             continue;
         }
         next = Instant::now() + crate::control::REFRESH;
+        client.set_home_relay(chosen);
+        published = chosen;
 
         let outcome = match runtime.block_on(client.sync()) {
             // Nothing moved. The overwhelmingly common case, and the one the

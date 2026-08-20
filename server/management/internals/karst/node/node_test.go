@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -188,6 +190,119 @@ func TestDataPlaneKeysCanRotate(t *testing.T) {
 	}
 	if !bytes.Equal(rec.PublicKey, k.Public()) {
 		t.Fatal("the identity key moved during a data-plane rotation")
+	}
+}
+
+// §9.1's report round-trips, and an update replaces rather than accumulates.
+func TestHomeRelayIsStoredAndReplaced(t *testing.T) {
+	s := newStore(t)
+	k := newIdentity(t)
+	h, err := s.Register(k.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	first := bytes.Repeat([]byte{0x11}, 32)
+	if err := s.SetHomeRelay(h, first); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	rec, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !bytes.Equal(rec.HomeRelay, first) {
+		t.Fatalf("stored %x, want %x", rec.HomeRelay, first)
+	}
+
+	second := bytes.Repeat([]byte{0x22}, 32)
+	if err := s.SetHomeRelay(h, second); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	rec, err = s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !bytes.Equal(rec.HomeRelay, second) {
+		t.Fatalf("a move left %x, want %x", rec.HomeRelay, second)
+	}
+
+	// And a node that has lost its relay clears it. Keeping the last known
+	// value would send every peer to a relay this node is no longer on.
+	if err := s.SetHomeRelay(h, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	rec, err = s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(rec.HomeRelay) != 0 {
+		t.Fatalf("a withdrawal left %x", rec.HomeRelay)
+	}
+}
+
+// Reporting the same relay again must not touch the row. Every node reports
+// this on every poll, so an unconditional write is one update per node per
+// refresh interval, and it moves UpdatedAt on rows nothing changed.
+func TestRepeatingTheSameHomeRelayDoesNotWrite(t *testing.T) {
+	s := newStore(t)
+	k := newIdentity(t)
+	h, err := s.Register(k.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	relay := bytes.Repeat([]byte{0x33}, 32)
+	if err := s.SetHomeRelay(h, relay); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	first, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if err := s.SetHomeRelay(h, relay); err != nil {
+		t.Fatalf("set again: %v", err)
+	}
+	again, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !again.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("an unchanged report rewrote the row: %v then %v", first.UpdatedAt, again.UpdatedAt)
+	}
+}
+
+// A value that cannot be a relay id is refused before it is stored: the id is
+// a SHA-256 digest, so any other length is a bug or a lie, and either way it
+// would be hashed into every peer's netmap version.
+func TestHomeRelayLengthIsChecked(t *testing.T) {
+	s := newStore(t)
+	k := newIdentity(t)
+	h, err := s.Register(k.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	for _, n := range []int{1, 31, 33, 64} {
+		if err := s.SetHomeRelay(h, bytes.Repeat([]byte{1}, n)); !errors.Is(err, node.ErrBadHomeRelay) {
+			t.Fatalf("%d bytes gave %v, want ErrBadHomeRelay", n, err)
+		}
+	}
+	rec, err := s.Get(h)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(rec.HomeRelay) != 0 {
+		t.Fatalf("a refused value was stored anyway: %x", rec.HomeRelay)
+	}
+}
+
+// An unregistered handle is not an error. The caller has authenticated the
+// node already, and a row that does not exist has nothing to hold — failing
+// here would turn a harmless race with registration into a refused netmap.
+func TestHomeRelayForUnknownHandleIsQuiet(t *testing.T) {
+	s := newStore(t)
+	if err := s.SetHomeRelay("nobody", bytes.Repeat([]byte{1}, 32)); err != nil {
+		t.Fatalf("unknown handle: %v", err)
 	}
 }
 

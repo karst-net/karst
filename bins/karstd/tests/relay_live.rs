@@ -263,6 +263,58 @@ async fn a_packet_crosses_between_two_admitted_nodes() {
     );
 }
 
+/// §9.1's measurement, end to end: a real ping on an established connection, a
+/// real relay answering it, and the probe table turning the pair into a number.
+///
+/// The two halves are proven separately elsewhere — `karst-relay`'s listener
+/// suite answers a `Ping`, and `home.rs` matches tokens — and neither one shows
+/// that `karstd` sends a frame this relay recognises. A token echoed back under
+/// a different length or a `Pong` the client did not parse would leave the
+/// selector receiving nothing at all, which looks exactly like a relay that is
+/// merely slow: the home relay would never be re-elected and nothing would say
+/// why.
+#[tokio::test]
+async fn a_relay_answers_a_latency_probe_and_the_round_trip_is_measured() {
+    let a = node(0x11);
+    let running = start_relay("latency", &[&a]).await;
+
+    let (mut tx, mut rx) = connect(&running, &a)
+        .await
+        .expect("a connects")
+        .split()
+        .expect("established");
+
+    let mut probes = karstd::home::RttProbes::default();
+    let token = [0xA7; karstd::relay::PING_TOKEN_LEN];
+    let sent_at = 1_000;
+    assert!(probes.sent(token, sent_at));
+    tx.ping(token).await.expect("ping");
+    tx.flush().await.expect("flush");
+
+    let events = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rx.receive(&*a, &RelayVerifier),
+    )
+    .await
+    .expect("the relay did not answer the ping before the timeout")
+    .expect("the stream failed");
+
+    assert_eq!(
+        events,
+        vec![karstd::relay::Event::Pong { token }],
+        "the relay answered with something other than this node's token"
+    );
+    let karstd::relay::Event::Pong { token } = events[0] else {
+        unreachable!()
+    };
+    assert_eq!(
+        probes.resolve(token, sent_at + 7),
+        Some(7),
+        "the answered token did not resolve to the round trip"
+    );
+    assert_eq!(probes.in_flight(), 0);
+}
+
 /// A node the relay has no roster entry for is refused.
 ///
 /// §5.3 makes this structural rather than a mode: `ClientAuth` carries no

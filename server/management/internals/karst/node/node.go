@@ -49,6 +49,7 @@ var (
 	ErrUnknownNode  = errors.New("node: unknown handle")
 	ErrKeyMismatch  = errors.New("node: handle is registered to a different identity key")
 	ErrBadPublicKey = errors.New("node: malformed identity public key")
+	ErrBadHomeRelay = errors.New("node: malformed home relay id")
 )
 
 // Handle derives the stable string identifier for an ML-DSA-65 identity.
@@ -73,8 +74,18 @@ type Identity struct {
 	// netmap is how they are distributed.
 	KemPublicKey []byte
 	DhPublicKey  []byte
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// HomeRelay is the Ponor relay this node reports holding a connection to
+	// (ponor-v1.md §9.1), or empty for a node holding none.
+	//
+	// Reported by the node rather than decided here: the choice is made from
+	// round-trip times only the node can measure. The server's job is to
+	// remember it and hand it to the node's peers, which is what makes a peer
+	// behind a symmetric NAT reachable at all — a peer that dials the wrong
+	// relay reaches nothing, so this being stale is not a slow path but a
+	// missing one.
+	HomeRelay []byte
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func (Identity) TableName() string { return "karst_node_identities" }
@@ -102,6 +113,8 @@ type DataPlaneKeys struct {
 const (
 	kemPublicKeySize = 1184
 	dhPublicKeySize  = 32
+	// A Ponor relay id is a SHA-256 digest over the relay's identity key.
+	relayIDSize = 32
 )
 
 // ValidateRegistration checks the identity and data-plane keys without
@@ -203,6 +216,33 @@ func (s *Store) Get(handle string) (*Identity, error) {
 		return nil, fmt.Errorf("node: get: %w", err)
 	}
 	return &rec, nil
+}
+
+// SetHomeRelay records the relay a node reports holding a connection to.
+//
+// Writes only when the value actually moved. Every node reports this on every
+// netmap poll, so an unconditional write would be one row update per node per
+// refresh interval — churn that buys nothing, and that would move UpdatedAt on
+// rows nothing had changed.
+//
+// An unknown handle is not an error: the caller has already authenticated the
+// node, and a row that has not been registered yet has nothing to hold.
+func (s *Store) SetHomeRelay(handle string, relayID []byte) error {
+	if len(relayID) != 0 && len(relayID) != relayIDSize {
+		return fmt.Errorf("%w: %d bytes, want %d or 0", ErrBadHomeRelay, len(relayID), relayIDSize)
+	}
+	// Normalised to empty rather than nil so the comparison below has one
+	// representation of "no relay" to test against.
+	if relayID == nil {
+		relayID = []byte{}
+	}
+	err := s.db.Model(&Identity{}).
+		Where("handle = ? AND (home_relay IS NULL OR home_relay <> ?)", handle, relayID).
+		Updates(map[string]any{"home_relay": relayID}).Error
+	if err != nil {
+		return fmt.Errorf("node: set home relay: %w", err)
+	}
+	return nil
 }
 
 // GetMany returns the identity records for a set of handles, keyed by handle.

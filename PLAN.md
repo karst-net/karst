@@ -2301,9 +2301,43 @@ onwards, anchored on the week of 2026-08-10.
   that skipped the field entirely but not one that hashed it in the wrong
   place.
 
-  Still to come: the daemon holds a `home::Selector` and a `Client::set_home_relay`
-  and nothing yet joins them — the RTT measurement loop that feeds the selector
-  is not written, so the field is plumbed end to end and always empty.
+  ✅ **The loop that fills it.** Every 60 s the daemon settles the last round's
+  answers, then pings the relay it holds on the connection it already has —
+  `Frame::Ping` behind whatever is queued, so the round trip measured is the one
+  the datapath would see rather than one taken past the traffic. A live relay
+  answering a real ping is a test (`relay_live.rs`), because the two halves were
+  proven separately and neither showed that `karstd` sends a frame this relay
+  recognises: a `Pong` the client failed to parse would leave the selector
+  receiving nothing, which looks exactly like a relay that is merely slow.
+
+  **A probe is matched by token, and an unmatched token measures nothing.** The
+  same rule as AVEN §7.4, for the same reason — a relay that volunteered or
+  replayed a `Pong` could otherwise report an arbitrarily good latency and win
+  an election. Two probes may be outstanding; a relay that answers neither is
+  not sent a third, so its silence is measured rather than this node's
+  willingness to ask.
+
+  **A move is published immediately rather than on the refresh timer.** Between
+  a node changing relay and its peers hearing about it, every peer is dialling a
+  relay this node has left, so the packets are not late — they are delivered
+  nowhere.
+
+  ✅ **The server keeps it.** The field was on the wire in both directions and
+  discarded in between: the handler never read `KarstNetmapRequest.home_relay`
+  and never set `KarstNetmapPeer.home_relay`, so every peer entry carried empty
+  bytes and the hashing work protected nothing. `node.Identity` now holds it,
+  written only when the value actually moves — every node reports on every poll,
+  and an unconditional write is one row update per node per refresh interval.
+  A value that is not 32 bytes is refused rather than ignored, since ignoring it
+  leaves the node believing it published a relay while its peers dial the old
+  one.
+
+  Still to come: **only the relay currently held is measured**, so the selector
+  can confirm a choice but cannot yet be talked out of one. Measuring
+  alternatives means a Ponor connection to each — TLS and an ML-DSA-65 handshake
+  apiece — and that cost deserves its own decision. And nothing yet *consumes* a
+  peer's published relay: reaching a peer by §9.1's second rule needs the daemon
+  to hold a connection to a relay it did not choose.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

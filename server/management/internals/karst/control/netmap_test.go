@@ -742,6 +742,131 @@ func requestDelta(t *testing.T, f *netFixture, holds []*proto.KarstPeerDigest) *
 }
 
 // A node that holds everything current is sent nothing.
+// ── home relay, ponor-v1.md §9.1 ────────────────────────────────────────────
+
+// requestNetmapReporting polls as self while reporting a home relay.
+func requestNetmapReporting(t *testing.T, f *netFixture, relay []byte) (*proto.KarstNetmapResponse, error) {
+	t.Helper()
+	payload, err := pb.Marshal(&proto.KarstNetmapRequest{HomeRelay: relay})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw, err := f.handler.Handle(context.Background(), nil, f.self.Public(), payload)
+	if err != nil {
+		return nil, err
+	}
+	resp := &proto.KarstNetmapResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return resp, nil
+}
+
+// The report a node makes about itself is kept, and cleared when it withdraws.
+//
+// The node measured this; the server cannot. Dropping it would leave the field
+// present on the wire in both directions and empty everywhere in between —
+// which is exactly the state this replaces.
+func TestReportedHomeRelayIsRecorded(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	relay := bytes.Repeat([]byte{0x5C}, 32)
+
+	if _, err := requestNetmapReporting(t, f, relay); err != nil {
+		t.Fatalf("netmap: %v", err)
+	}
+	rec, err := f.handler.Nodes.Get(f.selfH)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !bytes.Equal(rec.HomeRelay, relay) {
+		t.Fatalf("stored %x, want %x", rec.HomeRelay, relay)
+	}
+
+	// A node that loses its relay reports none, and the record must follow it
+	// down: peers left dialling a relay this node no longer holds reach
+	// nothing, and a stale entry is indistinguishable from a live one.
+	if _, err := requestNetmapReporting(t, f, nil); err != nil {
+		t.Fatalf("netmap: %v", err)
+	}
+	rec, err = f.handler.Nodes.Get(f.selfH)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(rec.HomeRelay) != 0 {
+		t.Fatalf("a withdrawn home relay is still stored as %x", rec.HomeRelay)
+	}
+}
+
+// And it reaches the peers, which is the only reason to store it.
+func TestHomeRelayReachesPeers(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	relay := bytes.Repeat([]byte{0xA3}, 32)
+	if err := f.handler.Nodes.SetHomeRelay(f.peerH[0], relay); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	resp := requestNetmap(t, f, 0)
+	var seen bool
+	for _, p := range resp.GetPeers() {
+		if string(p.GetNodeId()) != f.peerH[0] {
+			if len(p.GetHomeRelay()) != 0 {
+				t.Fatalf("a peer holding no relay was given one: %x", p.GetHomeRelay())
+			}
+			continue
+		}
+		seen = true
+		if !bytes.Equal(p.GetHomeRelay(), relay) {
+			t.Fatalf("peer carries %x, want %x", p.GetHomeRelay(), relay)
+		}
+	}
+	if !seen {
+		t.Fatal("the peer that reported a relay was not in the netmap")
+	}
+}
+
+// A move must be delivered. The digest and the version both cover the field,
+// so a peer that changes relay comes back in the delta — without that, the
+// server answers "unchanged" forever and every other node keeps dialling a
+// relay the peer has left.
+func TestHomeRelayMoveIsDelivered(t *testing.T) {
+	f := newNetmapFixture(t, 3)
+	full := requestNetmap(t, f, 0)
+	holds := digestsOf(full)
+
+	target := string(full.GetPeers()[1].GetNodeId())
+	if err := f.handler.Nodes.SetHomeRelay(target, bytes.Repeat([]byte{0x77}, 32)); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	d := requestDelta(t, f, holds)
+	if len(d.GetPeers()) != 1 {
+		t.Fatalf("got %d changed peers, want 1", len(d.GetPeers()))
+	}
+	if string(d.GetPeers()[0].GetNodeId()) != target {
+		t.Fatal("the wrong peer was sent")
+	}
+	if !bytes.Equal(d.GetPeers()[0].GetHomeRelay(), bytes.Repeat([]byte{0x77}, 32)) {
+		t.Fatalf("the moved relay was not delivered: %x", d.GetPeers()[0].GetHomeRelay())
+	}
+}
+
+// A value that cannot be a relay id is refused rather than stored.
+//
+// Silently ignoring it would leave the node believing it had published a relay
+// while its peers dialled the old one — unreachable, with nothing anywhere
+// saying why.
+func TestMalformedHomeRelayIsRefused(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	if _, err := requestNetmapReporting(t, f, []byte{1, 2, 3}); err == nil {
+		t.Fatal("a 3-byte home relay id was accepted")
+	}
+	// And the refusal is of that field rather than of the node: a well-formed
+	// report still works afterwards.
+	if _, err := requestNetmapReporting(t, f, bytes.Repeat([]byte{9}, 32)); err != nil {
+		t.Fatalf("a well-formed report was refused: %v", err)
+	}
+}
+
 func TestDeltaSendsNothingWhenUpToDate(t *testing.T) {
 	f := newNetmapFixture(t, 3)
 	full := requestNetmap(t, f, 0)
