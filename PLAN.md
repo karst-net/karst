@@ -3351,7 +3351,8 @@ onwards, anchored on the week of 2026-08-10.
   | 5 | symmetric | address-restricted cone | direct |
   | 6 | symmetric | symmetric | **relay** |
   | 7 | all UDP dropped | *(nothing)* | **relay**, and correctly so |
-  | 8 | symmetric | port-restricted cone | **relay** — and this one is winnable |
+  | 8 | symmetric | port-restricted cone | **relay** — no mapping to ask for |
+  | 8b | symmetric | port-restricted cone **with a port mapping** | direct — PCP/NAT-PMP |
   | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
   | 10 | the **same** NAT, one LAN | the same NAT, one LAN | direct — over private addresses |
 
@@ -3375,8 +3376,36 @@ onwards, anchored on the week of 2026-08-10.
   port-restricted cone, which is a CGNAT subscriber talking to somebody on a
   home router — differs from row 5 by one word in B's filter, and it fails:
   B checks the source *port* as well as the address, and A's probe arrives from
-  a port B never sent to. It is also the common real-world pairing, and unlike
-  row 6 it is winnable. See the exit discussion below.
+  a port B never sent to. It is also the common real-world pairing.
+
+  ✅ **Row 8b closes it, 2026-08-20: direct in 37 s.** The pairing is not a
+  limit of the protocol; it is a property of one NAT with nothing to ask. Give
+  B's home router the NAT-PMP/PCP service that real home routers have, and the
+  pair goes direct with code that was already built for row 9.
+
+  Rows 8 and 8b are kept **as a pair on purpose**, and neither says anything
+  useful alone. Row 8 alone reads as a capability Karst lacks. Row 8b alone
+  hides that the capability comes from the far end's router rather than from
+  anything this project can guarantee. Together they say the true thing: for the
+  commonest hard pairing, the distance between relayed and direct is whether B's
+  router answers PCP.
+
+  **What closes it is the mapping's inbound half, and that is not why the
+  mapping matters in row 9.** B is a cone, so its external port is already
+  stable — B's reflexive address *is* its mapped address, and A was already
+  probing it in row 8. B's NAT was refusing the datagram because A's source port
+  was one B had never sent to. The mapping installs an endpoint-independent
+  DNAT, which removes the refusal; A's probe lands, and B adopts the source it
+  arrived from — A's symmetric mapping toward B, the one allocation that works.
+  In row 9 the mapping does the opposite job: it makes an address *knowable*
+  that otherwise is not. A summary reading "explicit port mapping fixes both"
+  would be right by accident.
+
+  **Checked against the defect.** `KARST_AQUIFER_DISABLE_PORT_MAPPING=1` leaves
+  row 8b timing out after 210 s of trying. The candidate sets are identical
+  across those two runs — the fixture pins B's outbound port either way — so the
+  only thing that differs is whether B's NAT admits the probe, which is exactly
+  the claim above.
 
   **Row 10 is where the hairpinning result pays off.** Two nodes on one home
   network both learn a reflexive address, both advertise it, and both probe the
@@ -3536,8 +3565,32 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *Every physically-possible topology connects directly* — **seven of the eight
-  that are possible, with row 8 the one outstanding.**
+  *Every physically-possible topology connects directly* — **eight of the nine
+  that are possible; row 8 without a mapping is the one that does not, and it is
+  now conceded rather than outstanding.**
+
+  That concession is a decision taken on 2026-08-20 and it should be read with
+  its cost visible, because "physically possible" and "possible" are not the
+  same word. A direct path for unmapped row 8 exists in physics: §7.7's
+  birthday-paradox port search reaches it, and it was specified, implemented and
+  measured before being declined — **64% after eight minutes** at §7.5's probe
+  allowance, and it requires a datapath change against §4's single shared socket
+  (finding 28). So this is not "we could not"; it is "we measured what it costs
+  and did not buy it", which is the same answer §12.4 reaches for row 6 and the
+  same answer Tailscale reaches for both.
+
+  What makes the concession defensible rather than convenient is row 8b: the
+  pairing *does* go direct, in 37 seconds, as soon as B's router offers the
+  port mapping that ordinary home routers offer. The case Karst declines to buy
+  with probe traffic it buys with one PCP request, and the row proves it end to
+  end rather than arguing it.
+
+  **Two of the eleven rows remain relayed for a reason other than a missing
+  direct path**, and both are named here rather than folded into a percentage:
+  row 6 (symmetric to symmetric, §12.4's 0.01%) and unmapped row 8. Row 7 has no
+  direct path at all. Anyone who disagrees with either concession is
+  disagreeing with a measurement that is written down, which is the state this
+  section is trying to be in.
 
   The criterion was **restated on 2026-08-19** and the original is kept so the
   change is legible:
@@ -3545,28 +3598,35 @@ onwards, anchored on the week of 2026-08-10.
   > ~~≥ 90% direct-connection rate across the matrix~~
 
   It was restated because it is **arithmetically unreachable by counting rows**,
-  and not for want of engineering. Two of the ten topologies are relay by
+  and not for want of engineering. Three of the eleven topologies are relay by
   construction: symmetric-to-symmetric has no technique that reaches it
-  (§12.4's 0.01%), and a path with all UDP dropped has no direct path to find.
-  That caps any row count at 80%. The only routes to 90% would be to add easier
+  (§12.4's 0.01%), a path with all UDP dropped has no direct path to find, and
+  row 8 without a mapping has none this project is willing to buy (finding 28).
+  That caps any row count at 73%. The only routes to 90% would be to add easier
   rows — which games the denominator, and is the dishonesty this matrix exists
   to prevent — or to weight by real-world NAT prevalence, which needs field data
   this project does not have and cannot invent.
 
   The replacement is checkable, means something, and cannot be gamed by adding
   rows: an easy row that connects adds nothing to it, and a row that *should*
-  connect and does not fails it. The old figure is still worth reporting and
-  still is — seven of ten, 70% — but as a description rather than a target.
+  connect and does not fails it. Row 8b is the test of that rule and it passes
+  it: 8b does not raise the count on its own, because row 8 is still in the
+  denominator and still relayed. What 8b adds is the *condition* — a reader
+  learns that the pairing turns on B's router, which counting alone could never
+  say. The old figure is still worth reporting and still is — eight of eleven,
+  73% — but as a description rather than a target.
 
-  *The old figure, for continuity* — **seven of ten topologies, which is 70%,
-  or 78% over the nine where a direct path exists at all.** Both figures are
+  *The old figure, for continuity* — **eight of eleven topologies, which is
+  73%, or 80% over the ten where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is
   in the field, so this is a capability count and not the rate the criterion
   means; producing the latter needs field data this project does not have.
-  And three shapes are still unbuilt — double NAT, hairpinning, NAT64/DNS64 —
-  of which double NAT is the one the third criterion names.
+  And three shapes are still unbuilt **as whole-aquifer rows** — double NAT,
+  hairpinning, NAT64/DNS64 — of which double NAT is the one the third criterion
+  names. All three exist in `nat_matrix.rs` as instrument rows, which pins how
+  each behaves but says nothing about what Karst does on one.
 
   *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
   CGNAT when at least one NAT offers an explicit port mapping* — **yes, as of

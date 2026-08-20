@@ -369,6 +369,29 @@ enum Shape {
     /// *port* as well as the address, and A's probe arrives from a port B never
     /// sent to, so nothing crosses in either direction.
     SymmetricAndPortRestricted,
+    /// The same pairing, with **B's home router offering a port mapping** —
+    /// row 8 with the one capability the real version of B usually has.
+    ///
+    /// This row exists because the row above it is not, in the end, a statement
+    /// about what Karst can reach: it is a statement about what a NAT with no
+    /// port-mapping service can be made to admit. Separating the two is the
+    /// point. The pairing is the common one, so leaving it recorded as "does
+    /// not connect" without saying *under what conditions* is the kind of
+    /// summary that is true and useless.
+    ///
+    /// **What closes it is not a new address.** A cone's external port is
+    /// stable, so B already advertises a reachable address in the reflexive
+    /// tier and A already probes it; the row fails because B's NAT refuses a
+    /// datagram from a source port B never sent to. The mapping's inbound half
+    /// is an endpoint-independent DNAT, and *that* is what lets A's probe
+    /// through — after which B adopts the source it arrived from, which is A's
+    /// symmetric mapping toward B specifically, the one allocation that works.
+    ///
+    /// So the fourth candidate tier (`aven-v1.md` §7.2) is **not** the operative
+    /// part here, which is the opposite of [`Shape::SymmetricAndMapped`]. Both
+    /// rows need a mapping and they need it for different reasons; a summary
+    /// that said "explicit port mapping fixes both" would be right by accident.
+    SymmetricAndPortRestrictedMapped,
 }
 
 /// How a NAT allocates external ports, and what it lets back through.
@@ -389,6 +412,18 @@ enum Flavour {
     /// A symmetric NAT that also runs `miniupnpd`, so the node behind it can
     /// reserve its datapath port explicitly.
     SymmetricWithPortMapping,
+    /// A port-restricted cone that also runs `miniupnpd` — **an ordinary home
+    /// router**, which is the point of the flavour.
+    ///
+    /// The mapping does something different here than it does on a symmetric
+    /// NAT, and the difference is the whole of row 8b. A cone's external port
+    /// is already stable, so the node behind it already advertises a *correct*
+    /// address; what it cannot do is accept a datagram from a port it has never
+    /// sent to. The mapping's **inbound** half — an endpoint-independent DNAT —
+    /// is what removes that filter. On a symmetric NAT the mapping is valuable
+    /// for the opposite reason: it makes an address knowable that otherwise is
+    /// not.
+    PortRestrictedWithPortMapping,
     /// A cone that drops every forwarded UDP datagram in both directions. TCP
     /// still crosses, so Ponor and the control channel are unaffected.
     UdpBlocked,
@@ -423,10 +458,16 @@ impl Shape {
             | Self::SymmetricA
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
+            | Self::SymmetricAndPortRestrictedMapped
             | Self::SameLan => Expect::Direct,
-            // §7.7's port search does not yet carry this row: the hard side's
-            // scratch mappings expire before the easy side's next round can
-            // probe them. See PLAN.md and finding 28.
+            // **Not "not yet".** §7.7's birthday-paradox port search is the
+            // only technique that reaches this row without help from the NAT,
+            // and it was specified, implemented, measured and then *declined*
+            // on 2026-08-19 — 64% after eight minutes at §7.5's allowance, and
+            // it needs a datapath change against §4's single shared socket
+            // (finding 28). The row above it is what the same pairing does when
+            // B's router offers a mapping, which is the answer this project
+            // adopted for it.
             Self::BothSymmetric | Self::UdpBlocked | Self::SymmetricAndPortRestricted => {
                 Expect::Relay
             }
@@ -439,7 +480,10 @@ impl Shape {
     /// node before either has anything worth advertising.
     fn budget(self) -> Duration {
         Duration::from_secs(match self {
-            Self::BothNat | Self::SymmetricAndMapped | Self::SymmetricAndAddressRestricted => 210,
+            Self::BothNat
+            | Self::SymmetricAndMapped
+            | Self::SymmetricAndAddressRestricted
+            | Self::SymmetricAndPortRestrictedMapped => 210,
             _ => 150,
         })
     }
@@ -497,13 +541,15 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::SymmetricAndMapped
         | Shape::UdpBlocked
         | Shape::SymmetricAndAddressRestricted
-        | Shape::SymmetricAndPortRestricted => {
+        | Shape::SymmetricAndPortRestricted
+        | Shape::SymmetricAndPortRestrictedMapped => {
             let flavour = match shape {
                 Shape::SymmetricAndMapped => Flavour::SymmetricWithPortMapping,
                 Shape::SymmetricA
                 | Shape::BothSymmetric
                 | Shape::SymmetricAndAddressRestricted
-                | Shape::SymmetricAndPortRestricted => Flavour::Symmetric,
+                | Shape::SymmetricAndPortRestricted
+                | Shape::SymmetricAndPortRestrictedMapped => Flavour::Symmetric,
                 Shape::UdpBlocked => Flavour::UdpBlocked,
                 _ => Flavour::PortRestrictedCone,
             };
@@ -533,10 +579,12 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::BothSymmetric
         | Shape::SymmetricAndMapped
         | Shape::SymmetricAndAddressRestricted
-        | Shape::SymmetricAndPortRestricted => {
+        | Shape::SymmetricAndPortRestricted
+        | Shape::SymmetricAndPortRestrictedMapped => {
             let flavour = match shape {
                 Shape::SymmetricAndMapped | Shape::BothSymmetric => Flavour::Symmetric,
                 Shape::SymmetricAndAddressRestricted => Flavour::AddressRestrictedCone,
+                Shape::SymmetricAndPortRestrictedMapped => Flavour::PortRestrictedWithPortMapping,
                 _ => Flavour::PortRestrictedCone,
             };
             nat_in_front_of(
@@ -732,7 +780,10 @@ fn nat_in_front_of(
         &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
     ));
     nat_rules(nat_ns, &out_dev, &in_dev, node, outer, flavour);
-    if flavour == Flavour::SymmetricWithPortMapping {
+    if matches!(
+        flavour,
+        Flavour::SymmetricWithPortMapping | Flavour::PortRestrictedWithPortMapping
+    ) {
         start_miniupnpd(net, tag, nat_ns, &out_dev, &in_dev, node);
     }
 }
@@ -832,7 +883,17 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
             "{ type nat hook postrouting priority 100 ; }",
         ],
     ));
-    if flavour == Flavour::SymmetricWithPortMapping {
+    // **The outbound half of the mapping, installed by the fixture.** A real
+    // NAT-PMP or PCP grant is bidirectional: the external port is reserved for
+    // the internal one in both directions. `miniupnpd` writes the inbound DNAT
+    // when the node asks; this pins the matching source translation so the pair
+    // is consistent rather than dependent on masquerade's port-availability
+    // heuristic. It grants nothing on its own — with the mapping refused, the
+    // inbound side is still dropped, which is what the defect check turns on.
+    if matches!(
+        flavour,
+        Flavour::SymmetricWithPortMapping | Flavour::PortRestrictedWithPortMapping
+    ) {
         let fixed = format!(
             "oifname {out_dev} ip saddr {node} udp sport {DATA_PORT} snat to {outer}:{DATA_PORT}"
         );
@@ -846,7 +907,10 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
         Flavour::Symmetric | Flavour::SymmetricWithPortMapping => {
             format!("oifname {out_dev} masquerade fully-random")
         }
-        Flavour::PortRestrictedCone | Flavour::UdpBlocked | Flavour::AddressRestrictedCone => {
+        Flavour::PortRestrictedCone
+        | Flavour::PortRestrictedWithPortMapping
+        | Flavour::UdpBlocked
+        | Flavour::AddressRestrictedCone => {
             format!("oifname {out_dev} masquerade")
         }
     };
@@ -1578,12 +1642,38 @@ fn a_symmetric_nat_reaches_an_address_restricted_peer_directly() {
 /// from [`a_symmetric_nat_reaches_an_address_restricted_peer_directly`]: B's
 /// NAT checks the source port too.
 ///
-/// Expected to stay relayed today, and this row exists to establish that it
-/// does before anything is built to change it.
+/// **Stays relayed, and that is a settled answer rather than a pending one.**
+/// The technique for it — §7.7's port search — was built, measured and declined
+/// (finding 28). The row below is the same pairing when B's router offers a
+/// port mapping, which is the answer this project did adopt; read the two
+/// together or neither says anything useful.
 #[test]
 #[ignore = "needs root, network namespaces and a Go toolchain"]
 fn a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay() {
     run(Shape::SymmetricAndPortRestricted);
+}
+
+/// **The same pairing, with the router offering a port mapping — and it goes
+/// direct.**
+///
+/// The row above and this one differ by whether B's home router serves
+/// NAT-PMP/PCP, and that is the whole distance between "relayed" and "direct"
+/// for the commonest hard pairing there is. Recording only the row above would
+/// be true and would misinform: it would read as a limit of the protocol when
+/// it is a property of one NAT with nothing to ask.
+///
+/// **The mapping's inbound half is what does the work**, which is worth being
+/// precise about because it is not why the mapping matters on
+/// [`a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly`].
+/// B is a cone, so B's external port is already stable and A is already
+/// probing the right address; B's NAT simply refuses a source port it has
+/// never sent to. The DNAT removes that refusal. A's probe lands, B adopts the
+/// source it arrived from — A's symmetric mapping toward B, the one allocation
+/// that works — and the pair is direct.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port() {
+    run(Shape::SymmetricAndPortRestrictedMapped);
 }
 
 /// **Two laptops on one home network.**
@@ -1763,6 +1853,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
             | Shape::SymmetricA
             | Shape::SymmetricAndMapped
             | Shape::SymmetricAndAddressRestricted
+            | Shape::SymmetricAndPortRestrictedMapped
     ) {
         let s = status(net, "b", NS_B);
         let endpoint = field(&s, "endpoint").unwrap_or_default();
@@ -1802,6 +1893,27 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
             "A should report its explicit mapping on {NAT_A_OUTER}, not {mapped}:\n{s}"
         );
         assert_eq!(field(&s, "portmap_protocol").as_deref(), Some("pcp"), "{s}");
+    }
+    if shape == Shape::SymmetricAndPortRestrictedMapped {
+        // **The mapping is on B here, not on A** — the router side, not the
+        // CGNAT side, which is what makes this row the realistic one. A is
+        // behind carrier equipment it cannot ask for anything.
+        let s = status(net, "b", NS_B);
+        let mapped = field(&s, "portmap_external").unwrap_or_default();
+        assert!(
+            mapped.starts_with(NAT_B_OUTER),
+            "B should report its explicit mapping on {NAT_B_OUTER}, not {mapped}:\n{s}"
+        );
+        assert_eq!(field(&s, "portmap_protocol").as_deref(), Some("pcp"), "{s}");
+        // And A must have got nothing, which is the asymmetry the row is
+        // about: one mapping, on one side, is enough.
+        let s = status(net, "a", NS_A);
+        assert_eq!(
+            field(&s, "portmap_external").as_deref(),
+            Some("-"),
+            "A's NAT served a mapping, so this row is not the one-sided case \
+             it claims to be:\n{s}"
+        );
     }
 }
 

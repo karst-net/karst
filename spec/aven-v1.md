@@ -576,6 +576,18 @@ symmetric-to-symmetric does (§12.4). The section is kept rather than deleted
 because the reasoning cost a great deal to acquire and the next person to
 propose the technique deserves it.
 
+**§7.2's mapped-address tier reaches the same pairing when the cone's router
+serves PCP or NAT-PMP**, which ordinary home routers do — and that is the
+answer this specification recommends for it. The mapping's *inbound* half is
+what matters here, and it is not what makes §7.2's tier valuable elsewhere: a
+cone's external port is already stable, so the hard side is already probing a
+correct address, and the only obstacle is that the cone refuses a source port it
+has never sent to. An explicit mapping installs an endpoint-independent
+translation, which removes that refusal; the probe then lands and the cone
+adopts the source it arrived from (§7.6), which is the symmetric side's mapping
+toward it specifically. Measured end to end at 37 seconds. It is the same
+mechanism §7.2 offers a symmetric NAT, doing a different job.
+
 #### What was tried
 
 The published method is a random port search: the side behind endpoint-dependent

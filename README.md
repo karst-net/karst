@@ -48,7 +48,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 **874 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
-twelve-row NAT matrix and **eleven end-to-end aquifer topologies** — each one a
+twelve-row NAT matrix and **twelve end-to-end aquifer topologies** — each one a
 whole aquifer, and each ending in a TCP conversation under an ACL. That suite
 also carries ADR-0012's userspace release gate, which runs its daemon with **no
 capabilities at all** and reads the kernel's record back to prove it.
@@ -62,11 +62,19 @@ capabilities at all** and reads the kernel's record back to prove it.
 | symmetric | *(nothing)* | direct |
 | symmetric | address-restricted cone | direct |
 | symmetric **with a port mapping** | symmetric | **direct** — PCP/NAT-PMP |
+| symmetric | port-restricted cone **with a port mapping** | **direct** — PCP/NAT-PMP |
+| symmetric | port-restricted cone | relay — no mapping to ask for |
 | symmetric | symmetric | relay — not winnable; see below |
-| symmetric | port-restricted cone | relay — winnable, unbuilt |
 | all UDP dropped | *(nothing)* | relay, and correctly so |
 
-**Seven of ten, and the three that stay relayed are asserted to stay relayed.**
+**Eight of eleven, and the three that stay relayed are asserted to stay
+relayed.** The two *symmetric → port-restricted cone* rows are one pairing —
+a CGNAT subscriber talking to somebody on a home router, the commonest hard case
+there is — and the only difference between them is whether that router
+answers PCP. They are kept as a pair because neither is honest alone: the
+relayed one reads as a limit of the protocol, and the direct one hides that the
+capability comes from the far end's router rather than from Karst.
+
 A node that advertises an address it is not reachable at is worse than one that
 admits it is relayed, so those rows fail if either end ever reports `direct`.
 

@@ -285,6 +285,14 @@ an analysis and the implementation is removed; `aven-v1.md` §7.7 carries the
 decision and PLAN.md the cost argument. What follows is how it was reached,
 because the route matters more than the destination here.
 
+**And the row it was for now has an answer, added the same day.** §7.7 existed
+to reach row 8 — a CGNAT subscriber talking to somebody on a home router. The
+aquifer's row 8b runs that pairing with the router serving PCP, and it goes
+direct in **37 seconds** using the port-mapping client built for row 9. So the
+concession above is narrower than it first reads: what was declined is buying
+that pairing with probe traffic, not the pairing itself. Row 8 and row 8b are
+kept side by side so the condition is visible rather than inferred.
+
 `aven-v1.md` §7.7 has the hard side "open *N* sockets and send one datagram from
 each" toward the easy side's address, and probe on a **thirty-second** cadence
 reused from §7.5. Those two numbers do not work together.
@@ -1372,3 +1380,30 @@ cannot silently become "always keep one in flight".
 The gate was also run **three times consecutively** after the fix. That is not
 ceremony: finding 34 presented as a first run that passed and three that
 failed, so a single green run would have proved nothing.
+
+### Validation, 2026-08-20 — row 8b
+
+`cargo fmt --all --check`, workspace clippy, 874 Rust tests in 55 suites, and
+the **twelve aquifer topologies in 507 s** — which includes row 8 still
+relaying, so adding 8b did not quietly change the row it exists to be contrasted
+with.
+
+Row 8b measured **direct in 37 s**. Two defect injections, both restored:
+
+| Defect | Result |
+|---|---|
+| `KARST_AQUIFER_DISABLE_PORT_MAPPING=1` | times out after 210 s of trying — the mapping is what carries the row |
+| A's carrier NAT also serves `miniupnpd` | fails the one-sided assertion in 4 s |
+
+The first is the load-bearing one and it is stronger than it looks: the
+candidate sets are **identical** across those two runs, because the fixture pins
+B's outbound source port either way, so B's reflexive address already equals its
+mapped address. The only thing that differs between direct-in-37-s and
+never-converging is whether B's NAT admits the probe. That is the evidence for
+the claim that the mapping's *inbound* half is what closes this pairing — not
+the fourth candidate tier, which is what closes row 9.
+
+The second guards the row's premise rather than its result. Row 8b is worth
+having only if the mapping is on the **home router** and not on the carrier
+equipment the CGNAT subscriber cannot ask for anything; an assertion that A got
+no mapping is what keeps it that row.
