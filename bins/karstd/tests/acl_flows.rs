@@ -92,6 +92,7 @@ fn config_for(
             allowed_ips: vec![prefix],
             psk_is_fallback: false,
             disco_key: None,
+            home_relay: None,
         }],
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),

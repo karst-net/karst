@@ -262,20 +262,30 @@ pub fn run_with_control(
     // that did not exist yet would drop the one datagram that starts the
     // conversation.
     let relay_dropped = Arc::new(AtomicU64::new(0));
-    let (relay_out, relay_in) = match relay {
+    let (relay_out, relay_in, on_demand_in) = match relay {
         Some(_) => {
             let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
+            // §9.1's second rule has its own queue. Sharing the home
+            // connection's would let a peer on a relay this node has yet to
+            // dial — a TLS and ML-DSA-65 handshake away — fill the queue that
+            // every other peer's traffic is waiting in.
+            let (on_demand_tx, on_demand_rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
             (
                 Some(RelaySender {
                     queue: tx,
+                    on_demand: on_demand_tx,
                     dropped: Arc::clone(&relay_dropped),
                 }),
                 Some(rx),
+                Some(on_demand_rx),
             )
         }
-        None => (None, None),
+        None => (None, None, None),
     };
     let relay_out = relay_out.as_ref();
+    // §9.1. The engine routes by it, so it is set from the same value the relay
+    // worker connects to rather than recomputed from the registry.
+    engine.set_home_relay(relay.as_ref().map(|r| r.relay_id));
 
     // §9.1. The probes are per-connection state and the selector is the node's;
     // both are held here so the relay worker and the timer thread see the same
@@ -309,6 +319,25 @@ pub fn run_with_control(
     let relay_identity = control_client
         .as_ref()
         .map(crate::control::Client::relay_identity);
+
+    // Everything a Ponor connection needs that does not depend on *which* relay
+    // it is. Built before the scope, because the on-demand connections of
+    // §9.1's second rule are dialled while the daemon runs and each needs the
+    // same set.
+    let relay_common = relay_identity
+        .zip(relay_out)
+        .map(|(identity, relayed)| RelayCommon {
+            shutdown,
+            identity,
+            node_id: relay_node_id,
+            relay_ca_file: relay_ca,
+            disco: &disco,
+            engine: &engine,
+            socket: &socket,
+            tun: &tun,
+            relayed,
+            started,
+        });
 
     std::thread::scope(|scope| {
         if let Some(listen) = config.userspace_socks5_listen {
@@ -353,35 +382,29 @@ pub fn run_with_control(
         // Both protocols and both directions. AVEN's rendezvous made this
         // connection necessary; PHREATIC's fallback is what makes a peer with
         // no direct path reachable rather than merely known about.
-        if let (Some(identity), Some(relay), Some(relay_in), Some(relayed)) =
-            (relay_identity, relay, relay_in, relay_out)
+        if let (Some(common), Some(relay), Some(relay_in), Some(on_demand_in)) =
+            (relay_common.as_ref(), relay, relay_in, on_demand_in)
         {
-            let disco = &disco;
-            let engine = &engine;
-            let socket = &socket;
-            let tun = &tun;
             let rtt_probes = &rtt_probes;
             let home_selector = &home_selector;
             scope.spawn(move || {
                 relay_worker(
                     RelayContext {
-                        rtt: rtt_probes,
-                        home: home_selector,
-                        shutdown,
-                        identity,
+                        common,
                         relay,
-                        node_id: relay_node_id,
-                        relay_ca_file: relay_ca,
-                        disco,
-                        engine,
-                        socket,
-                        tun,
-                        relayed,
-                        started,
+                        role: RelayRole::Home {
+                            rtt: rtt_probes,
+                            home: home_selector,
+                        },
                     },
                     relay_in,
                 );
             });
+            // §9.1's second rule. Its own thread, which dials the relays peers
+            // published and closes them again when they fall idle — the home
+            // connection must not be stalled behind a handshake with a relay
+            // this node has never spoken to.
+            scope.spawn(move || on_demand_hub(scope, common, on_demand_in));
         }
 
         // ── tunnel → host ──────────────────────────────────────────────────
@@ -515,7 +538,12 @@ pub fn run_with_control(
                 next_probe = Instant::now() + crate::home::PROBE_INTERVAL;
                 probe_home_relay(&rtt_probes, &home_selector, relay_out, now, random_seed);
             }
-            dispatch(disco_poll(&disco, now, relay_out), &socket, &tun, relay_out);
+            dispatch(
+                disco_poll(&disco, &engine, now, relay_out),
+                &socket,
+                &tun,
+                relay_out,
+            );
             apply_disco_paths(&disco, &engine);
         }
     });
@@ -536,7 +564,12 @@ pub fn run_with_control(
 /// Probes come back as ordinary UDP output. Candidate advertisements go over
 /// the relay (§7.3) and are handed to `advertise`, which belongs to the relay
 /// worker — the only thread that owns a Ponor connection.
-fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySender>) -> Output {
+fn disco_poll(
+    disco: &Mutex<disco::Disco>,
+    engine: &Engine,
+    now_ms: u64,
+    relay: Option<&RelaySender>,
+) -> Output {
     let mut state = disco
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -555,7 +588,13 @@ fn disco_poll(disco: &Mutex<disco::Disco>, now_ms: u64, relay: Option<&RelaySend
             // timers, turning a relay outage into a tunnel outage. A dropped
             // advertisement costs one rendezvous attempt, and the next one is
             // five seconds away.
-            relay.send(destination, &payload);
+            //
+            // **Routed like the data, by §9.1's rules.** A rendezvous sent to a
+            // relay the peer is not on reaches nobody, and the direct path it
+            // would have opened is the one thing that makes this connection
+            // temporary — so an advertisement that took the wrong relay would
+            // leave the pair on the relay path for as long as they both ran.
+            relay.send_via(engine.relay_for(destination), destination, &payload);
         }
     }
 
@@ -724,6 +763,9 @@ enum Relayed {
 #[derive(Debug)]
 struct RelaySender {
     queue: tokio::sync::mpsc::Sender<Relayed>,
+    /// Traffic for §9.1's second rule, handed to the thread that owns the
+    /// on-demand connections.
+    on_demand: tokio::sync::mpsc::Sender<(RelayId, Relayed)>,
     dropped: Arc<AtomicU64>,
 }
 
@@ -739,16 +781,26 @@ impl RelaySender {
         }
     }
 
-    fn send(&self, destination: [u8; karst_relay_proto::consts::ID_LEN], payload: &[u8]) {
+    /// Queue a datagram on the relay `relay` names, or on the home connection
+    /// when it names none — §9.1's two rules, as the engine decided them.
+    fn send_via(&self, relay: Option<RelayId>, destination: RelayId, payload: &[u8]) {
         let relayed = Relayed::Packet {
             destination,
             payload: payload.to_vec(),
         };
-        if self.queue.try_send(relayed).is_err() {
+        let queued = match relay {
+            None => self.queue.try_send(relayed).is_ok(),
+            Some(relay) => self.on_demand.try_send((relay, relayed)).is_ok(),
+        };
+        if !queued {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
+
+/// A Ponor identifier: a node id or a relay id, which are the same width and
+/// derived the same way from different keys.
+type RelayId = [u8; karst_relay_proto::consts::ID_LEN];
 
 /// Reconnect delay bounds for the relay worker.
 const RELAY_BACKOFF_MIN: Duration = Duration::from_secs(1);
@@ -779,14 +831,9 @@ const RELAY_QUEUE: usize = 256;
 /// A struct rather than nine parameters, and it is the same set the engine's
 /// own threads borrow — the worker is a third datapath thread, not a side
 /// channel.
-struct RelayContext<'a> {
-    /// §9.1's outstanding latency probes on this connection.
-    rtt: &'a Mutex<crate::home::RttProbes>,
-    /// §9.1's home-relay choice, fed by those probes.
-    home: &'a Mutex<crate::home::Selector>,
+struct RelayCommon<'a> {
     shutdown: &'a Shutdown,
     identity: Arc<crate::control::Identity>,
-    relay: crate::netmap::Relay,
     node_id: Vec<u8>,
     disco: &'a Mutex<disco::Disco>,
     engine: &'a Engine,
@@ -799,6 +846,41 @@ struct RelayContext<'a> {
     /// exists. Sending is non-blocking, so the receive task may use it.
     relayed: &'a RelaySender,
     started: Instant,
+}
+
+/// Which of §9.1's two connections this worker is carrying, and the state that
+/// belongs to only one of them.
+enum RelayRole<'a> {
+    /// The relay this node chose and publishes. Kept up for as long as the
+    /// daemon runs, measured, and the only one whose answers move the choice.
+    Home {
+        /// §9.1's outstanding latency probes on this connection.
+        rtt: &'a Mutex<crate::home::RttProbes>,
+        /// §9.1's home-relay choice, fed by those probes.
+        home: &'a Mutex<crate::home::Selector>,
+    },
+    /// A relay a *peer* published, dialled because that peer is not on this
+    /// node's own relay. Nothing here is measured and nothing is published:
+    /// this connection is a way to reach one peer, not a candidate for
+    /// anything, and closing it when the traffic stops is what §9.1 asks for.
+    OnDemand {
+        /// Engine milliseconds at the last inbound traffic, shared with the hub
+        /// that decides when this connection has been idle long enough.
+        activity: Arc<AtomicU64>,
+    },
+}
+
+struct RelayContext<'a> {
+    common: &'a RelayCommon<'a>,
+    relay: crate::netmap::Relay,
+    role: RelayRole<'a>,
+}
+
+impl RelayContext<'_> {
+    /// Whether this is the connection §9.1 keeps up.
+    fn is_home(&self) -> bool {
+        matches!(self.role, RelayRole::Home { .. })
+    }
 }
 
 /// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
@@ -823,7 +905,7 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
         eprintln!("karstd: cannot start relay runtime; the relay path is disabled");
         return;
     };
-    let tls = match crate::relay_tls::client_config(context.relay_ca_file.as_deref()) {
+    let tls = match crate::relay_tls::client_config(context.common.relay_ca_file.as_deref()) {
         Ok(tls) => tls,
         // Named rather than swallowed. The likeliest cause is a mistyped or
         // unreadable `relay_ca_file`, and "the relay path is disabled" without
@@ -836,9 +918,9 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
 
     let mut outbound = outbound;
     let mut backoff = RELAY_BACKOFF_MIN;
-    while !context.shutdown.requested() {
+    while !context.common.shutdown.requested() {
         let session = crate::relay::Session::from_control_handle(
-            &context.node_id,
+            &context.common.node_id,
             &context.relay,
             random_seed(),
         );
@@ -848,7 +930,7 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
         };
         let connected = runtime.block_on(crate::relay::Connection::connect(
             session,
-            &*context.identity,
+            &*context.common.identity,
             &crate::control::RelayVerifier,
             Arc::clone(&tls),
             &context.relay,
@@ -868,7 +950,7 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
                         context.relay.address
                     );
                 }
-                sleep_backoff(context.shutdown, &mut backoff);
+                sleep_backoff(context.common.shutdown, &mut backoff);
                 continue;
             }
         };
@@ -877,7 +959,7 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
             // Treated as a failed attempt rather than asserted, because this is
             // a daemon carrying traffic and the alternative to being wrong here
             // is a panic in a thread nothing restarts.
-            sleep_backoff(context.shutdown, &mut backoff);
+            sleep_backoff(context.common.shutdown, &mut backoff);
             continue;
         };
         // Reset only once a connection is actually established. Resetting on
@@ -890,10 +972,15 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
         }
         backoff = RELAY_BACKOFF_MIN;
 
+        // Both directions stop together. Without this the receive loop would
+        // outlive a send loop whose queue has been closed — which is exactly
+        // how an on-demand connection ends — and the worker would sit in
+        // `join!` holding a TLS stream nobody is using until the daemon exits.
+        let closing = AtomicBool::new(false);
         runtime.block_on(async {
             tokio::join!(
-                relay_send_loop(context.shutdown, sender, &mut outbound),
-                relay_receive_loop(&context, receiver),
+                relay_send_loop(&context, &closing, sender, &mut outbound),
+                relay_receive_loop(&context, &closing, receiver),
             )
         });
 
@@ -901,27 +988,46 @@ fn relay_worker(context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver
         // mean probing a reflector that has already forgotten this node, and
         // advertising a mapping nothing is keeping alive.
         context
+            .common
             .disco
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear_reflector(&context.relay.relay_id);
+
+        // A closed queue is the hub saying this relay is no longer needed —
+        // §9.1's "SHOULD be closed after a period with no traffic". Reconnecting
+        // would undo the decision immediately.
+        if outbound.is_closed() && outbound.is_empty() {
+            return;
+        }
     }
 }
 
 /// Drain the queue onto the relay until it breaks or the daemon stops.
 async fn relay_send_loop(
-    shutdown: &Shutdown,
+    context: &RelayContext<'_>,
+    closing: &AtomicBool,
     mut sender: crate::relay::Sender,
     outbound: &mut tokio::sync::mpsc::Receiver<Relayed>,
 ) {
-    while !shutdown.requested() {
+    while !context.common.shutdown.requested() {
         // A short timeout rather than a bare `recv`, so a quiet connection
         // still notices a shutdown request.
         let Ok(next) = tokio::time::timeout(TICK, outbound.recv()).await else {
+            if closing.load(Ordering::Relaxed) {
+                return;
+            }
             continue;
         };
-        let Some(next) = next else { return };
+        let Some(next) = next else {
+            // The queue's last sender is gone, so nothing further can be sent
+            // on this connection. Tell the reader as well: it has no other way
+            // to learn that this connection is finished.
+            closing.store(true, Ordering::Relaxed);
+            return;
+        };
         if write_relayed(&mut sender, next).await.is_err() {
+            closing.store(true, Ordering::Relaxed);
             return;
         }
         // **Coalesce whatever else is already queued before flushing.** A
@@ -929,21 +1035,27 @@ async fn relay_send_loop(
         // fragments belonging to one handshake should cost one of each.
         while let Ok(more) = outbound.try_recv() {
             if write_relayed(&mut sender, more).await.is_err() {
+                closing.store(true, Ordering::Relaxed);
                 return;
             }
         }
         if sender.flush().await.is_err() {
+            closing.store(true, Ordering::Relaxed);
             return;
         }
     }
 }
 
 /// Deliver what the relay forwards to whichever protocol owns it.
-async fn relay_receive_loop(context: &RelayContext<'_>, mut receiver: crate::relay::Receiver) {
-    while !context.shutdown.requested() {
+async fn relay_receive_loop(
+    context: &RelayContext<'_>,
+    closing: &AtomicBool,
+    mut receiver: crate::relay::Receiver,
+) {
+    while !context.common.shutdown.requested() && !closing.load(Ordering::Relaxed) {
         let received = tokio::time::timeout(
             TICK,
-            receiver.receive(&*context.identity, &crate::control::RelayVerifier),
+            receiver.receive(&*context.common.identity, &crate::control::RelayVerifier),
         )
         .await;
         let events = match received {
@@ -951,88 +1063,242 @@ async fn relay_receive_loop(context: &RelayContext<'_>, mut receiver: crate::rel
             // A timeout is the normal case, not a failure: it is what lets this
             // loop notice a shutdown on a connection that happens to be quiet.
             Err(_) => continue,
-            Ok(Err(_)) => return,
+            Ok(Err(_)) => {
+                closing.store(true, Ordering::Relaxed);
+                return;
+            }
         };
+        if !events.is_empty() {
+            if let RelayRole::OnDemand { activity } = &context.role {
+                activity.store(now_ms(context.common.started), Ordering::Relaxed);
+            }
+        }
         for event in events {
-            // §7.7: this relay runs a reflector, and here is the key. Handed
-            // straight to discovery — the address inside is AVEN's encoding,
-            // and `karst-disco` owns that.
-            if let crate::relay::Event::Reflector { key, endpoint } = event {
-                let Ok(endpoint) = karst_disco::Endpoint::from_wire(&endpoint) else {
-                    // A relay this node authenticated sent an endpoint it
-                    // cannot parse. Nothing to do but ignore the offer; the
-                    // connection is still good for carrying traffic, which is
-                    // what it is chiefly for.
-                    continue;
-                };
-                let taken = context
-                    .disco
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .set_reflector(context.relay.relay_id, key, endpoint.0);
-                // Once per connection, not per datagram. A node that never
-                // learns its mapped address stays on the relay forever, and
-                // "the relay offered no reflector" and "the reflector never
-                // answered" are different problems that look identical from
-                // `karst status` — which is finding 18's lesson applied one
-                // subsystem over.
-                eprintln!(
-                    "karstd: relay {} offers a reflector at {} ({})",
-                    context.relay.address,
-                    endpoint.0,
-                    if taken {
-                        "accepted"
-                    } else {
-                        "declined, too many"
-                    }
-                );
-                continue;
+            on_relay_event(context, event);
+        }
+    }
+}
+
+/// Act on one event from a relay, whichever of §9.1's two connections it
+/// arrived on.
+fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
+    // §9.1's first rule, answered. The relay this node holds cannot
+    // deliver to this peer, so anything further for it goes to the
+    // relay the peer published — if it published one this node can
+    // reach.
+    //
+    // **Only the home connection is believed.** An on-demand relay
+    // saying a peer is not there means the peer's published home is
+    // wrong or stale, and re-marking on that answer would send the next
+    // packet back to the relay that has already refused it, and the one
+    // after that here again.
+    if let crate::relay::Event::Gone { peer_id, reason } = event {
+        if context.is_home()
+            && context
+                .common
+                .engine
+                .relay_unreachable(peer_id, now_ms(context.common.started))
+        {
+            eprintln!(
+                "karstd: relay {} cannot reach {} ({reason:?}); using the relay it \
+                     published",
+                context.relay.address,
+                hex_short(&peer_id)
+            );
+        }
+        return;
+    }
+    // §7.7: this relay runs a reflector, and here is the key. Handed
+    // straight to discovery — the address inside is AVEN's encoding,
+    // and `karst-disco` owns that.
+    //
+    // **Only from the home connection.** A reflector is a vantage point
+    // AVEN probes over minutes; taking one from a connection that
+    // closes as soon as its traffic stops would leave discovery
+    // advertising a mapping nothing is keeping alive, which is the
+    // failure `clear_reflector` exists to prevent.
+    if let crate::relay::Event::Reflector { key, endpoint } = event {
+        if !context.is_home() {
+            return;
+        }
+        let Ok(endpoint) = karst_disco::Endpoint::from_wire(&endpoint) else {
+            // A relay this node authenticated sent an endpoint it
+            // cannot parse. Nothing to do but ignore the offer; the
+            // connection is still good for carrying traffic, which is
+            // what it is chiefly for.
+            return;
+        };
+        let taken = context
+            .common
+            .disco
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_reflector(context.relay.relay_id, key, endpoint.0);
+        // Once per connection, not per datagram. A node that never
+        // learns its mapped address stays on the relay forever, and
+        // "the relay offered no reflector" and "the reflector never
+        // answered" are different problems that look identical from
+        // `karst status` — which is finding 18's lesson applied one
+        // subsystem over.
+        eprintln!(
+            "karstd: relay {} offers a reflector at {} ({})",
+            context.relay.address,
+            endpoint.0,
+            if taken {
+                "accepted"
+            } else {
+                "declined, too many"
             }
-            // §9.1's measurement, answered on the connection it was sent on.
-            if let crate::relay::Event::Pong { token } = event {
-                let resolved = context
-                    .rtt
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .resolve(token, now_ms(context.started));
-                if let Some(rtt) = resolved {
-                    let mut home = context
-                        .home
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    home.observe(context.relay.relay_id, rtt);
-                }
-                continue;
-            }
-            let crate::relay::Event::Packet { source_id, payload } = event else {
-                continue;
-            };
-            let now = now_ms(context.started);
-            // **AVEN is asked first, exactly as on the UDP socket**, and for the
-            // same reason: the two protocols share this transport too, and only
-            // one of them can authenticate any given datagram. `Disco` reports
-            // whether the payload was its own; anything else is PHREATIC's.
-            let handled = context
-                .disco
+        );
+        return;
+    }
+    // §9.1's measurement, answered on the connection it was sent on.
+    // Nothing pings an on-demand connection, so a `Pong` arriving on one
+    // answers no question this node asked and measures nothing.
+    if let crate::relay::Event::Pong { token } = event {
+        if let RelayRole::Home { rtt, home } = context.role {
+            let resolved = rtt
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .inbound_from_relay(source_id, &payload, now);
-            if handled {
-                continue;
+                .resolve(token, now_ms(context.common.started));
+            if let Some(measured) = resolved {
+                home.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .observe(context.relay.relay_id, measured);
             }
-            let out = context.engine.inbound_from_relay(
-                source_id,
-                &payload,
-                now,
-                &responder_randomness(),
+        }
+        return;
+    }
+    let crate::relay::Event::Packet { source_id, payload } = event else {
+        return;
+    };
+    let now = now_ms(context.common.started);
+    // **AVEN is asked first, exactly as on the UDP socket**, and for the
+    // same reason: the two protocols share this transport too, and only
+    // one of them can authenticate any given datagram. `Disco` reports
+    // whether the payload was its own; anything else is PHREATIC's.
+    let handled = context
+        .common
+        .disco
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .inbound_from_relay(source_id, &payload, now);
+    if handled {
+        return;
+    }
+    let out =
+        context
+            .common
+            .engine
+            .inbound_from_relay(source_id, &payload, now, &responder_randomness());
+    // **The reply goes back over the relay**, and it has to: the
+    // response to a relayed `HandshakeInit` is what completes the
+    // handshake, and until it does there is no session and no direct
+    // path to upgrade to. The engine has already chosen the transport,
+    // so this only has to honour it — and the queue is non-blocking, so
+    // handing work to the send task cannot stall this one.
+    dispatch(
+        out,
+        context.common.socket,
+        context.common.tun,
+        Some(context.common.relayed),
+    );
+}
+
+/// How long an on-demand connection is kept after its last datagram.
+///
+/// §9.1 says these "SHOULD be closed after a period with no traffic" and does
+/// not say how long. Two minutes: long enough that an interactive flow with
+/// gaps in it — a shell session, a paused transfer — does not pay for a TLS and
+/// ML-DSA-65 handshake every time the user stops typing, and short enough that a
+/// peer this node spoke to once does not leave a connection on somebody else's
+/// relay for the rest of the day.
+const ON_DEMAND_IDLE_MS: u64 = 120_000;
+
+/// Hold the connections §9.1's second rule needs, and only for as long as it
+/// needs them.
+///
+/// One thread owning the whole set rather than a shared map: dialling a relay is
+/// a TLS and ML-DSA-65 handshake, and the datapath thread that happened to send
+/// the first packet to a peer must not be the thread that waits for it. Every
+/// datagram arrives here already addressed to a relay — the engine decided that
+/// — so all this does is find the connection or start one.
+fn on_demand_hub<'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    common: &'scope RelayCommon<'scope>,
+    mut requests: tokio::sync::mpsc::Receiver<(RelayId, Relayed)>,
+) {
+    // A runtime only to wait on the queue: the connections themselves are
+    // driven by their own threads and runtimes, so nothing here can be starved
+    // by a slow relay.
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        eprintln!(
+            "karstd: cannot start the on-demand relay runtime; peers on other relays will \
+                   be unreachable"
+        );
+        return;
+    };
+    let mut open: crate::ondemand::Pool<tokio::sync::mpsc::Sender<Relayed>> =
+        crate::ondemand::Pool::new(ON_DEMAND_IDLE_MS);
+    let mut next_sweep = Instant::now() + TICK;
+
+    while !common.shutdown.requested() {
+        // On a timer rather than only when the queue goes quiet. A node with
+        // one busy peer elsewhere and one that has gone silent must still close
+        // the second connection, and a sweep that only ran between requests
+        // would never reach it while the first peer keeps talking.
+        if Instant::now() >= next_sweep {
+            next_sweep = Instant::now() + TICK;
+            let closed = open.expire(now_ms(common.started));
+            if closed > 0 {
+                eprintln!("karstd: closed {closed} idle on-demand relay connection(s)");
+            }
+        }
+        let Ok(request) = runtime.block_on(tokio::time::timeout(TICK, requests.recv())) else {
+            continue;
+        };
+        let Some((relay_id, item)) = request else {
+            return;
+        };
+        let now = now_ms(common.started);
+        if open.route(relay_id, now).is_none() {
+            // The registry is the only place a relay id becomes something
+            // dialable. A peer publishing one this node does not have is
+            // already filtered out when the roster is built, so reaching here
+            // with an unknown id means the netmap changed underneath the packet
+            // — drop it and let the next one be routed against the roster that
+            // replaced it.
+            let Some(relay) = common.engine.relay(relay_id) else {
+                common.relayed.dropped.fetch_add(1, Ordering::Relaxed);
+                continue;
+            };
+            eprintln!(
+                "karstd: dialling {} for a peer that published it as its home relay",
+                relay.address
             );
-            // **The reply goes back over the relay**, and it has to: the
-            // response to a relayed `HandshakeInit` is what completes the
-            // handshake, and until it does there is no session and no direct
-            // path to upgrade to. The engine has already chosen the transport,
-            // so this only has to honour it — and the queue is non-blocking, so
-            // handing work to the send task cannot stall this one.
-            dispatch(out, context.socket, context.tun, Some(context.relayed));
+            let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
+            let last = Arc::new(AtomicU64::new(now));
+            let activity = Arc::clone(&last);
+            scope.spawn(move || {
+                relay_worker(
+                    RelayContext {
+                        common,
+                        relay,
+                        role: RelayRole::OnDemand { activity },
+                    },
+                    rx,
+                );
+            });
+            open.insert(relay_id, tx, last);
+        }
+        let Some(queue) = open.route(relay_id, now) else {
+            continue;
+        };
+        if queue.try_send(item).is_err() {
+            common.relayed.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -1438,9 +1704,12 @@ fn dispatch(out: Output, socket: &UdpTransport, tun: &NetworkDevice, relay: Opti
     for (datagram, via) in &out.datagrams {
         match via {
             Via::Direct(to) => direct.push((datagram.as_slice(), *to)),
-            Via::Relay(destination) => {
+            Via::Relay {
+                relay: on,
+                destination,
+            } => {
                 if let Some(relay) = relay {
-                    relay.send(*destination, datagram);
+                    relay.send_via(*on, *destination, datagram);
                 }
             }
         }
@@ -1836,6 +2105,7 @@ mod route_tests {
                 allowed_ips: allowed,
                 psk_is_fallback: true,
                 disco_key: None,
+                home_relay: None,
             });
         }
         Config {
@@ -2014,5 +2284,78 @@ mod route_tests {
         let engine = one_peer_engine(Some(addr(1)));
         assert!(!engine.release_endpoint(9, addr(9)));
         assert_eq!(engine.endpoint(0), Some(addr(1)));
+    }
+}
+
+#[cfg(test)]
+mod relay_queue_tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+
+    fn sender(
+        depth: usize,
+    ) -> (
+        RelaySender,
+        tokio::sync::mpsc::Receiver<Relayed>,
+        tokio::sync::mpsc::Receiver<(RelayId, Relayed)>,
+    ) {
+        let (queue, home_rx) = tokio::sync::mpsc::channel(depth);
+        let (on_demand, on_demand_rx) = tokio::sync::mpsc::channel(depth);
+        (
+            RelaySender {
+                queue,
+                on_demand,
+                dropped: Arc::new(AtomicU64::new(0)),
+            },
+            home_rx,
+            on_demand_rx,
+        )
+    }
+
+    /// §9.1's two rules are two connections, so they are two queues. A datagram
+    /// for a peer's published relay put on the home connection would be
+    /// addressed to a relay that has already said it cannot deliver it.
+    #[test]
+    fn each_rule_reaches_its_own_connection() {
+        let (sender, mut home, mut on_demand) = sender(4);
+        let peer = [0xAA; karst_relay_proto::consts::ID_LEN];
+        let elsewhere = [0xBB; karst_relay_proto::consts::ID_LEN];
+
+        sender.send_via(None, peer, b"first rule");
+        sender.send_via(Some(elsewhere), peer, b"second rule");
+
+        assert!(matches!(home.try_recv(), Ok(Relayed::Packet { .. })));
+        assert!(home.try_recv().is_err(), "both datagrams took one queue");
+        let (relay, item) = on_demand.try_recv().expect("the second rule's datagram");
+        assert_eq!(relay, elsewhere, "queued for the wrong relay");
+        assert!(matches!(item, Relayed::Packet { .. }));
+    }
+
+    /// **A peer on a relay this node has not dialled cannot stall every other
+    /// peer.** Reaching it costs a TLS and ML-DSA-65 handshake before the first
+    /// datagram moves, and if that backlog shared the home connection's queue it
+    /// would be occupying the space the traffic that *does* have a connection is
+    /// waiting in.
+    #[test]
+    fn a_relay_that_is_not_dialled_yet_cannot_fill_the_home_queue() {
+        let (sender, mut home, _on_demand) = sender(2);
+        let peer = [0xAA; karst_relay_proto::consts::ID_LEN];
+        let elsewhere = [0xBB; karst_relay_proto::consts::ID_LEN];
+
+        for _ in 0..8 {
+            sender.send_via(Some(elsewhere), peer, b"backlog");
+        }
+        assert_eq!(
+            sender.dropped.load(Ordering::Relaxed),
+            6,
+            "a bounded queue must drop rather than block the datapath"
+        );
+
+        sender.send_via(None, peer, b"and the home connection still has room");
+        assert!(
+            matches!(home.try_recv(), Ok(Relayed::Packet { .. })),
+            "the home connection's queue was consumed by a relay nothing has dialled"
+        );
     }
 }

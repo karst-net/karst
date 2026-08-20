@@ -366,3 +366,62 @@ async fn without_the_configured_ca_the_tls_hop_is_refused() {
         "refused, but not for want of a trust anchor: {rendered}"
     );
 }
+
+/// **A peer this relay cannot reach comes back as an event, not as a
+/// disconnection**, which is what §9.1's second rule is built on.
+///
+/// Before this the client had no case for `PeerGone` at all: the frame fell
+/// through to the packet path, produced `OutOfOrder`, and the receive loop
+/// treated it as a broken stream. Addressing a peer that is offline or homed
+/// elsewhere is an ordinary event on a relay — and it happens *first*, since a
+/// node cannot know where a peer is until it tries — so the cost of getting
+/// this wrong was the connection to every other peer, torn down and rebuilt
+/// with backoff each time.
+///
+/// Against a real relay because the two ends decide this independently: the
+/// relay picks the reason byte from its own roster (§5.4 deliberately gives
+/// "unknown" and "in another aquifer" the same one), and the client has to
+/// parse the frame it actually sends.
+#[tokio::test]
+async fn a_relay_reports_a_peer_it_cannot_reach_without_dropping_the_connection() {
+    let a = node(0x11);
+    let stranger = node(0x33);
+    // Only `a` is admitted, so `stranger` is a destination this relay will not
+    // deliver to — the case a node hits when a peer is homed somewhere else.
+    let running = start_relay("gone", &[&a]).await;
+
+    let (mut tx, mut rx) = connect(&running, &a)
+        .await
+        .expect("a connects")
+        .split()
+        .expect("established");
+
+    let stranger_id =
+        karst_control_client::handle_bytes(&stranger.handle()).expect("the stranger's handle");
+    tx.send_packet(stranger_id, b"nobody is going to get this")
+        .await
+        .expect("send");
+    tx.flush().await.expect("flush");
+
+    let events = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rx.receive(&*a, &RelayVerifier),
+    )
+    .await
+    .expect("the relay said nothing about an undeliverable destination")
+    .expect("the client treated PeerGone as a broken stream");
+
+    let karstd::relay::Event::Gone { peer_id, .. } = events.first().expect("one event") else {
+        panic!("expected a Gone event, got {events:?}");
+    };
+    assert_eq!(
+        *peer_id, stranger_id,
+        "the relay named a different peer from the one addressed"
+    );
+
+    // **The connection is still usable**, which is the half that matters: this
+    // is the same connection every other peer's traffic is on.
+    let a_id = karst_control_client::handle_bytes(&a.handle()).expect("a's handle");
+    tx.send_packet(a_id, b"still here").await.expect("send");
+    tx.flush().await.expect("flush");
+}

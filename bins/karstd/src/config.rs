@@ -323,6 +323,13 @@ pub struct Peer {
     pub psk_is_fallback: bool,
     /// AVEN key for this pair. Static TOML peers have none and stay direct-only.
     pub disco_key: Option<[u8; 32]>,
+    /// The relay this peer published as its home — `ponor-v1.md` §9.1.
+    ///
+    /// `None` for a static TOML roster, which has no coordination server to
+    /// publish through, and for a peer that has not chosen one. Only a
+    /// registry id of the right width survives: a value of any other length
+    /// names no relay in `relays` and could only be dialled by guessing.
+    pub home_relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
 }
 
 impl fmt::Debug for Peer {
@@ -776,6 +783,17 @@ impl Peer {
             allowed_ips,
             psk_is_fallback,
             disco_key: entry.disco_key.as_ref().map(|key| *key.as_bytes()),
+            // §9.1. Empty is the ordinary case — a peer that holds no relay —
+            // and any other wrong width is a server this node cannot follow.
+            // Both become `None`, which costs the on-demand path and leaves the
+            // peer reachable by every other route, rather than failing the
+            // whole netmap over one unusable field.
+            home_relay: entry
+                .home_relay
+                .as_slice()
+                .first_chunk::<{ karst_relay_proto::consts::ID_LEN }>()
+                .filter(|_| entry.home_relay.len() == karst_relay_proto::consts::ID_LEN)
+                .copied(),
         })
     }
 
@@ -840,6 +858,9 @@ impl Peer {
             allowed_ips,
             psk_is_fallback,
             disco_key: None,
+            // A static roster has no coordination server, so no peer publishes
+            // anything — the same reason `node_id` and `disco_key` are empty.
+            home_relay: None,
         })
     }
 }
@@ -1275,6 +1296,50 @@ mod netmap_tests {
             interface: "karst0".to_owned(),
             network_mode: NetworkMode::Tun,
             userspace_socks5_listen: None,
+        }
+    }
+
+    /// §9.1's published relay reaches the datapath, which is the point of
+    /// carrying it: the netmap decoded it before this and the roster dropped
+    /// it, so every peer looked like a peer that had published nothing and the
+    /// second rule could never fire.
+    #[test]
+    fn a_peers_published_home_relay_reaches_the_roster() {
+        let mut peer = wire_peer("aaa", "alpha", "100.64.0.2");
+        peer.home_relay = vec![0x7C; 32];
+        let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+        assert_eq!(cfg.peers[0].home_relay, Some([0x7C; 32]));
+    }
+
+    /// A peer holding no relay is the ordinary case and must not look like one
+    /// holding a relay named by zero bytes.
+    #[test]
+    fn a_peer_that_published_no_relay_has_none() {
+        let map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+        assert_eq!(cfg.peers[0].home_relay, None);
+    }
+
+    /// A relay id of the wrong width names nothing in the registry. The peer
+    /// keeps every other route rather than the netmap being refused over one
+    /// unusable field — but it must not be truncated or padded into an id that
+    /// happens to match something.
+    #[test]
+    fn a_home_relay_of_the_wrong_width_is_dropped() {
+        for width in [1_usize, 31, 33, 64] {
+            let mut peer = wire_peer("aaa", "alpha", "100.64.0.2");
+            peer.home_relay = vec![0x7C; width];
+            let map = netmap(vec!["100.64.0.1/16".to_owned()], vec![peer], vec![]);
+            let cfg = Config::from_netmap(local(), &map).expect("load");
+            assert_eq!(
+                cfg.peers[0].home_relay, None,
+                "a {width}-byte relay id was accepted"
+            );
         }
     }
 

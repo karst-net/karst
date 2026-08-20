@@ -2332,12 +2332,51 @@ onwards, anchored on the week of 2026-08-10.
   leaves the node believing it published a relay while its peers dial the old
   one.
 
+  ✅ **The second rule: a peer's published relay is used.** `Via::Relay` now
+  names *which* relay carries a datagram, `ondemand.rs` holds the connections
+  that answer names other than this node's own, and a thread in `run.rs` dials
+  them and closes them again after two minutes without traffic (§9.1's "SHOULD
+  be closed after a period with no traffic"). Idleness counts **both**
+  directions: the peer this connection was opened for reaches this node on it,
+  so a pool counting only its own sends would cut an inbound stream every idle
+  period.
+
+  **§9.1 orders the two rules, and the order is the whole economy of it.** This
+  node's own relay is tried first — it is already connected, and the peer may be
+  on it or on its mesh — and only a `PeerGone` moves the peer to its published
+  home. That is the only way to learn it: §5.4 makes a relay refuse to say who
+  it holds, because answering for an arbitrary id is a membership oracle across
+  tenants. The refusal costs one datagram and expires after five minutes, so a
+  peer that later joins this relay stops paying for a second connection.
+
+  **`PeerGone` used to cost the connection to every other peer.** It fell
+  through to the packet path, produced `OutOfOrder`, and the receive loop
+  treated that as a broken stream — so addressing a peer that was merely
+  offline tore down the home connection and rebuilt it with backoff. It is an
+  ordinary event on a relay, and it happens *first*, since a node cannot know
+  where a peer is until it tries.
+
+  AVEN's advertisements take the same route as the data, which is not a detail:
+  a rendezvous sent to a relay the peer is not on reaches nobody, and the
+  direct path it would have opened is the one thing that makes an on-demand
+  connection temporary.
+
   Still to come: **only the relay currently held is measured**, so the selector
   can confirm a choice but cannot yet be talked out of one. Measuring
   alternatives means a Ponor connection to each — TLS and an ML-DSA-65 handshake
-  apiece — and that cost deserves its own decision. And nothing yet *consumes* a
-  peer's published relay: reaching a peer by §9.1's second rule needs the daemon
-  to hold a connection to a relay it did not choose.
+  apiece — on a slow rotation, reusing the on-demand connections above when they
+  exist.
+
+  **That is also what the second rule is waiting for, and the two must land in
+  this order.** Every node today takes `config.relays.first()`, so a homogeneous
+  aquifer has one home relay and the second rule fires only where rosters differ
+  — a peer admitted to a relay this node is not on. Once nodes measure and
+  choose differently the rule is load-bearing, and a node that moved relay
+  before peers could follow it would simply vanish. So this is tested at the
+  seams it has — routing (`relay_path.rs`), the pool's lifetimes
+  (`ondemand.rs`), the queue split (`run.rs`), and a real relay's `PeerGone`
+  (`relay_live.rs`) — and **not yet end to end**, because a two-relay aquifer
+  cannot currently be made to put two nodes on two relays.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are

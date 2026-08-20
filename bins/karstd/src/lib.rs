@@ -23,6 +23,7 @@ pub mod flow;
 pub mod home;
 pub mod ipc;
 pub mod netmap;
+pub mod ondemand;
 pub mod portmap;
 pub mod relay;
 pub mod relay_tls;

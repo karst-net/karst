@@ -47,6 +47,19 @@ pub enum Event {
         /// The token that went out, so the caller can attribute the round trip.
         token: [u8; PING_TOKEN_LEN],
     },
+    /// The relay cannot deliver to a peer this node addressed — §5.4, §10.1.
+    ///
+    /// **The answer to "is the peer on my relay?", which §9.1's first rule
+    /// needs and nothing else supplies.** A relay will not enumerate who it
+    /// holds — that would be a membership oracle across tenants — so the only
+    /// way to learn that a peer is elsewhere is to address it and be told.
+    Gone {
+        /// The peer that could not be reached.
+        peer_id: [u8; ID_LEN],
+        /// Why. §5.4 makes "unknown" and "in another aquifer" the same code on
+        /// purpose, so a caller must not read more into this than it says.
+        reason: frame::Reason,
+    },
     /// This relay runs an AVEN reflector — `ponor-v1.md` §7.7.
     ///
     /// Only ever produced **after** the relay's ML-DSA-65 signature has
@@ -498,8 +511,15 @@ async fn write_handshake_events(
                 ));
             }
             // Only ever produced once the relay's signature has verified, so
-            // reaching here means the handshake finished mid-buffer.
-            reflector @ Event::Reflector { .. } => deferred.push(reflector),
+            // reaching here means the handshake finished mid-buffer. A `Gone`
+            // this early names a peer nothing has addressed yet — held rather
+            // than refused, because the caller's own roster decides whether it
+            // means anything, and a relay saying something surprising about a
+            // third party is not a reason to drop a connection that just
+            // authenticated.
+            deferred_event @ (Event::Reflector { .. } | Event::Gone { .. }) => {
+                deferred.push(deferred_event);
+            }
         }
     }
     tls.flush().await.map_err(ConnectError::Io)?;
@@ -609,6 +629,17 @@ impl Session {
                     .first_chunk::<PING_TOKEN_LEN>()
                     .copied()
                     .map(|token| Event::Pong { token }));
+            }
+            // §10.1. **Not a protocol error, and treating it as one cost a
+            // reconnection.** Before this, an undeliverable destination — a
+            // peer that had gone offline, or one that was never on this relay —
+            // fell through to `received`, which returns `None` for anything but
+            // a `RecvPacket`, and the `OutOfOrder` that produced took the
+            // connection down and rebuilt it with backoff. Addressing an absent
+            // peer is an ordinary event on a relay; it must not cost this node
+            // the path to every other peer.
+            if let Frame::PeerGone { peer_id, reason } = *frame {
+                return Ok(Some(Event::Gone { peer_id, reason }));
             }
             return self
                 .received(frame)

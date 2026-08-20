@@ -47,14 +47,32 @@ use crate::routing::PeerIndex;
 pub enum Via {
     /// Straight to the peer on the shared UDP socket.
     Direct(SocketAddr),
-    /// Through the relay, addressed by the peer's Ponor node id.
+    /// Through a relay, addressed by the peer's Ponor node id.
     ///
     /// The relay reads the id and forwards the payload without looking inside
     /// it: what it carries is a sealed PHREATIC datagram, and `ponor-v1.md`
     /// §1.2 is explicit that no inner layer is added because there is nothing
     /// left to protect from the relay that the payload does not already cover.
-    Relay([u8; karst_relay_proto::consts::ID_LEN]),
+    Relay {
+        /// Which relay carries it. `None` is this node's own home relay —
+        /// §9.1's first rule, and the connection that is always up.
+        ///
+        /// `Some` names the peer's **published** home relay, §9.1's second
+        /// rule: a relay this node did not choose and holds a connection to
+        /// only for as long as there is traffic for it.
+        relay: Option<[u8; karst_relay_proto::consts::ID_LEN]>,
+        /// The peer, as the relay knows it.
+        destination: [u8; karst_relay_proto::consts::ID_LEN],
+    },
 }
+
+/// How long this node believes its own relay when it says a peer is not there.
+///
+/// Five minutes. Short enough that a peer which has since arrived on this
+/// node's relay — or on its mesh — stops paying for a second connection within
+/// a few minutes; long enough that a peer genuinely homed elsewhere costs one
+/// probing datagram every five minutes rather than one per packet.
+const HOME_RELAY_RETRY_MS: u64 = 5 * 60 * 1000;
 
 /// A full-size PHREATIC datagram must fit one Ponor frame, or the relay path
 /// would need a fragmentation layer that the direct path does not have — and
@@ -213,6 +231,17 @@ struct PeerSlot {
     /// a hash lookup and is taken alongside the session lock this path already
     /// takes, rather than being a new kind of contention.
     flows: Mutex<crate::flow::Flows>,
+    /// When this node's own relay last said it could not reach this peer, in
+    /// engine milliseconds. Zero means it has not — §9.1's first rule still
+    /// applies.
+    ///
+    /// **A relay will not say who it holds**, and §5.4 makes that deliberate:
+    /// answering "is this node here?" for an arbitrary id is a membership
+    /// oracle across tenants on a shared relay. So presence is learned the only
+    /// way it can be, by addressing the peer and reading the `PeerGone` that
+    /// comes back. An atomic rather than a lock because the outbound path reads
+    /// it for every packet to a peer with no direct path.
+    off_home: AtomicU64,
 }
 
 /// Everything a packet's handling depends on, swapped as a unit.
@@ -242,6 +271,15 @@ struct Roster {
     /// The reverse mapping, for attributing a relay-delivered datagram to the
     /// peer the relay says sent it.
     by_relay_id: HashMap<[u8; karst_relay_proto::consts::ID_LEN], PeerIndex>,
+    /// Each peer's published home relay — §9.1 — **filtered to relays this node
+    /// could actually dial**, which means present in the netmap's registry.
+    ///
+    /// A relay id alone names nothing dialable: reaching one needs its address,
+    /// its TLS name and the ML-DSA-65 key its identity is pinned to, and all
+    /// three come from the registry. Filtering here rather than at the point of
+    /// use means the routing decision cannot produce a destination the
+    /// transport will silently drop.
+    home_relays: Vec<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
     /// Whether this node has a relay to send through at all. Without one a
     /// peer's node id names a destination nothing can reach.
     relay_configured: bool,
@@ -280,6 +318,14 @@ pub struct Engine {
     /// so the HMAC schedule is not rebuilt per packet.
     in_mac_key: FragMacKey,
     stats: Counters,
+    /// The relay this node itself holds a connection to — §9.1.
+    ///
+    /// **Told to the engine rather than derived from the configuration**, even
+    /// though today the daemon takes the first registry entry. The choice
+    /// belongs to `home::Selector`, and a second place computing it is a second
+    /// place that can disagree — at which point this node would route a peer
+    /// onto an on-demand connection to the relay it is already sitting on.
+    home_relay: RwLock<Option<[u8; karst_relay_proto::consts::ID_LEN]>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -307,7 +353,72 @@ impl Engine {
             policy,
             in_mac_key,
             stats: Counters::default(),
+            home_relay: RwLock::new(None),
         }
+    }
+
+    /// Tell the engine which relay this node holds — §9.1.
+    ///
+    /// Routing needs it to tell the two rules apart: a peer whose published
+    /// home is the relay this node is already connected to is reached on that
+    /// connection, not on a second one dialled to the same address.
+    pub fn set_home_relay(&self, relay_id: Option<[u8; karst_relay_proto::consts::ID_LEN]>) {
+        *self
+            .home_relay
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = relay_id;
+    }
+
+    /// The registry entry for a relay id, or `None` if the netmap carries none.
+    ///
+    /// The engine holds the current configuration and swaps it as a unit, so
+    /// asking it is what keeps a dialler from working off a registry that has
+    /// been replaced since the packet was routed.
+    #[must_use]
+    pub fn relay(
+        &self,
+        relay_id: [u8; karst_relay_proto::consts::ID_LEN],
+    ) -> Option<crate::netmap::Relay> {
+        self.roster()
+            .config
+            .relays
+            .iter()
+            .find(|r| r.relay_id == relay_id)
+            .cloned()
+    }
+
+    fn home_relay(&self) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+        *self
+            .home_relay
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Record that this node's own relay could not deliver to `peer_id` —
+    /// §9.1's first rule, answered in the negative.
+    ///
+    /// Returns whether the peer now has somewhere else to be tried. `false`
+    /// means the peer published no reachable home relay, so this changes
+    /// nothing: the traffic keeps going to the relay that just refused it,
+    /// which is right, because a peer that is simply offline will be back on
+    /// that same relay when it returns.
+    pub fn relay_unreachable(
+        &self,
+        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
+        now_ms: u64,
+    ) -> bool {
+        let roster = self.roster();
+        let Some(&peer) = roster.by_relay_id.get(&peer_id) else {
+            return false;
+        };
+        let Some(slot) = roster.peers.get(peer) else {
+            return false;
+        };
+        // Zero is "not marked", so a mark taken in the first millisecond of the
+        // process must not read as one.
+        slot.off_home.store(now_ms.max(1), Ordering::Relaxed);
+        let elsewhere = roster.home_relays.get(peer).copied().flatten();
+        elsewhere.is_some_and(|id| Some(id) != self.home_relay())
     }
 
     /// A snapshot of the current peer set.
@@ -484,6 +595,12 @@ impl Engine {
     /// An earlier version asked `endpoint(peer)` in four places and dropped the
     /// packet when it was `None`, and a relay path added to three of them would
     /// have been a peer that could receive but not send.
+    /// **Which relay is the second half of the decision, and §9.1 orders it.**
+    /// This node's own relay is tried first, because the connection is already
+    /// up and the peer may well be on it or on its mesh. Only once that relay
+    /// has said otherwise — `PeerGone`, recorded by [`Self::relay_unreachable`]
+    /// — does the peer's published home relay come into play, and then only if
+    /// it is one this node could dial and is not the relay it already holds.
     fn via(&self, roster: &Roster, peer: PeerIndex) -> Option<Via> {
         if let Some(addr) = self.endpoint(peer) {
             return Some(Via::Direct(addr));
@@ -491,12 +608,54 @@ impl Engine {
         if !roster.relay_configured {
             return None;
         }
+        let destination = roster.relay_ids.get(peer).copied().flatten()?;
+        let refused = roster
+            .peers
+            .get(peer)
+            .is_some_and(|slot| slot.off_home.load(Ordering::Relaxed) != 0);
+        if refused {
+            if let Some(home) = roster.home_relays.get(peer).copied().flatten() {
+                if Some(home) != self.home_relay() {
+                    return Some(Via::Relay {
+                        relay: Some(home),
+                        destination,
+                    });
+                }
+            }
+        }
+        Some(Via::Relay {
+            relay: None,
+            destination,
+        })
+    }
+
+    /// Which relay carries traffic for the peer the relay knows as `peer_id`.
+    ///
+    /// The same decision [`Self::via`] makes, for the callers that hold a node
+    /// id rather than a roster index — AVEN's rendezvous, whose advertisements
+    /// must reach the peer by the same route its data does. A peer with a
+    /// direct path still answers here: an advertisement is what *creates* the
+    /// direct path, so it goes over the relay regardless (`aven-v1.md` §7.3).
+    #[must_use]
+    pub fn relay_for(
+        &self,
+        peer_id: [u8; karst_relay_proto::consts::ID_LEN],
+    ) -> Option<[u8; karst_relay_proto::consts::ID_LEN]> {
+        let roster = self.roster();
+        let &peer = roster.by_relay_id.get(&peer_id)?;
+        let refused = roster
+            .peers
+            .get(peer)
+            .is_some_and(|slot| slot.off_home.load(Ordering::Relaxed) != 0);
+        if !refused {
+            return None;
+        }
         roster
-            .relay_ids
+            .home_relays
             .get(peer)
             .copied()
             .flatten()
-            .map(Via::Relay)
+            .filter(|&home| Some(home) != self.home_relay())
     }
 
     /// Install an authenticated AVEN-selected endpoint for a roster peer.
@@ -583,6 +742,20 @@ impl Engine {
         // One peer's lock at a time, released before the next. A timer sweep
         // must not stall the datapath for every peer while it walks the roster.
         let roster = self.roster();
+        for slot in &roster.peers {
+            // §9.1's first rule is retried, because a peer's absence from this
+            // node's relay is a fact with a lifetime: the peer may join this
+            // relay's mesh, or move onto this relay outright, and neither
+            // produces a message anyone sends here. Retrying costs one datagram
+            // — the one that draws the next `PeerGone` — every
+            // `HOME_RELAY_RETRY`, and never retrying means a pair that could
+            // share one relay hop keeps paying for two connections for as long
+            // as both run.
+            let marked = slot.off_home.load(Ordering::Relaxed);
+            if marked != 0 && now_ms.saturating_sub(marked) >= HOME_RELAY_RETRY_MS {
+                slot.off_home.store(0, Ordering::Relaxed);
+            }
+        }
         for index in 0..roster.peers.len() {
             // As `connect_all`: reachable by either transport is enough.
             let reconnect = self.via(&roster, index).is_some();
@@ -1177,7 +1350,7 @@ impl Engine {
                 psk_is_fallback: peer.psk_is_fallback,
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
-                    Some(Via::Relay(_)) => Transport::Relay,
+                    Some(Via::Relay { .. }) => Transport::Relay,
                     None => Transport::Unreachable,
                 },
             })
@@ -1237,6 +1410,7 @@ fn build_roster(
     let mut by_hint = HashMap::with_capacity(config.peers.len());
     let mut relay_ids = Vec::with_capacity(config.peers.len());
     let mut by_relay_id = HashMap::with_capacity(config.peers.len());
+    let mut home_relays = Vec::with_capacity(config.peers.len());
 
     for (index, peer) in config.peers.iter().enumerate() {
         let hint = peer_id_hint(&MlKem::public_key_bytes(&peer.public.kem_pk));
@@ -1252,6 +1426,16 @@ fn build_roster(
             by_relay_id.insert(id, index);
         }
         relay_ids.push(relay_id);
+        // §9.1. A published relay this node's registry does not carry is a
+        // relay it has no address, TLS name or pinned key for — so it is
+        // dropped here, where the peer still has every other route, rather
+        // than surfacing as a destination the transport quietly discards.
+        home_relays.push(peer.home_relay.filter(|id| {
+            config
+                .relays
+                .iter()
+                .any(|registered| registered.relay_id == *id)
+        }));
         // The same peer as before keeps its session and its learned endpoint;
         // rebuilding would cost a rehandshake for a change that had nothing to
         // do with this peer.
@@ -1272,6 +1456,7 @@ fn build_roster(
                 )),
                 endpoint: RwLock::new(peer.endpoint),
                 flows: Mutex::new(crate::flow::Flows::new()),
+                off_home: AtomicU64::new(0),
             })
         };
         peers.push(slot);
@@ -1285,6 +1470,7 @@ fn build_roster(
         by_hint,
         relay_ids,
         by_relay_id,
+        home_relays,
     }
 }
 
