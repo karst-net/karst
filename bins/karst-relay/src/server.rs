@@ -212,6 +212,29 @@ impl Ctx {
         )
     }
 
+    /// A point-in-time view for the metrics endpoint.
+    ///
+    /// Takes the hub lock once and copies out, rather than holding it across a
+    /// render: the lock is on the forwarding path, and a scrape must not make
+    /// every client wait on string formatting.
+    fn snapshot(&self) -> crate::metrics::Snapshot {
+        let (local_clients, mesh_peers, remote_clients, totals) = self.with_hub(|hub| {
+            (
+                hub.local_clients(),
+                hub.mesh_peers(),
+                hub.remote_clients(),
+                hub.totals(),
+            )
+        });
+        crate::metrics::Snapshot {
+            local_clients,
+            mesh_peers,
+            remote_clients,
+            totals,
+            uptime_secs: self.started.elapsed().as_secs(),
+        }
+    }
+
     fn with_hub<T>(&self, f: impl FnOnce(&mut Hub) -> T) -> T {
         let mut g = match self.shared.lock() {
             Ok(g) => g,
@@ -291,8 +314,57 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         tokio::spawn(reflect_loop(socket, Arc::clone(&ctx)));
     }
 
+    if let Some(m) = &cfg.metrics {
+        // Bound before the client listener and fatal on failure, for the same
+        // reason the reflector is: a relay whose metrics endpoint silently is
+        // not running looks, to whatever is scraping it, exactly like a relay
+        // that has stopped.
+        let listener = TcpListener::bind(m.listen).await?;
+        eprintln!("karst-relay: metrics on {}", listener.local_addr()?);
+        tokio::spawn(metrics_loop(listener, Arc::clone(&ctx)));
+    }
+
     let listener = TcpListener::bind(cfg.listen).await?;
     serve_on(listener, ctx).await
+}
+
+/// Serve `GET /metrics` until the process ends.
+///
+/// **One request per connection, and a short read timeout.** This is an
+/// unauthenticated listener: a client that connects and says nothing must cost
+/// a socket for seconds rather than for ever, or a handful of them is a denial
+/// of service against the operator's visibility at the moment they need it
+/// most. Nothing here touches the roster or the identity, and a failure is
+/// logged and dropped rather than propagated — metrics going away must never
+/// take the relay with them.
+pub async fn metrics_loop(listener: TcpListener, ctx: Arc<Ctx>) {
+    loop {
+        let Ok((mut stream, _peer)) = listener.accept().await else {
+            continue;
+        };
+        let ctx = Arc::clone(&ctx);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+            )
+            .await;
+            let n = match read {
+                Ok(Ok(n)) if n > 0 => n,
+                _ => return,
+            };
+            let request = String::from_utf8_lossy(buf.get(..n).unwrap_or_default());
+            let line = request.lines().next().unwrap_or_default();
+            let body = if crate::metrics::wants_metrics(line) {
+                crate::metrics::http_response(&crate::metrics::render(&ctx.snapshot()))
+            } else {
+                crate::metrics::http_not_found()
+            };
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, body.as_bytes()).await;
+            let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
+        });
+    }
 }
 
 /// Keep admission current without making a relay restart an availability

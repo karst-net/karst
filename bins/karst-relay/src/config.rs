@@ -78,6 +78,26 @@ pub struct Config {
     /// an operator who did not ask for one should not be running one.
     #[serde(default)]
     pub reflect: Option<Reflect>,
+
+    /// Where to serve Prometheus metrics, if anywhere.
+    ///
+    /// **Its own listener, and off by default.** Sharing the client port would
+    /// put an unauthenticated `GET` on the socket that carries the tailnet's
+    /// traffic, and §5.3's admission is structural precisely so that port
+    /// answers nothing it cannot verify. Off by default because a metrics
+    /// endpoint is a disclosure surface — bounded, since it carries no
+    /// per-node dimension, but one an operator should choose rather than
+    /// inherit. Bind it to a management address.
+    #[serde(default)]
+    pub metrics: Option<Metrics>,
+}
+
+/// Where the metrics endpoint listens.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metrics {
+    /// Address to serve `GET /metrics` on.
+    pub listen: SocketAddr,
 }
 
 /// Where the reflector listens, and where clients are told to reach it.
@@ -193,6 +213,28 @@ impl Config {
     /// # Errors
     /// [`Error::Invalid`] naming the setting at fault.
     pub fn validate(&self) -> Result<(), Error> {
+        if let Some(metrics) = self.metrics {
+            // **Refuse a metrics listener that shares the client port.** It
+            // would put an unauthenticated `GET` on the socket carrying the
+            // tailnet's traffic, and §5.3's admission is structural precisely
+            // so that port answers nothing it cannot verify. A misconfiguration
+            // that only shows up as a strange response to a scraper is one
+            // worth refusing at startup.
+            if metrics.listen == self.listen {
+                return Err(Error::Invalid(
+                    "config: metrics.listen must not be the Ponor listener's \
+                     address; give it a management address of its own"
+                        .to_owned(),
+                ));
+            }
+            if let Some(reflect) = self.reflect {
+                if metrics.listen == reflect.listen {
+                    return Err(Error::Invalid(
+                        "config: metrics.listen collides with reflect.listen".to_owned(),
+                    ));
+                }
+            }
+        }
         if self.limits.queue_depth == 0 {
             // Not merely useless: a zero-depth queue silently discards every
             // frame, which is a relay that accepts connections and forwards

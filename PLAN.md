@@ -2252,13 +2252,59 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- `karst-relay`: outbound mesh dialling, region map, metrics; co-located with
-  the control server in the default deployment artefact.
-- **TURN fallback** (ADR-0008): client-side allocation, permissions, channel
-  binding and credential refresh; control-server ephemeral credential minting;
-  coturn added to the NAT matrix. **Designated slip candidate for this phase** —
-  the co-located relay covers the base case, so TURN moves to Phase 6 if the NAT
-  matrix work overruns, rather than compressing the matrix work.
+- 🔶 **`karst-relay`'s operational surface.** Metrics are done; outbound mesh
+  dialling, the region map and co-location with the control server in the
+  default deployment artefact are not.
+
+  ✅ **Prometheus metrics**, on their own listener and off by default. Two
+  decisions worth recording.
+
+  **Its own port, and `validate` refuses to let it share the client's.** A
+  metrics endpoint on the Ponor listener would put an unauthenticated `GET` on
+  the socket carrying the tailnet's traffic, and §5.3's admission is structural
+  precisely so that port answers nothing it cannot verify. A misconfiguration
+  that shows up only as a strange response to a scraper is worth refusing at
+  startup.
+
+  **No per-node labels, and that is disclosure rather than cardinality.** A
+  relay in a public pool carries thousands of nodes; a label per node is a
+  cardinality problem, but the reason it is forbidden is `ponor-v1.md` §11 —
+  an endpoint naming every node by id would publish the tailnet's membership to
+  anything that could reach it. There is a test asserting no metric carries a
+  label at all.
+
+  The counters had to become monotonic to be useful: `ConnStats` lives on the
+  connection and dies with it, so `Hub` now folds a departed connection's
+  totals into a retained sum. A counter that falls every time a client
+  disconnects reads downstream as a relay restart.
+
+  Rendered by hand rather than through a client library, as `http.rs` beside it
+  is: the text format is three lines of rules, and a registry plus a macro layer
+  plus a transitive tree is a poor trade in a network-facing daemon where every
+  dependency goes through `cargo deny`.
+
+  Checked against the defect: wiring `Hub::totals` to return zero fails
+  `the_metrics_endpoint_counts_traffic_the_relay_carried` and nothing else —
+  the unit tests render a `Snapshot` somebody constructed and cannot see it.
+- ➡️ **TURN fallback — slipped to Phase 6 on 2026-08-20**, exercising the
+  option this bullet reserved rather than quietly carrying it.
+
+  The condition it named was met: the NAT matrix work overran, and it overran
+  productively — the matrix went from nine rows to thirteen, the `karstd`
+  topologies from three to ten, and four defects came out of the extension that
+  no unit test could have found. Compressing that to protect a TURN schedule
+  would have been the wrong trade, which is precisely what the slip clause
+  existed to prevent.
+
+  **The base case is covered without it.** ADR-0008's argument was that the
+  co-located relay handles ordinary deployments and TURN buys interoperability
+  with third-party infrastructure. Ten topologies now say the relay path is
+  automatic and lossless, including the two where no direct path exists at all.
+  Nothing in Phase 4's exit depends on TURN.
+
+  Carried forward whole: client-side allocation, permissions, channel binding
+  and credential refresh; control-server ephemeral credential minting; coturn
+  added to the NAT matrix.
 - ✅ **AVEN v1 specified and its codec built** — `spec/aven-v1.md` and
   `crates/karst-disco/`, 51 tests. The NAT-traversal protocol gets a themed
   name per ADR-0010's rule (an *aven* is the shaft connecting a cave system
@@ -3273,6 +3319,16 @@ onwards, anchored on the week of 2026-08-10.
   (budget 4–6 weeks lead time; book this now, not at the start of Phase 6 —
   Phase 3 has already passed and the booking did not happen in it).
 - **External penetration test** of the control plane and console.
+- ⬅️ **TURN fallback**, slipped from Phase 4 on 2026-08-20 under the option that
+  bullet reserved: client-side allocation, permissions, channel binding and
+  credential refresh; control-server ephemeral credential minting; coturn added
+  to the NAT matrix.
+
+  It arrives here with the base case already covered — ten `karstd` topologies
+  show the co-located relay path automatic and lossless — so what TURN buys is
+  interoperability with third-party infrastructure (ADR-0008), not connectivity.
+  Scoped accordingly: it is a compatibility feature in this phase rather than a
+  traversal one.
 - Subnet routers, exit nodes, advertised routes, ACL-gated SSH.
 - Observability: Prometheus, OTel traces, per-node diagnostics bundle,
   `karst bugreport`.

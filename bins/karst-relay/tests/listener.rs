@@ -25,7 +25,7 @@ use std::sync::Arc;
 use base64ct::{Base64, Encoding as _};
 use karst_relay::config::Config;
 use karst_relay::roster::FileRoster;
-use karst_relay::server::{serve_on, Ctx};
+use karst_relay::server::{metrics_loop, serve_on, Ctx};
 use karst_relay::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_relay::tls;
 use karst_relay_proto::consts::ID_LEN;
@@ -42,6 +42,7 @@ const UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
 
 struct Harness {
     addr: std::net::SocketAddr,
+    metrics_addr: std::net::SocketAddr,
     ca: rustls::pki_types::CertificateDer<'static>,
     relay: Arc<Identity>,
     _dir: TempDir,
@@ -115,12 +116,22 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     let addr = listener.local_addr().expect("addr");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls_config);
 
+    // The metrics endpoint gets its own listener here as it does in `run`,
+    // rather than being folded into the client one — which is the property
+    // `config::validate` refuses to let an operator break.
+    let metrics = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind metrics");
+    let metrics_addr = metrics.local_addr().expect("addr");
+    tokio::spawn(metrics_loop(metrics, Arc::clone(&ctx)));
+
     tokio::spawn(async move {
         let _ = serve_on(listener, ctx).await;
     });
 
     Harness {
         addr,
+        metrics_addr,
         ca: cert.cert.der().clone(),
         relay: identity,
         _dir: dir,
@@ -523,5 +534,85 @@ async fn two_frames_in_one_write_are_both_delivered() {
             Frame::RecvPacket { payload, .. } => assert_eq!(payload, &[n; 64]),
             other => panic!("expected RecvPacket, got {other:?}"),
         }
+    }
+}
+
+/// Fetch one path from the metrics listener and return the whole response.
+async fn scrape(addr: std::net::SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.expect("connect to metrics");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: relay.test\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("send request");
+    let mut out = Vec::new();
+    stream.read_to_end(&mut out).await.expect("read response");
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// **The metrics endpoint against a relay that has actually carried traffic.**
+///
+/// The unit tests render a `Snapshot` somebody constructed. This asserts the
+/// numbers come from the hub — a forwarded packet has to move them — which is
+/// the half a rendering test cannot reach, and the half that breaks when the
+/// counters are wired to the wrong place.
+#[tokio::test]
+async fn the_metrics_endpoint_counts_traffic_the_relay_carried() {
+    let alice = identity(0x51);
+    let bob = identity(0x52);
+    let h = start("metrics-traffic", &[(&alice, "acme"), (&bob, "acme")]).await;
+
+    let before = scrape(h.metrics_addr, "/metrics").await;
+    assert!(before.starts_with("HTTP/1.1 200 OK"), "{before}");
+    assert!(
+        before.contains("\nkarst_relay_frames_in_total 0\n"),
+        "a fresh relay should have carried nothing: {before}"
+    );
+
+    let (mut a, _) = connect(&h).await;
+    handshake(&h, &mut a, &alice).await;
+    let (mut b, _) = connect(&h).await;
+    handshake(&h, &mut b, &bob).await;
+
+    let payload = [0xab; 64];
+    a.send(
+        &Frame::SendPacket {
+            dst_id: nid(&bob),
+            payload: &payload,
+        }
+        .to_vec(),
+    )
+    .await;
+    let _ = b.frame().await;
+
+    let after = scrape(h.metrics_addr, "/metrics").await;
+    assert!(
+        after.contains("\nkarst_relay_clients 2\n"),
+        "two clients should be connected: {after}"
+    );
+    assert!(
+        !after.contains("\nkarst_relay_frames_in_total 0\n"),
+        "a forwarded frame should have moved the counter: {after}"
+    );
+    assert!(
+        after.contains("Content-Type: text/plain; version=0.0.4"),
+        "the exposition format must be declared: {after}"
+    );
+}
+
+/// Anything that is not `GET /metrics` is a 404.
+///
+/// A relay's metrics listener is not a web server. Every path it answers is a
+/// path somebody has to reason about, so it answers exactly one.
+#[tokio::test]
+async fn the_metrics_listener_answers_only_its_own_path() {
+    let alice = identity(0x53);
+    let h = start("metrics-404", &[(&alice, "acme")]).await;
+    for path in ["/", "/roster", "/metrics/../roster"] {
+        let response = scrape(h.metrics_addr, path).await;
+        assert!(
+            response.starts_with("HTTP/1.1 404"),
+            "{path} was answered with {response}"
+        );
     }
 }
