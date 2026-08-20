@@ -2252,9 +2252,40 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- 🔶 **`karst-relay`'s operational surface.** Metrics are done; outbound mesh
-  dialling, the region map and co-location with the control server in the
-  default deployment artefact are not.
+- 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
+  dialling's decision half is; the dialler's I/O, the region map and
+  co-location with the control server in the default deployment artefact are
+  not.
+
+  🔶 **Mesh dialling — `mesh.rs`, sans-io, 8 tests.** Which peers are due, and
+  how long to wait after a failure. The I/O half is not written.
+
+  **§8 says what a mesh connection is and not who opens it, and that gap has a
+  failure mode.** If both ends dial, both succeed, and the hub — which keys a
+  mesh peer by relay id — replaces one with the other; two relays doing that on
+  a timer displace each other indefinitely, resending the presence state on
+  every flap. So **the relay whose id sorts lower dials and the other only
+  listens**: deterministic, no negotiation, no extra frame, and half the
+  connections in a region. A relay id is a hash of an ML-DSA-65 key, so the
+  ordering is arbitrary and stable, which is all the rule needs.
+
+  The consequence is a configuration rule worth stating: **every relay in a
+  region carries the whole mesh list, addresses included**, and the rule
+  decides who acts. An asymmetric file is a puzzle with a silent failure — the
+  pair simply never meshes.
+
+  The address is optional and a row without one is still admitted. A relay
+  behind a load balancer may be dial-in only, and refusing to admit one nobody
+  can dial would make the common cloud deployment unconfigurable. It lives on
+  `FileRoster` rather than on `karst-relay-proto`'s `RelayEntry`: where to dial
+  a relay is a deployment fact, and a second implementation of Ponor needs the
+  identity key and nothing about our topology.
+
+  Two properties the tests pin that are easy to get wrong. A dial in flight is
+  not dialled again on the next tick — `due` marks the attempt as it hands it
+  out, or every tick between a dial and its outcome starts another. And backoff
+  **survives a roster reload**, or a relay refreshing on a timer retries a dead
+  peer at full rate for ever, the reload undoing the state meant to slow it.
 
   ✅ **Prometheus metrics**, on their own listener and off by default. Two
   decisions worth recording.
