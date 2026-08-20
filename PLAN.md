@@ -2277,11 +2277,33 @@ onwards, anchored on the week of 2026-08-10.
   **not paid by the node that flaps**. Every change must reach the coordination
   server and from there every peer.
 
-  What remains is publishing the choice. `KarstRelay` carries a region and a
-  TLS name but the netmap has **no field for a node's home relay**, so §9.1's
-  "publishes the choice to the coordination server" needs a proto change, the Go
-  server, and the client — control-plane work rather than daemon work, and not
-  started.
+  ✅ **The choice is published.** `KarstNetmapRequest.home_relay` carries it up
+  and `KarstNetmapPeer.home_relay` carries it back down, so a node can reach a
+  peer by §9.1's second rule — an on-demand connection to that peer's home
+  relay — which is the only rendezvous a cross-region pair has, since §8
+  confines a mesh to one region on purpose.
+
+  Reported on the netmap request the node already sends rather than through a
+  call of its own: a second path to the same fact is a second path that can
+  disagree with the first.
+
+  **The field had to enter both content hashes, and that is the part that would
+  have failed silently.** The netmap version and the per-peer digest are hashes
+  over routable data. A home relay that moved without changing the digest would
+  never be delivered as a delta, and every other node would go on dialling a
+  relay the peer had left — a change that appears to apply and does not, which
+  is exactly what the filter fields' own comment warns about.
+
+  The cross-language vector suite caught the protocol change on the first run
+  and its message said what to do about it, which is what it is for. The
+  vectors now carry a case with a **non-empty** home relay: an empty value
+  still shifts the hash through its length prefix, so it would catch a side
+  that skipped the field entirely but not one that hashed it in the wrong
+  place.
+
+  Still to come: the daemon holds a `home::Selector` and a `Client::set_home_relay`
+  and nothing yet joins them — the RTT measurement loop that feeds the selector
+  is not written, so the field is plumbed end to end and always empty.
 - 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
   dialling's decision half is; the dialler's I/O, the region map and
   co-location with the control server in the default deployment artefact are
