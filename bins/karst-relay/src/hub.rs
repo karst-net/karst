@@ -76,6 +76,24 @@ pub struct ConnStats {
     pub undeliverable: u64,
 }
 
+impl ConnStats {
+    /// Fold another connection's totals into these.
+    ///
+    /// Saturating rather than wrapping: a counter that wraps is worse than one
+    /// that sticks, because a monitoring system reads the wrap as a reset and
+    /// a stick as a plateau — and only one of those is a lie about the
+    /// direction of travel.
+    fn absorb(&mut self, other: Self) {
+        self.frames_in = self.frames_in.saturating_add(other.frames_in);
+        self.bytes_in = self.bytes_in.saturating_add(other.bytes_in);
+        self.frames_out = self.frames_out.saturating_add(other.frames_out);
+        self.bytes_out = self.bytes_out.saturating_add(other.bytes_out);
+        self.dropped_rate = self.dropped_rate.saturating_add(other.dropped_rate);
+        self.dropped_queue = self.dropped_queue.saturating_add(other.dropped_queue);
+        self.undeliverable = self.undeliverable.saturating_add(other.undeliverable);
+    }
+}
+
 /// How the hub is configured.
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
@@ -139,6 +157,13 @@ pub struct Hub {
     conns: BTreeMap<ConnId, Conn>,
     by_node: HashMap<Id, ConnId>,
     by_mesh: HashMap<Id, ConnId>,
+    /// Everything the connections that have gone accounted for.
+    ///
+    /// **Kept because a counter that resets is not a counter.** `ConnStats`
+    /// lives on the connection and dies with it, which is right for the
+    /// per-connection view an operator asks for by id — but a relay's totals
+    /// must only ever go up, or every disconnect reads downstream as a restart.
+    retired: ConnStats,
     /// Which meshed relay holds a node that is not connected here — §8.
     ///
     /// Advisory. A relay MUST tolerate a `Forward` for a node that has just
@@ -161,6 +186,7 @@ impl Hub {
     pub fn new(cfg: Config) -> Self {
         Self {
             cfg,
+            retired: ConnStats::default(),
             conns: BTreeMap::new(),
             by_node: HashMap::new(),
             by_mesh: HashMap::new(),
@@ -523,6 +549,7 @@ impl Hub {
     /// of the ownership rule below, free to drift from it.
     pub fn disconnect(&mut self, id: ConnId) -> Option<[u8; ID_LEN]> {
         let conn = self.conns.remove(&id)?;
+        self.retired.absorb(conn.stats);
         let mut released = None;
 
         if let Some(node_id) = conn.node_id() {
@@ -570,6 +597,29 @@ impl Hub {
     #[must_use]
     pub fn pending(&self, id: ConnId) -> usize {
         self.conns.get(&id).map_or(0, |c| c.queue.len())
+    }
+
+    /// Everything this relay has carried since it started.
+    ///
+    /// Live connections plus the ones that have gone, so the numbers are
+    /// monotonic and a scrape can be differentiated. A sum over live
+    /// connections alone would fall every time a client left.
+    #[must_use]
+    pub fn totals(&self) -> ConnStats {
+        let mut out = self.retired;
+        for conn in self.conns.values() {
+            out.absorb(conn.stats);
+        }
+        out
+    }
+
+    /// Whether a mesh connection to this relay already exists.
+    ///
+    /// Asked by the dialler rather than tracked there, so there is one answer
+    /// to the question instead of two that can disagree.
+    #[must_use]
+    pub fn has_mesh(&self, relay_id: &Id) -> bool {
+        self.by_mesh.contains_key(relay_id)
     }
 
     /// Accounting for the operator — §7.4.

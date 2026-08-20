@@ -25,7 +25,7 @@ use std::sync::Arc;
 use base64ct::{Base64, Encoding as _};
 use karst_relay::config::Config;
 use karst_relay::roster::FileRoster;
-use karst_relay::server::{serve_on, Ctx};
+use karst_relay::server::{metrics_loop, serve_on, Ctx};
 use karst_relay::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_relay::tls;
 use karst_relay_proto::consts::ID_LEN;
@@ -42,7 +42,9 @@ const UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
 
 struct Harness {
     addr: std::net::SocketAddr,
+    metrics_addr: std::net::SocketAddr,
     ca: rustls::pki_types::CertificateDer<'static>,
+    ca_pem: String,
     relay: Arc<Identity>,
     _dir: TempDir,
 }
@@ -69,6 +71,21 @@ fn temp_dir(tag: &str) -> TempDir {
 
 /// Start a relay on an ephemeral port with the given nodes admitted.
 async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
+    let mut roster_text = String::new();
+    for (id, aquifer) in nodes {
+        use std::fmt::Write as _;
+        let _ = write!(
+            roster_text,
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
+            Base64::encode_string(id.public_key())
+        );
+    }
+    let (harness, _ctx, _dir) = start_with_ctx(tag, &roster_text).await;
+    harness
+}
+
+/// As [`start`], but keeping the context and directory a mesh test needs.
+async fn start_with_ctx(tag: &str, roster_text: &str) -> (Harness, Arc<Ctx>, std::path::PathBuf) {
     let dir = temp_dir(tag);
 
     // A self-signed certificate. §4.2 is the reason this is fine: relay
@@ -81,15 +98,6 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
     std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
 
-    let mut roster_text = String::new();
-    for (id, aquifer) in nodes {
-        use std::fmt::Write as _;
-        let _ = write!(
-            roster_text,
-            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
-            Base64::encode_string(id.public_key())
-        );
-    }
     let roster_path = dir.0.join("roster.toml");
     std::fs::write(&roster_path, roster_text).expect("write roster");
 
@@ -114,17 +122,34 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)]) -> Harness {
     let listener = TcpListener::bind(cfg.listen).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls_config);
+    let ctx_handle = Arc::clone(&ctx);
+
+    // The metrics endpoint gets its own listener here as it does in `run`,
+    // rather than being folded into the client one — which is the property
+    // `config::validate` refuses to let an operator break.
+    let metrics = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind metrics");
+    let metrics_addr = metrics.local_addr().expect("addr");
+    tokio::spawn(metrics_loop(metrics, Arc::clone(&ctx)));
 
     tokio::spawn(async move {
         let _ = serve_on(listener, ctx).await;
     });
 
-    Harness {
-        addr,
-        ca: cert.cert.der().clone(),
-        relay: identity,
-        _dir: dir,
-    }
+    let path = dir.0.clone();
+    (
+        Harness {
+            addr,
+            metrics_addr,
+            ca: cert.cert.der().clone(),
+            ca_pem: cert.cert.pem(),
+            relay: identity,
+            _dir: dir,
+        },
+        ctx_handle,
+        path,
+    )
 }
 
 /// A client connection, past TLS and past the HTTP upgrade.
@@ -202,6 +227,78 @@ async fn connect(h: &Harness) -> (Conn, Option<rustls::NamedGroup>) {
     buf.drain(..head);
 
     (Conn { tls, buf }, group)
+}
+
+/// A relay that can also be meshed with another.
+///
+/// `start` builds one relay from a roster of clients. A mesh needs each relay
+/// to hold the *other's* identity key as well, and the dialling side needs its
+/// address and its certificate — none of which exists until both are running.
+/// So this keeps the parts and wires them in a second step.
+struct Meshable {
+    harness: Harness,
+    ctx: Arc<Ctx>,
+    dir: std::path::PathBuf,
+    clients: String,
+}
+
+async fn start_meshable(tag: &str, nodes: &[(&Identity, &str)]) -> Meshable {
+    let mut clients = String::new();
+    for (id, aquifer) in nodes {
+        use std::fmt::Write as _;
+        let _ = write!(
+            clients,
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"{aquifer}\"\n\n",
+            Base64::encode_string(id.public_key())
+        );
+    }
+    let (harness, ctx, dir) = start_with_ctx(tag, &clients).await;
+    Meshable {
+        harness,
+        ctx,
+        dir,
+        clients,
+    }
+}
+
+impl Meshable {
+    /// Roster `other` on both sides and start dialling it from whichever side
+    /// `mesh::Dialler` says is responsible.
+    fn mesh_with(&mut self, other: &Meshable) {
+        self.mesh_with_region(other, "default");
+    }
+
+    /// As [`Self::mesh_with`], but rostering the peer in a named region.
+    fn mesh_with_region(&mut self, other: &Meshable, region: &str) {
+        for (me, them) in [(&*self, other), (other, &*self)] {
+            let roster = format!(
+                "{}[[mesh]]\nidentity_pk = \"{}\"\ndial = \"{}\"\nname = \"relay.test\"\n\
+                 region = \"{region}\"\n",
+                me.clients,
+                Base64::encode_string(them.harness.relay.public_key()),
+                them.harness.addr
+            );
+            let path = me.dir.join("roster.toml");
+            std::fs::write(&path, roster).expect("write mesh roster");
+            let reloaded = FileRoster::load(&path).expect("mesh roster loads");
+            me.ctx.replace_roster(reloaded);
+        }
+
+        // The dialler decides which side acts; start one on both and let the
+        // rule pick, exactly as `run` does.
+        for (me, them) in [(&*self, other), (other, &*self)] {
+            let ca = me.dir.join("mesh-ca.pem");
+            std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
+            let tls = karst_relay::tls::client_config(&ca).expect("client tls");
+            let dialler =
+                karst_relay::mesh::Dialler::new(me.harness.relay.relay_id(), "default".to_owned());
+            tokio::spawn(karst_relay::server::mesh_loop(
+                Arc::clone(&me.ctx),
+                tls,
+                dialler,
+            ));
+        }
+    }
 }
 
 /// Complete the Ponor handshake as `node`.
@@ -522,6 +619,192 @@ async fn two_frames_in_one_write_are_both_delivered() {
         match frame {
             Frame::RecvPacket { payload, .. } => assert_eq!(payload, &[n; 64]),
             other => panic!("expected RecvPacket, got {other:?}"),
+        }
+    }
+}
+
+/// Fetch one path from the metrics listener and return the whole response.
+async fn scrape(addr: std::net::SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.expect("connect to metrics");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: relay.test\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("send request");
+    let mut out = Vec::new();
+    stream.read_to_end(&mut out).await.expect("read response");
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// **The metrics endpoint against a relay that has actually carried traffic.**
+///
+/// The unit tests render a `Snapshot` somebody constructed. This asserts the
+/// numbers come from the hub — a forwarded packet has to move them — which is
+/// the half a rendering test cannot reach, and the half that breaks when the
+/// counters are wired to the wrong place.
+#[tokio::test]
+async fn the_metrics_endpoint_counts_traffic_the_relay_carried() {
+    let alice = identity(0x51);
+    let bob = identity(0x52);
+    let h = start("metrics-traffic", &[(&alice, "acme"), (&bob, "acme")]).await;
+
+    let before = scrape(h.metrics_addr, "/metrics").await;
+    assert!(before.starts_with("HTTP/1.1 200 OK"), "{before}");
+    assert!(
+        before.contains("\nkarst_relay_frames_in_total 0\n"),
+        "a fresh relay should have carried nothing: {before}"
+    );
+
+    let (mut a, _) = connect(&h).await;
+    handshake(&h, &mut a, &alice).await;
+    let (mut b, _) = connect(&h).await;
+    handshake(&h, &mut b, &bob).await;
+
+    let payload = [0xab; 64];
+    a.send(
+        &Frame::SendPacket {
+            dst_id: nid(&bob),
+            payload: &payload,
+        }
+        .to_vec(),
+    )
+    .await;
+    let _ = b.frame().await;
+
+    let after = scrape(h.metrics_addr, "/metrics").await;
+    assert!(
+        after.contains("\nkarst_relay_clients 2\n"),
+        "two clients should be connected: {after}"
+    );
+    assert!(
+        !after.contains("\nkarst_relay_frames_in_total 0\n"),
+        "a forwarded frame should have moved the counter: {after}"
+    );
+    assert!(
+        after.contains("Content-Type: text/plain; version=0.0.4"),
+        "the exposition format must be declared: {after}"
+    );
+}
+
+/// Anything that is not `GET /metrics` is a 404.
+///
+/// A relay's metrics listener is not a web server. Every path it answers is a
+/// path somebody has to reason about, so it answers exactly one.
+#[tokio::test]
+async fn the_metrics_listener_answers_only_its_own_path() {
+    let alice = identity(0x53);
+    let h = start("metrics-404", &[(&alice, "acme")]).await;
+    for path in ["/", "/roster", "/metrics/../roster"] {
+        let response = scrape(h.metrics_addr, path).await;
+        assert!(
+            response.starts_with("HTTP/1.1 404"),
+            "{path} was answered with {response}"
+        );
+    }
+}
+
+/// **Two relays mesh, and a packet crosses between them.**
+///
+/// The unit tests decide *when* to dial. This asserts the whole path: TLS out,
+/// the HTTP upgrade, a Ponor handshake with `role = MESH`, presence gossip, and
+/// a `Forward` delivered to a client on the other relay. It is the only place
+/// the outbound half is exercised at all — `serve` accepts a TLS *server*
+/// stream and a dialling relay holds a *client* one, so this is also what keeps
+/// the generalised connection loop honest.
+#[tokio::test]
+async fn two_relays_mesh_and_a_packet_crosses() {
+    let alice = identity(0x61);
+    let bob = identity(0x62);
+
+    // Two relays, each rostering both clients and each other.
+    let mut left = start_meshable("mesh-left", &[(&alice, "acme"), (&bob, "acme")]).await;
+    let right = start_meshable("mesh-right", &[(&alice, "acme"), (&bob, "acme")]).await;
+    left.mesh_with(&right);
+
+    // Alice on the left relay, Bob on the right.
+    let (mut a, _) = connect(&left.harness).await;
+    handshake(&left.harness, &mut a, &alice).await;
+    let (mut b, _) = connect(&right.harness).await;
+    handshake(&right.harness, &mut b, &bob).await;
+
+    // Presence has to propagate before the left relay knows where Bob is.
+    // Retried rather than slept on a fixed delay: §8 makes presence advisory
+    // and eventually consistent, so the test asserts convergence rather than
+    // a timing assumption.
+    let payload = [0x7e; 96];
+    let mut delivered = None;
+    for _ in 0..40 {
+        a.send(
+            &Frame::SendPacket {
+                dst_id: nid(&bob),
+                payload: &payload,
+            }
+            .to_vec(),
+        )
+        .await;
+        if let Ok(bytes) =
+            tokio::time::timeout(std::time::Duration::from_millis(250), b.frame()).await
+        {
+            delivered = Some(bytes);
+            break;
+        }
+    }
+
+    let bytes = delivered.expect("the packet never crossed the mesh");
+    let (frame, _) = decode(&bytes).expect("decodes").expect("complete");
+    assert_eq!(
+        frame,
+        Frame::RecvPacket {
+            src_id: nid(&alice),
+            payload: &payload,
+        },
+        "the far relay delivered something other than Alice's packet"
+    );
+}
+
+/// **§8's regional boundary, which is a bandwidth argument rather than a
+/// security one.**
+///
+/// Cross-region relay-to-relay forwarding would make every relay's bandwidth
+/// spendable by every other region's operator, so a relay refuses both to dial
+/// and to admit a mesh peer whose region differs. Enforced rather than trusted
+/// to the configuration: a foreign relay in the mesh list is then a mistake
+/// that shows up at once, not a slow bandwidth transfer nobody attributes to
+/// it.
+///
+/// It guards a misconfiguration, not a hostile operator — whoever writes one
+/// file writes the other — and the test says so because the code does.
+#[tokio::test]
+async fn a_mesh_peer_in_another_region_is_refused() {
+    let alice = identity(0x71);
+    let bob = identity(0x72);
+
+    let mut left = start_meshable("region-left", &[(&alice, "acme"), (&bob, "acme")]).await;
+    let right = start_meshable("region-right", &[(&alice, "acme"), (&bob, "acme")]).await;
+    // Both relays run in the default region; the roster claims otherwise.
+    left.mesh_with_region(&right, "us-east");
+
+    let (mut a, _) = connect(&left.harness).await;
+    handshake(&left.harness, &mut a, &alice).await;
+    let (mut b, _) = connect(&right.harness).await;
+    handshake(&right.harness, &mut b, &bob).await;
+
+    // Long enough for several dial attempts at the minimum backoff, so this is
+    // "refused" rather than "had not got round to it yet".
+    for _ in 0..12 {
+        a.send(
+            &Frame::SendPacket {
+                dst_id: nid(&bob),
+                payload: &[0x5c; 32],
+            }
+            .to_vec(),
+        )
+        .await;
+        if let Ok(bytes) =
+            tokio::time::timeout(std::time::Duration::from_millis(250), b.frame()).await
+        {
+            let (frame, _) = decode(&bytes).expect("decodes").expect("complete");
+            panic!("a packet crossed a regional boundary: {frame:?}");
         }
     }
 }

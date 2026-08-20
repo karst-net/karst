@@ -73,6 +73,28 @@ struct ClientRow {
 #[derive(Debug, Deserialize)]
 struct MeshRow {
     identity_pk: String,
+    /// Where to reach this relay, if this relay should dial it.
+    ///
+    /// **Configure the whole mesh list on every relay, addresses included.**
+    /// `mesh::Dialler` decides which side dials — the lower id — so a symmetric
+    /// file works everywhere and an asymmetric one is a configuration puzzle
+    /// with a silent failure mode: the pair simply never meshes.
+    ///
+    /// Optional, because a relay behind a load balancer may be dial-in only.
+    /// A peer with no address is still admitted when it dials in; it is only
+    /// never dialled.
+    #[serde(default)]
+    dial: Option<String>,
+    /// The name its certificate is issued for, when that differs from `dial`.
+    #[serde(default)]
+    name: Option<String>,
+    /// Which region this peer serves — §8. Must match this relay's own.
+    #[serde(default = "default_region")]
+    region: String,
+}
+
+fn default_region() -> String {
+    "default".to_owned()
 }
 
 /// A roster loaded from a file.
@@ -85,6 +107,20 @@ struct MeshRow {
 pub struct FileRoster {
     clients: HashMap<Id, RosterEntry>,
     mesh: HashMap<Id, RelayEntry>,
+    /// Which region each mesh peer serves — §8.
+    ///
+    /// Separate from `dial` because a dial-in-only peer has no address and
+    /// still has a region: the boundary has to hold on the side that *accepts*
+    /// a connection as well as the side that opens one, or an operator who put
+    /// a foreign relay in the list simply gets meshed by it instead.
+    region: HashMap<Id, String>,
+    /// Mesh peers with an address, for `mesh::Dialler`.
+    ///
+    /// Held here rather than on `RelayEntry`, which is a `karst-relay-proto`
+    /// type describing *admission*. Where to dial a relay is a deployment fact
+    /// and has no place in the protocol crate — a second implementation of
+    /// Ponor needs the identity key and nothing about our topology.
+    dial: Vec<crate::mesh::Peer>,
     decoy: Vec<u8>,
 }
 
@@ -167,6 +203,21 @@ impl std::fmt::Debug for FileRoster {
 }
 
 impl FileRoster {
+    /// The mesh peers this roster gives an address for.
+    ///
+    /// Every relay in a region should carry the whole list; `mesh::Dialler`
+    /// decides which side actually dials, so the same file works everywhere.
+    #[must_use]
+    pub fn mesh_dial_list(&self) -> Vec<crate::mesh::Peer> {
+        self.dial.clone()
+    }
+
+    /// The region a mesh peer serves, if it is in the roster at all.
+    #[must_use]
+    pub fn mesh_region(&self, id: &Id) -> Option<&str> {
+        self.region.get(id).map(String::as_str)
+    }
+
     /// An empty roster, which admits nobody.
     ///
     /// Stated as a test rather than a convenience: an absent configuration
@@ -176,6 +227,8 @@ impl FileRoster {
         Self {
             clients: HashMap::new(),
             mesh: HashMap::new(),
+            dial: Vec::new(),
+            region: HashMap::new(),
             decoy: fresh_decoy(),
         }
     }
@@ -210,9 +263,20 @@ impl FileRoster {
         }
 
         let mut mesh = HashMap::new();
+        let mut dial = Vec::new();
+        let mut region = HashMap::new();
         for (n, row) in file.mesh.iter().enumerate() {
             let pk = decode_key(&row.identity_pk, "mesh", n)?;
             let id = relay_id(&pk);
+            if let Some(addr) = &row.dial {
+                dial.push(crate::mesh::Peer {
+                    id,
+                    addr: addr.clone(),
+                    name: row.name.clone(),
+                    region: row.region.clone(),
+                });
+            }
+            region.insert(id, row.region.clone());
             if mesh.insert(id, RelayEntry { identity_pk: pk }).is_some() {
                 return Err(Error::Duplicate(format!(
                     "roster: mesh peer #{n} repeats an identity already listed"
@@ -223,6 +287,8 @@ impl FileRoster {
         Ok(Self {
             clients,
             mesh,
+            dial,
+            region,
             decoy: fresh_decoy(),
         })
     }
@@ -298,6 +364,7 @@ fn decode_key(text: &str, kind: &str, n: usize) -> Result<Vec<u8>, Error> {
 
 #[cfg(test)]
 mod tests {
+
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
@@ -308,6 +375,30 @@ mod tests {
 
     fn pk(seed: u8) -> Vec<u8> {
         Identity::from_seed(&[seed; SEED_LEN]).public_key().to_vec()
+    }
+
+    /// A mesh row's address is optional, and a row without one is still
+    /// admitted — it is only never dialled.
+    ///
+    /// Deliberate: a relay behind a load balancer may be dial-in only, and
+    /// refusing to admit one nobody can dial would make the common cloud
+    /// deployment unconfigurable.
+    #[test]
+    fn a_mesh_row_may_omit_its_address_and_is_still_admitted() {
+        let r = FileRoster::parse(&format!(
+            "[[mesh]]\nidentity_pk = \"{}\"\n\n\
+             [[mesh]]\nidentity_pk = \"{}\"\ndial = \"r2.test:8443\"\n",
+            key(1),
+            key(2)
+        ))
+        .expect("parses");
+
+        assert_eq!(r.mesh_count(), 2, "both are admissible");
+        let dial = r.mesh_dial_list();
+        assert_eq!(dial.len(), 1, "only the row with an address is dialled");
+        let first = dial.first().expect("one dialable peer");
+        assert_eq!(first.addr, "r2.test:8443");
+        assert_eq!(first.id, relay_id(&pk(2)));
     }
 
     #[test]

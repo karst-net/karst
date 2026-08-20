@@ -2252,13 +2252,128 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- `karst-relay`: outbound mesh dialling, region map, metrics; co-located with
-  the control server in the default deployment artefact.
-- **TURN fallback** (ADR-0008): client-side allocation, permissions, channel
-  binding and credential refresh; control-server ephemeral credential minting;
-  coturn added to the NAT matrix. **Designated slip candidate for this phase** —
-  the co-located relay covers the base case, so TURN moves to Phase 6 if the NAT
-  matrix work overruns, rather than compressing the matrix work.
+- 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
+  dialling's decision half is; the dialler's I/O, the region map and
+  co-location with the control server in the default deployment artefact are
+  not.
+
+  ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
+  how long to wait; `server.rs` dials them. **Two relays mesh and a packet
+  crosses between them**, which is the only test that exercises the outbound
+  half at all.
+
+  **§8 says what a mesh connection is and not who opens it, and that gap has a
+  failure mode.** If both ends dial, both succeed, and the hub — which keys a
+  mesh peer by relay id — replaces one with the other; two relays doing that on
+  a timer displace each other indefinitely, resending the presence state on
+  every flap. So **the relay whose id sorts lower dials and the other only
+  listens**: deterministic, no negotiation, no extra frame, and half the
+  connections in a region. A relay id is a hash of an ML-DSA-65 key, so the
+  ordering is arbitrary and stable, which is all the rule needs.
+
+  The consequence is a configuration rule worth stating: **every relay in a
+  region carries the whole mesh list, addresses included**, and the rule
+  decides who acts. An asymmetric file is a puzzle with a silent failure — the
+  pair simply never meshes.
+
+  The address is optional and a row without one is still admitted. A relay
+  behind a load balancer may be dial-in only, and refusing to admit one nobody
+  can dial would make the common cloud deployment unconfigurable. It lives on
+  `FileRoster` rather than on `karst-relay-proto`'s `RelayEntry`: where to dial
+  a relay is a deployment fact, and a second implementation of Ponor needs the
+  identity key and nothing about our topology.
+
+  Two properties the tests pin that are easy to get wrong. A dial in flight is
+  not dialled again on the next tick — `due` marks the attempt as it hands it
+  out, or every tick between a dial and its outcome starts another. And backoff
+  **survives a roster reload**, or a relay refreshing on a timer retries a dead
+  peer at full rate for ever, the reload undoing the state meant to slow it.
+
+  The I/O half needed the post-handshake loop **generalised over the stream
+  type**. `serve` accepts a TLS *server* stream and a dialling relay holds a
+  *client* one, while everything after the handshake — framing, the hub, the
+  write queue — is identical. A second copy for the outbound path would have
+  given mesh its own queue draining and close handling, free to drift from the
+  one every client uses.
+
+  **The trust anchor for dialling is required and there are no system roots.**
+  §4.2 declines to rest relay identity on certificates, so a mesh that fell back
+  to public roots would quietly accept anything a public CA had issued for the
+  name — the exact trust that section refuses. It also keeps a `WebPKI` bundle
+  out of a crate that does not otherwise need one. The certificate *name* is a
+  separate roster field from the dial address, because a relay behind a load
+  balancer is reached at one and presents the other.
+
+  Checked against two defects, both of which the end-to-end row catches and no
+  unit test could: making **both** sides dial fails it, and disabling the dialler
+  fails it.
+
+  ✅ **§8's regional boundary, enforced on both sides.** Mesh is within a
+  region because cross-region relay-to-relay forwarding would make every
+  relay's bandwidth spendable by every other region's operator. A relay refuses
+  both to dial and to admit a peer whose region differs — guarding only the
+  dialler would leave the boundary holding on one side of every pair, so an
+  operator who listed a foreign relay would simply be meshed *by* it instead.
+
+  Stated for what it is: a guard against **misconfiguration**, not against a
+  hostile operator, who writes both files. Its value is that a foreign relay in
+  the mesh list becomes a mistake visible at once rather than a slow bandwidth
+  transfer nobody attributes to it.
+
+  The default region is a name rather than empty, so a single-region deployment
+  works untouched and two relays that never heard of regions still mesh.
+  Removing both guards makes a packet cross the boundary, which is the row's
+  own defect check.
+
+  ✅ **Prometheus metrics**, on their own listener and off by default. Two
+  decisions worth recording.
+
+  **Its own port, and `validate` refuses to let it share the client's.** A
+  metrics endpoint on the Ponor listener would put an unauthenticated `GET` on
+  the socket carrying the tailnet's traffic, and §5.3's admission is structural
+  precisely so that port answers nothing it cannot verify. A misconfiguration
+  that shows up only as a strange response to a scraper is worth refusing at
+  startup.
+
+  **No per-node labels, and that is disclosure rather than cardinality.** A
+  relay in a public pool carries thousands of nodes; a label per node is a
+  cardinality problem, but the reason it is forbidden is `ponor-v1.md` §11 —
+  an endpoint naming every node by id would publish the tailnet's membership to
+  anything that could reach it. There is a test asserting no metric carries a
+  label at all.
+
+  The counters had to become monotonic to be useful: `ConnStats` lives on the
+  connection and dies with it, so `Hub` now folds a departed connection's
+  totals into a retained sum. A counter that falls every time a client
+  disconnects reads downstream as a relay restart.
+
+  Rendered by hand rather than through a client library, as `http.rs` beside it
+  is: the text format is three lines of rules, and a registry plus a macro layer
+  plus a transitive tree is a poor trade in a network-facing daemon where every
+  dependency goes through `cargo deny`.
+
+  Checked against the defect: wiring `Hub::totals` to return zero fails
+  `the_metrics_endpoint_counts_traffic_the_relay_carried` and nothing else —
+  the unit tests render a `Snapshot` somebody constructed and cannot see it.
+- ➡️ **TURN fallback — slipped to Phase 6 on 2026-08-20**, exercising the
+  option this bullet reserved rather than quietly carrying it.
+
+  The condition it named was met: the NAT matrix work overran, and it overran
+  productively — the matrix went from nine rows to thirteen, the `karstd`
+  topologies from three to ten, and four defects came out of the extension that
+  no unit test could have found. Compressing that to protect a TURN schedule
+  would have been the wrong trade, which is precisely what the slip clause
+  existed to prevent.
+
+  **The base case is covered without it.** ADR-0008's argument was that the
+  co-located relay handles ordinary deployments and TURN buys interoperability
+  with third-party infrastructure. Ten topologies now say the relay path is
+  automatic and lossless, including the two where no direct path exists at all.
+  Nothing in Phase 4's exit depends on TURN.
+
+  Carried forward whole: client-side allocation, permissions, channel binding
+  and credential refresh; control-server ephemeral credential minting; coturn
+  added to the NAT matrix.
 - ✅ **AVEN v1 specified and its codec built** — `spec/aven-v1.md` and
   `crates/karst-disco/`, 51 tests. The NAT-traversal protocol gets a themed
   name per ADR-0010's rule (an *aven* is the shaft connecting a cave system
@@ -3273,6 +3388,16 @@ onwards, anchored on the week of 2026-08-10.
   (budget 4–6 weeks lead time; book this now, not at the start of Phase 6 —
   Phase 3 has already passed and the booking did not happen in it).
 - **External penetration test** of the control plane and console.
+- ⬅️ **TURN fallback**, slipped from Phase 4 on 2026-08-20 under the option that
+  bullet reserved: client-side allocation, permissions, channel binding and
+  credential refresh; control-server ephemeral credential minting; coturn added
+  to the NAT matrix.
+
+  It arrives here with the base case already covered — ten `karstd` topologies
+  show the co-located relay path automatic and lossless — so what TURN buys is
+  interoperability with third-party infrastructure (ADR-0008), not connectivity.
+  Scoped accordingly: it is a compatibility feature in this phase rather than a
+  traversal one.
 - Subnet routers, exit nodes, advertised routes, ACL-gated SSH.
 - Observability: Prometheus, OTel traces, per-node diagnostics bundle,
   `karst bugreport`.

@@ -91,6 +91,8 @@ pub struct Ctx {
     identity: Arc<Identity>,
     tls: Arc<rustls::ServerConfig>,
     started: Instant,
+    /// Which region this relay serves — §8.
+    region: String,
     next_conn: AtomicU64,
     /// `None` unless the operator configured one — `config::Reflect`.
     ///
@@ -136,6 +138,7 @@ impl Ctx {
             identity,
             tls,
             started: Instant::now(),
+            region: cfg.region.clone(),
             next_conn: AtomicU64::new(1),
             reflect: cfg
                 .reflect
@@ -210,6 +213,41 @@ impl Ctx {
             }
             .to_vec(),
         )
+    }
+
+    /// A point-in-time view for the metrics endpoint.
+    ///
+    /// Takes the hub lock once and copies out, rather than holding it across a
+    /// render: the lock is on the forwarding path, and a scrape must not make
+    /// every client wait on string formatting.
+    /// Whether a mesh peer serves this relay's region — §8.
+    ///
+    /// A peer absent from the roster cannot be admitted at all, so `false` here
+    /// is a belt-and-braces answer rather than the load-bearing one.
+    fn same_region(&self, relay_id: &crate::mesh::Id) -> bool {
+        let roster = match self.roster.read() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        roster.mesh_region(relay_id) == Some(self.region.as_str())
+    }
+
+    fn snapshot(&self) -> crate::metrics::Snapshot {
+        let (local_clients, mesh_peers, remote_clients, totals) = self.with_hub(|hub| {
+            (
+                hub.local_clients(),
+                hub.mesh_peers(),
+                hub.remote_clients(),
+                hub.totals(),
+            )
+        });
+        crate::metrics::Snapshot {
+            local_clients,
+            mesh_peers,
+            remote_clients,
+            totals,
+            uptime_secs: self.started.elapsed().as_secs(),
+        }
     }
 
     fn with_hub<T>(&self, f: impl FnOnce(&mut Hub) -> T) -> T {
@@ -291,8 +329,68 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         tokio::spawn(reflect_loop(socket, Arc::clone(&ctx)));
     }
 
+    if let Some(m) = &cfg.metrics {
+        // Bound before the client listener and fatal on failure, for the same
+        // reason the reflector is: a relay whose metrics endpoint silently is
+        // not running looks, to whatever is scraping it, exactly like a relay
+        // that has stopped.
+        let listener = TcpListener::bind(m.listen).await?;
+        eprintln!("karst-relay: metrics on {}", listener.local_addr()?);
+        tokio::spawn(metrics_loop(listener, Arc::clone(&ctx)));
+    }
+
+    if let Some(mesh) = &cfg.mesh {
+        // A trust anchor that cannot be read is a relay that will never mesh,
+        // and finding that out at the first dial rather than at startup means
+        // finding it out from a log line nobody is reading.
+        let client_tls = crate::tls::client_config(&mesh.ca)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id(), cfg.region.clone());
+        eprintln!("karst-relay: mesh dialling enabled");
+        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, dialler));
+    }
+
     let listener = TcpListener::bind(cfg.listen).await?;
     serve_on(listener, ctx).await
+}
+
+/// Serve `GET /metrics` until the process ends.
+///
+/// **One request per connection, and a short read timeout.** This is an
+/// unauthenticated listener: a client that connects and says nothing must cost
+/// a socket for seconds rather than for ever, or a handful of them is a denial
+/// of service against the operator's visibility at the moment they need it
+/// most. Nothing here touches the roster or the identity, and a failure is
+/// logged and dropped rather than propagated — metrics going away must never
+/// take the relay with them.
+pub async fn metrics_loop(listener: TcpListener, ctx: Arc<Ctx>) {
+    loop {
+        let Ok((mut stream, _peer)) = listener.accept().await else {
+            continue;
+        };
+        let ctx = Arc::clone(&ctx);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+            )
+            .await;
+            let n = match read {
+                Ok(Ok(n)) if n > 0 => n,
+                _ => return,
+            };
+            let request = String::from_utf8_lossy(buf.get(..n).unwrap_or_default());
+            let line = request.lines().next().unwrap_or_default();
+            let body = if crate::metrics::wants_metrics(line) {
+                crate::metrics::http_response(&crate::metrics::render(&ctx.snapshot()))
+            } else {
+                crate::metrics::http_not_found()
+            };
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, body.as_bytes()).await;
+            let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
+        });
+    }
 }
 
 /// Keep admission current without making a relay restart an availability
@@ -407,6 +505,15 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
         // Either the peer stalled or it was refused. Both close silently.
         return;
     };
+    // §8's regional boundary, on the accepting side. Guarding only the dialler
+    // would leave it holding on one side of every pair: an operator who put a
+    // foreign relay in the list would simply be meshed *by* it instead.
+    if let Admitted::Mesh { relay_id } = &admitted {
+        if !ctx.same_region(relay_id) {
+            eprintln!("karst-relay: refused a mesh peer from another region");
+            return;
+        }
+    }
     let mut tls_stream = tls_stream;
     // §7.7: after `RelayAuth`, before any `RecvPacket`. Sent here rather than
     // through the hub's queue because the ordering is the security argument —
@@ -421,6 +528,17 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
 }
 
 type Tls = tokio_rustls::server::TlsStream<TcpStream>;
+
+/// What the post-handshake loop needs of a stream.
+///
+/// **Generic so an outbound mesh connection can use it.** `serve` accepts a
+/// TLS *server* stream; a relay dialling a mesh peer holds a TLS *client*
+/// stream, and everything after the handshake — framing, the hub, the write
+/// queue — is identical. Duplicating the loop for the second type would give
+/// the mesh path its own copy of the queue draining and the close handling,
+/// free to drift from the one every client uses.
+pub trait Stream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Stream for T {}
 
 /// TLS, the HTTP upgrade, and the Ponor handshake.
 ///
@@ -501,7 +619,7 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
 
 /// The steady state: read frames, hand them to the hub, write what it queues.
 async fn drive(
-    mut tls: Tls,
+    mut tls: impl Stream,
     mut buf: Vec<u8>,
     admitted: Admitted,
     peer: SocketAddr,
@@ -640,7 +758,7 @@ fn consume(buf: &mut Vec<u8>, id: ConnId, admitted: &Admitted, ctx: &Arc<Ctx>) -
 }
 
 /// Write everything the hub has queued for this connection.
-async fn flush(tls: &mut Tls, id: ConnId, ctx: &Arc<Ctx>) -> bool {
+async fn flush(tls: &mut impl Stream, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     loop {
         let next = ctx.with_hub(|hub| hub.take_outbound(id));
         let Some(bytes) = next else { return true };
@@ -650,7 +768,7 @@ async fn flush(tls: &mut Tls, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     }
 }
 
-async fn read_more(tls: &mut Tls, buf: &mut Vec<u8>) -> bool {
+async fn read_more(tls: &mut impl Stream, buf: &mut Vec<u8>) -> bool {
     let mut chunk = [0u8; CHUNK];
     match tls.read(&mut chunk).await {
         Ok(0) | Err(_) => false,
@@ -671,4 +789,182 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+/// The HTTP upgrade a dialling relay sends — §4.1, the same request a node
+/// sends, because a mesh connection is an ordinary Ponor connection.
+const MESH_UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
+     Host: relay\r\n\
+     Connection: Upgrade\r\n\
+     Upgrade: ponor\r\n\
+     Ponor-Version: 1\r\n\r\n";
+
+/// Dial the mesh peers this relay is responsible for — §8.
+///
+/// **Only one side of a pair dials**, and `mesh::Dialler` decides which; see
+/// its documentation for why, and for what happens if both do.
+pub async fn mesh_loop(
+    ctx: Arc<Ctx>,
+    client_tls: Arc<rustls::ClientConfig>,
+    mut dialler: crate::mesh::Dialler,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        dialler.set_peers(
+            ctx.roster
+                .read()
+                .map_or_else(|p| p.into_inner().mesh_dial_list(), |g| g.mesh_dial_list()),
+        );
+        let now = ctx.now_ms();
+        let connected = |id: &crate::mesh::Id| ctx.with_hub(|hub| hub.has_mesh(id));
+        for due in dialler.due(now, &connected) {
+            let ctx = Arc::clone(&ctx);
+            let tls = Arc::clone(&client_tls);
+            // Outcomes are reported through the hub rather than back into the
+            // dialler: the task outlives this iteration, and `due` has already
+            // marked the attempt so nothing dials it again meanwhile.
+            tokio::spawn(async move {
+                if let Err(e) = dial_mesh(&ctx, &tls, due.id, &due.addr, &due.name).await {
+                    eprintln!("karst-relay: mesh dial to {} failed: {e}", due.addr);
+                }
+            });
+        }
+    }
+}
+
+/// One outbound mesh connection, from TCP to the steady state.
+async fn dial_mesh(
+    ctx: &Arc<Ctx>,
+    tls: &Arc<rustls::ClientConfig>,
+    peer_id: crate::mesh::Id,
+    addr: &str,
+    name: &str,
+) -> Result<(), String> {
+    let entry = ctx
+        .roster
+        .read()
+        .map_or_else(
+            |p| p.into_inner().mesh_peer(&peer_id),
+            |g| g.mesh_peer(&peer_id),
+        )
+        .ok_or_else(|| "peer is not in the roster".to_owned())?;
+
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("connect: {e}"))?;
+    let remote = stream.peer_addr().map_err(|e| format!("peer_addr: {e}"))?;
+
+    // The name is only what TLS validates against the configured CA; §4.2 puts
+    // the identity check on the ML-DSA-65 signature below, not here. It comes
+    // from the roster rather than from the address, because a relay behind a
+    // load balancer is dialled at one and presents the other.
+    let server_name = rustls::pki_types::ServerName::try_from(name.to_owned())
+        .map_err(|e| format!("server name: {e}"))?;
+    let connector = tokio_rustls::TlsConnector::from(Arc::clone(tls));
+    let mut stream = connector
+        .connect(server_name, stream)
+        .await
+        .map_err(|e| format!("tls: {e}"))?;
+
+    stream
+        .write_all(MESH_UPGRADE.as_bytes())
+        .await
+        .map_err(|e| format!("upgrade: {e}"))?;
+
+    // Read until the end of the HTTP head, keeping whatever came after it: a
+    // relay may coalesce its `RelayHello` with the 101, and discarding the tail
+    // would lose the first frame of the handshake.
+    let mut buf = Vec::new();
+    let head_end = loop {
+        if let Some(at) = find_head_end(&buf) {
+            break at;
+        }
+        if buf.len() > 8192 {
+            return Err("upgrade response too large".to_owned());
+        }
+        let mut chunk = [0u8; 1024];
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("upgrade read: {e}"))?;
+        if n == 0 {
+            return Err("peer closed during upgrade".to_owned());
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    };
+    let head = String::from_utf8_lossy(buf.get(..head_end).unwrap_or_default()).into_owned();
+    if !head.starts_with("HTTP/1.1 101") {
+        return Err(format!(
+            "upgrade refused: {}",
+            head.lines().next().unwrap_or_default()
+        ));
+    }
+    let mut rest = buf.split_off(head_end);
+
+    let mut nonce = [0u8; 32];
+    getrandom::fill(&mut nonce).map_err(|e| format!("no entropy: {e}"))?;
+    let mut client = karst_relay_proto::ClientHandshake::new(
+        karst_relay_proto::Role::Mesh,
+        ctx.identity.relay_id(),
+        peer_id,
+        entry.identity_pk.clone(),
+        nonce,
+    );
+
+    let hello = next_frame(&mut stream, &mut rest).await?;
+    let (hello, _) = karst_relay_proto::frame::decode(&hello)
+        .map_err(|e| format!("hello: {e:?}"))?
+        .ok_or_else(|| "hello incomplete".to_owned())?;
+    let auth = client
+        .on_relay_hello(&hello, ctx.identity.as_ref())
+        .map_err(|e| format!("sign: {e:?}"))?;
+    stream
+        .write_all(&auth)
+        .await
+        .map_err(|e| format!("auth: {e}"))?;
+
+    let reply = next_frame(&mut stream, &mut rest).await?;
+    let (reply, _) = karst_relay_proto::frame::decode(&reply)
+        .map_err(|e| format!("relay auth: {e:?}"))?
+        .ok_or_else(|| "relay auth incomplete".to_owned())?;
+    client
+        .on_relay_auth(&reply, &crate::sign::PonorVerifier)
+        .map_err(|e| format!("verify: {e:?}"))?;
+    if !client.may_send() {
+        return Err("handshake did not establish".to_owned());
+    }
+
+    eprintln!("karst-relay: meshed with {addr}");
+    drive(
+        stream,
+        rest,
+        Admitted::Mesh { relay_id: peer_id },
+        remote,
+        Arc::clone(ctx),
+    )
+    .await;
+    Ok(())
+}
+
+/// The offset just past a complete HTTP head, if one has arrived.
+fn find_head_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
+}
+
+/// Read one complete Ponor frame, using anything already buffered first.
+async fn next_frame(stream: &mut impl Stream, buf: &mut Vec<u8>) -> Result<Vec<u8>, String> {
+    loop {
+        if let Ok(Some((_, used))) = karst_relay_proto::frame::decode(buf) {
+            return Ok(buf.drain(..used).collect());
+        }
+        let mut chunk = [0u8; 2048];
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("read: {e}"))?;
+        if n == 0 {
+            return Err("peer closed".to_owned());
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    }
 }
