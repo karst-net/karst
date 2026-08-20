@@ -2,9 +2,19 @@
 
 # Karst Kubernetes operator
 
-`karst-operator` reconciles a `KarstNode` into one host-networked `karstd`
-DaemonSet. It is intentionally **not** an admission webhook and it does not
-inject an unprivileged/userspace sidecar. Userspace operation is out of scope.
+`karst-operator` currently reconciles a `KarstNode` into one host-networked,
+privileged `karstd` DaemonSet. The daemon also supports an unprivileged
+userspace mode when configured directly:
+
+```toml
+[node]
+network_mode = "userspace"
+userspace_socks5_listen = "127.0.0.1:1080"
+```
+
+That listener accepts TCP SOCKS5 `CONNECT` requests to literal overlay IP
+addresses; a workload uses it as its sidecar proxy. Operator injection of this
+configuration remains outstanding.
 
 The resulting pod shares the host network namespace, is privileged, requests
 `NET_ADMIN`, and receives the host's `/dev/net/tun`. Those permissions are

@@ -24,7 +24,7 @@ use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
-use karst_tun::{Tun, TunConfig};
+use karst_tun::{Tun, TunConfig, Userspace};
 
 use crate::config::Config;
 use crate::disco;
@@ -40,6 +40,98 @@ const TICK: Duration = Duration::from_millis(100);
 /// Read timeout on the UDP socket, so the receive thread notices a shutdown
 /// request rather than blocking on a socket that will never speak again.
 const POLL_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// The only operations the I/O loop needs from its packet attachment.
+///
+/// TUN remains the default. The userspace variant deliberately has the same
+/// bare-IP boundary, so `dispatch` and the engine do not know which mode chose
+/// the packet and cannot accidentally weaken the established path.
+#[derive(Debug)]
+enum NetworkDevice {
+    Tun(Tun),
+    Userspace(Userspace),
+}
+
+impl NetworkDevice {
+    fn name(&self) -> &str {
+        match self {
+            Self::Tun(tun) => tun.name(),
+            Self::Userspace(stack) => stack.name(),
+        }
+    }
+
+    fn mtu(&self) -> usize {
+        match self {
+            Self::Tun(tun) => tun.mtu(),
+            Self::Userspace(stack) => stack.mtu(),
+        }
+    }
+
+    fn offload(&self) -> bool {
+        match self {
+            Self::Tun(tun) => tun.offload(),
+            Self::Userspace(stack) => stack.offload(),
+        }
+    }
+
+    fn recv_segments(
+        &self,
+        buf: &mut [u8],
+        out: &mut Vec<Vec<u8>>,
+    ) -> Result<usize, karst_tun::TunError> {
+        match self {
+            Self::Tun(tun) => tun.recv_segments(buf, out),
+            Self::Userspace(stack) => stack.recv_segments(buf, out),
+        }
+    }
+
+    fn send(&self, packet: &[u8]) -> Result<usize, karst_tun::TunError> {
+        match self {
+            Self::Tun(tun) => tun.send(packet),
+            Self::Userspace(stack) => stack.send(packet),
+        }
+    }
+
+    fn set_address(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(tun) => tun.set_address(address, prefix_len),
+            Self::Userspace(stack) => stack.set_address(address, prefix_len),
+        }
+    }
+
+    fn add_route(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(tun) => tun.add_route(address, prefix_len),
+            Self::Userspace(stack) => stack.add_route(address, prefix_len),
+        }
+    }
+
+    fn remove_route(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(tun) => tun.remove_route(address, prefix_len),
+            Self::Userspace(stack) => stack.remove_route(address, prefix_len),
+        }
+    }
+
+    fn userspace(&self) -> Option<Userspace> {
+        match self {
+            Self::Tun(_) => None,
+            Self::Userspace(stack) => Some(stack.clone()),
+        }
+    }
+}
 
 /// Signals shutdown to every thread.
 #[derive(Debug, Default)]
@@ -201,6 +293,8 @@ pub fn run_with_control(
         listen: config.listen,
         port_mapping: config.port_mapping,
         interface: config.interface.clone(),
+        network_mode: config.network_mode,
+        userspace_socks5_listen: config.userspace_socks5_listen,
         relay_ca_file: config.relay_ca_file.clone(),
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
@@ -211,6 +305,19 @@ pub fn run_with_control(
         .map(crate::control::Client::relay_identity);
 
     std::thread::scope(|scope| {
+        if let Some(listen) = config.userspace_socks5_listen {
+            // Configuration validation guarantees this is the userspace
+            // variant. Keep the endpoint inside the scoped daemon lifetime so
+            // it cannot survive the packet engine it depends on.
+            if let Some(stack) = tun.userspace() {
+                scope.spawn(move || {
+                    if let Err(e) = crate::socks5::serve(&stack, listen, shutdown) {
+                        eprintln!("karstd: userspace SOCKS5 listener {listen} stopped: {e}");
+                    }
+                });
+            }
+        }
+
         // ── host → tunnel ──────────────────────────────────────────────────
         let engine_host = &engine;
         let socket_host = &socket;
@@ -565,7 +672,7 @@ struct RelayContext<'a> {
     disco: &'a Mutex<disco::Disco>,
     engine: &'a Engine,
     socket: &'a UdpTransport,
-    tun: &'a Tun,
+    tun: &'a NetworkDevice,
     /// Extra trust anchors for the TLS hop, from local configuration.
     relay_ca_file: Option<std::path::PathBuf>,
     /// Where a reply to a relayed datagram goes when it is itself relayed —
@@ -838,7 +945,7 @@ fn apply_path_changes(changes: &[disco::PathChange], engine: &Engine) {
 /// A poisoned lock means a thread panicked while holding it; the tracked set is
 /// plain data rather than a half-written buffer, so continuing with it beats
 /// taking the tunnel down for every peer.
-fn apply_routes(routes: &Mutex<Routes>, tun: &Tun, config: &Config) {
+fn apply_routes(routes: &Mutex<Routes>, tun: &NetworkDevice, config: &Config) {
     routes
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -883,7 +990,7 @@ impl Routes {
     /// be installed costs reachability to one peer; giving up would cost the
     /// whole tunnel, and the node is already carrying traffic for everybody
     /// else by the time this runs.
-    fn apply(&mut self, tun: &Tun, config: &Config) {
+    fn apply(&mut self, tun: &NetworkDevice, config: &Config) {
         let wanted = Self::wanted(config);
 
         for (dst, len) in self.0.difference(&wanted) {
@@ -909,16 +1016,23 @@ impl Routes {
 }
 
 /// Create the TUN device and give it its addresses.
-fn bring_up_interface(config: &Config) -> io::Result<Tun> {
-    let tun = Tun::create(&TunConfig {
+fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
+    let attachment = TunConfig {
         name: config.interface.clone(),
         // Segmentation offload, if the kernel offers it. One read can then
         // return a coalesced TCP stream instead of a single packet, which is
         // the syscall the datapath was bound by (PLAN.md §3.4).
         offload: true,
         ..TunConfig::default()
-    })
-    .map_err(|e| io::Error::other(e.to_string()))?;
+    };
+    let tun = match config.network_mode {
+        crate::config::NetworkMode::Tun => Tun::create(&attachment)
+            .map(NetworkDevice::Tun)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+        crate::config::NetworkMode::Userspace => Userspace::create(&attachment)
+            .map(NetworkDevice::Userspace)
+            .map_err(|e| io::Error::other(e.to_string()))?,
+    };
 
     for addr in &config.addresses {
         // `addr.addr`, not the network: assigning the masked base would leave
@@ -1192,7 +1306,7 @@ fn demultiplex(
 /// `Output` is entirely direct or entirely relayed, so the batch is built from
 /// the direct ones in place and a separate pass only runs when a relayed
 /// datagram is actually present.
-fn dispatch(out: Output, socket: &UdpTransport, tun: &Tun, relay: Option<&RelaySender>) {
+fn dispatch(out: Output, socket: &UdpTransport, tun: &NetworkDevice, relay: Option<&RelaySender>) {
     let mut direct: Vec<(&[u8], std::net::SocketAddr)> = Vec::with_capacity(out.datagrams.len());
     for (datagram, via) in &out.datagrams {
         match via {
@@ -1265,7 +1379,7 @@ fn refresh_netmap(
     shutdown: &Shutdown,
     engine: &Engine,
     socket: &UdpTransport,
-    tun: &Tun,
+    tun: &NetworkDevice,
     started: Instant,
     local: &dyn Fn() -> crate::config::LocalSettings,
     routes: &Mutex<Routes>,
@@ -1366,7 +1480,7 @@ fn refresh_netmap(
 /// carried that this node could not use is, from the outside, indistinguishable
 /// from a peer the server was never told about, which is a completely different
 /// problem.
-fn announce(config: &Config, tun: &Tun, socket: &UdpTransport) -> io::Result<()> {
+fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::Result<()> {
     eprintln!(
         "karstd: {} up, mtu {}, listening on {}, {} peer(s){}",
         tun.name(),
@@ -1591,6 +1705,8 @@ mod route_tests {
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
             interface: "karst0".to_owned(),
+            network_mode: crate::config::NetworkMode::Tun,
+            userspace_socks5_listen: None,
             addresses: addresses
                 .iter()
                 .map(|a| a.parse().expect("interface address"))

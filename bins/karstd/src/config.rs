@@ -44,6 +44,25 @@ use crate::routing::{AllowedIps, InterfaceAddress, Prefix};
 /// plus 32 for X25519.
 pub const PRIVATE_KEY_LEN: usize = 96;
 
+/// Where `karstd` obtains and delivers bare IP packets.
+///
+/// TUN remains the default so existing services and host routing are unchanged.
+/// Userspace mode is for an explicitly configured unprivileged sidecar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkMode {
+    /// A Linux TUN device and host routes; requires `CAP_NET_ADMIN`.
+    Tun,
+    /// The pure-Rust IP stack; no host network configuration is attempted.
+    Userspace,
+}
+
+impl Default for NetworkMode {
+    fn default() -> Self {
+        Self::Tun
+    }
+}
+
 /// Anything that stopped a configuration from loading.
 #[derive(Debug)]
 pub enum ConfigError {
@@ -157,6 +176,12 @@ pub struct NodeSection {
     /// TUN interface name.
     #[serde(default = "default_interface")]
     pub interface: String,
+    /// Packet attachment mode. Omitted keeps the privileged TUN default.
+    #[serde(default)]
+    pub network_mode: NetworkMode,
+    /// Loopback SOCKS5 endpoint for userspace mode. Workloads use this to
+    /// reach overlay TCP addresses without a TUN device.
+    pub userspace_socks5_listen: Option<SocketAddr>,
     /// Addresses to assign to the interface.
     ///
     /// Required for a roster; ignored, and refused if present, for a
@@ -222,6 +247,21 @@ pub struct ControlSection {
 
 fn default_interface() -> String {
     karst_tun::DEFAULT_NAME.to_owned()
+}
+
+fn validate_userspace(
+    mode: NetworkMode,
+    socks5_listen: Option<SocketAddr>,
+) -> Result<(), ConfigError> {
+    match (mode, socks5_listen) {
+        (NetworkMode::Tun, Some(_)) => Err(ConfigError::Unusable(
+            "node.userspace_socks5_listen requires network_mode = \"userspace\"".to_owned(),
+        )),
+        (NetworkMode::Userspace, None) => Err(ConfigError::Unusable(
+            "network_mode = \"userspace\" requires node.userspace_socks5_listen".to_owned(),
+        )),
+        _ => Ok(()),
+    }
 }
 const fn default_port_mapping() -> bool {
     true
@@ -309,6 +349,10 @@ pub struct Config {
     pub port_mapping: bool,
     /// TUN interface name.
     pub interface: String,
+    /// Packet attachment mode.
+    pub network_mode: NetworkMode,
+    /// Optional userspace SOCKS5 endpoint.
+    pub userspace_socks5_listen: Option<SocketAddr>,
     /// Interface addresses — host addresses, not networks. See
     /// [`InterfaceAddress`].
     pub addresses: Vec<InterfaceAddress>,
@@ -351,6 +395,8 @@ impl fmt::Debug for Config {
             .field("listen", &self.listen)
             .field("port_mapping", &self.port_mapping)
             .field("interface", &self.interface)
+            .field("network_mode", &self.network_mode)
+            .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
             .field("skipped", &self.skipped)
@@ -431,11 +477,14 @@ impl Config {
         }
 
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
+        validate_userspace(file.node.network_mode, file.node.userspace_socks5_listen)?;
         Ok(Self {
             keys,
             listen: file.node.listen,
             port_mapping: file.node.port_mapping,
             interface: file.node.interface,
+            network_mode: file.node.network_mode,
+            userspace_socks5_listen: file.node.userspace_socks5_listen,
             addresses,
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
@@ -469,6 +518,7 @@ impl Config {
     /// route: no address of its own, a malformed key, or two peers claiming one
     /// range.
     pub fn from_netmap(local: LocalSettings, netmap: &Netmap) -> Result<Self, ConfigError> {
+        validate_userspace(local.network_mode, local.userspace_socks5_listen)?;
         // The node's own addresses carry the *on-link* prefix, so peers are
         // reachable over the interface. A bare address parses as a /32 here,
         // which brings the interface up with nothing on-link — the server is
@@ -533,6 +583,8 @@ impl Config {
             listen: local.listen,
             port_mapping: local.port_mapping,
             interface: local.interface,
+            network_mode: local.network_mode,
+            userspace_socks5_listen: local.userspace_socks5_listen,
             addresses,
             psk_epoch: netmap.psk_epoch,
             node_id: netmap.node_id.clone(),
@@ -582,6 +634,10 @@ pub struct LocalSettings {
     pub port_mapping: bool,
     /// TUN interface name.
     pub interface: String,
+    /// Packet attachment mode.
+    pub network_mode: NetworkMode,
+    /// Optional userspace SOCKS5 endpoint.
+    pub userspace_socks5_listen: Option<SocketAddr>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
 }
@@ -592,6 +648,8 @@ impl fmt::Debug for LocalSettings {
             .field("listen", &self.listen)
             .field("port_mapping", &self.port_mapping)
             .field("interface", &self.interface)
+            .field("network_mode", &self.network_mode)
+            .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .finish_non_exhaustive()
     }
 }
@@ -959,6 +1017,7 @@ allowed_ips = ["10.99.0.2/32"]
 
         assert_eq!(cfg.listen.port(), 51820);
         assert_eq!(cfg.interface, "karst0");
+        assert_eq!(cfg.network_mode, NetworkMode::Tun);
         assert_eq!(cfg.psk_epoch, 7);
         assert_eq!(cfg.addresses.len(), 2);
         assert_eq!(cfg.peers.len(), 1);
@@ -967,6 +1026,28 @@ allowed_ips = ["10.99.0.2/32"]
             cfg.routes.route("10.99.0.2".parse().unwrap()),
             Some(0),
             "the peer's address must route to it"
+        );
+    }
+
+    #[test]
+    fn userspace_mode_is_an_explicit_configuration_choice() {
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
+        let source = std::fs::read_to_string(&path).expect("read roster");
+        std::fs::write(
+            &path,
+            source.replace(
+                "interface = \"karst0\"",
+                "interface = \"karst0\"\nnetwork_mode = \"userspace\"\nuserspace_socks5_listen = \"127.0.0.1:1080\"",
+            ),
+        )
+        .expect("write roster");
+
+        let cfg = Config::load(&path).expect("load userspace roster");
+        assert_eq!(cfg.network_mode, NetworkMode::Userspace);
+        assert_eq!(
+            cfg.userspace_socks5_listen.expect("SOCKS listener").port(),
+            1080
         );
     }
 
@@ -1191,6 +1272,8 @@ mod netmap_tests {
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
             interface: "karst0".to_owned(),
+            network_mode: NetworkMode::Tun,
+            userspace_socks5_listen: None,
         }
     }
 

@@ -35,6 +35,7 @@
 //! configuration that would fail later, on the data path, as lost packets.
 
 pub mod ip;
+pub mod userspace;
 pub mod vnet;
 
 #[cfg(target_os = "linux")]
@@ -44,6 +45,7 @@ mod sys;
 
 #[cfg(target_os = "linux")]
 pub use linux::Tun;
+pub use userspace::{TcpHandle, Userspace};
 
 use std::fmt;
 use std::io;

@@ -29,6 +29,7 @@ pub mod routing;
 pub mod run;
 #[cfg(test)]
 mod scratch;
+mod socks5;
 
 pub use config::{Config, ConfigError};
 pub use engine::Engine;

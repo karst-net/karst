@@ -147,6 +147,8 @@ fn local(seed: u8) -> LocalSettings {
         listen: "0.0.0.0:51820".parse().expect("addr"),
         port_mapping: true,
         interface: "karst0".to_owned(),
+        network_mode: karstd::config::NetworkMode::Tun,
+        userspace_socks5_listen: None,
     }
 }
 

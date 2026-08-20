@@ -73,6 +73,8 @@ fn config_for(
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,
         interface: format!("karst{own}"),
+        network_mode: karstd::config::NetworkMode::Tun,
+        userspace_socks5_listen: None,
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,
         node_id: Vec::new(),

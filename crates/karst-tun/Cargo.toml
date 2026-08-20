@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 karst-proto.workspace = true
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
