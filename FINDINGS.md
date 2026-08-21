@@ -11,7 +11,7 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-four more, and all but one are closed — most found by
+followed it added thirty-four more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
@@ -26,12 +26,14 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**One finding remains open** — 38, recorded 2026-08-21, which is a retry
-schedule rather than a fault: a node whose gateway can never help asks it again
-every five seconds for the life of the process. It is written down rather than
-fixed because the fix is a backoff policy with its own test surface, and because
-the behaviour predates the row that surfaced it — it is what *every* node
-without a port-mapping service has always done.
+**No findings remain open.** 38 was the last, closed on 2026-08-21: a node whose
+gateway can never help used to ask it again every five seconds for the life of
+the process, which is what *every* node without a port-mapping service had
+always done. The classification was right and the schedule was not, so the fix
+is RFC 6887 §8.1.1's own backoff — doubling to a 1024-second cap, resetting on
+any answer, never giving up — and its deferral reason did not survive contact:
+a schedule that is a pure function of its own history needs no injectable
+clock.
 
 Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
@@ -79,19 +81,19 @@ carries both the new wording and the original, struck through.
 | 35 | Low | Userspace mode reported a host interface it had never created | Fixed 2026-08-20 |
 | 36 | Operational | Three privileged suites could report success by not running | Fixed 2026-08-20 |
 | 37 | Medium | A mapping on RFC 6598 shared address space was accepted as an external address | Fixed 2026-08-21 |
-| 38 | Low | A gateway that cannot ever grant a mapping is asked again every five seconds | **Open** — recorded 2026-08-21 |
+| 38 | Low | A gateway that cannot ever grant a mapping is asked again every five seconds | Fixed 2026-08-21 |
 | 39 | High | The SOCKS5 relay treated a client half-close as a full teardown | Fixed 2026-08-21 |
 | 40 | Medium | Userspace mode's round trip was a poll interval, not a cost | Fixed 2026-08-21 |
 | 41 | High | Every userspace TCP socket advertised a one-segment window | Fixed 2026-08-21 |
 | 42 | High | Nothing outside the test fixture kept a relay's roster fresh, so a deployed relay stops admitting nodes after 90 s | Fixed 2026-08-21 |
 | 43 | High | A production coordination server published no relays at all; only the test server ever set the netmap's relay registry | Fixed 2026-08-21 |
 
-## Open
+## Closed
 
 ### 38. Low: a gateway that can never grant a mapping is asked again every five seconds
 
 **Recorded 2026-08-21** by the double-NAT row, which is the first thing in the
-tree to run a node whose gateway answers and refuses.
+tree to run a node whose gateway answers and refuses. **Fixed the same day.**
 
 `RETRY_DELAY` is five seconds and flat. A refusal the gateway will keep making —
 `NO_RESOURCES` from a router that is itself behind a carrier, and will answer
@@ -115,14 +117,41 @@ port-mapping service at all gets `"the gateway did not answer PCP"` on the same
 five-second cadence, and that is most nodes. The row made it visible; it did
 not introduce it.
 
-Recommended: back off on consecutive failures — five seconds doubling to a cap
-of a few minutes, reset on any success or on an epoch change — and leave the
-classification alone. Deferred rather than done because `portmap::run` takes
-its time from `Instant::now()` inside its own loop, so a test for the schedule
-needs an injectable clock, and that is a refactor with a wider blast radius
-than the fix.
+The classification is left alone, as recommended. What changed is the schedule:
+`Backoff` doubles from the same five seconds to a cap of **1024 seconds**, and
+resets on progress of any kind.
 
-## Closed
+Both numbers are RFC 6887 §8.1.1's rather than chosen. That section is PCP's own
+retransmission schedule, answering the same question — how often to keep asking
+a gateway that is not helping — and it pairs `MRT = 1024` with `MRC = 0` and
+`MRD = 0`: **retry forever, never give up.** That second half was already right
+here and is what made the first half's absence a defect on its own. A day of
+refusals falls from 17,280 requests to about 90, and a gateway that recovers
+waits at most seventeen minutes.
+
+Reset covers more than success. A PCP gateway answering "use NAT-PMP", a
+gateway that restarted and lost its mapping, and a mid-protocol continuation are
+all gateways that *answered*; backing off through them would make a working
+fallback look slow to establish when nothing had failed.
+
+The jitter is ±10%, which is the same section's `RAND`. Every node behind one
+carrier-grade NAT starts its daemon when the link comes up, so an undithered
+schedule has them all asking at the same instants — and the doubling would make
+those collisions rarer but larger.
+
+**The deferral reason turned out to be avoidable.** The note above said a test
+needed an injectable clock in `portmap::run`. It does not: the schedule is a
+pure function of its own history, so `Backoff` is tested directly — six tests,
+including the arithmetic in this entry — and the *wiring* is checked end to end
+instead, by the row that found the finding. `portmap_retry_in_seconds` is now
+published, and `assert_double_nat` requires it to be non-zero; removing the one
+line that sets it fails that row. Publishing it also fixes the quieter half of
+this finding, which is that the status line read identically every five seconds
+for as long as the condition lasted, and so read as normal operation.
+
+Verified by injection against the six unit tests: removing the cap, removing the
+doubling (which is the original defect), disabling the reset, and zeroing the
+jitter each fail exactly the tests that name them.
 
 ### 43. High: a production coordination server published no relays at all
 
@@ -770,8 +799,6 @@ next session should start rather than anywhere in the protocol.
 The branch `aven-77-align` carries all eight fixes. It is unmerged because it
 also regresses `a_symmetric_nat_reaches_an_address_restricted_peer_directly`,
 which passes without it.
-
-## Closed
 
 ### 27. Operational: NAT64/DNS64 needed a dependency decision the matrix could not make for itself
 

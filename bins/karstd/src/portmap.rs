@@ -22,6 +22,72 @@ use crate::run::Shutdown;
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// The longest this backs off to — RFC 6887 §8.1.1's `MRT`, 1024 seconds.
+///
+/// Taken from PCP's own retransmission schedule rather than chosen, because the
+/// question it answers is the same one: how often to keep asking a gateway that
+/// is not helping. The RFC pairs `MRT` with `MRC = 0` and `MRD = 0` —
+/// **retry forever, never give up** — which is the half already implemented
+/// here and the half that made this a defect on its own.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(1024);
+
+/// How long to wait before asking a gateway that just refused.
+///
+/// **The classification was never wrong; the schedule was** (FINDINGS.md 38).
+/// RFC 6887 §7.4 makes `NO_RESOURCES` transient and `ResultCode::is_transient`
+/// agrees deliberately: a node that gave up on it would never recover when a
+/// gateway's table drained. But a flat five seconds turns "transient" into
+/// 17,280 requests a day that cannot succeed — and the node this hurts most is
+/// not the exotic one behind a carrier-grade NAT. It is **any node whose
+/// network has no port-mapping service at all**, which is most of them.
+///
+/// Doubling from [`RETRY_DELAY`] to [`MAX_RETRY_DELAY`] costs a gateway that
+/// recovers at most seventeen minutes of delay, against a daily request count
+/// that falls from 17,280 to about 90.
+#[derive(Debug)]
+struct Backoff {
+    delay: Duration,
+}
+
+impl Backoff {
+    const fn new() -> Self {
+        Self { delay: RETRY_DELAY }
+    }
+
+    /// Progress of any kind starts the schedule over.
+    ///
+    /// Including progress that is not yet a mapping — a PCP gateway that
+    /// answers "use NAT-PMP" is a gateway that answered. Backing off through
+    /// the fallback would make the second protocol look slow to establish when
+    /// nothing had failed.
+    fn reset(&mut self) {
+        self.delay = RETRY_DELAY;
+    }
+
+    /// The wait before the next attempt, then double it.
+    ///
+    /// `jitter` is a byte of randomness spread across RFC 6887 §8.1.1's `RAND`
+    /// range of ±0.1. **Not decoration:** every node behind one carrier-grade
+    /// NAT starts its daemon when the link comes up, so an undithered schedule
+    /// has them all asking the same gateway at the same instants, and the
+    /// doubling makes the collisions rarer but larger.
+    fn next(&mut self, jitter: u8) -> Duration {
+        let base = self.delay;
+        self.delay = self.delay.saturating_mul(2).min(MAX_RETRY_DELAY);
+
+        // ±10% of the base, from a byte: 0 → -10%, 255 → +10%.
+        let span = base.as_millis() / 5; // 20% of base
+        let offset = span * u128::from(jitter) / 255;
+        let millis = (base.as_millis() + offset).saturating_sub(span / 2);
+        Duration::from_millis(u64::try_from(millis).unwrap_or(u64::MAX))
+    }
+
+    /// What the current wait is, for the status line.
+    const fn current(&self) -> Duration {
+        self.delay
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub enabled: bool,
@@ -32,6 +98,12 @@ pub struct Snapshot {
     pub next_renew: Option<Instant>,
     pub state: &'static str,
     pub reason: Option<String>,
+    /// The current wait between attempts, while retrying.
+    ///
+    /// Published so a stretching schedule is visible. A status line identical
+    /// every five seconds for an hour is what let finding 38 read as normal
+    /// operation for as long as it did.
+    pub retry_in: Option<Duration>,
 }
 
 impl Snapshot {
@@ -46,6 +118,7 @@ impl Snapshot {
             next_renew: None,
             state: if enabled { "starting" } else { "disabled" },
             reason: (!enabled).then_some("disabled by config".to_owned()),
+            retry_in: None,
         }
     }
 
@@ -159,6 +232,7 @@ pub fn run(
     let mut mode = Mode::Pcp { last_epoch: None };
     let mut external_hint = 0u16;
     let mut next_attempt = Instant::now();
+    let mut backoff = Backoff::new();
 
     while !shutdown.requested() {
         if let Some(wait) = next_attempt.checked_duration_since(Instant::now()) {
@@ -219,6 +293,7 @@ pub fn run(
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_explicit_mapping(Some(external));
+                backoff.reset();
                 next_attempt = next_renew.unwrap_or_else(|| Instant::now() + RETRY_DELAY);
             }
             Ok(Outcome::NeedNatPmp) => {
@@ -234,29 +309,39 @@ pub fn run(
                     snapshot.state = "retrying";
                     snapshot.reason =
                         Some("PCP is unsupported here; falling back to NAT-PMP".to_owned());
+                    snapshot.retry_in = None;
                 });
                 disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_explicit_mapping(None);
+                backoff.reset();
                 next_attempt = Instant::now();
             }
             Ok(Outcome::Continue) => {
+                backoff.reset();
                 next_attempt = Instant::now();
             }
             Ok(Outcome::Retry { protocol, reason }) => {
+                let wait = backoff.next(crate::random_seed()[0]);
+                let current = backoff.current();
                 shared.update(|snapshot| {
                     snapshot.protocol = Some(protocol);
                     snapshot.external = None;
                     snapshot.next_renew = None;
                     snapshot.state = "retrying";
                     snapshot.reason = Some(reason);
+                    // Published so an operator can see the schedule stretching.
+                    // A status line that reads identically every five seconds
+                    // for an hour is what made finding 38 look like normal
+                    // operation.
+                    snapshot.retry_in = Some(current);
                 });
                 disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_explicit_mapping(None);
-                next_attempt = Instant::now() + RETRY_DELAY;
+                next_attempt = Instant::now() + wait;
             }
             Ok(Outcome::RestartNatPmp) => {
                 mode = Mode::NatPmp {
@@ -271,11 +356,13 @@ pub fn run(
                     snapshot.state = "retrying";
                     snapshot.reason =
                         Some("the gateway restarted and lost the mapping; retrying".to_owned());
+                    snapshot.retry_in = None;
                 });
                 disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_explicit_mapping(None);
+                backoff.reset();
                 next_attempt = Instant::now();
             }
             Err(Fatal { protocol, reason }) => {
@@ -600,4 +687,122 @@ fn clear_mapping(shared: &Shared, disco: &Mutex<Disco>, reason: &str) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .set_explicit_mapping(None);
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing
+    )]
+
+    use super::{Backoff, MAX_RETRY_DELAY, RETRY_DELAY};
+
+    /// Jitter that lands exactly on the base, so the schedule is readable.
+    const MID: u8 = 128;
+
+    #[test]
+    fn the_first_wait_is_the_old_flat_delay() {
+        // The fix must not make the *first* retry slower. A gateway that is
+        // briefly busy — the case `is_transient` exists for — should still be
+        // asked again promptly; it is repetition that was wrong, not the
+        // initial delay.
+        let mut b = Backoff::new();
+        let first = b.next(MID);
+        assert!(
+            first.abs_diff(RETRY_DELAY) <= RETRY_DELAY / 5,
+            "first wait {first:?} is not about {RETRY_DELAY:?}"
+        );
+    }
+
+    #[test]
+    fn waiting_doubles_and_stops_doubling() {
+        let mut b = Backoff::new();
+        let mut seen = Vec::new();
+        for _ in 0..20 {
+            seen.push(b.next(MID).as_secs());
+        }
+        // Doubling from 5s, and then pinned: 5, 10, 20, ... 640, 1024, 1024...
+        assert_eq!(&seen[..5], &[5, 10, 20, 40, 80], "not a doubling schedule");
+        assert_eq!(
+            *seen.last().expect("samples"),
+            MAX_RETRY_DELAY.as_secs(),
+            "the schedule grew past RFC 6887 §8.1.1's MRT"
+        );
+
+        // **Never gives up.** RFC 6887 pairs MRT with MRC = 0 and MRD = 0, and
+        // a node that stopped asking would never recover when a gateway's
+        // table drained — which is the reason `NO_RESOURCES` is transient.
+        assert!(seen.iter().all(|s| *s > 0), "the schedule stopped retrying");
+    }
+
+    #[test]
+    fn a_day_of_refusals_costs_about_ninety_requests() {
+        // The finding's number, checked rather than asserted in prose: a flat
+        // five seconds is 17,280 requests a day.
+        let mut b = Backoff::new();
+        let mut elapsed = 0u64;
+        let mut requests = 0u64;
+        while elapsed < 86_400 {
+            elapsed += b.next(MID).as_secs();
+            requests += 1;
+        }
+        assert!(
+            (80..=100).contains(&requests),
+            "a day of refusals costs {requests} requests, not about 90"
+        );
+    }
+
+    #[test]
+    fn progress_starts_the_schedule_over() {
+        // A gateway that recovers must not inherit the wait accumulated while
+        // it was refusing — otherwise the first success after a long outage is
+        // followed by a seventeen-minute gap before the next renewal attempt.
+        let mut b = Backoff::new();
+        for _ in 0..8 {
+            b.next(MID);
+        }
+        assert!(b.current() > RETRY_DELAY);
+        b.reset();
+        assert_eq!(b.current(), RETRY_DELAY, "reset did not clear the schedule");
+    }
+
+    #[test]
+    fn jitter_stays_inside_rfc_6887s_range() {
+        // ±10% of the base. Wider would let one node's schedule drift into
+        // another's; absent would have every node behind one carrier-grade NAT
+        // asking at the same instants, since they all start when the link does.
+        for jitter in [0u8, 1, 64, 128, 200, 255] {
+            let mut b = Backoff::new();
+            for _ in 0..4 {
+                b.next(MID);
+            }
+            let base = b.current();
+            let got = b.next(jitter);
+            let tenth = base / 10;
+            assert!(
+                got >= base - tenth && got <= base + tenth,
+                "jitter {jitter} put the wait at {got:?}, outside {base:?} ±10%"
+            );
+        }
+    }
+
+    #[test]
+    fn the_extremes_of_the_jitter_byte_actually_differ() {
+        // Guards against a jitter that computes to zero and looks correct
+        // because every assertion above is a range.
+        let mut low = Backoff::new();
+        let mut high = Backoff::new();
+        for _ in 0..4 {
+            low.next(MID);
+            high.next(MID);
+        }
+        assert_ne!(
+            low.next(0),
+            high.next(255),
+            "the jitter byte has no effect; every node retries in lockstep"
+        );
+    }
 }

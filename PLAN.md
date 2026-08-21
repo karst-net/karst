@@ -3831,14 +3831,23 @@ onwards, anchored on the week of 2026-08-10.
   its refusal names the 100.64 address in the response body, so a gateway that
   answered `SUCCESS` with the same body would have been believed.
 
-  The same row left **finding 38 open**, and deliberately: a gateway that can
-  never help is asked again every five seconds, for the life of the process.
-  The classification is right — RFC 6887 makes `NO_RESOURCES` transient, and a
-  node that gave up would never recover when a gateway's table drained — so
-  what is missing is a backoff, not a reclassification. It is not folded into
-  this row's commit because it predates the row: a node on a NAT with no
-  port-mapping service at all has always retried on the same cadence, and that
-  is most nodes.
+  The same row opened **finding 38**, deliberately held back from that commit
+  because it predates the row — a node on a NAT with no port-mapping service at
+  all had always retried on the same five-second cadence, and that is most
+  nodes. **Closed 2026-08-21.** The classification was right and stayed:
+  RFC 6887 makes `NO_RESOURCES` transient, and a node that gave up would never
+  recover when a gateway's table drained. The schedule is now that same RFC's
+  §8.1.1 — doubling to a 1024-second cap, ±10% jitter, resetting on any answer,
+  and never giving up, which is what `MRC = 0` and `MRD = 0` say. A day of
+  refusals costs about 90 requests instead of 17,280.
+
+  The deferral reason did not survive contact. It said a test would need an
+  injectable clock in `portmap::run`; the schedule is a pure function of its own
+  history, so the policy is tested directly and the *wiring* is checked by the
+  row that found it — `portmap_retry_in_seconds` is published and this row now
+  requires it to be non-zero, which also fixes the quieter half of the finding:
+  a status line that read identically every five seconds read as normal
+  operation.
 
   *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
   CGNAT when at least one NAT offers an explicit port mapping* — **yes, as of

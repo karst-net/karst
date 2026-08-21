@@ -1920,6 +1920,9 @@ fn report(
             if let Some(reason) = mapping.reason {
                 let _ = writeln!(out, "portmap_reason = \"{reason}\"");
             }
+            if let Some(retry_in) = mapping.retry_in {
+                let _ = writeln!(out, "portmap_retry_in_seconds = {}", retry_in.as_secs());
+            }
 
             let _ = writeln!(out, "\n[stats]");
             let _ = writeln!(out, "tx_packets = {}", stats.tx_packets);

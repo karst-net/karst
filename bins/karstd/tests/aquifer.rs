@@ -2211,6 +2211,21 @@ fn assert_double_nat(net: &Aquifer) {
          which would mean this row is testing an absent daemon rather than a \
          gateway that cannot help:\n{s}"
     );
+
+    // **And the refusal is backing off** — FINDINGS.md 38, whose fix this row
+    // is the only end-to-end witness for. A gateway that will refuse for as
+    // long as the subscriber is behind this carrier used to be asked every five
+    // seconds forever. The status carries the current wait, so a schedule that
+    // stopped stretching is visible here rather than only in a packet capture.
+    let retry_in: u64 = field(&s, "portmap_retry_in_seconds")
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or(0);
+    assert!(
+        retry_in > 0,
+        "a retrying node published no retry interval; the backoff is not \
+         wired to the path that reports it:\n{s}"
+    );
 }
 
 /// A request **and its reply**, under a policy that permits `*:22` and nothing
