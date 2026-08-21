@@ -2476,10 +2476,24 @@ onwards, anchored on the week of 2026-08-10.
   Sampling one would have passed against the defect five times in six — which
   is roughly what happened before the diagnosis: the gate passed on its first
   run and failed the next three.
-- 🔶 **`karst-relay`'s operational surface.** Metrics are done and mesh
-  dialling's decision half is; the dialler's I/O, the region map and
-  co-location with the control server in the default deployment artefact are
-  not.
+- 🔶 **`karst-relay`'s operational surface.** Metrics, mesh dialling and its I/O
+  are done — the entries below. **Two things are not, and they are what is left
+  of this bullet:**
+
+  - **The region map, end to end.** A relay knows its region, the netmap
+    carries it, and §8's boundary is enforced on both sides of a mesh pair. But
+    `bins/karstd/src/home.rs` has no notion of region at all: a node measures
+    every relay it is given and picks the fastest, which is the right answer
+    only because no deployment has yet handed it relays from two regions. §5's
+    "multiple relays per region, latency-probed by clients, published by the
+    control server" is therefore half-built, and the half that is missing is
+    the client's.
+  - **Co-location with the control server in the default deployment artefact.**
+    §5 makes this both the adoption lever and the answer to who pays for
+    bandwidth: the same `docker-compose`, the same static binary, a self-hoster
+    relaying in under five minutes without deciding anything. `deploy/` holds
+    two Dockerfiles and a Kubernetes example, and no compose file — so today
+    the five-minute path does not exist.
 
   ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
   how long to wait; `server.rs` dials them. **Two relays mesh and a packet
@@ -2694,7 +2708,11 @@ onwards, anchored on the week of 2026-08-10.
   four queries passed **vacuously**. A must-fail model that passes is a signal
   to go and look. `spec/models/README.md` records it, because the failure mode
   is silent and general.
-- 🔶 **`karst-disco` probe scheduling** — `engine.rs`, 69 tests in the crate.
+- ✅ **`karst-disco` probe scheduling** — `engine.rs`, 69 tests in the crate.
+  Complete against what `aven-v1.md` specifies; the one scheduling question the
+  spec leaves open is §12.2, whether a node accepts the previous epoch's disco
+  key while a rotation is in flight, and that is unwritten there rather than
+  unbuilt here.
   Sans-io and sans-clock like everything below it: `poll` takes a millisecond
   stamp and a closure that mints transaction ids, so a test runs an hour of
   scheduling in a loop with a counter for a CSPRNG and gets the same answer
@@ -2719,7 +2737,7 @@ onwards, anchored on the week of 2026-08-10.
   sweep fired on the very first poll and sent every candidate twice, and the
   give-up condition was off by one against §7.5's "immediately, then
   100/300/900".
-- 🔶 **The node speaks Ponor, and the netmap carries what discovery needs.**
+- ✅ **The node speaks Ponor, and the netmap carries what discovery needs.**
   `bins/karstd/src/relay.rs` and `relay_tls.rs` are the node half of the
   handshake `karst-relay` already answers: TLS 1.3 with `X25519MLKEM768`
   enforced at startup, the HTTP upgrade, and the pinned ML-DSA-65 Ponor
@@ -2823,7 +2841,7 @@ onwards, anchored on the week of 2026-08-10.
 - ✅ **§12.6 closed** — see the candidate-cap entry below. It is the only one of
   the seven open items in that section that this phase resolved; the other six
   stand.
-- 🔶 **Two defects found by review rather than by tests, both now closed.**
+- ✅ **Two defects found by review rather than by tests, both now closed.**
   Recorded here because each was invisible to a passing suite, and because the
   shape of both is the same: a boundary that could only express half of what it
   needed to say.
@@ -3002,11 +3020,11 @@ onwards, anchored on the week of 2026-08-10.
   §5.1 rather than an exception: no key means no discovery, ever, so there is
   nothing to learn from and nothing that could responsibly take it away. That is
   also what keeps a static TOML roster working.
-- 🔶 **NAT matrix — the instrument, validated.** `crates/karst-disco/tests/
+- ✅ **NAT matrix — the instrument, validated.** `crates/karst-disco/tests/
   nat_matrix.rs` builds three network namespaces with a masquerading middle and
   two distinct outer addresses, and establishes that each topology behaves the
-  way its label says. Five tests, run privileged in CI beside the TUN and
-  two-node jobs.
+  way its label says. **Thirteen tests**, run privileged in CI beside the TUN
+  and two-node jobs.
 
   **This measures the network, not Karst**, using `examples/natprobe.rs` and no
   product code at all. That ordering is the whole point: §6's ≥90%
@@ -3076,12 +3094,21 @@ onwards, anchored on the week of 2026-08-10.
   fixture is loud, and a negative one is silent.** Negative assertions are the
   ones to mutate, and every one in this file now has been.
 
-  Hairpinning and NAT64/DNS64 are unbuilt. Hairpinning needs a second host
-  inside the same NAT; NAT64 needs an out-of-tree translator — `jool-dkms` is
-  packaged but is a kernel module, which is a real CI dependency and a decision
-  rather than an afternoon. Both are named here rather than quietly omitted,
-  because a matrix that reports nine-for-nine is not the same as one that
-  reports nine-of-ten.
+  **Hairpinning and NAT64/DNS64 were the two gaps and both closed on
+  2026-08-19**, which is worth recording because the paragraph here used to say
+  they were unbuilt and give reasons. Hairpinning needed a second host inside
+  the same NAT and got two rows: one showing Linux does *not* loop a datagram
+  addressed to its own external address back inside, and one showing that when
+  configured to, the source is rewritten to the external address as RFC 4787
+  REQ-9 requires. NAT64 was going to need an out-of-tree kernel module —
+  `jool-dkms` — and did not: `tayga` plus an ordinary masquerade answers the
+  same question in userspace, which is finding 27 and a dependency avoided
+  rather than accepted.
+
+  What remains unbuilt is these two shapes **as whole-aquifer rows** — the
+  instrument pins how each behaves and says nothing about what a daemon does on
+  one. Neither is named by an exit criterion; double NAT was the third and is
+  built (row 11).
 - ✅ **The node's relay client, on a real socket** — `bins/karstd/tests/
   relay_live.rs`. `karst-relay` runs in process as a library, with a
   self-signed certificate the node trusts through `relay_ca_file`, and
