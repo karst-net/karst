@@ -29,7 +29,7 @@ way are worth more than the number it produced.
 |---|---|
 | `soak-2026-08-12-rekey-race.tsv` | **FAIL** — 459 samples, 7.9 h. Found the simultaneous-rekey race |
 | `soak-2026-08-12-pass.tsv` | **PASS** — 700 samples, 12.0 h, against the fix |
-| `userspace-cost-2026-08-21.md` | userspace mode at **0.5%** of the privileged path's throughput and 3× its RTT, with equal memory |
+| `userspace-cost-2026-08-21.md` | userspace mode at **37%** of the privileged path's throughput and 3× its RTT — after the measurement found a 71× window bug |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened

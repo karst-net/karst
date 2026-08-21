@@ -3482,7 +3482,7 @@ onwards, anchored on the week of 2026-08-10.
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
 - 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶** — proven
-  outbound, **now measured**, and with no inbound attachment.
+  outbound, measured, and with no inbound attachment.
 
   Userspace mode landed 2026-08-20: ADR-0012 chooses **smoltcp**, isolated
   behind a `karst-tun` packet device and reached only through an explicit
@@ -3565,35 +3565,58 @@ onwards, anchored on the week of 2026-08-10.
 
   | | underlay | privileged | userspace |
   |---|---|---|---|
-  | Throughput, one flow | 130–138 Gbps | 1340–1384 Mbps | **5.6–7.3 Mbps** |
-  | RTT p50 | 0.04–0.06 ms | 0.15–0.18 ms | **0.547 ms** |
-  | Peak RSS | — | 6,672–6,692 kB | **6,648–6,672 kB** |
+  | Throughput, one flow | 135–137 Gbps | 1368–1392 Mbps | **514.8–518.5 Mbps** |
+  | RTT p50 | 0.053–0.059 ms | 0.180–0.192 ms | **0.544–0.549 ms** |
+  | Peak RSS | — | 6,560–6,564 kB | **6,700–6,784 kB** |
 
-  **Memory is a non-answer, and that is an answer**: the two modes are equal to
-  within a rounding error, so nothing in that column argues either way.
-  **Latency is 3× the baseline** and 0.37 ms in absolute terms, which is a real
-  cost and a defensible one. **Throughput is 0.5% of the privileged path**, and
-  that is not defensible for bulk traffic — the deployment guidance now says so
-  instead of implying otherwise.
+  **37% of the privileged path's throughput, 3× its round trip, ~200 kB more
+  memory.** A stated cost rather than a caveat, and ADR-0012's *Reconsider if*
+  clause is not tripped.
 
-  The measurement was worth taking twice over, because taking it found two
-  defects that the gate-2 test could not (FINDINGS.md 39 and 40). The relay
-  treated a client half-close as a full teardown, so every client that ends a
-  request by closing its write half — `curl`, `nc -N`, any close-delimited
-  protocol — got a **truncated** reply; the harness could not complete one run
-  until it was fixed. And the first latency figure, 4.135 ms, turned out to be a
-  flat 2 ms poll counted twice rather than a cost: the distribution was
-  4.135/4.156/4.211 across p50/p90/p99, which is a timer wearing a
-  measurement's clothes.
+  **The sequence is the useful part, because the first numbers were 500× worse
+  and two of the three steps were not what they looked like.**
 
-  **What the remaining gap is, stated so it is not mistaken for tuning.** After
-  the poll fix, userspace mode is still 200× slower than the privileged path,
-  and the reasons are structural rather than constant: `recv_segments` returns
-  **one packet per call** where the privileged path returns ~52 through
-  `IFF_VNET_HDR` offload (§3.4, change 5), every relay pass takes the lock on
-  the *entire* smoltcp stack and polls it several times, and the SOCKS5 hop
-  copies every byte again. Rebuilding that loop is the next piece of userspace
-  work and it is a redesign, not a pass with a profiler.
+  | | Throughput | RTT p50 |
+  |---|---|---|
+  | As first measured | 1.1 Mbps | 4.135 ms |
+  | 1. Poll only when a pass moved nothing (finding 40) | 5.6–7.3 Mbps | **0.547 ms** |
+  | 2. `recv_segments` returns a batch, not one packet | 7.3 Mbps — **no change** | — |
+  | 3. Socket buffers above one MTU (finding 41) | **514.8–518.5 Mbps** | 0.546 ms |
+
+  Step 1 was **a timer, not a cost**: 4.135/4.156/4.211 across p50/p90/p99 is a
+  poll interval wearing a measurement's clothes, and it was two unconditional
+  2 ms sleeps, one per direction of a round trip.
+
+  Step 2 is **the negative result**, and it is worth as much as the positives.
+  `recv_segments` returned one packet per call where the privileged path returns
+  ~52 through `IFF_VNET_HDR` offload (§3.4, change 5). That is the
+  obvious-looking throughput bug, it was the first thing fixed, and it moved the
+  number from 7.3 Mbps to 7.3 Mbps.
+
+  Step 3 is **where the throughput was**: every TCP socket was built with
+  receive and transmit buffers of exactly one MTU. A receive buffer *is* the
+  window this stack advertises, so 1280 bytes permits one segment in flight and
+  an acknowledgement between each — stop-and-wait, whatever the path can carry,
+  and nothing below it can compensate. 64 KiB buffers moved the mode 7.3 → 516
+  Mbps, **71×**.
+
+  **That order is the same mistake this plan records making one layer down.**
+  §3.4 prescribed batching and offload before anything had been measured, and
+  the two lock removals turned out to be worth more than all the
+  micro-optimisation combined. Here batching was again tried before the
+  serialisation was found, and again bought nothing. The lesson did not
+  transfer the first time it was written down; it is written down again.
+
+  A third thing worth naming: the mode **worked** throughout. Its release gate
+  passed, its tests passed, and it was 70× slower than it needed to be, because
+  nothing in a correctness test can see a window.
+
+  So `a_bulk_transfer_is_not_stop_and_wait` now exists: 8 MiB through the SOCKS5
+  attachment, asserting only that it finished inside five seconds. Both ends of
+  that budget are measured rather than guessed — 1.2 s healthy in a debug build,
+  36.7 s with the defect put back — so a slow runner cannot fail it and
+  stop-and-wait cannot pass it. It reports no rate and has no baseline; the
+  measurement stays in `scripts/userspace-cost.sh` where it belongs.
 
   **Still outstanding, and it is still the honest boundary of the feature**:
   attachment is outbound only. A workload behind userspace mode can dial the

@@ -71,48 +71,66 @@ same hardware in the same minutes.
 
 ## Result
 
-| Metric | underlay | tun (privileged) | userspace | userspace, as first measured |
-|---|---|---|---|---|
-| Throughput, one flow | 130–138 Gbps | **1340–1384 Mbps** | **5.6–7.3 Mbps** | 1.1 Mbps |
-| RTT, p50 | 0.04–0.06 ms | **0.15–0.18 ms** | **0.547 ms** | 4.135 ms |
-| RTT, p90 | 0.07 ms | 0.21–0.23 ms | 0.566 ms | 4.156 ms |
-| Peak RSS (`VmHWM`), subject | — | **6,672–6,692 kB** | **6,648–6,672 kB** | 6,584 kB |
-| Release binary | — | — | +85,808 B (1.47%) | measured 2026-08-20 |
+| Metric | underlay | tun (privileged) | userspace |
+|---|---|---|---|
+| Throughput, one flow | 135–137 Gbps | **1368–1392 Mbps** | **514.8–518.5 Mbps** |
+| RTT, p50 | 0.053–0.059 ms | **0.180–0.192 ms** | **0.544–0.549 ms** |
+| RTT, p90 | 0.07 ms | 0.22 ms | 0.57 ms |
+| Peak RSS (`VmHWM`), subject | — | **6,560–6,564 kB** | **6,700–6,784 kB** |
+| Release binary | — | — | +85,808 B (1.47%), measured 2026-08-20 |
 
-Three runs of each after the fixes below; ranges are across runs.
+Three runs of each; ranges are across runs.
 
-**Memory is a non-answer, and that is the answer.** The subject's peak resident
-set is the same in both modes to within a rounding error — around 6.6 MB — and
-the peer, which is an ordinary privileged node in both scenarios, sits at 6.5 MB
-throughout. smoltcp's buffers are a fixed allocation per socket and there is one
-socket. Nothing in the memory column argues for or against the mode.
+**Userspace mode carries 37% of the privileged path's throughput, at 3× its
+round-trip time, for about 200 kB more resident memory.** That is a cost worth
+naming and not a disqualification.
 
-**Latency was a timer, not a cost** — see finding 40. The first measurement's
-4.135 ms had a p50/p90/p99 spread of 4.135/4.156/4.211: a distribution that flat
-is a poll interval, not work. It was two 2 ms sleeps in the SOCKS5 relay loop,
-one per direction of a round trip. With that fixed the mode is **0.547 ms
-against 0.178 ms privileged** — 3× the baseline and 0.37 ms of absolute
-difference, which is a real cost and a defensible one.
+### How it got there, because the first numbers were much worse
 
-**Throughput is not a timer, and it is the finding.** After the same fix,
-userspace mode carries 5.6–7.3 Mbps where the privileged path carries
-1340–1384 Mbps on the same hardware — **about 0.5%**. This is not smoltcp's
-arithmetic; it is the shape of the path around it:
+The measurement is more useful as a sequence than as a row, because two of the
+three steps were not what they looked like:
 
-- `Userspace::recv_segments` returns **one packet per call**. The privileged
-  path returns ~52 per `read` through `IFF_VNET_HDR` segmentation offload
-  (PLAN.md §3.4, change 5), so userspace mode gives up the batching the whole
-  datapath was rebuilt around.
-- Every one of `tcp_can_recv`, `tcp_may_recv`, `tcp_can_send`, `tcp_recv`,
-  `tcp_send` takes the lock on the **entire** smoltcp stack and calls `poll()`.
-  One relay pass therefore polls the stack several times.
-- Each byte is copied at the SOCKS5 hop in addition to every copy the
-  privileged path makes.
+| | Throughput | RTT p50 |
+|---|---|---|
+| As first measured | 1.1 Mbps | 4.135 ms |
+| 1. Poll only when a pass moved nothing (finding 40) | 5.6–7.3 Mbps | **0.547 ms** |
+| 2. `recv_segments` returns a batch, not one packet | 7.3 Mbps — **no change** | — |
+| 3. TCP socket buffers sized above one MTU (finding 41) | **514.8–518.5 Mbps** | 0.546 ms |
 
-None of these is a defect and none was measured before, which is why the mode
-shipped with a number nobody had. Fixing them is a redesign of the attachment
-loop rather than a tuning pass, and it is named as such in PLAN.md rather than
-attempted here.
+**Step 1 was a timer, not a cost.** The original 4.135 ms had a p50/p90/p99
+spread of 4.135/4.156/4.211 — 80 µs across every percentile. A distribution
+that flat is a poll interval, and it was: two unconditional 2 ms sleeps in the
+SOCKS5 relay loop, one per direction of a round trip.
+
+**Step 2 is the negative result, and it is worth as much as the positives.**
+`Userspace::recv_segments` returned exactly one packet per call where the
+privileged path returns ~52 through segmentation offload — an obvious-looking
+throughput bug, named as such in the first version of this document. Fixing it
+moved the number from 7.3 Mbps to 7.3 Mbps. The queue almost never held a
+second packet to batch.
+
+**Step 3 is where the throughput was.** Each TCP socket was constructed with
+receive and transmit buffers of exactly one MTU:
+
+```rust
+tcp::Socket::new(
+    tcp::SocketBuffer::new(vec![0; self.mtu]),   // 1280 bytes
+    tcp::SocketBuffer::new(vec![0; self.mtu]),
+)
+```
+
+A TCP receive buffer *is* the window the stack advertises. A 1280-byte window
+permits exactly one segment in flight, so the sender waits for an
+acknowledgement after every segment — stop-and-wait, whatever the path can
+carry, and no amount of batching or polling below it can help. Sizing the
+buffers at 64 KiB — an ordinary kernel starting window — moved the mode from
+7.3 to 516 Mbps, a **71× change**, and cost the 128 kB per connection visible
+in the memory row.
+
+The order matters to how this reads: step 2 was tried before step 3 because it
+was the visible thing, and it is exactly the mistake PLAN.md §3.4 records
+making with the datapath — batching and micro-optimisation attempted before the
+serialisation was found. Same lesson, a different layer, four months later.
 
 ## What this does not measure
 
@@ -121,32 +139,36 @@ attempted here.
   says nothing about that.
 - **A veth underlay**, which carries 130+ Gbps. Neither Karst row is limited by
   the wire here, which is deliberate — the point was to compare the two modes,
-  not to reproduce §3.4's link. On a real 1G NIC the `tun` row would fall to
-  that link's ceiling and the `userspace` row would almost certainly not move.
+  not to reproduce §3.4's link. On a real 1G NIC both rows would be nearer that
+  link's ceiling than to each other, which is worth knowing before quoting the
+  37% anywhere: it is a ratio measured where the wire is free.
 - **Bulk transfer only.** The workloads userspace mode exists for in a sidecar
   are often request/response, where the latency row matters more than the
   throughput row.
 
 ## The gate's verdict
 
-Gate 1 is **met in the sense that matters**: the numbers exist, they were taken
-with one instrument on one host in one sitting, and the commands are above.
+Gate 1 is **met**: the numbers exist, they were taken with one instrument on one
+host in one sitting, and the commands are above.
 
-Whether they *pass* is a separate question, and the honest answer is that they
-change the deployment recommendation rather than overturn it. ADR-0012's
-*Reconsider if* clause is engaged, not tripped:
+They also pass, which the first draft of this document could not say. At 37% of
+the privileged path's throughput, 3× its latency and ~200 kB more memory,
+userspace mode is a mode with a stated cost rather than a mode to avoid.
+ADR-0012's *Reconsider if* clause — "the measured performance or memory cost
+materially changes the deployment recommendation" — is **not** tripped: the
+recommendation is unchanged, with the cost now written down.
 
-- For the control-plane and request/response traffic a sidecar usually carries,
-  0.55 ms and a few Mbps is adequate, and the alternative — `CAP_NET_ADMIN` and
-  a TUN device in every container — is what the mode exists to avoid.
-- For bulk data it is not adequate, and no wording should imply otherwise. A
-  deployment moving real traffic should use the privileged path until the
-  attachment loop is rebuilt.
+The privileged path remains the default and remains faster. What has gone is
+the version of this conclusion that would have been recorded if the measurement
+had stopped after step 1: *"use the privileged path for anything but control
+traffic"*, which was true of the code as it stood and would have been wrong as
+a statement about the design.
 
-## Two defects found on the way
+## Three defects found on the way
 
-Running the measurement is what found both; neither was visible from the gate-2
-test, which does one request and one reply with no half-close.
+Running the measurement is what found all three; none was visible from the
+gate-2 test, which does one request and one reply, never half-closes, and
+passes at any speed.
 
 - **Finding 39** — the SOCKS5 relay treated a client half-close as a full
   teardown, so "send the request, close the write half, read the reply" —
@@ -156,3 +178,6 @@ test, which does one request and one reply with no half-close.
   test still passes against the defect, which is what makes the new row worth
   having.
 - **Finding 40** — the flat 2 ms poll above.
+- **Finding 41** — the one-MTU socket buffers above, which is the whole of the
+  71× and which nothing short of a throughput measurement would have found: the
+  mode worked, its tests passed, and it was 70× slower than it needed to be.

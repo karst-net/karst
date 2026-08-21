@@ -79,6 +79,33 @@ const LISTEN_PEER_2: u16 = 51846;
 const SOCKS_PORT_2: u16 = 11082;
 const SERVICE_PORT_2: u16 = 19002;
 
+/// A third pair, for the bulk row, on the same reasoning as the second.
+const OVERLAY_USERSPACE_3: &str = "10.88.2.1";
+const OVERLAY_PEER_3: &str = "10.88.2.2";
+const PEER_INTERFACE_3: &str = "karstu3";
+const LISTEN_USERSPACE_3: u16 = 51847;
+const LISTEN_PEER_3: u16 = 51848;
+const SOCKS_PORT_3: u16 = 11083;
+const SERVICE_PORT_3: u16 = 19003;
+
+/// How much the bulk row moves, and how long it may take.
+///
+/// **This is a throughput assertion in a correctness suite, and it is here
+/// because finding 41 could not be caught by anything else.** Every TCP socket
+/// was built with a one-MTU receive buffer — a 1280-byte advertised window, so
+/// one segment in flight and an acknowledgement between each — and the mode
+/// was *correct* at 7.3 Mbps. Every test passed. A window is invisible to
+/// assertions about bytes.
+///
+/// The budget is set to catch that and nothing else, with both ends measured
+/// rather than guessed: healthy, this transfer takes **1.2 s** in a debug
+/// build on the machine that wrote it; at a one-segment window it takes
+/// **36.7 s**, measured by putting the defect back. Five seconds sits between
+/// them with a 4× margin on the side that matters — a slow CI runner must not fail this row, and a return to
+/// stop-and-wait must not pass it.
+const BULK: usize = 8 * 1024 * 1024;
+const BULK_BUDGET: Duration = Duration::from_secs(5);
+
 /// `nobody`. Chosen because it exists on every distribution this is likely to
 /// run on and owns nothing worth reaching.
 const UNPRIVILEGED_UID: u32 = 65534;
@@ -805,6 +832,128 @@ fn a_half_closed_request_still_receives_its_reply() {
         .join()
         .expect("service thread")
         .unwrap_or_else(|e| panic!("the overlay service reported: {e}{}", report(&both)));
+}
+
+/// **8 MiB, and a clock — the row that would have caught finding 41.**
+///
+/// Userspace mode shipped with every TCP socket advertising a 1280-byte
+/// window: one segment in flight, an acknowledgement between each, 7.3 Mbps on
+/// a path carrying 1380. Nothing in this file caught it, and nothing in this
+/// file could have — the gate moves 64 KiB and asserts the bytes match, which
+/// is true at any speed. It took ADR-0012's gate-1 measurement to see it.
+///
+/// So this row asserts the one thing a correctness test can about a window:
+/// that a bulk transfer completes in a time a stop-and-wait connection cannot
+/// achieve. It is deliberately not a benchmark. It does not report a rate, it
+/// has no baseline to compare against, and its budget is loose enough that only
+/// a structural regression can fail it.
+#[test]
+#[ignore = "needs root to give the peer a TUN device"]
+fn a_bulk_transfer_is_not_stop_and_wait() {
+    if !have_prerequisites() {
+        return;
+    }
+
+    let userspace = start(&Spec {
+        tag: "bulk",
+        mode: Mode::UnprivilegedUserspace,
+        seed: 31,
+        peer_seed: 32,
+        address: OVERLAY_USERSPACE_3,
+        peer_address: OVERLAY_PEER_3,
+        listen: LISTEN_USERSPACE_3,
+        peer_listen: LISTEN_PEER_3,
+        interface: PEER_INTERFACE_3,
+        socks: SOCKS_PORT_3,
+    });
+    let peer = start(&Spec {
+        tag: "bulk-peer",
+        mode: Mode::PrivilegedTun,
+        seed: 32,
+        peer_seed: 31,
+        address: OVERLAY_PEER_3,
+        peer_address: OVERLAY_USERSPACE_3,
+        listen: LISTEN_PEER_3,
+        peer_listen: LISTEN_USERSPACE_3,
+        interface: PEER_INTERFACE_3,
+        socks: SOCKS_PORT_3,
+    });
+    let both = [&userspace, &peer];
+
+    wait_for(
+        &both,
+        "both nodes to establish",
+        Duration::from_secs(30),
+        || {
+            field(&status(&userspace), "state").as_deref() == Some("established")
+                && field(&status(&peer), "state").as_deref() == Some("established")
+        },
+    );
+
+    // A sink: read to EOF, then answer with the count. The count is what makes
+    // the timing honest — it is sent after the last byte has *arrived*, so the
+    // clock below cannot stop while data is still in a socket buffer.
+    let listener = bind_service(&both, &format!("{OVERLAY_PEER_3}:{SERVICE_PORT_3}"));
+    let service = std::thread::spawn(move || -> Result<u64, String> {
+        let (mut stream, _) = listener.accept().map_err(|e| format!("accept: {e}"))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(120)))
+            .map_err(|e| format!("read timeout: {e}"))?;
+        let mut total = 0u64;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => total += n as u64,
+                Err(e) => return Err(format!("reading the bulk stream: {e}")),
+            }
+        }
+        stream
+            .write_all(&total.to_be_bytes())
+            .map_err(|e| format!("writing the count: {e}"))?;
+        stream.flush().map_err(|e| format!("flush: {e}"))?;
+        Ok(total)
+    });
+
+    let proxy: SocketAddr = format!("127.0.0.1:{SOCKS_PORT_3}").parse().expect("proxy");
+    let target: SocketAddr = format!("{OVERLAY_PEER_3}:{SERVICE_PORT_3}")
+        .parse()
+        .expect("target");
+    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+
+    let chunk = vec![0x7eu8; 64 * 1024];
+    let started = Instant::now();
+    let mut written = 0usize;
+    while written < BULK {
+        tunnelled.write_all(&chunk).expect("send bulk");
+        written += chunk.len();
+    }
+    tunnelled.flush().expect("flush");
+    tunnelled
+        .shutdown(std::net::Shutdown::Write)
+        .expect("half-close");
+    let mut counted = [0u8; 8];
+    tunnelled
+        .read_exact(&mut counted)
+        .unwrap_or_else(|e| panic!("reading the receiver's count: {e}{}", report(&both)));
+    let elapsed = started.elapsed();
+
+    assert_eq!(
+        u64::from_be_bytes(counted),
+        written as u64,
+        "the receiver counted a different number of bytes{}",
+        report(&both)
+    );
+    assert!(
+        elapsed < BULK_BUDGET,
+        "{written} bytes took {elapsed:?}, over the {BULK_BUDGET:?} budget — at \
+         this size that is the signature of a one-segment window (FINDINGS.md \
+         41) rather than of a slow machine{}",
+        report(&both)
+    );
+    let served = service.join().expect("service thread");
+    served.unwrap_or_else(|e| panic!("the overlay service reported: {e}"));
+    eprintln!("bulk: {} MiB in {:?}", written / (1024 * 1024), elapsed);
 }
 
 /// **The instrument check.** The launcher above must really remove the

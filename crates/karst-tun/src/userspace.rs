@@ -26,6 +26,45 @@ use crate::{validate_mtu, TunConfig, TunError};
 /// The name surfaced by status output for a userspace endpoint.
 pub const USERSPACE_NAME: &str = "userspace";
 
+/// Most packets [`Userspace::recv_segments`] returns from one call.
+///
+/// Matched to the privileged path's offloaded read, which delivers around
+/// fifty packets at a time, so the datapath above sees batches of a similar
+/// shape whichever device is under it. Bounded rather than "everything queued"
+/// because the caller allocates per batch and a burst should not decide how
+/// much.
+///
+/// **Worth recording that this bought nothing on its own.** It replaced a
+/// version that returned exactly one packet per call, which looked like an
+/// obvious throughput bug; measured, it moved the mode from 7.3 Mbps to
+/// 7.3 Mbps. The queue almost never held a second packet, because the window
+/// below was letting only one segment be in flight at a time. Kept because it
+/// is strictly cheaper and because it will matter once something else is the
+/// constraint — the same reasoning PLAN.md §3.4 records for pre-keying the
+/// fragment MAC.
+const MAX_BATCH: usize = 64;
+
+/// The receive and transmit buffer given to each TCP socket.
+///
+/// **Deliberately not one MTU**, which is what this was and which reads
+/// plausible until you remember what a receive buffer *is* on a TCP socket: the
+/// window this stack advertises. An MTU-sized buffer advertises a 1280-byte
+/// window, so the far end may have exactly one segment in flight and must wait
+/// for an acknowledgement before sending the next — stop-and-wait, whatever the
+/// path underneath could carry. The transmit side is the mirror: one segment of
+/// application data at a time, so every write costs a round trip.
+///
+/// ADR-0012's gate-1 measurement is what surfaced it (FINDINGS.md 41): the mode
+/// sat at ~7 Mbps with the datapath and the relay loop both idle, which is the
+/// signature of a window and not of a cost.
+///
+/// 64 KiB is the ordinary starting window for a kernel socket and covers this
+/// path's bandwidth-delay product with three orders of magnitude to spare. The
+/// price is 128 KiB of buffer per connection, which is a real number for a
+/// sidecar with thousands of connections and not one for a sidecar with tens —
+/// against a resident set of ~6.6 MB, one connection is 2%.
+const SOCKET_BUFFER: usize = 64 * 1024;
+
 /// A handle to a TCP socket owned by [`Userspace`].
 ///
 /// It is intentionally opaque: socket state remains serialised with polling,
@@ -247,7 +286,17 @@ impl Userspace {
         out.clear();
         loop {
             if let Ok(mut packets) = self.queues.outbound.lock() {
-                if let Some(packet) = packets.pop_front() {
+                // **Everything queued, not one packet.** The privileged path
+                // returns ~52 packets per `read` through `IFF_VNET_HDR`
+                // segmentation offload (PLAN.md §3.4), and the datapath above
+                // was rebuilt around that batch. Returning a single packet per
+                // call handed the same datapath one packet at a time and gave
+                // up the batching for free — ADR-0012's gate-1 measurement is
+                // where that showed up.
+                while out.len() < MAX_BATCH {
+                    let Some(packet) = packets.pop_front() else {
+                        break;
+                    };
                     if packet.len() > self.mtu {
                         return Err(TunError::PacketTooLarge {
                             len: packet.len(),
@@ -255,7 +304,9 @@ impl Userspace {
                         });
                     }
                     out.push(packet);
-                    return Ok(1);
+                }
+                if !out.is_empty() {
+                    return Ok(out.len());
                 }
             }
             if let Ok(mut stack) = self.stack.lock() {
@@ -303,8 +354,8 @@ impl Userspace {
     /// Returns an I/O error when the port cannot be listened on.
     pub fn listen_tcp(&self, port: u16) -> Result<TcpHandle, TunError> {
         let socket = tcp::Socket::new(
-            tcp::SocketBuffer::new(vec![0; self.mtu]),
-            tcp::SocketBuffer::new(vec![0; self.mtu]),
+            tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]),
+            tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]),
         );
         let mut stack = self
             .stack
@@ -325,8 +376,8 @@ impl Userspace {
     /// Returns an I/O error for an unaddressable destination or invalid port.
     pub fn connect_tcp(&self, address: IpAddr, port: u16) -> Result<TcpHandle, TunError> {
         let mut socket = tcp::Socket::new(
-            tcp::SocketBuffer::new(vec![0; self.mtu]),
-            tcp::SocketBuffer::new(vec![0; self.mtu]),
+            tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]),
+            tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]),
         );
         let mut stack = self
             .stack

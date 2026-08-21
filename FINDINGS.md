@@ -11,11 +11,11 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-one more, and all but one are closed — most found by
+followed it added thirty-two more, and all but one are closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
-criterion names, and the last two by **measuring** a feature that had already
+criterion names, and the last three by **measuring** a feature that had already
 been proved to work.
 
 **One finding remains open** — 38, recorded 2026-08-21, which is a retry
@@ -74,6 +74,7 @@ carries both the new wording and the original, struck through.
 | 38 | Low | A gateway that cannot ever grant a mapping is asked again every five seconds | **Open** — recorded 2026-08-21 |
 | 39 | High | The SOCKS5 relay treated a client half-close as a full teardown | Fixed 2026-08-21 |
 | 40 | Medium | Userspace mode's round trip was a poll interval, not a cost | Fixed 2026-08-21 |
+| 41 | High | Every userspace TCP socket advertised a one-segment window | Fixed 2026-08-21 |
 
 ## Open
 
@@ -113,6 +114,64 @@ than the fix.
 
 ## Closed
 
+### 41. High: every userspace TCP socket advertised a one-segment window
+
+**Found 2026-08-21** by ADR-0012's gate-1 measurement, after two other fixes
+had failed to explain the number. Fixed the same day.
+
+Both `Userspace::connect_tcp` and `listen_tcp` built their socket like this:
+
+```rust
+tcp::Socket::new(
+    tcp::SocketBuffer::new(vec![0; self.mtu]),   // 1280 bytes
+    tcp::SocketBuffer::new(vec![0; self.mtu]),
+)
+```
+
+One MTU reads like the right unit for a packet-oriented stack, and for a
+*device* buffer it would be. For a TCP socket it is not: **the receive buffer is
+the window the stack advertises**. At 1280 bytes the far end may hold exactly one
+segment in flight and must wait for an acknowledgement before sending the next.
+The transmit side mirrors it — one segment of application data at a time, so
+every write costs a round trip.
+
+The result is stop-and-wait at whatever the path's latency is, and nothing
+underneath can compensate: not batching, not polling, not a faster datapath.
+Userspace mode sat at **7.3 Mbps** with the relay loop and the datapath both
+idle, which is the signature of a window rather than of a cost. 64 KiB buffers
+— an ordinary kernel starting window — took it to **514.8–518.5 Mbps**, a **71×
+change**, measured across three runs on the same host and harness. The price is
+128 kB per connection, visible as the ~200 kB the memory row moved.
+
+**Two things about how this was found are worth more than the fix.**
+
+It was found *last*. The obvious-looking cause — `recv_segments` returning one
+packet per call where the privileged path returns ~52 through segmentation
+offload — was found first, fixed first, written up as the explanation, and moved
+the number from 7.3 Mbps to 7.3 Mbps. That change is kept (it is strictly
+cheaper and will matter when something else is the constraint) and the negative
+result is recorded beside it, because attempting batching before finding the
+serialisation is **exactly** what PLAN.md §3.4 records doing to the privileged
+datapath: there the two lock removals were worth more than every
+micro-optimisation combined. The lesson had been written down and did not
+transfer.
+
+And nothing that existed could have caught it. The mode worked. ADR-0012's
+gate 2 passed, the unit tests passed, the half-close row added the same day
+passed — a correctness test cannot see a window, and a feature can be entirely
+correct and 70× slower than it should be. The only instrument that finds this
+is a number, which is what a measurement gate is for and why "gates, not
+estimates" was the right wording in the ADR.
+
+**So something can catch it now.** `a_bulk_transfer_is_not_stop_and_wait` moves
+8 MiB through the SOCKS5 attachment and asserts only that it finished inside
+five seconds. That is a throughput assertion in a correctness suite, which
+usually deserves suspicion, and both ends of its budget are measured rather
+than guessed: **1.2 s** healthy in a debug build, **36.7 s** with the defect
+put back. A 4× margin below and a 7× margin above, so a slow runner cannot fail
+it and stop-and-wait cannot pass it. It reports no rate and has no baseline; it
+is not a benchmark and is not trying to become one.
+
 ### 40. Medium: userspace mode's round trip was a poll interval, not a cost
 
 **Found 2026-08-21** by ADR-0012's gate-1 measurement. Fixed the same day.
@@ -149,13 +208,10 @@ Measured, both rates, same host and harness:
 | flat 200 µs | 0.545 ms | 9.9 Mbps |
 | **adaptive (shipped)** | **0.547 ms** | **5.6–7.3 Mbps** |
 
-**The throughput was not the timer**, and that is the residue. At 5.6–7.3 Mbps
-userspace mode is still 0.5% of the privileged path, and the measurement names
-where the rest is: `recv_segments` returns one packet per call where the
-privileged path returns ~52, and every relay pass locks and polls the entire
-smoltcp stack several times. That is a redesign of the attachment loop, not a
-constant, and it is recorded in PLAN.md as the next piece of work rather than
-attempted here.
+**The throughput was not the timer.** At 5.6–7.3 Mbps the mode was still 0.5% of
+the privileged path after this fix, and the first guess at why — `recv_segments`
+returning one packet per call — was wrong: see finding 41, which is where the
+throughput actually was, and the note there about the order these were tried in.
 
 ### 39. High: the SOCKS5 relay treated a client half-close as a full teardown
 
@@ -1743,3 +1799,44 @@ remaining variance is not where the interesting number is.
 **What the harness does not establish.** One flow, one peer, one connection, on
 a veth underlay carrying 130+ Gbps. It compares two modes on one host; it is
 not a link measurement and PLAN.md §3.4's figures are not comparable to it.
+
+### Validation, 2026-08-21 — the 71× window (finding 41)
+
+`cargo fmt --all --check`, workspace clippy, the full Rust suite and every
+privileged suite, re-run after the change to `karst-tun`'s socket construction:
+
+| Suite | Result |
+|---|---|
+| workspace | 877 passing in 55 suites |
+| `karst-tun` lib | 64 passing |
+| `karst-tun` device | 9 passing |
+| `karstd` two-node | 9 passing |
+| `karstd` userspace (the gate) | 3 passing, and **4** once the bulk row below was added |
+| `karstd` aquifer | 13 passing |
+
+The measurement, three runs of each scenario on the same host and harness:
+
+| Step | Throughput | RTT p50 |
+|---|---|---|
+| as found | 1.1 Mbps | 4.135 ms |
+| poll fix (40) | 5.6–7.3 Mbps | 0.547 ms |
+| batched `recv_segments` | 7.3 Mbps — **no change** | — |
+| 64 KiB socket buffers (41) | **514.8, 515.9, 516.8, 518.5 Mbps** | 0.544–0.549 ms |
+
+**The final figures are quoted individually rather than as a range** because
+their spread — under 1% across four runs — is itself the evidence that the
+window was the constraint. The 5.6–7.3 Mbps before it varied by 30% run to run,
+which is what a number decided by timing races looks like; a number decided by
+a window does not move.
+
+Memory moved with it and by the right amount: the subject's peak resident set
+went from 6,656 kB to 6,700–6,784 kB against a peer holding steady at ~6,560 kB.
+Two 64 KiB buffers is 128 kB, and the row shows 140–220 kB with run-to-run
+noise. A memory column that had *not* moved would have meant the buffers were
+not being allocated and the throughput change came from somewhere unexplained.
+
+**And the defect was put back**, which is how the 36.7 s figure above exists.
+`SOCKET_BUFFER` returned to one MTU fails the new bulk row at 8 MiB in 36.7 s
+and leaves the other three userspace rows passing — the same shape as finding
+39's check, and the same conclusion: the rows that existed before could not see
+this, one at a time or together.

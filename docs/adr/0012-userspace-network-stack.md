@@ -69,29 +69,45 @@ speak SOCKS5 and two instruments would put the difference inside the tool:
 
 | | underlay | privileged (TUN) | userspace |
 |---|---|---|---|
-| Throughput, one flow | 130–138 Gbps | 1340–1384 Mbps | **5.6–7.3 Mbps** |
-| RTT p50 | 0.04–0.06 ms | 0.15–0.18 ms | **0.547 ms** |
-| Peak RSS | — | 6,672–6,692 kB | **6,648–6,672 kB** |
+| Throughput, one flow | 135–137 Gbps | 1368–1392 Mbps | **514.8–518.5 Mbps** |
+| RTT p50 | 0.053–0.059 ms | 0.180–0.192 ms | **0.544–0.549 ms** |
+| Peak RSS | — | 6,560–6,564 kB | **6,700–6,784 kB** |
 
-Memory is equal to within a rounding error, so nothing in that column argues
-either way. Latency is 3× the baseline and 0.37 ms of absolute difference.
-Throughput is **0.5% of the privileged path**, and the measurement names why:
-`recv_segments` returns one packet per call where the privileged path returns
-~52 through segmentation offload, every relay pass locks and polls the whole
-smoltcp stack several times, and the SOCKS5 hop copies every byte again.
+**Userspace mode carries 37% of the privileged path's throughput, at 3× its
+round trip, for about 200 kB more resident memory.** The *Reconsider if* clause
+below is therefore **not** tripped: the recommendation is unchanged and the cost
+is now written down rather than unknown.
 
-**This engages the *Reconsider if* clause below without tripping it.** For the
-request/response traffic a sidecar usually carries, 0.55 ms and a few Mbps is
-adequate against an alternative of `CAP_NET_ADMIN` in every container. For bulk
-data it is not, and the deployment guidance says so rather than implying
-otherwise. Rebuilding the attachment loop is the work that would change it.
+That conclusion is only available because the measurement did not stop when it
+had a number. Taking it found **three** defects, none of them visible from gate
+2 — which does one request and one reply, never half-closes, and passes at any
+speed:
 
-Taking the measurement found two defects, neither visible from gate 2 — which
-does one request and one reply and never half-closes. FINDINGS.md 39: the
-SOCKS5 relay treated a client half-close as a full teardown, losing the reply
-for every client that ends a request by closing its write half. FINDINGS.md 40:
-a flat 2 ms poll in the same loop, which was the whole of the original 4.135 ms
-round trip.
+- **FINDINGS.md 39** — the SOCKS5 relay treated a client half-close as a full
+  teardown, truncating the reply for every client that ends a request by
+  closing its write half. The harness could not complete a run until this was
+  fixed.
+- **FINDINGS.md 40** — a flat 2 ms poll in the same loop, which was the whole of
+  the original 4.135 ms round trip: 4.135/4.156/4.211 across p50/p90/p99 is a
+  timer, not a cost.
+- **FINDINGS.md 41** — every TCP socket was built with receive and transmit
+  buffers of exactly one MTU. A receive buffer *is* the advertised window, so
+  1280 bytes meant one segment in flight and an acknowledgement between each.
+  Sizing them at 64 KiB moved the mode from 7.3 Mbps to 516 — **71×**, and the
+  128 kB per connection it costs is the memory row above.
+
+Gate 2's suite grew two rows out of this, so the next such regression is caught
+by a test rather than by a measurement: one for the half-close, and
+`a_bulk_transfer_is_not_stop_and_wait`, which moves 8 MiB and asserts only that
+it finished inside five seconds — 1.2 s healthy, 36.7 s with the window defect
+restored.
+
+Between 40 and 41 a fourth change was tried and kept without helping:
+`recv_segments` returning a batch rather than one packet per call. It is the
+obvious-looking throughput bug and it moved the number from 7.3 Mbps to
+7.3 Mbps, because the window above was the constraint. The order those were
+attempted in is the same mistake PLAN.md §3.4 records making with the
+privileged datapath, one layer up.
 
 ## Decision
 
@@ -175,7 +191,7 @@ Before accepting this proposal for implementation, the spike must record:
    thirteen) all pass alongside it, and all of them now run in CI rather than
    on request.
 
-### Attachment is outbound only, and slow
+### Attachment is outbound only
 
 Recorded because the gate above could easily be read as more than it is. A
 workload behind userspace mode can **dial** the mesh; nothing in the mesh can
@@ -185,11 +201,9 @@ can only make calls is half of the sidecar PLAN.md §9 promises, and the inbound
 half is a design decision — which overlay ports map to which local addresses —
 rather than a missing line of code.
 
-And what it does carry, it carries slowly: **5.6–7.3 Mbps against 1340–1384 on
-the privileged path**, measured 2026-08-21. Adequate for the request/response
-traffic a sidecar usually carries at 0.55 ms a round trip, and not adequate for
-bulk data. The cost is in the attachment loop rather than in smoltcp, and the
-measurement says which parts.
+What it does carry, it carries at **515 Mbps against 1380 on the privileged
+path**, measured 2026-08-21 — 37%, at 0.55 ms a round trip against 0.18 ms.
+A stated cost rather than a caveat.
 
 ### Reconsider if
 
