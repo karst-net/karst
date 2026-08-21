@@ -154,6 +154,7 @@ Notable decisions, each with an ADR:
 | MIT/Apache clients, AGPL server, DCO not CLA, no commercial licence | [0007](docs/adr/0007-licensing.md) |
 | Relay co-located with the coordination server; TURN fallback | [0008](docs/adr/0008-relay-infrastructure-and-funding.md) |
 | Control plane forked from NetBird rather than greenfield | [0009](docs/adr/0009-control-plane-fork-vs-greenfield.md) |
+| NAT64 synthesis at the socket boundary; RFC 7050 over RFC 8781 | [0013](docs/adr/0013-nat64-address-synthesis.md) |
 
 ## Components
 

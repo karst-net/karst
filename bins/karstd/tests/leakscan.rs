@@ -194,6 +194,7 @@ fn local() -> LocalSettings {
         network_mode: karstd::config::NetworkMode::Tun,
         userspace_socks5_listen: None,
         userspace_publish: Vec::new(),
+        nat64: None,
     }
 }
 

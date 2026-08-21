@@ -362,6 +362,23 @@ impl Client {
         })
     }
 
+    /// Reach the coordination server through a NAT64 prefix.
+    ///
+    /// A no-op unless the server is named by an **IPv4 literal** and this node
+    /// has a prefix: a hostname is synthesised by DNS64 during resolution, and
+    /// a node with IPv4 needs no help. See [`crate::nat64::rewrite_url`].
+    pub fn reach_via_nat64(&mut self, prefix: Option<karst_transport::Nat64Prefix>) {
+        let reachable = crate::nat64::rewrite_url(prefix, &self.endpoint);
+        if reachable != self.endpoint {
+            eprintln!(
+                "karstd: reaching the coordination server at {reachable} — \
+                 {} is IPv4 and this node has none",
+                self.endpoint
+            );
+            self.endpoint = reachable;
+        }
+    }
+
     /// The netmap this client currently holds.
     #[must_use]
     pub fn netmap(&self) -> &Netmap {
@@ -613,8 +630,16 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let file: crate::config::File =
         toml::from_str(&text).map_err(|e| Error::Protocol(format!("parsing config: {e}")))?;
 
+    // **Settled once, here, before anything opens a socket.** Every address
+    // this node is about to be handed — the control server below, the relays in
+    // its netmap, the endpoints in its peers — is a literal that a host with no
+    // IPv4 cannot reach, and the prefix is what makes them reachable. Resolving
+    // it any later would mean a control connection that had already failed.
+    let nat64 = crate::nat64::resolve(file.node.nat64, file.node.listen);
+
     let Some(section) = file.control.as_ref() else {
-        let config = Config::load(path).map_err(Error::Config)?;
+        let mut config = Config::load(path).map_err(Error::Config)?;
+        config.nat64 = nat64;
         return Ok((config, Source::Roster, None));
     };
 
@@ -640,6 +665,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     let dir = path.parent().unwrap_or(Path::new("."));
     let keys = crate::config::load_keys(path).map_err(Error::Config)?;
     let mut client = Client::new(section, dir, &keys)?;
+    client.reach_via_nat64(nat64);
 
     let local = LocalSettings {
         keys,
@@ -649,6 +675,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         network_mode: file.node.network_mode,
         userspace_socks5_listen: file.node.userspace_socks5_listen,
         userspace_publish: file.node.userspace_publish.clone(),
+        nat64,
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),

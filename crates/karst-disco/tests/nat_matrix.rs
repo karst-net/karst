@@ -165,7 +165,7 @@ fn effective_uid() -> u32 {
 }
 
 fn have_net_admin() -> bool {
-    effective_uid() == 0
+    let ok = effective_uid() == 0
         && Command::new("ip")
             .args(["netns", "list"])
             .output()
@@ -173,7 +173,40 @@ fn have_net_admin() -> bool {
         && Command::new("nft")
             .arg("--version")
             .output()
-            .is_ok_and(|o| o.status.success())
+            .is_ok_and(|o| o.status.success());
+    if !ok {
+        refuse_to_skip("root, ip and nft");
+    }
+    ok
+}
+
+/// Whether a tool this row needs is installed — **and a refusal to be quietly
+/// green without it**.
+///
+/// Skipping is for a developer without the tooling. In CI it must fail instead:
+/// a privileged suite that skips itself is a suite that passes while testing
+/// nothing. `bins/karstd/tests/aquifer.rs` has enforced this since 2026-08-20
+/// and this file did not, which is FINDINGS.md 48 — the NAT64 row skipped on
+/// every CI run from the day it was written, because the job that runs it never
+/// installed `tayga`, and it reported success each time.
+fn have_tool(name: &str) -> bool {
+    let ok = sh(&["sh", "-c", &format!("command -v {name}")]);
+    if !ok {
+        refuse_to_skip(name);
+    }
+    ok
+}
+
+/// `KARST_REQUIRE_PREREQUISITES` is how CI says "these are supposed to be
+/// here", so a runner image that stops shipping one turns the matrix red
+/// instead of turning it into a no-op.
+fn refuse_to_skip(what: &str) {
+    assert!(
+        std::env::var_os("KARST_REQUIRE_PREREQUISITES").is_none(),
+        "KARST_REQUIRE_PREREQUISITES is set, so skipping is not allowed — \
+         missing: {what}"
+    );
+    eprintln!("skipping: {what} is not available");
 }
 
 fn sh(args: &[&str]) -> bool {
@@ -1011,7 +1044,6 @@ fn ip_of(addr: &str) -> String {
 #[ignore = "needs root and network namespaces"]
 fn the_topology_carries_traffic_at_all() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1037,7 +1069,6 @@ fn a_cone_nat_reuses_one_port_across_destinations() {
     // learned from one peer usable by another, and it is the property that
     // makes hole punching easy.
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1089,7 +1120,6 @@ fn a_symmetric_nat_uses_a_different_port_per_destination() {
     // If this assertion does not hold, the "symmetric" row of the matrix is
     // measuring a cone NAT and every number from it is worthless.
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1137,7 +1167,6 @@ fn a_udp_blocked_path_carries_nothing() {
     // The relay-only row. A node here must fall back and stay there, so the
     // matrix needs a configuration where discovery cannot possibly succeed.
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1165,7 +1194,6 @@ fn an_unsolicited_datagram_does_not_cross() {
     // NAT. Without this the inner host is simply reachable, and a "direct
     // connection" through the matrix would prove nothing about traversal.
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1215,7 +1243,6 @@ fn an_unsolicited_datagram_does_not_cross() {
 #[ignore = "needs root and network namespaces"]
 fn a_full_cone_admits_an_address_it_never_contacted() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1254,7 +1281,6 @@ fn a_full_cone_admits_an_address_it_never_contacted() {
 #[ignore = "needs root and network namespaces"]
 fn an_address_restricted_cone_admits_a_new_port_but_not_a_new_address() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1293,7 +1319,6 @@ fn an_address_restricted_cone_admits_a_new_port_but_not_a_new_address() {
 #[ignore = "needs root and network namespaces"]
 fn an_ipv6_path_is_not_translated() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1360,7 +1385,6 @@ fn an_ipv6_path_is_not_translated() {
 #[ignore = "needs root and network namespaces"]
 fn a_carrier_nat_admits_the_reply_it_opened_and_nothing_else() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1457,7 +1481,6 @@ fn hairpin_attempt(probe: &str, hairpin: bool) -> Option<String> {
 #[ignore = "needs root and network namespaces"]
 fn a_masquerading_nat_does_not_hairpin() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1492,7 +1515,6 @@ fn a_masquerading_nat_does_not_hairpin() {
 #[ignore = "needs root and network namespaces"]
 fn a_nat_configured_for_hairpinning_rewrites_the_source_too() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1542,11 +1564,9 @@ fn observed_from6(probe: &str, bind_port: u16, target6: &str, target_port: u16) 
 #[ignore = "needs root, network namespaces and tayga"]
 fn a_nat64_path_carries_ipv6_to_ipv4_and_shares_one_port_space() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
-    if !sh(&["sh", "-c", "command -v tayga"]) {
-        eprintln!("skipping: tayga is not installed");
+    if !have_tool("tayga") {
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");
@@ -1585,7 +1605,6 @@ fn a_nat64_path_carries_ipv6_to_ipv4_and_shares_one_port_space() {
 #[ignore = "needs root and network namespaces"]
 fn a_subscriber_behind_a_carrier_nat_is_translated_twice() {
     if !have_net_admin() {
-        eprintln!("skipping: not root");
         return;
     }
     let _lock = matrix_lock().lock().expect("matrix lock");

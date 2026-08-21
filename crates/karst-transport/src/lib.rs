@@ -23,9 +23,11 @@
 //! **Receive-side GRO is not enabled**, and that is a considered omission
 //! rather than an oversight — see the note at the foot of `sys.rs`.
 
+mod nat64;
 #[cfg(target_os = "linux")]
 mod sys;
 
+pub use nat64::{Nat64Prefix, PrefixError, WKA, WKA2};
 #[cfg(target_os = "linux")]
 pub use sys::{Received, BATCH};
 
@@ -108,6 +110,9 @@ pub fn source_key(addr: SocketAddr) -> SourceKey {
 #[derive(Debug)]
 pub struct UdpTransport {
     socket: UdpSocket,
+    /// The NAT64 prefix this host reaches IPv4 through, if it is on such a
+    /// network. See [`Self::bind_via_nat64`].
+    nat64: Option<Nat64Prefix>,
 }
 
 impl UdpTransport {
@@ -118,7 +123,50 @@ impl UdpTransport {
     pub fn bind(addr: SocketAddr) -> io::Result<Self> {
         Ok(Self {
             socket: UdpSocket::bind(addr)?,
+            nat64: None,
         })
+    }
+
+    /// Bind on a network that reaches IPv4 only through a NAT64 translator.
+    ///
+    /// Every IPv4 destination is sent to `prefix::v4` instead, and every source
+    /// within the prefix is reported as the IPv4 address it stands for. The
+    /// rest of Karst therefore goes on holding, comparing and advertising plain
+    /// IPv4 addresses on a host that cannot send an IPv4 packet — which is the
+    /// only arrangement that works, because a synthesised address means nothing
+    /// outside this network and a node that advertised one would be telling
+    /// every peer to reach it somewhere that does not exist.
+    ///
+    /// **The prefix is fixed for the socket's life.** Learning it again would
+    /// mean re-reading DNS on a timer for a value that changes when the host
+    /// moves networks, which is a restart in this daemon anyway.
+    ///
+    /// # Errors
+    /// Any `bind` failure.
+    pub fn bind_via_nat64(addr: SocketAddr, prefix: Option<Nat64Prefix>) -> io::Result<Self> {
+        Ok(Self {
+            socket: UdpSocket::bind(addr)?,
+            nat64: prefix,
+        })
+    }
+
+    /// Where this socket must actually send, to reach `peer`.
+    ///
+    /// The identity on any host that is not behind NAT64, which is why every
+    /// send path can call it unconditionally.
+    fn route(&self, peer: SocketAddr) -> SocketAddr {
+        match self.nat64 {
+            Some(prefix) => prefix.synthesise_socket(peer),
+            None => peer,
+        }
+    }
+
+    /// What the rest of Karst should call the sender of a datagram.
+    fn attribute(&self, from: SocketAddr) -> SocketAddr {
+        match self.nat64 {
+            Some(prefix) => prefix.extract_socket(from),
+            None => from,
+        }
     }
 
     /// The address actually bound, after any ephemeral-port assignment.
@@ -167,7 +215,7 @@ impl UdpTransport {
         if datagram.len() > MAX_DATAGRAM {
             return Err(oversized(datagram.len()));
         }
-        self.socket.send_to(datagram, peer)
+        self.socket.send_to(datagram, self.route(peer))
     }
 
     /// Receive one datagram, returning its length and source.
@@ -180,7 +228,7 @@ impl UdpTransport {
     /// Any `recv` failure, including a timeout as `WouldBlock` or `TimedOut`.
     pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         let (n, from) = self.socket.recv_from(buf)?;
-        Ok((n, canonical(from)))
+        Ok((n, self.attribute(canonical(from))))
     }
 
     /// Send several datagrams in **one syscall** — `sendmmsg(2)`.
@@ -202,7 +250,17 @@ impl UdpTransport {
                 return Err(oversized(d.len()));
             }
         }
-        sys::send_batch(self.socket.as_fd(), datagrams)
+        // **The common path allocates nothing.** A host that is not behind
+        // NAT64 hands the slice straight through; only one that is pays for a
+        // rewritten copy, and it is the batch's own size.
+        let Some(prefix) = self.nat64 else {
+            return sys::send_batch(self.socket.as_fd(), datagrams);
+        };
+        let routed: Vec<(&[u8], SocketAddr)> = datagrams
+            .iter()
+            .map(|(d, peer)| (*d, prefix.synthesise_socket(*peer)))
+            .collect();
+        sys::send_batch(self.socket.as_fd(), &routed)
     }
 
     /// Receive several datagrams in **one syscall** — `recvmmsg(2)`.
@@ -218,7 +276,13 @@ impl UdpTransport {
         buffers: &mut [[u8; MAX_DATAGRAM]],
         out: &mut Vec<Received>,
     ) -> io::Result<usize> {
-        sys::recv_batch(self.socket.as_fd(), buffers, out)
+        let n = sys::recv_batch(self.socket.as_fd(), buffers, out)?;
+        if let Some(prefix) = self.nat64 {
+            for received in out.iter_mut() {
+                received.from = prefix.extract_socket(received.from);
+            }
+        }
+        Ok(n)
     }
 
     /// Send equal-sized datagrams as one segmented write — **UDP GSO**.
@@ -242,7 +306,7 @@ impl UdpTransport {
         if usize::from(segment_size) > MAX_DATAGRAM {
             return Err(oversized(usize::from(segment_size)));
         }
-        sys::send_segmented(self.socket.as_fd(), payload, segment_size, to)
+        sys::send_segmented(self.socket.as_fd(), payload, segment_size, self.route(to))
     }
 }
 
@@ -414,6 +478,82 @@ mod tests {
         // not produced by any socket; unwrapping it would invent a peer.
         let compat: SocketAddr = "[::192.0.2.1]:4242".parse().unwrap();
         assert_eq!(canonical(compat), compat);
+    }
+
+    /// A NAT64 socket sends to `prefix::v4` and reports the sender as IPv4 —
+    /// **over a real socket pair**, with no translator in sight.
+    ///
+    /// The trick is a prefix whose synthesised addresses this host already
+    /// routes. `::/96` is one: it embeds `0.0.0.1` as `::1`, so a send
+    /// addressed in plain IPv4 genuinely leaves through the prefix and
+    /// genuinely arrives on loopback, and the source that comes back is a real
+    /// `::1` that only the extraction can turn into `0.0.0.1`.
+    ///
+    /// **The obvious choice, `::ffff:0:0/96`, does not work and the reason is
+    /// worth keeping.** Its synthesised form is the v4-mapped address, which
+    /// [`canonical`] already rewrites one line earlier — so the test passes
+    /// whether or not NAT64 extraction is wired to the receive path at all.
+    /// This version was written first, and removing the extraction did not fail
+    /// it. A test that cannot fail is not evidence.
+    ///
+    /// The whole-aquifer row runs this against a real translator on an IPv6-only
+    /// network; what this pins is that both rewrites are wired to the socket,
+    /// which is a unit-sized claim and now fails in a unit-sized way.
+    #[test]
+    fn a_nat64_socket_sends_through_the_prefix_and_reports_plain_ipv4() {
+        let prefix: Nat64Prefix = "::/96".parse().unwrap();
+        // IPv6 disabled outright: nothing here to say.
+        let (Ok(a), Ok(b)) = (
+            UdpTransport::bind_via_nat64(SocketAddr::from((Ipv6Addr::LOCALHOST, 0)), Some(prefix)),
+            UdpTransport::bind_via_nat64(SocketAddr::from((Ipv6Addr::LOCALHOST, 0)), Some(prefix)),
+        ) else {
+            return;
+        };
+        b.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let their_port = b.local_addr().unwrap().port();
+        let our_port = a.local_addr().unwrap().port();
+
+        // Addressed as plain IPv4, exactly as the engine would address a peer
+        // out of a netmap. Nothing above the socket knows this host is on IPv6.
+        let to = SocketAddr::from((Ipv4Addr::new(0, 0, 0, 1), their_port));
+        a.send_to(b"through-the-prefix", to)
+            .expect("the send must go through the prefix to reach ::1");
+
+        let mut buf = [0u8; MAX_DATAGRAM];
+        let (n, from) = b.recv_from(&mut buf).unwrap();
+        assert_eq!(buf.get(..n), Some(&b"through-the-prefix"[..]));
+        assert_eq!(
+            from,
+            SocketAddr::from((Ipv4Addr::new(0, 0, 0, 1), our_port)),
+            "the sender came back as {from}; anything but a plain IPv4 address \
+             is one the engine cannot match against a netmap and would go on to \
+             hand back to peers as the address they were seen at"
+        );
+    }
+
+    /// The same socket must leave a genuine IPv6 peer alone. A NAT64 network
+    /// still has native IPv6, and rewriting a peer that is already reachable
+    /// would break the one path that needs no translation.
+    #[test]
+    fn a_nat64_socket_does_not_touch_a_native_ipv6_peer() {
+        let prefix = Nat64Prefix::well_known();
+        let Ok(a) =
+            UdpTransport::bind_via_nat64(SocketAddr::from((Ipv6Addr::LOCALHOST, 0)), Some(prefix))
+        else {
+            return;
+        };
+        let Ok(b) =
+            UdpTransport::bind_via_nat64(SocketAddr::from((Ipv6Addr::LOCALHOST, 0)), Some(prefix))
+        else {
+            return;
+        };
+        b.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        a.send_to(b"native", b.local_addr().unwrap()).unwrap();
+
+        let mut buf = [0u8; MAX_DATAGRAM];
+        let (_, from) = b.recv_from(&mut buf).unwrap();
+        assert_eq!(from, a.local_addr().unwrap());
+        assert!(from.is_ipv6(), "a native IPv6 peer was rewritten to {from}");
     }
 
     #[test]

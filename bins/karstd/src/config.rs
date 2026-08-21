@@ -200,6 +200,14 @@ pub struct NodeSection {
     /// PSK epoch these PSKs belong to (§2.6).
     #[serde(default = "default_epoch")]
     pub psk_epoch: u32,
+    /// How this node reaches IPv4 if it has no IPv4 of its own.
+    ///
+    /// `"auto"` — the default — discovers a NAT64 prefix by RFC 7050, and only
+    /// on a node that both listens on IPv6 and holds no IPv4 address. `"off"`
+    /// never synthesises. A prefix such as `"64:ff9b::/96"` uses that one.
+    /// See [`crate::nat64`] for what each gate is protecting against.
+    #[serde(default)]
+    pub nat64: crate::nat64::Mode,
 }
 
 /// The `[control]` table: how to reach the coordination server.
@@ -421,6 +429,11 @@ pub struct Config {
     pub userspace_socks5_listen: Option<SocketAddr>,
     /// Overlay ports this node publishes to the mesh. See [`crate::publish`].
     pub userspace_publish: Vec<PublishSection>,
+    /// The NAT64 prefix this node reaches IPv4 through, if it is on such a
+    /// network. Resolved once at startup by [`crate::nat64::resolve`] — the
+    /// mode an operator writes lives in [`NodeSection::nat64`], and by the time
+    /// a datapath exists the question has been settled.
+    pub nat64: Option<karst_transport::Nat64Prefix>,
     /// Interface addresses — host addresses, not networks. See
     /// [`InterfaceAddress`].
     pub addresses: Vec<InterfaceAddress>,
@@ -466,6 +479,7 @@ impl fmt::Debug for Config {
             .field("network_mode", &self.network_mode)
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .field("userspace_publish", &self.userspace_publish)
+            .field("nat64", &self.nat64)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
             .field("skipped", &self.skipped)
@@ -559,6 +573,12 @@ impl Config {
             network_mode: file.node.network_mode,
             userspace_socks5_listen: file.node.userspace_socks5_listen,
             userspace_publish: file.node.userspace_publish,
+            // Left unresolved here on purpose: settling it means a DNS query,
+            // and `Config::from_file` is called by tests and by `karst
+            // showconf`, neither of which should touch the network. The daemon
+            // resolves it in `control::load_config`, which is the one path a
+            // datapath is ever built from.
+            nat64: None,
             addresses,
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
@@ -664,10 +684,27 @@ impl Config {
             network_mode: local.network_mode,
             userspace_socks5_listen: local.userspace_socks5_listen,
             userspace_publish: local.userspace_publish,
+            nat64: local.nat64,
             addresses,
             psk_epoch: netmap.psk_epoch,
             node_id: netmap.node_id.clone(),
-            relays: netmap.relays.clone(),
+            // **The relay is the one address a node cannot fix for itself.**
+            // The control server comes from a file an operator can edit and a
+            // peer's endpoint is a hint that discovery can replace, but the
+            // relay arrives from the netmap as an IPv4 literal and is the
+            // node's only way onto the mesh. Rewriting it here, once, means
+            // every consumer — the first connection, §9.1's measurements,
+            // §9.2's moves — dials an address this host can reach without any
+            // of them knowing why.
+            relays: netmap
+                .relays
+                .iter()
+                .cloned()
+                .map(|mut relay| {
+                    relay.address = crate::nat64::rewrite_authority(local.nat64, &relay.address);
+                    relay
+                })
+                .collect(),
             relay_ca_file: local.relay_ca_file,
             peers,
             routes,
@@ -719,6 +756,11 @@ pub struct LocalSettings {
     pub userspace_socks5_listen: Option<SocketAddr>,
     /// Overlay ports this node publishes to the mesh. See [`crate::publish`].
     pub userspace_publish: Vec<PublishSection>,
+    /// The NAT64 prefix this node reaches IPv4 through, if it is on such a
+    /// network. Resolved once at startup by [`crate::nat64::resolve`] — the
+    /// mode an operator writes lives in [`NodeSection::nat64`], and by the time
+    /// a datapath exists the question has been settled.
+    pub nat64: Option<karst_transport::Nat64Prefix>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
 }
@@ -732,6 +774,7 @@ impl fmt::Debug for LocalSettings {
             .field("network_mode", &self.network_mode)
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .field("userspace_publish", &self.userspace_publish)
+            .field("nat64", &self.nat64)
             .finish_non_exhaustive()
     }
 }
@@ -1482,6 +1525,7 @@ mod netmap_tests {
             network_mode: NetworkMode::Tun,
             userspace_socks5_listen: None,
             userspace_publish: Vec::new(),
+            nat64: None,
         }
     }
 

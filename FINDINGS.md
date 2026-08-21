@@ -11,15 +11,18 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-six more, and all of them are now closed — most found by
+followed it added thirty-nine more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
 criterion names, three by **measuring** a feature that had already been proved
 to work, two by asking what a deployment needs that only a test fixture was
 providing, one by building the second half of a feature and looking at what the
-first half did with what it allocated, and the last by asking what a topology
-Karst has never been run on would need before it could be run on at all.
+first half did with what it allocated, one by asking what a topology Karst has
+never been run on would need before it could be run on at all, one by then
+running that topology, one by injecting a defect into a passing test and
+watching it stay green, and the last by asking which CI job already installed a
+tool a new row needed.
 
 **That last pair is worth naming as a category.** Findings 42 and 43 are one
 commit apart, and both are components that exist only in the test harness — a
@@ -28,9 +31,21 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**No findings remain open.** 45 was the most recent, found and closed on
-2026-08-21 while working out what a whole-aquifer NAT64 row would have to
-assert: a dual-stack node learned every IPv4 peer at a v4-mapped address and
+**No findings remain open.** 46, 47 and 48 are the most recent, all from
+2026-08-21 and all from actually building the NAT64 row rather than reasoning
+about it. 48 is the one worth reading first: the *instrument* row for the same
+topology had skipped on every CI run since it was written, because the job that
+runs it never installed `tayga` and the suite skipped quietly — the exact
+failure mode a paragraph in PLAN.md claims was closed the day before, in work
+that reached three suites and not the fourth.
+46 is what the first run found: a node on a NAT64-only network could reach
+nothing at all, because every address it is handed is an IPv4 literal and it has
+no IPv4 route to any of them. 47 is smaller and stranger — a test written to
+catch half of 46's fix could not fail, because the prefix chosen to make the
+test possible was the one prefix that made it vacuous.
+
+Before them, 45, found on the way to the same row while checking that IPv6 worked
+at all: a dual-stack node learned every IPv4 peer at a v4-mapped address and
 handed it back as that peer's reflexive address, which no IPv4-only node can
 send to. The node itself worked throughout, which is why nothing caught it.
 
@@ -102,8 +117,143 @@ carries both the new wording and the original, struck through.
 | 43 | High | A production coordination server published no relays at all; only the test server ever set the netmap's relay registry | Fixed 2026-08-21 |
 | 44 | High | Userspace mode never reclaimed a TCP socket, so a sidecar grew by 128 KiB per connection for the life of the process | Fixed 2026-08-21 |
 | 45 | High | A dual-stack node learned every IPv4 peer at a v4-mapped address and advertised it back as that peer's reflexive address, which no IPv4-only node can send to | Fixed 2026-08-21 |
+| 46 | High | A node on a NAT64-only network could reach nothing at all: every address it was handed was an IPv4 literal and it had no IPv4 route | Fixed 2026-08-21 |
+| 47 | Low | The first NAT64 socket test could not fail, because the prefix it chose let an earlier rewrite do the work | Fixed 2026-08-21 |
+| 48 | Medium | The NAT64 instrument row skipped on every CI run since it was written, and reported success each time | Fixed 2026-08-21 |
 
 ## Closed
+
+### 48. Medium: the instrument row that has never run
+
+**Found 2026-08-21** while adding `tayga` to the CI job for the *whole-aquifer*
+NAT64 row, by asking which other job already needed it. Fixed the same day.
+
+`crates/karst-disco/tests/nat_matrix.rs`'s
+`a_nat64_path_carries_ipv6_to_ipv4_and_shares_one_port_space` begins by checking
+for `tayga` and returning quietly if it is absent. The `tun` job that runs the
+suite installs nothing. So the row has skipped on every CI run since it was
+written on 2026-08-19 — printing one line into a log nobody reads and reporting
+success.
+
+**The measurement it produced is still real**, taken locally on a machine that
+has `tayga`, and PLAN.md cites it correctly: an IPv6-only node's NAT64 path maps
+endpoint-independently, which keeps every such node out of §7.7's hard class.
+What was lost is the guarantee that it stays true. A regression in the fixture,
+the kernel, or `tayga` itself would have been reported as a pass.
+
+**This is the exact failure mode PLAN.md claims was closed on 2026-08-20**, in
+the paragraph beginning "The suites now refuse to be quietly green". That work
+added `KARST_REQUIRE_PREREQUISITES` to `aquifer`, `userspace` and `gateway` and
+did not reach `nat_matrix` — which is the suite the §6 exit criterion is
+*measured through*. The sentence was true of the suites it was written about and
+read as true of all of them.
+
+Fixed on both sides, because either alone leaves a hole: the `tun` job now
+installs `tayga` and sets `KARST_REQUIRE_PREREQUISITES=1`, and every skip in
+`nat_matrix.rs` — the root check included — now goes through a helper that
+refuses to skip when that variable is set. Verified by running the suite as an
+ordinary user with the variable set (fails, naming what is missing) and as root
+with it set (thirteen rows, all executed, 21.58 s).
+
+### 47. Low: a test that could not fail
+
+**Found 2026-08-21** by injecting the defect it was written to catch, and
+finding that it still passed. Fixed the same day.
+
+`karst-transport`'s NAT64 test needed synthesised addresses that a machine with
+no translator could still route, and `::ffff:0:0/96` looked ideal: it embeds
+`127.0.0.1` as the v4-mapped loopback address, which a dual-stack socket
+delivers to itself. The send worked, the datagram arrived, the source came back
+as `127.0.0.1`, and the test was green.
+
+**It was green because [`canonical`] had already rewritten the source, one line
+before the NAT64 extraction ran.** The prefix chosen to make the test possible
+was exactly the prefix that made it vacuous. Deleting the extraction entirely
+left the test passing.
+
+Rewritten around `::/96`, which embeds `0.0.0.1` as `::1` — a real IPv6 address
+on loopback that only NAT64 extraction turns back into an IPv4 one. Removing
+either half now fails it.
+
+**The general shape is worth keeping.** A test written against a boundary that
+already normalises will silently measure the normalisation instead of the thing
+under test, and it looks identical from the outside: same assertion, same green.
+The only way to tell the two apart is to break the code on purpose. Every fix in
+this report is checked that way; this is the first time the check caught the
+*test*.
+
+### 46. High: a node on a NAT64-only network could reach nothing at all
+
+**Found 2026-08-21** by building the whole-aquifer NAT64 row and running it
+before writing any code — the first run failed in 30 seconds with
+`karstd: server: transport: transport error`, before the node had finished
+starting. Fixed the same day.
+
+**Every address Karst hands a node is an IPv4 literal.** The control server
+comes from its own configuration file, the relay from the netmap, the peer from
+a call-me-maybe. On an ordinary network that is fine. On a NAT64-only network
+the node has no IPv4 address and no IPv4 route, so all three are unreachable and
+the node never gets past enrolment.
+
+Nothing in Karst knew what a NAT64 prefix was. FINDINGS.md 45 had already
+recorded that — "not RFC 7050's `ipv4only.arpa` heuristic, not RFC 8781's
+PREF64" — as something the row would have to establish. It established it in the
+strongest available way, by failing.
+
+**What the fixture proved first.** Before concluding this was Karst's problem,
+the NAT64 leg was probed on its own: `ping6` and a TCP connection from the
+IPv6-only namespace to `64:ff9b::334b:a0a` both reached `51.75.10.10`. The path
+worked; only the daemon could not name it.
+
+**The fix is one rule applied at one boundary, plus two string rewrites.**
+`prefix::v4` is the IPv6 address a translator turns back into `v4`, so:
+
+- the datapath socket synthesises on send and extracts on receive, which means
+  the engine above it goes on holding, comparing and advertising plain IPv4
+  addresses on a host that cannot send an IPv4 packet;
+- the relay's address and the control server's URL are rewritten once, at the
+  point the configuration becomes real.
+
+A **name** is left alone in both, and that is not a shortcut — DNS64 synthesises
+for names already. Only a literal arrives unsynthesised, because nothing looked
+it up.
+
+**The extraction half is the one that matters and the row cannot see it.** With
+the receive-side extraction deleted the aquifer row still passes, because a
+synthesised address is one the NAT64 node really can reach — its own paths keep
+working. What breaks is `Pong.observed` (`aven-v1.md` §7.2): the node hands its
+IPv4 peer an address inside its own translator's prefix, the peer publishes that
+as its reflexive candidate, and every IPv4-only node in the mesh is handed an
+endpoint it cannot send to. That needs a third node to observe, so
+`bins/karstd/tests/nat64.rs` observes it instead — a real socket, a real
+`Disco`, and the `Pong` that comes out. Finding 45 is the same failure in its
+other spelling, and this one is worse: a v4-mapped address at least names
+somewhere real.
+
+**RFC 6052's embedding is not concatenation** below /96. Bits 64–71 are reserved
+and must be zero, so an address straddling them is split around the gap, and
+five of the six legal prefix lengths do straddle. The implementation is checked
+against §2.4's worked example copied verbatim from the standard rather than
+against its own arithmetic. Lengths the standard does not define are refused:
+assuming /96 for a /64 prefix does not fail, it synthesises a well-formed
+address for the wrong host, and the only symptom is that nothing answers.
+
+**Discovery is RFC 7050 and it is a heuristic, which the RFC says itself** (§3,
+§6). It needs a DNS64 resolver on the path, and it trusts an unauthenticated
+answer — a resolver that lies can choose where this node sends. That is bounded
+by what Karst already assumes, since traffic is authenticated and encrypted end
+to end, so a hostile prefix costs reachability rather than confidentiality. It
+is nonetheless why discovery is gated rather than eager: `auto` will not even
+ask unless the datapath is IPv6 *and* the host has no IPv4 address of its own.
+The second gate matters — a host with both would otherwise route every IPv4 flow
+through a translator it does not need, and learn a reflexive address belonging
+to the translator rather than to itself.
+
+**RFC 8781's PREF64 router-advertisement option is the better mechanism and is
+not implemented.** It needs no DNS and no DNS64, and it needs a raw ICMPv6
+socket to read router advertisements — so `CAP_NET_RAW` in a daemon that
+otherwise wants only `CAP_NET_ADMIN`. That trade is declined rather than
+overlooked.
 
 ### 45. High: a dual-stack node hands its IPv4 peers an address they cannot be reached at
 

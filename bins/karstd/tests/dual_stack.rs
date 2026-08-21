@@ -131,6 +131,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         network_mode: karstd::config::NetworkMode::Tun,
         userspace_socks5_listen: None,
         userspace_publish: Vec::new(),
+        nat64: None,
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,
         node_id: handle(&[own; 1952]).into_bytes(),

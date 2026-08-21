@@ -206,7 +206,12 @@ pub fn run_with_control(
 ) -> io::Result<()> {
     let tun = bring_up_interface(config)?;
 
-    let socket = UdpTransport::bind(config.listen)?;
+    // Every peer endpoint the datapath is given is an IPv4 literal from a
+    // netmap or a call-me-maybe. On a NAT64 node the socket is what turns those
+    // into addresses it can reach, and turns the answers back — so the engine
+    // above it goes on comparing plain IPv4 addresses and never learns that its
+    // own network spells them differently.
+    let socket = UdpTransport::bind_via_nat64(config.listen, config.nat64)?;
     socket.set_read_timeout(Some(POLL_TIMEOUT))?;
 
     // Routes for anything outside the interface's own on-link prefix — a
@@ -316,6 +321,7 @@ pub fn run_with_control(
         network_mode: config.network_mode,
         userspace_socks5_listen: config.userspace_socks5_listen,
         userspace_publish: config.userspace_publish.clone(),
+        nat64: config.nat64,
         relay_ca_file: config.relay_ca_file.clone(),
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
@@ -2504,6 +2510,7 @@ mod route_tests {
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
             userspace_publish: Vec::new(),
+            nat64: None,
             addresses: addresses
                 .iter()
                 .map(|a| a.parse().expect("interface address"))
@@ -2780,6 +2787,7 @@ mod probe_tests {
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
             userspace_publish: Vec::new(),
+            nat64: None,
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),
@@ -3287,6 +3295,7 @@ mod probe_tests {
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
             userspace_publish: Vec::new(),
+            nat64: None,
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),

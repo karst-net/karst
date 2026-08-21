@@ -99,6 +99,23 @@ jobs:
         with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The NAT64 instrument row needs a translator, and it had never had one:
+      # the row skipped on every CI run from the day it was written and reported
+      # success each time, because this job installed nothing and the suite
+      # skipped quietly (FINDINGS.md 48). Masked for the same reason the aquifer
+      # job masks its daemons — the post-install starts a service with nothing
+      # sensible to bind to.
+      - name: Translator for the NAT64 instrument row
+        run: |
+          sudo systemctl mask tayga || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tayga || true
+          printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
+      - name: What the runner actually has
+        run: |
+          for t in ip nft tayga; do
+            printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
       - name: Build the privileged test binaries
         run: |
           # The whole workspace: two_nodes drives the `karst` CLI from another
@@ -136,9 +153,16 @@ jobs:
       # way its label says, with no Karst code involved. PLAN.md §6's ≥90%
       # direct-connection criterion is measured through this, so an instrument
       # that silently mislabels a NAT would make that number meaningless.
+      #
+      # `KARST_REQUIRE_PREREQUISITES` turns a missing tool into a failure that
+      # names it, rather than a suite that passes while testing nothing. The
+      # `sudo env PATH` carries this job's PATH rather than root's `secure_path`,
+      # so `/usr/sbin` is on it and `tayga` is found.
       - name: NAT matrix (topology validation)
         timeout-minutes: 10
-        run: sudo "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
 
   # PLAN.md §6's exit criterion is measured here and nowhere else.
   #
@@ -183,13 +207,19 @@ jobs:
       # to skip (`KARST_REQUIRE_PREREQUISITES`) and names exactly what is
       # missing. An opaque apt failure is a worse diagnostic than a test that
       # says `missing: ["miniupnpd"]`.
-      - name: Port-mapping daemon for the mapped rows
+      #
+      # `tayga` and `dnsmasq` are the NAT64 row's half of the same argument.
+      # Without the translator node A is on an IPv6 island rather than a NAT64
+      # network; without a resolver it is on one with no DNS64, and the row
+      # would report the daemon failing to discover a prefix nothing was
+      # offering. Both are masked for the same reason as `miniupnpd`.
+      - name: Port-mapping daemon, translator and resolver for the privileged rows
         run: |
-          sudo systemctl mask miniupnpd || true
+          sudo systemctl mask miniupnpd tayga dnsmasq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            miniupnpd nftables || true
-          # Both install into /usr/sbin, and every run below is
+            miniupnpd nftables tayga dnsmasq || true
+          # These install into /usr/sbin, and every run below is
           # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
           # `secure_path`. Without the sbin directories on it the suites would
           # report tools missing that are in fact installed — the one
@@ -197,7 +227,7 @@ jobs:
           printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
       - name: What the runner actually has
         run: |
-          for t in ip nft go miniupnpd; do
+          for t in ip nft go miniupnpd tayga dnsmasq; do
             printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
       - name: Build the privileged test binaries

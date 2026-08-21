@@ -22,6 +22,7 @@ pub mod filter;
 pub mod flow;
 pub mod home;
 pub mod ipc;
+pub mod nat64;
 pub mod netmap;
 pub mod ondemand;
 pub mod portmap;

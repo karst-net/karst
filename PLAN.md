@@ -3400,11 +3400,12 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- ✅ **Full NAT test matrix in CI (§6) — twelve `karstd` topologies run end to
-  end, nine reach a direct path, and the instrument beneath them is twelve
-  rows.** The instrument is complete: NAT64/DNS64 landed
-  2026-08-19, built from `tayga` plus an ordinary masquerade rather than an
-  out-of-tree kernel module (finding 27).
+- ✅ **Full NAT test matrix in CI (§6) — thirteen `karstd` topologies run end to
+  end, ten reach a direct path, and the instrument beneath them is twelve
+  rows.** The instrument was complete on 2026-08-19, built from `tayga` plus an
+  ordinary masquerade rather than an out-of-tree kernel module (finding 27);
+  the **whole-aquifer** NAT64 row followed on 2026-08-21 and is the thirteenth
+  topology. Every shape §6 names now has a row with a daemon on it.
 
   ✅ **And it is actually in CI as of 2026-08-20**, which this bullet claimed in
   its title for some time while the suite ran only when somebody remembered to.
@@ -3423,10 +3424,20 @@ onwards, anchored on the week of 2026-08-10.
   `nat_matrix` in `tun`; `control` and `interop` in `vectors`; `aquifer`,
   `userspace` and `gateway` here.
 
-  **The suites now refuse to be quietly green.** They used to skip when their
+  **The suites now refuse to be quietly green** — *all* of them, as of
+  2026-08-21. They used to skip when their
   prerequisites were absent, which for a privileged suite in CI is the worst
   possible behaviour: a runner image that stopped shipping `miniupnpd` would
   have turned the two mapped rows into a no-op and reported success.
+
+  **This paragraph was written on 2026-08-20 and was true of three suites out of
+  four.** `nat_matrix` was the one it did not reach — the suite the exit
+  criterion below is *measured through* — and its NAT64 row had been skipping on
+  every CI run since the day it was written, because the `tun` job never
+  installed `tayga`. FINDINGS.md 48 has it. Corrected on both sides: the job
+  installs the translator and sets the variable, and every skip in the file now
+  goes through a helper that refuses. Thirteen instrument rows, all executed,
+  21.58 s.
   `KARST_REQUIRE_PREREQUISITES=1`, which CI sets, turns that skip into a failure
   naming exactly what is missing. The detection probes are the unprivileged ones
   (`nft --version`, not `nft list ruleset`) so the message says what is *not
@@ -3791,9 +3802,10 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *Every physically-possible topology connects directly* — **nine of the ten
+  *Every physically-possible topology connects directly* — **ten of the eleven
   that are possible; row 8 without a mapping is the one that does not, and it is
-  now conceded rather than outstanding.**
+  now conceded rather than outstanding.** NAT64 joined the numerator on
+  2026-08-21 and went direct on the first run that had the mechanism behind it.
 
   That concession is a decision taken on 2026-08-20 and it should be read with
   its cost visible, because "physically possible" and "possible" are not the
@@ -3811,7 +3823,7 @@ onwards, anchored on the week of 2026-08-10.
   with probe traffic it buys with one PCP request, and the row proves it end to
   end rather than arguing it.
 
-  **Two of the twelve rows remain relayed for a reason other than a missing
+  **Two of the thirteen rows remain relayed for a reason other than a missing
   direct path**, and both are named here rather than folded into a percentage:
   row 6 (symmetric to symmetric, §12.4's 0.01%) and unmapped row 8. Row 7 has no
   direct path at all. Anyone who disagrees with either concession is
@@ -3824,11 +3836,11 @@ onwards, anchored on the week of 2026-08-10.
   > ~~≥ 90% direct-connection rate across the matrix~~
 
   It was restated because it is **arithmetically unreachable by counting rows**,
-  and not for want of engineering. Three of the twelve topologies are relay by
+  and not for want of engineering. Three of the thirteen topologies are relay by
   construction: symmetric-to-symmetric has no technique that reaches it
   (§12.4's 0.01%), a path with all UDP dropped has no direct path to find, and
   row 8 without a mapping has none this project is willing to buy (finding 28).
-  That caps any row count at 75%. The only routes to 90% would be to add easier
+  That caps any row count at 77%. The only routes to 90% would be to add easier
   rows — which games the denominator, and is the dishonesty this matrix exists
   to prevent — or to weight by real-world NAT prevalence, which needs field data
   this project does not have and cannot invent.
@@ -3839,37 +3851,75 @@ onwards, anchored on the week of 2026-08-10.
   it: 8b does not raise the count on its own, because row 8 is still in the
   denominator and still relayed. What 8b adds is the *condition* — a reader
   learns that the pairing turns on B's router, which counting alone could never
-  say. The old figure is still worth reporting and still is — nine of twelve,
-  75% — but as a description rather than a target.
+  say. The old figure is still worth reporting and still is — ten of thirteen,
+  77% — but as a description rather than a target.
 
-  *The old figure, for continuity* — **nine of twelve topologies, which is
-  75%, or 82% over the eleven where a direct path exists at all.** Both figures are
+  *The old figure, for continuity* — **ten of thirteen topologies, which is
+  77%, or 83% over the twelve where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
-  alone. Two further honesties belong with them. The denominator is a set of
+  alone. One further honesty belongs with them: the denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is
   in the field, so this is a capability count and not the rate the criterion
   means; producing the latter needs field data this project does not have.
-  And **one** shape is still unbuilt as a whole-aquifer row: NAT64/DNS64. It
-  exists in `nat_matrix.rs` as an instrument row, which pins how the fixture
-  behaves but says nothing about what Karst does on one.
 
-  **Working out what that row would have to assert found FINDINGS.md 45**, and
-  the answer is worth having before the fixture is built. `node.listen` decides
-  the datapath's address family, because §4 gives it one shared socket: an
-  `AF_INET` socket cannot send to an IPv6 address at all, so `[::]` is the only
-  configuration that can use an IPv6 path — and on that socket every IPv4 peer
-  arrived as `[::ffff:a.b.c.d]`. The node *worked*, which is why nothing caught
-  it; what leaked was `Pong.observed`, so a dual-stack node told its IPv4 peers
-  they were at addresses no IPv4-only node can send to. Fixed by normalising at
-  the socket boundary, plus the matching wire rule — §6.2 already refuses a
-  second spelling of an address and the mapped form is one.
+  **Every shape §6 names now has a whole-aquifer row.** NAT64/DNS64 was the last
+  one outstanding and landed 2026-08-21 as
+  `an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh`. It goes **direct**, and
+  by [`Shape::NatA`]'s mechanism rather than a new one — the masquerade behind
+  the translator is an ordinary port-restricted cone, node B is publicly
+  reachable, so A's probe crosses first and B adopts the address it arrived
+  from. What is new is everything upstream of that.
 
-  Two things the row still has to establish, both now stated rather than
-  guessed. A node on a NAT64-only network reaches an IPv4 relay or peer **only**
-  if something synthesises `prefix::v4`, and nothing in Karst learns a NAT64
-  prefix — not RFC 7050's `ipv4only.arpa` heuristic, not RFC 8781's PREF64. And
-  an `AF_INET` node's sends to an IPv6 candidate fail silently, which is correct
-  for a node with no IPv6 connectivity and unreadable to its operator.
+  **Working out what the row would have to assert found FINDINGS.md 45**, before
+  the fixture existed. `node.listen` decides the datapath's address family,
+  because §4 gives it one shared socket: an `AF_INET` socket cannot send to an
+  IPv6 address at all, so `[::]` is the only configuration that can use an IPv6
+  path — and on that socket every IPv4 peer arrived as `[::ffff:a.b.c.d]`. The
+  node *worked*, which is why nothing caught it; what leaked was
+  `Pong.observed`, so a dual-stack node told its IPv4 peers they were at
+  addresses no IPv4-only node can send to. Fixed by normalising at the socket
+  boundary, plus the matching wire rule — §6.2 already refuses a second spelling
+  of an address and the mapped form is one.
+
+  **Then building the row found FINDINGS.md 46, which is the larger half.** The
+  first run failed in thirty seconds, before the node had finished starting:
+  every address Karst hands a node is an IPv4 literal — the control server from
+  its configuration, the relay from the netmap, the peer from a call-me-maybe —
+  and a node on a NAT64-only network has no IPv4 route to any of them. The
+  fixture was probed on its own first, and `ping6` and TCP both crossed to
+  `51.75.10.10` through `64:ff9b::334b:a0a`; the path worked and only the daemon
+  could not name it.
+
+  The fix is **one rule at one boundary, plus two string rewrites**. The datapath
+  socket synthesises `prefix::v4` on send and extracts it on receive, so the
+  engine above goes on holding plain IPv4 addresses on a host that cannot send
+  an IPv4 packet; the relay address and control URL are rewritten once, where
+  the configuration becomes real. A *name* is left alone in both, because DNS64
+  already synthesises for names — only a literal arrives unsynthesised.
+
+  The prefix itself is learned by **RFC 7050**, and gated: `auto` will not ask
+  unless the datapath is IPv6 *and* the host holds no IPv4 address of its own.
+  The second gate is not an optimisation — a host with both would route every
+  IPv4 flow through a translator it does not need and learn a reflexive address
+  belonging to the translator. **RFC 8781's PREF64 is the better mechanism and
+  is declined**, not overlooked: reading router advertisements needs a raw
+  ICMPv6 socket, and so `CAP_NET_RAW` in a daemon that otherwise wants only
+  `CAP_NET_ADMIN`.
+
+  **What the row cannot see, and what does see it.** With the receive-side
+  extraction deleted the row still passes — a synthesised address is one the
+  NAT64 node really can reach, so its own paths keep working. What breaks is
+  `Pong.observed`: it hands an IPv4 peer an address inside its own translator's
+  prefix, the peer publishes that as its reflexive candidate, and every
+  IPv4-only node is handed an endpoint it cannot send to. Observing that needs a
+  third node, so `bins/karstd/tests/nat64.rs` observes it directly instead —
+  real socket, real `Disco`, and the `Pong` that comes out. Writing that test
+  found FINDINGS.md 47, which is a test that could not fail.
+
+  One thing still unaddressed and now named rather than implied: an `AF_INET`
+  node's sends to an IPv6 candidate fail silently. That is correct behaviour for
+  a node with no IPv6 connectivity, and "this node cannot use IPv6" is a fact no
+  operator can read anywhere.
 
   **Hairpinning was named here as a second one, and that was wrong** —
   corrected 2026-08-21 after running the row rather than re-reading the
@@ -3879,7 +3929,7 @@ onwards, anchored on the week of 2026-08-10.
   missing: two nodes behind one non-hairpinning NAT go direct over the
   **private** segment, each holding the other's `10.98.1.x` address and
   explicitly *not* the NAT's outer one. The paragraph contradicted itself, too —
-  same-LAN is one of the twelve topologies the count above is taken over. The
+  same-LAN is one of the topologies the count above is taken over. The
   list was written on 2026-08-18 naming three shapes, and only double NAT was
   ever struck from it when it was built.
 
@@ -4061,7 +4111,7 @@ onwards, anchored on the week of 2026-08-10.
   credential refresh; control-server ephemeral credential minting; coturn added
   to the NAT matrix.
 
-  It arrives here with the base case already covered — twelve `karstd` topologies
+  It arrives here with the base case already covered — thirteen `karstd` topologies
   show the co-located relay path automatic and lossless — so what TURN buys is
   interoperability with third-party infrastructure (ADR-0008), not connectivity.
   Scoped accordingly: it is a compatibility feature in this phase rather than a

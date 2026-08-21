@@ -84,6 +84,35 @@ const CG_INNER: &str = "100.64.0.1";
 /// internet.
 const NAT_A_CG: &str = "100.64.0.2";
 
+/// [`Shape::Nat64`]'s IPv6-only inside: node A's address and its gateway's.
+///
+/// **Node A holds no IPv4 address at all** on this shape, which is the whole of
+/// what makes it a NAT64 row rather than a dual-stack one. `lo` still carries
+/// `127.0.0.1`, because the kernel puts it there and a daemon's control socket
+/// is a unix socket anyway.
+const IP_A_V6: &str = "fd00:11::2";
+/// The same address in the form `listen = "{ip}:51820"` needs it. Spelled out
+/// rather than built, because a `const fn` that brackets a string is more
+/// machinery than one literal is worth.
+const IP_A_V6_LISTEN: &str = "[fd00:11::2]";
+const NAT64_GW_V6: &str = "fd00:11::1";
+/// **The well-known prefix**, and this fixture is entitled to it.
+///
+/// RFC 6052 §3.1 forbids pairing `64:ff9b::/96` with non-global IPv4 addresses,
+/// and `tayga` enforces it — `nat_matrix.rs` uses a local prefix for exactly
+/// that reason, since its outside is 10.10.2.0/24. This aquifer's public
+/// segment is 51.75.10.0/24, which is global address space, so the realistic
+/// prefix is also the legal one here.
+const NAT64_PREFIX: &str = "64:ff9b::/96";
+/// `tayga`'s own two addresses and the pool it draws client mappings from.
+const NAT64_TAYGA_V4: &str = "192.168.255.1";
+/// RFC 7050 §3's name, which is what the node asks a resolver for.
+const IPV4ONLY_ARPA: &str = "ipv4only.arpa";
+/// Where `ip netns exec` looks for a namespace's own `/etc/resolv.conf`.
+const NETNS_ETC: &str = "/etc/netns";
+const NAT64_TAYGA_V6: &str = "fd00:64::1";
+const NAT64_POOL: &str = "192.168.255.0/24";
+
 const RELAY_PORT: u16 = 8443;
 /// A second relay on the same segment, for `ponor-v1.md` §9.1's two rules.
 const RELAY_PORT_2: u16 = 8444;
@@ -120,7 +149,11 @@ fn effective_uid() -> u32 {
 /// without them rather than merely absent: rows 8b and 9 turn on a port mapping
 /// being served, and a fixture that cannot serve one would report the product
 /// failing to reach a path that is in fact unreachable in that fixture. Finding
-/// 23 is what an instrument that lies about its own shape costs.
+/// 23 is what an instrument that lies about its own shape costs. `tayga` and
+/// `dnsmasq` are named on the same ground — without the first, the NAT64 row's
+/// node A is not on a NAT64 network but on an IPv6 island; without the second
+/// it is on one with no DNS64, and the row would report the daemon failing to
+/// discover a prefix that nothing was offering.
 fn missing_prerequisites() -> Vec<&'static str> {
     let mut missing = Vec::new();
     if effective_uid() != 0 {
@@ -135,6 +168,8 @@ fn missing_prerequisites() -> Vec<&'static str> {
         ("nft", "--version"),
         ("go", "version"),
         ("miniupnpd", "--help"),
+        ("tayga", "--help"),
+        ("dnsmasq", "--version"),
     ] {
         // `miniupnpd --help` exits non-zero, as usage output usually does, so
         // the test is whether the program ran at all.
@@ -236,6 +271,12 @@ impl Drop for Aquifer {
         // only the two it knew about and left the third behind.
         for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG] {
             let _ = sh(&["ip", "netns", "del", ns]);
+            // The NAT64 row writes a per-namespace `resolv.conf` under `/etc`,
+            // which is the one thing this fixture leaves outside its own
+            // namespaces and temporary directory. Removing all six costs
+            // nothing and means the cleanup cannot drift from the row that
+            // needs it.
+            let _ = std::fs::remove_dir_all(Path::new(NETNS_ETC).join(ns));
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -476,6 +517,31 @@ enum Shape {
     /// stated reason**, which is a different outcome from having found no
     /// gateway at all.
     DoubleNat,
+    /// Node A on an **IPv6-only** network behind a NAT64 translator; node B
+    /// public IPv4.
+    ///
+    /// The last shape §6's matrix names and the last one built. It differs from
+    /// every other row in kind rather than degree: elsewhere node A cannot be
+    /// *addressed*, and here it cannot address *anyone*. Every literal it is
+    /// handed — the control server from its own configuration, the relay from
+    /// the netmap, the peer from a call-me-maybe — is an IPv4 address, and node
+    /// A has no IPv4 route to reach one with.
+    ///
+    /// **What the row therefore measures is whether Karst can name a
+    /// destination it can reach**, which is a question no other topology asks.
+    /// A NAT64 network answers it with the prefix: `prefix::v4` is the IPv6
+    /// address the translator turns back into the IPv4 one, so a node that
+    /// knows the prefix can reach the whole IPv4 internet and a node that does
+    /// not is confined to its own segment. FINDINGS.md 45 recorded that nothing
+    /// in Karst learned a prefix; FINDINGS.md 46 is what running this row for
+    /// the first time found.
+    ///
+    /// Expected direct, and for the same reason as [`Shape::NatA`]: the
+    /// masquerade behind the translator is an ordinary port-restricted cone, B
+    /// is publicly reachable, so A's probe crosses first and B adopts the
+    /// address it arrived from. The translation is invisible to B, which is the
+    /// interesting half — B holds a plain IPv4 address for a peer that has none.
+    Nat64,
 }
 
 /// How a NAT allocates external ports, and what it lets back through.
@@ -544,6 +610,7 @@ impl Shape {
             | Self::SymmetricAndAddressRestricted
             | Self::SymmetricAndPortRestrictedMapped
             | Self::DoubleNat
+            | Self::Nat64
             | Self::SameLan => Expect::Direct,
             // **Not "not yet".** §7.7's birthday-paradox port search is the
             // only technique that reaches this row without help from the NAT,
@@ -614,6 +681,12 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
     if shape == Shape::DoubleNat {
         return build_double_nat(net);
     }
+    // An IPv6-only inside is a topology rather than a NAT flavour: `nat_rules`
+    // configures how a translation allocates ports, and this row changes which
+    // address family arrives at it in the first place.
+    if shape == Shape::Nat64 {
+        return build_nat64(net);
+    }
 
     // Node A is behind a NAT in every shape but `Flat`; only the flavour
     // changes.
@@ -623,6 +696,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         // is a compile error here, which is how every other arm behaves.
         Shape::SameLan => unreachable!("same-LAN is built by its own function"),
         Shape::DoubleNat => unreachable!("double NAT is built by its own function"),
+        Shape::Nat64 => unreachable!("NAT64 is built by its own function"),
         Shape::Flat => {
             public_leg("ktn-a", NS_A, IP_A_PUBLIC);
             IP_A_PUBLIC
@@ -665,6 +739,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         // is a compile error here, which is how every other arm behaves.
         Shape::SameLan => unreachable!("same-LAN is built by its own function"),
         Shape::DoubleNat => unreachable!("double NAT is built by its own function"),
+        Shape::Nat64 => unreachable!("NAT64 is built by its own function"),
         Shape::Flat | Shape::NatA | Shape::SymmetricA | Shape::UdpBlocked => {
             public_leg("ktn-b", NS_B, IP_B_PUBLIC);
             IP_B_PUBLIC
@@ -897,6 +972,229 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
 }
 
 /// Attach a namespace directly to the public bridge.
+/// An IPv6-only node behind a NAT64 translator, and a public IPv4 peer.
+///
+/// Built the way `crates/karst-disco/tests/nat_matrix.rs` builds its instrument
+/// row, and deliberately so: `tayga` does the protocol translation and an
+/// **ordinary masquerade** behind it does the port sharing, so the NAT
+/// semantics this row runs a daemon on are the ones that file has already
+/// characterised rather than a second implementation's taken on trust.
+/// FINDINGS.md 27 records why, and why an out-of-tree kernel module was not
+/// needed to get here.
+///
+/// Node A's namespace gets **no IPv4 address**. That is the entire fixture in
+/// one sentence — everything the row goes on to measure follows from a node
+/// that cannot send an IPv4 packet no matter what address it is given.
+fn build_nat64(net: &mut Aquifer) -> (&'static str, &'static str) {
+    must(&["ip", "netns", "add", NS_NAT_A]);
+    must(&nsr(NS_NAT_A, &["ip", "link", "set", "lo", "up"]));
+
+    // Outside: IPv4 only, onto the public bridge, exactly as every other NATed
+    // shape attaches.
+    veth(
+        End {
+            dev: "ktn-ao",
+            ns: NS_NAT_A,
+            ip: Some(NAT_A_OUTER),
+        },
+        End {
+            dev: "ktn-aop",
+            ns: NS_PUB,
+            ip: None,
+        },
+    );
+    must(&nsr(
+        NS_PUB,
+        &["ip", "link", "set", "ktn-aop", "master", "ktn-br"],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "route", "add", "default", "via", IP_PUB],
+    ));
+
+    // Inside: IPv6 only. `nodad` because duplicate-address detection would
+    // otherwise hold the address tentative for a second, and a bind to it fails
+    // with EADDRNOTAVAIL while it is — a race the daemon would lose.
+    veth(
+        End {
+            dev: "ktn-ai",
+            ns: NS_NAT_A,
+            ip: None,
+        },
+        End {
+            dev: "ktn-an",
+            ns: NS_A,
+            ip: None,
+        },
+    );
+    let gw = format!("{NAT64_GW_V6}/64");
+    let node = format!("{IP_A_V6}/64");
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "-6", "addr", "add", &gw, "dev", "ktn-ai", "nodad"],
+    ));
+    must(&nsr(NS_NAT_A, &["ip", "link", "set", "ktn-ai", "up"]));
+    must(&nsr(
+        NS_A,
+        &["ip", "-6", "addr", "add", &node, "dev", "ktn-an", "nodad"],
+    ));
+    must(&nsr(NS_A, &["ip", "link", "set", "ktn-an", "up"]));
+    must(&nsr(
+        NS_A,
+        &["ip", "-6", "route", "add", "default", "via", NAT64_GW_V6],
+    ));
+
+    must(&nsr(
+        NS_NAT_A,
+        &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &[
+            "sh",
+            "-c",
+            "echo 1 > /proc/sys/net/ipv6/conf/all/forwarding",
+        ],
+    ));
+
+    start_translator(net);
+    start_dns64(net);
+    public_leg("ktn-b", NS_B, IP_B_PUBLIC);
+
+    (IP_A_V6_LISTEN, IP_B_PUBLIC)
+}
+
+/// A resolver that answers `ipv4only.arpa` the way a DNS64 resolver does, and
+/// a `resolv.conf` inside node A's namespace that points at it.
+///
+/// **This is the fixture's half of RFC 7050, and it is a fixture and not a
+/// DNS64 implementation.** A real DNS64 resolver synthesises AAAA for every
+/// name with only an A record; all this one does is serve the single name the
+/// standard reserves for prefix discovery, with the AAAA a real one would
+/// return for it — `prefix::192.0.0.170`. That is the entire input the node
+/// takes from DNS, so serving more would test `dnsmasq` rather than Karst.
+///
+/// The resolver is reached over IPv6 from an IPv6-only namespace, which is the
+/// case that matters: a node behind NAT64 cannot talk to an IPv4 resolver
+/// either.
+fn start_dns64(net: &mut Aquifer) {
+    // 192.0.0.170 embedded in `64:ff9b::/96`. Written out rather than computed,
+    // so this constant is an independent statement of what the daemon must work
+    // out for itself — a fixture that derived it the same way the product does
+    // would agree with a wrong answer.
+    const SYNTHESISED_WKA: &str = "64:ff9b::c000:aa";
+
+    let record = format!("{IPV4ONLY_ARPA},{SYNTHESISED_WKA}");
+    let listen = format!("--listen-address={NAT64_GW_V6}");
+    net.spawn_service(
+        NS_NAT_A,
+        "dnsmasq",
+        &[
+            "--keep-in-foreground",
+            // Answer from the host-record alone: no upstream, no `/etc/hosts`,
+            // and no cache carried in from the machine running the test.
+            "--no-resolv",
+            "--no-hosts",
+            "--conf-file=/dev/null",
+            &listen,
+            "--bind-interfaces",
+            &format!("--host-record={record}"),
+            "--pid-file=",
+        ],
+        "dnsmasq.log",
+    );
+
+    // **`ip netns exec` bind-mounts this over `/etc/resolv.conf`.** It is how a
+    // namespace gets its own resolver, and it is why the daemon can read
+    // `/etc/resolv.conf` in the ordinary way and still see node A's network
+    // rather than the test machine's. Removed by `Aquifer::drop`.
+    let dir = Path::new(NETNS_ETC).join(NS_A);
+    std::fs::create_dir_all(&dir).expect("per-namespace /etc");
+    std::fs::write(
+        dir.join("resolv.conf"),
+        format!("nameserver {NAT64_GW_V6}\n"),
+    )
+    .expect("write the namespace's resolv.conf");
+    std::thread::sleep(Duration::from_millis(300));
+}
+
+/// Configure and start `tayga` in the already-wired NAT namespace.
+fn start_translator(net: &mut Aquifer) {
+    // **The tun device name is per-process, not the literal `nat64`.**
+    // `tayga --mktun` creates a *persistent* device, so a fixed name is shared
+    // with any other tayga on the machine — including one left behind by a
+    // crashed run. `nat_matrix.rs` records the run this cost.
+    let tun = format!("ktn64-{}", std::process::id());
+    let data = net.dir.join("tayga-data");
+    std::fs::create_dir_all(&data).expect("tayga data dir");
+    let conf = net.dir.join("tayga.conf");
+    std::fs::write(
+        &conf,
+        format!(
+            "tun-device {tun}\n\
+             ipv4-addr {NAT64_TAYGA_V4}\n\
+             ipv6-addr {NAT64_TAYGA_V6}\n\
+             prefix {NAT64_PREFIX}\n\
+             dynamic-pool {NAT64_POOL}\n\
+             data-dir {}\n",
+            data.display()
+        ),
+    )
+    .expect("write tayga config");
+    let conf_path = conf.to_string_lossy().into_owned();
+
+    must(&nsr(NS_NAT_A, &["tayga", "--mktun", "-c", &conf_path]));
+    must(&nsr(NS_NAT_A, &["ip", "link", "set", &tun, "up"]));
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "addr", "add", NAT64_TAYGA_V4, "dev", &tun],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "route", "add", NAT64_POOL, "dev", &tun],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "-6", "route", "add", NAT64_PREFIX, "dev", &tun],
+    ));
+
+    // **Where the port sharing comes from.** `tayga` is stateless: each IPv6
+    // client gets its own address out of the pool with ports untouched, which
+    // on its own is barely distinguishable from a plain IPv6 path and would
+    // report a comfortable result about a topology nobody is on. The masquerade
+    // collapses the pool onto one address and shares it by port, which is what
+    // a carrier does — and it is Linux's default masquerade, so the flavour
+    // node A ends up behind is the port-restricted cone `Shape::NatA` uses.
+    must(&nsr(NS_NAT_A, &["nft", "add", "table", "ip", "karst"]));
+    must(&nsr(
+        NS_NAT_A,
+        &[
+            "nft",
+            "add",
+            "chain",
+            "ip",
+            "karst",
+            "post",
+            "{ type nat hook postrouting priority 100 ; }",
+        ],
+    ));
+    must(&nsr(
+        NS_NAT_A,
+        &[
+            "nft",
+            "add",
+            "rule",
+            "ip",
+            "karst",
+            "post",
+            "oifname ktn-ao masquerade",
+        ],
+    ));
+
+    net.spawn_service(NS_NAT_A, "tayga", &["-d", "-c", &conf_path], "tayga.log");
+    std::thread::sleep(Duration::from_millis(600));
+}
+
 fn public_leg(dev: &str, ns: &str, ip: &str) {
     let peer = format!("{dev}-p");
     veth(
@@ -1927,6 +2225,25 @@ fn two_nodes_on_one_home_network_go_direct_over_the_lan() {
     run(Shape::SameLan);
 }
 
+/// The last shape §6's matrix names: an IPv6-only node reaches an IPv4 mesh.
+///
+/// **Every address node A is handed is one it cannot use.** Its control server
+/// comes from its own configuration file, its relay from the netmap, and its
+/// peer from a call-me-maybe — all three IPv4 literals arriving at a node with
+/// no IPv4 route. The row asserts that it reaches all three anyway, which on a
+/// NAT64 network means synthesising `prefix::v4` and therefore first learning
+/// the prefix.
+///
+/// Node B is the control: it is an ordinary public IPv4 node that is told
+/// nothing, and it must end up holding a plain IPv4 endpoint for a peer that
+/// does not have one. The translation is node A's business and no part of the
+/// protocol's.
+#[test]
+#[ignore = "needs root, network namespaces, a Go toolchain and tayga"]
+fn an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh() {
+    run(Shape::Nat64);
+}
+
 fn run(shape: Shape) {
     if !have_prerequisites() {
         return;
@@ -2074,6 +2391,10 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
         }
         return;
     }
+    if shape == Shape::Nat64 {
+        assert_nat64(net);
+        return;
+    }
 
     if matches!(
         shape,
@@ -2155,6 +2476,59 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
 /// [`assert_endpoints`] is already a list of special cases; folding a fourth
 /// one inline would have made the function longer than anything reading it
 /// wants to hold at once.
+/// What [`Shape::Nat64`] establishes beyond "the pair connected".
+///
+/// Three separate claims, and each one fails differently:
+///
+/// 1. **The prefix was discovered**, not configured and not guessed. Node A's
+///    configuration says nothing about NAT64 — the row would pass just as well
+///    if the well-known prefix were hard-coded somewhere, and that node would
+///    then fail on every real network using a network-specific prefix. So the
+///    daemon must say it read the prefix out of `ipv4only.arpa`.
+/// 2. **Node A holds a plain IPv4 address for node B.** A is reaching B through
+///    `prefix::51.75.10.20`, and if that address reached the engine then A
+///    would advertise it as an observed address — the FINDINGS.md 45 failure in
+///    its other spelling, and worse here, because a synthesised address is
+///    meaningless outside A's own network rather than merely unreachable from
+///    half of it.
+/// 3. **Node B sees an ordinary IPv4 peer.** B is told nothing and does nothing
+///    special; the translation is node A's business. If B held anything but the
+///    masquerade's outer address, the row would be measuring a topology where
+///    the far side had to cooperate, which is not the one being claimed.
+fn assert_nat64(net: &Aquifer) {
+    let log = net.log("a.log");
+    assert!(
+        log.contains(IPV4ONLY_ARPA),
+        "node A never reported discovering a NAT64 prefix from {IPV4ONLY_ARPA}, \
+         so whatever made this row pass was not RFC 7050 — a node that reaches \
+         the mesh only because the well-known prefix happens to be right will \
+         fail on any network that uses its own.\n── a.log ──\n{log}"
+    );
+    assert!(
+        log.contains(NAT64_PREFIX),
+        "node A discovered a prefix other than the {NAT64_PREFIX} this fixture \
+         serves.\n── a.log ──\n{log}"
+    );
+
+    let a = status(net, "a", NS_A);
+    let endpoint = field(&a, "endpoint").unwrap_or_default();
+    assert!(
+        endpoint.starts_with(IP_B_PUBLIC),
+        "node A holds {endpoint} for its peer, not the plain IPv4 address \
+         {IP_B_PUBLIC}. A synthesised address above the socket is one this node \
+         will hand to peers as an observed address, and it names nothing \
+         outside this network.\n{a}"
+    );
+
+    let b = status(net, "b", NS_B);
+    let endpoint = field(&b, "endpoint").unwrap_or_default();
+    assert!(
+        endpoint.starts_with(NAT_A_OUTER),
+        "node B holds {endpoint} for a peer it should see at the translator's \
+         masqueraded address {NAT_A_OUTER}\n{b}"
+    );
+}
+
 fn assert_double_nat(net: &Aquifer) {
     // **Two translations out, and neither of the closer addresses.** B can
     // only have learned this from the datagram that arrived, since nothing
