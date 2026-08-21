@@ -104,6 +104,21 @@ const LISTEN_PEER_4: u16 = 51850;
 const PUBLISHED_PORT: u16 = 19004;
 const BACKEND_PORT: u16 = 19005;
 
+/// Put the bulk row's measured time in the log, pass or fail.
+///
+/// **Before the assertions, not after.** This row failed on every CI run for
+/// two days and the one figure that would have explained it at a glance was
+/// printed only on the success path — so the logs recorded that the budget was
+/// missed and never by how much. A measurement worth asserting on is worth
+/// emitting unconditionally. The `aquifer` job passes `--nocapture` so it
+/// survives on a passing run too.
+fn report_rate(written: usize, elapsed: Duration) {
+    eprintln!(
+        "bulk: {} MiB in {elapsed:?} (budget {BULK_BUDGET:?})",
+        written / (1024 * 1024)
+    );
+}
+
 /// How much the bulk row moves, and how long it may take.
 ///
 /// **This is a throughput assertion in a correctness suite, and it is here
@@ -114,13 +129,23 @@ const BACKEND_PORT: u16 = 19005;
 /// assertions about bytes.
 ///
 /// The budget is set to catch that and nothing else, with both ends measured
-/// rather than guessed: healthy, this transfer takes **1.2 s** in a debug
-/// build on the machine that wrote it; at a one-segment window it takes
-/// **36.7 s**, measured by putting the defect back. Five seconds sits between
-/// them with a 4× margin on the side that matters — a slow CI runner must not fail this row, and a return to
-/// stop-and-wait must not pass it.
+/// rather than guessed. Re-measured 2026-08-21 on two pinned cores, which is
+/// roughly what a hosted CI runner gives: **1.34 s** healthy in a debug build,
+/// **54.8 s** with `SOCKET_BUFFER` put back to one MTU. A 41× separation.
+///
+/// **Ten seconds, and the placement is the whole point.** The original budget
+/// was five, chosen as ~4× above the healthy figure — and CI failed this row on
+/// every run from the day it was written, because 4× is not enough headroom for
+/// a shared virtual machine. The mistake was treating the budget as an absolute
+/// time. It is not: *both* ends scale with the speed of the machine, so a
+/// runner half as fast moves healthy to 2.7 s and the defect to 110 s, and what
+/// has to stay constant is the **ratio**. The budget therefore belongs at the
+/// geometric midpoint — √(1.34 × 54.8) ≈ 8.6 s — where it has the same margin
+/// in both directions. Ten rounds that off: 7.5× above healthy, 5.5× below the
+/// defect, and a runner would have to be seven times slower than this machine
+/// to fail the row spuriously.
 const BULK: usize = 8 * 1024 * 1024;
-const BULK_BUDGET: Duration = Duration::from_secs(5);
+const BULK_BUDGET: Duration = Duration::from_secs(10);
 
 /// `nobody`. Chosen because it exists on every distribution this is likely to
 /// run on and owns nothing worth reaching.
@@ -996,6 +1021,7 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
         .read_exact(&mut counted)
         .unwrap_or_else(|e| panic!("reading the receiver's count: {e}{}", report(&both)));
     let elapsed = started.elapsed();
+    report_rate(written, elapsed);
 
     assert_eq!(
         u64::from_be_bytes(counted),
@@ -1005,14 +1031,16 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
     );
     assert!(
         elapsed < BULK_BUDGET,
-        "{written} bytes took {elapsed:?}, over the {BULK_BUDGET:?} budget — at \
-         this size that is the signature of a one-segment window (FINDINGS.md \
-         41) rather than of a slow machine{}",
+        "{written} bytes took {elapsed:?}, over the {BULK_BUDGET:?} budget. \
+         The budget sits at the geometric midpoint of 1.34 s healthy and 54.8 s \
+         with finding 41's one-segment window put back, so this is that window \
+         returning unless the machine is seven times slower than the one those \
+         were measured on — in which case widen the budget rather than the \
+         other way round{}",
         report(&both)
     );
     let served = service.join().expect("service thread");
     served.unwrap_or_else(|e| panic!("the overlay service reported: {e}"));
-    eprintln!("bulk: {} MiB in {:?}", written / (1024 * 1024), elapsed);
 }
 
 /// **The other half of ADR-0012 §9's sidecar: the mesh reaching in.**

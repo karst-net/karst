@@ -260,8 +260,12 @@ jobs:
         env:
           KARST_REQUIRE_PREREQUISITES: "1"
         run: |
+          # `--nocapture` so the bulk row's measured time reaches the log on a
+          # pass as well as a failure. It is a throughput assertion on a shared
+          # virtual machine, and the number it is asserting on is the thing
+          # anyone debugging it will want first.
           sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
-            "$USERSPACE_TEST_BIN" --ignored --test-threads=1
+            "$USERSPACE_TEST_BIN" --ignored --test-threads=1 --nocapture
       # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
       # not write. Rows 8b and 9 of the matrix below rest on these bytes being
       # right, and every other test in `karst-portmap` checks the encoder
@@ -449,9 +453,26 @@ jobs:
           exit "$fail"
       - name: The generated state is not committable
         run: |
-          # It holds the relay's identity seed and the server's store key.
-          git check-ignore -q deploy/compose/state \
-            || { echo "::error::deploy/compose/state is not gitignored"; exit 1; }
+          # It holds the relay's TLS private key and the coordination server's
+          # store encryption key, so a self-hoster who runs `git add -A` after
+          # bootstrapping must not be able to publish them.
+          #
+          # **Named files inside the directory, not the directory itself.** The
+          # ignore rule is `state/`, which matches directories only, and
+          # `git check-ignore` cannot tell that a path is a directory when the
+          # path does not exist — and on a fresh checkout it does not, because
+          # bootstrap.sh has never run. Checking the bare directory therefore
+          # reported "not gitignored" for a directory that is ignored the moment
+          # it exists: the check failed on every clean CI run and passed on
+          # every developer machine that had bootstrapped once. Naming files
+          # under it is both correct on a fresh tree and a closer statement of
+          # the thing that matters, which is that a secret cannot be committed.
+          fail=0
+          for f in tls/relay.key management.json relay.toml; do
+            git check-ignore -q "deploy/compose/state/$f" \
+              || { echo "::error::deploy/compose/state/$f is not gitignored"; fail=1; }
+          done
+          exit "$fail"
 
   spdx:
     name: SPDX headers

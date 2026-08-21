@@ -99,7 +99,7 @@ technical terms do not.**
 ### Negative
 
 - Every document, path, crate and header changes. Done now, before scaffolding,
-  this is a text substitution; after Phase 0 it would touch published artifacts.
+  this is a text substitution; after Phase 0 it would touch published artefacts.
 - The mycology metaphor was a genuinely good fit and is lost.
 
 ### Clearance — complete

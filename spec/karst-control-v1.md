@@ -415,7 +415,7 @@ Not modelled: the record layer's sequence numbers, gRPC framing, and TLS. TLS
 is deliberately excluded — the point of this layer is to hold up when a TLS
 terminator is hostile, so modelling it would assume away the threat.
 
-Two red results during development were **modelling artifacts**, recorded so
+Two red results during development were **modelling artefacts**, recorded so
 future readers do not mistake them for findings: an unscoped agreement query
 (the attacker may legitimately register as itself) and an event-ordering
 mistake (the node emitted completion after its send, though the implementation

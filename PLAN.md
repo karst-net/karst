@@ -4200,7 +4200,7 @@ carved out of Phase 6 rather than added to the end.
 | Control plane | Table-driven ACL tests, Postgres-backed integration tests via testcontainers, exhaustive RBAC matrix tests |
 | Frontend | Vitest units, Playwright E2E against a real server, axe-core accessibility gate |
 | Security | `cargo deny` + `govulncheck` + Dependabot in CI, SBOM per release, quarterly dependency review |
-| Release | Reproducible builds, signed artifacts, transparency-logged releases |
+| Release | Reproducible builds, signed artefacts, transparency-logged releases |
 
 **Deterministic simulation testing deserves emphasis.** A virtual-clock,
 virtual-network harness that can replay a failing seed exactly is the
