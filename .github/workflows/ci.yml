@@ -337,6 +337,16 @@ jobs:
         run: cd server && go test -count=1 -run TestVectors ./management/internals/karst/control/
       - name: The Rust node reproduces them
         run: cargo test -p karst-control-client --test vectors
+      # The relay's admission file is a second format the two implementations
+      # share, and its failure mode is quieter than the wire's: a renamed field
+      # gives the relay a roster with zero clients rather than a parse error, so
+      # it starts cleanly and admits nobody. Same shape as the block above —
+      # Go renders the fixture, Rust parses it.
+      - name: The relay roster the server renders is the one the relay parses
+        run: |
+          cd server && go test -count=1 -run TestRosterVector ./management/internals/karst/roster/
+      - name: The relay reads it back
+        run: cargo test -p karst-relay --test roster_vector
       # Vectors prove the two implementations agree on every derivation and
       # framing function. They cannot prove the two ends actually talk: that
       # needs sockets, HTTP/2, protobuf on the wire, and a real ML-KEM

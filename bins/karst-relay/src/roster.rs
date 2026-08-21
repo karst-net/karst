@@ -314,6 +314,25 @@ impl FileRoster {
     pub fn mesh_count(&self) -> usize {
         self.mesh.len()
     }
+
+    /// The distinct aquifers this roster admits, sorted.
+    ///
+    /// For checking a roster against the implementation that wrote it —
+    /// `tests/roster_vector.rs` — where the aquifer is the field whose loss is
+    /// silent: §5.4 scopes forwarding by it, so an empty one turns a relay into
+    /// a message bus between any two keys it has heard of. Counts and names
+    /// only; the identity keys stay where they are.
+    #[must_use]
+    pub fn aquifers(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .clients
+            .values()
+            .map(|entry| entry.aquifer.0.clone())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
 }
 
 fn load_with_fingerprint(path: &Path) -> Result<(FileRoster, Fingerprint), Error> {

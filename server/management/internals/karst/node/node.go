@@ -263,6 +263,21 @@ func (s *Store) GetMany(handles []string) (map[string]*Identity, error) {
 	return out, nil
 }
 
+// All returns every enrolled identity, ordered by handle.
+//
+// Ordered because the caller that needs this is rendering the relay's roster
+// (ponor-v1.md §5.3), and a file whose lines shuffle between renders is a file
+// that appears to change on every write. The relay reloads on any change, so
+// unordered output would turn a no-op refresh into a parse and a swap of the
+// admission table several times a minute.
+func (s *Store) All() ([]Identity, error) {
+	var recs []Identity
+	if err := s.db.Order("handle").Find(&recs).Error; err != nil {
+		return nil, fmt.Errorf("node: all: %w", err)
+	}
+	return recs, nil
+}
+
 // Lookup returns the stored public key for a handle, or ErrUnknownNode.
 func (s *Store) Lookup(handle string) ([]byte, error) {
 	var rec Identity

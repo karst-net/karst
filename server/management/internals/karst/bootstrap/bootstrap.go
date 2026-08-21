@@ -82,6 +82,10 @@ type Karst struct {
 	StaticKEM []byte
 	VerifyKey []byte
 	Epoch     uint32
+	// Nodes is the enrolled-identity store, exposed so a co-located relay's
+	// roster can be rendered from it (PLAN.md §5, FINDINGS.md 42). Read-only
+	// as far as that caller is concerned; the handlers above own the writes.
+	Nodes *node.Store
 }
 
 // Install registers KarstControlService on the daemon's gRPC server.
@@ -161,6 +165,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
 		StaticKEM: svc.Pins().StaticKEM,
 		VerifyKey: svc.Pins().VerifyKey,
 		Epoch:     epoch,
+		Nodes:     nodes,
 	}
 
 	// The pins are public and must reach operators; the seeds never appear.

@@ -21,14 +21,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/netbirdio/netbird/management/cmd"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 )
 
@@ -40,6 +43,18 @@ import (
 // not work, rather than one that works too well.
 const karstPolicyEnv = "KARST_POLICY_FILE"
 
+// The co-located relay's roster — PLAN.md §5, FINDINGS.md 42.
+//
+// Unset means no roster is written, which is right for a server with no relay
+// beside it. Set, the file is rewritten on an interval whether or not
+// membership changed, because the relay's admission lease is refreshed by the
+// file's modification time and expires after ninety seconds.
+const (
+	karstRosterFileEnv     = "KARST_RELAY_ROSTER_FILE"
+	karstRosterAquiferEnv  = "KARST_AQUIFER"
+	karstRosterIntervalEnv = "KARST_RELAY_ROSTER_INTERVAL"
+)
+
 func main() {
 	pol, err := loadPolicy()
 	if err != nil {
@@ -47,20 +62,59 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Cancelled when main returns, which is the only shutdown signal this
+	// process has: cmd.Execute blocks until the daemon stops.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		s := nbserver.NewServer(cfg)
-		if _, err := bootstrap.Install(s, pol); err != nil {
+		k, err := bootstrap.Install(s, pol)
+		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
 			// Karst node, which is harder to diagnose than not starting.
 			log.Fatalf("karst: cannot install the control service: %v", err)
 		}
+		startRosterRefresher(ctx, k)
 		return s
 	})
 
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// startRosterRefresher keeps a co-located relay's admission file current.
+//
+// **Fatal on a bad configuration, and silent when there is none.** An operator
+// who set the path meant to run a relay beside this server; starting anyway
+// would produce a relay that admits nodes for ninety seconds and then stops,
+// which is the failure this exists to prevent and is remarkably hard to
+// diagnose from the relay's end. An operator who set nothing gets nothing.
+func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
+	path := os.Getenv(karstRosterFileEnv)
+	if path == "" {
+		return
+	}
+	interval := roster.DefaultInterval
+	if raw := os.Getenv(karstRosterIntervalEnv); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("karst: %s=%q is not a duration: %v", karstRosterIntervalEnv, raw, err)
+		}
+		interval = parsed
+	}
+	r, err := roster.New(k.Nodes, roster.Config{
+		Path:     path,
+		Aquifer:  os.Getenv(karstRosterAquiferEnv),
+		Interval: interval,
+	}, log.Warnf)
+	if err != nil {
+		log.Fatalf("karst: relay roster: %v", err)
+	}
+	log.Infof("karst: writing the relay roster to %s every %s", path, interval)
+	go r.Run(ctx)
 }
 
 func loadPolicy() (*policy.Document, error) {

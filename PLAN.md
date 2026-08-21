@@ -2495,6 +2495,21 @@ onwards, anchored on the week of 2026-08-10.
     two Dockerfiles and a Kubernetes example, and no compose file — so today
     the five-minute path does not exist.
 
+    **Starting on it found the reason it did not** (FINDINGS.md 42). A relay's
+    admission list is a file with a **ninety-second lease**: §5.3 makes
+    admission structural, and `roster::MAX_AGE` replaces it with an empty
+    roster when nobody refreshes it. Both rules are right and nothing outside
+    `aquifer.rs`'s fixture was doing the refreshing, so any deployed relay
+    stopped admitting nodes ninety seconds after it started — and the
+    Kubernetes README, followed literally, produced exactly that.
+
+    `server/management/internals/karst/roster` closes it: the coordination
+    server already holds every enrolled node's identity key, so it renders the
+    roster and rewrites it every 25 seconds, unconditionally, because the lease
+    is refreshed by the file's modification time rather than by its contents.
+    A compose file can now be honest, which is the remaining half of this
+    bullet.
+
   ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
   how long to wait; `server.rs` dials them. **Two relays mesh and a packet
   crosses between them**, which is the only test that exercises the outbound
