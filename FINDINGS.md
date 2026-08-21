@@ -11,7 +11,7 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-nine more, and all of them are now closed — most found by
+followed it added forty-one more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
@@ -21,17 +21,23 @@ providing, one by building the second half of a feature and looking at what the
 first half did with what it allocated, one by asking what a topology Karst has
 never been run on would need before it could be run on at all, one by then
 running that topology, one by injecting a defect into a passing test and
-watching it stay green, and the last by asking which CI job already installed a
-tool a new row needed.
+watching it stay green, one by asking which CI job already installed a tool a
+new row needed, and the last two by reading a CI log that a previous fix had
+made legible.
 
-**That last pair is worth naming as a category.** Findings 42 and 43 are one
+**Findings 42 and 43 are worth naming as a category.** They are one
 commit apart, and both are components that exist only in the test harness — a
 roster refresher and a relay registry — with production reading the field the
 harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**No findings remain open.** 46, 47 and 48 are the most recent, all from
+**No findings remain open.** 49 and 50 are the most recent, and both came out of
+a CI failure that an earlier fix had made readable — 49 is a real defect in the
+inbound path (a socket mid-handshake is indistinguishable from one that will
+never send again, so a published port half-closed its backend before the request
+arrived), and 50 retires a wall-clock budget that could not be set correctly for
+the range of machines it runs on. Before them, 46, 47 and 48, all from
 2026-08-21 and all from actually building the NAT64 row rather than reasoning
 about it. 48 is the one worth reading first: the *instrument* row for the same
 topology had skipped on every CI run since it was written, because the job that
@@ -120,8 +126,79 @@ carries both the new wording and the original, struck through.
 | 46 | High | A node on a NAT64-only network could reach nothing at all: every address it was handed was an IPv4 literal and it had no IPv4 route | Fixed 2026-08-21 |
 | 47 | Low | The first NAT64 socket test could not fail, because the prefix it chose let an earlier rewrite do the work | Fixed 2026-08-21 |
 | 48 | Medium | The NAT64 instrument row skipped on every CI run since it was written, and reported success each time | Fixed 2026-08-21 |
+| 49 | High | A published port half-closed its backend before the request arrived, because a socket mid-handshake looks exactly like one that will never send again | Fixed 2026-08-21 |
+| 50 | Medium | The bulk row's wall-clock budget could not separate healthy from defective across the range of machines it runs on | Fixed 2026-08-21 |
 
 ## Closed
+
+### 50. Medium: a budget that could not be set
+
+**Found 2026-08-21** by reading the CI figure the previous fix had put in the
+log: 8.19 s, against a budget of 10 s that had just been widened from 5 s.
+Fixed the same day.
+
+`a_bulk_transfer_is_not_stop_and_wait` moves 8 MiB and asserts it finishes
+inside a fixed time, which is the only way an end-to-end row can see finding
+41's one-segment window. The trouble is the spread. Healthy is **1.34 s** on two
+pinned cores here, **8.19 s** on a hosted runner, and **over 10 s** on a loaded
+single core — six-fold — while the defect is only about 41x healthy on whatever
+machine is doing the measuring. So the budget has to fall between "slowest
+healthy" and "fastest defect", and across the machines this actually runs on
+those two overlap. Any fixed number is too tight for a busy runner or too loose
+for a fast workstation. Widening it once had simply moved the failure.
+
+**The mistake was the instrument, not the number.** The property being asserted
+— the advertised receive window — is a property of the socket and does not vary
+with the machine at all. It is now asserted in `karst-tun` directly:
+`a_tcp_socket_advertises_a_window_worth_having` reads the buffer capacity, costs
+microseconds, cannot flake, and fails for exactly one reason. Injection-verified
+by putting `SOCKET_BUFFER` back to one MTU.
+
+The end-to-end row keeps a deliberately loose bound (120 s) as a smoke test —
+8 MiB really does cross two daemons and a userspace TCP stack — and its failure
+message now points at the window test rather than pretending to diagnose.
+
+### 49. High: a published port answered before it had been asked
+
+**Found 2026-08-21** from a CI log, after failing to reproduce it locally and
+after a first hypothesis that turned out to be wrong. Fixed the same day.
+
+The inbound row failed intermittently — about one run in ten, and only when run
+after the rest of the suite, never alone. The daemon's log said everything:
+
+```
+karstd: publishing overlay port 19004 to 127.0.0.1:19005
+karstd: overlay port 19004 from 10.88.3.2:49612: Broken pipe (os error 32)
+```
+
+**`is_active()` is true from `SYN-RECEIVED` onward.** `publish::serve` waited on
+it to decide a listening socket had become a connection, so on a machine slow
+enough to run that loop inside the handshake it handed `pump` a socket whose
+handshake had not finished. In that state `may_recv()` is false — and `pump`
+reads `!may_recv && !can_recv` as "the peer will send no more", which is exactly
+right once a connection is established and exactly wrong before it is. So the
+copy loop half-closed the backend immediately. The backend's `read_exact` got
+`EOF`, returned an error, dropped its socket; the request then arrived, the
+daemon wrote it, and got `EPIPE`. No reply was ever generated, and the test read
+`EOF` where 64 KiB should have been.
+
+**A wrong hypothesis, recorded because it cost two experiments.** The first
+theory was that the fixture's single-accept backend had been consumed by an
+abandoned connection from the test's connect-retry loop. It was disproved by
+instrumenting the backend to log every accept and running the suite twelve
+times: exactly one accept on the published port in every run, failures included.
+
+Fixed at the accept point, where the mistake is — `publish::serve` now waits for
+`may_recv`, the precise question of whether the connection can deliver bytes,
+and reclaims a socket whose handshake started and then died rather than waiting
+on it forever. `pump` carries a second guard: it will not believe a socket is
+finished until it has been ready at least once.
+
+The semantics that caused it are now pinned deterministically in `karst-tun`, by
+driving a handshake one packet at a time and asserting the two answers that
+together made the bug: `is_active()` true and `may_recv()` false after the `SYN`
+and before the `ACK`. Twenty runs of the full suite on a single core, the
+configuration that reproduced it, now pass.
 
 ### 48. Medium: the instrument row that has never run
 

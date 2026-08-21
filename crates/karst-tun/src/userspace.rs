@@ -752,6 +752,92 @@ mod tests {
         assert_eq!(received, b"hello");
     }
 
+    /// **Finding 41's defect, asserted where it is deterministic.**
+    ///
+    /// Every TCP socket was built with a one-MTU buffer, so one segment could
+    /// be in flight and the mode ran at 7.3 Mbps while being entirely correct.
+    /// The end-to-end row that catches it (`tests/userspace.rs`) can only see
+    /// it as elapsed time, and a wall-clock budget turned out to be the wrong
+    /// instrument: healthy varies more than six-fold across machines, so the
+    /// budget has to sit in a window that a loaded runner can wander into.
+    ///
+    /// The window itself is machine-independent, so it is checked here. This
+    /// costs microseconds, cannot flake, and fails for exactly one reason.
+    #[test]
+    fn a_tcp_socket_advertises_a_window_worth_having() {
+        let server = endpoint("10.0.0.2");
+        let listener = server.listen_tcp(8080).expect("listen");
+        let mut stack = server
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let socket = stack.socket(listener).expect("a socket we just made");
+        // Sixteen tunnel MTUs. The defect was one; the shipped value is fifty-
+        // one. Anything in that range is a window rather than stop-and-wait, so
+        // the bound names the property and not the constant — a future change
+        // that halves the buffer for a good reason should not have to edit a
+        // test that would still be telling the truth.
+        let floor = 16 * karst_proto::consts::TUNNEL_MTU;
+        assert!(
+            socket.recv_capacity() >= floor,
+            "receive buffer is {} B, under the {floor} B floor — at this size \
+             the advertised window allows about one segment in flight, which is \
+             FINDINGS.md 41 and is invisible to every assertion about bytes",
+            socket.recv_capacity()
+        );
+        assert!(
+            socket.send_capacity() >= floor,
+            "send buffer is {} B, under the {floor} B floor",
+            socket.send_capacity()
+        );
+    }
+
+    /// **A socket mid-handshake is active and cannot yet receive**, and those
+    /// two answers together are what FINDINGS.md 49 was made of.
+    ///
+    /// `is_active()` is true from `SYN-RECEIVED` onward, so a listener that has
+    /// seen only a `SYN` already looks like a connection. `may_recv()` in that
+    /// state is false — the same answer it gives once the peer has finished
+    /// sending forever. An accept loop that waited on the first and a copy loop
+    /// that trusted the second between them half-closed a backend before the
+    /// request had arrived.
+    ///
+    /// Deterministic because `relay` moves exactly one side's packets: after
+    /// the `SYN` and before the `ACK`, the server is in that state by
+    /// construction rather than by timing.
+    #[test]
+    fn a_socket_that_has_only_seen_a_syn_is_active_but_cannot_receive() {
+        let client = endpoint("10.0.0.1");
+        let server = endpoint("10.0.0.2");
+        let listener = server.listen_tcp(8080).expect("listen");
+        let connection = client
+            .connect_tcp("10.0.0.2".parse().expect("address"), 8080)
+            .expect("connect");
+
+        relay(&client, &server); // SYN
+        assert!(
+            server.tcp_is_active(listener),
+            "a listener that has seen a SYN reports itself inactive, so the \
+             accept loop would never pick this connection up"
+        );
+        assert!(
+            !server.tcp_may_recv(listener),
+            "the whole hazard is that `may_recv` is false here; if this ever \
+             becomes true, the guards built on it are protecting nothing"
+        );
+        assert!(!server.tcp_can_recv(listener));
+
+        relay(&server, &client); // SYN-ACK
+        relay(&client, &server); // ACK
+        assert!(
+            server.tcp_may_recv(listener),
+            "once established the socket must be able to receive, or the \
+             accept loop would wait for a readiness that never comes"
+        );
+        // And the client end agrees, so neither side is a special case.
+        assert!(client.tcp_may_recv(connection));
+    }
+
     /// Move whatever either side has to say until neither has anything.
     ///
     /// `relay` blocks like a TUN read, which is right for a handshake whose

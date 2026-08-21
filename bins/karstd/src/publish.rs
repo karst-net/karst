@@ -84,12 +84,44 @@ pub(crate) fn serve(stack: &Userspace, port: u16, to: SocketAddr, shutdown: &Shu
             // dial to the backend happens in the spawned thread rather than
             // here, so the window in which this port has no listener at all is
             // a thread spawn rather than a TCP connect.
-            while !stack.tcp_is_active(listener) {
+            //
+            // **Wait for the handshake to finish, not for the socket to leave
+            // LISTEN.** `is_active` is already true in `SYN-RECEIVED`, and a
+            // socket in that state reports `may_recv() == false` — which is the
+            // same answer it gives when the peer will never send again. Handing
+            // such a socket to `pump` made it half-close the backend before the
+            // request had arrived; the backend read `EOF`, closed, and the
+            // daemon's write of the real request came back `EPIPE`. FINDINGS.md
+            // 49, and it only ever showed on a machine slow enough to run this
+            // loop inside the handshake.
+            //
+            // `may_recv` is the precise question — "can this connection deliver
+            // bytes to me" — and it is what the first thing to touch the socket
+            // is going to ask anyway.
+            let mut handshaking = false;
+            loop {
                 if shutdown.requested() {
                     stack.tcp_release(listener);
                     return;
                 }
+                if stack.tcp_may_recv(listener) || stack.tcp_can_recv(listener) {
+                    break;
+                }
+                // A handshake that started and then died — a `RST`, or a peer
+                // that vanished — leaves a socket that is neither listening nor
+                // ever going to be established. Reclaim it and listen again,
+                // rather than waiting on it for the life of the daemon.
+                let active = stack.tcp_is_active(listener);
+                if handshaking && !active {
+                    stack.tcp_release(listener);
+                    break;
+                }
+                handshaking |= active;
                 std::thread::sleep(crate::pump::IDLE_POLL);
+            }
+            if !stack.tcp_may_recv(listener) && !stack.tcp_can_recv(listener) {
+                // The abandoned-handshake path above. Nothing to forward.
+                continue;
             }
 
             let from = stack.tcp_remote(listener);

@@ -92,6 +92,9 @@ fn copy(
     let mut local_done = false;
     let mut sent_fin = false;
     let mut told_local = false;
+    // Whether this connection has ever been able to carry bytes. See the
+    // teardown condition below.
+    let mut was_ready = false;
     let mut last_moved = std::time::Instant::now();
     while !shutdown.requested() {
         // **Sleep only when a pass moved nothing.** This loop is the whole
@@ -151,7 +154,17 @@ fn copy(
 
         // `tcp_may_recv` is false only when nothing further can ever arrive —
         // buffered bytes keep it true, so the drain above cannot be cut short.
-        if !stack.tcp_may_recv(tunnel) && !stack.tcp_can_recv(tunnel) {
+        //
+        // **Except before the handshake finishes**, where it is false because
+        // nothing can arrive *yet*. The two are indistinguishable from here, so
+        // this waits until the connection has been ready at least once before
+        // it will believe the socket is finished. `publish` no longer hands
+        // over a socket in `SYN-RECEIVED` (FINDINGS.md 49) and this is the
+        // second line of defence, because the cost of confusing the two is a
+        // half-close sent to a backend that has not yet seen a single byte of
+        // the request it is being asked to answer.
+        was_ready |= stack.tcp_may_recv(tunnel) || stack.tcp_can_recv(tunnel);
+        if was_ready && !stack.tcp_may_recv(tunnel) && !stack.tcp_can_recv(tunnel) {
             if !told_local {
                 // The workload learns the overlay end is finished the same way
                 // it would from any other socket.

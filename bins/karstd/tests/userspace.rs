@@ -128,24 +128,24 @@ fn report_rate(written: usize, elapsed: Duration) {
 /// was *correct* at 7.3 Mbps. Every test passed. A window is invisible to
 /// assertions about bytes.
 ///
-/// The budget is set to catch that and nothing else, with both ends measured
-/// rather than guessed. Re-measured 2026-08-21 on two pinned cores, which is
-/// roughly what a hosted CI runner gives: **1.34 s** healthy in a debug build,
-/// **54.8 s** with `SOCKET_BUFFER` put back to one MTU. A 41× separation.
+/// **The budget is now a smoke test, and the real guarantee moved.** A
+/// wall-clock bound cannot do this job reliably: healthy is 1.34 s on two
+/// pinned cores here, 8.19 s on a hosted CI runner, and over 10 s on a loaded
+/// single core — a six-fold spread — while the defect is only ~41x healthy on
+/// whatever machine is measuring. Those windows overlap across the range of
+/// machines this runs on, so any fixed number is either too tight for a slow
+/// runner or too loose for a fast one. It was set at five seconds and CI failed
+/// it on every run for two days.
 ///
-/// **Ten seconds, and the placement is the whole point.** The original budget
-/// was five, chosen as ~4× above the healthy figure — and CI failed this row on
-/// every run from the day it was written, because 4× is not enough headroom for
-/// a shared virtual machine. The mistake was treating the budget as an absolute
-/// time. It is not: *both* ends scale with the speed of the machine, so a
-/// runner half as fast moves healthy to 2.7 s and the defect to 110 s, and what
-/// has to stay constant is the **ratio**. The budget therefore belongs at the
-/// geometric midpoint — √(1.34 × 54.8) ≈ 8.6 s — where it has the same margin
-/// in both directions. Ten rounds that off: 7.5× above healthy, 5.5× below the
-/// defect, and a runner would have to be seven times slower than this machine
-/// to fail the row spuriously.
+/// The window is a property of the socket, not of the machine, so it is
+/// asserted where it is deterministic and free:
+/// `karst_tun::userspace::tests::a_tcp_socket_advertises_a_window_worth_having`
+/// fails in microseconds if `SOCKET_BUFFER` returns to one MTU. What remains
+/// here is an end-to-end sanity bound — 8 MiB really does cross two daemons and
+/// a userspace TCP stack — set high enough that it reports a machine in
+/// trouble rather than a machine that is merely busy.
 const BULK: usize = 8 * 1024 * 1024;
-const BULK_BUDGET: Duration = Duration::from_secs(10);
+const BULK_BUDGET: Duration = Duration::from_secs(120);
 
 /// `nobody`. Chosen because it exists on every distribution this is likely to
 /// run on and owns nothing worth reaching.
@@ -1032,11 +1032,10 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
     assert!(
         elapsed < BULK_BUDGET,
         "{written} bytes took {elapsed:?}, over the {BULK_BUDGET:?} budget. \
-         The budget sits at the geometric midpoint of 1.34 s healthy and 54.8 s \
-         with finding 41's one-segment window put back, so this is that window \
-         returning unless the machine is seven times slower than the one those \
-         were measured on — in which case widen the budget rather than the \
-         other way round{}",
+         That is far beyond any healthy figure measured on any machine \
+         (1.34 s to 8.19 s), so something is wrong with the path rather than \
+         with the machine's speed. If the receive window is the suspect, \
+         karst-tun's own window test says so directly{}",
         report(&both)
     );
     let served = service.join().expect("service thread");
