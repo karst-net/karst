@@ -3894,6 +3894,8 @@ onwards, anchored on the week of 2026-08-10.
   reads the measurements and concludes the technique is ready has the same
   surprise waiting.
 
+### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
+
 - KarstDNS: stub resolver, split DNS, all platform integrations (§7).
 - Bedrock: SLH-DSA roots, quorum signing, hash-chained log,
   client-side enforcement, console UI for signing requests.
@@ -3908,10 +3910,20 @@ onwards, anchored on the week of 2026-08-10.
 
 ### Phase 6 — Hardening and beta (8 weeks · Dec 2026–Feb 2027)
 
-- **External cryptographic review** of PHREATIC and its implementation
-  (budget 4–6 weeks lead time; book this now, not at the start of Phase 6 —
-  Phase 3 has already passed and the booking did not happen in it).
-- **External penetration test** of the control plane and console.
+- **Internal cryptographic review** of PHREATIC and its implementation: a
+  structured self-review against the spec, the ProVerif and Verifpal models,
+  and the vector suite, written up with the same findings discipline as the
+  rest of this work. The external review it stands in for moved to Phase 8 on
+  2026-08-21.
+
+  Being internal is a change of kind, not only of cost. A self-review cannot
+  find what the team does not think to look for, which is most of what an
+  external review is bought for. It is worth doing anyway — it is how the
+  assumptions get written down — but it must not be reported as a review
+  having happened.
+- **Internal penetration test** of the control plane and console, against a
+  deployment stood up from the published artefacts rather than a lab rig, so
+  that what is tested is what a self-hoster actually runs.
 - ⬅️ **TURN fallback**, slipped from Phase 4 on 2026-08-20 under the option that
   bullet reserved: client-side allocation, permissions, channel binding and
   credential refresh; control-server ephemeral credential minting; coturn added
@@ -3930,8 +3942,10 @@ onwards, anchored on the week of 2026-08-10.
 - Documentation: install guide, operations manual, protocol spec, security
   whitepaper, migration guide from WireGuard/Tailscale.
 - Public beta with design partners.
-- **Exit:** all high/critical audit findings remediated and re-tested;
-  30 days of beta with a defined stability bar met.
+- **Exit:** all high/critical findings from the internal review and internal
+  penetration test remediated and re-tested; 30 days of beta with a defined
+  stability bar met. **This exit no longer carries an external opinion**, which
+  is what it meant before 2026-08-21; the external work is Phase 8.
 
 ### Phase 7 — GA and mobile (12 weeks · Feb–May 2027)
 
@@ -3952,14 +3966,43 @@ onwards, anchored on the week of 2026-08-10.
   Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
 - v1.0 GA.
 
+### Phase 8 — External review (post-GA · from May 2027)
+
+Moved out of Phase 6 on 2026-08-21: the external engagements are not going to
+happen on that timeline, and a plan that keeps them there is a plan that
+reports an assurance it will not have.
+
+- **External cryptographic review** of PHREATIC and its implementation. Budget
+  4–6 weeks of lead time for booking, and book it well before the phase opens —
+  this item has now missed two phases it was scheduled in (Phase 3's booking
+  window and Phase 6), each time because the lead time was noticed at the start
+  of the phase rather than ahead of it.
+- **External penetration test** of the control plane and console.
+- **Exit:** all high/critical findings remediated and re-tested, and the report
+  published or summarised publicly.
+
+**What this costs, stated plainly.** v1.0 ships without external cryptographic
+review. The mitigations are real but partial — Verifpal in Phase 1, ProVerif in
+Phase 3, the vector suite, `kani` on the reassembler, and the Phase 6 internal
+review — and none of them is an independent adversarial look at the protocol as
+built. Two consequences follow, and both belong in the open rather than in a
+retrospective: the security whitepaper and the release notes must say that no
+external review has taken place, and §12's "crypto review finds a protocol flaw
+late" risk gets later and more expensive to remediate, because a flaw found
+after GA is one found in deployments rather than in a branch. The hybrid
+construction is what makes this survivable rather than reckless: a break in
+either primitive costs no confidentiality on its own.
+
 **Total from here: ~40 weeks (~9 months) to GA**, 2026-08-10 → May 2027, being
-Phases 4–7. Self-hosted Linux-to-Linux mesh with a working console is usable at
+Phases 4–7. Phase 8 follows GA and is not on that path. Self-hosted Linux-to-Linux mesh with a working console is usable at
 end of Phase 5 (**~20 weeks**, Dec 2026), and that is the milestone worth
 optimizing for.
 
-The original figure was ~65 weeks across all eight phases. Phases 0–3 are done
-and the remainder is what is left to schedule; the 65-week number is not
-restated as elapsed time, because it was never a measurement.
+The original figure was ~65 weeks across the eight phases that existed then
+(0–7). Phases 0–3 are done and the remainder is what is left to schedule; the
+65-week number is not restated as elapsed time, because it was never a
+measurement. Phase 8 does not extend it — it was never inside it, having been
+carved out of Phase 6 rather than added to the end.
 
 ---
 
@@ -3995,7 +4038,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
 | Greenfield scope exceeds estimate | High | **High** | Phase-5 usable milestone; mobile and SaaS explicitly deferred; ruthless non-goals |
 | Platform DNS integration breakage | Medium | High | Per-platform tests, conservative fallbacks, `karst doctor` diagnostics |
 | Windows driver signing / macOS notarization delays | Medium | Medium | Start certificate acquisition in Phase 3, not Phase 5 |
-| Crypto review finds a protocol flaw late | High | Medium | Verifpal in Phase 1 and ProVerif in Phase 3 pull discovery earlier; book reviewers early |
+| Crypto review finds a protocol flaw late | High | **High** | Verifpal in Phase 1 and ProVerif in Phase 3 pull discovery earlier, and Phase 6 adds an internal review. Raised from Medium on 2026-08-21: external review moved to Phase 8, so the first independent look now lands **after** GA and any flaw it finds is found in deployments. Book the reviewers well ahead of the phase — the item has already slipped twice on lead time alone |
 | No WireGuard interop limits adoption | Medium | Certain | Accepted consequence of the greenfield decision; mitigate with a migration guide and side-by-side operation support |
 | Trademark collision forces a rename | Low–Medium | **High** | ADR-0007 makes trademark the only defensive lever; a collision already appears likely. Search concluded and name settled as a Phase 0 exit criterion, before repo/crate/SPDX names harden |
 
@@ -4066,7 +4109,9 @@ The plan is decision-complete; what remains is execution.
 4. Run the **NetBird fork-evaluation spike** (ADR-0009) early in Phase 0; its
    outcome restructures Phases 3 and 5.
 4. Draft `spec/phreatic-v1.md` far enough to model in Verifpal.
-5. Book an external cryptographic reviewer for **Q4 2026** now — Phase 6 opens
-   in December, lead times are long, and this is a hard gate on GA. The date
-   moved forward by three quarters when the schedule was re-anchored; the
-   booking is the item most likely to be left on the old one.
+5. ⬅️ **Book an external cryptographic reviewer.** Moved to Phase 8 on
+   2026-08-21, and with it the character of the item: it is **no longer a gate
+   on GA**, because GA now precedes it. That removes the deadline that was
+   supposed to force the booking, so the booking is more likely to slip, not
+   less — it has already slipped twice on lead time alone. Set a date for it
+   independently of the phase schedule.
