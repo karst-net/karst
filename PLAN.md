@@ -2403,7 +2403,7 @@ onwards, anchored on the week of 2026-08-10.
   carries, rather than stranding the node somewhere peers are no longer told to
   look.
 
-  ✅ **Two nodes on two relays, end to end.** `aquifer.rs`'s eleventh row runs
+  ✅ **Two nodes on two relays, end to end.** `aquifer.rs`'s two-relay row runs
   two relays and makes one unreachable from node B — which is what a relay a
   node is not admitted to looks like from outside, since §10.1 makes a roster
   miss indistinguishable from a relay that is down. B leaves the relay its
@@ -3307,8 +3307,8 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- ✅ **Full NAT test matrix in CI (§6) — eleven `karstd` topologies run end to
-  end, eight reach a direct path, and the instrument beneath them is twelve
+- ✅ **Full NAT test matrix in CI (§6) — twelve `karstd` topologies run end to
+  end, nine reach a direct path, and the instrument beneath them is twelve
   rows.** The instrument is complete: NAT64/DNS64 landed
   2026-08-19, built from `tayga` plus an ordinary masquerade rather than an
   out-of-tree kernel module (finding 27).
@@ -3385,6 +3385,7 @@ onwards, anchored on the week of 2026-08-10.
   | 8b | symmetric | port-restricted cone **with a port mapping** | direct — PCP/NAT-PMP |
   | 9 | symmetric **with a port mapping** | symmetric | direct — PCP/NAT-PMP |
   | 10 | the **same** NAT, one LAN | the same NAT, one LAN | direct — over private addresses |
+  | 11 | its own router, behind a **carrier's** symmetric NAT | *(nothing)* | direct — B adopts the carrier's address |
 
   Each row is a whole aquifer — Go control server, relay, two daemons, real TUN
   devices — not a probe against a socket, and each ends with a TCP conversation
@@ -3595,7 +3596,7 @@ onwards, anchored on the week of 2026-08-10.
   relay because no direct endpoint exists, and nothing above it knows the
   difference.
 
-  *Every physically-possible topology connects directly* — **eight of the nine
+  *Every physically-possible topology connects directly* — **nine of the ten
   that are possible; row 8 without a mapping is the one that does not, and it is
   now conceded rather than outstanding.**
 
@@ -3615,7 +3616,7 @@ onwards, anchored on the week of 2026-08-10.
   with probe traffic it buys with one PCP request, and the row proves it end to
   end rather than arguing it.
 
-  **Two of the eleven rows remain relayed for a reason other than a missing
+  **Two of the twelve rows remain relayed for a reason other than a missing
   direct path**, and both are named here rather than folded into a percentage:
   row 6 (symmetric to symmetric, §12.4's 0.01%) and unmapped row 8. Row 7 has no
   direct path at all. Anyone who disagrees with either concession is
@@ -3628,11 +3629,11 @@ onwards, anchored on the week of 2026-08-10.
   > ~~≥ 90% direct-connection rate across the matrix~~
 
   It was restated because it is **arithmetically unreachable by counting rows**,
-  and not for want of engineering. Three of the eleven topologies are relay by
+  and not for want of engineering. Three of the twelve topologies are relay by
   construction: symmetric-to-symmetric has no technique that reaches it
   (§12.4's 0.01%), a path with all UDP dropped has no direct path to find, and
   row 8 without a mapping has none this project is willing to buy (finding 28).
-  That caps any row count at 73%. The only routes to 90% would be to add easier
+  That caps any row count at 75%. The only routes to 90% would be to add easier
   rows — which games the denominator, and is the dishonesty this matrix exists
   to prevent — or to weight by real-world NAT prevalence, which needs field data
   this project does not have and cannot invent.
@@ -3643,20 +3644,48 @@ onwards, anchored on the week of 2026-08-10.
   it: 8b does not raise the count on its own, because row 8 is still in the
   denominator and still relayed. What 8b adds is the *condition* — a reader
   learns that the pairing turns on B's router, which counting alone could never
-  say. The old figure is still worth reporting and still is — eight of eleven,
-  73% — but as a description rather than a target.
+  say. The old figure is still worth reporting and still is — nine of twelve,
+  75% — but as a description rather than a target.
 
-  *The old figure, for continuity* — **eight of eleven topologies, which is
-  73%, or 80% over the ten where a direct path exists at all.** Both figures are
+  *The old figure, for continuity* — **nine of twelve topologies, which is
+  75%, or 82% over the eleven where a direct path exists at all.** Both figures are
   below the criterion and both are reported rather than the flattering one
   alone. Two further honesties belong with them. The denominator is a set of
   topologies chosen here, not a population weighted by how common each NAT is
   in the field, so this is a capability count and not the rate the criterion
   means; producing the latter needs field data this project does not have.
-  And three shapes are still unbuilt **as whole-aquifer rows** — double NAT,
-  hairpinning, NAT64/DNS64 — of which double NAT is the one the third criterion
-  names. All three exist in `nat_matrix.rs` as instrument rows, which pins how
+  And **two** shapes are still unbuilt as whole-aquifer rows — hairpinning and
+  NAT64/DNS64. Both exist in `nat_matrix.rs` as instrument rows, which pins how
   each behaves but says nothing about what Karst does on one.
+
+  **Double NAT was the third, and it is built as of 2026-08-21** — the one the
+  criterion names by name, and the row is
+  `a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer`. Node A sits
+  behind its own router, behind a carrier's symmetric NAT, on RFC 6598 shared
+  space; node B is public. It goes **direct in 35 seconds**, by
+  [`Shape::SymmetricA`]'s mechanism rather than a new one: B is reachable, so
+  A's probe crosses first and B adopts the address it arrived from. Two stages
+  do not change that argument — they change which of the three addresses that
+  now exist is the one that works, and the row asserts B ends up holding the
+  carrier's and neither of the two closer ones.
+
+  It also put the port-mapping client in front of the case it cannot help, and
+  **that found finding 37**: a router behind a carrier can only grant a mapping
+  on a 100.64.0.0/10 address, and `is_unusable_external` — written for exactly
+  this case, and citing RFC 6886 §3.2's double-NAT paragraph — checked RFC 1918
+  and not RFC 6598. `miniupnpd` refuses rather than granting, which is why the
+  row passes either way and why the fix is unit-tested rather than row-tested;
+  its refusal names the 100.64 address in the response body, so a gateway that
+  answered `SUCCESS` with the same body would have been believed.
+
+  The same row left **finding 38 open**, and deliberately: a gateway that can
+  never help is asked again every five seconds, for the life of the process.
+  The classification is right — RFC 6887 makes `NO_RESOURCES` transient, and a
+  node that gave up would never recover when a gateway's table drained — so
+  what is missing is a backoff, not a reclassification. It is not folded into
+  this row's commit because it predates the row: a node on a NAT with no
+  port-mapping service at all has always retried on the same cadence, and that
+  is most nodes.
 
   *A peer behind symmetric CGNAT reaches a peer behind a different symmetric
   CGNAT when at least one NAT offers an explicit port mapping* — **yes, as of
@@ -3786,7 +3815,7 @@ onwards, anchored on the week of 2026-08-10.
   credential refresh; control-server ephemeral credential minting; coturn added
   to the NAT matrix.
 
-  It arrives here with the base case already covered — eleven `karstd` topologies
+  It arrives here with the base case already covered — twelve `karstd` topologies
   show the co-located relay path automatic and lossless — so what TURN buys is
   interoperability with third-party infrastructure (ADR-0008), not connectivity.
   Scoped accordingly: it is a compatibility feature in this phase rather than a

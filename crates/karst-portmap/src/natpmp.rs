@@ -220,13 +220,54 @@ pub fn epoch(datagram: &[u8]) -> Option<u32> {
 /// double-NATed gateway. Advertising it would put an unroutable candidate into
 /// every peer's probe queue, so it is refused at the boundary rather than
 /// filtered later. Loopback and link-local are refused for the same reason.
+///
+/// **RFC 6598 shared address space is the case this was written for and did not
+/// cover** (finding 37). 100.64.0.0/10 is what a carrier addresses subscriber
+/// routers out of, so it is the address a *double-NATed gateway* actually
+/// reports — the exact situation the paragraph above names — and
+/// `Ipv4Addr::is_private` does not include it, because it is not RFC 1918.
+/// Measured rather than reasoned: `miniupnpd` behind a carrier answers PCP with
+/// `NO_RESOURCES` and still names its 100.64 address in the response body, and
+/// a gateway that answered `SUCCESS` with the same body — which consumer
+/// routers do — would have been believed.
+///
+/// The v6 arm carried the same gap by symmetry: a unique-local or link-local
+/// address is v6's private address, and only loopback and the unspecified
+/// address were refused.
+///
+/// Multicast and broadcast are refused last, on a different ground: they are
+/// not unicast endpoints at all, so no probe sent to one can establish a path.
+///
+/// Documentation prefixes are deliberately **not** refused. They are ordinary
+/// globally-scoped unicast as far as routing is concerned, and both this
+/// crate's fixtures and `bins/karstd/tests/aquifer.rs` use routable-looking
+/// addresses from that space to stand in for public ones.
 #[must_use]
 pub fn is_unusable_external(addr: IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => {
-            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+            let [a, b, ..] = v4.octets();
+            // RFC 6598 §7: 100.64.0.0/10.
+            let shared = a == 100 && (64..128).contains(&b);
+            v4.is_private()
+                || shared
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
         }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            // RFC 4193 fc00::/7, and RFC 4291 §2.5.6 fe80::/10.
+            let unique_local = (first & 0xfe00) == 0xfc00;
+            let link_local = (first & 0xffc0) == 0xfe80;
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || unique_local
+                || link_local
+                || v6.is_multicast()
+        }
     }
 }
 
@@ -428,6 +469,52 @@ mod tests {
         for good in ["203.0.113.9", "198.51.100.1"] {
             let addr: IpAddr = good.parse().expect("address");
             assert!(!is_unusable_external(addr), "{good} should be accepted");
+        }
+    }
+
+    #[test]
+    fn shared_address_space_is_rejected() {
+        // **Finding 37.** RFC 6598's 100.64.0.0/10 is what a carrier addresses
+        // subscriber routers out of, so it is what a gateway behind CGNAT
+        // reports — the very case the check exists for — and it is not RFC
+        // 1918, so `is_private` says nothing about it.
+        for bad in ["100.64.0.1", "100.64.0.2", "100.100.5.6", "100.127.255.255"] {
+            let addr: IpAddr = bad.parse().expect("address");
+            assert!(is_unusable_external(addr), "{bad} is RFC 6598 shared space");
+        }
+        // The edges, in both directions. 100.64/10 is a ten-bit prefix, so the
+        // second octet is what decides it, and an off-by-one here would either
+        // reject public space or admit the carrier's.
+        for good in ["100.63.255.255", "100.128.0.0", "100.0.0.1", "99.64.0.1"] {
+            let addr: IpAddr = good.parse().expect("address");
+            assert!(
+                !is_unusable_external(addr),
+                "{good} is outside 100.64.0.0/10 and is ordinary public space"
+            );
+        }
+    }
+
+    #[test]
+    fn the_v6_arm_refuses_what_the_v4_arm_refuses() {
+        // The two arms were asymmetric: v4 refused private and link-local, v6
+        // refused neither. A unique-local address is v6's RFC 1918.
+        for bad in ["fd00::1", "fc00::1", "fe80::1", "::1", "::", "ff02::1"] {
+            let addr: IpAddr = bad.parse().expect("address");
+            assert!(is_unusable_external(addr), "{bad} should be rejected");
+        }
+        for good in ["2001:db8::1", "2606:4700::1111"] {
+            let addr: IpAddr = good.parse().expect("address");
+            assert!(!is_unusable_external(addr), "{good} should be accepted");
+        }
+    }
+
+    #[test]
+    fn an_address_that_is_not_a_unicast_endpoint_is_rejected() {
+        // Not "unroutable" like the ranges above — a probe to one of these
+        // cannot establish a path with a peer no matter how it is routed.
+        for bad in ["224.0.0.1", "239.1.2.3", "255.255.255.255"] {
+            let addr: IpAddr = bad.parse().expect("address");
+            assert!(is_unusable_external(addr), "{bad} should be rejected");
         }
     }
 }

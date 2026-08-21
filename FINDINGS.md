@@ -11,13 +11,20 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added twenty-seven more, and all of those are closed — most found by
+followed it added twenty-nine more, and all but one are closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
-a feature nobody had ever run, and the last found by asking which of those
-suites CI actually runs.
+a feature nobody had ever run, and the last two found by building the
+double-NAT row the exit criterion names.
 
-**No findings remain open.** Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
+**One finding remains open** — 38, recorded 2026-08-21, which is a retry
+schedule rather than a fault: a node whose gateway can never help asks it again
+every five seconds for the life of the process. It is written down rather than
+fixed because the fix is a backoff policy with its own test surface, and because
+the behaviour predates the row that surfaced it — it is what *every* node
+without a port-mapping service has always done.
+
+Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
 masquerade. Finding 24 was not a code defect — it recorded that
 Phase 4's third exit criterion could not be met by the mechanism the plan named
@@ -62,8 +69,87 @@ carries both the new wording and the original, struck through.
 | 34 | High | A simultaneous open left both ends `established` and unable to decrypt | Fixed 2026-08-20 |
 | 35 | Low | Userspace mode reported a host interface it had never created | Fixed 2026-08-20 |
 | 36 | Operational | Three privileged suites could report success by not running | Fixed 2026-08-20 |
+| 37 | Medium | A mapping on RFC 6598 shared address space was accepted as an external address | Fixed 2026-08-21 |
+| 38 | Low | A gateway that cannot ever grant a mapping is asked again every five seconds | **Open** — recorded 2026-08-21 |
+
+## Open
+
+### 38. Low: a gateway that can never grant a mapping is asked again every five seconds
+
+**Recorded 2026-08-21** by the double-NAT row, which is the first thing in the
+tree to run a node whose gateway answers and refuses.
+
+`RETRY_DELAY` is five seconds and flat. A refusal the gateway will keep making —
+`NO_RESOURCES` from a router that is itself behind a carrier, and will answer
+the same way for as long as the subscriber is behind that carrier — produces
+17,280 requests a day that cannot succeed. The measured status is
+`portmap_state = "retrying"`, `portmap_reason = "PCP failed transiently (PCP
+code 8); retrying"`, restated every five seconds.
+
+**The code is right and the schedule is not.** RFC 6887 §7.4 makes
+`NO_RESOURCES` a transient code, and `ResultCode::is_transient` classifies it
+that way deliberately — a node that gave up on it would never recover when a
+gateway's table drained. What is missing is the other half of the same
+argument, which `is_transient`'s own doc comment already makes for permanent
+codes: *"a node that retries `UnsupportedVersion` every thirty seconds is
+generating traffic that cannot ever work"*. A transient code repeated
+indefinitely reaches the same place by a different route.
+
+**It predates the row that found it**, which is why it is Low and why it is
+recorded rather than folded into that commit: a node on a NAT with no
+port-mapping service at all gets `"the gateway did not answer PCP"` on the same
+five-second cadence, and that is most nodes. The row made it visible; it did
+not introduce it.
+
+Recommended: back off on consecutive failures — five seconds doubling to a cap
+of a few minutes, reset on any success or on an epoch change — and leave the
+classification alone. Deferred rather than done because `portmap::run` takes
+its time from `Instant::now()` inside its own loop, so a test for the schedule
+needs an injectable clock, and that is a refactor with a wider blast radius
+than the fix.
 
 ## Closed
+
+### 37. Medium: a mapping on RFC 6598 shared address space was accepted as an external address
+
+**Found 2026-08-21** while building the double-NAT aquifer row. Fixed the same
+day.
+
+`natpmp::is_unusable_external` refuses an external address a gateway should
+never name, and its doc comment cites the case it was written for: "RFC 6886
+§3.2 anticipates it for a double-NATed gateway". It checked
+`Ipv4Addr::is_private`, which is RFC 1918 — 10/8, 172.16/12, 192.168/16 — and
+**not** RFC 6598's 100.64.0.0/10, which is the range a carrier actually
+addresses subscriber routers out of. So the one deployment the check names by
+name was the one it did not cover.
+
+A gateway reporting `100.64.0.2` would have been believed, and the mapped
+address is `aven-v1.md` §7.2's **strongest** candidate tier — so every peer
+would have put an address it cannot reach at the top of its probe queue, and
+the datagrams would have gone into the carrier's shared space toward whatever
+equipment holds that address, which is not the peer.
+
+**Measured, not reasoned about.** `miniupnpd` given a 100.64 external address
+logs "Reserved / private IP address 100.64.0.2 on ext interface … Port
+forwarding is impossible" and answers PCP `MAP` with `NO_RESOURCES` — **and
+names `::ffff:100.64.0.2` in the response body anyway**. The bytes that would
+have been believed are on the wire in the refusal; a gateway answering
+`SUCCESS` with that same body is an ordinary consumer router, not a
+hypothetical.
+
+The v6 arm carried the same gap by symmetry — it refused loopback and the
+unspecified address while the v4 arm refused private and link-local — so
+unique-local (`fc00::/7`) and link-local (`fe80::/10`) are refused now too.
+Multicast and broadcast are refused on a different ground, which the comment
+keeps separate: they are not unicast endpoints at all, so no probe to one can
+establish a path. Documentation prefixes are deliberately still accepted; they
+are ordinary global unicast to a router, and both this crate's fixtures and the
+aquifer use them to stand in for public addresses.
+
+Three unit tests, each of which fails against the old predicate and passes
+against the new one, including both edges of the ten-bit prefix — `100.63.255.255`
+and `100.128.0.0` must stay accepted, since an off-by-one there rejects public
+space or admits the carrier's.
 
 ### 36. Operational: three privileged suites could report success by not running
 
@@ -1480,3 +1566,50 @@ that row is what a GitHub runner would produce if it did not.
 
 The workflow file was parsed rather than eyeballed, and the `aquifer` job's
 steps enumerated from the parse, since a YAML error here fails only on push.
+
+### Validation, 2026-08-21 — the double-NAT row
+
+`cargo fmt --all --check`, workspace clippy, and the full Rust suite: clean, now
+**877 tests in 55 suites** — the three new `karst-portmap` units for finding 37.
+Each of the three fails against the old predicate and passes against the new
+one, which was checked by reverting the predicate rather than asserted.
+
+**Thirteen aquifer topologies in 542 s**, up from twelve in 507 s: the new row
+costs 35 seconds and changed nothing about the twelve it joined. Row 11 —
+`a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer` — reaches a direct
+path in **35 s**, with node A behind its own router behind a carrier's symmetric
+NAT on RFC 6598 space.
+
+A's port-mapping status at the end of the row, which is the half worth quoting:
+
+```
+portmap_state    = "retrying"
+portmap_gateway  = "10.98.1.1:5351"
+portmap_protocol = "pcp"
+portmap_external = "-"
+portmap_reason   = "PCP failed transiently (PCP code 8); retrying"
+```
+
+PCP code 8 is `NO_RESOURCES`, and it is the same code a raw probe gets out of
+`miniupnpd` when its external address is 100.64.0.2 — so the daemon's path and
+a hand-built datagram agree about what the gateway said.
+
+Three mutations, each restored:
+
+| Mutation | Result |
+|---|---|
+| the carrier forwards without translating | fails in 31 s — node A cannot reach the coordination server at all, so the second stage is load-bearing before discovery is even reached |
+| the router serves no PCP | fails on the new assertion — `"the gateway did not answer PCP"`, after reaching a direct path in 31 s, so the failure is isolated to the port-mapping half |
+| the carrier made a cone rather than symmetric | **passes**, direct in 35 s |
+
+The third is reported because it is a negative result and belongs in the record:
+the row does not depend on the carrier's flavour for its outcome. The symmetric
+carrier is there because that is what carriers are — the instrument row
+`a_subscriber_behind_a_carrier_nat_is_translated_twice` pins it — and not
+because the row would pass without it.
+
+**Two assertions in the row are guards that no mutation here makes fire**: that
+B holds neither the router's 100.64 address nor A's private one. No cheap
+mutation of the fixture produces either, because nothing advertises them —
+which is the point of writing them down. They constrain a future change to
+candidate selection, not this fixture.

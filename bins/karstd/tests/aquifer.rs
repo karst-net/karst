@@ -50,6 +50,9 @@ const NS_PUB: &str = "karst-tn-pub";
 /// A NAT in front of each node, present only in the shapes that use one.
 const NS_NAT_A: &str = "karst-tn-nata";
 const NS_NAT_B: &str = "karst-tn-natb";
+/// The carrier's NAT, for [`Shape::DoubleNat`] only — a second translation
+/// stage in front of node A's own router.
+const NS_CG: &str = "karst-tn-cg";
 
 /// Everything on the public segment hangs off a bridge in [`NS_PUB`], so the
 /// same wiring carries two, three or four participants.
@@ -67,6 +70,19 @@ const IP_B_PRIVATE: &str = "10.98.2.2";
 /// Node B's address when it shares node A's private segment — [`Shape::SameLan`].
 const IP_B_SAME_LAN: &str = "10.98.1.3";
 const NAT_B_INNER: &str = "10.98.2.1";
+
+/// The carrier's public address, and its side of the shared-space segment.
+///
+/// **RFC 6598 space is the point of the row, not decoration.** 100.64.0.0/10
+/// exists precisely so a carrier can address subscriber routers without
+/// spending public addresses or colliding with the RFC 1918 range those routers
+/// already use inside. A subscriber's router therefore holds an address that
+/// looks routable to anything checking only for RFC 1918, and is not.
+const CG_OUTER: &str = "51.75.10.4";
+const CG_INNER: &str = "100.64.0.1";
+/// Node A's own router's outward address — inside the carrier, not on the
+/// internet.
+const NAT_A_CG: &str = "100.64.0.2";
 
 const RELAY_PORT: u16 = 8443;
 /// A second relay on the same segment, for `ponor-v1.md` §9.1's two rules.
@@ -218,7 +234,7 @@ impl Drop for Aquifer {
         // NS_NAT too, even in the topologies that never create it: deleting a
         // namespace that is not there is free, and an earlier version listed
         // only the two it knew about and left the third behind.
-        for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B] {
+        for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG] {
             let _ = sh(&["ip", "netns", "del", ns]);
         }
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -433,6 +449,33 @@ enum Shape {
     /// rows need a mapping and they need it for different reasons; a summary
     /// that said "explicit port mapping fixes both" would be right by accident.
     SymmetricAndPortRestrictedMapped,
+    /// Node A behind **two** translation stages — its own router, behind a
+    /// carrier's — with node B public.
+    ///
+    /// The exit criterion names double NAT by name, and until now it existed
+    /// only in `crates/karst-disco/tests/nat_matrix.rs`, which pins how such a
+    /// path treats a *datagram* and says nothing about what a node does on one.
+    /// Every other row with a NAT has exactly one translation, so nothing in
+    /// this tree had ever run a daemon behind a second.
+    ///
+    /// **The direct path is reached the way [`Shape::SymmetricA`] reaches it**,
+    /// which is what makes the row a measurement rather than a hope: B is
+    /// publicly reachable, so A's probe crosses first and B adopts the address
+    /// it arrived from. Two stages do not change that argument — they only
+    /// change which address it is. What the row establishes is that the address
+    /// B ends up holding is the **carrier's**, two translations out, and not
+    /// either of the two closer ones that also exist and cannot work.
+    ///
+    /// **And it is where the port-mapping client meets the case it cannot
+    /// help.** A's router is a real gateway serving PCP, and it is behind
+    /// carrier equipment, so every mapping it could grant would name an address
+    /// in RFC 6598 space that no peer can reach. `miniupnpd` refuses on exactly
+    /// that ground — "Reserved / private IP address … Port forwarding is
+    /// impossible", answering `NETWORK_FAILURE` rather than granting something
+    /// useless — so the row asserts that `karstd` ends with **no mapping and a
+    /// stated reason**, which is a different outcome from having found no
+    /// gateway at all.
+    DoubleNat,
 }
 
 /// How a NAT allocates external ports, and what it lets back through.
@@ -500,6 +543,7 @@ impl Shape {
             | Self::SymmetricAndMapped
             | Self::SymmetricAndAddressRestricted
             | Self::SymmetricAndPortRestrictedMapped
+            | Self::DoubleNat
             | Self::SameLan => Expect::Direct,
             // **Not "not yet".** §7.7's birthday-paradox port search is the
             // only technique that reaches this row without help from the NAT,
@@ -540,7 +584,7 @@ struct End<'a> {
 
 /// Build the namespaces, and return the addresses the two nodes listen on.
 fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static str) {
-    for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B] {
+    for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
     for ns in [NS_A, NS_B, NS_PUB] {
@@ -563,14 +607,22 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
     if shape == Shape::SameLan {
         return build_same_lan(net);
     }
+    // Two translation stages is a different shape rather than a different
+    // flavour, by the same argument as the row above: `nat_in_front_of` puts a
+    // NAT's outward leg on the public bridge, and this one's belongs on the
+    // carrier's segment.
+    if shape == Shape::DoubleNat {
+        return build_double_nat(net);
+    }
 
     // Node A is behind a NAT in every shape but `Flat`; only the flavour
     // changes.
     let ip_a = match shape {
-        // Handled by `build_same_lan` above, which returns before this match.
+        // Handled by their own builders above, which return before this match.
         // Spelled out rather than caught by a wildcard so that adding a shape
         // is a compile error here, which is how every other arm behaves.
         Shape::SameLan => unreachable!("same-LAN is built by its own function"),
+        Shape::DoubleNat => unreachable!("double NAT is built by its own function"),
         Shape::Flat => {
             public_leg("ktn-a", NS_A, IP_A_PUBLIC);
             IP_A_PUBLIC
@@ -608,10 +660,11 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         }
     };
     let ip_b = match shape {
-        // Handled by `build_same_lan` above, which returns before this match.
+        // Handled by their own builders above, which return before this match.
         // Spelled out rather than caught by a wildcard so that adding a shape
         // is a compile error here, which is how every other arm behaves.
         Shape::SameLan => unreachable!("same-LAN is built by its own function"),
+        Shape::DoubleNat => unreachable!("double NAT is built by its own function"),
         Shape::Flat | Shape::NatA | Shape::SymmetricA | Shape::UdpBlocked => {
             public_leg("ktn-b", NS_B, IP_B_PUBLIC);
             IP_B_PUBLIC
@@ -727,6 +780,120 @@ fn build_same_lan(net: &mut Aquifer) -> (&'static str, &'static str) {
         Flavour::PortRestrictedCone,
     );
     (IP_A_PRIVATE, IP_B_SAME_LAN)
+}
+
+/// Node A behind its own router, behind a carrier's — [`Shape::DoubleNat`].
+///
+/// Four namespaces on A's side of the wire: the node, its router, the carrier,
+/// and the public segment. The stages are deliberately **different flavours**,
+/// because that is what the deployment is: an ordinary consumer masquerade at
+/// home, and carrier equipment that scatters ports. Two cones would make the
+/// row a long path rather than a hard one.
+///
+/// The carrier gets **no route toward the subscriber's LAN**, and that is not
+/// an omission. A real carrier has none: the subscriber's router has already
+/// translated 10.98.1.2 into its own [`NAT_A_CG`] address before anything
+/// reaches the carrier, and the return path is conntrack's, not routing's.
+fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
+    for ns in [NS_CG, NS_NAT_A] {
+        must(&["ip", "netns", "add", ns]);
+        must(&nsr(ns, &["ip", "link", "set", "lo", "up"]));
+    }
+
+    // The carrier's outward leg, on the public bridge like every other NAT's.
+    veth(
+        End {
+            dev: "ktn-cgo",
+            ns: NS_CG,
+            ip: Some(CG_OUTER),
+        },
+        End {
+            dev: "ktn-cgop",
+            ns: NS_PUB,
+            ip: None,
+        },
+    );
+    must(&nsr(
+        NS_PUB,
+        &["ip", "link", "set", "ktn-cgop", "master", "ktn-br"],
+    ));
+    must(&nsr(
+        NS_CG,
+        &["ip", "route", "add", "default", "via", IP_PUB],
+    ));
+
+    // The shared-space segment between the carrier and the subscriber's router.
+    veth(
+        End {
+            dev: "ktn-cgi",
+            ns: NS_CG,
+            ip: Some(CG_INNER),
+        },
+        End {
+            dev: "ktn-ao",
+            ns: NS_NAT_A,
+            ip: Some(NAT_A_CG),
+        },
+    );
+    must(&nsr(
+        NS_NAT_A,
+        &["ip", "route", "add", "default", "via", CG_INNER],
+    ));
+
+    // And the subscriber's LAN, holding node A alone.
+    veth(
+        End {
+            dev: "ktn-ai",
+            ns: NS_NAT_A,
+            ip: Some(NAT_A_INNER),
+        },
+        End {
+            dev: "ktn-an",
+            ns: NS_A,
+            ip: Some(IP_A_PRIVATE),
+        },
+    );
+    must(&nsr(
+        NS_A,
+        &["ip", "route", "add", "default", "via", NAT_A_INNER],
+    ));
+
+    for ns in [NS_CG, NS_NAT_A] {
+        must(&nsr(
+            ns,
+            &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
+        ));
+    }
+    // Stage one: the subscriber's own router, an ordinary cone.
+    nat_rules(
+        NS_NAT_A,
+        "ktn-ao",
+        "ktn-ai",
+        IP_A_PRIVATE,
+        NAT_A_CG,
+        Flavour::PortRestrictedCone,
+    );
+    // Stage two: the carrier's, symmetric — which is what makes this the hard
+    // shape and not merely a long one. What sits behind it is the router, so
+    // that is the address named here.
+    nat_rules(
+        NS_CG,
+        "ktn-cgo",
+        "ktn-cgi",
+        NAT_A_CG,
+        CG_OUTER,
+        Flavour::Symmetric,
+    );
+
+    // **The router serves PCP and can grant nothing**, which is the case the
+    // row exists to put in front of the port-mapping client. Started here
+    // rather than through a `Flavour`, because the mapping flavours also pin a
+    // fixed source translation for the mapping to be consistent with, and there
+    // is going to be no mapping.
+    start_miniupnpd(net, "a", NS_NAT_A, "ktn-ao", "ktn-ai", IP_A_PRIVATE);
+
+    public_leg("ktn-b", NS_B, IP_B_PUBLIC);
+    (IP_A_PRIVATE, IP_B_PUBLIC)
 }
 
 /// Attach a namespace directly to the public bridge.
@@ -1717,6 +1884,28 @@ fn a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port() {
     run(Shape::SymmetricAndPortRestrictedMapped);
 }
 
+/// **A subscriber behind carrier-grade NAT — two translations, not one.**
+///
+/// The exit criterion names double NAT, and every other row with a NAT has a
+/// single stage. `crates/karst-disco/tests/nat_matrix.rs` already pins what two
+/// stages do to a datagram; this is the first thing in the tree that runs a
+/// *daemon* behind one, which is a different question: an instrument row can
+/// say the source address changes twice, and only a whole aquifer can say which
+/// of the three addresses that now exist a peer ends up holding.
+///
+/// It also puts the port-mapping client in front of the one case it cannot
+/// help. A's router speaks PCP and is itself behind the carrier, so every
+/// mapping it could grant would name an address in RFC 6598 shared space —
+/// unroutable from anywhere but that carrier. The right outcome is no mapping
+/// and a reason, and both are asserted, because a node that advertised one
+/// would put an address no peer can reach at the top of every peer's probe
+/// queue (`aven-v1.md` §7.2).
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer() {
+    run(Shape::DoubleNat);
+}
+
 /// **Two laptops on one home network.**
 ///
 /// As ordinary as any row here, and missing until now. Both nodes learn a
@@ -1925,6 +2114,9 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
             "A is using B's private address, which cannot be reachable: {endpoint}"
         );
     }
+    if shape == Shape::DoubleNat {
+        assert_double_nat(net);
+    }
     if shape == Shape::SymmetricAndMapped {
         let s = status(net, "a", NS_A);
         let mapped = field(&s, "portmap_external").unwrap_or_default();
@@ -1955,6 +2147,70 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
              it claims to be:\n{s}"
         );
     }
+}
+
+/// The three assertions [`Shape::DoubleNat`] exists for.
+///
+/// Split out because they are the row's whole content and because
+/// [`assert_endpoints`] is already a list of special cases; folding a fourth
+/// one inline would have made the function longer than anything reading it
+/// wants to hold at once.
+fn assert_double_nat(net: &Aquifer) {
+    // **Two translations out, and neither of the closer addresses.** B can
+    // only have learned this from the datagram that arrived, since nothing
+    // A knows about itself names it: A holds a 10.98 address, its router
+    // holds a 100.64 one, and the reflector shows A a *different* carrier
+    // port than the one B sees, because the carrier is symmetric.
+    let s = status(net, "b", NS_B);
+    let endpoint = field(&s, "endpoint").unwrap_or_default();
+    assert!(
+        endpoint.starts_with(CG_OUTER),
+        "B should hold A's carrier address {CG_OUTER}, not {endpoint}"
+    );
+    assert!(
+        !endpoint.starts_with(NAT_A_CG),
+        "B is using the subscriber router's address inside the carrier, \
+         which is unroutable from anywhere else: {endpoint}"
+    );
+    assert!(
+        !endpoint.starts_with(IP_A_PRIVATE),
+        "B is using A's private address, which cannot be reachable: {endpoint}"
+    );
+
+    // **A gateway was found, answered, and had nothing to give**, and the last
+    // of those three is the one that takes an assertion of its own.
+    // `portmap_gateway` comes from the routing table, so it is reported whether
+    // or not anything is listening there; a row that checked only the gateway
+    // and the absent mapping would pass identically against a fixture whose
+    // `miniupnpd` never started — and would then be measuring nothing.
+    let s = status(net, "a", NS_A);
+    let gateway = field(&s, "portmap_gateway").unwrap_or_default();
+    assert!(
+        gateway.starts_with(NAT_A_INNER),
+        "A should have found its router at {NAT_A_INNER} as the gateway, \
+         not {gateway}:\n{s}"
+    );
+    assert_eq!(
+        field(&s, "portmap_external").as_deref(),
+        Some("-"),
+        "a router behind carrier NAT can only grant a mapping on an address \
+         no peer can reach; advertising one would put an unroutable \
+         candidate in every peer's probe queue:\n{s}"
+    );
+    assert_ne!(field(&s, "portmap_state").as_deref(), Some("mapped"), "{s}");
+    let reason = field(&s, "portmap_reason").unwrap_or_default();
+    assert!(
+        !reason.is_empty(),
+        "the refusal must be reported: a subscriber who cannot be reached \
+         directly is entitled to know it is the carrier and not Karst:\n{s}"
+    );
+    assert!(
+        !reason.contains("did not answer"),
+        "the router is supposed to have answered and refused; {reason:?} is \
+         what a node reports when nothing is listening at the gateway at all, \
+         which would mean this row is testing an absent daemon rather than a \
+         gateway that cannot help:\n{s}"
+    );
 }
 
 /// A request **and its reply**, under a policy that permits `*:22` and nothing
