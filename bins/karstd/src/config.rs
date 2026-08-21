@@ -182,6 +182,13 @@ pub struct NodeSection {
     /// Loopback SOCKS5 endpoint for userspace mode. Workloads use this to
     /// reach overlay TCP addresses without a TUN device.
     pub userspace_socks5_listen: Option<SocketAddr>,
+    /// Overlay TCP ports this node answers on, and where each one goes.
+    ///
+    /// The inbound half of userspace mode's attachment; see [`crate::publish`].
+    /// Empty is the default and means nothing on this node is reachable from
+    /// the mesh.
+    #[serde(default)]
+    pub userspace_publish: Vec<PublishSection>,
     /// Addresses to assign to the interface.
     ///
     /// Required for a roster; ignored, and refused if present, for a
@@ -249,19 +256,71 @@ fn default_interface() -> String {
     karst_tun::DEFAULT_NAME.to_owned()
 }
 
+/// A `[[node.userspace_publish]]` entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishSection {
+    /// The overlay TCP port peers connect to.
+    pub port: u16,
+    /// Where connections to it are forwarded, on this host.
+    pub to: SocketAddr,
+}
+
 fn validate_userspace(
     mode: NetworkMode,
     socks5_listen: Option<SocketAddr>,
+    publish: &[PublishSection],
 ) -> Result<(), ConfigError> {
-    match (mode, socks5_listen) {
-        (NetworkMode::Tun, Some(_)) => Err(ConfigError::Unusable(
-            "node.userspace_socks5_listen requires network_mode = \"userspace\"".to_owned(),
-        )),
-        (NetworkMode::Userspace, None) => Err(ConfigError::Unusable(
-            "network_mode = \"userspace\" requires node.userspace_socks5_listen".to_owned(),
-        )),
-        _ => Ok(()),
+    if mode == NetworkMode::Tun {
+        if socks5_listen.is_some() {
+            return Err(ConfigError::Unusable(
+                "node.userspace_socks5_listen requires network_mode = \"userspace\"".to_owned(),
+            ));
+        }
+        if !publish.is_empty() {
+            // TUN mode publishes nothing because it does not have to: the node
+            // has a real interface, and a service bound to its overlay address
+            // is reachable by the host's own listener.
+            return Err(ConfigError::Unusable(
+                "node.userspace_publish requires network_mode = \"userspace\"; in TUN mode a \
+                 service reachable from the mesh is one bound to the interface address"
+                    .to_owned(),
+            ));
+        }
+        return Ok(());
     }
+    // **Either attachment will do, but not neither.** A node with a userspace
+    // stack and no way in or out of it carries packets nothing can read: it
+    // establishes with its peers, reports healthy, and is useless. Requiring
+    // the SOCKS listener specifically would be worse than requiring nothing —
+    // an inbound-only sidecar would have to open an outbound surface it does
+    // not want in order to start.
+    if socks5_listen.is_none() && publish.is_empty() {
+        return Err(ConfigError::Unusable(
+            "network_mode = \"userspace\" requires node.userspace_socks5_listen or at least \
+             one [[node.userspace_publish]] entry; without one the stack has no attachment"
+                .to_owned(),
+        ));
+    }
+    let mut ports = BTreeSet::new();
+    for entry in publish {
+        if entry.port == 0 {
+            return Err(ConfigError::Unusable(
+                "node.userspace_publish has an entry on port 0, which nothing can connect to"
+                    .to_owned(),
+            ));
+        }
+        if !ports.insert(entry.port) {
+            // Two entries for one port is two answers to "where does this go",
+            // and resolving it by file order would send a peer's traffic
+            // somewhere nobody chose.
+            return Err(ConfigError::Unusable(format!(
+                "node.userspace_publish names overlay port {} twice",
+                entry.port
+            )));
+        }
+    }
+    Ok(())
 }
 const fn default_port_mapping() -> bool {
     true
@@ -360,6 +419,8 @@ pub struct Config {
     pub network_mode: NetworkMode,
     /// Optional userspace SOCKS5 endpoint.
     pub userspace_socks5_listen: Option<SocketAddr>,
+    /// Overlay ports this node publishes to the mesh. See [`crate::publish`].
+    pub userspace_publish: Vec<PublishSection>,
     /// Interface addresses — host addresses, not networks. See
     /// [`InterfaceAddress`].
     pub addresses: Vec<InterfaceAddress>,
@@ -404,6 +465,7 @@ impl fmt::Debug for Config {
             .field("interface", &self.interface)
             .field("network_mode", &self.network_mode)
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
+            .field("userspace_publish", &self.userspace_publish)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
             .field("skipped", &self.skipped)
@@ -484,7 +546,11 @@ impl Config {
         }
 
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
-        validate_userspace(file.node.network_mode, file.node.userspace_socks5_listen)?;
+        validate_userspace(
+            file.node.network_mode,
+            file.node.userspace_socks5_listen,
+            &file.node.userspace_publish,
+        )?;
         Ok(Self {
             keys,
             listen: file.node.listen,
@@ -492,6 +558,7 @@ impl Config {
             interface: file.node.interface,
             network_mode: file.node.network_mode,
             userspace_socks5_listen: file.node.userspace_socks5_listen,
+            userspace_publish: file.node.userspace_publish,
             addresses,
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
@@ -525,7 +592,11 @@ impl Config {
     /// route: no address of its own, a malformed key, or two peers claiming one
     /// range.
     pub fn from_netmap(local: LocalSettings, netmap: &Netmap) -> Result<Self, ConfigError> {
-        validate_userspace(local.network_mode, local.userspace_socks5_listen)?;
+        validate_userspace(
+            local.network_mode,
+            local.userspace_socks5_listen,
+            &local.userspace_publish,
+        )?;
         // The node's own addresses carry the *on-link* prefix, so peers are
         // reachable over the interface. A bare address parses as a /32 here,
         // which brings the interface up with nothing on-link — the server is
@@ -592,6 +663,7 @@ impl Config {
             interface: local.interface,
             network_mode: local.network_mode,
             userspace_socks5_listen: local.userspace_socks5_listen,
+            userspace_publish: local.userspace_publish,
             addresses,
             psk_epoch: netmap.psk_epoch,
             node_id: netmap.node_id.clone(),
@@ -645,6 +717,8 @@ pub struct LocalSettings {
     pub network_mode: NetworkMode,
     /// Optional userspace SOCKS5 endpoint.
     pub userspace_socks5_listen: Option<SocketAddr>,
+    /// Overlay ports this node publishes to the mesh. See [`crate::publish`].
+    pub userspace_publish: Vec<PublishSection>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
 }
@@ -657,6 +731,7 @@ impl fmt::Debug for LocalSettings {
             .field("interface", &self.interface)
             .field("network_mode", &self.network_mode)
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
+            .field("userspace_publish", &self.userspace_publish)
             .finish_non_exhaustive()
     }
 }
@@ -1070,6 +1145,116 @@ allowed_ips = ["10.99.0.2/32"]
             cfg.userspace_socks5_listen.expect("SOCKS listener").port(),
             1080
         );
+        assert!(
+            cfg.userspace_publish.is_empty(),
+            "nothing is published unless it is asked for"
+        );
+    }
+
+    /// Load a roster with `[node]` extended by `keys` and `tables` appended to
+    /// the document.
+    ///
+    /// Two arguments rather than one because TOML says so: an array of tables
+    /// ends the table it is written inside, so `[[node.userspace_publish]]` has
+    /// to follow every plain key of `[node]`.
+    fn node_with(dir: &Path, keys: &str, tables: &str) -> Result<Config, ConfigError> {
+        let path = roster(dir, "");
+        let source = std::fs::read_to_string(&path).expect("read roster");
+        let text = format!(
+            "{}\n{tables}\n",
+            source.replace(
+                "interface = \"karst0\"",
+                &format!("interface = \"karst0\"\n{keys}")
+            )
+        );
+        std::fs::write(&path, text).expect("write roster");
+        Config::load(&path)
+    }
+
+    /// The inbound half of ADR-0012 §9's sidecar: an overlay port and where it
+    /// goes, both named by the operator and neither inferred.
+    #[test]
+    fn a_published_port_names_one_overlay_port_and_one_destination() {
+        let dir = Scratch::new("cfg");
+        let cfg = node_with(
+            dir.path(),
+            "network_mode = \"userspace\"\nuserspace_socks5_listen = \"127.0.0.1:1080\"\n",
+            "[[node.userspace_publish]]\nport = 8080\nto = \"127.0.0.1:80\"\n\
+             [[node.userspace_publish]]\nport = 5432\nto = \"127.0.0.1:5432\"\n",
+        )
+        .expect("load");
+        let ports: Vec<u16> = cfg.userspace_publish.iter().map(|p| p.port).collect();
+        assert_eq!(ports, vec![8080, 5432]);
+        assert_eq!(
+            cfg.userspace_publish.first().expect("first").to,
+            "127.0.0.1:80".parse::<SocketAddr>().expect("address")
+        );
+    }
+
+    /// **An inbound-only sidecar is a real deployment**, and requiring it to
+    /// open a SOCKS listener it does not want in order to start would be
+    /// requiring it to widen its own surface.
+    #[test]
+    fn publishing_alone_is_enough_to_attach_a_userspace_node() {
+        let dir = Scratch::new("cfg");
+        let cfg = node_with(
+            dir.path(),
+            "network_mode = \"userspace\"\n",
+            "[[node.userspace_publish]]\nport = 8080\nto = \"127.0.0.1:80\"\n",
+        )
+        .expect("load");
+        assert_eq!(cfg.userspace_socks5_listen, None);
+        assert_eq!(cfg.userspace_publish.len(), 1);
+    }
+
+    /// A userspace stack nothing can reach and nothing can leave carries
+    /// packets no process will ever read: it establishes, reports healthy, and
+    /// is useless. Refused at load time rather than discovered in production.
+    #[test]
+    fn a_userspace_node_with_no_attachment_at_all_is_refused() {
+        let dir = Scratch::new("cfg");
+        let err = node_with(dir.path(), "network_mode = \"userspace\"\n", "")
+            .expect_err("an unattached userspace node must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("userspace_socks5_listen") && message.contains("userspace_publish"),
+            "the refusal does not say what would fix it: {message}"
+        );
+    }
+
+    #[test]
+    fn publishing_is_refused_for_the_configurations_that_cannot_honour_it() {
+        for (label, keys, tables, expect) in [
+            (
+                "TUN mode has an interface and does not need this",
+                "",
+                "[[node.userspace_publish]]\nport = 8080\nto = \"127.0.0.1:80\"\n",
+                "requires network_mode",
+            ),
+            (
+                "port 0 is not a port anything connects to",
+                "network_mode = \"userspace\"\n",
+                "[[node.userspace_publish]]\nport = 0\nto = \"127.0.0.1:80\"\n",
+                "port 0",
+            ),
+            (
+                "one port, two destinations",
+                "network_mode = \"userspace\"\n",
+                "[[node.userspace_publish]]\nport = 8080\nto = \"127.0.0.1:80\"\n\
+                 [[node.userspace_publish]]\nport = 8080\nto = \"127.0.0.1:81\"\n",
+                "twice",
+            ),
+        ] {
+            let dir = Scratch::new("cfg");
+            let message = match node_with(dir.path(), keys, tables) {
+                Ok(_) => panic!("{label}: accepted"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                message.contains(expect),
+                "{label}: the refusal does not mention {expect:?}: {message}"
+            );
+        }
     }
 
     /// An absent PSK is the §7.3 fallback. It must be recorded, not silently
@@ -1296,6 +1481,7 @@ mod netmap_tests {
             interface: "karst0".to_owned(),
             network_mode: NetworkMode::Tun,
             userspace_socks5_listen: None,
+            userspace_publish: Vec::new(),
         }
     }
 

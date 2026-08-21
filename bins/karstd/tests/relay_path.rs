@@ -152,6 +152,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         interface: format!("karst{own}"),
         network_mode: karstd::config::NetworkMode::Tun,
         userspace_socks5_listen: None,
+        userspace_publish: Vec::new(),
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,
         node_id: own_handle.clone().into_bytes(),

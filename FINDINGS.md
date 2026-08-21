@@ -11,13 +11,14 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-four more, and all of them are now closed — most found by
+followed it added thirty-five more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
 criterion names, three by **measuring** a feature that had already been proved
-to work, and the last two by asking what a deployment needs that only a test
-fixture was providing.
+to work, two by asking what a deployment needs that only a test fixture was
+providing, and the last by building the second half of a feature and looking at
+what the first half did with what it allocated.
 
 **That last pair is worth naming as a category.** Findings 42 and 43 are one
 commit apart, and both are components that exist only in the test harness — a
@@ -26,7 +27,13 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**No findings remain open.** 38 was the last, closed on 2026-08-21: a node whose
+**No findings remain open.** 44 was the most recent, found and closed on
+2026-08-21 by building userspace mode's inbound attachment: the *outbound* path
+had been leaking a TCP socket and its 128 KiB of buffers per connection since
+the day it shipped, and no test of bytes could see it because every conversation
+it leaked was correct.
+
+Before it, 38 was the last open one, closed the same day: a node whose
 gateway can never help used to ask it again every five seconds for the life of
 the process, which is what *every* node without a port-mapping service had
 always done. The classification was right and the schedule was not, so the fix
@@ -87,8 +94,71 @@ carries both the new wording and the original, struck through.
 | 41 | High | Every userspace TCP socket advertised a one-segment window | Fixed 2026-08-21 |
 | 42 | High | Nothing outside the test fixture kept a relay's roster fresh, so a deployed relay stops admitting nodes after 90 s | Fixed 2026-08-21 |
 | 43 | High | A production coordination server published no relays at all; only the test server ever set the netmap's relay registry | Fixed 2026-08-21 |
+| 44 | High | Userspace mode never reclaimed a TCP socket, so a sidecar grew by 128 KiB per connection for the life of the process | Fixed 2026-08-21 |
 
 ## Closed
+
+### 44. High: userspace mode never reclaimed a TCP socket
+
+**Found 2026-08-21** while building the inbound attachment, by asking what an
+accept loop should do with a connection once it is finished. Fixed the same day.
+It is not a bug in the new code: it is a bug in the *outbound* path, which had
+been shipping since 2026-08-20.
+
+`Userspace::connect_tcp` added a socket to smoltcp's `SocketSet` and **nothing
+ever removed one.** `SocketSet::remove` appeared in exactly one place in the
+tree — the error path of `listen_tcp` — so every SOCKS5 connection the sidecar
+handled left a socket behind permanently. A daemon that had served a thousand
+connections held a thousand sockets and had reclaimed none of the memory.
+
+Two costs, and the second is the one that would have been diagnosed as something
+else:
+
+- **Memory.** Each socket carries a receive and a transmit buffer, so a finished
+  connection retains 128 KiB. Finding 41 made this a hundred times worse
+  three days ago and neither of us noticed: raising the buffers from one MTU to
+  64 KiB was right for throughput, and it multiplied the size of every leaked
+  socket by 51.
+- **Time.** `interface.poll` walks every socket in the set on every packet the
+  daemon carries. So the datapath gets slower in proportion to the number of
+  connections the process has *ever* handled — a sidecar that is fast on Monday
+  and slow on Friday, with no leak visible in any per-packet code path.
+
+**Nothing could have caught it.** Every conversation was correct: the bytes
+arrived, the half-closes worked, the bulk row hit its budget. Correctness tests
+observe what crosses a connection, and this is a property of what is left behind
+after one. The measurement in `docs/measurements/userspace-cost-2026-08-21.md`
+could not see it either — it reports peak RSS for a run that opens three
+connections.
+
+The fix has three parts, and the second is the one that makes the first safe.
+
+*Release, not close.* `tcp_release` hands a socket back; the stack keeps polling
+it until it has finished closing and only then frees it, so a `FIN` already in
+flight is not cut off. A connection that never finishes is aborted after five
+seconds — `RETIRE_GRACE` — because at that point the far end is not answering
+and holding 128 KiB for it is the wrong trade. `tcp_abort` is the same mechanism
+with the deadline already past, for a connection the daemon has decided to
+refuse.
+
+*A generation on every handle.* smoltcp identifies a socket by its index and
+hands a freed index straight back out to the next socket, so making removal
+possible also makes **use-after-release** possible — and a stale handle would
+not fail, it would read and write a different connection's bytes. Every handle
+now carries the generation it was issued in and every accessor checks it, so a
+stale one resolves to nothing. `a_released_handle_cannot_reach_the_socket_that_
+replaces_it` asks a released handle every question the API has, against a live
+connection sitting in its old slot, and requires all of them to come back empty.
+It also removes the last way a caller could panic this crate: smoltcp's own
+`get_mut` panics on a handle it does not recognise.
+
+*Somewhere to see it.* `karst status` reports `userspace_sockets` in userspace
+mode, and the end-to-end row waits for the count to come back down after its
+conversation ends. Without that line the property would be back to being
+invisible — which is how it survived in the first place.
+
+Verified by injection: with the reaper's removal taken out, three unit tests and
+the end-to-end row fail, and each names the socket it expected back.
 
 ### 38. Low: a gateway that can never grant a mapping is asked again every five seconds
 

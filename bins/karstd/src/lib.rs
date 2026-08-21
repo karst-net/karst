@@ -25,6 +25,8 @@ pub mod ipc;
 pub mod netmap;
 pub mod ondemand;
 pub mod portmap;
+mod publish;
+mod pump;
 pub mod relay;
 pub mod relay_tls;
 pub mod routing;

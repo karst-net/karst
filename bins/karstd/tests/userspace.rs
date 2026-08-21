@@ -88,6 +88,22 @@ const LISTEN_PEER_3: u16 = 51848;
 const SOCKS_PORT_3: u16 = 11083;
 const SERVICE_PORT_3: u16 = 19003;
 
+/// A fourth pair, for the inbound row. The node under test has **no SOCKS
+/// listener at all**, which is half the point of the row: an inbound-only
+/// sidecar must not have to open an outbound surface it does not want.
+const OVERLAY_USERSPACE_4: &str = "10.88.3.1";
+const OVERLAY_PEER_4: &str = "10.88.3.2";
+const PEER_INTERFACE_4: &str = "karstu4";
+const LISTEN_USERSPACE_4: u16 = 51849;
+const LISTEN_PEER_4: u16 = 51850;
+/// The overlay port the mesh connects to, and the loopback port behind it.
+///
+/// Different numbers deliberately: a published port that happened to equal its
+/// backend's would pass even if the daemon ignored the mapping and forwarded to
+/// whatever port the connection arrived on.
+const PUBLISHED_PORT: u16 = 19004;
+const BACKEND_PORT: u16 = 19005;
+
 /// How much the bulk row moves, and how long it may take.
 ///
 /// **This is a throughput assertion in a correctness suite, and it is here
@@ -256,9 +272,13 @@ struct Spec {
     listen: u16,
     peer_listen: u16,
     interface: &'static str,
-    /// Where userspace mode offers its SOCKS5 listener. Ignored by the two TUN
-    /// modes, which have no attachment surface of their own.
-    socks: u16,
+    /// Where userspace mode offers its SOCKS5 listener, if it offers one.
+    /// Ignored by the two TUN modes, which have no attachment surface of their
+    /// own.
+    socks: Option<u16>,
+    /// Overlay ports this node answers on, each with the loopback port it
+    /// forwards to. The inbound half of the attachment.
+    publish: &'static [(u16, u16)],
 }
 
 fn root_dir() -> PathBuf {
@@ -281,12 +301,26 @@ fn start(spec: &Spec) -> Node {
     // Userspace mode has no host interface and no route table, so the whole
     // difference between the two configurations is these two lines.
     let attachment = match spec.mode {
-        Mode::UnprivilegedUserspace => format!(
-            "network_mode = \"userspace\"\nuserspace_socks5_listen = \"127.0.0.1:{}\"\n",
-            spec.socks
-        ),
+        Mode::UnprivilegedUserspace => {
+            let mut lines = "network_mode = \"userspace\"\n".to_owned();
+            if let Some(port) = spec.socks {
+                let _ = writeln!(lines, "userspace_socks5_listen = \"127.0.0.1:{port}\"");
+            }
+            lines
+        }
         Mode::PrivilegedTun | Mode::UnprivilegedTun => String::new(),
     };
+    // Written after every plain key of `[node]`, because an array of tables
+    // ends the table it appears inside.
+    let mut published = String::new();
+    if spec.mode == Mode::UnprivilegedUserspace {
+        for (overlay, backend) in spec.publish {
+            let _ = write!(
+                published,
+                "\n[[node.userspace_publish]]\nport = {overlay}\nto = \"127.0.0.1:{backend}\"\n"
+            );
+        }
+    }
     let toml = format!(
         r#"
 [node]
@@ -294,7 +328,7 @@ listen = "0.0.0.0:{listen}"
 interface = "{interface}"
 addresses = ["{address}/24"]
 private_key_file = "node.key"
-{attachment}
+{attachment}{published}
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
@@ -561,6 +595,25 @@ fn socks_connect_when_ready(proxy: SocketAddr, target: SocketAddr, nodes: &[&Nod
     }
 }
 
+/// Dial an overlay address until it answers.
+///
+/// The peer's route to it appears a moment after the daemon does, and the
+/// published listener a moment after that; a refusal inside that window is a
+/// race with startup rather than a failure of the row.
+fn connect_when_ready(target: SocketAddr, nodes: &[&Node]) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match TcpStream::connect_timeout(&target, Duration::from_secs(5)) {
+            Ok(stream) => return stream,
+            Err(e) if Instant::now() < deadline => {
+                let _ = e;
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => panic!("nothing ever answered on {target}: {e}{}", report(nodes)),
+        }
+    }
+}
+
 // ── the gate ────────────────────────────────────────────────────────────────
 
 /// The kernel's own record of what the node under test may do.
@@ -638,7 +691,8 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
         // required, and asserting on the reported name below is what shows it
         // was ignored rather than quietly honoured.
         interface: PEER_INTERFACE,
-        socks: SOCKS_PORT,
+        socks: Some(SOCKS_PORT),
+        publish: &[],
     });
     let peer = start(&Spec {
         tag: "peer",
@@ -650,7 +704,8 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
         listen: LISTEN_PEER,
         peer_listen: LISTEN_USERSPACE,
         interface: PEER_INTERFACE,
-        socks: SOCKS_PORT,
+        socks: Some(SOCKS_PORT),
+        publish: &[],
     });
     let both = [&userspace, &peer];
 
@@ -748,7 +803,8 @@ fn a_half_closed_request_still_receives_its_reply() {
         listen: LISTEN_USERSPACE_2,
         peer_listen: LISTEN_PEER_2,
         interface: PEER_INTERFACE_2,
-        socks: SOCKS_PORT_2,
+        socks: Some(SOCKS_PORT_2),
+        publish: &[],
     });
     let peer = start(&Spec {
         tag: "half-close-peer",
@@ -760,7 +816,8 @@ fn a_half_closed_request_still_receives_its_reply() {
         listen: LISTEN_PEER_2,
         peer_listen: LISTEN_USERSPACE_2,
         interface: PEER_INTERFACE_2,
-        socks: SOCKS_PORT_2,
+        socks: Some(SOCKS_PORT_2),
+        publish: &[],
     });
     let both = [&userspace, &peer];
 
@@ -864,7 +921,8 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
         listen: LISTEN_USERSPACE_3,
         peer_listen: LISTEN_PEER_3,
         interface: PEER_INTERFACE_3,
-        socks: SOCKS_PORT_3,
+        socks: Some(SOCKS_PORT_3),
+        publish: &[],
     });
     let peer = start(&Spec {
         tag: "bulk-peer",
@@ -876,7 +934,8 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
         listen: LISTEN_PEER_3,
         peer_listen: LISTEN_USERSPACE_3,
         interface: PEER_INTERFACE_3,
-        socks: SOCKS_PORT_3,
+        socks: Some(SOCKS_PORT_3),
+        publish: &[],
     });
     let both = [&userspace, &peer];
 
@@ -956,6 +1015,122 @@ fn a_bulk_transfer_is_not_stop_and_wait() {
     eprintln!("bulk: {} MiB in {:?}", written / (1024 * 1024), elapsed);
 }
 
+/// **The other half of ADR-0012 §9's sidecar: the mesh reaching in.**
+///
+/// Until this existed, attachment was outbound only — a workload behind
+/// userspace mode could dial every peer, and no peer could reach it, because
+/// SOCKS5 `CONNECT` was the whole surface and `Userspace::listen_tcp` was
+/// reachable from no configuration. That was Phase 4's last 🔶.
+///
+/// The node under test publishes overlay port `PUBLISHED_PORT` to a loopback
+/// service on `BACKEND_PORT`, and has **no SOCKS listener at all**: an
+/// inbound-only sidecar must not have to open an outbound surface to start.
+/// The test then connects to `OVERLAY_USERSPACE_4:PUBLISHED_PORT` from the
+/// host, which can only be routed through the peer's TUN device — there is no
+/// interface anywhere carrying that address, so a connection that arrives
+/// crossed the tunnel by construction.
+///
+/// The two port numbers differ so that a daemon which ignored the mapping and
+/// forwarded to whatever port the connection arrived on would fail this rather
+/// than pass it.
+#[test]
+#[ignore = "needs root to give the peer a TUN device"]
+fn a_published_service_inside_userspace_mode_is_reachable_from_the_mesh() {
+    if !have_prerequisites() {
+        return;
+    }
+
+    // Bound before the daemon starts: the published port is dialled the moment
+    // a peer connects, and a backend that is not listening yet would be a race
+    // rather than a result.
+    let backend = TcpListener::bind(format!("127.0.0.1:{BACKEND_PORT}")).expect("bind backend");
+    let request = pattern(0x3c, PAYLOAD);
+    let reply = pattern(0xc3, PAYLOAD);
+    let service = serve_once(backend, request.clone(), reply.clone());
+
+    let userspace = start(&Spec {
+        tag: "inbound",
+        mode: Mode::UnprivilegedUserspace,
+        seed: 17,
+        peer_seed: 18,
+        address: OVERLAY_USERSPACE_4,
+        peer_address: OVERLAY_PEER_4,
+        listen: LISTEN_USERSPACE_4,
+        peer_listen: LISTEN_PEER_4,
+        interface: PEER_INTERFACE_4,
+        socks: None,
+        publish: &[(PUBLISHED_PORT, BACKEND_PORT)],
+    });
+    let peer = start(&Spec {
+        tag: "inbound-peer",
+        mode: Mode::PrivilegedTun,
+        seed: 18,
+        peer_seed: 17,
+        address: OVERLAY_PEER_4,
+        peer_address: OVERLAY_USERSPACE_4,
+        listen: LISTEN_PEER_4,
+        peer_listen: LISTEN_USERSPACE_4,
+        interface: PEER_INTERFACE_4,
+        socks: None,
+        publish: &[],
+    });
+    let both = [&userspace, &peer];
+
+    assert_unprivileged(&userspace);
+    wait_for(
+        &both,
+        "both nodes to establish",
+        Duration::from_secs(30),
+        || {
+            field(&status(&userspace), "state").as_deref() == Some("established")
+                && field(&status(&peer), "state").as_deref() == Some("established")
+        },
+    );
+
+    let target: SocketAddr = format!("{OVERLAY_USERSPACE_4}:{PUBLISHED_PORT}")
+        .parse()
+        .expect("target");
+    let mut mesh = connect_when_ready(target, &both);
+    mesh.set_read_timeout(Some(Duration::from_secs(60)))
+        .expect("read timeout");
+    mesh.write_all(&request).expect("send the request");
+    mesh.flush().expect("flush the request");
+    let mut received = vec![0u8; PAYLOAD];
+    mesh.read_exact(&mut received).unwrap_or_else(|e| {
+        panic!(
+            "reading the reply from the published service: {e}{}",
+            report(&both)
+        )
+    });
+
+    assert_eq!(
+        received, reply,
+        "the reply from the published service does not match what it sent"
+    );
+    service
+        .join()
+        .expect("service thread")
+        .unwrap_or_else(|e| panic!("the published service reported: {e}"));
+    assert_carried_the_payload(&userspace);
+
+    // **FINDINGS.md 44, end to end.** The conversation is over; the socket it
+    // used must not still be on the stack. A daemon that leaked it would pass
+    // every assertion above and grow by 128 KiB per connection forever.
+    drop(mesh);
+    wait_for(
+        &both,
+        "the finished connection to be reclaimed",
+        Duration::from_secs(20),
+        || {
+            field(&status(&userspace), "userspace_sockets")
+                .and_then(|v| v.parse::<usize>().ok())
+                // One socket remains: the listener waiting for the next
+                // connection, which is the whole point of a published port.
+                .is_some_and(|held| held <= 1)
+        },
+    );
+}
+
 /// **The instrument check.** The launcher above must really remove the
 /// privilege, so the same launcher is pointed at TUN mode and must fail.
 ///
@@ -980,7 +1155,8 @@ fn a_tun_is_impossible_for_the_process_under_test() {
         listen: LISTEN_UNUSED,
         peer_listen: LISTEN_UNUSED + 1,
         interface: "karstu1",
-        socks: SOCKS_PORT,
+        socks: Some(SOCKS_PORT),
+        publish: &[],
     });
 
     let deadline = Instant::now() + Duration::from_secs(20);

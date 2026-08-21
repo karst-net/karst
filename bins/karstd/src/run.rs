@@ -315,6 +315,7 @@ pub fn run_with_control(
         interface: config.interface.clone(),
         network_mode: config.network_mode,
         userspace_socks5_listen: config.userspace_socks5_listen,
+        userspace_publish: config.userspace_publish.clone(),
         relay_ca_file: config.relay_ca_file.clone(),
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
@@ -356,6 +357,19 @@ pub fn run_with_control(
                         eprintln!("karstd: userspace SOCKS5 listener {listen} stopped: {e}");
                     }
                 });
+            }
+        }
+        // The inbound half. One thread per published port: each holds a
+        // listening socket on the stack, and a port whose backend is down must
+        // not stop the others being reachable.
+        for entry in &config.userspace_publish {
+            if let Some(stack) = tun.userspace() {
+                let (port, to) = (entry.port, entry.to);
+                // Named at startup, because a node's inbound surface is
+                // something an operator should be able to read out of the log
+                // rather than reconstruct from the configuration file.
+                println!("karstd: publishing overlay port {port} to {to}");
+                scope.spawn(move || crate::publish::serve(&stack, port, to, shutdown));
             }
         }
 
@@ -458,6 +472,7 @@ pub fn run_with_control(
                                 Attachment {
                                     name: tun_ctl.name(),
                                     mtu: tun_ctl.mtu(),
+                                    sockets: tun_ctl.userspace().map(|stack| stack.socket_count()),
                                 },
                                 started,
                                 &relay_dropped,
@@ -1846,6 +1861,13 @@ pub struct Attachment<'a> {
     /// The tunnel MTU. §13.6 requires it be reportable, because a path that
     /// black-holes full-size packets is otherwise very hard to diagnose.
     pub mtu: usize,
+    /// TCP sockets the userspace stack is holding, or `None` in TUN mode where
+    /// the kernel owns them.
+    ///
+    /// Reported because in userspace mode the daemon *is* the TCP stack, so a
+    /// number that only ever rises is the visible form of FINDINGS.md 44 — and
+    /// nothing else in the status output would show it.
+    pub sockets: Option<usize>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1880,6 +1902,9 @@ fn report(
             let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
             let _ = writeln!(out, "addresses = {addrs:?}");
             let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+            if let Some(sockets) = device.sockets {
+                let _ = writeln!(out, "userspace_sockets = {sockets}");
+            }
 
             let mapping = portmap.unwrap_or_else(|| portmap::Snapshot::new(config.port_mapping));
             let _ = writeln!(out, "\n[portmap]");
@@ -2478,6 +2503,7 @@ mod route_tests {
             interface: "karst0".to_owned(),
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
+            userspace_publish: Vec::new(),
             addresses: addresses
                 .iter()
                 .map(|a| a.parse().expect("interface address"))
@@ -2753,6 +2779,7 @@ mod probe_tests {
             interface: "karst0".to_owned(),
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
+            userspace_publish: Vec::new(),
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),
@@ -3259,6 +3286,7 @@ mod probe_tests {
             interface: "karst0".to_owned(),
             network_mode: crate::config::NetworkMode::Tun,
             userspace_socks5_listen: None,
+            userspace_publish: Vec::new(),
             addresses: vec!["100.64.0.1/16".parse().expect("address")],
             psk_epoch: 1,
             node_id: Vec::new(),

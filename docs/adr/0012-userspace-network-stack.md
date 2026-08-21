@@ -126,9 +126,13 @@ Userspace mode attaches workloads through an explicit loopback SOCKS5 listener
 (`node.userspace_socks5_listen`). It supports TCP `CONNECT` to literal overlay
 IPv4 and IPv6 addresses. DNS names are intentionally not accepted: resolving a
 name through the host resolver would be an unreviewed path around Karst's
-packet and policy boundary. The listener is required when `network_mode` is
-`"userspace"`, and is refused in TUN mode so no configuration is silently
-ignored.
+packet and policy boundary. It is refused in TUN mode so no configuration is
+silently ignored.
+
+The mesh reaches *in* through published overlay ports
+(`[[node.userspace_publish]]`), each naming one port and one local destination.
+A userspace node must configure at least one of the two attachments — see
+*Attachment, both directions* below for why either alone is enough.
 
 ### Options considered
 
@@ -171,7 +175,8 @@ requirement, and gVisor changes the architecture too broadly for this phase.
   the selected stack.
 - The sidecar/operator design must define how workloads are attached without
   granting them a host TUN interface; that is deployment work, not an implicit
-  property of the stack.
+  property of the stack. — **done 2026-08-21**, both directions; see
+  *Attachment, both directions* below.
 
 ### Acceptance and implementation gates
 
@@ -191,15 +196,68 @@ Before accepting this proposal for implementation, the spike must record:
    thirteen) all pass alongside it, and all of them now run in CI rather than
    on request.
 
-### Attachment is outbound only
+### Attachment, both directions — inbound decided 2026-08-21
 
-Recorded because the gate above could easily be read as more than it is. A
-workload behind userspace mode can **dial** the mesh; nothing in the mesh can
-reach a service *inside* it, because SOCKS5 `CONNECT` is the only attachment
-and `Userspace::listen_tcp` is reachable from no configuration. A sidecar that
-can only make calls is half of the sidecar PLAN.md §9 promises, and the inbound
-half is a design decision — which overlay ports map to which local addresses —
-rather than a missing line of code.
+Outbound came first and was recorded here as half a sidecar: a workload behind
+userspace mode could **dial** the mesh, and nothing in the mesh could reach a
+service *inside* it, because SOCKS5 `CONNECT` was the only attachment and
+`Userspace::listen_tcp` was reachable from no configuration. The note said the
+inbound half was a design decision — which overlay ports map to which local
+addresses — rather than a missing line of code. This is that decision.
+
+**An inbound attachment is a list the operator writes, and nothing else.**
+
+```toml
+[[node.userspace_publish]]
+port = 8080          # the overlay TCP port peers connect to
+to = "127.0.0.1:80"  # where it goes, on this host
+```
+
+Four things follow from that shape, and each was chosen against an alternative.
+
+*Explicit ports rather than a transparent listener.* The stack could have
+accepted every port and forwarded to the same port on loopback, which needs no
+configuration at all. It would also mean a node's inbound surface was whatever
+happened to be listening on its host — discovered rather than decided, and
+changing whenever an unrelated process bound a port. A published port is a
+sentence somebody wrote.
+
+*The two port numbers are independent.* The overlay port and the backend port
+are separate fields because a sidecar's whole job is often to present a service
+on a conventional port that the workload does not itself use. The end-to-end row
+publishes 19004 to 19005 precisely so that an implementation which forwarded to
+"whatever port the connection arrived on" fails it.
+
+*The destination is unconstrained, and the ACL is what protects it.* Restricting
+`to` to loopback was considered and rejected: a compose deployment whose workload
+is another container on a bridge network is an ordinary case, and refusing it
+would push operators to a worse workaround. What bounds the risk is not the
+destination but the source — an inbound packet reaches `publish` only after
+`Engine::deliver_to_host` has admitted it, so a peer no ACL rule permits cannot
+reach a published port at all. The same check governs TUN mode.
+
+*A published port is bounded at 64 concurrent connections.* This is the one
+asymmetry with the outbound side, and it exists because the initiator is
+different. On the SOCKS5 side the party opening connections is a local process
+the operator already trusts; here it is another node, and each connection costs
+a thread and 128 KiB of smoltcp buffers. In TUN mode this bound is the kernel's,
+on a listener the daemon is not part of. In userspace mode the daemon *is* the
+listener, so it has to have one.
+
+`network_mode = "userspace"` now requires *either* attachment rather than the
+SOCKS listener specifically. An inbound-only sidecar is a real deployment, and
+requiring it to open an outbound surface it does not want in order to start
+would be requiring it to widen itself.
+
+**Writing it found FINDINGS.md 44, which was outbound mode's bug.** Nothing ever
+removed a TCP socket from the stack: `connect_tcp` added one per SOCKS
+connection and no path freed it, so a long-running sidecar accumulated sockets
+and their 128 KiB of buffers without bound, and polled every dead one on every
+packet. It had been invisible because every conversation was correct, and finding
+41 had made it 100× worse by raising the buffers from one MTU to 64 KiB. The
+stack now reclaims a released socket once it has finished closing, `karst status`
+reports `userspace_sockets` in userspace mode, and the end-to-end row asserts the
+count comes back down.
 
 What it does carry, it carries at **515 Mbps against 1380 on the privileged
 path**, measured 2026-08-21 — 37%, at 0.55 ms a round trip against 0.18 ms.

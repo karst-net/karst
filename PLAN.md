@@ -3574,8 +3574,8 @@ onwards, anchored on the week of 2026-08-10.
   is only as honest as its weakest topology, and a NAT missing a filter chain
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
-- 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶** — proven
-  outbound, measured, and with no inbound attachment.
+- ✅ **Kubernetes operator ✅ + Docker images ✅ + userspace mode ✅** — proven
+  in both directions, and measured.
 
   Userspace mode landed 2026-08-20: ADR-0012 chooses **smoltcp**, isolated
   behind a `karst-tun` packet device and reached only through an explicit
@@ -3711,11 +3711,53 @@ onwards, anchored on the week of 2026-08-10.
   stop-and-wait cannot pass it. It reports no rate and has no baseline; the
   measurement stays in `scripts/userspace-cost.sh` where it belongs.
 
-  **Still outstanding, and it is still the honest boundary of the feature**:
-  attachment is outbound only. A workload behind userspace mode can dial the
-  mesh; nothing in the mesh can reach a service inside it, because SOCKS5
-  `CONNECT` is the whole attachment surface and `Userspace::listen_tcp` is
-  reachable from no configuration. That is half of §9's sidecar.
+  ✅ **The inbound half, built 2026-08-21**, which was this phase's last 🔶.
+  Attachment used to be outbound only — a workload could dial the mesh and
+  nothing in the mesh could reach a service inside it, because SOCKS5 `CONNECT`
+  was the whole surface and `Userspace::listen_tcp` was reachable from no
+  configuration. A node now publishes overlay ports it chooses:
+
+  ```toml
+  [[node.userspace_publish]]
+  port = 8080
+  to = "127.0.0.1:80"
+  ```
+
+  ADR-0012 carries the decision and its alternatives; three things belong here.
+  **The inbound surface is a list somebody wrote** rather than whatever happens
+  to be listening on the host, which is what a transparent all-ports listener
+  would have made it. **The ACL is what protects it**, not a restriction on the
+  destination: an inbound packet reaches the published port only after
+  `Engine::deliver_to_host` has admitted it, which is the same check TUN mode
+  gets, so a peer no rule permits cannot reach a published port at all. And
+  **`network_mode = "userspace"` now requires either attachment rather than the
+  SOCKS listener specifically** — an inbound-only sidecar is a real deployment,
+  and making it open an outbound surface it does not want in order to start
+  would be making it widen itself.
+
+  `a_published_service_inside_userspace_mode_is_reachable_from_the_mesh` is the
+  row, and it publishes 19004 to 19005 so that a daemon which ignored the
+  mapping and forwarded to the arriving port fails it. The target address
+  exists on no interface anywhere, so a connection that arrives crossed the
+  tunnel by construction. Injection-verified three ways: never publishing,
+  ignoring the mapping, and never reclaiming the socket each fail it.
+
+  **And building it found FINDINGS.md 44, which was the outbound path's bug.**
+  Nothing ever removed a TCP socket from the userspace stack — `connect_tcp`
+  added one per SOCKS connection and `SocketSet::remove` appeared in exactly one
+  place in the tree, an error path. So a sidecar retained 128 KiB per finished
+  connection *and* polled every dead socket on every packet, which is a datapath
+  that gets slower in proportion to the number of connections the process has
+  ever handled. Two things kept it invisible: every conversation was correct, so
+  no correctness test could see it, and finding 41 had multiplied its size by 51
+  three days earlier as a side effect of being right about windows.
+
+  The fix is a graceful release with a five-second grace period, and a
+  **generation on every handle** — because making removal possible also makes
+  use-after-release possible, and smoltcp hands a freed index straight back out,
+  so a stale handle would not fail but would read another connection's bytes.
+  `karst status` now reports `userspace_sockets`, without which the property
+  would be back to being invisible, which is how it survived in the first place.
 - **Exit:** **every topology in the matrix where a direct path is physically
   possible reaches one**, and the rest fall back to the relay without loss with
   both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a

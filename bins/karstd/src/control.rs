@@ -648,6 +648,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         interface: file.node.interface.clone(),
         network_mode: file.node.network_mode,
         userspace_socks5_listen: file.node.userspace_socks5_listen,
+        userspace_publish: file.node.userspace_publish.clone(),
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),

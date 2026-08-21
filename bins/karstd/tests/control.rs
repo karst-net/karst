@@ -149,6 +149,7 @@ fn local(seed: u8) -> LocalSettings {
         interface: "karst0".to_owned(),
         network_mode: karstd::config::NetworkMode::Tun,
         userspace_socks5_listen: None,
+        userspace_publish: Vec::new(),
     }
 }
 

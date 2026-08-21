@@ -10,11 +10,21 @@ userspace mode when configured directly:
 [node]
 network_mode = "userspace"
 userspace_socks5_listen = "127.0.0.1:1080"
+
+[[node.userspace_publish]]
+port = 8080
+to = "127.0.0.1:80"
 ```
 
-That listener accepts TCP SOCKS5 `CONNECT` requests to literal overlay IP
-addresses; a workload uses it as its sidecar proxy. Operator injection of this
-configuration remains outstanding.
+Those are the two directions, and a userspace node needs at least one of them.
+The SOCKS5 listener accepts TCP `CONNECT` requests to literal overlay IP
+addresses — a workload uses it as its sidecar proxy — and it goes outwards
+only. A `[[node.userspace_publish]]` entry is the way in: peers that reach this
+node's overlay address on `port` are forwarded to `to`. Nothing is published
+unless it is written down, and who may reach a published port is still decided
+by the ACL, exactly as in TUN mode.
+
+Operator injection of this configuration remains outstanding.
 
 The resulting pod shares the host network namespace, is privileged, requests
 `NET_ADMIN`, and receives the host's `/dev/net/tun`. Those permissions are

@@ -9,9 +9,9 @@
 //! what lets userspace mode share cryptokey routing and filtering with TUN
 //! mode without making either policy depend on the host's privileges.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant as StdInstant};
 
@@ -65,13 +65,43 @@ const MAX_BATCH: usize = 64;
 /// against a resident set of ~6.6 MB, one connection is 2%.
 const SOCKET_BUFFER: usize = 64 * 1024;
 
+/// How long a retiring connection is given to finish closing.
+///
+/// [`Userspace::tcp_release`] is a graceful hand-back: the socket keeps being
+/// polled so an in-flight `FIN`/`ACK` exchange can complete, and only then is
+/// its memory reclaimed. Past this the far end is not answering, and continuing
+/// to hold 128 KiB of buffers for it is the wrong trade — so the connection is
+/// aborted, which sends a reset and lets the reaper take it on the next pass.
+///
+/// Five seconds because the path underneath may include a relay hop and a
+/// PHREATIC rekey; it is a bound on a pathological peer, not a timeout anything
+/// healthy will reach.
+const RETIRE_GRACE: Duration = Duration::from_secs(5);
+
 /// A handle to a TCP socket owned by [`Userspace`].
 ///
 /// It is intentionally opaque: socket state remains serialised with polling,
 /// so callers cannot accidentally mutate a socket while its packets are being
 /// constructed.
+///
+/// **The generation is what makes [`Userspace::tcp_release`] safe.** smoltcp
+/// identifies a socket by its index in the set, and a freed index is handed
+/// straight back out to the next socket — so a handle kept past its release
+/// would name a *different* connection, and would read or write somebody else's
+/// bytes. Every handle carries the generation it was issued in, every lookup
+/// checks it, and a stale one resolves to nothing at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TcpHandle(SocketHandle);
+pub struct TcpHandle {
+    socket: SocketHandle,
+    generation: u64,
+}
+
+/// A socket handed back by its owner, waiting to finish closing.
+#[derive(Debug, Clone, Copy)]
+struct Retiring {
+    socket: SocketHandle,
+    deadline: StdInstant,
+}
 
 #[derive(Debug, Default)]
 struct Queues {
@@ -145,6 +175,11 @@ struct Stack {
     interface: Interface,
     device: QueueDevice,
     sockets: SocketSet<'static>,
+    /// Which sockets are still owned by a caller, and in which generation.
+    live: HashMap<SocketHandle, u64>,
+    /// Handed back, not yet reclaimed. See [`Retiring`] and [`RETIRE_GRACE`].
+    retiring: Vec<Retiring>,
+    next_generation: u64,
     started: StdInstant,
     next_ephemeral_port: u16,
 }
@@ -159,6 +194,80 @@ impl Stack {
         let _ = self
             .interface
             .poll(now, &mut self.device, &mut self.sockets);
+        self.reap(StdInstant::now());
+    }
+
+    /// Add a socket and issue a handle for it.
+    fn insert(&mut self, socket: tcp::Socket<'static>) -> TcpHandle {
+        let handle = self.sockets.add(socket);
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
+        self.live.insert(handle, generation);
+        TcpHandle {
+            socket: handle,
+            generation,
+        }
+    }
+
+    /// Resolve a handle, or `None` if it has been released.
+    ///
+    /// Every accessor goes through this. smoltcp's own `get_mut` panics on a
+    /// handle it does not recognise, and this crate's discipline is that no
+    /// input reaches a panic — a released handle is a caller's bookkeeping
+    /// mistake, and it should surface as "this socket can do nothing" rather
+    /// than as a dead daemon.
+    fn socket(&mut self, handle: TcpHandle) -> Option<&mut tcp::Socket<'static>> {
+        if self.live.get(&handle.socket).copied() != Some(handle.generation) {
+            return None;
+        }
+        Some(self.sockets.get_mut::<tcp::Socket>(handle.socket))
+    }
+
+    /// Hand a socket back, to be reclaimed once it has finished closing.
+    fn retire(&mut self, handle: TcpHandle, now: StdInstant) {
+        if self.live.get(&handle.socket).copied() != Some(handle.generation) {
+            return;
+        }
+        self.retiring.push(Retiring {
+            socket: handle.socket,
+            deadline: now + RETIRE_GRACE,
+        });
+    }
+
+    /// Reclaim retired sockets that have finished, and abort the ones that will
+    /// not.
+    ///
+    /// **This is what stops the socket set growing without bound.** Every
+    /// connection the sidecar handles adds a socket with 128 KiB of buffers,
+    /// and until this existed nothing ever removed one: a daemon that had
+    /// served a thousand connections held a thousand sockets, polled all of
+    /// them on every packet, and had reclaimed none of the memory.
+    fn reap(&mut self, now: StdInstant) {
+        if self.retiring.is_empty() {
+            return;
+        }
+        let mut finished = Vec::new();
+        let mut expired = Vec::new();
+        for entry in &self.retiring {
+            let socket = self.sockets.get::<tcp::Socket>(entry.socket);
+            // `is_open` is false in CLOSED and TIME-WAIT. A listening socket has
+            // no connection to tear down, so it goes immediately — otherwise a
+            // daemon shutting down would wait out the grace period per port.
+            if !socket.is_open() || socket.is_listening() {
+                finished.push(entry.socket);
+            } else if now >= entry.deadline {
+                expired.push(entry.socket);
+            }
+        }
+        for handle in expired {
+            // Sends a reset on this poll; the next pass sees CLOSED and frees it.
+            self.sockets.get_mut::<tcp::Socket>(handle).abort();
+        }
+        for handle in finished {
+            self.retiring.retain(|e| e.socket != handle);
+            self.live.remove(&handle);
+            let _ = self.sockets.remove(handle);
+        }
     }
 }
 
@@ -205,6 +314,9 @@ impl Userspace {
                 interface,
                 device,
                 sockets: SocketSet::new(Vec::new()),
+                live: HashMap::new(),
+                retiring: Vec::new(),
+                next_generation: 0,
                 started: StdInstant::now(),
                 next_ephemeral_port: 49_152,
             })),
@@ -361,13 +473,18 @@ impl Userspace {
             .stack
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let handle = stack.sockets.add(socket);
-        if let Err(e) = stack.sockets.get_mut::<tcp::Socket>(handle).listen(port) {
-            let _ = stack.sockets.remove(handle);
+        let handle = stack.insert(socket);
+        if let Err(e) = stack
+            .sockets
+            .get_mut::<tcp::Socket>(handle.socket)
+            .listen(port)
+        {
+            stack.live.remove(&handle.socket);
+            let _ = stack.sockets.remove(handle.socket);
             return Err(TunError::Io(io::Error::other(e.to_string())));
         }
         stack.poll();
-        Ok(TcpHandle(handle))
+        Ok(handle)
     }
 
     /// Open a TCP connection over the userspace stack.
@@ -396,9 +513,94 @@ impl Userspace {
         ) {
             return Err(TunError::Io(io::Error::other(e.to_string())));
         }
-        let handle = stack.sockets.add(socket);
+        let handle = stack.insert(socket);
         stack.poll();
-        Ok(TcpHandle(handle))
+        Ok(handle)
+    }
+
+    /// Whether a socket has stopped merely listening — smoltcp's `accept`.
+    ///
+    /// A listening socket *becomes* the connection when one arrives, so there
+    /// is no separate accepted handle: this is the edge that says the handle
+    /// now names a conversation with a peer.
+    #[must_use]
+    pub fn tcp_is_active(&self, handle: TcpHandle) -> bool {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stack.poll();
+        stack.socket(handle).is_some_and(|s| s.is_active())
+    }
+
+    /// The overlay address at the other end of a connection.
+    ///
+    /// `None` for a socket that has none — one still listening, one already
+    /// released — because an inbound connection with no record of who made it
+    /// is not something an operator can act on.
+    #[must_use]
+    pub fn tcp_remote(&self, handle: TcpHandle) -> Option<SocketAddr> {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let endpoint = stack.socket(handle)?.remote_endpoint()?;
+        Some(SocketAddr::new(endpoint.addr.into(), endpoint.port))
+    }
+
+    /// Hand a socket back for the stack to reclaim.
+    ///
+    /// Graceful: the connection keeps being polled until it has finished
+    /// closing, so a `FIN` already in flight is not cut off. See
+    /// [`RETIRE_GRACE`] for what happens to one that never finishes.
+    ///
+    /// **Callers must release every handle they take.** Nothing else frees a
+    /// socket, and each holds two 64 KiB buffers and is polled with every
+    /// packet the daemon carries.
+    pub fn tcp_release(&self, handle: TcpHandle) {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stack.retire(handle, StdInstant::now());
+        stack.poll();
+    }
+
+    /// Refuse a connection now: reset it and reclaim it.
+    ///
+    /// The difference from [`Self::tcp_release`] is who the deadline is for. A
+    /// release is for a conversation that is over and can be given time to say
+    /// so; this is for one the daemon has decided not to have — where waiting
+    /// out the grace period would hold exactly the resource being refused.
+    pub fn tcp_abort(&self, handle: TcpHandle) {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(socket) = stack.socket(handle) {
+            socket.abort();
+        }
+        // Zero grace: the reset goes out on this poll and the reaper takes it
+        // on the next. Expressed as an already-past deadline rather than as a
+        // second code path, so an abort cannot drift from a release.
+        let now = StdInstant::now();
+        stack.retire(handle, now.checked_sub(RETIRE_GRACE).unwrap_or(now));
+        stack.poll();
+    }
+
+    /// How many TCP sockets this stack is holding.
+    ///
+    /// Exists to be asserted on: "the sidecar reclaims what it opens" is a
+    /// property no test of bytes can see, and FINDINGS.md 44 is what happens
+    /// when nothing checks it.
+    #[must_use]
+    pub fn socket_count(&self) -> usize {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stack.poll();
+        stack.live.len()
     }
 
     /// Whether a TCP socket has received bytes.
@@ -409,7 +611,7 @@ impl Userspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         stack.poll();
-        stack.sockets.get_mut::<tcp::Socket>(handle.0).can_recv()
+        stack.socket(handle).is_some_and(|s| s.can_recv())
     }
 
     /// Whether more bytes can still arrive on a TCP socket.
@@ -427,7 +629,7 @@ impl Userspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         stack.poll();
-        stack.sockets.get_mut::<tcp::Socket>(handle.0).may_recv()
+        stack.socket(handle).is_some_and(|s| s.may_recv())
     }
 
     /// Whether a TCP socket may accept more application bytes.
@@ -438,7 +640,7 @@ impl Userspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         stack.poll();
-        stack.sockets.get_mut::<tcp::Socket>(handle.0).can_send()
+        stack.socket(handle).is_some_and(|s| s.can_send())
     }
 
     /// Close a TCP socket's transmit half.
@@ -447,7 +649,9 @@ impl Userspace {
             .stack
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        stack.sockets.get_mut::<tcp::Socket>(handle.0).close();
+        if let Some(socket) = stack.socket(handle) {
+            socket.close();
+        }
         stack.poll();
     }
 
@@ -461,7 +665,9 @@ impl Userspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         stack.poll();
-        let socket = stack.sockets.get_mut::<tcp::Socket>(handle.0);
+        let Some(socket) = stack.socket(handle) else {
+            return Ok(0);
+        };
         socket
             .recv(|bytes| {
                 out.extend_from_slice(bytes);
@@ -480,8 +686,11 @@ impl Userspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let sent = stack
-            .sockets
-            .get_mut::<tcp::Socket>(handle.0)
+            .socket(handle)
+            // A released handle is not a socket that is merely full: reporting
+            // zero would spin a proxy loop forever on bytes that can never go
+            // anywhere.
+            .ok_or_else(|| TunError::Io(io::Error::other("TCP socket has been released")))?
             .send_slice(bytes)
             .map_err(|e| TunError::Io(io::Error::other(e.to_string())))?;
         stack.poll();
@@ -541,5 +750,192 @@ mod tests {
         );
         server.tcp_recv(listener, &mut received).expect("receive");
         assert_eq!(received, b"hello");
+    }
+
+    /// Move whatever either side has to say until neither has anything.
+    ///
+    /// `relay` blocks like a TUN read, which is right for a handshake whose
+    /// packets are all required. Teardown is not like that — how many segments
+    /// a close takes depends on what was in flight — so this drains instead.
+    fn settle(a: &Userspace, b: &Userspace) {
+        let mut packets = Vec::new();
+        for _ in 0..64 {
+            let mut moved = false;
+            for (from, to) in [(a, b), (b, a)] {
+                // Drained directly rather than through `recv_segments`, which
+                // blocks until there is something: at the end of a teardown
+                // there legitimately is not.
+                if let Ok(mut queue) = from.queues.outbound.lock() {
+                    packets.clear();
+                    while let Some(packet) = queue.pop_front() {
+                        packets.push(packet);
+                    }
+                }
+                for packet in &packets {
+                    to.send(packet).expect("packet accepted");
+                    moved = true;
+                }
+                // Polls, which is what gives each side its chance to answer and
+                // runs its reaper.
+                let _ = from.socket_count();
+            }
+            if !moved {
+                return;
+            }
+        }
+    }
+
+    /// Open, use and close a connection, and require the memory back.
+    ///
+    /// **FINDINGS.md 44.** Every connection the sidecar handled added a socket
+    /// with 128 KiB of buffers and nothing ever removed one, so a long-running
+    /// daemon grew without bound and polled every corpse on every packet. No
+    /// test of bytes could see it: the conversations were all correct.
+    #[test]
+    fn a_finished_connection_is_reclaimed() {
+        let client = endpoint("10.0.0.1");
+        let server = endpoint("10.0.0.2");
+        assert_eq!(client.socket_count(), 0, "a fresh stack holds no sockets");
+
+        for round in 0..8 {
+            let listener = server.listen_tcp(8080).expect("listen");
+            let connection = client
+                .connect_tcp("10.0.0.2".parse().expect("address"), 8080)
+                .expect("connect");
+            relay(&client, &server);
+            relay(&server, &client);
+            relay(&client, &server);
+            client.tcp_send(connection, b"hello").expect("send");
+            settle(&client, &server);
+
+            client.tcp_close(connection);
+            server.tcp_close(listener);
+            settle(&client, &server);
+            client.tcp_release(connection);
+            server.tcp_release(listener);
+            settle(&client, &server);
+
+            assert_eq!(
+                (client.socket_count(), server.socket_count()),
+                (0, 0),
+                "round {round} left a socket behind"
+            );
+        }
+    }
+
+    /// A listening socket becomes the connection, and knows who made it.
+    #[test]
+    fn a_listener_reports_when_a_peer_has_taken_it_up() {
+        let client = endpoint("10.0.0.1");
+        let server = endpoint("10.0.0.2");
+        let listener = server.listen_tcp(8080).expect("listen");
+        assert!(
+            !server.tcp_is_active(listener),
+            "an untouched listener is not a connection"
+        );
+        assert_eq!(
+            server.tcp_remote(listener),
+            None,
+            "an untouched listener has no peer"
+        );
+
+        let connection = client
+            .connect_tcp("10.0.0.2".parse().expect("address"), 8080)
+            .expect("connect");
+        relay(&client, &server);
+        assert!(
+            server.tcp_is_active(listener),
+            "the listener did not report the arriving connection"
+        );
+        let remote = server.tcp_remote(listener).expect("the peer's address");
+        assert_eq!(
+            remote.ip(),
+            "10.0.0.1".parse::<IpAddr>().expect("address"),
+            "the connection is attributed to the wrong overlay address"
+        );
+        client.tcp_release(connection);
+        server.tcp_release(listener);
+    }
+
+    /// A released handle addresses nothing, including the socket that reuses
+    /// its slot.
+    ///
+    /// smoltcp hands a freed index straight back out, so without the generation
+    /// check a handle kept one line too long would read and write a stranger's
+    /// connection.
+    #[test]
+    fn a_released_handle_cannot_reach_the_socket_that_replaces_it() {
+        let client = endpoint("10.0.0.1");
+        let server = endpoint("10.0.0.2");
+        let first = server.listen_tcp(8080).expect("listen");
+        server.tcp_release(first);
+        assert_eq!(server.socket_count(), 0, "the listener was not reclaimed");
+
+        let second = server.listen_tcp(8081).expect("listen again");
+        let connection = client
+            .connect_tcp("10.0.0.2".parse().expect("address"), 8081)
+            .expect("connect");
+        relay(&client, &server);
+        relay(&server, &client);
+        relay(&client, &server);
+        client.tcp_send(connection, b"private").expect("send");
+        settle(&client, &server);
+
+        // Everything the stale handle can be asked, asked. None of it may
+        // reach `second`, and none of it may panic.
+        assert!(!server.tcp_can_recv(first), "a stale handle read a socket");
+        assert!(!server.tcp_may_recv(first));
+        assert!(!server.tcp_can_send(first));
+        assert!(!server.tcp_is_active(first));
+        assert_eq!(server.tcp_remote(first), None);
+        let mut stolen = Vec::new();
+        assert_eq!(
+            server.tcp_recv(first, &mut stolen).expect("no panic"),
+            0,
+            "a stale handle received another connection's bytes"
+        );
+        assert!(stolen.is_empty(), "a stale handle copied out {stolen:?}");
+        assert!(
+            server.tcp_send(first, b"forged").is_err(),
+            "a stale handle wrote into another connection"
+        );
+        server.tcp_close(first);
+
+        // …and the real connection is untouched by all of it.
+        assert!(
+            server.tcp_can_recv(second),
+            "the live connection was disturbed by use of a stale handle"
+        );
+        let mut received = Vec::new();
+        server.tcp_recv(second, &mut received).expect("receive");
+        assert_eq!(received, b"private");
+    }
+
+    /// A refused connection is reset rather than left to time out.
+    #[test]
+    fn an_aborted_connection_is_reset_and_reclaimed_at_once() {
+        let client = endpoint("10.0.0.1");
+        let server = endpoint("10.0.0.2");
+        let listener = server.listen_tcp(8080).expect("listen");
+        let connection = client
+            .connect_tcp("10.0.0.2".parse().expect("address"), 8080)
+            .expect("connect");
+        relay(&client, &server);
+        relay(&server, &client);
+        relay(&client, &server);
+        assert!(client.tcp_can_send(connection), "not established");
+
+        server.tcp_abort(listener);
+        settle(&client, &server);
+        assert_eq!(
+            server.socket_count(),
+            0,
+            "an aborted connection was not reclaimed"
+        );
+        assert!(
+            !client.tcp_may_recv(connection),
+            "the client was not told the connection had gone"
+        );
+        client.tcp_release(connection);
     }
 }
