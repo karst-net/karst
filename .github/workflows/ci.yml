@@ -140,6 +140,126 @@ jobs:
         timeout-minutes: 10
         run: sudo "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
 
+  # PLAN.md §6's exit criterion is measured here and nowhere else.
+  #
+  # The `tun` job above validates the *instrument* — that each NAT flavour
+  # behaves the way its label says, with no Karst code involved. This runs the
+  # product through it: a Go coordination server, a relay, and two daemons with
+  # real TUN devices in separate namespaces, from first enrolment to a TCP
+  # conversation under a port-scoped ACL, across every topology in the matrix.
+  # Until now it ran only when somebody remembered to, which for the suite that
+  # measures an exit criterion is the wrong arrangement.
+  #
+  # Separate from `tun` so the two run in parallel and a failure names which
+  # layer broke: the instrument, or the thing being measured.
+  #
+  # It also carries the two remaining privileged suites, which need root and
+  # `miniupnpd` and nothing else this job does not already have: ADR-0012's
+  # userspace gate and the port-mapping codec check. Between the three jobs,
+  # every `#[ignore]`d suite in the tree now runs without being asked.
+  aquifer:
+    name: End-to-end topologies (privileged)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The fixture builds and runs the coordination server itself, as root —
+      # so `go` has to be on root's PATH, which is what the `sudo env PATH`
+      # below is for.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # `miniupnpd` serves PCP for the two rows that turn on an explicit port
+      # mapping. Masked first: the package's post-install starts the service,
+      # which has nothing sensible to bind to on a runner and would fail the
+      # step for a reason unrelated to what is being installed.
+      #
+      # Failure here is deliberately not fatal, because the suite itself refuses
+      # to skip (`KARST_REQUIRE_PREREQUISITES`) and names exactly what is
+      # missing. An opaque apt failure is a worse diagnostic than a test that
+      # says `missing: ["miniupnpd"]`.
+      - name: Port-mapping daemon for the mapped rows
+        run: |
+          sudo systemctl mask miniupnpd || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            miniupnpd nftables || true
+          # Both install into /usr/sbin, and every run below is
+          # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
+          # `secure_path`. Without the sbin directories on it the suites would
+          # report tools missing that are in fact installed — the one
+          # diagnostic worse than no diagnostic.
+          printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
+      - name: What the runner actually has
+        run: |
+          for t in ip nft go miniupnpd; do
+            printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+      - name: Build the privileged test binaries
+        run: |
+          cargo build --workspace
+          # The gateway suite drives this as a helper inside the client
+          # namespace; `cargo build` alone does not build examples.
+          cargo build -p karst-portmap --example pmprobe
+          find_bin() {
+            cargo test -p "$1" --test "$2" --no-run --message-format=json \
+              | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
+          }
+          aquifer=$(find_bin karstd aquifer)
+          userspace=$(find_bin karstd userspace)
+          gateway=$(find_bin karst-portmap gateway)
+          for b in "$aquifer" "$userspace" "$gateway"; do
+            [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
+          done
+          echo "AQUIFER_TEST_BIN=$aquifer" >> "$GITHUB_ENV"
+          echo "USERSPACE_TEST_BIN=$userspace" >> "$GITHUB_ENV"
+          echo "GATEWAY_TEST_BIN=$gateway" >> "$GITHUB_ENV"
+      # ADR-0012's release gate. Fast, and it shares this job's root because it
+      # needs a TUN device for the *peer* — the node under test runs with an
+      # empty capability bounding set and reads /proc back to prove it.
+      #
+      # Run before the aquifer so a broken privilege drop is reported in seconds
+      # rather than after the long suite.
+      - name: Userspace mode without CAP_NET_ADMIN
+        timeout-minutes: 5
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$USERSPACE_TEST_BIN" --ignored --test-threads=1
+      # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
+      # not write. Rows 8b and 9 of the matrix below rest on these bytes being
+      # right, and every other test in `karst-portmap` checks the encoder
+      # against the decoder — which passes just as happily when both halves
+      # share a misreading. Four seconds, and it needs exactly the root and the
+      # `miniupnpd` this job already has, which is why it lives here rather than
+      # in a job of its own.
+      - name: Port-mapping codecs against a third-party gateway
+        timeout-minutes: 5
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$GATEWAY_TEST_BIN" --ignored --test-threads=1
+      # Fixed namespace, interface and port names throughout, so one at a time.
+      #
+      # `KARST_REQUIRE_PREREQUISITES=1` is the part that matters: without it a
+      # runner image that stopped shipping `miniupnpd` would turn this suite
+      # into a no-op that reports success, which is precisely the failure the
+      # matrix exists to prevent one layer down.
+      - name: Every topology in the matrix
+        timeout-minutes: 35
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$AQUIFER_TEST_BIN" --ignored --test-threads=1 --nocapture
+
   # Licence allowlist — a GPL dependency reaching the MIT/Apache crates would
   # break both App Store and kernel-datapath viability (ADR-0003, ADR-0007).
   deny:

@@ -61,7 +61,14 @@ const CLIENT: &str = "10.96.1.2";
 /// The port a node would actually be mapping.
 const DATA_PORT: u16 = 51820;
 
-fn have_prerequisites() -> bool {
+/// Everything this fixture needs and does not have.
+///
+/// `miniupnpd` is the one that matters. It *is* the independent implementation
+/// this file exists to check the codec against, so a run without it is not a
+/// weaker version of this test — it is a different test, and one already
+/// covered by the round-trip units. `nft` earns its place beside it because
+/// miniupnpd's nftables backend writes into chains created here.
+fn missing_prerequisites() -> Vec<&'static str> {
     let root = std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|s| {
@@ -74,10 +81,46 @@ fn have_prerequisites() -> bool {
         })
         .unwrap_or(1)
         == 0;
-    root && Command::new("miniupnpd")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success() || !o.stdout.is_empty())
+    let mut missing = Vec::new();
+    if !root {
+        missing.push("root");
+    }
+    // Probes chosen so they need no privilege: this reports what is
+    // *installed*, not what this process may do with it.
+    for (tool, probe) in [
+        ("ip", "-Version"),
+        ("nft", "--version"),
+        ("miniupnpd", "-h"),
+    ] {
+        // Usage output usually exits non-zero, so the test is whether the
+        // program ran at all.
+        if Command::new(tool).arg(probe).output().is_err() {
+            missing.push(tool);
+        }
+    }
+    missing
+}
+
+/// Whether to run, **and a refusal to be quietly green**.
+///
+/// Skipping is for a developer without the tooling. In CI it must fail
+/// instead: this suite is the only place the NAT-PMP and PCP codecs meet an
+/// implementation we did not write, so a runner image that stopped shipping
+/// `miniupnpd` would leave the codecs agreeing with themselves and CI
+/// reporting success. `KARST_REQUIRE_PREREQUISITES=1`, which CI sets, turns
+/// that skip into a failure naming what is missing.
+fn have_prerequisites() -> bool {
+    let missing = missing_prerequisites();
+    if missing.is_empty() {
+        return true;
+    }
+    assert!(
+        std::env::var_os("KARST_REQUIRE_PREREQUISITES").is_none(),
+        "KARST_REQUIRE_PREREQUISITES is set, so skipping is not allowed — \
+         missing: {missing:?}"
+    );
+    eprintln!("skipping: missing {missing:?}");
+    false
 }
 
 fn sh(args: &[&str]) -> bool {
@@ -287,7 +330,6 @@ fn exchange(request: &[u8]) -> Option<Vec<u8>> {
 #[ignore = "needs root, network namespaces and miniupnpd"]
 fn natpmp_reports_the_external_address_the_gateway_actually_has() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and miniupnpd");
         return;
     }
     let _gw = start();
@@ -308,7 +350,6 @@ fn natpmp_reports_the_external_address_the_gateway_actually_has() {
 #[ignore = "needs root, network namespaces and miniupnpd"]
 fn natpmp_installs_a_mapping_a_third_party_gateway_agrees_with() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and miniupnpd");
         return;
     }
     let _gw = start();
@@ -357,7 +398,6 @@ fn natpmp_installs_a_mapping_a_third_party_gateway_agrees_with() {
 #[ignore = "needs root, network namespaces and miniupnpd"]
 fn pcp_installs_a_mapping_and_names_the_external_address_in_one_exchange() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and miniupnpd");
         return;
     }
     let _gw = start();
@@ -393,7 +433,6 @@ fn pcp_installs_a_mapping_and_names_the_external_address_in_one_exchange() {
 #[ignore = "needs root, network namespaces and miniupnpd"]
 fn a_pcp_response_carries_back_the_nonce_that_was_sent() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and miniupnpd");
         return;
     }
     let _gw = start();

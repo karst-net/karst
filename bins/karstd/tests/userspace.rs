@@ -94,13 +94,39 @@ fn effective_uid() -> u32 {
         .unwrap_or(1)
 }
 
+/// Whether to run, **and a refusal to be quietly green**.
+///
+/// `setpriv` is the one that matters. Without it this file cannot drop the
+/// privilege, and a version of `have_prerequisites` that merely skipped would
+/// let ADR-0012's gate report success by not running — for a claim whose whole
+/// content is "this ran without the capability".
+/// `KARST_REQUIRE_PREREQUISITES=1`, which CI sets, turns that skip into a
+/// failure.
 fn have_prerequisites() -> bool {
-    effective_uid() == 0
-        && Path::new("/dev/net/tun").exists()
-        && Command::new("setpriv")
-            .arg("--help")
-            .output()
-            .is_ok_and(|o| o.status.success())
+    let mut missing = Vec::new();
+    if effective_uid() != 0 {
+        missing.push("root");
+    }
+    if !Path::new("/dev/net/tun").exists() {
+        missing.push("/dev/net/tun");
+    }
+    if !Command::new("setpriv")
+        .arg("--help")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        missing.push("setpriv");
+    }
+    if missing.is_empty() {
+        return true;
+    }
+    assert!(
+        std::env::var_os("KARST_REQUIRE_PREREQUISITES").is_none(),
+        "KARST_REQUIRE_PREREQUISITES is set, so skipping is not allowed — \
+         missing: {missing:?}"
+    );
+    eprintln!("skipping: missing {missing:?}");
+    false
 }
 
 // ── keys ────────────────────────────────────────────────────────────────────
@@ -554,7 +580,6 @@ fn assert_carried_the_payload(node: &Node) {
 #[ignore = "needs root to give the peer a TUN device"]
 fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root, /dev/net/tun and setpriv");
         return;
     }
 
@@ -652,7 +677,6 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
 #[ignore = "needs root"]
 fn a_tun_is_impossible_for_the_process_under_test() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root, /dev/net/tun and setpriv");
         return;
     }
 

@@ -2252,11 +2252,13 @@ onwards, anchored on the week of 2026-08-10.
   peers, so the receiving half is done, but nothing dials a configured peer
   yet), Prometheus metrics, `Restarting` on graceful shutdown, and roster
   reload without a restart — which §13.2 makes the consequential one.
-- 🔶 **§9.1 home-relay selection.** `bins/karstd/src/home.rs`, sans-io. A node
+- ✅ **§9.1 home-relay selection.** `bins/karstd/src/home.rs`, sans-io. A node
   used to hold `config.relays.first()`, which is a choice made by the server's
   iteration order rather than by the network. It now measures, chooses, moves,
-  publishes, and uses what its peers publish — every part of §9.1 except an
-  end-to-end test of two nodes on two relays.
+  publishes, and uses what its peers publish — and
+  `two_nodes_on_two_relays_reach_each_other` is the end-to-end row that closes
+  it, which was the last piece outstanding and which found four defects on the
+  way (FINDINGS.md 29–32).
 
   **The hysteresis is AVEN's, and reusing it caught a bug.** §9.2 recommends
   "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
@@ -3305,11 +3307,39 @@ onwards, anchored on the week of 2026-08-10.
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
   excuse.
-- 🔶 **Full NAT test matrix in CI (§6) — ten `karstd` topologies run end to
-  end, seven reach a direct path, and the instrument beneath them is now twelve
+- ✅ **Full NAT test matrix in CI (§6) — eleven `karstd` topologies run end to
+  end, eight reach a direct path, and the instrument beneath them is twelve
   rows.** The instrument is complete: NAT64/DNS64 landed
   2026-08-19, built from `tayga` plus an ordinary masquerade rather than an
   out-of-tree kernel module (finding 27).
+
+  ✅ **And it is actually in CI as of 2026-08-20**, which this bullet claimed in
+  its title for some time while the suite ran only when somebody remembered to.
+  `.github/workflows/ci.yml`'s `aquifer` job runs every topology plus ADR-0012's
+  userspace gate, in parallel with the instrument job so a failure names which
+  layer broke — the measuring device or the thing measured.
+
+  **And the same question was then asked of every other `#[ignore]`d suite**,
+  by listing them and matching each against the job that runs it. One had no
+  job: `karst-portmap`'s `gateway`, which drives the NAT-PMP and PCP codecs
+  against `miniupnpd` — an implementation we did not write, and the only check
+  that either codec agrees with anything but itself. Rows 8b and 9 rest on
+  those bytes. It runs in the `aquifer` job too, where the root and the
+  `miniupnpd` it needs already exist, and it costs four seconds. **Every
+  privileged suite in the tree now has a CI home**: `device`, `two_nodes` and
+  `nat_matrix` in `tun`; `control` and `interop` in `vectors`; `aquifer`,
+  `userspace` and `gateway` here.
+
+  **The suites now refuse to be quietly green.** They used to skip when their
+  prerequisites were absent, which for a privileged suite in CI is the worst
+  possible behaviour: a runner image that stopped shipping `miniupnpd` would
+  have turned the two mapped rows into a no-op and reported success.
+  `KARST_REQUIRE_PREREQUISITES=1`, which CI sets, turns that skip into a failure
+  naming exactly what is missing. The detection probes are the unprivileged ones
+  (`nft --version`, not `nft list ruleset`) so the message says what is *not
+  installed* rather than what this process may not do — a check that sends
+  someone to install a package they already have is a check that trains people
+  to ignore it.
 
   Three instrument rows added 2026-08-19:
 
@@ -3756,7 +3786,7 @@ onwards, anchored on the week of 2026-08-10.
   credential refresh; control-server ephemeral credential minting; coturn added
   to the NAT matrix.
 
-  It arrives here with the base case already covered — ten `karstd` topologies
+  It arrives here with the base case already covered — eleven `karstd` topologies
   show the co-located relay path automatic and lossless — so what TURN buys is
   interoperability with third-party infrastructure (ADR-0008), not connectivity.
   Scoped accordingly: it is a compatibility feature in this phase rather than a

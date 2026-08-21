@@ -98,16 +98,57 @@ fn effective_uid() -> u32 {
         .unwrap_or(1)
 }
 
+/// Everything this fixture needs and does not have.
+///
+/// `miniupnpd` and `nft` are named because two rows are silently *wrong*
+/// without them rather than merely absent: rows 8b and 9 turn on a port mapping
+/// being served, and a fixture that cannot serve one would report the product
+/// failing to reach a path that is in fact unreachable in that fixture. Finding
+/// 23 is what an instrument that lies about its own shape costs.
+fn missing_prerequisites() -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if effective_uid() != 0 {
+        missing.push("root");
+    }
+    // **Probes that need no privilege**, so this reports what is *installed*
+    // rather than what this process may do. `nft list ruleset` would fail as an
+    // ordinary user and name `nft` as missing when it is present — a message
+    // that sends someone to install a package they already have.
+    for (tool, probe) in [
+        ("ip", "-Version"),
+        ("nft", "--version"),
+        ("go", "version"),
+        ("miniupnpd", "--help"),
+    ] {
+        // `miniupnpd --help` exits non-zero, as usage output usually does, so
+        // the test is whether the program ran at all.
+        if Command::new(tool).arg(probe).output().is_err() {
+            missing.push(tool);
+        }
+    }
+    missing
+}
+
+/// Whether to run, **and a refusal to be quietly green**.
+///
+/// Skipping is for a developer without the tooling. In CI it must fail instead:
+/// a privileged suite that skips itself is a suite that passes while testing
+/// nothing, which is the exact failure mode `ci.yml`'s TUN job comments warn
+/// about one layer down. `KARST_REQUIRE_PREREQUISITES=1` is how CI says "these
+/// are supposed to be here" — so a runner image that stops shipping `miniupnpd`
+/// turns the matrix red instead of turning it into a no-op.
 fn have_prerequisites() -> bool {
-    effective_uid() == 0
-        && Command::new("ip")
-            .args(["netns", "list"])
-            .output()
-            .is_ok_and(|o| o.status.success())
-        && Command::new("go")
-            .arg("version")
-            .output()
-            .is_ok_and(|o| o.status.success())
+    let missing = missing_prerequisites();
+    if missing.is_empty() {
+        return true;
+    }
+    assert!(
+        std::env::var_os("KARST_REQUIRE_PREREQUISITES").is_none(),
+        "KARST_REQUIRE_PREREQUISITES is set, so skipping is not allowed — \
+         missing: {missing:?}"
+    );
+    eprintln!("skipping: missing {missing:?}");
+    false
 }
 
 fn sh(args: &[&str]) -> bool {
@@ -1699,7 +1740,6 @@ fn two_nodes_on_one_home_network_go_direct_over_the_lan() {
 
 fn run(shape: Shape) {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and a Go toolchain");
         return;
     }
     let mut net = Aquifer {
@@ -2017,7 +2057,6 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
 #[ignore = "needs root, network namespaces and a Go toolchain"]
 fn two_nodes_on_two_relays_reach_each_other() {
     if !have_prerequisites() {
-        eprintln!("skipping: needs root and a Go toolchain");
         return;
     }
     let mut net = Aquifer {

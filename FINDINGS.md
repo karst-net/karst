@@ -11,10 +11,11 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added twenty-six more, and all of those are closed — most found by
+followed it added twenty-seven more, and all of those are closed — most found by
 building the thing the finding above them asked for, several found by counting
-what the test matrix did *not* cover, and the last three found by writing a
-release gate for a feature nobody had ever run.
+what the test matrix did *not* cover, three found by writing a release gate for
+a feature nobody had ever run, and the last found by asking which of those
+suites CI actually runs.
 
 **No findings remain open.** Finding 28 was resolved by *not adopting* the technique it was about: §7.7's port search is specified, measured and conceded to the relay. Finding 27 was a decision rather than a defect and
 was taken on 2026-08-19: the NAT64 row is built from `tayga` plus an ordinary
@@ -60,8 +61,45 @@ carries both the new wording and the original, struck through.
 | 33 | High | A forgeable `HandshakeInit` tore down a working session — §12.6 | Fixed 2026-08-20 |
 | 34 | High | A simultaneous open left both ends `established` and unable to decrypt | Fixed 2026-08-20 |
 | 35 | Low | Userspace mode reported a host interface it had never created | Fixed 2026-08-20 |
+| 36 | Operational | Three privileged suites could report success by not running | Fixed 2026-08-20 |
 
 ## Closed
+
+### 36. Operational: three privileged suites could report success by not running
+
+**Found 2026-08-20** by listing every `#[ignore]`d suite in the tree and
+matching each against the CI job that runs it. Fixed the same day.
+
+Three had no job at all — `bins/karstd/tests/aquifer.rs`, which is where
+PLAN.md §6's ≥90% direct-connection criterion is measured;
+`bins/karstd/tests/userspace.rs`, which is ADR-0012's release gate; and
+`crates/karst-portmap/tests/gateway.rs`, which is the only place the NAT-PMP
+and PCP codecs meet an implementation we did not write. `just test-privileged`
+ran all three, so the coverage existed; what did not exist was anything that
+ran it without being asked. The §6 bullet in PLAN.md had said "in CI" for some
+time, which is how this survived: the claim was in the title of the thing it
+was untrue of.
+
+**The second half is the one worth recording.** All three *skipped* when their
+prerequisites were absent, and a skip is reported as a pass. Dropping them into
+CI as they stood would have created the failure mode the NAT matrix exists to
+prevent one layer down: a runner image that stopped shipping `miniupnpd` would
+have turned rows 8b and 9 into a no-op, the gateway suite into nothing at all,
+and the job green. A suite that measures an exit criterion must not be able to
+report success by not running.
+
+`KARST_REQUIRE_PREREQUISITES=1`, which CI sets and a developer does not, turns
+the skip into a failure naming exactly what is missing. Locally the skip
+survives, because a developer without `miniupnpd` is the case it was written
+for.
+
+The detection probes are deliberately the **unprivileged** ones — `nft
+--version`, not `nft list ruleset` — so the message says what is *not
+installed* rather than what this process may not do. A check that sends someone
+to install a package they already have is a check that trains people to ignore
+it. For the same reason the job puts `/usr/sbin` on `PATH` explicitly: `nft`
+and `miniupnpd` live there, every run is `sudo env "PATH=$PATH"`, and a runner
+PATH without it would produce a red build naming tools that are present.
 
 ### 34. High: a simultaneous open left both ends `established` and unable to decrypt
 
@@ -1407,3 +1445,38 @@ The second guards the row's premise rather than its result. Row 8b is worth
 having only if the mapping is on the **home router** and not on the carrier
 equipment the CGNAT subscriber cannot ask for anything; an assertion that A got
 no mapping is what keeps it that row.
+
+### Validation, 2026-08-20 — the privileged suites in CI
+
+`cargo fmt --all --check`, workspace clippy, and **874 Rust tests in 55
+suites**: clean. The change is to CI and to three test files, so the evidence
+that matters is that each suite passes under **the exact command line CI
+uses** — `sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" <bin>
+--ignored --test-threads=1` — rather than under `just`:
+
+| Suite | Result |
+|---|---|
+| `karstd` userspace (ADR-0012's gate) | 2 passing, 2.5 s |
+| `karst-portmap` gateway | 4 passing, 3.4 s |
+| `karstd` aquifer | **12 passing, 507 s** |
+
+The aquifer figure is the same 507 s as the row-8b pass, which is the point of
+quoting it: running it the CI way changed nothing about what it measures.
+
+The refusal to skip is checked in both directions, on all three suites, because
+a gate that cannot be observed failing is a gate nobody has tested:
+
+| Condition | Required behaviour | Observed |
+|---|---|---|
+| `KARST_REQUIRE_PREREQUISITES=1`, non-root | fail | `missing: ["root"]` |
+| `KARST_REQUIRE_PREREQUISITES=1`, root, `PATH` without `/usr/sbin` | fail | `missing: ["nft", "miniupnpd"]` |
+| unset, non-root | skip, pass | skipped |
+| set, everything present | run | passed |
+
+The second row is the load-bearing one: it is the runner-image regression the
+whole change exists to catch, and it names the two tools rather than reporting
+success. It also demonstrates why the job adds `/usr/sbin` to `PATH` itself —
+that row is what a GitHub runner would produce if it did not.
+
+The workflow file was parsed rather than eyeballed, and the `aquifer` job's
+steps enumerated from the parse, since a YAML error here fails only on push.
