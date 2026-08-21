@@ -52,6 +52,41 @@ pub const MAX_HANDSHAKE_DATAGRAM: usize = karst_proto::consts::HANDSHAKE_DATAGRA
 /// representation and cannot collide.
 pub type SourceKey = [u8; 18];
 
+/// Put a received source address into the one form the rest of Karst uses.
+///
+/// **A dual-stack socket does not report both families the same way.**
+/// `node.listen` decides the datapath's address family — §4 gives it one shared
+/// socket — and an `AF_INET` socket cannot send to an IPv6 address at all, so
+/// `[::]` is the only configuration that can use an IPv6 path. On that socket
+/// an IPv4 peer's datagrams arrive from `[::ffff:a.b.c.d]`, and Rust's
+/// `SocketAddr` does not know that is the same place as `a.b.c.d`:
+/// `SocketAddr::V4(x) == SocketAddr::V6(mapped)` is false, always.
+///
+/// Everything above this layer compares addresses for equality — the engine
+/// attributes a datagram to a peer that way, AVEN hands the source straight
+/// back as `Pong.observed`, and `karst status` prints it. Normalising here
+/// rather than at each of those means there is one representation of an
+/// address in the daemon, and it is the one every other node can reach: a
+/// v4-mapped address advertised as a candidate is one that no IPv4-only peer
+/// can send to (FINDINGS.md 45).
+///
+/// [`source_key`] maps the other way, and deliberately: a *reassembly* key
+/// wants both families in one width, and it is not an address anything sends
+/// to.
+#[must_use]
+pub fn canonical(addr: SocketAddr) -> SocketAddr {
+    match addr.ip() {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            // `to_ipv4_mapped`, not `to_ipv4`: the latter also unwraps the
+            // deprecated IPv4-compatible form (`::a.b.c.d`), which is a
+            // different and long-obsolete encoding that no socket produces.
+            Some(v4) => SocketAddr::new(IpAddr::V4(v4), addr.port()),
+            None => addr,
+        },
+        IpAddr::V4(_) => addr,
+    }
+}
+
 /// Encode a socket address as a [`SourceKey`].
 #[must_use]
 pub fn source_key(addr: SocketAddr) -> SourceKey {
@@ -144,7 +179,8 @@ impl UdpTransport {
     /// # Errors
     /// Any `recv` failure, including a timeout as `WouldBlock` or `TimedOut`.
     pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        self.socket.recv_from(buf)
+        let (n, from) = self.socket.recv_from(buf)?;
+        Ok((n, canonical(from)))
     }
 
     /// Send several datagrams in **one syscall** — `sendmmsg(2)`.
@@ -294,6 +330,90 @@ mod tests {
         assert_ne!(v4, v6);
         // The IPv4-mapped prefix is what makes the two families comparable.
         assert_eq!(v4.get(10..12), Some(&[0xFF, 0xFF][..]));
+    }
+
+    /// **The kernel's behaviour, not a belief about it.**
+    ///
+    /// Everything `canonical` exists for rests on one claim: that a dual-stack
+    /// socket reports an IPv4 peer as `[::ffff:a.b.c.d]`. That is a property of
+    /// the operating system, so it is checked against a real socket pair rather
+    /// than asserted — and the first assertion here is the claim itself, so a
+    /// platform on which it were false would say so rather than leave the
+    /// normalisation looking like superstition.
+    #[test]
+    fn a_dual_stack_socket_reports_an_ipv4_peer_at_its_ipv4_address() {
+        let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
+            // A host with IPv6 disabled outright. Nothing to say here.
+            return;
+        };
+        dual.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let port = dual.local_addr().unwrap().port();
+        let v4 = UdpTransport::bind(loopback()).unwrap();
+        let to = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        // An `AF_INET` socket sending to a dual-stack one: the ordinary case of
+        // an IPv4 node in a mesh whose peer is dual-stack.
+        if v4.send_to(b"from-v4", to).is_err() {
+            return; // No v4 mapping on this host either.
+        }
+
+        let mut buf = [0u8; MAX_DATAGRAM];
+        let (n, from) = dual.recv_from(&mut buf).unwrap();
+        assert_eq!(buf.get(..n), Some(&b"from-v4"[..]));
+        assert_eq!(
+            from,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, v4.local_addr().unwrap().port())),
+            "a dual-stack socket reported an IPv4 peer as {from}, which no \
+             IPv4-only node can send to"
+        );
+        assert!(
+            from.is_ipv4(),
+            "the source is still an IPv6 address, so it will not compare equal \
+             to the IPv4 endpoint a netmap carries"
+        );
+    }
+
+    /// The batched receive path is a separate syscall and a separate decoder,
+    /// so it gets the same requirement rather than inheriting it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_batched_path_canonicalises_the_same_way() {
+        let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
+            return;
+        };
+        dual.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let port = dual.local_addr().unwrap().port();
+        let v4 = UdpTransport::bind(loopback()).unwrap();
+        if v4
+            .send_to(b"batched", SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+            .is_err()
+        {
+            return;
+        }
+
+        let mut buffers = vec![[0u8; MAX_DATAGRAM]; 4];
+        let mut out = Vec::new();
+        let count = dual.recv_batch(&mut buffers, &mut out).unwrap();
+        assert_eq!(count, 1);
+        let received = out.first().expect("one datagram");
+        assert!(
+            received.from.is_ipv4(),
+            "recvmmsg reported {} — the two receive paths disagree about the \
+             same address",
+            received.from
+        );
+    }
+
+    /// A genuine IPv6 peer is left alone: only the mapped form is rewritten.
+    #[test]
+    fn a_real_ipv6_address_is_not_touched() {
+        let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 4242));
+        assert_eq!(canonical(v6), v6);
+        let v4 = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 4242));
+        assert_eq!(canonical(v4), v4, "an IPv4 address is already canonical");
+        // The deprecated IPv4-*compatible* form is not a mapped address and is
+        // not produced by any socket; unwrapping it would invent a peer.
+        let compat: SocketAddr = "[::192.0.2.1]:4242".parse().unwrap();
+        assert_eq!(canonical(compat), compat);
     }
 
     #[test]

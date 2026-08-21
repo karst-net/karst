@@ -162,12 +162,16 @@ fn from_sockaddr(storage: &libc::sockaddr_storage) -> Option<SocketAddr> {
                     mem::size_of::<libc::sockaddr_in6>(),
                 );
             }
-            Some(SocketAddr::V6(SocketAddrV6::new(
+            // Canonicalised here as well as in `recv_from`, because these are
+            // two independent receive paths into the same daemon and an address
+            // that took the batched one must not be a different value from the
+            // same address that took the other.
+            Some(crate::canonical(SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::from(sin6.sin6_addr.s6_addr),
                 u16::from_be(sin6.sin6_port),
                 sin6.sin6_flowinfo,
                 sin6.sin6_scope_id,
-            )))
+            ))))
         }
         _ => None,
     }

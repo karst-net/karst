@@ -89,7 +89,24 @@ impl Endpoint {
                 let octets = v4.first_chunk::<4>().ok_or(Error::Malformed)?;
                 IpAddr::V4(Ipv4Addr::from(*octets))
             }
-            0x06 => IpAddr::V6(Ipv6Addr::from(*addr)),
+            0x06 => {
+                let v6 = Ipv6Addr::from(*addr);
+                // **The same rule as the padding above, for the same reason.**
+                // `::ffff:a.b.c.d` is an IPv4 address written as an IPv6 one,
+                // so accepting it here would give every IPv4 address two
+                // spellings on the wire — and the two are not interchangeable
+                // to the node that receives them. A node whose datapath socket
+                // is `AF_INET` cannot send to an IPv6 address at all; the
+                // kernel refuses with `EAFNOSUPPORT` and the datagram is
+                // dropped, so a peer advertising the mapped form would be
+                // unreachable by exactly the nodes that could have reached it
+                // (FINDINGS.md 45). Family `0x04` is how an IPv4 candidate is
+                // named.
+                if v6.to_ipv4_mapped().is_some() {
+                    return Err(Error::Malformed);
+                }
+                IpAddr::V6(v6)
+            }
             _ => return Err(Error::Malformed),
         };
         Ok(Self(SocketAddr::new(ip, port)))
@@ -787,6 +804,52 @@ mod tests {
         let mac = k.mac(&d);
         d.extend_from_slice(&mac);
         assert_eq!(open(&d, &k), Err(Error::Malformed));
+    }
+
+    /// **An IPv4 address wearing IPv6 clothes is refused**, for the same
+    /// reason the dirty tail above is: one address, one spelling.
+    ///
+    /// This one has teeth beyond tidiness. A node whose datapath socket is
+    /// `AF_INET` — which is what `listen = "0.0.0.0:…"` produces, and what
+    /// nearly every deployment writes — cannot send to an IPv6 address at all;
+    /// the kernel refuses with `EAFNOSUPPORT`. So a candidate advertised as
+    /// `::ffff:10.0.0.1` is unreachable by exactly the nodes that could have
+    /// reached `10.0.0.1`, and the failure is silent on both ends: the sender
+    /// drops the error, and the advertiser sees a peer that never answers.
+    #[test]
+    fn an_ipv4_address_advertised_as_ipv6_is_refused() {
+        let k = key(1);
+        let mut d = Vec::new();
+        d.extend_from_slice(&MAGIC);
+        d.extend_from_slice(&[VERSION, T_PONG]);
+        d.extend_from_slice(&tag());
+        d.extend_from_slice(&0u32.to_be_bytes());
+        d.extend_from_slice(&[0u8; TX_ID_LEN]);
+        d.push(0x06);
+        d.extend_from_slice(
+            &std::net::Ipv4Addr::new(10, 0, 0, 1)
+                .to_ipv6_mapped()
+                .octets(),
+        );
+        d.extend_from_slice(&1234u16.to_be_bytes());
+        let mac = k.mac(&d);
+        d.extend_from_slice(&mac);
+        assert_eq!(open(&d, &k), Err(Error::Malformed));
+
+        // …and a genuine IPv6 address is untouched, so the rule above is not
+        // quietly refusing the whole family.
+        let mut good = Vec::new();
+        good.extend_from_slice(&MAGIC);
+        good.extend_from_slice(&[VERSION, T_PONG]);
+        good.extend_from_slice(&tag());
+        good.extend_from_slice(&0u32.to_be_bytes());
+        good.extend_from_slice(&[0u8; TX_ID_LEN]);
+        good.push(0x06);
+        good.extend_from_slice(&"2001:db8::1".parse::<Ipv6Addr>().expect("v6").octets());
+        good.extend_from_slice(&1234u16.to_be_bytes());
+        let mac = k.mac(&good);
+        good.extend_from_slice(&mac);
+        assert!(open(&good, &k).is_ok(), "a real IPv6 endpoint was refused");
     }
 
     #[test]

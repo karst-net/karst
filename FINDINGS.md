@@ -11,14 +11,15 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-five more, and all of them are now closed — most found by
+followed it added thirty-six more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
 criterion names, three by **measuring** a feature that had already been proved
 to work, two by asking what a deployment needs that only a test fixture was
-providing, and the last by building the second half of a feature and looking at
-what the first half did with what it allocated.
+providing, one by building the second half of a feature and looking at what the
+first half did with what it allocated, and the last by asking what a topology
+Karst has never been run on would need before it could be run on at all.
 
 **That last pair is worth naming as a category.** Findings 42 and 43 are one
 commit apart, and both are components that exist only in the test harness — a
@@ -27,11 +28,16 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**No findings remain open.** 44 was the most recent, found and closed on
-2026-08-21 by building userspace mode's inbound attachment: the *outbound* path
-had been leaking a TCP socket and its 128 KiB of buffers per connection since
-the day it shipped, and no test of bytes could see it because every conversation
-it leaked was correct.
+**No findings remain open.** 45 was the most recent, found and closed on
+2026-08-21 while working out what a whole-aquifer NAT64 row would have to
+assert: a dual-stack node learned every IPv4 peer at a v4-mapped address and
+handed it back as that peer's reflexive address, which no IPv4-only node can
+send to. The node itself worked throughout, which is why nothing caught it.
+
+Before it, 44 — found the same day by building userspace mode's inbound
+attachment: the *outbound* path had been leaking a TCP socket and its 128 KiB of
+buffers per connection since the day it shipped, and no test of bytes could see
+it because every conversation it leaked was correct.
 
 Before it, 38 was the last open one, closed the same day: a node whose
 gateway can never help used to ask it again every five seconds for the life of
@@ -95,8 +101,77 @@ carries both the new wording and the original, struck through.
 | 42 | High | Nothing outside the test fixture kept a relay's roster fresh, so a deployed relay stops admitting nodes after 90 s | Fixed 2026-08-21 |
 | 43 | High | A production coordination server published no relays at all; only the test server ever set the netmap's relay registry | Fixed 2026-08-21 |
 | 44 | High | Userspace mode never reclaimed a TCP socket, so a sidecar grew by 128 KiB per connection for the life of the process | Fixed 2026-08-21 |
+| 45 | High | A dual-stack node learned every IPv4 peer at a v4-mapped address and advertised it back as that peer's reflexive address, which no IPv4-only node can send to | Fixed 2026-08-21 |
 
 ## Closed
+
+### 45. High: a dual-stack node hands its IPv4 peers an address they cannot be reached at
+
+**Found 2026-08-21** while establishing what a whole-aquifer NAT64 row would
+have to assert — a row about an IPv6-only node needs IPv6 to work first, and
+this is what was found on the way to checking that. Fixed the same day.
+
+**`node.listen` decides the datapath's address family, and that is the whole of
+Karst's IPv6 story.** §4 gives the datapath one shared socket and the operator
+picks its family by writing an address. An `AF_INET` socket — `0.0.0.0`, which
+is what every example in the tree writes — cannot send to an IPv6 address at
+all; the kernel refuses with `EAFNOSUPPORT`, and `dispatch` drops the error
+deliberately, because a send failure must not take the daemon down. So `[::]` is
+the only configuration that can use an IPv6 path, and `aven-v1.md`'s candidate
+encoding carries IPv6 addresses precisely so that one can exist.
+
+On that socket, an IPv4 peer's datagrams arrive from `[::ffff:a.b.c.d]`, and
+`SocketAddr::V4(x) == SocketAddr::V6(mapped)` is false in Rust, always.
+
+**The obvious consequence is not the one that happens, and that is worth
+recording.** The engine attributes a transport datagram to a peer by comparing
+its source against the endpoint it holds, so this looked like a node that
+establishes — handshakes are attributed by *key* — and then silently drops every
+packet. It does not. Accepting a handshake *records the source address as the
+peer's endpoint*, so the comparison is mapped-against-mapped and matches. The
+node works.
+
+What breaks is everything that lets that address out of the node:
+
+- `karst status` prints an address that is not the peer's address.
+- `set_endpoint` and `release_endpoint` compare against the netmap's IPv4
+  endpoint and never match it.
+- **`Pong.observed`.** This is the damage. AVEN answers a `Ping` with the source
+  address it arrived from, which is how a node is told its own reflexive address
+  (`aven-v1.md` §7.2). A dual-stack node tells its IPv4 peer that it is at
+  `[::ffff:a.b.c.d]`; the peer believes it, advertises it in `CallMeMaybe`, and
+  every IPv4-only node in the aquifer receives a candidate it cannot send to.
+  One dual-stack node can make an IPv4 node unreachable to everyone else, and
+  every symptom of it is silence: the sender's error is dropped, and the
+  advertiser sees a peer that never answers.
+
+The fix is one normalisation at the socket boundary — `karst_transport::canonical`,
+applied in both receive paths, so no v4-mapped address ever enters the daemon
+and there is exactly one representation of an address above the socket.
+`source_key` maps the *other* way and stays as it is: a reassembly key wants
+both families in one width and is not an address anything sends to.
+
+The wire decoder gets the matching rule. `aven-v1.md` §6.2's endpoint encoding
+already refuses a non-zero IPv4 pad, with the comment that an ignored tail is
+"a covert channel and a second spelling of one address" — and `::ffff:a.b.c.d`
+under family `0x06` is exactly a second spelling. It is now refused the same
+way, so a peer running unfixed code, or a hostile one, cannot advertise a
+candidate that only dual-stack nodes can probe.
+
+**Two test layers, because neither sees the other's half.**
+`karst-transport`'s `a_dual_stack_socket_reports_an_ipv4_peer_at_its_ipv4_address`
+binds real sockets and pins what the *kernel* does — the first assertion is the
+mapped-source claim itself, so a platform where it were false would say so
+rather than leave the normalisation looking like superstition.
+`bins/karstd/tests/dual_stack.rs` drives two engines with no socket at all and
+pins what the daemon *does with* the result, modelling the receive path through
+the same `canonical` the daemon calls. Removing that call fails both.
+
+**Still open, and named rather than fixed**: an `AF_INET` node silently drops
+every send to an IPv6 candidate. That is correct behaviour for a node with no
+IPv6 connectivity, and the silence is `dispatch`'s deliberate policy, but it
+means "this node cannot use IPv6" is a fact no operator can read anywhere. It
+belongs with the NAT64 row, which is the remaining Phase 4 shape.
 
 ### 44. High: userspace mode never reclaimed a TCP socket
 

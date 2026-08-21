@@ -3849,9 +3849,39 @@ onwards, anchored on the week of 2026-08-10.
   topologies chosen here, not a population weighted by how common each NAT is
   in the field, so this is a capability count and not the rate the criterion
   means; producing the latter needs field data this project does not have.
-  And **two** shapes are still unbuilt as whole-aquifer rows — hairpinning and
-  NAT64/DNS64. Both exist in `nat_matrix.rs` as instrument rows, which pins how
-  each behaves but says nothing about what Karst does on one.
+  And **one** shape is still unbuilt as a whole-aquifer row: NAT64/DNS64. It
+  exists in `nat_matrix.rs` as an instrument row, which pins how the fixture
+  behaves but says nothing about what Karst does on one.
+
+  **Working out what that row would have to assert found FINDINGS.md 45**, and
+  the answer is worth having before the fixture is built. `node.listen` decides
+  the datapath's address family, because §4 gives it one shared socket: an
+  `AF_INET` socket cannot send to an IPv6 address at all, so `[::]` is the only
+  configuration that can use an IPv6 path — and on that socket every IPv4 peer
+  arrived as `[::ffff:a.b.c.d]`. The node *worked*, which is why nothing caught
+  it; what leaked was `Pong.observed`, so a dual-stack node told its IPv4 peers
+  they were at addresses no IPv4-only node can send to. Fixed by normalising at
+  the socket boundary, plus the matching wire rule — §6.2 already refuses a
+  second spelling of an address and the mapped form is one.
+
+  Two things the row still has to establish, both now stated rather than
+  guessed. A node on a NAT64-only network reaches an IPv4 relay or peer **only**
+  if something synthesises `prefix::v4`, and nothing in Karst learns a NAT64
+  prefix — not RFC 7050's `ipv4only.arpa` heuristic, not RFC 8781's PREF64. And
+  an `AF_INET` node's sends to an IPv6 candidate fail silently, which is correct
+  for a node with no IPv6 connectivity and unreadable to its operator.
+
+  **Hairpinning was named here as a second one, and that was wrong** —
+  corrected 2026-08-21 after running the row rather than re-reading the
+  sentence. `Shape::SameLan` and
+  `two_nodes_on_one_home_network_go_direct_over_the_lan` have existed since
+  2026-08-19, and the row asserts precisely what the sentence claimed was
+  missing: two nodes behind one non-hairpinning NAT go direct over the
+  **private** segment, each holding the other's `10.98.1.x` address and
+  explicitly *not* the NAT's outer one. The paragraph contradicted itself, too —
+  same-LAN is one of the twelve topologies the count above is taken over. The
+  list was written on 2026-08-18 naming three shapes, and only double NAT was
+  ever struck from it when it was built.
 
   **Double NAT was the third, and it is built as of 2026-08-21** — the one the
   criterion names by name, and the row is
