@@ -39,8 +39,15 @@ kubectl apply -f deploy/kubernetes/operator/config.yaml
 
 Then create the Secret and `KarstNode` shown in `example.yaml`. The operator
 watches its own namespace; install a copy per namespace that needs a node
-agent. The relay image is deliberately independent of this operator: deploy it
-as ordinary infrastructure with a TLS certificate and an explicit roster.
+agent. The relay image is deliberately independent of this operator.
+
+**Deploying the relay is not just "a TLS certificate and an explicit roster",
+which is what this page used to say.** A relay's roster has a 90-second lease
+and something must rewrite it forever, and a relay nothing publishes in the
+netmap is one no node will ever dial. Both are easy to miss and neither
+announces itself. See [`deploy/compose`](../compose/README.md), which wires a
+coordination server and a relay together correctly and explains both traps;
+a Kubernetes relay needs the same two pieces.
 
 The `KarstNode` controller owns only the DaemonSet named after the resource.
 Deleting the custom resource deletes that DaemonSet. It never mutates

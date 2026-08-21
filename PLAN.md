@@ -2488,27 +2488,47 @@ onwards, anchored on the week of 2026-08-10.
     "multiple relays per region, latency-probed by clients, published by the
     control server" is therefore half-built, and the half that is missing is
     the client's.
-  - **Co-location with the control server in the default deployment artefact.**
-    §5 makes this both the adoption lever and the answer to who pays for
-    bandwidth: the same `docker-compose`, the same static binary, a self-hoster
-    relaying in under five minutes without deciding anything. `deploy/` holds
-    two Dockerfiles and a Kubernetes example, and no compose file — so today
-    the five-minute path does not exist.
+  - 🔶 **Co-location with the control server in the default deployment
+    artefact.** §5 makes this both the adoption lever and the answer to who
+    pays for bandwidth: the same `docker-compose`, the same static binary, a
+    self-hoster relaying in under five minutes without deciding anything.
 
-    **Starting on it found the reason it did not** (FINDINGS.md 42). A relay's
-    admission list is a file with a **ninety-second lease**: §5.3 makes
-    admission structural, and `roster::MAX_AGE` replaces it with an empty
-    roster when nobody refreshes it. Both rules are right and nothing outside
-    `aquifer.rs`'s fixture was doing the refreshing, so any deployed relay
-    stopped admitting nodes ninety seconds after it started — and the
-    Kubernetes README, followed literally, produced exactly that.
+    **Built 2026-08-21** — `deploy/compose/` and a third image,
+    `deploy/images/karst-control.Dockerfile`. What remains is named at the end
+    of this bullet, and it is not infrastructure.
 
-    `server/management/internals/karst/roster` closes it: the coordination
-    server already holds every enrolled node's identity key, so it renders the
-    roster and rewrites it every 25 seconds, unconditionally, because the lease
-    is refreshed by the file's modification time rather than by its contents.
-    A compose file can now be honest, which is the remaining half of this
-    bullet.
+    **Building it found the two reasons it had never existed**, one per commit,
+    and both are the same shape: a component that lived only in the test
+    harness while production read the field the harness filled.
+
+    - FINDINGS.md 42 — a relay's admission list is a file with a **ninety-second
+      lease** (§5.3 makes admission structural; `roster::MAX_AGE` empties it
+      when nobody refreshes), and nothing outside `aquifer.rs`'s fixture
+      refreshed it. Any deployed relay stopped admitting nodes ninety seconds
+      after it started. `karst/roster` rewrites it every 25 s, unconditionally,
+      because the lease is refreshed by mtime rather than by contents.
+    - FINDINGS.md 43 — the netmap's relay registry was populated **only by
+      `karst/testserver`**. A production server published no relays, so nodes
+      that could not connect directly could not connect at all, silently.
+      `karst/relayreg` loads an operator-written registry; `relay_id` is derived
+      from the pinned key rather than typed, and the file is validated fatally
+      at startup because `karstd` fails the *entire* netmap over one bad entry.
+
+    Both mechanisms were then exercised against a running deployment rather
+    than argued for. With the producer up, the roster's mtime advanced every
+    25 s while its contents stayed byte-identical, and the relay ran past the
+    lease without complaint. Stopped, the relay logged `roster lease expired`
+    at the 90-second boundary and admitted nobody; restarted, it recovered on
+    the next write. The relay's own `relay_id` matched the one derived from the
+    registry entry, end to end, which is the check `karstd` performs before it
+    will accept a netmap at all.
+
+    **What is left is enrolment, and it is Phase 5's.** The artefact stands up
+    the infrastructure; it cannot walk a self-hoster to a connected node,
+    because a node needs a setup key, a setup key needs an account, and an
+    account needs the admin console. The five-minute path exists as far as the
+    server and relay, and `deploy/compose/README.md` says so in those words
+    rather than letting a reader discover it after the third command.
 
   ✅ **Mesh dialling, end to end.** `mesh.rs` decides which peers are due and
   how long to wait; `server.rs` dials them. **Two relays mesh and a packet

@@ -387,6 +387,42 @@ jobs:
       - name: No PSK bytes reach a bug report
         run: cargo test -p karstd --test leakscan
 
+  # The deployment artefact is the one thing here with no test suite behind it,
+  # and findings 42 and 43 are both about components that existed only where
+  # something exercised them. This does not stand the stack up — that needs two
+  # image builds — but it does refuse the ways it rots silently: a compose file
+  # that no longer parses, a bootstrap script with a syntax error, and the two
+  # environment variables whose absence is the whole of both findings.
+  compose:
+    name: Deployment artefact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The compose file parses
+        run: docker compose -f deploy/compose/docker-compose.yml config -q
+      - name: bootstrap.sh parses, and is executable
+        run: |
+          sh -n deploy/compose/bootstrap.sh
+          test -x deploy/compose/bootstrap.sh \
+            || { echo "::error::bootstrap.sh is not executable"; exit 1; }
+      - name: The compose file wires both halves of admission
+        run: |
+          # A relay needs a roster producer (finding 42) and nodes need a relay
+          # registry (finding 43). Either one missing is a deployment that comes
+          # up clean and never carries a packet, so their absence is checked
+          # here rather than discovered by a self-hoster.
+          fail=0
+          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER; do
+            grep -q "$var" deploy/compose/docker-compose.yml \
+              || { echo "::error::docker-compose.yml no longer sets $var"; fail=1; }
+          done
+          exit "$fail"
+      - name: The generated state is not committable
+        run: |
+          # It holds the relay's identity seed and the server's store key.
+          git check-ignore -q deploy/compose/state \
+            || { echo "::error::deploy/compose/state is not gitignored"; exit 1; }
+
   spdx:
     name: SPDX headers
     runs-on: ubuntu-latest
