@@ -11,13 +11,20 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added thirty-three more, and all but one are closed — most found by
+followed it added thirty-four more, and all but one are closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
 criterion names, three by **measuring** a feature that had already been proved
-to work, and the last by asking what a deployment needs that only a test
+to work, and the last two by asking what a deployment needs that only a test
 fixture was providing.
+
+**That last pair is worth naming as a category.** Findings 42 and 43 are one
+commit apart, and both are components that exist only in the test harness — a
+roster refresher and a relay registry — with production reading the field the
+harness filled in. Neither could fail a test, because in a test the missing
+piece is present. They surfaced the week the tree acquired its first deployment
+artefact, which is the only vantage point from which either is visible.
 
 **One finding remains open** — 38, recorded 2026-08-21, which is a retry
 schedule rather than a fault: a node whose gateway can never help asks it again
@@ -77,6 +84,7 @@ carries both the new wording and the original, struck through.
 | 40 | Medium | Userspace mode's round trip was a poll interval, not a cost | Fixed 2026-08-21 |
 | 41 | High | Every userspace TCP socket advertised a one-segment window | Fixed 2026-08-21 |
 | 42 | High | Nothing outside the test fixture kept a relay's roster fresh, so a deployed relay stops admitting nodes after 90 s | Fixed 2026-08-21 |
+| 43 | High | A production coordination server published no relays at all; only the test server ever set the netmap's relay registry | Fixed 2026-08-21 |
 
 ## Open
 
@@ -115,6 +123,67 @@ needs an injectable clock, and that is a refactor with a wider blast radius
 than the fix.
 
 ## Closed
+
+### 43. High: a production coordination server published no relays at all
+
+**Found 2026-08-21** by reading, one commit after finding 42, while writing the
+`docker-compose` artefact both findings block. Fixed the same day.
+
+A node learns which relays exist, and which key authenticates each one, from
+exactly one place: the `relays` field of its signed netmap. That is deliberate —
+`ponor-v1.md` §4.2 declines to trust TLS for relay identity, so a relay a node
+was told about out of band is a relay it cannot authenticate. There is no local
+relay list in `karstd`, and there should not be.
+
+`control.NetmapHandler.Relays` is therefore the only supply of relays in the
+system. **The only code that ever populated it was `karst/testserver`**, which
+exists to serve the Rust test suite. `bootstrap.Install` never set the field, so
+every real deployment handed every node an empty registry:
+
+```console
+$ grep -rn "KarstRelay{" --include=*.go server/ | grep -v _test | grep -v /proto/
+management/internals/karst/testserver/netmap.go:195:	return &proto.KarstRelay{
+```
+
+One construction in the whole server, in the test harness.
+
+**Nothing failed.** The relay ran, its config validated, its roster was current
+(after 42), and it sat there while nodes that could not reach each other
+directly could not reach each other at all. Relaying did not break; it never
+happened. This is the same shape as 42 — the test suite holding the production
+component — and finding them a commit apart is not a coincidence: both are
+things only a deployment needs, and until this week nothing in the tree was a
+deployment.
+
+The fix is `server/management/internals/karst/relayreg`, loading an
+operator-written registry from `KARST_RELAY_REGISTRY_FILE`. Two decisions in it
+are worth stating:
+
+- **`relay_id` is derived, never configured.** §5.2 defines it as
+  `SHA-256("karst-relay-id-v1" ‖ identity_pk)`, and `karstd` recomputes it while
+  decoding. A hand-written id would make a silent mismatch a typo away, so the
+  field is refused if supplied.
+- **Validation is fatal at startup**, because it is the only place the error can
+  be reported usefully. `karstd` decodes the registry with
+  `collect::<Result<_, _>>()?`, so **one malformed entry fails the entire netmap
+  for every node** rather than dropping that relay. A typo is a total outage
+  whose symptom points nowhere near it; every check in `relayreg` mirrors one in
+  `Relay::from_wire` so that a file the server accepts is one every node
+  accepts.
+
+**A term hashed by both ends and exercised by neither.** `netmap_version` has
+covered a domain-separated `karst-relays` term since 2026-08-18, and no vector
+carried a single relay — because no production server ever populated the field.
+So the one part of the netmap that had never been checked across
+implementations was the part about to be used for the first time. The version is
+what a node compares against the netmap it assembled, refusing one that
+disagrees, so a drift there is not a degraded relay: **no netmap ever applies.**
+`spec/vectors/karst-control-v1.json` now carries three registry cases, and the
+Rust side additionally checks the `relay_id` derivation against them.
+
+Verified by injection: dropping the region from the Rust relay hash, and
+dropping the `karst-relays` separator, each fail `netmap_version_matches`. Both
+passed before this change.
 
 ### 42. High: nothing outside the test fixture kept a relay's roster fresh
 

@@ -21,7 +21,7 @@
 use karst_control_client::{
     channel::{derive_keys, hello_signing_input, init_signing_input, Record, KEY_LEN},
     handle::handle,
-    netmap::{netmap_version, peer_digest, FilterRuleView, NetmapContent, PeerEntry},
+    netmap::{netmap_version, peer_digest, FilterRuleView, NetmapContent, PeerEntry, RelayView},
     psk::{pair, PSK_LEN},
 };
 use serde::Deserialize;
@@ -53,7 +53,26 @@ struct VersionCase {
     peers: Option<Vec<VersionPeer>>,
     packet_filter: Option<Vec<VersionRule>>,
     egress_filter: Option<Vec<VersionRule>>,
+    #[serde(default)]
+    relays: Option<Vec<VersionRelay>>,
     version: u64,
+}
+
+/// The relay registry, as the version hash sees it.
+///
+/// The `karst-relays` term has been hashed by both ends since 2026-08-18 and no
+/// vector carried a relay until 2026-08-21, because until then no production
+/// server ever populated the field — the only code that did was the Go test
+/// server (FINDINGS.md 43). A drift here is not a degraded relay: this node
+/// recomputes the version over what it assembled and refuses a netmap that
+/// disagrees, so **no netmap would ever apply**.
+#[derive(Deserialize, Debug, Clone)]
+struct VersionRelay {
+    address: String,
+    tls_server_name: String,
+    relay_id: String,
+    identity_key: String,
+    region: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -398,6 +417,8 @@ struct VersionInputs {
     egress_ports: Vec<Vec<(u32, u32)>>,
     node_id: Vec<u8>,
     addresses: Vec<String>,
+    relay_ids: Vec<Vec<u8>>,
+    relay_keys: Vec<Vec<u8>>,
 }
 
 /// Inclusive port ranges out of a rule list.
@@ -438,7 +459,16 @@ fn inputs(c: &VersionCase) -> VersionInputs {
         egress_ports: port_ranges(c.egress_filter.as_deref().unwrap_or_default()),
         node_id: unhex(&c.node_id),
         addresses: c.addresses.clone().unwrap_or_default(),
+        relay_ids: relays_of(c).iter().map(|r| unhex(&r.relay_id)).collect(),
+        relay_keys: relays_of(c)
+            .iter()
+            .map(|r| unhex(&r.identity_key))
+            .collect(),
     }
+}
+
+fn relays_of(c: &VersionCase) -> &[VersionRelay] {
+    c.relays.as_deref().unwrap_or_default()
 }
 
 fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
@@ -469,6 +499,18 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         .map(|(nodes, ports)| FilterRuleView { nodes, ports })
         .collect();
 
+    let relays: Vec<RelayView<'_>> = relays_of(c)
+        .iter()
+        .enumerate()
+        .map(|(i, r)| RelayView {
+            address: &r.address,
+            tls_server_name: &r.tls_server_name,
+            relay_id: &held.relay_ids[i],
+            identity_key: &held.relay_keys[i],
+            region: &r.region,
+        })
+        .collect();
+
     netmap_version(&NetmapContent {
         psk_epoch: c.psk_epoch,
         node_id: &held.node_id,
@@ -477,7 +519,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         peers: &entries,
         packet_filter: &rules,
         egress_filter: &egress,
-        relays: &[],
+        relays: &relays,
     })
 }
 
@@ -495,6 +537,48 @@ fn netmap_version_matches() {
             "netmap_version case {i} disagrees with the Go server"
         );
     }
+}
+
+/// A relay's id is a digest of its pinned identity key — `ponor-v1.md` §5.2.
+///
+/// Both ends derive it independently: the Go server when it compiles a registry
+/// (`karst/relayreg`), and `karstd` while decoding the netmap, which rejects the
+/// **entire netmap** when the two disagree rather than skipping the entry. The
+/// relation is checked here against fixtures the Go side produced, so a changed
+/// domain label is caught by a test rather than by every node in a deployment
+/// failing to apply a netmap it just authenticated.
+#[test]
+fn a_relay_id_is_the_digest_of_its_identity_key() {
+    use sha2::{Digest as _, Sha256};
+
+    let mut checked = 0_usize;
+    for c in &vectors().cases.netmap_version {
+        for r in relays_of(c) {
+            let key = unhex(&r.identity_key);
+            assert_eq!(
+                key.len(),
+                1952,
+                "the vector's identity key is not an ML-DSA-65 public key"
+            );
+            let mut h = Sha256::new();
+            h.update(b"karst-relay-id-v1");
+            h.update(&key);
+            assert_eq!(
+                unhex(&r.relay_id),
+                h.finalize().as_slice(),
+                "relay_id is not SHA-256(\"karst-relay-id-v1\" || identity_key); \
+                 karstd would refuse every netmap carrying this registry"
+            );
+            checked += 1;
+        }
+    }
+    // Guards against the quiet failure: a renamed field deserialises to no
+    // relays at all, and a loop over nothing passes every assertion in it.
+    assert!(
+        checked >= 4,
+        "only {checked} relay entries in the vector; the cases carrying \
+         registries did not deserialise"
+    );
 }
 
 /// The version is sent in clear, so it must not be a function of the PSKs. Two

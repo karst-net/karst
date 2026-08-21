@@ -93,7 +93,11 @@ type Karst struct {
 // Returns the pins an operator must distribute with auth keys. Handing out
 // only the KEM half silently downgrades forward secrecy, so both are returned
 // together and logged together.
-func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
+// The relay registry is passed in rather than discovered because a relay's
+// identity key is a pin: §4.2 has a node trust the key this server vouches for
+// and nothing else, which is only meaningful if a human decided what it is.
+// Nil means no relays, and therefore no relaying — see karst/relayreg.
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -147,6 +151,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
 			PSK:    deriver,
 			Epoch:  epoch,
 			Policy: pol,
+			Relays: relays,
 		},
 	}
 
@@ -172,6 +177,20 @@ func Install(s *nbserver.BaseServer, pol *policy.Document) (*Karst, error) {
 	log.Infof("karst: server KEM pin  %s", base64.StdEncoding.EncodeToString(k.StaticKEM))
 	log.Infof("karst: server sign pin %s", base64.StdEncoding.EncodeToString(k.VerifyKey))
 	log.Infof("karst: psk epoch %d (rotates every %ds)", k.Epoch, EpochSeconds)
+
+	// Said out loud because its absence is invisible from every other vantage
+	// point: a relay with a valid config and a current roster still sees no
+	// connections, since a node dials only relays its netmap named (FINDINGS.md
+	// 43). A warning here is the one place that reads as a cause.
+	if len(relays) == 0 {
+		log.Warnf("karst: no relay registry; nodes will be told of no relays and " +
+			"cannot relay, so a pair that fails to connect directly cannot connect at all")
+	} else {
+		for _, r := range relays {
+			log.Infof("karst: relay %s (%s) region %s",
+				r.GetAddress(), r.GetTlsServerName(), r.GetRegion())
+		}
+	}
 
 	return k, nil
 }

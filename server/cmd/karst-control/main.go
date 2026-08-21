@@ -31,8 +31,10 @@ import (
 	"github.com/netbirdio/netbird/management/cmd"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
+	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
 // karstPolicyEnv names a file holding the ACL document (PLAN.md §4.3).
@@ -55,8 +57,21 @@ const (
 	karstRosterIntervalEnv = "KARST_RELAY_ROSTER_INTERVAL"
 )
 
+// karstRelayRegistryEnv names the relay registry published to every node.
+//
+// The counterpart of the roster and easily confused with it: the roster tells a
+// relay which nodes to admit, and the registry tells nodes which relays exist.
+// A deployment needs both, and having only one is silent — the relay admits
+// nobody who ever arrives, because nobody was told to arrive.
+const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
+
 func main() {
 	pol, err := loadPolicy()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
+	relays, err := loadRelays()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
@@ -69,7 +84,7 @@ func main() {
 
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol)
+		k, err := bootstrap.Install(s, pol, relays)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -115,6 +130,30 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 	}
 	log.Infof("karst: writing the relay roster to %s every %s", path, interval)
 	go r.Run(ctx)
+}
+
+// loadRelays reads the relay registry a node is told about — §4.2.
+//
+// **Unset is not a safe default here, only a quiet one.** With no registry the
+// server runs correctly and hands every node an empty relay list, so nodes that
+// cannot reach each other directly cannot reach each other at all; nothing
+// fails, relaying simply never happens. The warning is emitted by
+// bootstrap.Install, which is the one place that sees the final list.
+//
+// A registry that is set and unreadable is fatal, for the reason a bad policy
+// is: karstd fails the *entire* netmap over one malformed entry, so a typo here
+// takes the whole deployment down with a symptom that points nowhere near it.
+func loadRelays() ([]*proto.KarstRelay, error) {
+	path := os.Getenv(karstRelayRegistryEnv)
+	if path == "" {
+		return nil, nil
+	}
+	relays, err := relayreg.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	log.Infof("karst: loaded %d relays from %s", len(relays), path)
+	return relays, nil
 }
 
 func loadPolicy() (*policy.Document, error) {
