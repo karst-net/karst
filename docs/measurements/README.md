@@ -11,6 +11,12 @@ series behind it, and lab machines get reimaged.
 
 Produced by `scripts/soak.sh`; see that file for the sampling method.
 
+`userspace-cost-2026-08-21.md` is ADR-0012's gate 1: what userspace mode costs
+against the privileged baseline, measured with one instrument
+(`scripts/userspace-cost.sh` and `bins/karstd/examples/tcpload.rs`) over one
+topology. Committed because the ADR requires the numbers before the mode is
+accepted as implemented, and because taking them found two defects.
+
 `hard-easy-2026-08-19.md` is a different kind of entry: a NAT-traversal
 experiment with its harness beside it (`hard-easy-birthday.py`), committed
 because it decided a design question — whether the birthday technique is worth
@@ -23,6 +29,7 @@ way are worth more than the number it produced.
 |---|---|
 | `soak-2026-08-12-rekey-race.tsv` | **FAIL** — 459 samples, 7.9 h. Found the simultaneous-rekey race |
 | `soak-2026-08-12-pass.tsv` | **PASS** — 700 samples, 12.0 h, against the fix |
+| `userspace-cost-2026-08-21.md` | userspace mode at **0.5%** of the privileged path's throughput and 3× its RTT, with equal memory |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened
@@ -61,7 +68,11 @@ second one has it.
 
 ```sh
 scripts/soak.sh turing lovelace --addr-a 10.10.10.1 --addr-b 10.10.10.2
+sudo scripts/userspace-cost.sh --seconds 10 --rtt-count 300
 ```
+
+The second needs only one host: it builds its own two namespaces, and its
+three scenarios all run inside them.
 
 Launch it from one of the machines under test, so the run outlives the session
 that started it. Start with `--hours 0.25` — every code path in the harness is

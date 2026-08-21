@@ -11,11 +11,12 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added twenty-nine more, and all but one are closed — most found by
+followed it added thirty-one more, and all but one are closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
-a feature nobody had ever run, and the last two found by building the
-double-NAT row the exit criterion names.
+a feature nobody had ever run, two by building the double-NAT row the exit
+criterion names, and the last two by **measuring** a feature that had already
+been proved to work.
 
 **One finding remains open** — 38, recorded 2026-08-21, which is a retry
 schedule rather than a fault: a node whose gateway can never help asks it again
@@ -71,6 +72,8 @@ carries both the new wording and the original, struck through.
 | 36 | Operational | Three privileged suites could report success by not running | Fixed 2026-08-20 |
 | 37 | Medium | A mapping on RFC 6598 shared address space was accepted as an external address | Fixed 2026-08-21 |
 | 38 | Low | A gateway that cannot ever grant a mapping is asked again every five seconds | **Open** — recorded 2026-08-21 |
+| 39 | High | The SOCKS5 relay treated a client half-close as a full teardown | Fixed 2026-08-21 |
+| 40 | Medium | Userspace mode's round trip was a poll interval, not a cost | Fixed 2026-08-21 |
 
 ## Open
 
@@ -109,6 +112,87 @@ needs an injectable clock, and that is a refactor with a wider blast radius
 than the fix.
 
 ## Closed
+
+### 40. Medium: userspace mode's round trip was a poll interval, not a cost
+
+**Found 2026-08-21** by ADR-0012's gate-1 measurement. Fixed the same day.
+
+The first run put userspace mode at **1.1 Mbps and a 4.135 ms round trip**
+against 1370 Mbps and 0.196 ms on the privileged path. The throughput was
+believable; the latency was not, and the distribution said so:
+
+```
+rtt_p50 4.139   rtt_p90 4.156   rtt_p99 4.211   rtt_max 4.219
+```
+
+A spread of 80 µs across every percentile is not work. It is a timer — and at
+2.000 ms per tick, two ticks of one.
+
+`socks5::proxy` slept an unconditional 2 ms at the end of every pass through
+its relay loop, so a round trip cost at least two of them: one before the
+request went out, one before the reply was noticed. The same sleep capped
+throughput at one `READ_CHUNK` per tick.
+
+Fixed by sleeping only when a pass moved no bytes at all, and by two rates
+rather than one: 200 µs while a connection has moved something in the last
+50 ms, 2 ms once it has gone quiet. The two cases want opposite things — a
+connection waiting for a reply is idle in exactly the interval that matters,
+and a connection nobody is using is a resource to be cheap about. A flat 200 µs
+would have fixed the latency and made every idle connection wake 5,000 times a
+second.
+
+Measured, both rates, same host and harness:
+
+| Poll | RTT p50 | Throughput |
+|---|---|---|
+| flat 2 ms | 4.135 ms | 1.1 Mbps |
+| flat 200 µs | 0.545 ms | 9.9 Mbps |
+| **adaptive (shipped)** | **0.547 ms** | **5.6–7.3 Mbps** |
+
+**The throughput was not the timer**, and that is the residue. At 5.6–7.3 Mbps
+userspace mode is still 0.5% of the privileged path, and the measurement names
+where the rest is: `recv_segments` returns one packet per call where the
+privileged path returns ~52, and every relay pass locks and polls the entire
+smoltcp stack several times. That is a redesign of the attachment loop, not a
+constant, and it is recorded in PLAN.md as the next piece of work rather than
+attempted here.
+
+### 39. High: the SOCKS5 relay treated a client half-close as a full teardown
+
+**Found 2026-08-21** by ADR-0012's gate-1 measurement, which could not complete
+a single run because of it. Fixed the same day.
+
+`socks5::proxy` relayed until `client.read` returned `Ok(0)`, and then closed
+the tunnel and returned. But EOF on that read does not mean the conversation is
+over — it means the workload has closed its **write** half, which is an
+ordinary thing for a client to do: send the request, half-close, read the
+answer to EOF. `curl` does it, `nc -N` does it, and every protocol that
+delimits a message by closing does it.
+
+The FIN itself crossed correctly — `Userspace::tcp_close` is smoltcp's `close`,
+which is a half-close on the wire — so the service on the far end received the
+whole request and answered it. What was lost was the answer: the relay had
+already returned, dropping the client socket with it. The observed symptom is a
+**truncated reply**, not a missing one, which is worse: a client sees a short
+read rather than an error.
+
+The fix tracks the two directions separately, as TCP does. The client's EOF
+sets a flag; the FIN goes out only once everything already buffered has been
+handed to the stack, so the request cannot be truncated; the relay keeps
+copying overlay→client until `tcp_may_recv` says nothing more can arrive, then
+closes the workload's side so it sees a clean EOF too.
+
+That last part needed a new distinction. `tcp_can_recv` asks whether bytes are
+buffered *now*; a relay that stopped on it would cut the reply short. The
+question is whether more can *ever* arrive, which is smoltcp's `may_recv`, now
+exposed as `Userspace::tcp_may_recv` with the difference written down at the
+call site.
+
+`a_half_closed_request_still_receives_its_reply` covers it, and its shape is
+deliberate: both ends read to EOF, so each half of the fix is load-bearing. The
+**existing gate test still passes against the defect** — it writes a fixed-size
+request, reads a fixed-size reply, and never half-closes — which is exactly why
+a feature proved to work still had this in it.
 
 ### 37. Medium: a mapping on RFC 6598 shared address space was accepted as an external address
 
@@ -1613,3 +1697,49 @@ B holds neither the router's 100.64 address nor A's private one. No cheap
 mutation of the fixture produces either, because nothing advertises them —
 which is the point of writing them down. They constrain a future change to
 candidate selection, not this fixture.
+
+### Validation, 2026-08-21 — ADR-0012's gate 1
+
+`cargo fmt --all --check`, workspace clippy, **877 Rust tests in 55 suites**:
+clean. Every privileged suite was run, because this pass changed `karst-tun`
+and `karstd`'s datapath attachment rather than a test:
+
+| Suite | Result |
+|---|---|
+| `karst-tun` device | 9 passing, 1.7 s |
+| `karstd` two-node | 9 passing, 217 s |
+| `karstd` userspace (the gate) | **3** passing, 1.2 s — the half-close row is new |
+| `karstd` aquifer | 13 passing, 544 s |
+
+The measurement itself is in
+`docs/measurements/userspace-cost-2026-08-21.md` with its host details and
+commands; the numbers are not repeated here.
+
+**Finding 39 is checked against its own defect, and the control is the point.**
+Restoring the old `Ok(0) => { tcp_close; return }` makes
+`a_half_closed_request_still_receives_its_reply` fail with *"the reply was
+truncated after the half-close"* — and leaves
+`a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin` **passing**.
+That is precisely how a feature with a release gate shipped with this in it:
+the gate writes a fixed-size request, reads a fixed-size reply, and never
+half-closes.
+
+**Finding 40 is checked by measurement rather than by assertion**, which is the
+honest form for a latency figure, and the three poll settings were each run on
+the same host in the same session:
+
+| Poll | RTT p50 | Throughput |
+|---|---|---|
+| flat 2 ms (as found) | 4.135 ms | 1.1 Mbps |
+| flat 200 µs | 0.545 ms | 9.9 Mbps |
+| adaptive (shipped) | 0.547 ms | 5.6–7.3 Mbps |
+
+The middle row is not the shipped one on purpose: it buys the same latency by
+waking every idle connection 5,000 times a second. The third row's throughput
+spread across three runs is wider than the second row's single sample, and no
+claim is made that the two differ — at 200× below the privileged path, the
+remaining variance is not where the interesting number is.
+
+**What the harness does not establish.** One flow, one peer, one connection, on
+a veth underlay carrying 130+ Gbps. It compares two modes on one host; it is
+not a link measurement and PLAN.md §3.4's figures are not comparable to it.

@@ -61,8 +61,37 @@ daemons which **both** knew the other's endpoint, so it was the first thing to
 perform a simultaneous open; that had been silently broken. The lesson is the
 ADR's own: a mode that is built and unproven is not a mode that works.
 
-Gate 1 (throughput, latency, memory against the privileged baseline) is **not**
-met and is not estimated here.
+**Gate 1 met, 2026-08-21** — [`docs/measurements/userspace-cost-2026-08-21.md`](../measurements/userspace-cost-2026-08-21.md),
+produced by `scripts/userspace-cost.sh` on a 4-core aarch64 VM, Linux
+6.8.0-138, rustc 1.88.0, release build. Three scenarios over one topology in two
+network namespaces, all measured by one instrument, because `iperf3` cannot
+speak SOCKS5 and two instruments would put the difference inside the tool:
+
+| | underlay | privileged (TUN) | userspace |
+|---|---|---|---|
+| Throughput, one flow | 130–138 Gbps | 1340–1384 Mbps | **5.6–7.3 Mbps** |
+| RTT p50 | 0.04–0.06 ms | 0.15–0.18 ms | **0.547 ms** |
+| Peak RSS | — | 6,672–6,692 kB | **6,648–6,672 kB** |
+
+Memory is equal to within a rounding error, so nothing in that column argues
+either way. Latency is 3× the baseline and 0.37 ms of absolute difference.
+Throughput is **0.5% of the privileged path**, and the measurement names why:
+`recv_segments` returns one packet per call where the privileged path returns
+~52 through segmentation offload, every relay pass locks and polls the whole
+smoltcp stack several times, and the SOCKS5 hop copies every byte again.
+
+**This engages the *Reconsider if* clause below without tripping it.** For the
+request/response traffic a sidecar usually carries, 0.55 ms and a few Mbps is
+adequate against an alternative of `CAP_NET_ADMIN` in every container. For bulk
+data it is not, and the deployment guidance says so rather than implying
+otherwise. Rebuilding the attachment loop is the work that would change it.
+
+Taking the measurement found two defects, neither visible from gate 2 — which
+does one request and one reply and never half-closes. FINDINGS.md 39: the
+SOCKS5 relay treated a client half-close as a full teardown, losing the reply
+for every client that ends a request by closing its write half. FINDINGS.md 40:
+a flat 2 ms poll in the same loop, which was the whole of the original 4.135 ms
+round trip.
 
 ## Decision
 
@@ -134,16 +163,19 @@ Before accepting this proposal for implementation, the spike must record:
 
 1. Release-binary size delta, peak/resident memory, and TCP throughput/latency
    for the same Karst topology and payload as the privileged baseline, including
-   the exact commands and host details. — **size only; the rest outstanding.**
+   the exact commands and host details. — **met 2026-08-21**, size on
+   2026-08-20; see the measurement above and
+   `docs/measurements/userspace-cost-2026-08-21.md`.
 2. A no-`CAP_NET_ADMIN` end-to-end TCP conversation through userspace mode,
    run as an unprivileged process. Deliberately breaking the userspace packet
    bridge must make that test fail before it is relied upon. — **met
    2026-08-20**, `bins/karstd/tests/userspace.rs`, `just test-userspace`.
 3. Confirmation that the existing privileged topology suite remains unchanged.
-   — **met 2026-08-20**: TUN (9), two-node (9) and the eleven aquifer
-   topologies all pass alongside it.
+   — **met 2026-08-20**: TUN (9), two-node (9) and the aquifer topologies (now
+   thirteen) all pass alongside it, and all of them now run in CI rather than
+   on request.
 
-### Attachment is outbound only
+### Attachment is outbound only, and slow
 
 Recorded because the gate above could easily be read as more than it is. A
 workload behind userspace mode can **dial** the mesh; nothing in the mesh can
@@ -152,6 +184,12 @@ and `Userspace::listen_tcp` is reachable from no configuration. A sidecar that
 can only make calls is half of the sidecar PLAN.md §9 promises, and the inbound
 half is a design decision — which overlay ports map to which local addresses —
 rather than a missing line of code.
+
+And what it does carry, it carries slowly: **5.6–7.3 Mbps against 1340–1384 on
+the privileged path**, measured 2026-08-21. Adequate for the request/response
+traffic a sidecar usually carries at 0.55 ms a round trip, and not adequate for
+bulk data. The cost is in the attachment loop rather than in smoltcp, and the
+measurement says which parts.
 
 ### Reconsider if
 

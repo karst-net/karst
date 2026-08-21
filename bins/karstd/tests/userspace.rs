@@ -66,6 +66,19 @@ const LISTEN_UNUSED: u16 = 51843;
 const SOCKS_PORT: u16 = 11080;
 const SERVICE_PORT: u16 = 19000;
 
+/// A second pair, for the half-close row. Its own ports, overlay addresses and
+/// interface name: the tests run one at a time, but a TUN device outlives the
+/// process that made it by a moment, and a second row that reused the name
+/// would fail with `Device or resource busy` for a reason having nothing to do
+/// with what it measures.
+const OVERLAY_USERSPACE_2: &str = "10.88.1.1";
+const OVERLAY_PEER_2: &str = "10.88.1.2";
+const PEER_INTERFACE_2: &str = "karstu2";
+const LISTEN_USERSPACE_2: u16 = 51845;
+const LISTEN_PEER_2: u16 = 51846;
+const SOCKS_PORT_2: u16 = 11082;
+const SERVICE_PORT_2: u16 = 19002;
+
 /// `nobody`. Chosen because it exists on every distribution this is likely to
 /// run on and owns nothing worth reaching.
 const UNPRIVILEGED_UID: u32 = 65534;
@@ -216,6 +229,9 @@ struct Spec {
     listen: u16,
     peer_listen: u16,
     interface: &'static str,
+    /// Where userspace mode offers its SOCKS5 listener. Ignored by the two TUN
+    /// modes, which have no attachment surface of their own.
+    socks: u16,
 }
 
 fn root_dir() -> PathBuf {
@@ -239,7 +255,8 @@ fn start(spec: &Spec) -> Node {
     // difference between the two configurations is these two lines.
     let attachment = match spec.mode {
         Mode::UnprivilegedUserspace => format!(
-            "network_mode = \"userspace\"\nuserspace_socks5_listen = \"127.0.0.1:{SOCKS_PORT}\"\n"
+            "network_mode = \"userspace\"\nuserspace_socks5_listen = \"127.0.0.1:{}\"\n",
+            spec.socks
         ),
         Mode::PrivilegedTun | Mode::UnprivilegedTun => String::new(),
     };
@@ -440,10 +457,8 @@ fn serve_once(
 /// Bound to the overlay address rather than `0.0.0.0` deliberately: a wildcard
 /// bind would also be reachable over loopback, and a test that could pass
 /// without the tunnel is not a test of the tunnel.
-fn bind_service(nodes: &[&Node]) -> TcpListener {
-    let address: SocketAddr = format!("{OVERLAY_PEER}:{SERVICE_PORT}")
-        .parse()
-        .expect("service address");
+fn bind_service(nodes: &[&Node], address: &str) -> TcpListener {
+    let address: SocketAddr = address.parse().expect("service address");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match TcpListener::bind(address) {
@@ -596,6 +611,7 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
         // required, and asserting on the reported name below is what shows it
         // was ignored rather than quietly honoured.
         interface: PEER_INTERFACE,
+        socks: SOCKS_PORT,
     });
     let peer = start(&Spec {
         tag: "peer",
@@ -607,6 +623,7 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
         listen: LISTEN_PEER,
         peer_listen: LISTEN_USERSPACE,
         interface: PEER_INTERFACE,
+        socks: SOCKS_PORT,
     });
     let both = [&userspace, &peer];
 
@@ -639,7 +656,11 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
 
     let request = pattern(0x5a, PAYLOAD);
     let reply = pattern(0xa5, PAYLOAD);
-    let service = serve_once(bind_service(&both), request.clone(), reply.clone());
+    let service = serve_once(
+        bind_service(&both, &format!("{OVERLAY_PEER}:{SERVICE_PORT}")),
+        request.clone(),
+        reply.clone(),
+    );
 
     let proxy: SocketAddr = format!("127.0.0.1:{SOCKS_PORT}").parse().expect("proxy");
     let target: SocketAddr = format!("{OVERLAY_PEER}:{SERVICE_PORT}")
@@ -666,6 +687,126 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
     assert_carried_the_payload(&userspace);
 }
 
+/// **A request that ends by closing, and the reply that comes after it.**
+///
+/// TCP is two independent half-duplex streams, and a large family of clients
+/// uses that: send the request, close the write half, read the answer until
+/// EOF. `curl` does it, `nc -N` does it, and any protocol that delimits a
+/// message by closing does it. Found by ADR-0012's gate-1 measurement, which
+/// could not complete a run for this reason — FINDINGS.md 39.
+///
+/// The service here reads **to EOF** rather than a known length, so the row
+/// fails in a different place for each half of the bug: if the FIN never
+/// crosses, the service blocks and this times out; if the FIN crosses but the
+/// reverse direction is torn down with it, the reply never arrives.
+///
+/// The client reads to EOF as well, which is the *other* half of the same rule:
+/// it returns only once the proxy has closed the workload's side after the
+/// overlay end finished. A relay that propagated the client's FIN and then sat
+/// on the far end's would hang here rather than truncate.
+#[test]
+#[ignore = "needs root to give the peer a TUN device"]
+fn a_half_closed_request_still_receives_its_reply() {
+    if !have_prerequisites() {
+        return;
+    }
+
+    let userspace = start(&Spec {
+        tag: "half-close",
+        mode: Mode::UnprivilegedUserspace,
+        seed: 21,
+        peer_seed: 22,
+        address: OVERLAY_USERSPACE_2,
+        peer_address: OVERLAY_PEER_2,
+        listen: LISTEN_USERSPACE_2,
+        peer_listen: LISTEN_PEER_2,
+        interface: PEER_INTERFACE_2,
+        socks: SOCKS_PORT_2,
+    });
+    let peer = start(&Spec {
+        tag: "half-close-peer",
+        mode: Mode::PrivilegedTun,
+        seed: 22,
+        peer_seed: 21,
+        address: OVERLAY_PEER_2,
+        peer_address: OVERLAY_USERSPACE_2,
+        listen: LISTEN_PEER_2,
+        peer_listen: LISTEN_USERSPACE_2,
+        interface: PEER_INTERFACE_2,
+        socks: SOCKS_PORT_2,
+    });
+    let both = [&userspace, &peer];
+
+    wait_for(
+        &both,
+        "both nodes to establish",
+        Duration::from_secs(30),
+        || {
+            field(&status(&userspace), "state").as_deref() == Some("established")
+                && field(&status(&peer), "state").as_deref() == Some("established")
+        },
+    );
+
+    let request = pattern(0x3c, PAYLOAD);
+    let reply = pattern(0xc3, PAYLOAD);
+    let listener = bind_service(&both, &format!("{OVERLAY_PEER_2}:{SERVICE_PORT_2}"));
+    let expected = request.clone();
+    let answer = reply.clone();
+    let service = std::thread::spawn(move || -> Result<(), String> {
+        let (mut stream, _) = listener.accept().map_err(|e| format!("accept: {e}"))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .map_err(|e| format!("read timeout: {e}"))?;
+        // **To EOF, not to a length.** This is what makes the row a test of the
+        // half-close: the service learns the request has ended because the
+        // client closed, which is the only signal it is given.
+        let mut received = Vec::new();
+        stream
+            .read_to_end(&mut received)
+            .map_err(|e| format!("reading the request: {e}"))?;
+        if received != expected {
+            return Err(format!(
+                "the request arrived as {} bytes, not {}",
+                received.len(),
+                expected.len()
+            ));
+        }
+        stream
+            .write_all(&answer)
+            .map_err(|e| format!("writing the reply: {e}"))?;
+        stream.flush().map_err(|e| format!("flush: {e}"))?;
+        Ok(())
+    });
+
+    let proxy: SocketAddr = format!("127.0.0.1:{SOCKS_PORT_2}").parse().expect("proxy");
+    let target: SocketAddr = format!("{OVERLAY_PEER_2}:{SERVICE_PORT_2}")
+        .parse()
+        .expect("target");
+    let mut tunnelled = socks_connect_when_ready(proxy, target, &both);
+
+    tunnelled.write_all(&request).expect("send the request");
+    tunnelled.flush().expect("flush the request");
+    tunnelled
+        .shutdown(std::net::Shutdown::Write)
+        .expect("half-close the request");
+
+    let mut received = Vec::new();
+    tunnelled
+        .read_to_end(&mut received)
+        .unwrap_or_else(|e| panic!("reading the reply after a half-close: {e}{}", report(&both)));
+    assert_eq!(
+        received.len(),
+        reply.len(),
+        "the reply was truncated after the half-close{}",
+        report(&both)
+    );
+    assert_eq!(received, reply, "the reply that crossed does not match");
+    service
+        .join()
+        .expect("service thread")
+        .unwrap_or_else(|e| panic!("the overlay service reported: {e}{}", report(&both)));
+}
+
 /// **The instrument check.** The launcher above must really remove the
 /// privilege, so the same launcher is pointed at TUN mode and must fail.
 ///
@@ -690,6 +831,7 @@ fn a_tun_is_impossible_for_the_process_under_test() {
         listen: LISTEN_UNUSED,
         peer_listen: LISTEN_UNUSED + 1,
         interface: "karstu1",
+        socks: SOCKS_PORT,
     });
 
     let deadline = Instant::now() + Duration::from_secs(20);

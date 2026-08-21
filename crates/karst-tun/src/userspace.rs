@@ -361,6 +361,24 @@ impl Userspace {
         stack.sockets.get_mut::<tcp::Socket>(handle.0).can_recv()
     }
 
+    /// Whether more bytes can still arrive on a TCP socket.
+    ///
+    /// **Not the same question as [`Self::tcp_can_recv`]**, and conflating them
+    /// is how a proxy loses the last part of a reply. `tcp_can_recv` asks
+    /// whether bytes are buffered *now*; this asks whether the far end might
+    /// still send any — true while data is buffered, and true after that until
+    /// the remote closes. A relay needs both: the first says when to copy, and
+    /// only the second says when to stop.
+    #[must_use]
+    pub fn tcp_may_recv(&self, handle: TcpHandle) -> bool {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stack.poll();
+        stack.sockets.get_mut::<tcp::Socket>(handle.0).may_recv()
+    }
+
     /// Whether a TCP socket may accept more application bytes.
     #[must_use]
     pub fn tcp_can_send(&self, handle: TcpHandle) -> bool {

@@ -3482,15 +3482,15 @@ onwards, anchored on the week of 2026-08-10.
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
 - 🔶 **Kubernetes operator ✅ + Docker images ✅ + userspace mode 🔶** — proven
-  outbound, unmeasured for cost, and with no inbound attachment.
+  outbound, **now measured**, and with no inbound attachment.
 
   Userspace mode landed 2026-08-20: ADR-0012 chooses **smoltcp**, isolated
   behind a `karst-tun` packet device and reached only through an explicit
   runtime mode. Workloads attach over a loopback **SOCKS5** listener that
   accepts `CONNECT` to literal overlay addresses and refuses names — resolving
   one through the host resolver would be an unreviewed path around Karst's
-  packet and policy boundary. The privileged path is untouched and the ten
-  aquifer topologies still pass.
+  packet and policy boundary. The privileged path is untouched and the aquifer
+  topologies — thirteen of them now — still pass.
 
   **Four oversights corrected on review**, recorded because three of them are
   the kind that pass every test that exists.
@@ -3556,13 +3556,50 @@ onwards, anchored on the week of 2026-08-10.
   its first run: userspace mode reported the interface name from the *config
   file*, an `ip link` entry that does not exist (FINDINGS.md 35).
 
-  **Still outstanding, and it is now the honest boundary of the feature**:
+  **ADR-0012's gate 1 is met as of 2026-08-21**, and the number is the point of
+  this entry. `scripts/userspace-cost.sh` runs three scenarios over one
+  topology in two namespaces — underlay, privileged TUN, userspace — with **one
+  instrument** for all three, because `iperf3` cannot speak SOCKS5 and two
+  tools would put the difference inside the instrument. Full record in
+  [`docs/measurements/userspace-cost-2026-08-21.md`](docs/measurements/userspace-cost-2026-08-21.md).
+
+  | | underlay | privileged | userspace |
+  |---|---|---|---|
+  | Throughput, one flow | 130–138 Gbps | 1340–1384 Mbps | **5.6–7.3 Mbps** |
+  | RTT p50 | 0.04–0.06 ms | 0.15–0.18 ms | **0.547 ms** |
+  | Peak RSS | — | 6,672–6,692 kB | **6,648–6,672 kB** |
+
+  **Memory is a non-answer, and that is an answer**: the two modes are equal to
+  within a rounding error, so nothing in that column argues either way.
+  **Latency is 3× the baseline** and 0.37 ms in absolute terms, which is a real
+  cost and a defensible one. **Throughput is 0.5% of the privileged path**, and
+  that is not defensible for bulk traffic — the deployment guidance now says so
+  instead of implying otherwise.
+
+  The measurement was worth taking twice over, because taking it found two
+  defects that the gate-2 test could not (FINDINGS.md 39 and 40). The relay
+  treated a client half-close as a full teardown, so every client that ends a
+  request by closing its write half — `curl`, `nc -N`, any close-delimited
+  protocol — got a **truncated** reply; the harness could not complete one run
+  until it was fixed. And the first latency figure, 4.135 ms, turned out to be a
+  flat 2 ms poll counted twice rather than a cost: the distribution was
+  4.135/4.156/4.211 across p50/p90/p99, which is a timer wearing a
+  measurement's clothes.
+
+  **What the remaining gap is, stated so it is not mistaken for tuning.** After
+  the poll fix, userspace mode is still 200× slower than the privileged path,
+  and the reasons are structural rather than constant: `recv_segments` returns
+  **one packet per call** where the privileged path returns ~52 through
+  `IFF_VNET_HDR` offload (§3.4, change 5), every relay pass takes the lock on
+  the *entire* smoltcp stack and polls it several times, and the SOCKS5 hop
+  copies every byte again. Rebuilding that loop is the next piece of userspace
+  work and it is a redesign, not a pass with a profiler.
+
+  **Still outstanding, and it is still the honest boundary of the feature**:
   attachment is outbound only. A workload behind userspace mode can dial the
   mesh; nothing in the mesh can reach a service inside it, because SOCKS5
   `CONNECT` is the whole attachment surface and `Userspace::listen_tcp` is
-  reachable from no configuration. That is half of §9's sidecar. ADR-0012's
-  gate 1 — throughput, latency and memory against the privileged baseline —
-  also remains unmeasured; only the binary-size delta exists.
+  reachable from no configuration. That is half of §9's sidecar.
 - **Exit:** **every topology in the matrix where a direct path is physically
   possible reaches one**, and the rest fall back to the relay without loss with
   both nodes reporting why; relay fallback is automatic and lossless; a peer behind symmetric CGNAT reaches a peer behind a
