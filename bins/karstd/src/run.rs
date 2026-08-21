@@ -2868,6 +2868,72 @@ mod probe_tests {
         );
     }
 
+    /// **A region does not narrow the candidates, and that is the design.**
+    ///
+    /// `ponor-v1.md` §9.1 selects a home relay by measuring RTT and §9.2 adds
+    /// hysteresis; neither mentions the region, and this test exists so the
+    /// omission reads as a decision rather than as something nobody got to.
+    ///
+    /// The reason is that **a region belongs to a relay and a node has none**.
+    /// Nothing tells a node where it is, so a node filtering "its own region"
+    /// would first have to infer one — and the only evidence available is
+    /// latency, which is what selection already uses. Filtering would replace a
+    /// direct measurement with a guess derived from it.
+    ///
+    /// Region is load-bearing elsewhere and untouched by this: §8 confines a
+    /// mesh to one region, so two nodes whose home relays are in different
+    /// regions reach each other by §9.1's second path — an on-demand connection
+    /// to the peer's home relay — rather than through relay-to-relay
+    /// forwarding. That is a cost of one connection, not a failure to connect.
+    #[test]
+    fn relays_from_another_region_are_measured_like_any_other() {
+        let mut far = relay(2);
+        far.region = "eu-west".to_owned();
+        let mut farther = relay(3);
+        farther.region = "ap-south".to_owned();
+        let engine = engine(vec![relay(1), far.clone(), farther.clone()]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+
+        // Every candidate is reached across enough rounds to rule out a filter
+        // that merely happens to admit the first one.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+        for round in 0..40 {
+            probe_relays(
+                &rtt,
+                &home,
+                &mut rotation,
+                &engine,
+                Some(&q.sender),
+                1_000 * (round + 1),
+                seeds(),
+            );
+            let _ = q.home.try_recv();
+            if let Some(id) = pinged_elsewhere(&mut q) {
+                seen.insert(id);
+            }
+            // Clear the in-flight tokens, or MAX_OUTSTANDING_PROBES stops the
+            // probes after two rounds and the test would conclude "filtered"
+            // from a relay that was simply never asked again.
+            let mut probes = rtt
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for r in [&relay(1), &far, &farther] {
+                probes.reset(r.relay_id);
+            }
+            drop(probes);
+        }
+
+        assert!(
+            seen.contains(&far.relay_id) && seen.contains(&farther.relay_id),
+            "a relay in another region was never measured; selection has grown a \
+             region filter that §9.1 does not specify"
+        );
+    }
+
     /// **A relay that stops answering stops being asked.** The probe table is
     /// per relay, so this is measured as that relay's silence rather than as a
     /// node that ran out of patience with all of them.

@@ -2476,19 +2476,50 @@ onwards, anchored on the week of 2026-08-10.
   Sampling one would have passed against the defect five times in six — which
   is roughly what happened before the diagnosis: the gate passed on its first
   run and failed the next three.
-- 🔶 **`karst-relay`'s operational surface.** Metrics, mesh dialling and its I/O
-  are done — the entries below. **Two things are not, and they are what is left
-  of this bullet:**
+- ✅ **`karst-relay`'s operational surface.** Metrics, mesh dialling and its I/O
+  are done — the entries below. The two items that were outstanding are closed,
+  one by building it and one by finding the claim about it was wrong:
 
-  - **The region map, end to end.** A relay knows its region, the netmap
-    carries it, and §8's boundary is enforced on both sides of a mesh pair. But
-    `bins/karstd/src/home.rs` has no notion of region at all: a node measures
-    every relay it is given and picks the fastest, which is the right answer
-    only because no deployment has yet handed it relays from two regions. §5's
-    "multiple relays per region, latency-probed by clients, published by the
-    control server" is therefore half-built, and the half that is missing is
-    the client's.
-  - 🔶 **Co-location with the control server in the default deployment
+  - ✅ **The region map, end to end.** This bullet used to say the client half
+    was missing: that `bins/karstd/src/home.rs` has no notion of region, and
+    that picking the fastest relay "is the right answer only because no
+    deployment has yet handed it relays from two regions". **Checked
+    2026-08-21, and the second half of that sentence is false.** Picking the
+    fastest is the right answer with any number of regions, and §9 specifies
+    exactly that — RTT with hysteresis, no mention of region.
+
+    The reason it is right is worth writing down, because it is what the
+    original claim missed: **a region belongs to a relay and a node has none.**
+    Nothing tells a node where it is. A node filtering to "its own region"
+    would first have to infer one, and the only evidence available is latency —
+    so filtering would replace a direct measurement with a guess derived from
+    it. Region stays load-bearing where §8 puts it, confining a mesh, and two
+    nodes homed in different regions still reach each other by §9.1's second
+    path: an on-demand connection to the peer's home relay. That is one extra
+    connection, not a failure to connect.
+
+    §5's "multiple relays per region, latency-probed by clients, published by
+    the control server" is therefore complete, and what had actually been
+    missing from it was the third clause — nothing published relays at all
+    (FINDINGS.md 43), which is why no deployment had ever handed a node two
+    regions to be wrong about.
+
+    The omission is now a test rather than an absence:
+    `relays_from_another_region_are_measured_like_any_other` fails against a
+    region filter, so a later reader who assumes the feature was forgotten gets
+    told it was decided.
+
+    **One known cost, stated so it is not rediscovered as a bug.** The probe
+    rotation measures one alternative at a time for `PROBE_ROUNDS` (4) rounds
+    and then rests `REST_ROUNDS` (6), at a `PROBE_INTERVAL` of 60 s — ten
+    minutes per candidate, so a full cycle over an *N*-relay registry takes
+    10(*N*−1) minutes regardless of which regions those relays are in. That is
+    linear in registry size and is bounded in practice by ADR-0007's decision
+    that there is no default public fleet: a self-hosted registry is a handful
+    of relays, not a global map. A candidate also gets exactly three usable
+    rounds against a hysteresis needing three consecutive wins, so a single lost
+    `Pong` costs it that turn and it waits for the next one.
+  - ✅ **Co-location with the control server in the default deployment
     artefact.** §5 makes this both the adoption lever and the answer to who
     pays for bandwidth: the same `docker-compose`, the same static binary, a
     self-hoster relaying in under five minutes without deciding anything.
