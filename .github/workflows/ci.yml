@@ -364,6 +364,31 @@ jobs:
         working-directory: .
         run: ./scripts/govulncheck.sh server
 
+  # The published OpenAPI document, generated bindings, and mock are one
+  # contract. Regenerate and typecheck them in CI so a server-only change
+  # cannot drift from the console client unnoticed.
+  control-api-contract:
+    name: Control API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Regenerate Go OpenAPI types
+        run: cd server/shared/management/http/api && ./generate-karst.sh
+      - name: Generated Go types are committed
+        run: git diff --exit-code -- server/shared/management/http/api/karst/types.gen.go
+      - name: Contract mock parses
+        run: node --check web/tools/karst-api-mock.mjs
+      - name: Install locked web dependencies
+        run: cd web && corepack pnpm install --frozen-lockfile
+      - name: Typecheck and verify generated TypeScript client
+        run: cd web && corepack pnpm --filter @karst-net/api-client run check && corepack pnpm --filter @karst-net/api-client run check-drift
+
   # Cross-implementation vectors: the Go server generates them, the Rust node
   # must reproduce them. A drift in either is a handshake that never completes
   # and produces no diagnostic, so it is checked on every commit rather than

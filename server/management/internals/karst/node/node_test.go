@@ -240,6 +240,40 @@ func TestHomeRelayIsStoredAndReplaced(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesIdentityAndRelatedObservations(t *testing.T) {
+	s := newStore(t)
+	first, second := newIdentity(t), newIdentity(t)
+	firstHandle, err := s.Register(first.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register first: %v", err)
+	}
+	secondHandle, err := s.Register(second.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register second: %v", err)
+	}
+	if err := s.ReplaceSessionObservations(firstHandle, []node.SessionObservation{{PeerHandle: secondHandle, Path: "direct"}}); err != nil {
+		t.Fatalf("record first observation: %v", err)
+	}
+	if err := s.ReplaceSessionObservations(secondHandle, []node.SessionObservation{{PeerHandle: firstHandle, Path: "relay"}}); err != nil {
+		t.Fatalf("record second observation: %v", err)
+	}
+
+	if err := s.Delete(firstHandle); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := s.Get(firstHandle); !errors.Is(err, node.ErrUnknownNode) {
+		t.Fatalf("deleted identity: got %v, want ErrUnknownNode", err)
+	}
+	if _, err := s.Get(secondHandle); err != nil {
+		t.Fatalf("other identity was deleted: %v", err)
+	}
+	if observations, err := s.AllSessionObservations(); err != nil {
+		t.Fatalf("list observations: %v", err)
+	} else if len(observations) != 0 {
+		t.Fatalf("observations survived deprovisioning: %#v", observations)
+	}
+}
+
 // Reporting the same relay again must not touch the row. Every node reports
 // this on every poll, so an unconditional write is one update per node per
 // refresh interval, and it moves UpdatedAt on rows nothing changed.

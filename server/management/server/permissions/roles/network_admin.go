@@ -15,6 +15,7 @@ var NetworkAdmin = RolePermissions{
 		operations.Delete: false,
 	},
 	Permissions: Permissions{
+		modules.KarstControl: {operations.Read: true, operations.Create: true, operations.Update: true, operations.Delete: true},
 		modules.Networks: {
 			operations.Read:   true,
 			operations.Create: true,

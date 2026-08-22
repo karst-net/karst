@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use karst_control_client::transport::pb;
 use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
@@ -2223,6 +2224,28 @@ fn refresh_netmap(
         }
         next = Instant::now() + crate::control::REFRESH;
         client.set_home_relay(chosen);
+        let epoch = client.netmap().psk_epoch;
+        let sessions = engine
+            .status()
+            .into_iter()
+            .map(|status| pb::KarstSessionObservation {
+                peer_id: status.node_id,
+                path: match status.transport {
+                    crate::engine::Transport::Direct => "direct",
+                    crate::engine::Transport::Relay => "relay",
+                    crate::engine::Transport::Unreachable => "unreachable",
+                }
+                .to_owned(),
+                endpoint: status
+                    .endpoint
+                    .map(|endpoint| endpoint.to_string())
+                    .unwrap_or_default(),
+                lattice_only: status.psk_is_fallback,
+                psk_epoch: epoch,
+                suite: status.suite,
+            })
+            .collect();
+        client.set_session_observations(sessions);
         published = chosen;
 
         let outcome = match runtime.block_on(client.sync()) {

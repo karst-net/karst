@@ -233,6 +233,53 @@ func TestHeadOnEmptyLog(t *testing.T) {
 	}
 }
 
+func TestListBeforeUsesAStableSequenceCursor(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := context.Background()
+	appendN(t, l, 5)
+
+	first, err := l.ListBefore(ctx, 0, 2)
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if got, want := []uint64{first[0].Seq, first[1].Seq}, []uint64{5, 4}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("first page: got %v want %v", got, want)
+	}
+	// A concurrent append moves the head but cannot move the next page below
+	// the cursor, unlike an offset query.
+	if _, err := l.Append(ctx, "alice", "peer.login", "node-new", "detail"); err != nil {
+		t.Fatalf("concurrent append: %v", err)
+	}
+	second, err := l.ListBefore(ctx, first[len(first)-1].Seq, 2)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if got, want := []uint64{second[0].Seq, second[1].Seq}, []uint64{3, 2}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("second page: got %v want %v", got, want)
+	}
+}
+
+func TestListFilteredHonorsActorAndAction(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := context.Background()
+	for _, entry := range []struct{ actor, action string }{
+		{"alice", "policy.write"},
+		{"bob", "policy.write"},
+		{"alice", "node.delete"},
+	} {
+		if _, err := l.Append(ctx, entry.actor, entry.action, "node", ""); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	entries, err := l.ListFiltered(ctx, "alice", "policy.write", 0, 10)
+	if err != nil {
+		t.Fatalf("list filtered: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Actor != "alice" || entries[0].Action != "policy.write" {
+		t.Fatalf("unexpected filtered entries: %#v", entries)
+	}
+}
+
 // Length prefixing: two different events must not hash identically because
 // their fields concatenate the same way.
 func TestFieldsCannotBeConfused(t *testing.T) {

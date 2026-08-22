@@ -1,6 +1,7 @@
 package roles
 
 import (
+	"github.com/netbirdio/netbird/management/server/permissions/modules"
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
 	"github.com/netbirdio/netbird/management/server/types"
 )
@@ -12,5 +13,8 @@ var User = RolePermissions{
 		operations.Create: false,
 		operations.Update: false,
 		operations.Delete: false,
+	},
+	Permissions: Permissions{
+		modules.KarstControl: {operations.Read: false, operations.Create: false, operations.Update: false, operations.Delete: false},
 	},
 }

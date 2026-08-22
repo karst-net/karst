@@ -148,6 +148,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | PSK master extraction (A4) | HSM/KMS custody where available; documented software fallback; O(1) derived, not stored | ADR-0004 | Key-custody review |
 | Control-channel interception | TLS 1.3 with `X25519MLKEM768` | ADR-0001 | Config tests |
 | Stale netmap → silent connectivity loss (A8) | Netmap age surfaced in `karst status`; `karst doctor` diagnoses hint misses | ADR-0005 | Phase 3 |
+| Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorised admin/auditor views | Phase 5 control API | Route × role secret/authorisation scan |
 
 ### B3 — Relay and TURN
 

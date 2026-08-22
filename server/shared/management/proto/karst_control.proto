@@ -104,6 +104,26 @@ message KarstNetmapRequest {
   //
   // 32 bytes, the SHA-256 relay handle of KarstRelay.relay_id.
   bytes home_relay = 3;
+
+  // Last session facts measured by this node. These are observations, never
+  // assertions by the control server; the receiver records its own timestamp.
+  // No key material, PSKs, or discovery secrets appear in this message.
+  repeated KarstSessionObservation sessions = 4;
+}
+
+message KarstSessionObservation {
+  // The peer handle from the netmap this node currently holds.
+  bytes peer_id = 1;
+  // direct, relay, or unreachable.
+  string path = 2;
+  // Last direct endpoint, if any. This is an address, not credential material.
+  string endpoint = 3;
+  // Whether this pair is using the PSK-absent lattice-only fallback.
+  bool lattice_only = 4;
+  // The netmap PSK epoch used to interpret lattice_only.
+  uint32 psk_epoch = 5;
+  // The negotiated hybrid suite, for example "ML-KEM-768 + X25519".
+  string suite = 6;
 }
 
 // KarstPeerDigest is a node's summary of one peer entry it holds.

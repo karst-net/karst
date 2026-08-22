@@ -20,16 +20,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"gorm.io/gorm"
 
+	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
+	"github.com/netbirdio/netbird/management/internals/karst/audit"
+	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -133,6 +138,36 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: node store: %w", err)
 	}
+	auditLog, err := audit.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: audit log: %w", err)
+	}
+	policyStore, err := policy.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: policy store: %w", err)
+	}
+	relayStore, err := relayreg.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: relay store: %w", err)
+	}
+	bedrockStore, err := bedrock.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: bedrock store: %w", err)
+	}
+	// Static relays remain a fallback for accounts that have not created an
+	// account-scoped registry. They are not copied into a global table at boot.
+	// The configured document remains a read-only fallback for accounts that
+	// have not yet written their own policy. Persisting it here would turn one
+	// operator file into a global, cross-account policy revision.
+
+	// Register after NewAPIHandler has installed the shared auth, CORS, and
+	// metrics middleware and its built-in routes. Karst therefore has no second
+	// authentication path, while the route ordering stays mechanically clear.
+	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, s.PermissionsManager(), router)
+	}}); err != nil {
+		return nil, fmt.Errorf("karst: register API extension: %w", err)
+	}
 
 	accounts := s.AccountManager()
 	peers := &storePeers{store: sql, accounts: accounts}
@@ -146,12 +181,14 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	router := &handler{
 		login: &control.LoginHandler{Nodes: nodes, Accounts: accounts, OIDC: oidc},
 		netmap: &control.NetmapHandler{
-			Nodes:  nodes,
-			Peers:  peers,
-			PSK:    deriver,
-			Epoch:  epoch,
-			Policy: pol,
-			Relays: relays,
+			Nodes:       nodes,
+			Peers:       peers,
+			PSK:         deriver,
+			Epoch:       epoch,
+			Policy:      pol,
+			PolicyStore: policyStore,
+			Relays:      relays,
+			RelayStore:  relayStore,
 		},
 	}
 

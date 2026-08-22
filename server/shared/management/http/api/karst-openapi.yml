@@ -1,0 +1,437 @@
+openapi: 3.0.3
+info:
+  title: Karst Control API
+  version: 1.0.0-draft.1
+  description: |
+    Karst-owned administrative API. All paths inherit the management server's
+    authentication middleware. Public keys may be represented by stable
+    handles, but this API never returns PSKs, discovery keys, setup keys, or
+    private node material.
+servers:
+  - url: /api/karst/v1
+security:
+  - bearerAuth: []
+paths:
+  /nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      parameters:
+        - $ref: '#/components/parameters/tag'
+        - $ref: '#/components/parameters/user'
+        - $ref: '#/components/parameters/posture'
+        - $ref: '#/components/parameters/coverage'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200': {description: Node page, content: {application/json: {schema: {$ref: '#/components/schemas/NodePage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /nodes/{handle}:
+    parameters: [{$ref: '#/components/parameters/handle'}]
+    get:
+      operationId: getNode
+      tags: [nodes]
+      responses:
+        '200': {description: Node, content: {application/json: {schema: {$ref: '#/components/schemas/Node'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateNode
+      tags: [nodes]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/NodeUpdate'}}}}
+      responses:
+        '200': {description: Updated node, content: {application/json: {schema: {$ref: '#/components/schemas/Node'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deprovisionNode
+      tags: [nodes]
+      responses:
+        '204': {description: Node deprovisioned}
+        default: {$ref: '#/components/responses/Error'}
+  /nodes/{handle}/paths:
+    parameters: [{$ref: '#/components/parameters/handle'}]
+    get:
+      operationId: getNodePaths
+      tags: [nodes]
+      responses:
+        '200': {description: Last paths reported by this node, content: {application/json: {schema: {$ref: '#/components/schemas/NodePaths'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /nodes/{handle}/posture:
+    parameters: [{$ref: '#/components/parameters/handle'}]
+    get:
+      operationId: getNodePosture
+      tags: [nodes]
+      responses:
+        '200': {description: Last cryptographic posture reported by this node, content: {application/json: {schema: {$ref: '#/components/schemas/NodePosture'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /policy:
+    get:
+      operationId: getPolicy
+      tags: [policy]
+      responses:
+        '200': {description: Current policy, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersion'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: writePolicy
+      tags: [policy]
+      parameters: [{$ref: '#/components/parameters/ifMatch'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyWrite'}}}}
+      responses:
+        '200': {description: Newly written version, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersion'}}}}
+        '412': {$ref: '#/components/responses/VersionConflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/versions:
+    get:
+      operationId: listPolicyVersions
+      tags: [policy]
+      parameters: [{$ref: '#/components/parameters/cursor'}, {$ref: '#/components/parameters/limit'}]
+      responses:
+        '200': {description: Version page, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersionPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/versions/{version}:
+    parameters: [{$ref: '#/components/parameters/version'}]
+    get:
+      operationId: getPolicyVersion
+      tags: [policy]
+      responses:
+        '200': {description: Policy version, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersion'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/validate:
+    post:
+      operationId: validatePolicy
+      tags: [policy]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyWrite'}}}}
+      responses:
+        '200': {description: Validation diagnostics, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyValidation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/preview:
+    post:
+      operationId: previewPolicy
+      tags: [policy]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyWrite'}}}}
+      responses:
+        '200': {description: Flow-level change preview, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyPreview'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/rollback/{version}:
+    parameters: [{$ref: '#/components/parameters/version'}]
+    post:
+      operationId: rollbackPolicy
+      tags: [policy]
+      parameters: [{$ref: '#/components/parameters/ifMatch'}]
+      responses:
+        '200': {description: New version copied from the requested version, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersion'}}}}
+        '412': {$ref: '#/components/responses/VersionConflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /policy/test:
+    post:
+      operationId: testPolicy
+      tags: [policy]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyWrite'}}}}
+      responses:
+        '200': {description: Policy test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relays:
+    get:
+      operationId: listRelays
+      tags: [relays]
+      responses:
+        '200': {description: Relay registry, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Relay'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createRelay
+      tags: [relays]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreate'}}}}
+      responses:
+        '201': {description: Onboarded relay, content: {application/json: {schema: {$ref: '#/components/schemas/Relay'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relays/{relayId}:
+    parameters: [{$ref: '#/components/parameters/relayId'}]
+    delete:
+      operationId: deleteRelay
+      tags: [relays]
+      responses:
+        '204': {description: Relay removed}
+        default: {$ref: '#/components/responses/Error'}
+  /relays/{relayId}/health:
+    parameters: [{$ref: '#/components/parameters/relayId'}]
+    get:
+      operationId: getRelayHealth
+      tags: [relays]
+      responses:
+        '200': {description: Relay health derived from the roster, content: {application/json: {schema: {$ref: '#/components/schemas/RelayHealth'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock:
+    get:
+      operationId: getBedrock
+      tags: [bedrock]
+      responses:
+        '200': {description: Bedrock configuration, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockStatus'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/log:
+    get:
+      operationId: listBedrockLog
+      tags: [bedrock]
+      parameters: [{$ref: '#/components/parameters/cursor'}, {$ref: '#/components/parameters/limit'}]
+      responses:
+        '200': {description: Bedrock log page, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockLogPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/log/verify:
+    get:
+      operationId: verifyBedrockLog
+      tags: [bedrock]
+      responses:
+        '200': {description: Chain verification, content: {application/json: {schema: {$ref: '#/components/schemas/ChainVerification'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/requests:
+    get:
+      operationId: listBedrockRequests
+      tags: [bedrock]
+      responses:
+        '200': {description: Pending signing requests, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/SigningRequest'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/requests/export:
+    post:
+      operationId: exportBedrockRequests
+      tags: [bedrock]
+      responses:
+        '200': {description: Offline signer bundle, content: {application/json: {schema: {$ref: '#/components/schemas/SignedBundle'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/responses/import:
+    post:
+      operationId: importBedrockResponses
+      tags: [bedrock]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SignedBundle'}}}}
+      responses:
+        '204': {description: Signed responses imported}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/mode:
+    put:
+      operationId: setBedrockMode
+      tags: [bedrock]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockModeWrite'}}}}
+      responses:
+        '200': {description: Updated status, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockStatus'}}}}
+        '409': {$ref: '#/components/responses/AcknowledgementMismatch'}
+        default: {$ref: '#/components/responses/Error'}
+  /posture:
+    get:
+      operationId: getPosture
+      tags: [posture]
+      parameters: [{$ref: '#/components/parameters/observedSince'}]
+      responses:
+        '200': {description: Defensible aggregate posture, content: {application/json: {schema: {$ref: '#/components/schemas/PostureAggregate'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /posture/sessions:
+    get:
+      operationId: listPostureSessions
+      tags: [posture]
+      parameters: [{$ref: '#/components/parameters/posture'}, {$ref: '#/components/parameters/cursor'}, {$ref: '#/components/parameters/limit'}]
+      responses:
+        '200': {description: Session posture page, content: {application/json: {schema: {$ref: '#/components/schemas/SessionPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit:
+    get:
+      operationId: listAuditEntries
+      tags: [audit]
+      parameters: [{$ref: '#/components/parameters/cursor'}, {$ref: '#/components/parameters/limit'}, {$ref: '#/components/parameters/actor'}, {$ref: '#/components/parameters/action'}]
+      responses:
+        '200': {description: Audit page, content: {application/json: {schema: {$ref: '#/components/schemas/AuditPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit/export:
+    get:
+      operationId: exportAudit
+      tags: [audit]
+      parameters: [{$ref: '#/components/parameters/exportFormat'}]
+      responses:
+        '200': {description: Audit export, content: {application/json: {schema: {oneOf: [{type: array, items: {$ref: '#/components/schemas/AuditEntry'}}, {type: string, format: binary}]}, text/csv: {schema: {type: string, format: binary}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit/head:
+    get:
+      operationId: getAuditHead
+      tags: [audit]
+      responses:
+        '200': {description: Current anchor candidate, content: {application/json: {schema: {$ref: '#/components/schemas/AuditHead'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit/verify:
+    get:
+      operationId: verifyAudit
+      tags: [audit]
+      responses:
+        '200': {description: Audit chain verification, content: {application/json: {schema: {$ref: '#/components/schemas/ChainVerification'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit/sinks:
+    post:
+      operationId: createAuditSink
+      tags: [audit]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuditSinkWrite'}}}}
+      responses:
+        '201': {description: Audit sink configured, content: {application/json: {schema: {$ref: '#/components/schemas/AuditSink'}}}}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    handle: {name: handle, in: path, required: true, schema: {type: string, minLength: 44, maxLength: 44}}
+    relayId: {name: relayId, in: path, required: true, schema: {type: string, readOnly: true}}
+    version: {name: version, in: path, required: true, schema: {type: integer, minimum: 1}}
+    cursor: {name: cursor, in: query, schema: {type: string}}
+    limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    tag: {name: tag, in: query, schema: {type: string}}
+    user: {name: user, in: query, schema: {type: string}}
+    posture: {name: posture, in: query, schema: {type: string, enum: [pq, lattice_only, stale, unknown]}}
+    coverage: {name: coverage, in: query, schema: {type: string, enum: [covered, uncovered, stale]}}
+    actor: {name: actor, in: query, schema: {type: string}}
+    action: {name: action, in: query, schema: {type: string}}
+    observedSince: {name: observed_since, in: query, schema: {type: string, format: date-time}}
+    ifMatch: {name: If-Match, in: header, required: true, schema: {type: string}, description: Current policy version ETag.}
+    exportFormat: {name: format, in: query, required: true, schema: {type: string, enum: [json, csv]}}
+  responses:
+    Error: {description: Error response, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    ValidationError: {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    AcknowledgementMismatch: {description: Enforcing acknowledgement does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgementMismatch'}}}}
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties: {code: {type: string}, message: {type: string}, request_id: {type: string}}
+    Page:
+      type: object
+      required: [next_cursor]
+      properties: {next_cursor: {type: string, nullable: true}}
+    Node:
+      type: object
+      required: [handle, name, user_id, tags, enabled, created_at, posture]
+      properties:
+        handle: {type: string, readOnly: true}
+        name: {type: string}
+        user_id: {type: string}
+        tags: {type: array, items: {type: string}}
+        enabled: {type: boolean}
+        expires_at: {type: string, nullable: true, format: date-time}
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, nullable: true, format: date-time}
+        posture: {$ref: '#/components/schemas/NodePosture'}
+    NodeUpdate:
+      type: object
+      additionalProperties: false
+      properties: {name: {type: string}, tags: {type: array, items: {type: string}}, expires_at: {type: string, nullable: true, format: date-time}, enabled: {type: boolean}}
+    NodePage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Node'}}}}]
+    NodePaths:
+      type: object
+      required: [observed_at, paths]
+      properties: {observed_at: {type: string, nullable: true, format: date-time}, paths: {type: array, items: {$ref: '#/components/schemas/PathObservation'}}}
+    PathObservation:
+      type: object
+      required: [peer_handle, kind, observed_at]
+      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}}
+    NodePosture:
+      type: object
+      required: [status, observed_at]
+      properties: {status: {type: string, enum: [pq, lattice_only, stale, unknown]}, suite: {type: string, nullable: true}, psk_epoch: {type: integer, nullable: true, minimum: 0}, lattice_only: {type: boolean}, observed_at: {type: string, nullable: true, format: date-time}}
+    PolicyWrite:
+      type: object
+      required: [document]
+      properties: {document: {type: string, description: HuJSON policy document.}}
+    PolicyVersion:
+      type: object
+      required: [version, document, author, created_at]
+      properties: {version: {type: integer, minimum: 1}, document: {type: string}, author: {type: string}, created_at: {type: string, format: date-time}}
+    PolicyVersionPage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/PolicyVersion'}}}}]
+    PolicyValidation:
+      type: object
+      required: [valid, diagnostics]
+      properties: {valid: {type: boolean}, diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}}
+    Diagnostic:
+      type: object
+      required: [severity, message, line, column]
+      properties: {severity: {type: string, enum: [error, warning]}, message: {type: string}, line: {type: integer, minimum: 1}, column: {type: integer, minimum: 1}}
+    PolicyPreview:
+      type: object
+      required: [added, removed]
+      properties: {added: {type: array, items: {$ref: '#/components/schemas/Flow'}}, removed: {type: array, items: {$ref: '#/components/schemas/Flow'}}}
+    Flow:
+      type: object
+      required: [source, destination, protocol, ports]
+      properties: {source: {type: string}, destination: {type: string}, protocol: {type: string}, ports: {type: string}}
+    PolicyTestResult:
+      type: object
+      required: [passed, results]
+      properties: {passed: {type: boolean}, results: {type: array, items: {type: object, required: [name, passed], properties: {name: {type: string}, passed: {type: boolean}, message: {type: string}}}}}
+    RelayCreate:
+      type: object
+      required: [address, identity_key, region]
+      additionalProperties: false
+      properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}}
+    Relay:
+      allOf: [{$ref: '#/components/schemas/RelayCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/RelayHealth'}}}]
+    RelayHealth:
+      type: object
+      required: [source, last_confirmed_at, admission_state]
+      properties: {source: {type: string, enum: [roster_mtime]}, last_confirmed_at: {type: string, nullable: true, format: date-time}, sessions: {type: integer, nullable: true, minimum: 0}, bytes: {type: integer, nullable: true, minimum: 0}, admission_state: {type: string, enum: [confirmed, stale, unknown]}}
+    BedrockStatus:
+      type: object
+      required: [mode, quorum, roots, authorities]
+      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, quorum: {type: integer, minimum: 1}, roots: {type: array, items: {$ref: '#/components/schemas/Authority'}}, authorities: {type: array, items: {$ref: '#/components/schemas/Authority'}}}
+    Authority:
+      type: object
+      required: [id, name, status]
+      properties: {id: {type: string}, name: {type: string}, status: {type: string, enum: [active, retired, unavailable]}}
+    BedrockLogPage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/BedrockLogEntry'}}}}]
+    BedrockLogEntry:
+      type: object
+      required: [sequence, hash, created_at, verified]
+      properties: {sequence: {type: integer, minimum: 1}, hash: {type: string}, created_at: {type: string, format: date-time}, verified: {type: boolean}}
+    ChainVerification:
+      type: object
+      required: [valid, head]
+      properties: {valid: {type: boolean}, first_bad_sequence: {type: integer, nullable: true, minimum: 1}, head: {$ref: '#/components/schemas/AuditHead'}}
+    SigningRequest:
+      type: object
+      required: [id, created_at, payload_hash]
+      properties: {id: {type: string}, created_at: {type: string, format: date-time}, payload_hash: {type: string}}
+    SignedBundle:
+      type: object
+      required: [format, payload]
+      properties: {format: {type: string, const: bedrock-signed-bundle-v1}, payload: {type: string, format: byte}}
+    BedrockModeWrite:
+      type: object
+      required: [mode, acknowledged_cut_off_handles]
+      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, acknowledged_cut_off_handles: {type: array, items: {type: string}, uniqueItems: true}}
+    AcknowledgementMismatch:
+      type: object
+      required: [code, message, required_cut_off_handles]
+      properties: {code: {type: string, const: acknowledgement_mismatch}, message: {type: string}, required_cut_off_handles: {type: array, items: {type: string}, uniqueItems: true}}
+    PostureAggregate:
+      type: object
+      required: [as_of, window_start, observed_sessions, eligible_sessions, pq_covered_sessions, lattice_only_sessions, stale_nodes, suites]
+      properties: {as_of: {type: string, format: date-time}, window_start: {type: string, format: date-time}, observed_sessions: {type: integer, minimum: 0}, eligible_sessions: {type: integer, minimum: 0}, pq_covered_sessions: {type: integer, minimum: 0}, lattice_only_sessions: {type: integer, minimum: 0}, stale_nodes: {type: integer, minimum: 0}, suites: {type: object, additionalProperties: {type: integer, minimum: 0}}}
+    SessionPage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/SessionPosture'}}}}]
+    SessionPosture:
+      type: object
+      required: [node_handle, peer_handle, status, lattice_only, observed_at]
+      properties: {node_handle: {type: string}, peer_handle: {type: string}, status: {type: string, enum: [pq, lattice_only, stale, unknown]}, suite: {type: string, nullable: true}, psk_epoch: {type: integer, nullable: true}, lattice_only: {type: boolean}, observed_at: {type: string, format: date-time}}
+    AuditPage:
+      allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items, anchor], properties: {items: {type: array, items: {$ref: '#/components/schemas/AuditEntry'}}, anchor: {$ref: '#/components/schemas/AuditAnchor'}}}]
+    AuditEntry:
+      type: object
+      required: [sequence, created_at, actor, action, target, previous_hash, hash]
+      properties: {sequence: {type: integer, minimum: 1}, created_at: {type: string, format: date-time}, actor: {type: string}, action: {type: string}, target: {type: string}, detail: {type: string}, previous_hash: {type: string}, hash: {type: string}}
+    AuditHead:
+      type: object
+      required: [sequence, hash]
+      properties: {sequence: {type: integer, minimum: 0}, hash: {type: string}}
+    AuditAnchor:
+      type: object
+      required: [last_anchored_sequence, entries_since_anchor]
+      properties: {last_anchored_sequence: {type: integer, nullable: true, minimum: 1}, last_anchored_at: {type: string, nullable: true, format: date-time}, entries_since_anchor: {type: integer, minimum: 0}}
+    AuditSinkWrite:
+      type: object
+      required: [kind, endpoint]
+      properties: {kind: {type: string, enum: [webhook, syslog]}, endpoint: {type: string}}
+    AuditSink:
+      allOf: [{$ref: '#/components/schemas/AuditSinkWrite'}, {type: object, required: [id], properties: {id: {type: string, readOnly: true}}}]

@@ -418,6 +418,14 @@ impl Session {
         &self.policy
     }
 
+    /// The suite bound into this session's handshake parameters. It is exposed
+    /// for authenticated control-plane posture reporting, never inferred from
+    /// a display string.
+    #[must_use]
+    pub const fn suite(&self) -> SuiteId {
+        self.suite
+    }
+
     /// Begin a handshake. No-op if one is already in flight or established.
     ///
     /// Refuses outright if the configured suite is below the local floor: an

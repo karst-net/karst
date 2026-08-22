@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"hash"
 	"sort"
+	"sync"
 
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
@@ -19,6 +21,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
@@ -57,7 +60,10 @@ type NetmapHandler struct {
 	DNSZone string
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
-	Relays []*proto.KarstRelay
+	Relays     []*proto.KarstRelay
+	RelayStore interface {
+		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
+	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
 	//
@@ -66,8 +72,23 @@ type NetmapHandler struct {
 	// loaded a policy denies traffic rather than permitting all of it, and the
 	// symptom is a network that does not work rather than one that works too
 	// well.
-	Policy *policy.Document
+	Policy      *policy.Document
+	PolicyStore interface {
+		Current(context.Context) (*policy.Version, error)
+	}
+	policyCacheMu sync.RWMutex
+	policyCache   map[policyCacheKey]*policy.Document
 }
+
+// policyCacheKey identifies an immutable stored revision. Policy versions are
+// append-only per account, so a parsed document can be shared safely across
+// netmap refreshes without delaying a newly written revision.
+type policyCacheKey struct {
+	accountID string
+	version   uint64
+}
+
+const maxCachedPolicyDocuments = 128
 
 // Handle implements Handler.
 func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte) ([]byte, error) {
@@ -94,7 +115,6 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		}
 		return nil, fmt.Errorf("record home relay: %w", err)
 	}
-
 	accountID, err := h.Peers.GetAccountIDForPeerKey(ctx, self)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "node is not registered")
@@ -106,6 +126,41 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	peers, err := h.Peers.GetPeersFromAccount(ctx, accountID, selfPeer.ID, selfPeer.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("list peers: %w", err)
+	}
+	// A report is only meaningful for another peer in the reporting node's
+	// account. Without this check a malicious or stale client could create
+	// arbitrary handles in the global observation table and leak them through
+	// posture aggregation. Telemetry remains advisory: bad input is logged and
+	// ignored, never allowed to deny the node its netmap.
+	knownPeers := make(map[string]struct{}, len(peers))
+	for _, p := range peers {
+		if p.Key != self {
+			knownPeers[p.Key] = struct{}{}
+		}
+	}
+	observations := make([]node.SessionObservation, 0, len(req.GetSessions()))
+	for _, report := range req.GetSessions() {
+		peerHandle := string(report.GetPeerId())
+		if _, ok := knownPeers[peerHandle]; !ok {
+			log.WithFields(log.Fields{"node": self, "peer": peerHandle}).Warn("ignore Karst session observation for unauthorized peer")
+			continue
+		}
+		observations = append(observations, node.SessionObservation{
+			PeerHandle: peerHandle, Path: report.GetPath(),
+			Endpoint: report.GetEndpoint(), LatticeOnly: report.GetLatticeOnly(), PSKEpoch: report.GetPskEpoch(),
+			Suite: report.GetSuite(),
+		})
+	}
+	// An absent repeated field is indistinguishable from an empty one in proto3.
+	// Preserve the last report for pre-upgrade nodes rather than treating their
+	// first old-client poll as a deletion of useful, explicitly timestamped data.
+	if len(observations) > 0 {
+		if err := h.Nodes.ReplaceSessionObservations(self, observations); err != nil {
+			// Session telemetry is advisory. Losing a netmap over a failed
+			// observation write turns monitoring pressure into a connectivity
+			// outage, and a database failure is not a client protocol error.
+			log.WithError(err).WithField("node", self).Warn("record Karst session observations")
+		}
 	}
 
 	handles := make([]string, 0, len(peers))
@@ -131,12 +186,20 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("account prefixes: %w", err)
 	}
 
+	relays := h.Relays
+	if h.RelayStore != nil {
+		var err error
+		relays, err = h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load relays: %w", err)
+		}
+	}
 	resp := &proto.KarstNetmapResponse{
 		PskEpoch:  h.Epoch,
 		NodeId:    []byte(self),
 		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
 		DnsName:   selfPeer.DNSLabel,
-		Relays:    h.Relays,
+		Relays:    relays,
 	}
 
 	for _, p := range peers {
@@ -210,7 +273,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// outbound. Both are needed for §4.3's "enforced on both ends", and neither
 	// is derivable from the other: Karst's ACLs are unidirectional grants, so a
 	// node's inbound rules say nothing about what it may send.
-	filter, egress, err := h.compileFilter(self, peers)
+	filter, egress, err := h.compileFilter(policy.WithAccount(ctx, accountID), self, peers)
 	if err != nil {
 		return nil, err
 	}
@@ -278,10 +341,20 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 
 // compileFilter turns the policy into this node's packet filters, inbound and
 // outbound.
-func (h *NetmapHandler) compileFilter(self string, peers []*nbpeer.Peer) (
+func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []*nbpeer.Peer) (
 	[]*proto.KarstFilterRule, []*proto.KarstEgressRule, error,
 ) {
 	doc := h.Policy
+	if h.PolicyStore != nil {
+		version, err := h.PolicyStore.Current(ctx)
+		if errors.Is(err, policy.ErrNoVersion) {
+			doc = nil
+		} else if err != nil {
+			return nil, nil, fmt.Errorf("load current policy: %w", err)
+		} else if doc, err = h.parsedPolicy(version); err != nil {
+			return nil, nil, err
+		}
+	}
 	if doc == nil {
 		// No policy loaded: empty filters, which are default deny in both
 		// directions.
@@ -319,6 +392,39 @@ func (h *NetmapHandler) compileFilter(self string, peers []*nbpeer.Peer) (
 		eg = append(eg, &proto.KarstEgressRule{Dsts: r.Dsts, Ports: portRanges(r.Ports)})
 	}
 	return out, eg, nil
+}
+
+func (h *NetmapHandler) parsedPolicy(version *policy.Version) (*policy.Document, error) {
+	key := policyCacheKey{accountID: version.AccountID, version: version.Version}
+	h.policyCacheMu.RLock()
+	doc := h.policyCache[key]
+	h.policyCacheMu.RUnlock()
+	if doc != nil {
+		return doc, nil
+	}
+	parsed, err := policy.Parse([]byte(version.Document))
+	if err != nil {
+		return nil, fmt.Errorf("stored policy: %w", err)
+	}
+	h.policyCacheMu.Lock()
+	defer h.policyCacheMu.Unlock()
+	if h.policyCache == nil {
+		h.policyCache = make(map[policyCacheKey]*policy.Document)
+	}
+	if existing := h.policyCache[key]; existing != nil {
+		return existing, nil
+	}
+	if len(h.policyCache) >= maxCachedPolicyDocuments {
+		// Versions are immutable and the cache is only a parse optimisation, so
+		// arbitrary eviction preserves correctness while bounding memory under a
+		// stream of policy edits.
+		for stale := range h.policyCache {
+			delete(h.policyCache, stale)
+			break
+		}
+	}
+	h.policyCache[key] = parsed
+	return parsed, nil
 }
 
 func portRanges(in []policy.PortRange) []*proto.KarstPortRange {

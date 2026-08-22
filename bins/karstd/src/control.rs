@@ -273,6 +273,7 @@ pub struct Client {
     /// its relay go must be able to say so, or peers keep being sent somewhere
     /// nothing is listening.
     home_relay: Vec<u8>,
+    sessions: Vec<pb::KarstSessionObservation>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
     dh_public: Vec<u8>,
@@ -349,6 +350,7 @@ impl Client {
 
         Ok(Self {
             home_relay: Vec::new(),
+            sessions: Vec::new(),
             endpoint: section.server.clone(),
             pins,
             identity,
@@ -519,6 +521,13 @@ impl Client {
         self.home_relay = relay_id.map(|id| id.to_vec()).unwrap_or_default();
     }
 
+    /// Replace the last locally measured session observations. They are sent
+    /// with the next authenticated netmap request rather than through a second
+    /// control path.
+    pub fn set_session_observations(&mut self, sessions: Vec<pb::KarstSessionObservation>) {
+        self.sessions = sessions;
+    }
+
     async fn fetch(&mut self, conn: &mut Connection) -> Result<Outcome, Error> {
         use prost::Message as _;
 
@@ -529,6 +538,7 @@ impl Client {
             // rather than through a call of its own: a second path to the same
             // fact is a second path that can disagree with this one.
             home_relay: self.home_relay.clone(),
+            sessions: self.sessions.clone(),
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())

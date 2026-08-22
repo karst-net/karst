@@ -214,6 +214,16 @@ the `delta` flag, not an empty peer list, distinguishes those cases. On a
 complete replacement the node MUST discard every peer absent from `peers`; on a
 delta it MUST apply `peers` and `removed_peers` to the map it already holds.
 
+The request's `sessions` field (wire field 4) is an authenticated, advisory
+report from the node that measured each peer path. Each observation names the
+stable peer `node_id` from the netmap — never a DNS/display label — and carries
+`direct`, `relay`, or `unreachable`, an optional endpoint, the PSK-fallback
+indicator and epoch, and the suite bound into the session's handshake
+parameters. The server timestamps receipt, validates bounded text and
+duplicate handles, and MUST NOT deny or delay a netmap when observation
+persistence fails. Observations contain no PSK, discovery key, or private
+material and are rendered as last-known telemetry rather than current truth.
+
 Each `KarstNetmapPeer` contains its routable identity material, current and
 previous PHREATIC PSKs, and these additional fields:
 

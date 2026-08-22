@@ -15,6 +15,7 @@ var Admin = RolePermissions{
 		operations.Delete: true,
 	},
 	Permissions: Permissions{
+		modules.KarstControl: {operations.Read: true, operations.Create: true, operations.Update: true, operations.Delete: true},
 		modules.Accounts: {
 			operations.Read:   true,
 			operations.Create: false,

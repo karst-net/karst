@@ -113,6 +113,10 @@ type document struct {
 	Relays []Entry `json:"relays"`
 }
 
+// Compile validates one API-supplied relay entry through the exact same path
+// the startup registry uses. The derived relay ID is never caller supplied.
+func Compile(entry Entry) (*proto.KarstRelay, error) { return entry.compile() }
+
 // Load reads and validates a registry file.
 func Load(path string) ([]*proto.KarstRelay, error) {
 	raw, err := os.ReadFile(path)

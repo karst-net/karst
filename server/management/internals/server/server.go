@@ -72,6 +72,11 @@ type BaseServer struct {
 	// hooks registered by external modules via RegisterGRPCExtension. Populated
 	// during boot (single-threaded), consumed by GRPCServer() and Stop().
 	grpcExtensions []GRPCExtension
+	// apiExtensions are registered after NewAPIHandler has installed its common
+	// middleware and built-in routes, and before the router is served.
+	apiExtensionMu  sync.Mutex
+	apiExtensions   []APIExtension
+	apiHandlerBuilt bool
 
 	listener    net.Listener
 	certManager *autocert.Manager

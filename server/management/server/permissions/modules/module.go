@@ -22,6 +22,7 @@ const (
 	IdentityProviders Module = "identity_providers"
 	Services          Module = "services"
 	AgentNetwork      Module = "agent_network"
+	KarstControl      Module = "karst_control"
 
 	// Agent Network submodules. A role may grant one of these directly
 	// or grant the AgentNetwork parent, which covers all of them (see
@@ -53,6 +54,7 @@ var All = map[Module]struct{}{
 	IdentityProviders: {},
 	Services:          {},
 	AgentNetwork:      {},
+	KarstControl:      {},
 
 	AgentNetworkProviders:  {},
 	AgentNetworkPolicies:   {},

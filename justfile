@@ -105,6 +105,20 @@ go-test:
 go-vuln:
     cd server && govulncheck ./...
 
+# Regenerate Karst's isolated API models from its contract. The generated
+# package intentionally does not share the fork's api package: both documents
+# define common names such as User and bearer-auth helpers.
+api-generate-karst:
+    cd server/shared/management/http/api && ./generate-karst.sh
+
+# Contract mock with a fifty-node account, mixed posture, two relay states,
+# Bedrock data, and a deliberately broken audit-chain verification result.
+api-mock:
+    node web/tools/karst-api-mock.mjs
+
+api-client-check:
+    cd web/packages/api-client && npm run check
+
 # ── Web ─────────────────────────────────────────────────────────────────────
 web-install:
     cd web && pnpm install --frozen-lockfile

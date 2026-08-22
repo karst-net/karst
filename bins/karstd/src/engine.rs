@@ -1432,6 +1432,7 @@ impl Engine {
             .enumerate()
             .map(|(index, peer)| PeerStatus {
                 name: peer.name.clone(),
+                node_id: peer.node_id.clone(),
                 hint: short_hint(&peer.public.kem_pk),
                 endpoint: self.endpoint(index),
                 established: self.established(index),
@@ -1441,6 +1442,19 @@ impl Engine {
                     .is_some_and(|p| Self::lock(&p.session).rekeying()),
                 allowed_ips: peer.allowed_ips.iter().map(ToString::to_string).collect(),
                 psk_is_fallback: peer.psk_is_fallback,
+                suite: roster.peers.get(index).map_or_else(
+                    || "unknown".to_owned(),
+                    |runtime| {
+                        Self::lock(&runtime.session)
+                            .suite()
+                            .params()
+                            .name
+                            .to_owned()
+                    },
+                    // Configuration and runtime peers are normally updated as
+                    // one roster, but status must remain diagnostic-only if a
+                    // transitional state is ever observed.
+                ),
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
                     Some(Via::Relay { .. }) => Transport::Relay,
@@ -1572,6 +1586,9 @@ fn build_roster(
 pub struct PeerStatus {
     /// Configured name.
     pub name: String,
+    /// Stable control-plane node handle. Unlike `name`, this is never derived
+    /// from a DNS label and therefore survives label-less peers.
+    pub node_id: Vec<u8>,
     /// First bytes of the `peer_id_hint`, hex — enough to identify a peer in a
     /// bug report without disclosing a key.
     pub hint: String,
@@ -1585,6 +1602,8 @@ pub struct PeerStatus {
     pub allowed_ips: Vec<String>,
     /// Whether the §7.3 zero-PSK fallback is in use.
     pub psk_is_fallback: bool,
+    /// The suite bound into this peer's active handshake state.
+    pub suite: String,
     /// How this peer's traffic currently leaves the node.
     ///
     /// **Not decoration, and not a bool.** A relayed peer works, and works more

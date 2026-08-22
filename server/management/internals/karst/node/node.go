@@ -88,6 +88,22 @@ type Identity struct {
 	UpdatedAt time.Time
 }
 
+// SessionObservation is the last session fact a node reported for one peer.
+// It intentionally has no key or PSK fields: the REST API needs posture, not
+// the material from which a session could be reconstructed.
+type SessionObservation struct {
+	ReporterHandle string `gorm:"primaryKey;size:64"`
+	PeerHandle     string `gorm:"primaryKey;size:64"`
+	Path           string `gorm:"not null"`
+	Endpoint       string
+	LatticeOnly    bool
+	PSKEpoch       uint32
+	Suite          string
+	ObservedAt     time.Time `gorm:"not null;index"`
+}
+
+func (SessionObservation) TableName() string { return "karst_session_observations" }
+
 func (Identity) TableName() string { return "karst_node_identities" }
 
 // Store persists node identities.
@@ -98,10 +114,70 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("node: nil database")
 	}
-	if err := db.AutoMigrate(&Identity{}); err != nil {
+	if err := db.AutoMigrate(&Identity{}, &SessionObservation{}); err != nil {
 		return nil, fmt.Errorf("node: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// ReplaceSessionObservations atomically replaces a reporter's complete view.
+// The server, not the node, timestamps the observation so an offline node
+// cannot make stale information look fresh.
+func (s *Store) ReplaceSessionObservations(reporter string, observations []SessionObservation) error {
+	if len(observations) > maxSessionReports {
+		return fmt.Errorf("node: too many session observations")
+	}
+	seen := make(map[string]struct{}, len(observations))
+	now := time.Now().UTC()
+	for i := range observations {
+		o := &observations[i]
+		if o.PeerHandle == "" || o.PeerHandle == reporter || len(o.PeerHandle) > HandleLength {
+			return fmt.Errorf("node: invalid session peer handle")
+		}
+		if o.Path != "direct" && o.Path != "relay" && o.Path != "unreachable" {
+			return fmt.Errorf("node: invalid session path %q", o.Path)
+		}
+		if len(o.Endpoint) > maxSessionText || len(o.Suite) > maxSessionText {
+			return fmt.Errorf("node: session observation text too long")
+		}
+		if _, ok := seen[o.PeerHandle]; ok {
+			return fmt.Errorf("node: duplicate session peer %q", o.PeerHandle)
+		}
+		seen[o.PeerHandle] = struct{}{}
+		o.ReporterHandle = reporter
+		o.ObservedAt = now
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("reporter_handle = ?", reporter).Delete(&SessionObservation{}).Error; err != nil {
+			return fmt.Errorf("node: delete session observations: %w", err)
+		}
+		if len(observations) == 0 {
+			return nil
+		}
+		if err := tx.Create(&observations).Error; err != nil {
+			return fmt.Errorf("node: create session observations: %w", err)
+		}
+		return nil
+	})
+}
+
+// SessionObservations returns a reporter's last complete observation batch.
+func (s *Store) SessionObservations(reporter string) ([]SessionObservation, error) {
+	var observations []SessionObservation
+	if err := s.db.Where("reporter_handle = ?", reporter).Order("peer_handle").Find(&observations).Error; err != nil {
+		return nil, fmt.Errorf("node: list session observations: %w", err)
+	}
+	return observations, nil
+}
+
+// AllSessionObservations returns all persisted reports for account-level
+// aggregation. Callers must apply account authorization before exposing rows.
+func (s *Store) AllSessionObservations() ([]SessionObservation, error) {
+	var observations []SessionObservation
+	if err := s.db.Order("observed_at DESC").Find(&observations).Error; err != nil {
+		return nil, fmt.Errorf("node: list all session observations: %w", err)
+	}
+	return observations, nil
 }
 
 // DataPlaneKeys are a node's PHREATIC keys, supplied at registration.
@@ -114,7 +190,9 @@ const (
 	kemPublicKeySize = 1184
 	dhPublicKeySize  = 32
 	// A Ponor relay id is a SHA-256 digest over the relay's identity key.
-	relayIDSize = 32
+	relayIDSize       = 32
+	maxSessionReports = 4096
+	maxSessionText    = 512
 )
 
 // ValidateRegistration checks the identity and data-plane keys without
@@ -216,6 +294,26 @@ func (s *Store) Get(handle string) (*Identity, error) {
 		return nil, fmt.Errorf("node: get: %w", err)
 	}
 	return &rec, nil
+}
+
+// Delete removes a deprovisioned node and every session observation in which
+// it participated. Observations have no useful meaning once either endpoint
+// has been removed, and retaining them can otherwise expose stale topology in
+// later posture views.
+func (s *Store) Delete(handle string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("reporter_handle = ? OR peer_handle = ?", handle, handle).Delete(&SessionObservation{}).Error; err != nil {
+			return fmt.Errorf("node: delete session observations: %w", err)
+		}
+		result := tx.Where("handle = ?", handle).Delete(&Identity{})
+		if result.Error != nil {
+			return fmt.Errorf("node: delete identity: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return ErrUnknownNode
+		}
+		return nil
+	})
 }
 
 // SetHomeRelay records the relay a node reports holding a connection to.

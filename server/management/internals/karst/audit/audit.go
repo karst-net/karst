@@ -37,9 +37,12 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"net/netip"
+	"net/url"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const chainLabel = "karst-audit-v1"
@@ -50,6 +53,21 @@ var (
 	// ErrEmpty is returned by Head when nothing has been logged.
 	ErrEmpty = errors.New("audit: log is empty")
 )
+
+var ErrNoAccount = errors.New("audit: account scope missing")
+
+type accountContextKey struct{}
+
+func WithAccount(ctx context.Context, accountID string) context.Context {
+	return context.WithValue(ctx, accountContextKey{}, accountID)
+}
+func accountFromContext(ctx context.Context) (string, error) {
+	accountID, _ := ctx.Value(accountContextKey{}).(string)
+	if accountID == "" {
+		return "", ErrNoAccount
+	}
+	return accountID, nil
+}
 
 // Entry is one recorded action.
 //
@@ -76,6 +94,52 @@ type Entry struct {
 	// Hash is this entry's chain hash.
 	Hash string `gorm:"index"`
 }
+
+// AddSink records a credential-free audit delivery destination. Secrets for a
+// webhook belong in the secret store and are deliberately not accepted here.
+func (l *Log) AddSink(ctx context.Context, kind, endpoint string) (*Sink, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if kind != "webhook" && kind != "syslog" {
+		return nil, fmt.Errorf("audit: unsupported sink kind %q", kind)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("audit: invalid sink endpoint")
+	}
+	if kind == "webhook" && u.Scheme != "https" {
+		return nil, fmt.Errorf("audit: webhook endpoint must use https")
+	}
+	if kind == "syslog" && u.Scheme != "tls" {
+		return nil, fmt.Errorf("audit: syslog endpoint must use tls")
+	}
+	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !ip.IsGlobalUnicast() {
+		return nil, fmt.Errorf("audit: sink endpoint must not use a non-global IP")
+	}
+	s := &Sink{AccountID: accountID, ID: fmt.Sprintf("sink-%x", sha256.Sum256([]byte(accountID+"\x00"+kind+"\x00"+endpoint))), Kind: kind, Endpoint: endpoint, CreatedAt: time.Now().UTC()}
+	if err := l.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(s).Error; err != nil {
+		return nil, fmt.Errorf("audit: create sink: %w", err)
+	}
+	if err := l.db.WithContext(ctx).Where("account_id = ? AND id = ?", accountID, s.ID).First(s).Error; err != nil {
+		return nil, fmt.Errorf("audit: load sink: %w", err)
+	}
+	return s, nil
+}
+
+// Sink is an audit export destination. Credentials are deliberately not part
+// of this model; a delivery implementation must obtain them from the secret
+// store rather than returning or persisting them with the REST configuration.
+type Sink struct {
+	AccountID string `gorm:"primaryKey;size:64"`
+	ID        string `gorm:"primaryKey"`
+	Kind      string `gorm:"not null"`
+	Endpoint  string `gorm:"not null"`
+	CreatedAt time.Time
+}
+
+func (Sink) TableName() string { return "karst_audit_sinks" }
 
 func (Entry) TableName() string { return "karst_audit_log" }
 
@@ -116,12 +180,51 @@ func writeField(h hash.Hash, field []byte) {
 // Log is the append-only store.
 type Log struct{ db *gorm.DB }
 
+// List returns a stable, newest-first page of append-only entries.
+func (l *Log) List(ctx context.Context, offset, limit int) ([]Entry, error) {
+	return l.ListFiltered(ctx, "", "", offset, limit)
+}
+
+// ListFiltered returns a stable, newest-first page narrowed by the documented
+// actor and action filters. Empty filters deliberately mean "any", so callers
+// can compose either dimension without broadening the other.
+func (l *Log) ListFiltered(ctx context.Context, actor, action string, offset, limit int) ([]Entry, error) {
+	query := l.db.WithContext(ctx).Order("seq DESC").Offset(offset).Limit(limit)
+	if actor != "" {
+		query = query.Where("actor = ?", actor)
+	}
+	if action != "" {
+		query = query.Where("action = ?", action)
+	}
+	var entries []Entry
+	if err := query.Find(&entries).Error; err != nil {
+		return nil, fmt.Errorf("audit: list: %w", err)
+	}
+	return entries, nil
+}
+
+// ListBefore returns a newest-first page strictly below before. A zero cursor
+// starts at the current head. Sequence numbers are immutable, so this remains
+// stable while new entries are appended; offset pagination would otherwise
+// duplicate or skip entries as the head moves between pages.
+func (l *Log) ListBefore(ctx context.Context, before uint64, limit int) ([]Entry, error) {
+	query := l.db.WithContext(ctx).Order("seq DESC").Limit(limit)
+	if before != 0 {
+		query = query.Where("seq < ?", before)
+	}
+	var entries []Entry
+	if err := query.Find(&entries).Error; err != nil {
+		return nil, fmt.Errorf("audit: list before: %w", err)
+	}
+	return entries, nil
+}
+
 // New migrates the audit table and returns a log over it.
 func New(db *gorm.DB) (*Log, error) {
 	if db == nil {
 		return nil, errors.New("audit: nil database")
 	}
-	if err := db.AutoMigrate(&Entry{}); err != nil {
+	if err := db.AutoMigrate(&Entry{}, &Sink{}); err != nil {
 		return nil, fmt.Errorf("audit: migrate: %w", err)
 	}
 	return &Log{db: db}, nil
