@@ -189,3 +189,77 @@ fn a_native_ipv6_peer_is_reported_at_its_own_address() {
     };
     assert_eq!(observed.0, peer.local_addr().unwrap());
 }
+
+/// **What an operator actually reads on a node that cannot use IPv6.**
+///
+/// FINDINGS.md 51: every send path drops errors on purpose, so an `AF_INET`
+/// node's sends to an IPv6 candidate were an unbroken silence — no log line, no
+/// counter, no symptom but never connecting. The counter is asserted in
+/// `karst-transport`; what is asserted here is that it reaches the one surface
+/// an operator looks at, because a number nothing prints is the same as no
+/// number.
+#[test]
+fn an_ipv4_node_says_in_its_status_that_ipv6_is_out_of_reach() {
+    let cfg = std::sync::Arc::new(config());
+    let text = karstd::run::status_report(
+        &cfg,
+        &karstd::engine::Engine::new(&cfg),
+        karstd::run::Attachment {
+            name: "karst0",
+            mtu: 1280,
+            sockets: None,
+            unreachable_family: Some(3),
+        },
+        0,
+    );
+    assert!(
+        text.contains(r#"ipv6 = "unreachable (node.listen is IPv4)""#),
+        "status does not say this node cannot use IPv6:\n{text}"
+    );
+    assert!(
+        text.contains("ipv6_candidates_refused = 3"),
+        "status does not carry the count:\n{text}"
+    );
+
+    // A dual-stack node must not be told it has a problem it does not have.
+    let dual = karstd::run::status_report(
+        &cfg,
+        &karstd::engine::Engine::new(&cfg),
+        karstd::run::Attachment {
+            name: "karst0",
+            mtu: 1280,
+            sockets: None,
+            unreachable_family: None,
+        },
+        0,
+    );
+    assert!(
+        !dual.contains("ipv6 ="),
+        "a dual-stack node was told IPv6 is unreachable:\n{dual}"
+    );
+}
+
+/// The minimum a `Config` needs to be reported on.
+fn config() -> karstd::config::Config {
+    karstd::config::Config {
+        keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
+            &[7u8; 64], &[7u8; 32],
+        )),
+        listen: "0.0.0.0:51820".parse().expect("listen"),
+        port_mapping: false,
+        interface: "karst0".to_owned(),
+        network_mode: karstd::config::NetworkMode::default(),
+        userspace_socks5_listen: None,
+        userspace_publish: Vec::new(),
+        nat64: None,
+        addresses: Vec::new(),
+        psk_epoch: 1,
+        node_id: Vec::new(),
+        relays: Vec::new(),
+        relay_ca_file: None,
+        peers: Vec::new(),
+        routes: karstd::routing::AllowedIps::build(Vec::new()).expect("routes"),
+        skipped: Vec::new(),
+        filter: karstd::filter::PacketFilter::unrestricted(),
+    }
+}

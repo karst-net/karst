@@ -423,6 +423,190 @@ pub(crate) fn send_segmented(
     Ok(usize::try_from(sent).unwrap_or(0))
 }
 
+// ── RFC 8781 PREF64 discovery ───────────────────────────────────────────────
+
+/// `ICMP6_FILTER`, from RFC 3542 §3.2. Not in `libc` for every target, and it
+/// is a stable part of the `ICMPv6` socket ABI.
+const ICMP6_FILTER: libc::c_int = 1;
+/// `ND_ROUTER_SOLICIT` and `ND_ROUTER_ADVERT` — RFC 4861 §4.1, §4.2.
+const ND_ROUTER_SOLICIT: u8 = 133;
+const ND_ROUTER_ADVERT: u8 = 134;
+/// RFC 4861 §4: every Neighbour Discovery message is sent with a hop limit of
+/// 255 and refused on receipt if it arrives with anything less. That single
+/// rule is what makes these messages un-spoofable from off-link, and it is the
+/// only authentication `PREF64` has.
+const ND_HOP_LIMIT: libc::c_int = 255;
+
+/// A raw `ICMPv6` socket that solicits routers and reads their advertisements.
+///
+/// **Opening this needs `CAP_NET_RAW`, and not having it is an ordinary
+/// outcome.** `karstd` wants `CAP_NET_ADMIN` for a TUN device and nothing more,
+/// and in userspace mode it runs with an empty capability set — so this is
+/// opportunistic. A caller that cannot open one falls back to RFC 7050, which
+/// needs no privilege at all.
+#[derive(Debug)]
+pub struct RouterSocket {
+    fd: std::os::fd::OwnedFd,
+}
+
+impl RouterSocket {
+    /// Open the socket and filter it down to Router Advertisements.
+    ///
+    /// # Errors
+    /// [`io::ErrorKind::PermissionDenied`] without `CAP_NET_RAW`, which callers
+    /// should treat as "this mechanism is unavailable" rather than as a fault.
+    pub fn open() -> io::Result<Self> {
+        // SAFETY: `socket` takes three integers and returns a file descriptor
+        // or -1. No pointers are involved.
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_INET6,
+                libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+                libc::IPPROTO_ICMPV6,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `fd` is a fresh descriptor this function owns and has not
+        // handed to anything else, which is exactly `from_raw_fd`'s contract.
+        let fd = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+        let socket = Self { fd };
+
+        // **Block every ICMPv6 type, then pass only Router Advertisements.**
+        // Without this the socket receives every ICMPv6 message the host sees —
+        // every ping, every unreachable, every neighbour solicitation — and the
+        // read loop below would spend its timeout discarding them.
+        //
+        // **A set bit *blocks*.** RFC 3542 §3.2 defines `SETBLOCKALL` as all
+        // ones and `SETPASS` as *clearing* a bit, which reads backwards to
+        // anyone who assumes a filter lists what it admits. Written the other
+        // way round this passed every ICMPv6 type except the one type it
+        // wanted, and no unit test could see it: the option parser was correct,
+        // the solicitation went out correctly, and the answer was dropped by
+        // the socket before anything in this crate looked at it. FINDINGS.md 52.
+        let mut filter = [u32::MAX; 8];
+        let bit = u32::from(ND_ROUTER_ADVERT);
+        if let Some(word) = filter.get_mut((bit >> 5) as usize) {
+            *word &= !(1u32 << (bit & 31));
+        }
+        socket.set_opt(
+            libc::IPPROTO_ICMPV6,
+            ICMP6_FILTER,
+            std::ptr::from_ref(&filter).cast(),
+            std::mem::size_of_val(&filter),
+        )?;
+
+        // RFC 4861 §4.1: a Router Solicitation is sent with hop limit 255.
+        let hops = ND_HOP_LIMIT;
+        socket.set_opt(
+            libc::IPPROTO_IPV6,
+            libc::IPV6_MULTICAST_HOPS,
+            std::ptr::from_ref(&hops).cast(),
+            std::mem::size_of_val(&hops),
+        )?;
+        Ok(socket)
+    }
+
+    /// One `setsockopt`, with the length the caller measured.
+    fn set_opt(
+        &self,
+        level: libc::c_int,
+        name: libc::c_int,
+        value: *const libc::c_void,
+        len: usize,
+    ) -> io::Result<()> {
+        // SAFETY: `value` points at a live local in the caller's frame for the
+        // duration of this call, and `len` is `size_of_val` of that same local,
+        // so the kernel reads exactly what is there and nothing beyond it.
+        let rc = unsafe {
+            libc::setsockopt(
+                self.fd.as_raw_fd(),
+                level,
+                name,
+                value,
+                libc::socklen_t::try_from(len).unwrap_or(0),
+            )
+        };
+        if rc < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Send a Router Solicitation out of one interface — RFC 4861 §4.1.
+    ///
+    /// Addressed to `ff02::2`, the all-routers link-local multicast group.
+    /// `interface` is a kernel interface index; a link-local destination is
+    /// ambiguous without one, which is what the scope id carries.
+    ///
+    /// The `ICMPv6` checksum is left zero on purpose: for `IPPROTO_ICMPV6` the
+    /// kernel computes it, and RFC 3542 §3.1 requires that it does.
+    ///
+    /// # Errors
+    /// Any `sendto` failure. `ENETUNREACH` on an interface with no IPv6 is
+    /// ordinary and means only that this interface has no router to ask.
+    pub fn solicit(&self, interface: u32) -> io::Result<()> {
+        // Type, code, checksum, then four reserved bytes. No source
+        // link-layer option: it is optional (§4.1), and omitting it keeps this
+        // free of any need to know the interface's hardware address.
+        let message = [ND_ROUTER_SOLICIT, 0, 0, 0, 0, 0, 0, 0];
+        let all_routers =
+            SocketAddrV6::new(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 2), 0, 0, interface);
+        let (addr, addr_len) = to_sockaddr(SocketAddr::V6(all_routers));
+        // SAFETY: `message` and `addr` are live locals for the duration of the
+        // call, and both lengths are of those same locals. `sendto` reads
+        // through the pointers and writes through neither.
+        let sent = unsafe {
+            libc::sendto(
+                self.fd.as_raw_fd(),
+                message.as_ptr().cast(),
+                message.len(),
+                0,
+                std::ptr::from_ref(&addr).cast(),
+                addr_len,
+            )
+        };
+        if sent < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Read one Router Advertisement, or time out.
+    ///
+    /// Returns the `ICMPv6` message, starting at the type byte — which is what
+    /// [`crate::Nat64Prefix::from_router_advertisement`] parses. The IPv6 header
+    /// is not included: `AF_INET6` raw sockets deliver the payload alone.
+    ///
+    /// # Errors
+    /// [`io::ErrorKind::WouldBlock`] or [`io::ErrorKind::TimedOut`] when no
+    /// advertisement arrives inside `timeout`; otherwise any `recv` failure.
+    pub fn recv_advertisement(
+        &self,
+        buf: &mut [u8],
+        timeout: std::time::Duration,
+    ) -> io::Result<usize> {
+        let tv = libc::timeval {
+            tv_sec: libc::time_t::try_from(timeout.as_secs()).unwrap_or(libc::time_t::MAX),
+            tv_usec: libc::suseconds_t::from(timeout.subsec_micros()),
+        };
+        self.set_opt(
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            std::ptr::from_ref(&tv).cast(),
+            std::mem::size_of_val(&tv),
+        )?;
+        // SAFETY: the kernel writes at most `buf.len()` bytes through this
+        // pointer, and `buf` is a live mutable borrow for the whole call.
+        let n = unsafe { libc::recv(self.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+}
+
 // ── UDP GRO is deliberately absent ──────────────────────────────────────────
 //
 // `UDP_GRO` is the receive-side counterpart of `UDP_SEGMENT`, and enabling it

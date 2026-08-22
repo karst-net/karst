@@ -11,7 +11,7 @@ tests. It does not treat the plan or source-code comments as proof that a
 feature is correct.
 
 All nine original findings are closed. The re-review and the Phase 4 work that
-followed it added forty-one more, and all of them are now closed — most found by
+followed it added forty-three more, and all of them are now closed — most found by
 building the thing the finding above them asked for, several found by counting
 what the test matrix did *not* cover, three found by writing a release gate for
 a feature nobody had ever run, two by building the double-NAT row the exit
@@ -22,8 +22,9 @@ first half did with what it allocated, one by asking what a topology Karst has
 never been run on would need before it could be run on at all, one by then
 running that topology, one by injecting a defect into a passing test and
 watching it stay green, one by asking which CI job already installed a tool a
-new row needed, and the last two by reading a CI log that a previous fix had
-made legible.
+new row needed, two by reading a CI log that a previous fix had made legible,
+and the last by building an end-to-end test for a mechanism whose unit tests all
+passed.
 
 **Findings 42 and 43 are worth naming as a category.** They are one
 commit apart, and both are components that exist only in the test harness — a
@@ -32,7 +33,13 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artefact, which is the only vantage point from which either is visible.
 
-**No findings remain open.** 49 and 50 are the most recent, and both came out of
+**No findings remain open.** 52 is the most recent and the one worth reading:
+RFC 3542's `ICMP6_FILTER` uses a set bit to *block*, this code assumed it meant
+*pass*, and so PREF64 discovery admitted every `ICMPv6` type except the one it
+existed to receive. Every unit test passed — the parser was right, the
+solicitation was right, and the answer was thrown away by the socket before any
+Rust in the tree saw it. 51, beside it, closes a sub-issue deferred from 45: a
+node that cannot use IPv6 now says so. Before them, 49 and 50, and both came out of
 a CI failure that an earlier fix had made readable — 49 is a real defect in the
 inbound path (a socket mid-handshake is indistinguishable from one that will
 never send again, so a published port half-closed its backend before the request
@@ -128,8 +135,66 @@ carries both the new wording and the original, struck through.
 | 48 | Medium | The NAT64 instrument row skipped on every CI run since it was written, and reported success each time | Fixed 2026-08-21 |
 | 49 | High | A published port half-closed its backend before the request arrived, because a socket mid-handshake looks exactly like one that will never send again | Fixed 2026-08-21 |
 | 50 | Medium | The bulk row's wall-clock budget could not separate healthy from defective across the range of machines it runs on | Fixed 2026-08-21 |
+| 51 | Medium | An `AF_INET` node dropped every send to an IPv6 candidate in silence, with no log line, counter or symptom but never connecting | Fixed 2026-08-21 |
+| 52 | High | `ICMP6_FILTER` was written inverted, so PREF64 discovery admitted every ICMPv6 type except the one it wanted | Fixed 2026-08-21 |
 
 ## Closed
+
+### 52. High: a filter that admitted everything except what it was for
+
+**Found 2026-08-21** by building an end-to-end test for RFC 8781 discovery
+against a router written in another language. Fixed the same day.
+
+RFC 3542 §3.2's `ICMP6_FILTER` is a 256-bit map, and **a set bit blocks**:
+`ICMP6_FILTER_SETBLOCKALL` is all ones and `SETPASS` *clears* a bit. That reads
+backwards to anyone who assumes a filter lists what it admits, and it was
+written backwards here — block-all as zeros, then setting the bit for Router
+Advertisements. The result passed every `ICMPv6` type except type 134.
+
+**Nothing in the unit tests could see it.** The option parser was correct and
+thoroughly tested against RFC 8781's field layout; the solicitation was correct
+and went out correctly. The answer was discarded by the socket before any code
+in this crate looked at it, so the only symptom was that discovery never found
+a prefix — indistinguishable from a network with no NAT64 router on it.
+
+The same misreading appeared independently in the Python router the test uses,
+which filtered *out* the solicitations it was waiting for. Two ends written from
+the same wrong assumption, which is exactly the failure mode an independent
+implementation is supposed to prevent — and it still worked, because each end
+failed at a different point and the test could not pass until both were right.
+
+Injection-verified: restoring the inverted filter fails the row.
+
+**The row exists because of this defect and would not have existed without it.**
+The mechanism was three-quarters unit-tested and looked finished. What was left
+was the quarter only a socket can exercise: that the filter admits what it
+should, that a solicitation reaches the right multicast group out of the right
+interface, and that what comes back starts at the byte the parser expects.
+
+### 51. Medium: a node that could not use IPv6 and never said so
+
+**Found 2026-08-21** — recorded as a named sub-issue of FINDINGS.md 45 on
+2026-08-21 and deferred, then fixed.
+
+`node.listen` decides the datapath's address family, because §4 gives it one
+shared socket. A node listening on an IPv4 address has an `AF_INET` socket,
+which cannot send to an IPv6 address at all — the kernel refuses with
+`EAFNOSUPPORT`. That is correct behaviour for a node with no IPv6 connectivity.
+
+**The problem was that every send path drops errors on purpose.** A full buffer
+or an unreachable host must not take the daemon down, and the protocol
+retransmits, so `dispatch` discards the result. A peer reachable only over IPv6
+therefore produced no log line, no counter, and no symptom other than never
+connecting — and "this node cannot use IPv6" was a fact no operator could read
+anywhere.
+
+The transport is what knows its own family, so that is where it is answered
+now: a send to an unreachable family is refused before the syscall with
+`ErrorKind::Unsupported` and a message naming `node.listen`, counted, and
+reported once per process in the log. `karst status` prints
+`ipv6 = "unreachable (node.listen is IPv4)"` on every such node — before the
+first IPv6 candidate arrives as well as after, because the configuration is the
+fact and a count of zero does not make it untrue.
 
 ### 50. Medium: a budget that could not be set
 

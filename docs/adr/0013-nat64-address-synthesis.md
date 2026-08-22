@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-21
 - **Deciders:** project maintainer, on review 2026-08-21
-- **Related:** PLAN.md §6 (test matrix), FINDINGS.md 45, 46, 47, `aven-v1.md` §7.2
+- **Related:** PLAN.md §6 (test matrix), FINDINGS.md 45, 46, 47, 51, 52, `aven-v1.md` §7.2
 
 ---
 
@@ -76,11 +76,12 @@ any of them knowing why.
 is what it is for. Only a literal arrives at a node unsynthesised, because
 nothing looked it up.
 
-### 3. Learn the prefix by RFC 7050, gated twice
+### 3. Learn the prefix by PREF64 where possible, RFC 7050 otherwise, gated twice
 
 `node.nat64` takes `"auto"` (the default), `"off"`, or a literal prefix.
-`"auto"` resolves `ipv4only.arpa` for AAAA and takes the prefix out of the
-synthesised answer — but only after two gates:
+`"auto"` solicits routers for an RFC 8781 PREF64 option and, failing that,
+resolves `ipv4only.arpa` for AAAA and takes the prefix out of the synthesised
+answer — but only after two gates:
 
 1. **The datapath socket must be IPv6.** `node.listen` decides the address
    family, because §4 gives the datapath one shared socket, and an `AF_INET`
@@ -96,14 +97,26 @@ synthesised answer — but only after two gates:
 An explicit prefix skips the second gate and not the first: the first is a hard
 incompatibility, the second is a judgement an operator may overrule.
 
-**Alternative rejected: RFC 8781's PREF64 router-advertisement option.** It is
-the better mechanism — no DNS, no DNS64 dependency, and the information comes
-from the router that actually knows. It requires reading ICMPv6 router
-advertisements, which requires a raw socket, which requires `CAP_NET_RAW` in a
-daemon that otherwise wants only `CAP_NET_ADMIN`. That is a real widening of the
-daemon's privilege for a mechanism the gated fallback already covers on every
-network that runs DNS64. Declined, and revisitable if a deployment turns up
-running NAT64 without it.
+**RFC 8781's PREF64 is implemented and tried first — revised 2026-08-21.**
+This ADR originally declined it: reading ICMPv6 router advertisements needs a
+raw socket and so `CAP_NET_RAW`, in a daemon that otherwise wants only
+`CAP_NET_ADMIN`. That reasoning treated the capability as a *requirement*, and
+it need not be one. The socket is opened **opportunistically**: if it opens,
+PREF64 runs and is preferred; if it fails with `EPERM` — which is the ordinary
+case in userspace mode, where the daemon holds no capabilities at all — the
+node falls back to RFC 7050 exactly as before. Nothing is required and nothing
+is lost.
+
+It is preferred where available because it is the better answer on both counts
+the original text conceded. The prefix comes from the router that actually
+performs the translation rather than from whichever resolver replied, over
+link-local multicast an off-link attacker cannot reach; and it works on a NAT64
+network with no DNS64 deployed, which RFC 7050 cannot.
+
+Its parsing is not the concatenation it looks like: §4 packs a 13-bit lifetime
+and a 3-bit *prefix-length code* into one word, and the code is an index into
+six lengths rather than a length. A zero lifetime is a withdrawal, not an
+advertisement. All six codes are implemented and tested.
 
 **Alternative rejected: configuration only.** It works and it is what the first
 draft did, but it makes a node on a NAT64 network require an operator who knows
@@ -152,6 +165,15 @@ itself proves nothing.
   test found FINDINGS.md 47.
 - The prefix is fixed for the process's life. A host that moves between
   networks needs a restart, which is already true of `node.listen`.
-- One thing remains unaddressed and is named rather than implied: an `AF_INET`
-  node's sends to an IPv6 candidate fail silently. Correct for a node with no
-  IPv6 connectivity, and unreadable to its operator.
+- An `AF_INET` node's sends to an IPv6 candidate no longer fail silently
+  (FINDINGS.md 51). The send is refused before the syscall with a message naming
+  `node.listen`, counted, and reported once per process; `karst status` prints
+  `ipv6 = "unreachable (node.listen is IPv4)"` on every such node.
+- **Building PREF64 end to end found FINDINGS.md 52**, which no unit test could
+  have: `ICMP6_FILTER` uses a set bit to *block* (RFC 3542 §3.2), this code
+  assumed it meant *pass*, and the socket therefore admitted every `ICMPv6` type
+  except Router Advertisements. The parser was correct and the solicitation was
+  correct; the answer was discarded below both. The test that caught it drives a
+  router written in Python, so a misreading of the standard shows up as a
+  disagreement rather than as two copies of one mistake agreeing — and the same
+  misreading did in fact appear at both ends.

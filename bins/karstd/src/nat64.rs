@@ -184,6 +184,17 @@ fn auto(listen: SocketAddr) -> Option<Nat64Prefix> {
     if has_ipv4() {
         return None;
     }
+    // **PREF64 first, and the order is the point.** RFC 8781's prefix comes
+    // from the router that performs the translation, over link-local multicast
+    // that an off-link attacker cannot reach, and needs no DNS64 deployed at
+    // all. RFC 7050 asks a resolver instead, and believes it.
+    if let Some(p) = discover_pref64() {
+        eprintln!(
+            "karstd: this host has no IPv4 address; reaching IPv4 through the \
+             NAT64 prefix {p}, from a router advertisement (RFC 8781)"
+        );
+        return Some(p);
+    }
     let prefix = discover();
     match prefix {
         Some(p) => eprintln!(
@@ -192,12 +203,99 @@ fn auto(listen: SocketAddr) -> Option<Nat64Prefix> {
         ),
         None => eprintln!(
             "karstd: this host has no IPv4 address and no NAT64 prefix could be \
-             discovered from {IPV4ONLY_ARPA} — every IPv4 relay, server or peer \
-             will be unreachable. If this network runs NAT64 without DNS64, set \
-             node.nat64 to its prefix."
+             discovered — no router advertised a PREF64 option (RFC 8781) and \
+             {IPV4ONLY_ARPA} yielded nothing (RFC 7050). Every IPv4 relay, \
+             server or peer will be unreachable. Set node.nat64 to this \
+             network's prefix."
         ),
     }
     prefix
+}
+
+/// How long to wait for a router to answer a solicitation.
+///
+/// RFC 4861 §6.3.7 has a host retransmit solicitations at 4-second intervals.
+/// One round is enough here: this runs at startup, a router on the link answers
+/// in milliseconds, and RFC 7050 is waiting behind it.
+const RA_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Ask every interface's routers for a PREF64 option — RFC 8781.
+///
+/// `None` covers three different situations that need no distinguishing here:
+/// no `CAP_NET_RAW`, no router that advertises the option, and no IPv6
+/// interface to ask on. All three mean "try the other mechanism".
+fn discover_pref64() -> Option<Nat64Prefix> {
+    let socket = match karst_transport::RouterSocket::open() {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            // Not a failure. The daemon asks for CAP_NET_ADMIN and no more, and
+            // in userspace mode it holds nothing at all.
+            return None;
+        }
+        Err(e) => {
+            eprintln!("karstd: cannot open an ICMPv6 socket for PREF64 discovery: {e}");
+            return None;
+        }
+    };
+
+    let interfaces = ipv6_interfaces();
+    if interfaces.is_empty() {
+        return None;
+    }
+    for index in &interfaces {
+        // An interface with no router, or none at all, is ordinary.
+        let _ = socket.solicit(*index);
+    }
+
+    // One buffer, reused. An advertisement is a few hundred bytes; the IPv6
+    // minimum MTU bounds anything a router can send in one.
+    let mut buf = [0u8; 1280];
+    let deadline = std::time::Instant::now() + RA_TIMEOUT;
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let Ok(n) = socket.recv_advertisement(&mut buf, left) else {
+            return None; // timed out, or the socket failed
+        };
+        // **Keep reading rather than returning on the first advertisement.** A
+        // link can have several routers and only one of them a translator, so
+        // an RA without the option says nothing about the next one.
+        if let Some(prefix) = Nat64Prefix::from_router_advertisement(buf.get(..n)?) {
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+/// Kernel indices of the interfaces that have an IPv6 address.
+///
+/// Read from `/proc/net/if_inet6` rather than through `getifaddrs`, which keeps
+/// this crate free of `unsafe` — ADR-0003 confines that to `karst-transport` —
+/// and gives the interface *index* directly, which is what a link-local
+/// destination needs and what an address alone cannot supply.
+///
+/// Loopback is skipped: it has no router.
+fn ipv6_interfaces() -> Vec<u32> {
+    let Ok(text) = std::fs::read_to_string("/proc/net/if_inet6") else {
+        return Vec::new();
+    };
+    let mut seen = Vec::new();
+    for line in text.lines() {
+        // address(32 hex) index(hex) prefixlen(hex) scope(hex) flags(hex) name
+        let mut fields = line.split_whitespace();
+        let Some(address) = fields.next() else {
+            continue;
+        };
+        let Some(index) = fields.next().and_then(|f| u32::from_str_radix(f, 16).ok()) else {
+            continue;
+        };
+        let Some(name) = fields.nth(3) else { continue };
+        if name == "lo" || address.starts_with("00000000000000000000000000000001") {
+            continue;
+        }
+        if !seen.contains(&index) {
+            seen.push(index);
+        }
+    }
+    seen
 }
 
 /// Whether this host holds an IPv4 address it could send from.
@@ -618,6 +716,69 @@ mod tests {
         }
         for s in ["http://51.75.10.10:9443", "https://karst.example.com"] {
             assert_eq!(rewrite_url(None, s), s);
+        }
+    }
+
+    /// `/proc/net/if_inet6` parsing: real indices, and loopback left out.
+    ///
+    /// A Router Solicitation goes to a link-local multicast address, which is
+    /// ambiguous without an interface index — so this is the one piece of
+    /// information PREF64 discovery cannot do without. Loopback is excluded
+    /// because it has no router, and soliciting on it wastes the whole budget.
+    #[test]
+    fn only_interfaces_that_could_have_a_router_are_solicited() {
+        // The real file must at least parse without panicking.
+        let _ = ipv6_interfaces();
+
+        let sample = "\
+00000000000000000000000000000001 01 80 10 80       lo\n\
+fe800000000000000042aaaaaaaaaaaa 03 40 20 80     eth0\n\
+20010db8000000000000000000000001 03 40 00 80     eth0\n\
+fe800000000000000042bbbbbbbbbbbb 07 40 20 80     wlan0\n";
+        let mut seen: Vec<u32> = Vec::new();
+        for line in sample.lines() {
+            let mut fields = line.split_whitespace();
+            let Some(address) = fields.next() else {
+                continue;
+            };
+            let Some(index) = fields.next().and_then(|f| u32::from_str_radix(f, 16).ok()) else {
+                continue;
+            };
+            let Some(name) = fields.nth(3) else { continue };
+            if name == "lo" || address.starts_with("00000000000000000000000000000001") {
+                continue;
+            }
+            if !seen.contains(&index) {
+                seen.push(index);
+            }
+        }
+        assert_eq!(
+            seen,
+            vec![3, 7],
+            "loopback must be excluded and an interface with two addresses \
+             solicited once, not twice"
+        );
+    }
+
+    /// **PREF64 is tried before RFC 7050, and asking costs nothing when it is
+    /// unavailable.** Without `CAP_NET_RAW` the socket cannot open, and that is
+    /// an ordinary outcome rather than an error: the daemon wants
+    /// `CAP_NET_ADMIN` and no more, and in userspace mode it holds nothing.
+    #[test]
+    fn pref64_discovery_gives_up_quietly_without_the_capability() {
+        let started = std::time::Instant::now();
+        let found = discover_pref64();
+        if karst_transport::RouterSocket::open().is_err() {
+            assert_eq!(
+                found, None,
+                "no ICMPv6 socket can be opened here, so nothing can have been \
+                 discovered"
+            );
+            assert!(
+                started.elapsed() < RA_TIMEOUT,
+                "an unavailable mechanism must not spend its whole timeout \
+                 before falling back to the one that works"
+            );
         }
     }
 

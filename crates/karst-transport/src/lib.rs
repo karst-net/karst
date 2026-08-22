@@ -29,11 +29,12 @@ mod sys;
 
 pub use nat64::{Nat64Prefix, PrefixError, WKA, WKA2};
 #[cfg(target_os = "linux")]
-pub use sys::{Received, BATCH};
+pub use sys::{Received, RouterSocket, BATCH};
 
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::os::fd::AsFd;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Largest UDP payload Karst will send or receive — `spec/phreatic-v1.md` §13.6.
@@ -113,6 +114,11 @@ pub struct UdpTransport {
     /// The NAT64 prefix this host reaches IPv4 through, if it is on such a
     /// network. See [`Self::bind_via_nat64`].
     nat64: Option<Nat64Prefix>,
+    /// Whether this socket is `AF_INET`, and so cannot carry IPv6 at all.
+    ipv4_only: bool,
+    /// How many datagrams this socket has refused because their destination is
+    /// in a family it cannot reach. See [`Self::unreachable_family`].
+    unreachable: AtomicU64,
 }
 
 impl UdpTransport {
@@ -121,10 +127,7 @@ impl UdpTransport {
     /// # Errors
     /// Any `bind` failure.
     pub fn bind(addr: SocketAddr) -> io::Result<Self> {
-        Ok(Self {
-            socket: UdpSocket::bind(addr)?,
-            nat64: None,
-        })
+        Self::bind_via_nat64(addr, None)
     }
 
     /// Bind on a network that reaches IPv4 only through a NAT64 translator.
@@ -144,10 +147,68 @@ impl UdpTransport {
     /// # Errors
     /// Any `bind` failure.
     pub fn bind_via_nat64(addr: SocketAddr, prefix: Option<Nat64Prefix>) -> io::Result<Self> {
+        let socket = UdpSocket::bind(addr)?;
+        // Asked of the socket rather than of `addr`, so a bind to a name or to
+        // port 0 is described by what the kernel actually gave out.
+        let ipv4_only = socket.local_addr().map_or(addr.is_ipv4(), |a| a.is_ipv4());
         Ok(Self {
-            socket: UdpSocket::bind(addr)?,
+            socket,
             nat64: prefix,
+            ipv4_only,
+            unreachable: AtomicU64::new(0),
         })
+    }
+
+    /// Whether this socket is `AF_INET`, and so can never send to an IPv6
+    /// address.
+    #[must_use]
+    pub const fn is_ipv4_only(&self) -> bool {
+        self.ipv4_only
+    }
+
+    /// How many datagrams have been refused for having a destination in a
+    /// family this socket cannot reach.
+    ///
+    /// **Nonzero means a peer is unreachable and nothing else will say so.**
+    /// `node.listen` decides the datapath's address family, because §4 gives it
+    /// one shared socket; an `AF_INET` socket cannot send to an IPv6 address at
+    /// all. Every send path drops errors on purpose — a full buffer or an
+    /// unreachable host must not take the daemon down, and the protocol
+    /// retransmits — so a peer that advertises only IPv6 candidates produces an
+    /// unbroken silence. This is the counter that turns that silence into a
+    /// number an operator can read.
+    #[must_use]
+    pub fn unreachable_family(&self) -> u64 {
+        self.unreachable.load(Ordering::Relaxed)
+    }
+
+    /// Whether this socket could send to `peer` at all, ignoring reachability.
+    ///
+    /// A question about address families, not about routes: `true` here does
+    /// not promise the datagram arrives.
+    #[must_use]
+    fn family_reachable(&self, peer: SocketAddr) -> bool {
+        !(self.ipv4_only && peer.is_ipv6())
+    }
+
+    /// Refuse a datagram whose destination this socket cannot address.
+    fn refuse(&self, peer: SocketAddr) -> io::Error {
+        let n = self.unreachable.fetch_add(1, Ordering::Relaxed);
+        if n == 0 {
+            // Once per process. A peer that keeps advertising an IPv6 candidate
+            // would otherwise write the log at the probe rate, and the fact
+            // does not change: it is a property of this node's configuration.
+            eprintln!(
+                "karstd: cannot send to {peer} — node.listen is an IPv4 address, \
+                 so the datapath socket is AF_INET and no IPv6 peer or candidate \
+                 is reachable from it. Set node.listen to \"[::]\" to use both \
+                 families. This is reported once; `karst status` counts the rest."
+            );
+        }
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{peer} is IPv6 and this datapath socket is AF_INET"),
+        )
     }
 
     /// Where this socket must actually send, to reach `peer`.
@@ -215,7 +276,11 @@ impl UdpTransport {
         if datagram.len() > MAX_DATAGRAM {
             return Err(oversized(datagram.len()));
         }
-        self.socket.send_to(datagram, self.route(peer))
+        let to = self.route(peer);
+        if !self.family_reachable(to) {
+            return Err(self.refuse(to));
+        }
+        self.socket.send_to(datagram, to)
     }
 
     /// Receive one datagram, returning its length and source.
@@ -306,7 +371,11 @@ impl UdpTransport {
         if usize::from(segment_size) > MAX_DATAGRAM {
             return Err(oversized(usize::from(segment_size)));
         }
-        sys::send_segmented(self.socket.as_fd(), payload, segment_size, self.route(to))
+        let to = self.route(to);
+        if !self.family_reachable(to) {
+            return Err(self.refuse(to));
+        }
+        sys::send_segmented(self.socket.as_fd(), payload, segment_size, to)
     }
 }
 
@@ -478,6 +547,64 @@ mod tests {
         // not produced by any socket; unwrapping it would invent a peer.
         let compat: SocketAddr = "[::192.0.2.1]:4242".parse().unwrap();
         assert_eq!(canonical(compat), compat);
+    }
+
+    /// **An `AF_INET` socket refuses an IPv6 destination, loudly.**
+    ///
+    /// This used to be a silent drop, and the silence was the whole problem.
+    /// `node.listen` decides the datapath's address family — §4 gives it one
+    /// shared socket — so a node listening on `0.0.0.0` cannot send to an IPv6
+    /// candidate at all. Every send path in the daemon drops errors on purpose,
+    /// because a full buffer or an unreachable host must not take it down, so
+    /// a peer reachable only over IPv6 produced no log line, no counter and no
+    /// symptom other than never connecting (FINDINGS.md 51).
+    #[test]
+    fn an_ipv4_socket_says_why_it_cannot_send_to_an_ipv6_peer() {
+        let v4 = UdpTransport::bind(loopback()).unwrap();
+        assert!(v4.is_ipv4_only());
+        assert_eq!(v4.unreachable_family(), 0);
+
+        let peer = SocketAddr::from((Ipv6Addr::LOCALHOST, 51820));
+        let err = v4.send_to(b"unreachable", peer).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::Unsupported,
+            "an IPv6 destination on an AF_INET socket is a configuration \
+             mismatch, not a transient send failure: {err}"
+        );
+        assert!(err.to_string().contains("AF_INET"), "{err}");
+        assert_eq!(
+            v4.unreachable_family(),
+            1,
+            "the refusal must be countable, because `karst status` is the only \
+             place an operator can see this"
+        );
+        // Counting, not just flagging: a peer that keeps advertising is worth
+        // distinguishing from one that tried once.
+        let _ = v4.send_to(b"again", peer);
+        assert_eq!(v4.unreachable_family(), 2);
+
+        // And an IPv4 destination on the same socket is untouched.
+        assert!(v4.send_to(b"fine", v4.local_addr().unwrap()).is_ok());
+        assert_eq!(v4.unreachable_family(), 2);
+    }
+
+    /// A dual-stack socket reaches both families, so the question never arises
+    /// and the counter must stay at zero rather than fire on every IPv6 peer.
+    #[test]
+    fn a_dual_stack_socket_refuses_nothing_for_its_family() {
+        let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
+            return; // IPv6 disabled outright.
+        };
+        assert!(!dual.is_ipv4_only());
+        let port = dual.local_addr().unwrap().port();
+        assert!(dual
+            .send_to(b"v6", SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
+            .is_ok());
+        // A v4 destination goes out v4-mapped on this socket, which is exactly
+        // why `is_ipv4_only` asks the socket rather than the destination.
+        let _ = dual.send_to(b"v4", SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
+        assert_eq!(dual.unreachable_family(), 0);
     }
 
     /// A NAT64 socket sends to `prefix::v4` and reports the sender as IPv4 —

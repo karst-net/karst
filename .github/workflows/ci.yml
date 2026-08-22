@@ -123,6 +123,10 @@ jobs:
           cargo build --workspace
           # The NAT matrix drives this as a helper inside each namespace.
           cargo build -p karst-disco --example natprobe
+          # And PREF64 discovery is driven the same way: a test process cannot
+          # enter a namespace without `setns`, so the thing under test is a
+          # small program `ip netns exec` can launch there.
+          cargo build -p karst-transport --example pref64probe
           find_bin() {
             cargo test -p "$1" --test "$2" --no-run --message-format=json \
               | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
@@ -130,9 +134,11 @@ jobs:
           tun=$(find_bin karst-tun device)
           two=$(find_bin karstd two_nodes)
           nat=$(find_bin karst-disco nat_matrix)
-          for b in "$tun" "$two" "$nat"; do
+          pref64=$(find_bin karst-transport pref64)
+          for b in "$tun" "$two" "$nat" "$pref64"; do
             [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
           done
+          echo "PREF64_TEST_BIN=$pref64" >> "$GITHUB_ENV"
           echo "TUN_TEST_BIN=$tun" >> "$GITHUB_ENV"
           echo "TWO_NODE_TEST_BIN=$two" >> "$GITHUB_ENV"
           echo "NAT_MATRIX_TEST_BIN=$nat" >> "$GITHUB_ENV"
@@ -163,6 +169,16 @@ jobs:
         run: |
           sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
             "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
+      # RFC 8781 against a router that is not ours: a Python script builds the
+      # advertisement from the standard's field layout, so a misreading shows up
+      # as a disagreement rather than as two copies of one mistake agreeing.
+      # It is what caught the inverted ICMP6_FILTER (FINDINGS.md 52), which no
+      # unit test could see.
+      - name: PREF64 discovery against an independent router
+        timeout-minutes: 5
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$PREF64_TEST_BIN" --ignored --test-threads=1
 
   # PLAN.md §6's exit criterion is measured here and nowhere else.
   #

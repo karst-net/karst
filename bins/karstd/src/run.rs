@@ -460,6 +460,7 @@ pub fn run_with_control(
         // ── control socket ─────────────────────────────────────────────────
         let engine_ctl = &engine;
         let tun_ctl = &tun;
+        let socket_ctl = &socket;
         let portmap_state = &portmap;
         scope.spawn(move || {
             while !shutdown.requested() {
@@ -479,6 +480,9 @@ pub fn run_with_control(
                                     name: tun_ctl.name(),
                                     mtu: tun_ctl.mtu(),
                                     sockets: tun_ctl.userspace().map(|stack| stack.socket_count()),
+                                    unreachable_family: socket_ctl
+                                        .is_ipv4_only()
+                                        .then(|| socket_ctl.unreachable_family()),
                                 },
                                 started,
                                 &relay_dropped,
@@ -1874,6 +1878,14 @@ pub struct Attachment<'a> {
     /// number that only ever rises is the visible form of FINDINGS.md 44 — and
     /// nothing else in the status output would show it.
     pub sockets: Option<usize>,
+    /// Datagrams refused because their destination is in an address family
+    /// this datapath socket cannot reach, and whether that is possible at all.
+    ///
+    /// `None` on a dual-stack socket, where the question does not arise.
+    /// `Some(n)` on an `AF_INET` one, where every IPv6 candidate is
+    /// unreachable and *nothing else in the daemon says so* — the send paths
+    /// drop errors on purpose, so the symptom is silence. FINDINGS.md 51.
+    pub unreachable_family: Option<u64>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1910,6 +1922,14 @@ fn report(
             let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
             if let Some(sockets) = device.sockets {
                 let _ = writeln!(out, "userspace_sockets = {sockets}");
+            }
+            if let Some(refused) = device.unreachable_family {
+                // Printed on every IPv4-only node, not only when the count is
+                // nonzero. "This node cannot use IPv6" is the fact an operator
+                // needs, and it is true before the first peer advertises an
+                // IPv6 candidate as well as after.
+                let _ = writeln!(out, "ipv6 = \"unreachable (node.listen is IPv4)\"");
+                let _ = writeln!(out, "ipv6_candidates_refused = {refused}");
             }
 
             let mapping = portmap.unwrap_or_else(|| portmap::Snapshot::new(config.port_mapping));

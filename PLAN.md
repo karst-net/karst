@@ -2099,7 +2099,18 @@ onwards, anchored on the week of 2026-08-10.
   run finds zero PSK bytes. The log scan runs in CI, not as a one-time check —
   this is a regression that gets reintroduced, not one that gets fixed once.
 
-### Phase 4 — Relays and NAT traversal (10 weeks · Aug–Oct 2026) — 🔶 in progress
+### Phase 4 — Relays and NAT traversal (10 weeks · Aug–Oct 2026) — ✅ complete
+
+> **Completed 2026-08-21**, with one exit criterion **conceded rather than met**
+> and stated here rather than left to be found further down. Every topology in
+> §6's matrix where a direct path is physically possible reaches one, *except*
+> row 8 without a port mapping — the symmetric-to-port-restricted pairing, whose
+> only technique is §7.7's birthday-paradox port search. That was specified,
+> implemented and measured at 64% after eight minutes before being declined
+> (FINDINGS.md 28), and row 8b shows the same pairing going direct in 37 seconds
+> as soon as B's router offers a mapping. The other two criteria hold. Thirteen
+> whole-aquifer topologies, ten direct: 77%, or 83% of the twelve where a direct
+> path exists at all.
 
 - ✅ **Ponor v1 specified** — `spec/ponor-v1.md`, normative, with framing,
   mutual post-quantum authentication, admission, presence, mesh and relay
@@ -3420,9 +3431,10 @@ onwards, anchored on the week of 2026-08-10.
   that either codec agrees with anything but itself. Rows 8b and 9 rest on
   those bytes. It runs in the `aquifer` job too, where the root and the
   `miniupnpd` it needs already exist, and it costs four seconds. **Every
-  privileged suite in the tree now has a CI home**: `device`, `two_nodes` and
-  `nat_matrix` in `tun`; `control` and `interop` in `vectors`; `aquifer`,
-  `userspace` and `gateway` here.
+  privileged suite in the tree now has a CI home**: `device`, `two_nodes`,
+  `nat_matrix` and `pref64` in `tun`; `control` and `interop` in `vectors`;
+  `aquifer`, `userspace` and `gateway` here. `pref64` joined on 2026-08-21 with
+  the mechanism it tests.
 
   **The suites now refuse to be quietly green** — *all* of them, as of
   2026-08-21. They used to skip when their
@@ -3897,14 +3909,30 @@ onwards, anchored on the week of 2026-08-10.
   the configuration becomes real. A *name* is left alone in both, because DNS64
   already synthesises for names — only a literal arrives unsynthesised.
 
-  The prefix itself is learned by **RFC 7050**, and gated: `auto` will not ask
-  unless the datapath is IPv6 *and* the host holds no IPv4 address of its own.
-  The second gate is not an optimisation — a host with both would route every
-  IPv4 flow through a translator it does not need and learn a reflexive address
-  belonging to the translator. **RFC 8781's PREF64 is the better mechanism and
-  is declined**, not overlooked: reading router advertisements needs a raw
-  ICMPv6 socket, and so `CAP_NET_RAW` in a daemon that otherwise wants only
-  `CAP_NET_ADMIN`.
+  The prefix is learned by **RFC 8781's PREF64 first and RFC 7050 second**, and
+  gated: `auto` will not ask unless the datapath is IPv6 *and* the host holds no
+  IPv4 address of its own. The second gate is not an optimisation — a host with
+  both would route every IPv4 flow through a translator it does not need and
+  learn a reflexive address belonging to the translator.
+
+  **PREF64 was declined on 2026-08-21 and built the same day**, because the
+  reason for declining it did not survive being written down: it needs
+  `CAP_NET_RAW`, and the ADR treated that as a *requirement* when it is only an
+  opportunity. The socket is opened opportunistically — if it opens, PREF64 runs
+  and is preferred; if it returns `EPERM`, which is the ordinary case in
+  userspace mode, the node falls back to RFC 7050 exactly as before. It is
+  preferred where available because the prefix then comes from the router that
+  performs the translation rather than from whichever resolver answered, and
+  because it works on a NAT64 network with no DNS64 at all.
+
+  **Building it found FINDINGS.md 52.** RFC 3542's `ICMP6_FILTER` uses a set bit
+  to *block*; this code assumed it meant *pass*, so the socket admitted every
+  `ICMPv6` type except the one it existed to receive. Every unit test passed —
+  the option parser was right, the solicitation was right, and the answer was
+  discarded below both. It is caught by a row that drives a router written in
+  Python, so a misreading of the standard shows up as a disagreement rather than
+  as two copies of one mistake agreeing; the same misreading did in fact appear
+  at both ends.
 
   **What the row cannot see, and what does see it.** With the receive-side
   extraction deleted the row still passes — a synthesised address is one the
@@ -3916,10 +3944,15 @@ onwards, anchored on the week of 2026-08-10.
   real socket, real `Disco`, and the `Pong` that comes out. Writing that test
   found FINDINGS.md 47, which is a test that could not fail.
 
-  One thing still unaddressed and now named rather than implied: an `AF_INET`
-  node's sends to an IPv6 candidate fail silently. That is correct behaviour for
-  a node with no IPv6 connectivity, and "this node cannot use IPv6" is a fact no
-  operator can read anywhere.
+  **An `AF_INET` node's sends to an IPv6 candidate no longer fail silently** —
+  FINDINGS.md 51, closed 2026-08-21. Dropping the error was correct and the
+  silence was not: every send path discards failures on purpose, so a peer
+  reachable only over IPv6 produced no log line, no counter and no symptom but
+  never connecting. The transport is what knows its own family, so it refuses
+  the send before the syscall with a message naming `node.listen`, counts it,
+  and says so once per process; `karst status` prints
+  `ipv6 = "unreachable (node.listen is IPv4)"` on every such node, whether or
+  not the count is yet nonzero.
 
   **Hairpinning was named here as a second one, and that was wrong** —
   corrected 2026-08-21 after running the row rather than re-reading the

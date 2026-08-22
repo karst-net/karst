@@ -210,6 +210,7 @@ fn attachment() -> karstd::run::Attachment<'static> {
         name: "karst0",
         mtu: 1280,
         sockets: None,
+        unreachable_family: None,
     }
 }
 

@@ -42,6 +42,9 @@ use std::str::FromStr;
 /// the only symptom is that nothing answers.
 const LEGAL: [u8; 6] = [32, 40, 48, 56, 64, 96];
 
+/// RFC 8781's PREF64 router-advertisement option — IANA ND option type 38.
+const PREF64_OPTION: u8 = 38;
+
 /// The IPv4 address RFC 7050 §3 reserves for prefix discovery. `ipv4only.arpa`
 /// has exactly this A record and no AAAA of its own, so any AAAA a resolver
 /// returns for it was synthesised — and the prefix is what is left when this is
@@ -218,6 +221,95 @@ impl Nat64Prefix {
         }
     }
 
+    /// Recover the prefix from a Router Advertisement's PREF64 option —
+    /// RFC 8781.
+    ///
+    /// `msg` is the `ICMPv6` message, starting at the type byte, as a raw `ICMPv6`
+    /// socket delivers it: the IPv6 header is not included.
+    ///
+    /// **This is the authoritative source and RFC 7050 is the fallback.** The
+    /// prefix comes from the router that actually performs the translation,
+    /// signed by nothing but delivered over link-local multicast that an
+    /// off-link attacker cannot reach — where the DNS heuristic trusts whatever
+    /// resolver answered. It also needs no DNS64 deployed at all.
+    ///
+    /// # The layout is not a concatenation
+    ///
+    /// §4 packs a 13-bit lifetime and a 3-bit *prefix length code* into one
+    /// 16-bit word, and the code is an index into six lengths rather than the
+    /// length itself. Reading it as a length would produce a prefix of 0, 1 or
+    /// 2 bits — which `Nat64Prefix::new` refuses, so the mistake would show up
+    /// as "no prefix found" rather than as a wrong address. That is the better
+    /// failure, and it is still worth not making.
+    ///
+    /// A zero lifetime means the router is **withdrawing** the prefix (§4), so
+    /// it is not a prefix this node may adopt.
+    #[must_use]
+    pub fn from_router_advertisement(msg: &[u8]) -> Option<Self> {
+        // ICMPv6 type 134, ND_ROUTER_ADVERT. Anything else is not an RA, and
+        // reading its bytes as one would find options where there are none.
+        if *msg.first()? != 134 {
+            return None;
+        }
+        // 4 bytes of ICMPv6 header, then 12 of RA fields, then options.
+        let mut at = 16usize;
+        while at < msg.len() {
+            let kind = *msg.get(at)?;
+            let units = usize::from(*msg.get(at.checked_add(1)?)?);
+            // **A zero length is malformed and must not be walked past.** RFC
+            // 4861 §4.6 gives every option a length of at least one unit; a
+            // zero would advance this loop by nothing and spin forever on a
+            // packet an attacker chose.
+            if units == 0 {
+                return None;
+            }
+            let end = at.checked_add(units.checked_mul(8)?)?;
+            if end > msg.len() {
+                return None;
+            }
+            if kind == PREF64_OPTION && units == 2 {
+                if let Some(prefix) = Self::from_pref64_body(msg.get(at..end)?) {
+                    return Some(prefix);
+                }
+            }
+            at = end;
+        }
+        None
+    }
+
+    /// One 16-byte PREF64 option, header included.
+    fn from_pref64_body(option: &[u8]) -> Option<Self> {
+        let word = u16::from_be_bytes([*option.get(2)?, *option.get(3)?]);
+        // 13 bits of lifetime in units of 8 seconds, then 3 bits of code.
+        if word >> 3 == 0 {
+            return None; // withdrawn
+        }
+        let len = match word & 0b111 {
+            0 => 96,
+            1 => 64,
+            2 => 56,
+            3 => 48,
+            4 => 40,
+            5 => 32,
+            // 6 and 7 are reserved. §4 requires the option be ignored rather
+            // than guessed at.
+            _ => return None,
+        };
+        let mut base = [0u8; 16];
+        base.get_mut(..12)?.copy_from_slice(option.get(4..16)?);
+        // The option always carries 96 bits; the code says how many of them
+        // count. §4 has the receiver ignore the rest, and `new` refuses a value
+        // with bits set past its length, so they are cleared rather than
+        // rejected — a router that leaves them set is not worth failing over.
+        let bits = usize::from(len);
+        for (i, byte) in base.iter_mut().enumerate() {
+            let keep = bits.saturating_sub(i * 8).min(8);
+            let mask = if keep >= 8 { 0xFFu8 } else { !(0xFFu8 >> keep) };
+            *byte &= mask;
+        }
+        Self::new(Ipv6Addr::from(base), len).ok()
+    }
+
     /// Recover the prefix from an AAAA record for `ipv4only.arpa` — RFC 7050 §3.
     ///
     /// The name has A records for [`WKA`] and [`WKA2`] and no AAAA of its own,
@@ -276,7 +368,12 @@ impl FromStr for Nat64Prefix {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
 
     use super::*;
 
@@ -395,6 +492,144 @@ mod tests {
             assert_eq!(synth.port(), 51820, "{prefix} lost the port");
             assert_eq!(p.extract_socket(synth), v4, "{prefix} did not round-trip");
         }
+    }
+
+    /// Build a Router Advertisement carrying `options`.
+    fn advertisement(options: &[u8]) -> Vec<u8> {
+        let mut m = vec![134u8, 0, 0, 0]; // type, code, checksum
+        m.extend_from_slice(&[64, 0]); // cur hop limit, flags
+        m.extend_from_slice(&1800u16.to_be_bytes()); // router lifetime
+        m.extend_from_slice(&0u32.to_be_bytes()); // reachable time
+        m.extend_from_slice(&0u32.to_be_bytes()); // retrans timer
+        m.extend_from_slice(options);
+        m
+    }
+
+    /// One PREF64 option, from a lifetime in seconds and a prefix-length code.
+    fn pref64(seconds: u16, plc: u16, prefix: &str) -> Vec<u8> {
+        let mut o = vec![38u8, 2];
+        o.extend_from_slice(&(((seconds / 8) << 3) | plc).to_be_bytes());
+        let addr: Ipv6Addr = prefix.parse().unwrap();
+        o.extend_from_slice(&addr.octets()[..12]);
+        o
+    }
+
+    /// **All six prefix-length codes**, which is the table the whole option
+    /// turns on. The code is an index, not a length: reading it as a length
+    /// gives a 0-, 1- or 2-bit prefix.
+    #[test]
+    fn every_prefix_length_code_maps_to_the_length_the_standard_assigns() {
+        for (plc, len, prefix) in [
+            (0u16, 96u8, "64:ff9b::"),
+            (1, 64, "2001:db8:122:344::"),
+            (2, 56, "2001:db8:122:300::"),
+            (3, 48, "2001:db8:122::"),
+            (4, 40, "2001:db8:100::"),
+            (5, 32, "2001:db8::"),
+        ] {
+            let ra = advertisement(&pref64(600, plc, prefix));
+            let got = Nat64Prefix::from_router_advertisement(&ra)
+                .unwrap_or_else(|| panic!("code {plc} yielded no prefix"));
+            assert_eq!(got.bits(), len, "code {plc} is a /{len}");
+            assert_eq!(got.to_string(), format!("{prefix}/{len}"));
+        }
+    }
+
+    /// The reserved codes are ignored rather than guessed at — §4.
+    #[test]
+    fn a_reserved_prefix_length_code_is_ignored() {
+        for plc in [6u16, 7] {
+            let ra = advertisement(&pref64(600, plc, "64:ff9b::"));
+            assert_eq!(
+                Nat64Prefix::from_router_advertisement(&ra),
+                None,
+                "code {plc} is reserved and must not be interpreted"
+            );
+        }
+    }
+
+    /// A zero lifetime is a **withdrawal**, not an advertisement.
+    #[test]
+    fn a_withdrawn_prefix_is_not_adopted() {
+        let ra = advertisement(&pref64(0, 0, "64:ff9b::"));
+        assert_eq!(Nat64Prefix::from_router_advertisement(&ra), None);
+        // One tick of lifetime is still an advertisement.
+        let live = advertisement(&pref64(8, 0, "64:ff9b::"));
+        assert_eq!(
+            Nat64Prefix::from_router_advertisement(&live),
+            Some(Nat64Prefix::well_known())
+        );
+    }
+
+    /// PREF64 is found among the options a real router actually sends, at any
+    /// position — not only when it is first.
+    #[test]
+    fn the_option_is_found_among_the_others() {
+        // Source link-layer address (type 1), MTU (type 5), prefix information
+        // (type 3), then PREF64.
+        let mut options = vec![1u8, 1, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+        options.extend_from_slice(&[5u8, 1, 0, 0, 0, 0, 0x05, 0xdc]);
+        let mut pio = vec![3u8, 4, 64, 0xc0];
+        pio.extend_from_slice(&[0u8; 28]);
+        options.extend_from_slice(&pio);
+        options.extend_from_slice(&pref64(600, 0, "64:ff9b::"));
+        let ra = advertisement(&options);
+        assert_eq!(
+            Nat64Prefix::from_router_advertisement(&ra),
+            Some(Nat64Prefix::well_known()),
+            "the option was not found behind the ones every router sends"
+        );
+    }
+
+    /// An RA with no PREF64 yields nothing, and so does a message that is not
+    /// an RA at all — a Neighbour Advertisement's bytes are not options.
+    #[test]
+    fn only_a_router_advertisement_carrying_the_option_yields_a_prefix() {
+        assert_eq!(
+            Nat64Prefix::from_router_advertisement(&advertisement(&[])),
+            None
+        );
+        let mut not_an_ra = advertisement(&pref64(600, 0, "64:ff9b::"));
+        not_an_ra[0] = 136; // Neighbour Advertisement
+        assert_eq!(Nat64Prefix::from_router_advertisement(&not_an_ra), None);
+    }
+
+    /// **A zero-length option must not spin the walk forever**, and every
+    /// truncation must return rather than read past the end. This input comes
+    /// off a raw socket and nothing has vouched for it.
+    #[test]
+    fn a_malformed_advertisement_is_refused_without_hanging() {
+        // Length 0 is illegal (RFC 4861 §4.6) and advances the cursor by
+        // nothing.
+        let mut zero = advertisement(&[38u8, 0, 0, 0]);
+        zero.extend_from_slice(&[0u8; 12]);
+        assert_eq!(Nat64Prefix::from_router_advertisement(&zero), None);
+
+        // An option claiming more bytes than the message holds.
+        let lying = advertisement(&[38u8, 9, 0x02, 0x00]);
+        assert_eq!(Nat64Prefix::from_router_advertisement(&lying), None);
+
+        // And every prefix of a well-formed message.
+        let full = advertisement(&pref64(600, 0, "64:ff9b::"));
+        for cut in 0..full.len() {
+            let _ = Nat64Prefix::from_router_advertisement(&full[..cut]);
+        }
+    }
+
+    /// Bits past the prefix length are cleared rather than refused — §4 has the
+    /// receiver ignore them, and a router that leaves them set is not worth
+    /// failing over.
+    #[test]
+    fn bits_past_the_prefix_length_are_ignored() {
+        // A /32 code with a full 96 bits of prefix set.
+        let mut o = vec![38u8, 2];
+        o.extend_from_slice(&(((600u16 / 8) << 3) | 5).to_be_bytes());
+        o.extend_from_slice(&[
+            0x20, 0x01, 0x0d, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ]);
+        let got = Nat64Prefix::from_router_advertisement(&advertisement(&o))
+            .expect("the option is well formed; only its low bits are noise");
+        assert_eq!(got, "2001:db8::/32".parse::<Nat64Prefix>().unwrap());
     }
 
     /// RFC 7050 §3: the prefix is whatever is left when the well-known address
