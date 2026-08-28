@@ -97,18 +97,7 @@ packages-verify:
 
 # The packaged unit under a real systemd: start, SIGKILL, prove DNS recovered.
 packages-verify-systemd:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    image=karst-systemd-verify
-    docker build -q -t "$image" -f packaging/test/systemd.Dockerfile packaging/test
-    container=$(docker run -d --privileged --cgroupns=host \
-        -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/karst:ro" "$image")
-    trap 'docker rm -f "$container" >/dev/null' EXIT
-    for _ in $(seq 30); do
-        [ "$(docker exec "$container" systemctl is-system-running 2>/dev/null || true)" = running ] && break
-        sleep 1
-    done
-    docker exec "$container" bash /karst/scripts/package-systemd-verify.sh /karst/dist/packages/old
+    ./scripts/package-systemd-container.sh dist/packages/old
 
 # ── macOS ───────────────────────────────────────────────────────────────────
 #

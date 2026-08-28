@@ -189,7 +189,7 @@ jobs:
           name: linux-packages-amd64-${{ github.sha }}
           path: dist/packages
       - name: Start, crash, recover
-        run: sudo ./scripts/package-systemd-verify.sh dist/packages
+        run: ./scripts/package-systemd-container.sh dist/packages
 
   # ## The artefacts a release is actually made of
   #

@@ -48,6 +48,30 @@ section() { printf '\n== %s\n' "$1"; }
 [ "$(id -u)" -eq 0 ] || { echo "package-systemd-verify: must run as root" >&2; exit 2; }
 [ -d /run/systemd/system ] || { echo "package-systemd-verify: systemd is not the running init" >&2; exit 2; }
 
+# Refused, not skipped, and with the reason.
+#
+# The DNS section below writes a known original to /etc/resolv.conf and asserts
+# those exact bytes come back. Where /etc/resolv.conf is a symlink into
+# systemd-resolved's own run directory, that write lands in a file resolved
+# owns and regenerates, and it puts its own content back before the assertion
+# runs — a failure that reads as "the resolver integration is broken" and is
+# nothing of the kind. Use scripts/package-systemd-container.sh, which gives
+# the check a resolver it owns.
+#
+# Exit 2, distinct from the 1 an assertion failure produces: this is the
+# harness declining to produce a meaningless answer, not a defect in Karst.
+if [ -L /etc/resolv.conf ] && case "$(readlink -f /etc/resolv.conf)" in
+  /run/systemd/resolve/*) true ;; *) false ;;
+esac then
+  cat >&2 <<'REFUSED'
+package-systemd-verify: /etc/resolv.conf is a symlink into systemd-resolved's
+run directory, which resolved regenerates. This check needs a resolver file it
+owns, or its DNS assertion reports a failure that is really resolved winning a
+race. Run scripts/package-systemd-container.sh instead.
+REFUSED
+  exit 2
+fi
+
 package=$(find "$package_dir" -maxdepth 1 -name 'karst-client*.deb' | head -1)
 [ -n "$package" ] || { echo "package-systemd-verify: no karst-client .deb in $package_dir" >&2; exit 2; }
 
