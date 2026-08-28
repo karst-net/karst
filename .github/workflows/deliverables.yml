@@ -54,6 +54,18 @@ jobs:
         run: |
           dnf -y install gcc gcc-c++ cmake make perl git unzip tar gzip
       - uses: actions/checkout@v4
+      # The job runs as root inside the container while the checkout belongs to
+      # the runner's own user, and git refuses a repository it does not trust
+      # the ownership of. Nothing in the Rust build asks git anything, so it
+      # succeeds — and then `go build` stamps VCS information into the binary,
+      # cannot read the repository, and fails the whole job with
+      # `error obtaining VCS status: exit status 128`.
+      #
+      # `-buildvcs=false` would also make it build. It would do so by throwing
+      # away the commit stamped into the release binary, which is worth more
+      # than the line it costs to keep.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # `arduino/setup-protoc` unpacks a musl binary that will not run here, so
       # protoc comes from its own release archive.
       - name: protoc
