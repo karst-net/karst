@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright the Karst contributors.
+
+name: karst-control
+arch: amd64
+platform: linux
+version: "${VERSION}"
+release: "1"
+section: net
+priority: optional
+maintainer: Karst contributors <maintainers@karst.net>
+description: Karst coordination service
+license: AGPL-3.0-or-later
+contents:
+  - src: dist/karst-control
+    dst: /usr/bin/karst-control
+    file_info:
+      mode: 0755
+  - src: packaging/systemd/karst-control.service
+    dst: /usr/lib/systemd/system/karst-control.service
+  - dst: /etc/karst
+    type: dir
+    file_info:
+      mode: 0755
+  - dst: /var/lib/netbird
+    type: dir
+    file_info:
+      mode: 0750

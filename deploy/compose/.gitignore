@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+
+# Everything bootstrap.sh generates. This directory holds the relay's identity
+# seed, its TLS private key, and the coordination server's store encryption key
+# — committing it would publish the deployment's secrets and, worse, would let
+# two deployments share a relay identity.
+state/

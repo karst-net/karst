@@ -1,0 +1,58 @@
+[package]
+name = "karst-relay"
+description = "Ponor relay server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+publish = false
+
+# A library beside the binary: the forwarding core is worth
+# integration-testing, and a `[[bin]]`-only package cannot be imported from
+# `tests/`.
+[lib]
+name = "karst_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "karst-relay"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-disco.workspace = true
+karst-relay-proto.workspace = true
+
+base64ct = { version = "1", features = ["alloc"] }
+getrandom = "0.3"
+ml-dsa = "0.1"
+# Pinned to what `ml-dsa` uses. Two rand_core majors in one graph is normal;
+# handing `sign_randomized` an RNG from the wrong one is a type error with a
+# thoroughly unhelpful message, so the version is stated rather than inferred.
+rand_core = "0.10"
+serde = { version = "1", features = ["derive"] }
+sha2 = { version = "0.10", default-features = false }
+toml = "0.9"
+
+# TLS. `aws-lc-rs` rather than `ring` is forced by spec §4.1: it is the only
+# rustls provider that offers X25519MLKEM768, and `prefer-post-quantum` is what
+# puts the hybrid group first rather than merely available. Verified at startup
+# by `tls::provider`, so a feature-flag change cannot silently drop it.
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs", "prefer-post-quantum", "logging"] }
+# PEM parsing comes from rustls-pki-types rather than rustls-pemfile: the
+# latter is deprecated (RUSTSEC-2025-0103) with no safe upgrade, and
+# `cargo deny check advisories` fails the build on it. The replacement is the
+# `PemObject` trait, which rustls re-exports.
+rustls-pki-types = { version = "1", features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
+
+[dev-dependencies]
+# Self-signed certificates for the listener test. A relay whose TLS is only
+# ever exercised against a real CA is a relay whose TLS is never exercised.
+rcgen = "0.14"

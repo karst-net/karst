@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+
+[Unit]
+Description=Karst node agent
+Documentation=https://github.com/karst-net/karst
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/karstd --config /etc/karst/karstd.toml
+ExecStopPost=-/usr/bin/karst dns revert --config /etc/karst/karstd.toml
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=karst
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

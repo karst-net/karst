@@ -1,0 +1,40 @@
+[package]
+name = "karst-crypto"
+description = "KEM/signature/AEAD traits, suite registry, zeroization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["ml-kem-rustcrypto"]
+# Default KEM backend. `ml-kem` is Apache-2.0 OR MIT, which preserves the
+# GPLv2 compatibility ADR-0007 deliberately kept for a future kernel datapath.
+ml-kem-rustcrypto = ["dep:ml-kem"]
+
+[dependencies]
+# The data-plane AEAD (ADR-0001, ADR-0015). `chacha20poly1305` was beside this
+# until ADR-0015 item 7 removed the ChaCha suite; it survives only in
+# `karst-control-client`, which reaches it directly. Pinned to 0.10 rather than
+# 0.11 because 0.11 moved to `aead` 0.6, and the rest of the graph is on 0.5.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+ml-kem = { version = "0.3", optional = true, default-features = false }
+# Bedrock's two signature tiers, both ML-DSA-87 since ADR-0015 Option A.
+# `slh-dsa` was here for the hash-based root and is gone with it: CNSA 2.0
+# excludes SLH-DSA, so nothing in the tree uses it.
+ml-dsa = "0.1"
+# The two suite hashes and the HKDF over them (ADR-0015 item 1). `alloc` on
+# sha2 is not needed: `hash::Digest` is a fixed buffer precisely so the
+# transcript never allocates.
+sha2 = { version = "0.10", default-features = false }
+hkdf = { version = "0.12", default-features = false }
+rand_core = { version = "0.9", default-features = false }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+
+[dev-dependencies]
+rand = "0.9"

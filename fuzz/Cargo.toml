@@ -1,0 +1,47 @@
+[package]
+name = "karst-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+karst-proto = { path = "../crates/karst-proto" }
+karst-noise = { path = "../crates/karst-noise" }
+karst-crypto = { path = "../crates/karst-crypto" }
+karst-dns = { path = "../crates/karst-dns" }
+
+[[bin]]
+name = "fragment_header"
+path = "fuzz_targets/fragment_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reassembly"
+path = "fuzz_targets/reassembly.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[[bin]]
+name = "handshake_respond"
+path = "fuzz_targets/handshake_respond.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_message"
+path = "fuzz_targets/dns_message.rs"
+test = false
+doc = false
+bench = false

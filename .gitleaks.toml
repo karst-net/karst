@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Copyright the Karst contributors.
+#
+# Configuration for the secret scan in .github/workflows/ci.yml.
+#
+# Netmaps carry per-pair PSKs and TURN credentials (spec §2.6), so this scan is
+# continuous rather than one-time — THREAT-MODEL.md R5. The allowlists below
+# are deliberately narrow: each one names a path whose contents are published
+# by design or are upstream's, and NONE of them covers Karst's own code.
+
+title = "Karst"
+
+[extend]
+useDefault = true
+
+# Upstream NetBird's test fixtures. server/ is a pruned fork and no forked file
+# is modified (server/README.md), so these cannot be rewritten to satisfy a
+# scanner without giving up the fork discipline and taking a cherry-pick
+# conflict on every future security fix.
+#
+# Scoped to the vendored subtrees by name. Karst's own server code lives at
+# server/management/internals/karst/ and is matched by none of these patterns,
+# so it is scanned exactly like everything else — which is the point. RE2 has
+# no negative lookahead, hence the enumeration rather than an exclusion.
+[[allowlists]]
+description = "Vendored NetBird test fixtures (not Karst code)"
+paths = [
+  '''^server/management/server/.*_test\.go$''',
+  '''^server/management/server/testdata/''',
+  '''^server/management/cmd/.*_test\.go$''',
+  '''^server/management/internals/modules/.*_test\.go$''',
+  '''^server/management/internals/shared/.*_test\.go$''',
+]
+
+# Cross-implementation test vectors. These are derived values from fixed,
+# published inputs, and they exist to be published: an independent
+# implementation cannot check itself against vectors it cannot read. They are
+# not credentials to any deployment.
+#
+# PSK bytes are a separate matter and are covered by the dedicated leak scan
+# (the psk-leak job), which asserts they reach neither logs nor a bug report.
+[[allowlists]]
+description = "Published cross-implementation test vectors"
+paths = ['''^spec/vectors/''']
+
+# Build artefacts. Absent from a fresh CI checkout; present when the scan is
+# run locally, where a dependency's own test key would otherwise be reported.
+[[allowlists]]
+description = "Build output"
+paths = [
+  '''^target/''',
+  '''^fuzz/target/''',
+]

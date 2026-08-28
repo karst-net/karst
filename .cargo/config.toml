@@ -1,0 +1,20 @@
+# Karst — cargo configuration.
+
+[env]
+# **Test threads need more stack than the 8 MiB default, in debug builds only.**
+#
+# Ponor's handshake helpers are async fns that nest several deep, and an async
+# fn's future holds every local that lives across an `.await` — including the
+# frames, which now carry a 4 627-byte ML-DSA-87 signature each. Debug builds do
+# not collapse those state machines, so a test that drives a handshake through
+# five nested helpers carries five copies.
+#
+# ADR-0015 moved identities from ML-DSA-65 to ML-DSA-87 and that was enough to
+# overflow a test thread. The production paths were fixed properly — the
+# relay's per-connection and mesh-dial futures are boxed, and its read buffers
+# moved to the heap — but the *test* futures are large by construction and
+# boxing every test body would be noise rather than a fix.
+#
+# Release builds are unaffected: the optimiser collapses the nesting. This is a
+# debug-build test-harness accommodation and nothing more. FINDINGS 58.
+RUST_MIN_STACK = "16777216"

@@ -1,0 +1,10 @@
+{
+  "name": "@karst-net/tokens",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": { "./theme.css": "./theme.css" },
+  "scripts": { "lint": "eslint src --max-warnings 0" },
+  "devDependencies": { "typescript": "6.0.3" }
+}

@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Copyright the Karst contributors.
+#
+# Example karstd roster — Phase 2.
+#
+# There is no coordination server yet, so peers are listed by hand. Phase 3
+# replaces this file with a netmap from the control plane; the fields below are
+# the same ones the netmap will carry, so a roster written now describes the
+# same network afterwards.
+#
+# Setting up two nodes:
+#
+#   karstd genkey > /etc/karst/node.key && chmod 600 /etc/karst/node.key
+#   karstd pubkey --config /etc/karst/karstd.toml    # paste into the other node
+#   karstd check  --config /etc/karst/karstd.toml    # validate before running
+#   karstd        --config /etc/karst/karstd.toml    # needs CAP_NET_ADMIN
+#
+# `karstd pubkey` deliberately works before any peer is configured — a new node
+# needs to publish its key precisely in order to be added elsewhere.
+
+[node]
+# UDP socket for PHREATIC traffic. 0.0.0.0 accepts on every interface; pin it
+# to one address if the host is multi-homed and only one path should be used.
+listen = "0.0.0.0:51820"
+
+# TUN interface name. Created at startup and removed when karstd exits — it is
+# never made persistent, so a crashed daemon cannot leave an interface behind
+# black-holing everything the kernel still routes to it.
+#
+# This is a *preference*, not a request. Linux honours it; macOS names its
+# `utun` devices itself and will hand back `utunN` whatever is written here.
+# `karst status` reports the name the interface actually got, and that is the
+# one to use with `ifconfig`, `route` or anything else.
+interface = "karst0"
+
+# Addresses assigned to the interface. These are HOST addresses with the length
+# of the on-link prefix: `10.77.0.1/24` means "I am .1, the /24 is on-link". It
+# does not mean the network 10.77.0.0/24.
+#
+# An IPv6 address is normal and supported. It is also the reason the tunnel MTU
+# is fixed at 1280: RFC 8200 §5 requires that on any link carrying IPv6, and
+# spec §13.6 explains what follows from it.
+addresses = ["10.77.0.1/24", "fd7a:5ea5::1/64"]
+
+# 96 bytes of hex seed: 64 for the ML-KEM key, 32 for X25519. Generate with
+# `karstd genkey`. Refused unless the file is mode 600 — a key readable by
+# group or other is not a key.
+private_key_file = "/etc/karst/node.key"
+
+# Which cipher-suite profile this node runs. Omitted means "default".
+#
+#   default   KARST_1 — ML-KEM-768 with an X25519 hybrid, AES-256-GCM,
+#             SHA-512. Category 3. What every node runs unless told otherwise.
+#   cnsa2     KARST_2 — ML-KEM-1024, AES-256-GCM, SHA-384, no classical half.
+#             Category 5, the CNSA 2.0 profile (ADR-0015).
+#
+# Both run AES-256-GCM. There was a third suite running ChaCha20-Poly1305 and
+# it was removed (ADR-0015 item 7): it is not a NIST algorithm, so no deployment
+# under a mandate could select it. A node without AES-NI or ARMv8 crypto
+# extensions therefore pays for AES in software.
+#
+# **This is not a preference, it is a class.** One word chooses two things that
+# must not disagree: the parameter set of this node's static KEM key, and the
+# floor it refuses below. A `cnsa2` node and a `default` node cannot talk to
+# each other — a mandated deployment may not fall back, and a node without an
+# ML-KEM-1024 key has nothing to answer with. Moving a fleet between profiles
+# is a re-keying, planned as one.
+#
+# Changing this changes the public key the same seed expands to, and therefore
+# this node's identity. Re-run `karstd pubkey` and update every peer's roster
+# entry — the key is 1568 bytes of hex under `cnsa2` against 1184 by default,
+# so a stale entry fails to load rather than failing quietly.
+#
+# `cnsa2` costs one extra handshake fragment: a KARST_2 HandshakeInit is 3210
+# bytes and needs three datagrams where KARST_1 needs two, so on a lossy link
+# expect more handshake retries (spec §6.5).
+#
+# crypto_profile = "cnsa2"
+
+# Which PSK epoch the psk values below belong to (§2.6). Rotation arrives with
+# the control plane; until then this stays put.
+psk_epoch = 1
+
+# ── peers ────────────────────────────────────────────────────────────────────
+#
+# One [[peer]] block each. Order does not matter: routing is by longest prefix,
+# not by position, and two peers claiming an identical range is a hard error
+# rather than a silent last-one-wins.
+
+[[peer]]
+# Used in logs and `karstd check`. Must be unique.
+name = "bob"
+
+# From `karstd pubkey` on that node. The KEM key is 1184 bytes under the
+# default profile and 1568 under `cnsa2`; its length is what says which, so
+# there is no second field to keep in step and no way to claim one and paste
+# the other. The X25519 key is 32 bytes and unused under `cnsa2`.
+kem_public_key = "…2368 hex characters…"
+dh_public_key = "…64 hex characters…"
+
+# Per-pair pre-shared key, 32 bytes of hex. OPTIONAL, and its absence is
+# reported at startup rather than assumed: without it the handshake still has
+# both key families, but loses the shared secret that would survive a break of
+# both (spec §7.3). Supplying one makes this file as sensitive as the private
+# key, and karstd then requires mode 600 on it too.
+# psk = "…64 hex characters…"
+
+# Where to reach this peer. OPTIONAL: a peer with no endpoint is never
+# contacted — there is nowhere to send — but can still connect to us, and its
+# address is learned from the handshake that arrives. That is the arrangement
+# for a peer behind NAT. At least one side of every pair needs an endpoint.
+endpoint = "192.0.2.20:51820"
+
+# Addresses this peer owns. This is cryptokey routing and it cuts both ways:
+# outbound, it decides which peer carries a packet; inbound, a packet from bob
+# whose source is outside these ranges is DROPPED. Authentication proves a
+# packet came from bob — it does not entitle bob to speak for anyone else.
+#
+# Keep these as tight as the network allows. `0.0.0.0/0` is legitimate for an
+# exit node and means exactly what it says.
+allowed_ips = ["10.77.0.2/32", "fd7a:5ea5::2/128"]
+
+[[peer]]
+name = "carol"
+kem_public_key = "…"
+dh_public_key = "…"
+allowed_ips = ["10.77.0.3/32"]
+# No endpoint: carol is behind NAT and will connect to us.

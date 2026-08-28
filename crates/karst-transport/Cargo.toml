@@ -1,0 +1,23 @@
+[package]
+name = "karst-transport"
+description = "UDP sockets, GSO/GRO, sendmmsg, endpoint management"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-proto.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+karst-crypto.workspace = true
+karst-noise.workspace = true
+karst-node.workspace = true

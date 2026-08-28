@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  The Karst node agent, as a root LaunchDaemon.
+
+  A LaunchDaemon rather than a NetworkExtension, deliberately. A
+  `NEPacketTunnelProvider` needs the
+  `com.apple.developer.networking.networkextension` entitlement, which Apple
+  grants by application with a review turnaround measured in weeks and no
+  committed SLA — making that a release dependency would put shipping behind
+  somebody else's queue. A root daemon opening `utun` needs no entitlement at
+  all; it needs root, which a signed `.pkg` installer has.
+
+  The trade, stated plainly: this daemon is not sandboxed and cannot ship on
+  the Mac App Store. See plans/phase-5/06-macos-client.md §3.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.karst.karstd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/karstd</string>
+        <string>--config</string>
+        <string>/etc/karst/karstd.toml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      Restart on a crash, but not on a clean exit. `karstd` exits zero only
+      when it was asked to stop, and relaunching it then would make the daemon
+      impossible to turn off without unloading it.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!--
+      Ten seconds between restarts. The default of one second turns a bad
+      config into a tight crash loop that fills the log faster than anyone can
+      read the first error in it.
+    -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/karst/karstd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/karst/karstd.log</string>
+
+    <!--
+      The datapath is two blocking threads and a timer, and a laptop that has
+      just woken has a queue of packets to move. `Adaptive` lets launchd treat
+      it as interactive while it is busy rather than pinning it to the
+      background QoS a daemon otherwise inherits.
+    -->
+    <key>ProcessType</key>
+    <string>Adaptive</string>
+</dict>
+</plist>

@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "bins/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/karst-net/karst"
+authors = ["The Karst contributors"]
+
+# Intra-workspace dependencies carry both a path and a version. The path is what
+# builds; the version is what `cargo publish` requires, since crates.io rejects a
+# bare path dependency. Declaring them once here keeps the two from drifting
+# apart — a mismatch surfaces only at publish time, long after the change.
+[workspace.dependencies]
+karst-bedrock = { path = "crates/karst-bedrock", version = "0.0.0" }
+karst-control-client = { path = "crates/karst-control-client", version = "0.0.0" }
+karst-crypto = { path = "crates/karst-crypto", version = "0.0.0" }
+karst-disco = { path = "crates/karst-disco", version = "0.0.0" }
+karst-dns = { path = "crates/karst-dns", version = "0.0.0" }
+karst-node = { path = "crates/karst-node", version = "0.0.0" }
+karst-noise = { path = "crates/karst-noise", version = "0.0.0" }
+karst-portmap = { path = "crates/karst-portmap", version = "0.0.0" }
+karst-proto = { path = "crates/karst-proto", version = "0.0.0" }
+karst-relay-proto = { path = "crates/karst-relay-proto", version = "0.0.0" }
+karst-transport = { path = "crates/karst-transport", version = "0.0.0" }
+karst-tun = { path = "crates/karst-tun", version = "0.0.0" }
+karstd = { path = "bins/karstd", version = "0.0.0" }
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Cryptographic and packet code: these are correctness-critical.
+indexing_slicing = "warn"
+panic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+arithmetic_side_effects = "allow"   # revisit once the datapath lands
+# `sk`/`pk` pairs are the universal convention in cryptographic code; renaming
+# them to satisfy a similarity heuristic would make the code harder to review
+# against the specification, not easier.
+similar_names = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

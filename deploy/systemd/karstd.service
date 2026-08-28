@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# A bare-metal / VM node agent unit. Install alongside the karstd and karst
+# binaries (e.g. /usr/local/bin), copy this file to
+# /etc/systemd/system/karstd.service, and `systemctl enable --now karstd`.
+#
+# ExecStopPost= is the crash-safety net plans/phase-5/01-karstdns.md §7.1
+# calls for: karstd itself never installs a signal handler (its TUN device is
+# not persistent, so the kernel already tears it down on any exit, including
+# SIGKILL — see bins/karstd/src/main.rs), so nothing inside the daemon can run
+# on the way out. This unit runs the revert from outside instead, on every
+# stop — clean or not — so a machine never keeps pointing at a resolver that
+# stopped listening. The leading '-' means a failed revert (there was nothing
+# to revert, or the interface was already gone) does not fail the stop.
+#
+# Binding the DNS stub address and the TUN device needs CAP_NET_ADMIN and
+# CAP_NET_BIND_SERVICE; this unit runs as root for both, matching the
+# Kubernetes DaemonSet's choice (deploy/images/karstd.Dockerfile). Dropping to
+# an ambient-capability non-root user is a reasonable hardening follow-up, but
+# it is not exercised by anything in this tree today and untested capability
+# sets are worse than running as root and saying so.
+
+[Unit]
+Description=Karst node agent
+Documentation=https://github.com/karst-net/karst
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/karstd --config /etc/karst/karstd.toml
+ExecStopPost=-/usr/local/bin/karst dns revert --config /etc/karst/karstd.toml
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=karst
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

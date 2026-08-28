@@ -1,0 +1,288 @@
+name: Build deliverables
+
+on:
+  # Packaging is deliberately push-only: pull requests exercise the same
+  # source through CI without creating downloadable distribution artefacts.
+  push:
+
+permissions:
+  contents: read
+
+# Keyed on the event as well as the ref, matching ci.yml. This workflow has a
+# single trigger today, so it changes nothing now — it is here so that adding a
+# `schedule` or `workflow_dispatch` later cannot reintroduce the collision
+# ci.yml's comment describes, where two runs on the same ref cancel each other
+# because they are told they are the same thing.
+concurrency:
+  group: deliverables-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    env:
+      VERSION: 0.0.0+git.${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Build client and services
+        run: |
+          cargo build --locked --release --package karstd --package karst-cli --package karst-relay
+          mkdir -p dist/packages
+          install -m 0755 target/release/karstd dist/karstd
+          install -m 0755 target/release/karst dist/karst
+          install -m 0755 target/release/karst-relay dist/karst-relay
+          (cd server && CGO_ENABLED=1 go build -trimpath -o ../dist/karst-control ./cmd/karst-control)
+      - name: Install nFPM
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Build Debian and RPM packages
+        run: |
+          for package in karst-client karst-relay karst-control; do
+            nfpm package --packager deb --target "dist/packages/$package.deb" --config "packaging/nfpm/$package.yaml"
+            nfpm package --packager rpm --target "dist/packages/$package.rpm" --config "packaging/nfpm/$package.yaml"
+          done
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ github.sha }}
+          path: dist/packages/*
+          if-no-files-found: error
+
+  images:
+    name: Container images (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: client
+            file: deploy/images/karstd.Dockerfile
+            image: karst-client
+          - name: relay
+            file: deploy/images/karst-relay.Dockerfile
+            image: karst-relay
+          - name: control
+            file: deploy/images/karst-control.Dockerfile
+            image: karst-control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          load: true
+          push: false
+          tags: local/${{ matrix.image }}:${{ github.sha }}
+
+  # The macOS client package: two architectures joined with `lipo`, a .pkg, and
+  # — when the Apple credentials exist — signing, notarization and stapling.
+  #
+  # ## Why signing is conditional and not required here
+  #
+  # The Developer ID certificates come from an Apple Developer Program
+  # organisation membership that takes weeks to obtain and can stall on a
+  # legal-entity mismatch (plans/phase-5/06-macos-client.md §7). Until it
+  # lands, and on every push to a fork afterwards, `secrets.*` is empty. The
+  # choice is between building nothing and building an unsigned package that
+  # says so, and this builds the unsigned one: it proves the packaging works,
+  # which is what a per-push job is for. An unsigned .pkg is useless to a user
+  # — Gatekeeper refuses it — and it is not published anywhere that implies
+  # otherwise.
+  #
+  # **Notarization runs on tags only.** It is slow and rate-limited, so a
+  # per-push notarization queue is a per-push wait; and `--require-signing`
+  # goes with it, so a tag can never quietly produce an unsigned artefact.
+  macos-package:
+    name: macOS package
+    runs-on: macos-14
+    env:
+      VERSION: 0.0.0+git.${{ github.sha }}
+      # Lifted to job scope because the `secrets` context is not available in
+      # an `if:` condition and a step's own `env:` is not visible to its own
+      # `if:` either. Testing `env.X != ''` at job scope is the only way to ask
+      # "was this secret configured?" — which is the question that decides
+      # whether this build is signed. An unset secret is an empty string, so
+      # these are empty on a fork and on any repository that has not yet
+      # completed the Apple Developer Program enrolment.
+      APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      # No `targets:` input on purpose. It would add them to `stable`, which is
+      # not the toolchain that builds: `rust-toolchain.toml` pins 1.88 and
+      # cargo reads the file. `scripts/build-macos-pkg.sh` runs its own
+      # `rustup target add`, which honours the pin — do not "simplify" that
+      # away in favour of this action, which is exactly the mistake the `macos`
+      # job in ci.yml made.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # A throwaway keychain, not the login one. The runner is ephemeral, but
+      # the login keychain is unlocked for the whole job and every later step
+      # would be able to sign with these; a dedicated keychain that is deleted
+      # at the end keeps the certificates reachable only where they are used.
+      #
+      # `.gitignore` blocks `*.p12` and `*.pem` deliberately (SECURITY.md), so
+      # the certificates cannot arrive any way but this one.
+      - name: Import signing certificates
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/karst-signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" -k "$keychain" \
+            -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          # Without this, `codesign` blocks on a GUI prompt that no runner can
+          # answer, and the job hangs until its timeout rather than failing.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/certs.p12"
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Notarization credentials
+        if: ${{ startsWith(github.ref, 'refs/tags/') && env.APPLE_NOTARY_KEY != '' }}
+        run: |
+          key="$RUNNER_TEMP/notary.p8"
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key"
+          chmod 600 "$key"
+          echo "KARST_NOTARY_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Build the package
+        env:
+          KARST_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          KARST_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          # Tags must be signed and notarized; pushes may not be.
+          if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            ./scripts/build-macos-pkg.sh --require-signing
+          else
+            ./scripts/build-macos-pkg.sh
+          fi
+
+      # Installing the package it just built proves the scripts run as root,
+      # the paths are right and the daemon is *not* started without a config —
+      # none of which the build itself can show. Gatekeeper is not exercised
+      # here and cannot be: a locally-built package passes on the machine that
+      # built it for reasons that have nothing to do with a user's, which is
+      # why clean-machine verification stays a manual release step.
+      - name: Install, verify layout, uninstall
+        run: |
+          sudo installer -pkg dist/macos/karst-macos-universal.pkg -target /
+          test -x /usr/local/bin/karstd
+          test -x /usr/local/bin/karst
+          test -f /Library/LaunchDaemons/dev.karst.karstd.plist
+          test -f /etc/karst/karstd.toml.example
+          test -d /var/log/karst
+          lipo -archs /usr/local/bin/karstd | tee /dev/stderr | grep -q x86_64
+          lipo -archs /usr/local/bin/karstd | grep -q arm64
+          # Both binaries run at all. `--help` rather than `--version`, which
+          # `karstd` does not accept — an option it does not know is an option
+          # it refuses, and the run subcommand is not something to invoke here.
+          /usr/local/bin/karstd --help > /dev/null
+          /usr/local/bin/karst --help > /dev/null
+          # `genkey` is the first thing a new node runs, and it is the one
+          # command that exercises the crypto in the installed universal
+          # binary rather than just its argument parser.
+          #
+          # Not `karstd check` on the example config: that file is
+          # documentation, its peer keys are placeholders, and it is *meant*
+          # to fail validation until an operator fills them in.
+          #
+          # Measured with `${#key}`, not `wc -c` through a pipe. BSD `wc`
+          # right-pads its output, so an empty key prints "       0" and never
+          # matches `^0$` — and a pipeline's status is its last command's,
+          # since Actions runs `bash -e` without `pipefail`. A check written
+          # that way passes whether `genkey` produced a key or crashed.
+          key=$(sudo /usr/local/bin/karstd genkey 2>/dev/null)
+          # 96 bytes of hex seed: 64 for the ML-KEM key, 32 for X25519.
+          [ "${#key}" -ge 192 ] \
+            || { echo "::error::genkey produced ${#key} chars, expected >=192"; exit 1; }
+          # No config was installed, so the daemon must not be loaded — see the
+          # postinstall script for why that is the intended outcome.
+          if launchctl print system/dev.karst.karstd >/dev/null 2>&1; then
+            echo "::error::the daemon was started with no configuration"
+            exit 1
+          fi
+          sudo /usr/local/bin/karst-uninstall
+          test ! -e /usr/local/bin/karstd
+          test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-package-${{ github.sha }}
+          path: |
+            dist/macos/karst-macos-universal.pkg
+            dist/macos/karst-macos-universal.pkg.sha256
+          if-no-files-found: error
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/karst-signing.keychain-db" 2>/dev/null || true
+
+  # Mac App Store submission — wired up, and stubbed.
+  #
+  # The package `macos-package` builds installs a root LaunchDaemon, and the
+  # App Store accepts only sandboxed applications, so it would be rejected on
+  # review whatever it is signed with. That is a deliberate architectural
+  # choice — plans/phase-5/06-macos-client.md §3 — and the App Store route
+  # needs a `NEPacketTunnelProvider` variant that does not exist yet.
+  #
+  # This job therefore exists to be *ready*: it runs the moment an Apple ID
+  # certificate is configured, checks every precondition, and reports precisely
+  # what is still missing rather than uploading something that will be
+  # rejected. `scripts/appstore-submit-macos.sh` carries the real command
+  # sequence, so the remaining work is producing an eligible artefact, not
+  # working out how to submit one.
+  #
+  # It never blocks a release: `continue-on-error`, because a submission that
+  # cannot yet succeed must not turn a good build red.
+  app-store:
+    name: Mac App Store (stub)
+    needs: macos-package
+    runs-on: macos-14
+    continue-on-error: true
+    # Tags only. Deliberately *not* also gated on the certificates being
+    # present: a job-level `if:` cannot see the `secrets` context, and the
+    # script checks for them itself and exits cleanly with an explanation when
+    # they are absent — which is the more useful behaviour anyway, since the
+    # explanation is the whole point of this job today.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-package-${{ github.sha }}
+          path: dist/macos
+      - name: Submit
+        env:
+          KARST_APPSTORE_IDENTITY: ${{ secrets.APPLE_APPSTORE_IDENTITY }}
+          KARST_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          KARST_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+        run: |
+          if [ -n "$APPLE_NOTARY_KEY" ]; then
+            key="$RUNNER_TEMP/notary.p8"
+            echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key"
+            chmod 600 "$key"
+            export KARST_NOTARY_KEY="$key"
+          fi
+          ./scripts/appstore-submit-macos.sh dist/macos/karst-macos-universal.pkg

@@ -1,0 +1,786 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'   # nightly: long-running ProVerif variants
+
+permissions:
+  contents: read
+
+# Keyed on the **event** as well as the ref, and that is the load-bearing part.
+#
+# A `schedule` run and a `push` run both carry `github.ref = refs/heads/main`,
+# so without the event they share a group and `cancel-in-progress` makes them
+# cancel each other. That is wrong in both directions, and the second is the
+# damaging one:
+#
+#   - the nightly fires and kills whatever push is mid-flight, discarding
+#     results for a commit that has already landed on main; and
+#   - **a push kills the nightly** — which is the only run that exercises the
+#     broken-primitive ProVerif variants, a step with `timeout-minutes: 180`.
+#     One daytime push during that window and the models that *must fail* are
+#     silently never checked, with nothing in the log saying so.
+#
+# Superseding still works where it is wanted: a second push to main cancels the
+# first, and a new commit on a pull request cancels its predecessor, because
+# those share both event and ref. Two nightlies cannot overlap — the cron is
+# daily and the long step is capped at three hours.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Provenance without a CLA — ADR-0007. Contributors sign off; that is all.
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Every commit carries Signed-off-by
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          fail=0
+          while read -r sha; do
+            git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>' \
+              || { echo "::error::missing Signed-off-by: $sha"; fail=1; }
+          done < <(git rev-list "$base..$head")
+          [ "$fail" -eq 0 ] || { echo "Sign off with 'git commit -s'. See CONTRIBUTING.md."; exit 1; }
+
+  # Netmaps carry per-pair PSKs and TURN credentials (§2.6).
+  # Continuous, not one-time — see THREAT-MODEL.md R5.
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # The gitleaks *action* requires a paid licence for organisation-owned
+      # repositories; the gitleaks *tool* is MIT and has no such condition.
+      # Running the binary directly keeps the scan free and pins the version,
+      # so a new upstream release cannot change what CI enforces overnight.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/
+          gitleaks version
+      # Two scans: the working tree, and every commit reachable from it. A PSK
+      # committed and then removed is still a leaked PSK, which `detect`
+      # against the checkout alone would not see.
+      - name: No secrets in the working tree
+        run: gitleaks dir . --redact --verbose
+      - name: No secrets anywhere in history
+        run: gitleaks git . --redact --verbose
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # karst-control-client generates its gRPC client from the same .proto the
+      # Go server compiles, so the build needs protoc.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: rustfmt, clippy }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+
+  # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the
+  # job above. Without this job the entire kernel-facing surface — interface
+  # creation, MTU, address assignment, real packets — would be untested, which
+  # is the failure mode where a suite stays green while the datapath is broken.
+  #
+  # GitHub-hosted runners give passwordless sudo and a working /dev/net/tun.
+  # The binary is built unprivileged and only the run is elevated, so no
+  # root-owned artefacts land in target/.
+  tun:
+    name: Kernel datapath (privileged)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `cargo build --workspace` below includes karst-control-client, whose
+      # build script compiles the .proto. Without protoc the whole job fails
+      # before a single TUN device is created.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The NAT64 instrument row needs a translator, and it had never had one:
+      # the row skipped on every CI run from the day it was written and reported
+      # success each time, because this job installed nothing and the suite
+      # skipped quietly (FINDINGS.md 48). Masked for the same reason the aquifer
+      # job masks its daemons — the post-install starts a service with nothing
+      # sensible to bind to.
+      - name: Translator for the NAT64 instrument row
+        run: |
+          sudo systemctl mask tayga || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tayga || true
+          printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
+      - name: What the runner actually has
+        run: |
+          for t in ip nft tayga; do
+            printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+      - name: Build the privileged test binaries
+        run: |
+          # The whole workspace: two_nodes drives the `karst` CLI from another
+          # package, which `cargo test -p karstd` alone would not build.
+          cargo build --workspace
+          # The NAT matrix drives this as a helper inside each namespace.
+          cargo build -p karst-disco --example natprobe
+          # And PREF64 discovery is driven the same way: a test process cannot
+          # enter a namespace without `setns`, so the thing under test is a
+          # small program `ip netns exec` can launch there.
+          cargo build -p karst-transport --example pref64probe
+          find_bin() {
+            cargo test -p "$1" --test "$2" --no-run --message-format=json \
+              | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
+          }
+          tun=$(find_bin karst-tun device)
+          two=$(find_bin karstd two_nodes)
+          nat=$(find_bin karst-disco nat_matrix)
+          pref64=$(find_bin karst-transport pref64)
+          for b in "$tun" "$two" "$nat" "$pref64"; do
+            [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
+          done
+          echo "PREF64_TEST_BIN=$pref64" >> "$GITHUB_ENV"
+          echo "TUN_TEST_BIN=$tun" >> "$GITHUB_ENV"
+          echo "TWO_NODE_TEST_BIN=$two" >> "$GITHUB_ENV"
+          echo "NAT_MATRIX_TEST_BIN=$nat" >> "$GITHUB_ENV"
+      # Fixed interface and namespace names, so one at a time.
+      - name: TUN devices
+        run: sudo "$TUN_TEST_BIN" --ignored --test-threads=1
+      # Two daemons in network namespaces routing real IP traffic — the Phase 2
+      # exit criterion in miniature. Without this job the daemon is only ever
+      # tested against itself in-process.
+      # Includes the interface-flap tests. One deliberately waits out
+      # REJECT_AFTER_TIME (~200 s) to prove a session that *expires* is re-dialled
+      # rather than left idle — the failure that would otherwise appear only
+      # after a three-minute outage in production.
+      - name: Two daemons over a veth pair
+        timeout-minutes: 15
+        run: sudo "$TWO_NODE_TEST_BIN" --ignored --test-threads=1
+      # The NAT matrix validates itself: each topology is shown to behave the
+      # way its label says, with no Karst code involved. PLAN.md §6's ≥90%
+      # direct-connection criterion is measured through this, so an instrument
+      # that silently mislabels a NAT would make that number meaningless.
+      #
+      # `KARST_REQUIRE_PREREQUISITES` turns a missing tool into a failure that
+      # names it, rather than a suite that passes while testing nothing. The
+      # `sudo env PATH` carries this job's PATH rather than root's `secure_path`,
+      # so `/usr/sbin` is on it and `tayga` is found.
+      - name: NAT matrix (topology validation)
+        timeout-minutes: 10
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$NAT_MATRIX_TEST_BIN" --ignored --test-threads=1
+      # RFC 8781 against a router that is not ours: a Python script builds the
+      # advertisement from the standard's field layout, so a misreading shows up
+      # as a disagreement rather than as two copies of one mistake agreeing.
+      # It is what caught the inverted ICMP6_FILTER (FINDINGS.md 52), which no
+      # unit test could see.
+      - name: PREF64 discovery against an independent router
+        timeout-minutes: 5
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$PREF64_TEST_BIN" --ignored --test-threads=1
+
+  # macOS is a second kernel-facing platform, and nothing above this line would
+  # notice it breaking: every job so far runs on Linux, where `utun` does not
+  # exist and where the four-byte address-family prefix, the `ifconfig` and
+  # `route` invocations, and the `PF_ROUTE` dump are all unreachable code.
+  #
+  # Three tiers, cheapest first, and each catches a different mistake:
+  #
+  #   - **cross-compile both architectures.** The whole workspace, so a
+  #     Linux-only assumption anywhere in it — `/proc`, netlink, `sendmmsg` —
+  #     fails here rather than at package time. Both arches because Intel Macs
+  #     are a real part of this project's audience and a `cfg(target_arch)`
+  #     mistake is invisible on one of them.
+  #   - **unit and integration tests.** Includes the `macos_wire` suite, which
+  #     also runs on Linux; running it here as well is not redundant, because
+  #     this is where the constants meet the kernel that defines them.
+  #   - **privileged `utun` tests**, with `sudo`. Creating an interface needs
+  #     root, and a suite that silently skips is a suite that reports success
+  #     for work it never did — so `KARST_REQUIRE_PREREQUISITES` makes the skip
+  #     fatal, exactly as it does for the Linux privileged suites.
+  #
+  # `macos-14` is Apple Silicon; the x86-64 half is cross-compiled and its
+  # tests do not run. That asymmetry is worth stating rather than hiding: what
+  # is verified on Intel is that it builds, and the rest is the release
+  # walkthrough's manual step.
+  macos:
+    name: macOS client
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      # **Not the action's `targets:` input**, which is the trap the `fuzz` job
+      # below documents from the other direction: `rust-toolchain.toml` pins
+      # 1.88 for the workspace and that pin wins, because cargo reads the file
+      # rather than rustup's default. The action installs `stable` and adds
+      # targets to *that*, so `targets:` here put x86-64 somewhere nothing
+      # builds with, while the job ran under 1.88 — which had only the host
+      # target and failed with "can't find crate for `core`".
+      #
+      # `rustup target add` honours the toolchain file, so it lands on the
+      # toolchain that actually compiles. `scripts/build-macos-pkg.sh` does the
+      # same for the same reason; that is why the packaging job was unaffected
+      # and this one was not.
+      #
+      # aarch64 is the runner's host target and is always present. It is named
+      # anyway: relying on the host happening to be Apple Silicon is how this
+      # breaks again the day the runner image changes.
+      - name: Both Apple targets, on the toolchain the pin selects
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup show active-toolchain
+          rustup target list --installed
+      - uses: Swatinem/rust-cache@v2
+      - name: Both architectures build
+        run: |
+          cargo clippy --workspace --all-targets --all-features \
+            --target aarch64-apple-darwin -- -D warnings
+          cargo check --workspace --all-targets --all-features \
+            --target x86_64-apple-darwin
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-features
+      # Built unprivileged and only the run elevated, so no root-owned
+      # artefacts land in target/ — the same arrangement as the `tun` job.
+      - name: Build the privileged utun suite
+        run: |
+          bin=$(cargo test -p karst-tun --test utun --no-run --message-format=json \
+                  | grep -o '"executable":"[^"]*utun[^"]*"' | head -1 | cut -d'"' -f4)
+          [ -n "$bin" ] || { echo "::error::could not locate the utun test binary"; exit 1; }
+          echo "UTUN_TEST_BIN=$bin" >> "$GITHUB_ENV"
+      # The kernel hands out utun units in order and each test takes one, so
+      # one at a time — the same reason the Linux TUN suite is serialised.
+      - name: Real utun devices (privileged)
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$UTUN_TEST_BIN" --ignored --test-threads=1
+
+  # PLAN.md §6's exit criterion is measured here and nowhere else.
+  #
+  # The `tun` job above validates the *instrument* — that each NAT flavour
+  # behaves the way its label says, with no Karst code involved. This runs the
+  # product through it: a Go coordination server, a relay, and two daemons with
+  # real TUN devices in separate namespaces, from first enrolment to a TCP
+  # conversation under a port-scoped ACL, across every topology in the matrix.
+  # Until now it ran only when somebody remembered to, which for the suite that
+  # measures an exit criterion is the wrong arrangement.
+  #
+  # Separate from `tun` so the two run in parallel and a failure names which
+  # layer broke: the instrument, or the thing being measured.
+  #
+  # It also carries the two remaining privileged suites, which need root and
+  # `miniupnpd` and nothing else this job does not already have: ADR-0012's
+  # userspace gate and the port-mapping codec check. Between the three jobs,
+  # every `#[ignore]`d suite in the tree now runs without being asked.
+  aquifer:
+    name: End-to-end topologies (privileged)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The fixture builds and runs the coordination server itself, as root —
+      # so `go` has to be on root's PATH, which is what the `sudo env PATH`
+      # below is for.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # `miniupnpd` serves PCP for the two rows that turn on an explicit port
+      # mapping. Masked first: the package's post-install starts the service,
+      # which has nothing sensible to bind to on a runner and would fail the
+      # step for a reason unrelated to what is being installed.
+      #
+      # Failure here is deliberately not fatal, because the suite itself refuses
+      # to skip (`KARST_REQUIRE_PREREQUISITES`) and names exactly what is
+      # missing. An opaque apt failure is a worse diagnostic than a test that
+      # says `missing: ["miniupnpd"]`.
+      #
+      # `tayga` and `dnsmasq` are the NAT64 row's half of the same argument.
+      # Without the translator node A is on an IPv6 island rather than a NAT64
+      # network; without a resolver it is on one with no DNS64, and the row
+      # would report the daemon failing to discover a prefix nothing was
+      # offering. Both are masked for the same reason as `miniupnpd`.
+      - name: Port-mapping daemon, translator and resolver for the privileged rows
+        run: |
+          sudo systemctl mask miniupnpd tayga dnsmasq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            miniupnpd nftables tayga dnsmasq || true
+          # These install into /usr/sbin, and every run below is
+          # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
+          # `secure_path`. Without the sbin directories on it the suites would
+          # report tools missing that are in fact installed — the one
+          # diagnostic worse than no diagnostic.
+          printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
+      - name: What the runner actually has
+        run: |
+          for t in ip nft go miniupnpd tayga dnsmasq; do
+            printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+      - name: Build the privileged test binaries
+        run: |
+          cargo build --workspace
+          # The gateway suite drives this as a helper inside the client
+          # namespace; `cargo build` alone does not build examples.
+          cargo build -p karst-portmap --example pmprobe
+          find_bin() {
+            cargo test -p "$1" --test "$2" --no-run --message-format=json \
+              | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
+          }
+          aquifer=$(find_bin karstd aquifer)
+          userspace=$(find_bin karstd userspace)
+          gateway=$(find_bin karst-portmap gateway)
+          for b in "$aquifer" "$userspace" "$gateway"; do
+            [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
+          done
+          echo "AQUIFER_TEST_BIN=$aquifer" >> "$GITHUB_ENV"
+          echo "USERSPACE_TEST_BIN=$userspace" >> "$GITHUB_ENV"
+          echo "GATEWAY_TEST_BIN=$gateway" >> "$GITHUB_ENV"
+      # ADR-0012's release gate. Fast, and it shares this job's root because it
+      # needs a TUN device for the *peer* — the node under test runs with an
+      # empty capability bounding set and reads /proc back to prove it.
+      #
+      # Run before the aquifer so a broken privilege drop is reported in seconds
+      # rather than after the long suite.
+      - name: Userspace mode without CAP_NET_ADMIN
+        timeout-minutes: 5
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          # `--nocapture` so the bulk row's measured time reaches the log on a
+          # pass as well as a failure. It is a throughput assertion on a shared
+          # virtual machine, and the number it is asserting on is the thing
+          # anyone debugging it will want first.
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$USERSPACE_TEST_BIN" --ignored --test-threads=1 --nocapture
+      # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
+      # not write. Rows 8b and 9 of the matrix below rest on these bytes being
+      # right, and every other test in `karst-portmap` checks the encoder
+      # against the decoder — which passes just as happily when both halves
+      # share a misreading. Four seconds, and it needs exactly the root and the
+      # `miniupnpd` this job already has, which is why it lives here rather than
+      # in a job of its own.
+      - name: Port-mapping codecs against a third-party gateway
+        timeout-minutes: 5
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$GATEWAY_TEST_BIN" --ignored --test-threads=1
+      # Fixed namespace, interface and port names throughout, so one at a time.
+      #
+      # `KARST_REQUIRE_PREREQUISITES=1` is the part that matters: without it a
+      # runner image that stopped shipping `miniupnpd` would turn this suite
+      # into a no-op that reports success, which is precisely the failure the
+      # matrix exists to prevent one layer down.
+      - name: Every topology in the matrix
+        timeout-minutes: 35
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$AQUIFER_TEST_BIN" --ignored --test-threads=1 --nocapture
+
+  # Licence allowlist — a GPL dependency reaching the MIT/Apache crates would
+  # break both App Store and kernel-datapath viability (ADR-0003, ADR-0007).
+  deny:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with: { command: check }
+
+  # The control plane is a vendored fork plus Karst's own packages under
+  # management/internals/karst. Without this job none of it runs in CI — which
+  # was the state until 2026-08-13, with 82 passing tests nobody was checking.
+  go:
+    name: Control plane (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: gofmt -l management/internals/karst | tee /dev/stderr | (! grep -q .)
+      - run: go build ./...
+      # vet, not just build: it compiles test files, and the prune once
+      # dropped a test-only package that build alone could not see.
+      - run: go vet ./...
+      - name: Karst packages
+        run: go test -race ./management/internals/karst/...
+      # Upstream's own tests are how a cherry-picked security fix gets
+      # validated. They need testdata fixtures, which a package-graph prune
+      # silently removes and which neither build nor vet can detect.
+      - name: Upstream smoke test (proves fixtures survive)
+        run: go test -count=1 -run Test_RegisterPeerByUser ./management/server/
+      # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
+      # the coordination server is a vulnerability in the component that holds
+      # every per-pair PSK.
+      #
+      # Not the stock action: two findings reach us through testcontainers and
+      # have no fixed version to upgrade to, and the action cannot express an
+      # exception. The script names them individually and fails on anything
+      # else — including on an exception that has gone stale.
+      - name: Install govulncheck
+        working-directory: .
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: No called vulnerabilities
+        working-directory: .
+        run: ./scripts/govulncheck.sh server
+
+  # The published OpenAPI document, generated bindings, and mock are one
+  # contract. Regenerate and typecheck them in CI so a server-only change
+  # cannot drift from the console client unnoticed.
+  control-api-contract:
+    name: Control API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Regenerate Go OpenAPI types
+        run: cd server/shared/management/http/api && ./generate-karst.sh
+      - name: Generated Go types are committed
+        run: git diff --exit-code -- server/shared/management/http/api/karst/types.gen.go
+      - name: Contract mock parses
+        run: node --check web/tools/karst-api-mock.mjs
+      - name: Install locked web dependencies
+        run: cd web && corepack pnpm install --frozen-lockfile
+      - name: Typecheck and verify generated TypeScript client
+        run: cd web && corepack pnpm --filter @karst-net/api-client run check && corepack pnpm --filter @karst-net/api-client run check-drift
+
+  # Cross-implementation vectors: the Go server generates them, the Rust node
+  # must reproduce them. A drift in either is a handshake that never completes
+  # and produces no diagnostic, so it is checked on every commit rather than
+  # discovered in the field.
+  vectors:
+    name: Go/Rust wire agreement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Before the first cargo step, not after: every karst-control-client
+      # target needs the generated gRPC client, including `--test vectors`.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: Vectors match the Go implementation that generated them
+        run: cd server && go test -count=1 -run TestVectors ./management/internals/karst/control/
+      - name: The Rust node reproduces them
+        run: cargo test -p karst-control-client --test vectors
+      # The relay's admission file is a second format the two implementations
+      # share, and its failure mode is quieter than the wire's: a renamed field
+      # gives the relay a roster with zero clients rather than a parse error, so
+      # it starts cleanly and admits nobody. Same shape as the block above —
+      # Go renders the fixture, Rust parses it.
+      - name: The relay roster the server renders is the one the relay parses
+        run: |
+          cd server && go test -count=1 -run TestRosterVector ./management/internals/karst/roster/
+      - name: The relay reads it back
+        run: cargo test -p karst-relay --test roster_vector
+      # Vectors prove the two implementations agree on every derivation and
+      # framing function. They cannot prove the two ends actually talk: that
+      # needs sockets, HTTP/2, protobuf on the wire, and a real ML-KEM
+      # handshake between two processes in two languages.
+      - name: A Rust node handshakes with the Go server
+        run: cargo test -p karst-control-client --test interop -- --ignored --test-threads=1
+      # And the rest of the way: registration, the netmap, the compiled ACLs and
+      # the encrypted cache, against the real Go handlers. This is where a
+      # disagreement about the netmap version or the peer digest shows up as
+      # something other than "no netmap ever applies".
+      - name: A Rust node registers and receives a netmap
+        run: cargo test -p karstd --test control -- --ignored --test-threads=1
+
+  # Phase 3 exit criterion (§2.6): "an automated scan of logs, traces, and a
+  # generated karst bugreport over a full registration-to-handshake run finds
+  # zero PSK bytes. The log scan runs in CI, not as a one-time check — this is
+  # a regression that gets reintroduced, not one that gets fixed once."
+  psk-leak:
+    name: PSK leak scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: No PSK bytes reach the logs
+        run: cd server && go test -count=1 -run "TestNoPSKBytesReachTheLogs|TestLeakScannerDetectsAPlantedLeak|TestKeyNeverRenders" ./management/internals/karst/...
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      # The node half: a real netmap carrying real PSKs, a datapath built from
+      # it, traffic through it, and then every diagnostic a person can reach —
+      # `karst status`, `karst bugreport`, and every `Debug`. Including the
+      # planted-leak check, without which a scan that finds nothing proves
+      # nothing.
+      - name: No PSK bytes reach a bug report
+        run: cargo test -p karstd --test leakscan
+
+  # The deployment artefact is the one thing here with no test suite behind it,
+  # and findings 42 and 43 are both about components that existed only where
+  # something exercised them. This does not stand the stack up — that needs two
+  # image builds — but it does refuse the ways it rots silently: a compose file
+  # that no longer parses, a bootstrap script with a syntax error, and the two
+  # environment variables whose absence is the whole of both findings.
+  compose:
+    name: Deployment artefact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The compose file parses
+        run: docker compose -f deploy/compose/docker-compose.yml config -q
+      - name: bootstrap.sh parses, and is executable
+        run: |
+          sh -n deploy/compose/bootstrap.sh
+          test -x deploy/compose/bootstrap.sh \
+            || { echo "::error::bootstrap.sh is not executable"; exit 1; }
+      - name: The compose file wires both halves of admission
+        run: |
+          # A relay needs a roster producer (finding 42) and nodes need a relay
+          # registry (finding 43). Either one missing is a deployment that comes
+          # up clean and never carries a packet, so their absence is checked
+          # here rather than discovered by a self-hoster.
+          fail=0
+          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER; do
+            grep -q "$var" deploy/compose/docker-compose.yml \
+              || { echo "::error::docker-compose.yml no longer sets $var"; fail=1; }
+          done
+          exit "$fail"
+      - name: The generated state is not committable
+        run: |
+          # It holds the relay's TLS private key and the coordination server's
+          # store encryption key, so a self-hoster who runs `git add -A` after
+          # bootstrapping must not be able to publish them.
+          #
+          # **Named files inside the directory, not the directory itself.** The
+          # ignore rule is `state/`, which matches directories only, and
+          # `git check-ignore` cannot tell that a path is a directory when the
+          # path does not exist — and on a fresh checkout it does not, because
+          # bootstrap.sh has never run. Checking the bare directory therefore
+          # reported "not gitignored" for a directory that is ignored the moment
+          # it exists: the check failed on every clean CI run and passed on
+          # every developer machine that had bootstrapped once. Naming files
+          # under it is both correct on a fresh tree and a closer statement of
+          # the thing that matters, which is that a secret cannot be committed.
+          fail=0
+          for f in tls/relay.key management.json relay.toml; do
+            git check-ignore -q "deploy/compose/state/$f" \
+              || { echo "::error::deploy/compose/state/$f is not gitignored"; fail=1; }
+          done
+          exit "$fail"
+
+  spdx:
+    name: SPDX headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every source file declares its licence
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            head -3 "$f" | grep -q 'SPDX-License-Identifier' \
+              || { echo "::error file=$f::missing SPDX-License-Identifier"; fail=1; }
+          done < <({
+                    find crates bins web -type f \
+                      \( -name '*.rs' -o -name '*.go' -o -name '*.ts' -o -name '*.tsx' \) \
+                      -not -path '*/node_modules/*'
+                    # server/ is a vendored fork of NetBird (BSD-3), which
+                    # licenses per-repository rather than per-file. Requiring
+                    # SPDX headers there would mean editing 580 upstream files
+                    # — the opposite of the fork-and-diverge discipline in
+                    # server/README.md, and 580 future cherry-pick conflicts.
+                    # Karst's own additions live under a karst path and are
+                    # held to the rule.
+                    find server -type f -name '*.go' \
+                      \( -path '*/karst/*' -o -name 'karst_*' \) \
+                      -not -name '*.pb.go'
+                    find server -type f -name 'karst_*.proto'
+                  })
+          exit "$fail"
+
+  # Fuzzing targets the pre-authentication path: the fragment codec and the
+  # reassembler (THREAT-MODEL R1). Short smoke runs per PR; OSS-Fuzz runs
+  # continuously.
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    # rust-toolchain.toml pins 1.88 for the workspace, and that pin wins over
+    # whatever `dtolnay/rust-toolchain@nightly` makes default — cargo reads the
+    # file, not rustup's default. libFuzzer needs nightly, so the pin has to be
+    # overridden explicitly; RUSTUP_TOOLCHAIN is the one thing that outranks it.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked cargo-fuzz
+      - run: cargo fuzz build
+      # Seed the corpus with genuine protocol messages. Without this the
+      # handshake target stalls at the length check: random mutation will never
+      # produce a structurally valid 2378-byte HandshakeInit. Measured
+      # difference: 380 -> 1038 covered edges.
+      - run: cargo run -p karst-noise --example dump_corpus -- fuzz/corpus/handshake_respond
+      - run: cargo fuzz run fragment_header    -- -max_total_time=60
+      - run: cargo fuzz run reassembly         -- -max_total_time=120
+      - run: cargo fuzz run handshake_respond  -- -max_total_time=180 -max_len=4096
+
+  # Verifpal on every PR; ProVerif base model is the release gate; the
+  # broken-primitive ProVerif variants run nightly (PLAN.md §2.5).
+  formal:
+    name: Formal models
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Verifpal is Rust as of v0.80 and declares rust-version 1.96, which the
+      # workspace's 1.88 pin cannot satisfy — and the pin applies here because
+      # cargo resolves rust-toolchain.toml from the working directory, not from
+      # --manifest-path. RUSTUP_TOOLCHAIN overrides it for this step alone;
+      # the workspace itself stays on 1.88.
+      #
+      # Pinned to a tag rather than tracking master: an upstream change would
+      # otherwise alter what our release gate means, without a commit here.
+      - name: Build Verifpal
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          VERIFPAL_VERSION: v0.80.1
+        run: |
+          git clone --depth 1 --branch "$VERIFPAL_VERSION" \
+            https://github.com/symbolicsoft/verifpal.git /tmp/verifpal
+          cargo build --release --manifest-path /tmp/verifpal/Cargo.toml
+          sudo install /tmp/verifpal/target/release/verifpal /usr/local/bin/
+          verifpal --version || true
+      - name: Verify all models
+        run: |
+          fail=0
+          for m in phreatic phreatic-kem-broken phreatic-dh-broken; do
+            echo "::group::$m"
+            verifpal verify "spec/models/$m.vp" | tail -15
+            verifpal verify "spec/models/$m.vp" | grep -q "queries pass" \
+              || { echo "::error::$m did not pass"; fail=1; }
+            echo "::endgroup::"
+          done
+          exit "$fail"
+      # ProVerif is not packaged in Debian or Ubuntu — `apt-get install proverif`
+      # cannot ever have worked. It ships through opam, which is how the version
+      # gets pinned: a solver change between releases can turn a proof into a
+      # non-termination, and a release gate that silently changes what it proves
+      # is worse than no gate.
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.2"
+      - name: Install ProVerif
+        run: opam install -y proverif.2.05
+      # opam installs into a switch that is only on PATH inside `opam exec`.
+      - name: ProVerif is on PATH
+        run: |
+          opam exec -- proverif -help | head -1
+          echo "$(opam var bin)" >> "$GITHUB_PATH"
+      # All three protocols, every commit. karst-control.pv was previously in
+      # `just verify` only, so spec/karst-control-v1.md §10's "all four queries
+      # verify" rested on somebody remembering to run it — added here 2026-08-14
+      # alongside Ponor rather than left as a second gap.
+      - name: ProVerif — base models (release gate, PLAN.md §2.5)
+        timeout-minutes: 30
+        run: |
+          ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+          ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
+          ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
+          ./spec/models/check-proverif.sh spec/models/aven.pv 600 4
+      # These are only useful while they still FAIL. A change that quietly
+      # stopped them failing would turn the demonstration into a decoration,
+      # so the expected number of false queries is asserted rather than the
+      # absence of true ones. Both run in seconds; no reason to defer them to
+      # the nightly job.
+      - name: ProVerif — models that must fail
+        run: |
+          ./spec/models/gen-variants.sh
+          # Drops ss_eph: forward secrecy goes, authentication stays.
+          ./spec/models/check-proverif.sh spec/models/karst-control-nofs.pv 600 2 2
+          # Drops relay_id from the client's signature: a rogue relay
+          # impersonates its own clients at another relay.
+          ./spec/models/check-proverif.sh spec/models/ponor-norelayid.pv 600 2 2
+          # MAC over the header only: an attacker rewrites tx_id on a captured
+          # Pong and confirms a path the peer never answered from.
+          ./spec/models/check-proverif.sh spec/models/aven-headeronly.pv 600 2 2
+      # Broken-primitive variants add a public destructor and take minutes to
+      # hours. Nightly, not per-PR — see spec/models/README.md.
+      - name: ProVerif — broken-primitive variants
+        if: github.event_name == 'schedule'
+        timeout-minutes: 180
+        run: |
+          ./spec/models/gen-variants.sh
+          # phreatic-kem-broken is KNOWN NOT TO TERMINATE — see
+          # spec/models/README.md. Only dh-broken is gated.
+          ./spec/models/check-proverif.sh spec/models/phreatic-dh-broken.pv 10000 4
+
+  web:
+    name: Admin console
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install web dependencies
+        working-directory: web
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+      - name: Type-check and lint
+        run: cd web && corepack pnpm -r exec tsc --noEmit && corepack pnpm -r lint
+      - name: Unit tests and production build
+        working-directory: web
+        run: |
+          corepack pnpm -r test
+          corepack pnpm -r build
+      - name: API client contract drift
+        working-directory: web
+        run: corepack pnpm --filter @karst-net/api-client run check-drift
+      - name: Browser accessibility and keyboard flows
+        working-directory: web
+        run: |
+          corepack pnpm --filter console exec playwright install --with-deps chromium
+          corepack pnpm --filter console test:e2e

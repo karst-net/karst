@@ -1,0 +1,236 @@
+(* SPDX-License-Identifier: CC-BY-4.0
+ *
+ * PONOR v1 — ProVerif model
+ * Models spec/ponor-v1.md §5 and §7.1. Run: proverif ponor.pv
+ *
+ * Ponor is the node<->relay protocol. It is the smallest of the three Karst
+ * handshakes because it derives no keys: TLS provides confidentiality for the
+ * hop and PHREATIC provides it end to end, so all Ponor has to do is establish
+ * *who* is at each end of a relay connection. This model checks exactly that
+ * and claims nothing else.
+ *
+ * WHAT IS MODELLED
+ *   Mutual authentication of the three-message handshake, in both directions,
+ *   for both roles (a node connecting as a client, a relay connecting as a
+ *   mesh peer), against an attacker who OPERATES A RELAY OF ITS OWN that
+ *   honest clients legitimately connect to. That last part is the interesting
+ *   configuration and the reason this model is worth running: ADR-0008 §6
+ *   supports a community relay pool, so "a relay you use is hostile" is a
+ *   configuration the product offers rather than a contrived one.
+ *
+ * WHAT IS NOT MODELLED, AND WHY
+ *   - TLS. Deliberately absent, as in karst-control.pv. Modelling it would
+ *     assume away every attacker this model is trying to see.
+ *   - The frames after the handshake. This is not an omission for tidiness; it
+ *     is a real property of the design and is recorded in spec §13.3.
+ *     Ponor derives NO session key, so the authentication established here
+ *     does not extend to the SendPacket/RecvPacket stream that follows.
+ *     Frame integrity rests entirely on TLS. KARST-CONTROL derives keys
+ *     precisely so it does not have that dependency; Ponor accepts it because
+ *     the payloads are already PHREATIC ciphertext and the damage an injecting
+ *     attacker can do is bounded by that. The model cannot show this — an
+ *     absent property produces no failing query — so it is stated here.
+ *   - Rate limits, presence, queueing. Not security properties of the
+ *     handshake.
+ *
+ * VARIANT
+ *   ponor-norelayid.pv drops relay_id from the CLIENT's signing input and is
+ *   expected to FAIL queries 1 and 3 — the two in which the relay
+ *   authenticates a peer — while 2 and 4 still pass, because only the client's
+ *   signing input is touched. See gen-variants.sh. A run in which it passes
+ *   means this model has stopped testing anything.
+ *)
+
+(* ─── Types ────────────────────────────────────────────────────────────── *)
+
+type sskey.       (* ML-DSA-65 signing key *)
+type spkey.       (* ML-DSA-65 verification key *)
+
+free c: channel.
+
+free CLBL: bitstring.        (* "ponor-client-auth-v1" *)
+free RLBL: bitstring.        (* "ponor-relay-auth-v1"  *)
+free ROLE_CLIENT: bitstring. (* role = 0x01 *)
+free ROLE_MESH:   bitstring. (* role = 0x02 *)
+
+(* ─── ML-DSA ───────────────────────────────────────────────────────────── *)
+
+fun spk_of(sskey): spkey.
+fun sign(sskey, bitstring): bitstring.
+
+reduc forall sk: sskey, m: bitstring;
+    sigverify(spk_of(sk), m, sign(sk, m)) = true.
+
+(* ─── Hashing and identifiers ──────────────────────────────────────────── *)
+
+fun cat(bitstring, bitstring): bitstring [data].
+fun v2b(spkey): bitstring [data, typeConverter].
+fun H(bitstring): bitstring.
+
+(* node_id  = SHA-256("karst-node-handle-v1" || identity_pk)   — spec §5.1
+   relay_id = SHA-256("karst-relay-id-v1"    || relay_pk)      — spec §5.2
+
+   Two distinct public constructors rather than one hash with two labels. In
+   the symbolic model that is the same thing — each is injective and their
+   ranges are disjoint — and it makes the domain separation impossible to lose
+   by accident while editing. The disjointness is load-bearing: it is why a
+   node id can never be looked up in the mesh directory. *)
+fun nodeid(spkey): bitstring.
+fun relayid(spkey): bitstring.
+
+(* ─── The two signing inputs — spec §5.5 ───────────────────────────────── *)
+
+letfun client_input(rid: bitstring, rrand: bitstring, crand: bitstring,
+                    pid: bitstring, role: bitstring) =
+    H(cat(CLBL, cat(rid, cat(rrand, cat(crand, cat(pid, role)))))).
+
+letfun relay_input(rid: bitstring, rrand: bitstring, crand: bitstring,
+                   pid: bitstring, role: bitstring) =
+    H(cat(RLBL, cat(rid, cat(rrand, cat(crand, cat(pid, role)))))).
+
+(* ─── Identities ───────────────────────────────────────────────────────── *)
+
+(* Free rather than new-bound so the queries below can name them. *)
+free nsk: sskey [private].    (* honest node, admitted as a client        *)
+free msk: sskey [private].    (* honest relay, admitted as a mesh peer    *)
+free hsk: sskey [private].    (* the honest relay whose roster we test    *)
+free xsk: sskey [private].    (* a rogue relay — handed to the attacker   *)
+
+(* ─── Events ───────────────────────────────────────────────────────────── *)
+
+(* Each event carries the RELAY the party believes it is talking to. That is
+   the whole point: without it, a query could not tell "the client
+   authenticated to this relay" from "the client authenticated to some relay
+   and its signature was carried here". *)
+event ClientSentAuth(spkey, spkey, bitstring).    (* relay, peer, transcript *)
+event RelayAdmitted(spkey, spkey, bitstring).
+event RelaySentAuth(spkey, spkey, bitstring).
+event ClientEstablished(spkey, spkey, bitstring).
+
+(* ─── Queries ──────────────────────────────────────────────────────────── *)
+
+(* 1. The honest relay authenticates the honest node, INJECTIVELY.
+      Injective because §7.1 claims a captured ClientAuth is useless on any
+      other connection — that is what relay_random is for.
+
+      This is the query the norelayid variant breaks, and the attack it breaks
+      it with is worth stating: a rogue relay copies the honest relay's
+      relay_random into its own hello, so a client connecting to the ROGUE
+      produces a signature the HONEST relay accepts. Binding relay_id is what
+      stops it. Note that the client checks the relay's identity locally in
+      both versions — checking who you are talking to is not the same as
+      binding it into what you sign, and this query is the difference. *)
+query t: bitstring;
+    inj-event(RelayAdmitted(spk_of(hsk), spk_of(nsk), t))
+        ==> inj-event(ClientSentAuth(spk_of(hsk), spk_of(nsk), t)).
+
+(* 2. The node authenticates the honest relay, injectively. The mirror
+      property, and what client_random is for. §7.1 requires the client to
+      verify this before sending anything beyond ClientAuth. *)
+query t: bitstring;
+    inj-event(ClientEstablished(spk_of(hsk), spk_of(nsk), t))
+        ==> inj-event(RelaySentAuth(spk_of(hsk), spk_of(nsk), t)).
+
+(* 3. The same, for a relay admitted as a MESH peer (§8). Mesh peers carry
+      §8's forwarding privileges, so they get their own query rather than an
+      argument by analogy. *)
+query t: bitstring;
+    inj-event(RelayAdmitted(spk_of(hsk), spk_of(msk), t))
+        ==> inj-event(ClientSentAuth(spk_of(hsk), spk_of(msk), t)).
+
+(* 4. And the mesh peer authenticates the relay. *)
+query t: bitstring;
+    inj-event(ClientEstablished(spk_of(hsk), spk_of(msk), t))
+        ==> inj-event(RelaySentAuth(spk_of(hsk), spk_of(msk), t)).
+
+(* ─── The connecting side — spec §7.1 ──────────────────────────────────── *)
+
+(* pinRid / pinRvk are the relay's id and verification key, taken from the
+   registry in the netmap and never from the connection (§4.2). There is
+   deliberately no branch here that accepts an unpinned relay: a relay a client
+   cannot verify is a relay it does not use. *)
+let peer(sk: sskey, myid: bitstring, role: bitstring,
+         pinRid: bitstring, pinRvk: spkey) =
+    in(c, (rid: bitstring, rrand: bitstring));
+
+    (* §4.2. This check is present in the broken variant too — it is not what
+       makes query 1 hold. *)
+    if rid = pinRid then
+
+    new crand: bitstring;
+    let ti = client_input(rid, rrand, crand, myid, role) in
+
+    event ClientSentAuth(pinRvk, spk_of(sk), ti);
+    out(c, (role, myid, crand, sign(sk, ti)));
+
+    in(c, rsig: bitstring);
+    let tr = relay_input(rid, rrand, crand, myid, role) in
+    if sigverify(pinRvk, tr, rsig) = true then
+    event ClientEstablished(pinRvk, spk_of(sk), tr).
+
+(* ─── The listening side ───────────────────────────────────────────────── *)
+
+(* The roster is the two parameters. The peer's verification key is obtained
+   from them and from nowhere else, because ClientAuth carries no key — spec
+   §5.3. There is no third branch, and that absence is the model of "a relay
+   with no roster entry for an id cannot verify that id's signature at all".
+
+   The timing defence of §10.1 is not modelled: ProVerif reasons about what an
+   attacker can derive, not about how long a rejection takes. *)
+let relay(rsk: sskey, clientVk: spkey, meshVk: spkey) =
+    new rrand: bitstring;
+    let rid = relayid(spk_of(rsk)) in
+    out(c, (rid, rrand));
+
+    in(c, (role: bitstring, pid: bitstring, crand: bitstring, sg: bitstring));
+
+    let ti = client_input(rid, rrand, crand, pid, role) in
+    let tr = relay_input(rid, rrand, crand, pid, role) in
+
+    if role = ROLE_CLIENT && pid = nodeid(clientVk) then (
+        if sigverify(clientVk, ti, sg) = true then
+        event RelayAdmitted(spk_of(rsk), clientVk, ti);
+        event RelaySentAuth(spk_of(rsk), clientVk, tr);
+        out(c, sign(rsk, tr))
+    )
+    else if role = ROLE_MESH && pid = relayid(meshVk) then (
+        if sigverify(meshVk, ti, sg) = true then
+        event RelayAdmitted(spk_of(rsk), meshVk, ti);
+        event RelaySentAuth(spk_of(rsk), meshVk, tr);
+        out(c, sign(rsk, tr))
+    ).
+
+(* ─── Main ─────────────────────────────────────────────────────────────── *)
+
+process
+    (* Public knowledge. Pinning is an integrity assumption, not a secrecy
+       one, so the attacker sees every verification key. *)
+    out(c, spk_of(nsk));
+    out(c, spk_of(msk));
+    out(c, spk_of(hsk));
+    out(c, spk_of(xsk));
+
+    (* The rogue relay's SIGNING key goes to the attacker, so the attacker
+       runs that relay itself with no further help from the model. This is a
+       relay in the registry that honest clients connect to — ADR-0008 §6's
+       community pool, where the operator is not the data subject. *)
+    out(c, xsk);
+
+    (
+      (* The honest node uses both relays, because that is what a client does:
+         a home relay and whatever else the registry offers. The second line is
+         what makes query 1 non-trivial. *)
+      ( !peer(nsk, nodeid(spk_of(nsk)), ROLE_CLIENT,
+              relayid(spk_of(hsk)), spk_of(hsk)) )
+    | ( !peer(nsk, nodeid(spk_of(nsk)), ROLE_CLIENT,
+              relayid(spk_of(xsk)), spk_of(xsk)) )
+
+      (* The honest mesh peer, likewise. *)
+    | ( !peer(msk, relayid(spk_of(msk)), ROLE_MESH,
+              relayid(spk_of(hsk)), spk_of(hsk)) )
+    | ( !peer(msk, relayid(spk_of(msk)), ROLE_MESH,
+              relayid(spk_of(xsk)), spk_of(xsk)) )
+
+      (* The honest relay, whose roster admits exactly those two. *)
+    | ( !relay(hsk, spk_of(nsk), spk_of(msk)) )
+    )

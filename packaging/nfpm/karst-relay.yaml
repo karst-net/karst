@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+
+name: karst-relay
+arch: amd64
+platform: linux
+version: "${VERSION}"
+release: "1"
+section: net
+priority: optional
+maintainer: Karst contributors <maintainers@karst.net>
+description: Karst Ponor relay service
+license: MIT OR Apache-2.0
+contents:
+  - src: dist/karst-relay
+    dst: /usr/bin/karst-relay
+    file_info:
+      mode: 0755
+  - src: packaging/systemd/karst-relay.service
+    dst: /usr/lib/systemd/system/karst-relay.service
+  - dst: /etc/karst
+    type: dir
+    file_info:
+      mode: 0755

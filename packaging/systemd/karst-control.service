@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright the Karst contributors.
+
+[Unit]
+Description=Karst coordination service
+Documentation=https://github.com/karst-net/karst
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/karst/control.env
+ExecStart=/usr/bin/karst-control management --config /etc/netbird/management.json --datadir /var/lib/netbird --port 33073 --log-file console
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

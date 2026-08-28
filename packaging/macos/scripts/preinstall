@@ -1,0 +1,34 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# Stop and unload any daemon already installed, before its binary is replaced.
+#
+# Not `set -e`. A preinstall that exits non-zero aborts the installation, and
+# every command here is one that legitimately fails on a first install — there
+# is no daemon to stop and no plist to unload. The failure that matters is
+# leaving the *old* daemon running while the new binary is written underneath
+# it, and that is what this prevents.
+
+PLIST="/Library/LaunchDaemons/dev.karst.karstd.plist"
+LABEL="dev.karst.karstd"
+
+if [ -f "$PLIST" ]; then
+    # `bootout` is the modern spelling and `unload` the one that works on
+    # anything older; try both and care about neither's exit status.
+    /bin/launchctl bootout "system/${LABEL}" 2>/dev/null
+    /bin/launchctl unload "$PLIST" 2>/dev/null
+fi
+
+# Revert host DNS before the binary that knows how to do it is replaced.
+#
+# This is the ordering that matters most in this script. `karst dns revert`
+# restores whatever the daemon changed, and running it *after* an upgrade would
+# mean a new binary reverting state written by an old one. On a machine where
+# the daemon was killed rather than stopped, this is also the moment the stale
+# revert file is consumed.
+if [ -x /usr/local/bin/karst ] && [ -f /etc/karst/karstd.toml ]; then
+    /usr/local/bin/karst dns revert --config /etc/karst/karstd.toml 2>/dev/null
+fi
+
+exit 0

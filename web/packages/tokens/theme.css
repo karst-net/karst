@@ -1,0 +1,57 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright the Karst contributors. */
+
+:root {
+  color-scheme: light dark;
+  --surface: #ffffff;
+  --surface-raised: #f4f7fa;
+  --text: #17202a;
+  --muted: #52616b;
+  --border: #c6d1d9;
+  --accent: #075985;
+  --accent-text: #ffffff;
+  --danger: #a61b1b;
+  --success: #176b3a;
+  --warning: #8a4b00;
+  --focus: #005fcc;
+  --radius: 0.45rem;
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2rem;
+}
+
+/* Three states, not two. An explicit [data-theme] wins in both directions; with
+   no attribute the system preference decides. Defining the dark tokens only
+   inside the media query — as this file used to — leaves a toggle with nothing
+   to switch, which is how the console shipped an inert Theme button and a
+   dark-mode test that graded a white page. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: #101820;
+    --surface-raised: #1a2630;
+    --text: #edf4f7;
+    --muted: #b3c2c9;
+    --border: #52616b;
+    --accent: #63c5f3;
+    --accent-text: #07131a;
+    --danger: #ff9b9b;
+    --success: #9be4b5;
+    --warning: #ffd18a;
+    --focus: #8fd3ff;
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface: #101820;
+  --surface-raised: #1a2630;
+  --text: #edf4f7;
+  --muted: #b3c2c9;
+  --border: #52616b;
+  --accent: #63c5f3;
+  --accent-text: #07131a;
+  --danger: #ff9b9b;
+  --success: #9be4b5;
+  --warning: #ffd18a;
+  --focus: #8fd3ff;
+}

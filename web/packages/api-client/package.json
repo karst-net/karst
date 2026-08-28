@@ -1,0 +1,17 @@
+{
+  "name": "@karst-net/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check": "tsc --noEmit",
+    "check-drift": "npm run generate && git diff --exit-code -- src/generated"
+  },
+  "devDependencies": {
+	"@hey-api/openapi-ts": "0.99.0",
+	"typescript": "6.0.3"
+  }
+}

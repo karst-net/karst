@@ -1,0 +1,50 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# Create the daemon's directories and start it — if it has been configured.
+
+set -eu
+
+PLIST="/Library/LaunchDaemons/dev.karst.karstd.plist"
+LABEL="dev.karst.karstd"
+CONFIG="/etc/karst/karstd.toml"
+
+# 0755 on the config directory and 0700 on the log directory. The node's
+# private key lives beside the config and `karstd` writes it 0600 itself; the
+# logs are the looser secret — they name peers and endpoints — and nothing but
+# root needs to read them.
+/bin/mkdir -p /etc/karst
+/bin/chmod 0755 /etc/karst
+/bin/mkdir -p /var/log/karst
+/bin/chmod 0700 /var/log/karst
+/usr/sbin/chown root:wheel /etc/karst /var/log/karst
+
+# launchd refuses a plist that is group- or world-writable, and the diagnostic
+# it gives for it is not obviously about permissions.
+/bin/chmod 0644 "$PLIST"
+/usr/sbin/chown root:wheel "$PLIST"
+
+# **Only start a daemon that has something to run on.** With no config,
+# `karstd` exits non-zero, `KeepAlive` restarts it, and the installer would
+# have handed the user a crash loop as its first impression. Leaving it
+# unloaded means `karst` and `karstd` are on the PATH, the operator writes a
+# config, and the daemon starts on the next boot or on an explicit bootstrap.
+if [ -f "$CONFIG" ]; then
+    /bin/launchctl bootstrap system "$PLIST" 2>/dev/null \
+        || /bin/launchctl load -w "$PLIST"
+    echo "karst: daemon loaded; run 'karst status' to check it"
+else
+    cat <<'EOF'
+karst: installed, and not yet started — there is no /etc/karst/karstd.toml.
+
+  1. Write a configuration; /etc/karst/karstd.toml.example is a starting point.
+  2. sudo launchctl bootstrap system /Library/LaunchDaemons/dev.karst.karstd.plist
+  3. karst status
+
+The interface name in the config is a preference on macOS: the kernel assigns
+utunN regardless, and `karst status` reports the name it actually got.
+EOF
+fi
+
+exit 0

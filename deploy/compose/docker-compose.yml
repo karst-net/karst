@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+
+# The co-located deployment PLAN.md §5 makes the default: one coordination
+# server and one relay, on one host, sharing one directory.
+#
+# Run ./bootstrap.sh once before `docker compose up -d`. It generates the key
+# material and the two files below that neither service can invent for itself.
+#
+# # The two files, and why both are needed
+#
+# They are counterparts and are easy to confuse:
+#
+#   roster.toml   control WRITES, relay READS — which nodes the relay admits
+#   relays.json   bootstrap WRITES, control READS — which relays nodes are told about
+#
+# A deployment with only the first has a relay that admits nobody who ever
+# arrives, because nobody was told to arrive. A deployment with only the second
+# has nodes that dial a relay which refuses them. Neither failure logs anything
+# resembling its cause, which is why bootstrap.sh writes both or neither.
+
+name: karst
+
+services:
+  # The coordination server: the forked NetBird management daemon with
+  # KarstControlService attached (ADR-0011).
+  control:
+    image: ghcr.io/karst-net/karst-control:dev
+    restart: unless-stopped
+    environment:
+      # Rewrites roster.toml every 25s. **Not optional in this deployment.**
+      # The relay's admission lease is refreshed by the file's modification
+      # time and expires after 90 seconds, so without this the relay stops
+      # admitting nodes a minute and a half after it starts (FINDINGS.md 42).
+      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      # §5.4 scopes relay forwarding by aquifer. One value here, because this
+      # deployment is single-tenant; it is what stops a relay becoming a
+      # message bus between any two keys it has heard of.
+      KARST_AQUIFER: ${KARST_AQUIFER:-default}
+      # Which relays every node is told about (§4.2). Without it the netmap
+      # carries no relays and nodes that cannot connect directly cannot
+      # connect at all — silently (FINDINGS.md 43).
+      KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
+      # Absent would mean an empty filter, which is DEFAULT DENY. The file
+      # bootstrap.sh writes is allow-all and says so in its first line; narrow
+      # it before this is a real deployment.
+      KARST_POLICY_FILE: /var/lib/karst/policy.json
+    volumes:
+      - ./state:/var/lib/karst
+      - ./state/netbird:/var/lib/netbird
+      # Read-write, not read-only: the daemon generates a store encryption key
+      # on first boot and saves it back into this file. Mounted :ro it exits
+      # with "read-only file system" and no store is ever created.
+      - ./state/management.json:/etc/netbird/management.json
+    ports:
+      - "${KARST_CONTROL_PORT:-33073}:33073"
+
+  relay:
+    image: ghcr.io/karst-net/karst-relay:dev
+    restart: unless-stopped
+    command: ["--config", "/var/lib/karst/relay.toml"]
+    volumes:
+      - ./state:/var/lib/karst
+    ports:
+      # The relay's own listener. 443 inside the container because §4.1 wants a
+      # port that survives networks permitting only HTTPS; the host side is
+      # yours to choose, but whatever you choose must match the address in
+      # relays.json — nodes dial what the registry says, not what compose maps.
+      - "${KARST_RELAY_PORT:-443}:443"
+    depends_on:
+      # Ordering only, not readiness: compose does not wait for the first
+      # roster to be written. The relay is built for that — it starts on the
+      # placeholder roster bootstrap.sh leaves, admitting nobody, and picks up
+      # the real one within 25 seconds. Nothing is lost because no node can be
+      # enrolled before the server is up either.
+      - control

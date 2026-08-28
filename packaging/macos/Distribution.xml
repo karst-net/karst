@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  The distribution wrapper `productbuild` turns into the installed .pkg.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>Karst</title>
+    <organization>dev.karst</organization>
+
+    <!--
+      macOS 13 (Ventura). Stated rather than left open: supporting older costs
+      testing time for a shrinking population, and an installer that runs on a
+      release nobody tested is worse than one that declines politely.
+    -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="13.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <!--
+      System volume only. The daemon's paths are absolute — /usr/local/bin,
+      /Library/LaunchDaemons, /etc/karst — so installing onto any other volume
+      would produce a package whose files are not where its plist says.
+    -->
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <domains enable_localSystem="true" enable_anywhere="false" enable_currentUserHome="false"/>
+
+    <choices-outline>
+        <line choice="dev.karst.karstd"/>
+    </choices-outline>
+
+    <choice id="dev.karst.karstd" visible="false" title="Karst node agent">
+        <pkg-ref id="dev.karst.karstd"/>
+    </choice>
+
+    <pkg-ref id="dev.karst.karstd">karst-component.pkg</pkg-ref>
+</installer-gui-script>
