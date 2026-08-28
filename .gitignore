@@ -31,6 +31,11 @@ netmap-cache*
 /server/testserver
 /server/karst-control
 
+# `cargo cyclonedx` writes one of these beside every Cargo.toml it walks. They
+# are release artefacts built per tag, not source: a committed SBOM is a
+# dependency list that is wrong the moment Cargo.lock moves.
+*.cdx.json
+
 # ── Node ────────────────────────────────────────────────────────────────────
 node_modules/
 dist/

@@ -2,7 +2,7 @@
 # Copyright the Karst contributors.
 
 name: karst-relay
-arch: amd64
+arch: ${ARCH}
 platform: linux
 version: "${VERSION}"
 release: "1"
@@ -22,3 +22,8 @@ contents:
     type: dir
     file_info:
       mode: 0755
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove-karst-relay.sh
+  postremove: packaging/scripts/postremove.sh

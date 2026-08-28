@@ -18,15 +18,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ## Why this builds inside a container
+  #
+  # A release binary carries the glibc of the machine that linked it. Built on
+  # `ubuntu-latest` — glibc 2.39 — `karstd` refuses to start on Debian 12
+  # (2.36) and RHEL 9 (2.34), two of the four distributions
+  # plans/phase-5/09-exit-criteria.md §2 says the docs will claim. The package
+  # installs perfectly first, which is what makes it a release problem rather
+  # than a build problem: nothing upstream of an actual install on an actual
+  # distribution can see it, and `packages-verify` below is where it was found.
+  #
+  # Rocky Linux 9 is RHEL 9's glibc (2.34) with public repositories and no
+  # subscription, so linking there puts the floor at the oldest distribution in
+  # the supported set and every newer one is forward-compatible.
   packages:
-    name: Linux packages
-    runs-on: ubuntu-latest
+    name: Linux packages (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: rockylinux:9
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       VERSION: 0.0.0+git.${{ github.sha }}
+      ARCH: ${{ matrix.arch }}
     steps:
+      # Before checkout, which otherwise falls back to a REST tarball and says
+      # so. `curl` is excluded deliberately: the base image ships
+      # `curl-minimal`, and asking for `curl` is an unresolvable file conflict.
+      - name: Build prerequisites
+        run: |
+          dnf -y install gcc gcc-c++ cmake make perl git unzip tar gzip
       - uses: actions/checkout@v4
-      - uses: arduino/setup-protoc@v3
-        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      # `arduino/setup-protoc` unpacks a musl binary that will not run here, so
+      # protoc comes from its own release archive.
+      - name: protoc
+        run: |
+          case "$(uname -m)" in
+            aarch64) platform=aarch_64 ;;
+            x86_64)  platform=x86_64 ;;
+            *) echo "::error::unsupported architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSLo /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-${platform}.zip"
+          unzip -q -o /tmp/protoc.zip -d /usr/local
+          protoc --version
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:
@@ -40,6 +80,8 @@ jobs:
           install -m 0755 target/release/karst dist/karst
           install -m 0755 target/release/karst-relay dist/karst-relay
           (cd server && CGO_ENABLED=1 go build -trimpath -o ../dist/karst-control ./cmd/karst-control)
+      - name: The glibc floor is the oldest supported distribution
+        run: ./scripts/glibc-floor.sh 2.34 dist/karstd dist/karst dist/karst-relay dist/karst-control
       - name: Install nFPM
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
@@ -47,14 +89,171 @@ jobs:
       - name: Build Debian and RPM packages
         run: |
           for package in karst-client karst-relay karst-control; do
-            nfpm package --packager deb --target "dist/packages/$package.deb" --config "packaging/nfpm/$package.yaml"
-            nfpm package --packager rpm --target "dist/packages/$package.rpm" --config "packaging/nfpm/$package.yaml"
+            nfpm package --packager deb --target dist/packages/ --config "packaging/nfpm/$package.yaml"
+            nfpm package --packager rpm --target dist/packages/ --config "packaging/nfpm/$package.yaml"
           done
+          ls -l dist/packages
+      # The same build, published twice under consecutive versions. It exists
+      # only so `packages-verify` has something to upgrade *to*; it is never
+      # released, and it is a separate artefact so it cannot be mistaken for
+      # one. An upgrade path that is only ever exercised by real releases is
+      # one that gets tested for the first time by users.
+      - name: Build the upgrade fixture
+        env:
+          VERSION: 0.0.1+git.${{ github.sha }}
+        run: |
+          mkdir -p dist/upgrade-fixture
+          nfpm package --packager deb --target dist/upgrade-fixture/ --config packaging/nfpm/karst-client.yaml
+          nfpm package --packager rpm --target dist/upgrade-fixture/ --config packaging/nfpm/karst-client.yaml
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
-          name: linux-packages-${{ github.sha }}
+          name: linux-packages-${{ matrix.arch }}-${{ github.sha }}
           path: dist/packages/*
+          if-no-files-found: error
+      - name: Upload the upgrade fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-fixture-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/upgrade-fixture/*
+          if-no-files-found: error
+
+  # The gate plans/phase-5/09-exit-criteria.md §2 asks for: not "the package
+  # definitions exist" but "install/upgrade/uninstall them on each documented
+  # distribution". Debian 12, Ubuntu 24.04, Fedora 41 and RHEL 9 are the set
+  # the docs will claim, so they are the set that gets installed on.
+  #
+  # `redhat/ubi9` is the RHEL 9 userland Red Hat publishes without a
+  # subscription. It is the real thing for this purpose — same glibc, same rpm,
+  # same paths — and the alternative is claiming support for a distribution
+  # nothing ever installs on.
+  packages-verify:
+    name: Install ${{ matrix.arch }} on ${{ matrix.distro }}
+    needs: packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        distro: ["debian:12", "ubuntu:24.04", "fedora:41", "redhat/ubi9"]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/packages/old
+      - uses: actions/download-artifact@v4
+        with:
+          name: upgrade-fixture-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/packages/new
+      # Read-only mount: the script must not be able to write back into the
+      # checkout, so anything it leaves behind is inside the container it
+      # installed into.
+      - name: Install, upgrade, uninstall
+        run: |
+          docker run --rm -v "$PWD:/karst:ro" "${{ matrix.distro }}" \
+            bash /karst/scripts/package-verify.sh \
+              /karst/dist/packages/old /karst/dist/packages/new
+
+  # The half `packages-verify` cannot reach: it runs in containers with no PID
+  # 1, so nothing there ever loads the unit file the package ships. This runs
+  # the packaged node agent under a real systemd and kills it the way a crash
+  # would, to prove the unit's DNS recovery hook fires from the paths the
+  # package installed to — see the script header for what that does and does
+  # not claim.
+  packages-systemd:
+    name: Packaged unit under systemd
+    needs: packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-amd64-${{ github.sha }}
+          path: dist/packages
+      - name: Start, crash, recover
+        run: sudo ./scripts/package-systemd-verify.sh dist/packages
+
+  # ## The artefacts a release is actually made of
+  #
+  # plans/phase-5/09-exit-criteria.md §5 lists checksums, a detached signature
+  # and a per-artefact SBOM alongside the packages themselves, and singles the
+  # checksums out: the portal's download page tells users to verify, and the
+  # docs explain how, so the file has to exist and be right.
+  #
+  # Signing is conditional on the key being configured, exactly as the macOS
+  # job is conditional on the Apple credentials, and for the same reason: a
+  # fork and a repository that has not yet been given a release key should
+  # still be able to produce and check everything else. The distinction that
+  # matters is that a *tag* must not be able to produce an unsigned release, so
+  # the signature is required there.
+  release-artefacts:
+    name: Checksums, signatures and SBOMs
+    needs: [packages, packages-verify, packages-systemd]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_GPG_KEY: ${{ secrets.RELEASE_GPG_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-packages-*-${{ github.sha }}
+          path: dist/release
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist/release
+          # Sorted, so the file is byte-identical for identical inputs and a
+          # diff between two releases is about the artefacts and not the order
+          # the runner happened to download them in.
+          sha256sum $(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort) > SHA256SUMS
+          cat SHA256SUMS
+      - name: Sign the checksums
+        if: env.RELEASE_GPG_KEY != ''
+        run: |
+          printf '%s' "$RELEASE_GPG_KEY" | base64 --decode | gpg --batch --import
+          gpg --batch --yes --armor --detach-sign --output dist/release/SHA256SUMS.asc dist/release/SHA256SUMS
+          gpg --batch --verify dist/release/SHA256SUMS.asc dist/release/SHA256SUMS
+      # A tag is a release. The check is separate from the signing step above
+      # because a step that is skipped is a step that is green, and "the
+      # signature was skipped on a tag" must be a failure rather than a silence.
+      - name: A tagged release must be signed
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test -f dist/release/SHA256SUMS.asc || {
+            echo "::error::a tag produced no detached signature; RELEASE_GPG_KEY is not configured"
+            exit 1
+          }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: SBOMs
+        run: |
+          cargo install cargo-cyclonedx --locked --version 0.5.7
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
+          mkdir -p dist/release/sbom
+          # One SBOM per shipped binary rather than one for the workspace: an
+          # SBOM is a claim about an artefact, and "something in this repository
+          # depends on it" is not that claim.
+          cargo cyclonedx --format json --all
+          for binary in karstd karst-cli karst-relay; do
+            find bins/$binary -name '*.cdx.json' -exec cp {} "dist/release/sbom/$binary.cdx.json" \;
+          done
+          (cd server && "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/karst-control \
+            -output ../dist/release/sbom/karst-control.cdx.json)
+          ls -l dist/release/sbom
+      - name: Upload the release set
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artefacts-${{ github.sha }}
+          path: dist/release/**
           if-no-files-found: error
 
   images:

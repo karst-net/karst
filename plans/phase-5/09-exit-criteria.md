@@ -38,16 +38,38 @@ Twelve checkable claims hide in that sentence:
 Claims 3 and 12 are the ones most likely to be quietly dropped, and they are
 the two the criterion actually turns on.
 
-## 2. Linux packaging: implementation exists; release proof remains
+## 2. Linux packaging: proven on 2026-08-28, with two items left
 
-The original version of this section found no package or systemd implementation.
-That is no longer true: `packaging/nfpm/` contains client, relay, and control
-package definitions, and `packaging/systemd/` plus `deploy/systemd/` contain
-service units and deployment guidance. The remaining gap is **release proof**:
-produce packages in CI, install/upgrade/uninstall them on each documented
-distribution, exercise DNS reversion, and publish the resulting signed
-artefacts and checksums. Do not describe package definitions alone as a
-published installer experience.
+The original version of this section found no package or systemd
+implementation; a later revision found definitions but no proof. Both are
+superseded. The proof now exists and is wired into `deliverables.yml`:
+
+| Gate | Where |
+|---|---|
+| Install, upgrade, uninstall on Debian 12, Ubuntu 24.04, Fedora 41, RHEL 9 | `packages-verify`, 8 jobs (4 distributions × amd64/arm64) |
+| The packaged unit under a real systemd, including DNS recovery after `SIGKILL` | `packages-systemd` |
+| Binaries link against the oldest supported glibc | `scripts/glibc-floor.sh`, asserted in the build job |
+| `SHA256SUMS`, detached signature, CycloneDX SBOM per artefact | `release-artefacts` |
+
+All three checks are runnable without a push — `just packages`,
+`just packages-verify`, `just packages-verify-systemd`.
+
+**Writing it found four defects, three of them release-blocking**, which is the
+argument for the section: FINDINGS.md 59 (every package shipped a binary that
+could not start on Debian 12 or RHEL 9, and installed cleanly on both), 60 (the
+daemon survived its own removal, leaving a dangling enablement symlink), 61
+(nothing created `/var/lib/karst`, so the documented netmap-cache path did not
+exist and had no mode), and 62, still open (`RuntimeDirectory=` deletes the DNS
+revert record the manual recovery reads).
+
+Two items remain before this row can be called finished:
+
+- **Container image signing.** §5's table says cosign; the `images` job builds
+  and does not sign. It needs a key or an OIDC identity decided first.
+- **The published location.** Producing signed artefacts is not publishing
+  them. Nothing yet uploads to a release, and `scripts/release-manifest.sh` —
+  which the portal's download page reads — is still wired to nothing and still
+  expects a Windows MSI that is Phase 8's.
 
 Phase 4 half-noticed this from the other side, recording that the compose
 artefact "cannot walk a self-hoster to a connected node, because a node needs a

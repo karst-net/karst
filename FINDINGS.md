@@ -23,8 +23,18 @@ never been run on would need before it could be run on at all, one by then
 running that topology, one by injecting a defect into a passing test and
 watching it stay green, one by asking which CI job already installed a tool a
 new row needed, two by reading a CI log that a previous fix had made legible,
-and the last by building an end-to-end test for a mechanism whose unit tests all
-passed.
+one by building an end-to-end test for a mechanism whose unit tests all
+passed, and the last three by installing a package that CI had been building
+and uploading, green, for weeks.
+
+**Findings 59 to 62 are the packaging set, and they share one cause.** They
+came out of the first run of `scripts/package-verify.sh`, which does nothing
+cleverer than install the `.deb` and `.rpm` on Debian 12, Ubuntu 24.04, Fedora
+41 and RHEL 9 and look at what happened. Three of the four are release-blocking
+and none of them is subtle; the reason they survived is that nothing had ever
+performed the install. `plans/phase-5/09-exit-criteria.md` §2 names exactly this
+gap — "do not describe package definitions alone as a published installer
+experience" — and it was right.
 
 **Findings 42 and 43 are worth naming as a category.** They are one
 commit apart, and both are components that exist only in the test harness — a
@@ -41,7 +51,7 @@ no code ever wrote. 55 is beside it: a head exchange
 that had ten passing unit tests and sent in only one direction, because the
 event it hooked fires for one of the two roles.
 
-**Three findings are open, and none is a live defect.** 53 is scope, and it is
+**Four findings are open, and none is a live defect.** 53 is scope, and it is
 now load-bearing: **CNSA 2.0 is a mandate as of 2026-08-25 (ADR-0015)**, so
 AES-256-GCM — named in the suite registry and, for a long time, implemented
 nowhere — is the first item of a Category 5 transition rather than a
@@ -54,7 +64,11 @@ keeps 53 open — and what remains there is dispatch, not cryptography. 54 is a 
 the AEAD, which is harmless while only one encrypted type exists and becomes a
 redirection bug the moment a second one is added. 56 is a design gap: audit
 anchoring cannot run on a timer without a capability-scoped authority, because
-anything holding an authority key can also countersign nodes. Among the closed ones, 52 is the most recent and the one worth reading:
+anything holding an authority key can also countersign nodes. 62 is the newest,
+and it is a question rather than a bug: the DNS revert record is written under
+`/run/karst`, which the unit's own `RuntimeDirectory=` deletes on stop, so the
+recovery the docs offer by hand has nothing left to read on the one path the
+record exists for. Among the closed ones, 52 is the most recent and the one worth reading:
 RFC 3542's `ICMP6_FILTER` uses a set bit to *block*, this code assumed it meant
 *pass*, and so PREF64 discovery admitted every `ICMPv6` type except the one it
 existed to receive. Every unit test passed — the parser was right, the
@@ -158,8 +172,126 @@ carries both the new wording and the original, struck through.
 | 50 | Medium | The bulk row's wall-clock budget could not separate healthy from defective across the range of machines it runs on | Fixed 2026-08-21 |
 | 51 | Medium | An `AF_INET` node dropped every send to an IPv6 candidate in silence, with no log line, counter or symptom but never connecting | Fixed 2026-08-21 |
 | 52 | High | `ICMP6_FILTER` was written inverted, so PREF64 discovery admitted every ICMPv6 type except the one it wanted | Fixed 2026-08-21 |
+| 59 | High | Every Linux package shipped a binary that cannot start on Debian 12 or RHEL 9, and installs cleanly on both | Fixed 2026-08-28 |
+| 60 | Medium | Removing the node package left the daemon running and a dangling enablement symlink behind it | Fixed 2026-08-28 |
+| 61 | Medium | No package created `/var/lib/karst`, so the documented netmap cache path did not exist and had no mode | Fixed 2026-08-28 |
+| 62 | Low | `RuntimeDirectory=karst` deletes the DNS revert record on stop, so the documented manual recovery has nothing to read | Open |
 
 ## Closed
+
+### 62. Low: the DNS revert record is deleted by the unit that exists to use it
+
+**Found 2026-08-28** while building the packaged-unit systemd check
+(`scripts/package-systemd-verify.sh`), by noticing an assertion that passed
+against a package with a deliberately broken hook path. Open.
+
+`karstd.service` sets `RuntimeDirectory=karst`, and systemd's default
+`RuntimeDirectoryPreserve=no` means it **deletes `/run/karst` when the unit
+stops** — including `/run/karst/dns-revert`, the record
+`plans/phase-5/01-karstdns.md` §7.1 introduces precisely so that a host whose
+resolver was replaced can be recovered after the daemon is gone.
+
+On the ordinary path this costs nothing: `ExecStopPost=` runs `karst dns
+revert` before the directory is cleaned up, the host is restored, and the
+record is consumed. It costs something on the path the record exists for. If
+the hook does not run or does not succeed — a wrong path, a transient failure,
+an operator who ran `systemctl stop` on a daemon that had already been
+`SIGKILL`ed — systemd then removes the only description of what the original
+resolver configuration was. `sudo karst dns revert`, which
+docs/GETTING-STARTED.md §6.3 offers as the manual recovery, finds nothing to
+revert and exits successfully, on a machine where every lookup is failing.
+
+Not fixed here because the fix is a KarstDNS design decision rather than a
+packaging one, and there are at least two:
+`RuntimeDirectoryPreserve=restart`, which keeps the record across a restart but
+still not across a stop; or moving the record to `/var/lib/karst`, which
+survives both and raises its own question, since a record that outlives a
+reboot describes a resolver configuration that `/run` being a tmpfs has already
+reset. §7.1's own test plan says to assert recovery "across a reboot by leaving
+the revert file and starting cold", which cannot happen with the file under
+`/run` at all — so the workstream should settle which of those it meant.
+
+**What it cost as a test.** The check "the revert record was consumed" passed
+whether the hook worked or not, because systemd deleted the directory either
+way. It is removed rather than repaired, with the reason written where it was.
+
+### 61. Medium: no package created the state directory the docs tell operators to use
+
+**Found 2026-08-28** by the first run of `scripts/package-verify.sh`, on all
+four supported distributions. Fixed the same day.
+
+docs/GETTING-STARTED.md §6.3 configures `cache_file =
+"/var/lib/karst/netmap.cache"` and tells the operator to `sudo mkdir -p
+/var/lib/karst` by hand. No package created it, so the directory existed only
+if someone read that line, and its mode was whatever their umask was.
+
+That mode is not cosmetic. The netmap cache holds one pre-shared key per peer —
+THREAT-MODEL R5 — so a default-umask `0755` publishes every PSK on the node to
+every local user. The directory is now package content at `0700`, declared once
+in the nfpm description so `rpm --verify` can check it, rather than created by
+a postinstall where nothing would.
+
+### 60. Medium: removing the package left the daemon running behind it
+
+**Found 2026-08-28** by `scripts/package-verify.sh`'s removal section. Fixed
+the same day.
+
+The packages shipped no maintainer scripts at all. `dpkg --remove karst-client`
+therefore deleted `/usr/bin/karstd` and the unit file out from under a running
+service, which kept running — with its executable unlinked — until the next
+reboot, and left
+`/etc/systemd/system/multi-user.target.wants/karstd.service` pointing at a unit
+file that no longer existed.
+
+The dangling link is the part that bites twice. systemd complains about it on
+every subsequent `daemon-reload`, and a later reinstall silently resurrects a
+service the administrator never re-enabled.
+
+Fixed with `preremove` scripts that stop and disable the unit — and only on a
+real removal. The two packaging systems disagree about how they say so
+(`dpkg` passes `remove`; `rpm` passes `0`), and a hook that acts on every
+invocation turns an upgrade into an outage, so both dialects are matched
+together. `packaging/scripts/preremove-karstd.sh` carries the reasoning, and
+the upgrade case has its own assertion: a service the admin enabled must still
+be enabled afterwards.
+
+### 59. High: every Linux package shipped a binary that could not start on half the supported distributions
+
+**Found 2026-08-28** on the first run of `scripts/package-verify.sh`, before
+any of it had been wired into CI. Fixed the same day.
+
+`deliverables.yml` built the release binaries on `ubuntu-latest`. A dynamically
+linked binary records the highest glibc symbol version it uses, and that build
+records `GLIBC_2.39`. Debian 12 has 2.36 and RHEL 9 has 2.34 — two of the four
+distributions plans/phase-5/09-exit-criteria.md §2 says the docs will claim.
+
+```
+/usr/bin/karstd: /lib/aarch64-linux-gnu/libc.so.6: version `GLIBC_2.39' not found
+```
+
+**The package installs perfectly first.** `dpkg -i` succeeds, every file lands
+in the right place with the right mode, and the failure arrives when the
+operator starts the service. Nothing upstream of an install on a real
+distribution could see it: the build was green, the packaging was correct, and
+the artefact was broken.
+
+Fixed by building in a `rockylinux:9` container — RHEL 9's glibc, public
+repositories, no subscription — which puts the floor at the oldest distribution
+in the supported set. `scripts/glibc-floor.sh` then asserts it next to the
+compiler, so a change of build image fails in the job that made the change
+rather than eight container jobs later. The guard was checked in both
+directions: it passes the Rocky-built binaries and fails the
+`ubuntu-latest`-built ones.
+
+**Why this one was invisible for so long.** Finding 43 and finding 42 were the
+same shape — components that existed only in the test harness — and this is the
+next layer down. The tree has had package *definitions* since Phase 5 opened,
+and a CI job that built them and uploaded them, and every one of those runs was
+green. What none of them did was install the result on a distribution, which is
+the only vantage point from which this is visible. §2 of the exit criteria
+already said so in as many words: package definitions are not a published
+installer experience.
+
 
 ### 58. Medium: the relay's connection future was 2 KB from overflowing a stack
 

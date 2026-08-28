@@ -31,6 +31,85 @@ test-privileged: test-tun test-karstd test-userspace test-dns test-nat-matrix te
 test-tun:
     @just _privileged karst-tun device
 
+# ── Linux packaging ─────────────────────────────────────────────────────────
+#
+# The gate in plans/phase-5/09-exit-criteria.md §2 is an install on each
+# documented distribution, not a package that builds. These recipes are the
+# same checks CI runs, so a packaging change can be tried without a push.
+#
+# Both need Docker and `nfpm`; `packages` builds into dist/ and leaves the
+# result there for the two verifiers.
+
+# Build .deb and .rpm for this machine's architecture, plus the upgrade fixture.
+packages version="0.0.1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    arch=$(dpkg --print-architecture 2>/dev/null || rpm --eval '%{_arch}')
+    mkdir -p dist/packages/old dist/packages/new
+    for binary in karstd karst karst-relay; do
+        install -m 0755 "target/release/$binary" "dist/$binary"
+    done
+    # The upgrade target is the same build under a higher version — "0.0.1.1"
+    # sorts above "0.0.1" for both dpkg and rpm — because what is being tested
+    # is the packaging's upgrade path, not a difference between two builds.
+    for packager in deb rpm; do
+        VERSION={{ version }} ARCH="$arch" nfpm package --packager "$packager" \
+            --target dist/packages/old/ --config packaging/nfpm/karst-client.yaml
+        VERSION={{ version }}.1 ARCH="$arch" nfpm package --packager "$packager" \
+            --target dist/packages/new/ --config packaging/nfpm/karst-client.yaml
+    done
+    # Advisory here, fatal in CI. A developer on a current distribution cannot
+    # produce a 2.34-floor binary without the release container, and refusing
+    # to package theirs would only stop them testing the packaging — but the
+    # older rows of `just packages-verify` are then going to fail on a glibc
+    # symbol, and that is worth predicting rather than debugging (finding 59).
+    if ! ./scripts/glibc-floor.sh 2.34 dist/karstd dist/karst dist/karst-relay; then
+        echo
+        echo "note: these binaries carry this machine's glibc, so 'just packages-verify'"
+        echo "      will fail its Debian 12 and RHEL 9 rows on a missing symbol version."
+        echo "      That is the local build showing, not the packaging. CI builds in"
+        echo "      rockylinux:9 for exactly this reason."
+    fi
+
+# Install, upgrade and uninstall on every distribution the docs will claim.
+packages-verify:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Every distribution runs even when an earlier one fails. One broken row
+    # hiding the three behind it is how a packaging change gets fixed twice.
+    failed=""
+    for distro in debian:12 ubuntu:24.04 fedora:41 redhat/ubi9; do
+        printf '\n──── %s\n' "$distro"
+        docker run --rm -v "$PWD:/karst:ro" "$distro" \
+            bash /karst/scripts/package-verify.sh \
+                /karst/dist/packages/old /karst/dist/packages/new \
+            || failed="$failed $distro"
+    done
+    if [ -n "$failed" ]; then
+        printf '\nfailed on:%s\n' "$failed"
+        exit 1
+    fi
+    printf '\nevery documented distribution installs, upgrades and uninstalls\n'
+
+# Runs in a privileged container booted on systemd, rather than on this
+# machine, because the check replaces /etc/resolv.conf and killing it half way
+# through should not cost the developer their resolver.
+
+# The packaged unit under a real systemd: start, SIGKILL, prove DNS recovered.
+packages-verify-systemd:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image=karst-systemd-verify
+    docker build -q -t "$image" -f packaging/test/systemd.Dockerfile packaging/test
+    container=$(docker run -d --privileged --cgroupns=host \
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/karst:ro" "$image")
+    trap 'docker rm -f "$container" >/dev/null' EXIT
+    for _ in $(seq 30); do
+        [ "$(docker exec "$container" systemctl is-system-running 2>/dev/null || true)" = running ] && break
+        sleep 1
+    done
+    docker exec "$container" bash /karst/scripts/package-systemd-verify.sh /karst/dist/packages/old
+
 # ── macOS ───────────────────────────────────────────────────────────────────
 #
 # The macOS client, from a Mac. Nothing here runs on Linux: `utun`, `ifconfig`,

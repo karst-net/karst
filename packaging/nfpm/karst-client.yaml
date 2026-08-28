@@ -2,7 +2,7 @@
 # Copyright the Karst contributors.
 
 name: karst-client
-arch: amd64
+arch: ${ARCH}
 platform: linux
 version: "${VERSION}"
 release: "1"
@@ -26,3 +26,17 @@ contents:
     type: dir
     file_info:
       mode: 0755
+  # The netmap cache lives here (`[control] cache_file` in
+  # docs/GETTING-STARTED.md §6.3) and it holds one pre-shared key per peer, so
+  # 0700 is a confidentiality boundary rather than tidiness — THREAT-MODEL R5.
+  # Shipped as package content and not created in a postinstall so that the
+  # mode is declared once and `rpm --verify` can check it.
+  - dst: /var/lib/karst
+    type: dir
+    file_info:
+      mode: 0700
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove-karstd.sh
+  postremove: packaging/scripts/postremove.sh

@@ -2,7 +2,7 @@
 # Copyright the Karst contributors.
 
 name: karst-control
-arch: amd64
+arch: ${ARCH}
 platform: linux
 version: "${VERSION}"
 release: "1"
@@ -26,3 +26,8 @@ contents:
     type: dir
     file_info:
       mode: 0750
+
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove-karst-control.sh
+  postremove: packaging/scripts/postremove.sh
