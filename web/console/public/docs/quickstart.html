@@ -1,1 +1,39 @@
-../../../../docs/quickstart.html
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Copyright the Karst contributors. -->
+<!-- The console serves this in-product at /docs/quickstart.html, so it must be
+     a real file rather than a link to anything outside `public/`: a self-hosted
+     console cannot reach the public site, and Vite copies `public/` verbatim
+     and fails the build on a target it cannot stat.
+
+     The same wording is published at karst-net.github.io/quickstart.html. The
+     two copies are deliberately independent — see that repository's README —
+     so a change to the text here belongs there as well. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Karst quickstart</title>
+    <!-- The console's own tokens, inlined. This page is static and outside the
+         bundler, so it cannot import the workspace stylesheet; without a
+         background of its own it renders white inside a dark console. -->
+    <style>
+      :root { color-scheme: light dark; --surface: #ffffff; --surface-raised: #f4f7fa; --text: #17202a; --muted: #52616b; --accent: #075985; }
+      @media (prefers-color-scheme: dark) { :root { --surface: #101820; --surface-raised: #1a2630; --text: #edf4f7; --muted: #b3c2c9; --accent: #63c5f3; } }
+      body { margin: 0; background: var(--surface); color: var(--text); font: 1rem/1.6 system-ui, sans-serif; }
+      main { max-width: 44rem; padding: 2rem clamp(1rem, 4vw, 3rem); }
+      li { margin: .75rem 0; }
+      code { background: var(--surface-raised); border-radius: .25rem; padding: .1rem .3rem; font-size: .9em; overflow-wrap: anywhere; }
+      p:last-child { color: var(--muted); }
+    </style>
+  </head>
+  <body><main>
+    <h1>Karst quickstart</h1>
+    <p>Open the Karst administration console and complete <strong>First-run setup</strong>. You need the public HTTPS URL of your coordination server.</p>
+    <ol>
+      <li>Enter the public server URL in <strong>First-run setup</strong>.</li>
+      <li>Create a one-time enrolment key. Copy it immediately; it is shown only once.</li>
+      <li>Install the Karst node package on the machine you want to connect. Put the one-time key in <code>[control] setup_key</code> in <code>/etc/karst/karstd.toml</code>, alongside the server URL and pins from the installation guide. Validate it with <code>sudo karstd check --config /etc/karst/karstd.toml</code>, then start it with <code>sudo systemctl enable --now karstd</code>. There is no <code>karst up</code> command.</li>
+      <li>Open <strong>Machines</strong> and confirm the new node has a current observation and crypto posture.</li>
+    </ol>
+    <p>If the node is absent or stale, check its service logs and confirm its coordination-server URL before generating another key. Never paste a one-time key into a ticket, chat, or shell history you do not control.</p>
+  </main></body>
+</html>
