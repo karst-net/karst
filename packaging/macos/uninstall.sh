@@ -21,6 +21,10 @@ LABEL="dev.karst.karstd"
 
 # 1. Revert host DNS *first*, while the binary that knows what to revert and
 #    the config that says which mechanism was used are both still present.
+#
+#    On macOS this restores /etc/resolver: it removes the files Karst created,
+#    puts back byte for byte any file it replaced, and consumes the revert
+#    record under /var/db/karst — including one a killed daemon left behind.
 if [ -x /usr/local/bin/karst ] && [ -f /etc/karst/karstd.toml ]; then
     /usr/local/bin/karst dns revert --config /etc/karst/karstd.toml || true
 fi
@@ -35,6 +39,10 @@ rm -f "$PLIST"
 rm -f /usr/local/bin/karstd /usr/local/bin/karst
 rm -f /etc/karst/karstd.toml.example
 rm -rf /var/log/karst
+# The DNS revert above consumed the record inside it; this takes the directory
+# only if that worked, so a leftover record survives to be reverted next time
+# rather than being deleted along with the machine's chance of recovering.
+rmdir /var/db/karst 2>/dev/null || true
 /usr/sbin/pkgutil --forget dev.karst.karstd 2>/dev/null || true
 
 # 4. **Not** /etc/karst. It holds the node's private key and its configuration,

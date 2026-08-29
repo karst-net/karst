@@ -273,7 +273,7 @@ pub trait HostResolver {
 | `systemd-resolved` | `/run/systemd/resolve/stub-resolv.conf` exists **and** the D-Bus name is activatable | `org.freedesktop.resolve1.Manager.SetLinkDNS`, `SetLinkDomains` with the mesh zone as a routing-only domain (`~zone`) | The correct integration. Routing-only domains give split DNS for free. Use D-Bus directly (`zbus`), not `resolvectl` — shelling out to a binary that may not be installed is how this breaks on a minimal image |
 | NetworkManager | `org.freedesktop.NetworkManager` on the bus and it manages the TUN device | Per-device DNS via the D-Bus API | NM and resolved often coexist; prefer resolved when both are present, and record why in the code |
 | `resolv.conf` rewrite | Fallback when neither is present | Write, atomically, via a temp file and `rename(2)` | Preserve the original by copy, not by move — `/etc/resolv.conf` is frequently a symlink into `/run`, and moving it breaks whatever manages it |
-| macOS | Always | `/etc/resolver/<zone>` file + `scutil` for global DNS | [06](06-macos-client.md) §5 |
+| macOS | Always | A file per domain in `/etc/resolver/` — the zone and every search domain — then `dscacheutil -flushcache; killall -HUP mDNSResponder` | Implemented, `host/macos.rs`. **Not `scutil`**: a `SCDynamicStore` value lives only as long as the session that set it, so a `scutil` child process would have its entry dropped the moment it exits. The global search list therefore remains unimplemented — [06](06-macos-client.md) §5 |
 | Windows | Always | NRPT rule via registry, or the `DnsClientNrptRule` PowerShell cmdlets | [07](07-windows-client.md) §6 |
 
 **Test each on the distributions we claim to support, not on one.** The
@@ -331,9 +331,12 @@ return whatever the portal said, unmodified.
 - **`karstd` config** (`bins/karstd/src/config.rs`): a `[dns]` table —
   `enabled`, `stub_address`, `accept_netmap_config`, `upstream` override,
   `host_integration = "auto" | "resolved" | "resolvconf" | "networkmanager" |
-  "none"`. `"none"` is important: a machine whose DNS is managed by something
-  we do not know about should be able to run the resolver and be pointed at it
-  by hand.
+  "macos" | "none"`. `"none"` is important: a machine whose DNS is managed by
+  something we do not know about should be able to run the resolver and be
+  pointed at it by hand. `"macos"` is the `/etc/resolver` directory and is what
+  `"auto"` selects there; naming it off macOS is refused rather than accepted,
+  because those files would be real state on a host whose resolver never reads
+  them.
 - **`karst dns status`**: what the node believes the host config is, what the
   host config actually is (`observe()`), which upstreams are in use, cache
   counters, and the last five failed lookups with their reason. Add

@@ -178,6 +178,10 @@ pub enum HostIntegration {
     Resolved,
     Resolvconf,
     Networkmanager,
+    /// macOS's `/etc/resolver` directory. Selectable by name on any host so a
+    /// configuration is portable and a mistake is diagnosable, and refused at
+    /// startup off macOS, where the files it writes would change nothing.
+    Macos,
     None,
 }
 

@@ -28,6 +28,10 @@ pub enum HostRuntime {
     Resolved(karst_dns::host::Resolved),
     NetworkManager(karst_dns::host::NetworkManager),
     ResolvConf(karst_dns::host::Controller),
+    /// macOS's `/etc/resolver` directory. The variant is compiled on every
+    /// platform even though only macOS selects it, so a Linux build type-checks
+    /// this path rather than discovering it on the release runner.
+    Macos(karst_dns::host::Macos),
 }
 
 impl HostRuntime {
@@ -59,25 +63,53 @@ impl HostRuntime {
             controller.recover().map_err(|error| error.to_string())?;
             Ok::<_, String>(Self::ResolvConf(controller))
         };
+        // `/etc/resolver` files are the whole split-DNS story on macOS: one
+        // file per domain, longest suffix wins, and non-mesh names keep the
+        // resolvers the host already had. Recovering first is what consumes a
+        // record left by a killed daemon before this run can write its own.
+        //
+        // **`karst-dns` compiles this mechanism everywhere**, so the closure is
+        // not `cfg`-gated and every platform type-checks it. Whether it is
+        // *selected* is the question below, and off macOS the answer is never.
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+        let macos = || {
+            let mut host = karst_dns::host::Macos::system();
+            host.recover().map_err(|error| error.to_string())?;
+            Ok::<_, String>(Self::Macos(host))
+        };
         match settings.host_integration {
             HostIntegration::None => Ok(Self::None),
             HostIntegration::Resolved => resolved().map(Self::Resolved),
             HostIntegration::Networkmanager => network_manager().map(Self::NetworkManager),
             HostIntegration::Resolvconf => resolvconf(),
-            // Every mechanism Karst implements is a Linux one. On macOS the
-            // right answer is `/etc/resolver/` files plus the
-            // SystemConfiguration dynamic store, and neither is written yet
-            // (`plans/phase-5/06-macos-client.md` §5) — so `Auto` selects
-            // nothing rather than falling through to `resolvconf`.
+            #[cfg(target_os = "macos")]
+            HostIntegration::Macos => macos(),
+            // Refused rather than quietly accepted. Writing `/etc/resolver`
+            // files on Linux would leave real state on the host and change no
+            // resolution whatsoever, which is the worst of both outcomes.
+            #[cfg(not(target_os = "macos"))]
+            HostIntegration::Macos => Err(
+                "dns.host_integration = \"macos\" is the /etc/resolver mechanism \
+                 and only macOS reads that directory"
+                    .to_owned(),
+            ),
+            // macOS: `/etc/resolver` files, which make every mesh name resolve
+            // system-wide. The resolver search list is not part of this and is
+            // not implemented — see `karst_dns::host::Macos` for why a `scutil`
+            // child process cannot supply it — so a bare hostname still needs
+            // its domain. `karst status` reports the mechanism either way.
+            #[cfg(target_os = "macos")]
+            HostIntegration::Auto => macos(),
+            // Neither Linux nor macOS. Every mechanism Karst implements belongs
+            // to one of those two, so `Auto` selects nothing rather than
+            // falling through to `resolvconf`.
             //
-            // **That fall-through would be worse than doing nothing.** macOS
-            // ships an `/etc/resolv.conf` that is a generated symlink most
-            // resolvers do not consult, so rewriting it would not make mesh
-            // names resolve; it would only leave a modified system file, and a
-            // revert file for it, on a machine where it changed no behaviour.
-            // Announcing the gap is the honest outcome, and the daemon's DNS
-            // resolver still listens for anything pointed at it explicitly.
-            #[cfg(not(target_os = "linux"))]
+            // **That fall-through would be worse than doing nothing.** It would
+            // leave a modified system file, and a revert file for it, on a
+            // machine whose resolver may never consult either. Announcing the
+            // gap is the honest outcome, and the daemon's DNS resolver still
+            // listens for anything pointed at it explicitly.
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             HostIntegration::Auto => {
                 eprintln!(
                     "karstd: host DNS integration is not implemented on this \
@@ -138,6 +170,31 @@ impl HostRuntime {
                     &config.netmap_dns.search_domains,
                 )
                 .map_err(|error| error.to_string()),
+            Self::Macos(macos) => {
+                if enabled {
+                    macos.apply(
+                        config.dns.stub_address,
+                        &config.netmap_dns.zone,
+                        &config.netmap_dns.search_domains,
+                    )
+                } else {
+                    macos.revert()
+                }
+                .map_err(|error| error.to_string())?;
+                // The resolver files are already correct when this is set; the
+                // flush that follows them is what stops `mDNSResponder` serving
+                // the answers it cached before the change. Reporting it as an
+                // apply failure would say the opposite of what happened, so it
+                // is a warning on its own.
+                if let Some(detail) = macos.flush_error() {
+                    eprintln!(
+                        "karstd: resolver files applied, but the DNS cache was \
+                         not flushed ({detail}); names may resolve to their \
+                         previous answers until the cache expires"
+                    );
+                }
+                Ok(())
+            }
         }
     }
 
@@ -151,6 +208,7 @@ impl HostRuntime {
             Self::ResolvConf(controller) => {
                 controller.shutdown().map_err(|error| error.to_string())
             }
+            Self::Macos(macos) => macos.revert().map_err(|error| error.to_string()),
         }
     }
 
@@ -188,6 +246,16 @@ impl HostRuntime {
                     }
                 })
                 .map_err(|error| error.to_string()),
+            Self::Macos(macos) => macos
+                .observe()
+                .map(|applied| {
+                    if applied {
+                        "configured"
+                    } else {
+                        "not configured"
+                    }
+                })
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -198,6 +266,7 @@ impl HostRuntime {
             Self::Resolved(_) => "systemd-resolved",
             Self::NetworkManager(_) => "networkmanager",
             Self::ResolvConf(_) => "resolv.conf",
+            Self::Macos(_) => "/etc/resolver",
         }
     }
 }
@@ -224,6 +293,12 @@ pub fn revert_host(settings: &crate::config::DnsSettings, interface: &str) -> Re
         .exists();
     match settings.host_integration {
         HostIntegration::None => Ok(()),
+        // The opposite case to the link-scoped one below, and the reason it is
+        // named rather than left to fall through: `/etc/resolver` files are not
+        // attached to the interface and outlive it, which is precisely why they
+        // must be reverted when the TUN is already gone. Constructing the
+        // runtime is what recovers a record a killed daemon left behind.
+        HostIntegration::Macos => HostRuntime::new(settings, None, interface)?.shutdown(),
         // A mechanism pinned to a link-scoped backend never touched
         // `resolv.conf`, and the link's own DNS state disappears with it —
         // there is nothing left for either to revert.
@@ -681,6 +756,48 @@ mod tests {
             revert_host(&settings, "karst-test-missing0")
                 .expect("a gone interface already lost its link-scoped DNS state");
         }
+    }
+
+    /// The `/etc/resolver` mechanism is compiled everywhere so that a Linux
+    /// build type-checks it, which makes "compiled" and "selectable" two
+    /// different questions. This is the second one, and off macOS the answer
+    /// has to be a refusal rather than a daemon that writes real files into a
+    /// directory no resolver on this host reads.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_resolver_directory_mechanism_is_refused_off_macos() {
+        let settings = crate::config::DnsSettings {
+            host_integration: crate::config::HostIntegration::Macos,
+            ..crate::config::DnsSettings::default()
+        };
+        let error = HostRuntime::new(&settings, None, "karst0")
+            .expect_err("/etc/resolver is not a mechanism on this platform");
+        assert!(error.contains("/etc/resolver"), "{error}");
+        assert!(
+            revert_host(&settings, "karst0").is_err(),
+            "and reverting it must not silently report success either"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn auto_selects_the_resolver_directory_on_macos() {
+        let settings = crate::config::DnsSettings::default();
+        let host = HostRuntime::new(&settings, None, "utun9").expect("auto-selected mechanism");
+        assert_eq!(host.mechanism(), "/etc/resolver");
+        assert_eq!(host.observe().expect("observe"), "not configured");
+    }
+
+    /// `karst status` prints this, and the walkthrough in
+    /// `plans/phase-5/06-macos-client.md` §10 reads it to tell a machine with
+    /// host DNS integration from one without.
+    #[test]
+    fn every_mechanism_names_itself() {
+        assert_eq!(HostRuntime::None.mechanism(), "none");
+        assert_eq!(
+            HostRuntime::Macos(karst_dns::host::Macos::system()).mechanism(),
+            "/etc/resolver"
+        );
     }
 
     #[test]
