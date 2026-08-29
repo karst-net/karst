@@ -5,14 +5,25 @@ off the read-only views.**
 
 ## 1. Scope, which is the whole design
 
-> **Re-baselined 2026-08-27.** The portal exists and has subject-derived device
-> list, one-time enrolment key, rename/revoke, access explanation, session, and
-> download views. Complete its data contract before calling it self-service:
-> device platform is currently emitted as `unknown`; session entries are derived
-> from audit rows and expose neither real end time nor IP; and download depends
-> on a release manifest that is not produced by the current platform pipeline.
-> The enrolment instruction must match the daemon's actual configuration flow,
-> not `karst up`.
+> **Re-baselined 2026-08-27; data contract closed 2026-08-28.** The portal
+> exists and has subject-derived device list, one-time enrolment key,
+> rename/revoke, access explanation, session, and download views.
+>
+> The four contract gaps this note listed are closed. Device platform comes
+> from the client's reported GoOS. Session history is a real record of
+> control-channel connections — `node.DeviceSession`, written around the
+> authenticated part of the stream — with a genuine end time, a genuine
+> address, and a null end meaning "still connected" rather than "unknown"
+> (FINDINGS.md 63). The download manifest is generated from the artefacts a
+> release actually contains and lists every build for the platform, since the
+> client now ships four Linux packages (FINDINGS.md 65). The enrolment
+> instruction already matched the daemon's configuration flow.
+>
+> Two things surfaced while closing them and are worth carrying forward: the
+> portal's Playwright suite had never run in CI (FINDINGS.md 64, now wired in),
+> and the session address is the proxy's address behind a reverse proxy, which
+> the schema states rather than implying a device location the server cannot
+> know.
 
 §8.2: "Deliberately small: download the client for your platform, see and name
 your own devices, run the add-device flow, revoke a lost device, view which

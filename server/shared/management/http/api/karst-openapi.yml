@@ -394,8 +394,16 @@ components:
       properties: {destination: {type: string}, rule: {type: integer, minimum: 1}, group: {type: string}, changed_at: {type: string, format: date-time}, changed_by: {type: string}}
     MySession:
       type: object
+      description: >-
+        One control-channel connection by one of the caller's own devices.
+        ended_at is null while the session is live. ip is the address the
+        coordination server saw the connection come from, which behind a
+        reverse proxy is the proxy rather than the device: the control channel
+        authenticates itself (ADR-0011) and does not read a forwarded-for
+        header, because a header the client sets is not evidence of where the
+        client is.
       required: [started_at, device]
-      properties: {started_at: {type: string, format: date-time}, ended_at: {type: string, nullable: true, format: date-time}, device: {type: string}, ip: {type: string, nullable: true}}
+      properties: {started_at: {type: string, format: date-time}, ended_at: {type: string, nullable: true, format: date-time}, device: {type: string, description: The device name its owner gave it}, ip: {type: string, nullable: true}}
     NodePage:
       allOf: [{$ref: '#/components/schemas/Page'}, {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Node'}}}}]
     NodePaths:

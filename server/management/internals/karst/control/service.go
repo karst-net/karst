@@ -16,9 +16,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
@@ -41,6 +43,23 @@ func (f HandlerFunc) Handle(ctx context.Context, nodeID, identity, payload []byt
 	return f(ctx, nodeID, identity, payload)
 }
 
+// SessionRecorder is told when an authenticated node's stream opens, makes
+// progress, and closes. It is what gives the portal a session history with a
+// real end time and a real address instead of audit rows with neither
+// (plans/phase-5/05-user-portal.md §1).
+//
+// Recording starts *after* the handshake, deliberately. A connection that
+// fails to authenticate is not a session; writing a row for one would let an
+// unauthenticated caller append to a table by connecting, and would show a
+// user attempts that were never their device.
+type SessionRecorder interface {
+	// Opened returns an id that Touched and Closed refer to. An id of zero
+	// means "not recording", and the other two methods ignore it.
+	Opened(ctx context.Context, handle, clientAddr string) (uint64, error)
+	Touched(ctx context.Context, id uint64) error
+	Closed(ctx context.Context, id uint64) error
+}
+
 // Service implements proto.KarstControlServiceServer.
 type Service struct {
 	proto.UnimplementedKarstControlServiceServer
@@ -50,7 +69,15 @@ type Service struct {
 	lookup   channel.IdentityLookup
 	verifier channel.Verifier
 	handler  Handler
+	// sessions is optional. Nil means the deployment keeps no session history,
+	// which is how the test server and every existing caller of New behave.
+	sessions SessionRecorder
 }
+
+// RecordSessionsWith attaches a session recorder. Separate from New so that
+// callers that do not keep session history — the test server, and anything
+// constructing a service for one exchange — are unchanged by its existence.
+func (s *Service) RecordSessionsWith(recorder SessionRecorder) { s.sessions = recorder }
 
 // New builds the service.
 //
@@ -111,10 +138,43 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	}
 	nodeID := init.GetNodeId()
 
+	// From here the node is authenticated, so the connection is a session.
+	//
+	// The close is deferred rather than written at each return: this loop
+	// leaves by seven different paths, one of them the ordinary io.EOF of a
+	// node shutting down, and a session history that is correct only for the
+	// tidy exits would be wrong exactly when someone is looking at it.
+	//
+	// A recording failure is logged and not returned. A device that cannot
+	// connect because the server could not write a history row would be a
+	// worse outcome than a missing row.
+	var sessionID uint64
+	if s.sessions != nil {
+		var err error
+		if sessionID, err = s.sessions.Opened(ctx, string(nodeID), clientAddr(ctx)); err != nil {
+			log.WithContext(ctx).Warnf("karst: recording session start for %x: %v", nodeID, err)
+		}
+		defer func() {
+			// ctx is cancelled by the time this runs on a client hangup, and a
+			// cancelled context is one no write will be accepted on — so the
+			// close gets its own.
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCloseTimeout)
+			defer cancel()
+			if err := s.sessions.Closed(closeCtx, sessionID); err != nil {
+				log.WithContext(closeCtx).Warnf("karst: recording session end for %x: %v", nodeID, err)
+			}
+		}()
+	}
+
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			return err // includes io.EOF for a clean client hangup
+		}
+		if s.sessions != nil {
+			if err := s.sessions.Touched(ctx, sessionID); err != nil {
+				log.WithContext(ctx).Debugf("karst: advancing session for %x: %v", nodeID, err)
+			}
 		}
 		if msg.GetInit() != nil {
 			// Re-handshaking mid-stream would reset the sequence counters
@@ -158,6 +218,22 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			return err
 		}
 	}
+}
+
+// sessionCloseTimeout bounds the write that records a disconnect. It runs on a
+// context detached from the dead stream's, so without a deadline a stalled
+// database would hold the goroutine for that connection open indefinitely.
+const sessionCloseTimeout = 5 * time.Second
+
+// clientAddr reports the address gRPC says the stream came from, or "" when
+// the transport does not supply one — an in-process pipe in a test, for
+// instance. See node.DeviceSession for what this address does and does not
+// mean behind a proxy.
+func clientAddr(ctx context.Context) string {
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		return p.Addr.String()
+	}
+	return ""
 }
 
 // Client is the node side of the stream. It lives here rather than in the Rust

@@ -784,3 +784,10 @@ jobs:
         run: |
           corepack pnpm --filter console exec playwright install --with-deps chromium
           corepack pnpm --filter console test:e2e
+      # The portal has had a Playwright suite since it was written and CI has
+      # never run it — only the console's. Seven tests, including the axe sweep
+      # over all four routes, reporting to nobody. Same shape as finding 48: a
+      # suite that cannot fail because it is never invoked.
+      - name: Portal accessibility and self-service flows
+        working-directory: web
+        run: corepack pnpm --filter portal test:e2e

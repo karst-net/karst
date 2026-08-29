@@ -55,6 +55,20 @@ type nodeDeleter interface {
 	Delete(handle string) error
 }
 
+// sessionReader is the portal's session history. Optional, like the other
+// capability interfaces here: a deployment whose node store does not provide
+// it gets a precondition error rather than a page of silently empty rows.
+type sessionReader interface {
+	SessionsForHandles(handles []string, limit int) ([]node.DeviceSession, error)
+}
+
+// sessionCloser ends a revoked device's live sessions. See
+// node.CloseSessionsForHandle for why revocation does not rely on the stream
+// teardown alone.
+type sessionCloser interface {
+	CloseSessionsForHandle(handle string, at time.Time) error
+}
+
 type enrollmentKeyBinder interface {
 	BindEnrollmentKey(key, userID string) error
 }
@@ -493,6 +507,17 @@ func (h *handler) meRevokeDevice(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	// Before the identity goes. Session rows outlive the device on purpose — a
+	// user who revokes a stolen laptop still wants to see where it was — so
+	// they must be closed while the handle is still known to belong to this
+	// subject, and a device deleted mid-session must not be left looking
+	// connected forever.
+	if closer, ok := h.nodes.(sessionCloser); ok {
+		if err := closer.CloseSessionsForHandle(peerRecord.Key, time.Now()); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
 	if deleter, ok := h.nodes.(nodeDeleter); ok {
 		if err := deleter.Delete(peerRecord.Key); err != nil && !errors.Is(err, node.ErrUnknownNode) {
 			util.WriteError(r.Context(), err, w)
@@ -540,20 +565,55 @@ func (h *handler) meSessions(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.audit == nil {
-		util.WriteJSONObject(r.Context(), w, []any{})
-		return
-	}
-	entries, err := h.audit.ListFiltered(r.Context(), user.UserId, "", 100, 0)
+	// The caller's own devices, resolved the same way /me/devices resolves
+	// them. The handles that reach the store are therefore always ones this
+	// subject is authorized for; no handle is ever taken from the request
+	// (plans/phase-5/05-user-portal.md §2).
+	nodes, err := h.authorizedNodes(r.Context(), user.AccountId, user.UserId)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	// Audit entries are returned only for the caller. The stable generic fields
-	// let the portal show history without exposing another user's target.
-	items := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		items = append(items, map[string]any{"started_at": entry.CreatedAt, "ended_at": nil, "device": entry.Target, "ip": nil})
+	reader, ok := h.nodes.(sessionReader)
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "session history is not configured"), w)
+		return
+	}
+	handles := make([]string, 0, len(nodes))
+	names := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		handles = append(handles, n.Handle)
+		// The device's name, not its handle: the portal is showing a person
+		// their own laptop, and a 64-character handle names nothing to them.
+		names[n.Handle] = n.Name
+	}
+	sessions, err := reader.SessionsForHandles(handles, 0)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	items := make([]map[string]any, 0, len(sessions))
+	for _, session := range sessions {
+		name := names[session.Handle]
+		if name == "" {
+			name = session.Handle
+		}
+		// ended_at stays null for a session that is still live, which is what
+		// lets the portal say "now" rather than inventing an end.
+		var ended any
+		if session.EndedAt != nil {
+			ended = *session.EndedAt
+		}
+		var ip any
+		if session.ClientAddr != "" {
+			ip = session.ClientAddr
+		}
+		items = append(items, map[string]any{
+			"started_at": session.StartedAt,
+			"ended_at":   ended,
+			"device":     name,
+			"ip":         ip,
+		})
 	}
 	util.WriteJSONObject(r.Context(), w, items)
 }
@@ -2203,6 +2263,17 @@ func (h *handler) deleteNode(w http.ResponseWriter, r *http.Request) {
 	if err := h.peerWriter.DeletePeer(r.Context(), user.AccountId, peerRecord.ID, user.UserId); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
+	}
+	// Before the identity goes. Session rows outlive the device on purpose — a
+	// user who revokes a stolen laptop still wants to see where it was — so
+	// they must be closed while the handle is still known to belong to this
+	// subject, and a device deleted mid-session must not be left looking
+	// connected forever.
+	if closer, ok := h.nodes.(sessionCloser); ok {
+		if err := closer.CloseSessionsForHandle(peerRecord.Key, time.Now()); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
 	}
 	if deleter, ok := h.nodes.(nodeDeleter); ok {
 		if err := deleter.Delete(peerRecord.Key); err != nil && !errors.Is(err, node.ErrUnknownNode) {

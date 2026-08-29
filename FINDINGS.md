@@ -176,8 +176,98 @@ carries both the new wording and the original, struck through.
 | 60 | Medium | Removing the node package left the daemon running and a dangling enablement symlink behind it | Fixed 2026-08-28 |
 | 61 | Medium | No package created `/var/lib/karst`, so the documented netmap cache path did not exist and had no mode | Fixed 2026-08-28 |
 | 62 | Low | `RuntimeDirectory=karst` deletes the DNS revert record on stop, so the documented manual recovery has nothing to read | Open |
+| 63 | Medium | The portal's session history was audit rows: every entry reported a null end time and a null address | Fixed 2026-08-28 |
+| 64 | Medium | The portal's Playwright suite has never run in CI — only the console's | Fixed 2026-08-28 |
+| 65 | Medium | The download manifest generator named a Windows MSI and a `.deb` the pipeline does not build, so it could not succeed, and the fixture served the same invented names | Fixed 2026-08-28 |
 
 ## Closed
+
+### 65. Medium: the download manifest described artefacts nothing builds
+
+**Found 2026-08-28** by tracing the portal's download page back to what
+produces its data. Fixed the same day.
+
+`scripts/release-manifest.sh` named three exact files, one of them
+`karst-windows-amd64.msi`. There is no Windows client — it is Phase 8 — so the
+script's `test -f` could never pass against a real release directory, and it
+was wired into nothing. Its `karst-linux-amd64.deb` was equally invented: the
+pipeline builds `karst-client_<version>_<arch>.deb`.
+
+**The fixture agreed with the script rather than with the pipeline.**
+`web/tools/karst-api-mock.mjs` served those same three names, so the portal's
+download test passed against a manifest describing files that have never
+existed, for a page that would have been empty in production. That is findings
+42 and 43's category again — a component that exists only in the test harness —
+and it is the third time this shape has appeared.
+
+The generator now discovers artefacts and fails if it finds none, which also
+fixed something the fixed list could not express: since finding 59 the client
+ships as `.deb` and `.rpm` for amd64 and arm64, so "the Linux download" names
+four files. The page offered exactly one, chosen by first match, and was
+therefore wrong for three users in four. It now lists every build for the
+detected platform with its architecture, format and checksum, because a browser
+cannot be asked what architecture it is running on and guessing hands somebody
+a package that will not install.
+
+### 64. Medium: the portal's browser suite has never run
+
+**Found 2026-08-28** while adding a download test to it. Fixed the same day.
+
+`web/portal` has a Playwright config, seven tests, and an axe sweep over all
+four routes. CI's `web` job runs `--filter console test:e2e` and nothing else,
+so none of them has ever executed on a push.
+
+The suite passes, which is the least reassuring possible outcome: it means the
+portal's accessibility and self-service flows have been correct *and unverified*
+for as long as they have existed, and nothing would have said otherwise the
+first time they were not. Finding 48 was this exact shape — a suite reporting
+success by not running — and the lesson recorded there was to check that a
+check runs, which is a habit and not a fix.
+
+### 63. Medium: the portal's session history was audit rows with the interesting fields removed
+
+**Found 2026-08-28** from the use-case review's own list
+(plans/phase-5/05-user-portal.md §1). Fixed the same day.
+
+`GET /me/sessions` mapped audit-log entries to session rows:
+
+```go
+items = append(items, map[string]any{
+    "started_at": entry.CreatedAt, "ended_at": nil, "device": entry.Target, "ip": nil})
+```
+
+Every field but the first was wrong. `started_at` was when an administrative
+action was logged, not when a device connected; `device` was an audit target;
+and `ended_at` and `ip` were hardcoded null because the audit log does not know
+either. The contract declares both nullable, so this was contract-legal and
+useless — a page titled "My session history" that could not say when a session
+ended or where it came from.
+
+Nothing in the tree could have answered it. `SessionObservation` looks like the
+right table and is not: it is a node's report about its *peers*, replaced
+wholesale on each report, so it holds no history at all.
+
+The answer was in the control channel, which already knows exactly when a
+device attached and from where — it is serving the stream. `DeviceSession` now
+records open, progress and close around the authenticated portion of
+`Service.Session`, and the portal reads real rows filtered to the caller's own
+devices.
+
+Three things that were not obvious until the data existed:
+
+- **A killed server records no ends.** Its streams' deferred closes never run,
+  so those rows stay open, and closing them at the next startup would report a
+  session that ended on Friday as having ended on Monday. Each row carries a
+  last-seen time that advances with the node's requests, and recovery closes it
+  there — accurate to the refresh interval and honest about being an estimate.
+- **Revocation has to close the row itself.** The stream teardown normally
+  records the end, but a user who has just revoked a stolen laptop must not be
+  shown it as still connected because the two raced.
+- **The address is the proxy's, behind a proxy.** The control channel
+  authenticates itself (ADR-0011) and does not read a forwarded-for header,
+  because a header the client sets is not evidence of where the client is. The
+  schema says so rather than implying a device location the server cannot know.
+
 
 ### 62. Low: the DNS revert record is deleted by the unit that exists to use it
 

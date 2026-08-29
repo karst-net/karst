@@ -138,6 +138,18 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: node store: %w", err)
 	}
+	// Sessions a previous process was serving are still open in the table: its
+	// streams' deferred closes did not run, because the process is gone. Close
+	// them at the last request each one was seen making, and drop history past
+	// the retention window, before anything can read the table back.
+	recovered, pruned, err := nodes.RecoverSessions(time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("karst: recover device sessions: %w", err)
+	}
+	if recovered > 0 || pruned > 0 {
+		log.Infof("karst: device sessions: closed %d left open by a previous run, pruned %d past %s",
+			recovered, pruned, node.SessionRetention)
+	}
 	auditLog, err := audit.New(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: audit log: %w", err)
@@ -205,6 +217,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 
 	svc := control.New(static, identity.ControlSigner{Key: srvIdentity},
 		nodes.LookupFunc(), identity.ControlVerifier{}, router)
+	// What makes `/me/sessions` a session history rather than a list of audit
+	// rows with a null end time and a null address.
+	svc.RecordSessionsWith(sessionRecorder{nodes: nodes})
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{
 		Register: func(reg grpc.ServiceRegistrar) {

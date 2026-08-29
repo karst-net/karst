@@ -40,10 +40,21 @@ const bedrock = { mode: "advisory", quorum: 2, roots: [], authorities: [], zone:
 const dnsSettings = { disabled_management_groups: [] };
 const port = Number.parseInt(process.env.KARST_API_MOCK_PORT ?? "4010", 10);
 const prefix = "/api/karst/v1";
+// Shaped like scripts/release-manifest.sh output, and named the way the
+// pipeline actually names things — `karst-client_<version>_<arch>.deb`, not the
+// `karst-linux-amd64.deb` this fixture used to invent. A fixture that describes
+// artefacts nothing builds lets the download test pass for a page that would be
+// empty in production, which is the fixture-only failure FINDINGS.md 42 and 43
+// are about.
+//
+// No Windows row: the client is Phase 8, so a manifest offering one would be
+// describing a file that does not exist.
 const releaseAssets = [
-  { platform: "windows", name: "karst-windows-amd64.msi", url: "/releases/karst-windows-amd64.msi", sha256: "b783bb7b65d1b9c8a5b0f81fd22cfe481ba6807e2b01986f8cf07b61185d1139" },
-  { platform: "macos", name: "karst-macos-universal.pkg", url: "/releases/karst-macos-universal.pkg", sha256: "31a05d7fd3946767a06d2638a63d7f6df13ce8cb4a4e06631d0a0258de4f4f57" },
-  { platform: "linux", name: "karst-linux-amd64.deb", url: "/releases/karst-linux-amd64.deb", sha256: "c10b418474a5ba59159d55ef58d54a24d8b9f341f089f67f1fd9b20a398b12f7" },
+  { platform: "macos", arch: "universal", format: "pkg", name: "karst-macos-universal.pkg", url: "/releases/karst-macos-universal.pkg", sha256: "31a05d7fd3946767a06d2638a63d7f6df13ce8cb4a4e06631d0a0258de4f4f57" },
+  { platform: "linux", arch: "amd64", format: "deb", name: "karst-client_0.1.0-1_amd64.deb", url: "/releases/karst-client_0.1.0-1_amd64.deb", sha256: "c10b418474a5ba59159d55ef58d54a24d8b9f341f089f67f1fd9b20a398b12f7" },
+  { platform: "linux", arch: "arm64", format: "deb", name: "karst-client_0.1.0-1_arm64.deb", url: "/releases/karst-client_0.1.0-1_arm64.deb", sha256: "9d5f2a1c3e4b6789012345678901234567890abcdef1234567890abcdef12345" },
+  { platform: "linux", arch: "amd64", format: "rpm", name: "karst-client-0.1.0-1.x86_64.rpm", url: "/releases/karst-client-0.1.0-1.x86_64.rpm", sha256: "b783bb7b65d1b9c8a5b0f81fd22cfe481ba6807e2b01986f8cf07b61185d1139" },
+  { platform: "linux", arch: "arm64", format: "rpm", name: "karst-client-0.1.0-1.aarch64.rpm", url: "/releases/karst-client-0.1.0-1.aarch64.rpm", sha256: "4f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0" },
 ];
 
 function json(response, status, value) {

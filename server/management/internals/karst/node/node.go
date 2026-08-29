@@ -126,7 +126,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("node: nil database")
 	}
-	if err := db.AutoMigrate(&Identity{}, &SessionObservation{}, &EnrollmentOwner{}); err != nil {
+	if err := db.AutoMigrate(&Identity{}, &SessionObservation{}, &EnrollmentOwner{}, &DeviceSession{}); err != nil {
 		return nil, fmt.Errorf("node: migrate: %w", err)
 	}
 	return &Store{db: db}, nil

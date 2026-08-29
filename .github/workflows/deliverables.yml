@@ -206,7 +206,7 @@ jobs:
   # the signature is required there.
   release-artefacts:
     name: Checksums, signatures and SBOMs
-    needs: [packages, packages-verify, packages-systemd]
+    needs: [packages, packages-verify, packages-systemd, macos-package]
     runs-on: ubuntu-latest
     env:
       RELEASE_GPG_KEY: ${{ secrets.RELEASE_GPG_KEY }}
@@ -217,13 +217,25 @@ jobs:
           pattern: linux-packages-*-${{ github.sha }}
           path: dist/release
           merge-multiple: true
+      # The macOS package belongs in the same set: it is an artefact of the
+      # release, it needs a checksum for the same reason, and the portal's
+      # download page has to be able to offer it. On a push it is unsigned and
+      # Gatekeeper will refuse it — see the macos-package job — which is a
+      # reason not to publish that build, not a reason to leave it out of the
+      # set the release is assembled from.
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-package-${{ github.sha }}
+          path: dist/release
       - name: Checksums
         run: |
           cd dist/release
           # Sorted, so the file is byte-identical for identical inputs and a
           # diff between two releases is about the artefacts and not the order
           # the runner happened to download them in.
-          sha256sum $(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort) > SHA256SUMS
+          # `.sha256` files are the macOS job's own single-file checksum; listing
+          # a checksum file inside the checksum file helps nobody.
+          sha256sum $(find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name '*.sha256' -printf '%P\n' | sort) > SHA256SUMS
           cat SHA256SUMS
       - name: Sign the checksums
         if: env.RELEASE_GPG_KEY != ''
@@ -261,6 +273,15 @@ jobs:
           (cd server && "$(go env GOPATH)/bin/cyclonedx-gomod" app -json -main cmd/karst-control \
             -output ../dist/release/sbom/karst-control.cdx.json)
           ls -l dist/release/sbom
+      # The portal's download page reads this. Generated from the artefacts in
+      # this directory rather than written by hand, so a checksum on the page
+      # cannot disagree with the file it describes — and generated *here*,
+      # after the macOS package has been collected, so it lists everything a
+      # release actually contains.
+      - name: Portal download manifest
+        run: |
+          ./scripts/release-manifest.sh dist/release dist/release/manifest.json
+          cat dist/release/manifest.json
       - name: Upload the release set
         uses: actions/upload-artifact@v4
         with:
