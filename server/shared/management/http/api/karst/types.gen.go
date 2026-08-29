@@ -569,8 +569,9 @@ type MyDevice struct {
 	Platform   string     `json:"platform"`
 }
 
-// MySession defines model for MySession.
+// MySession One control-channel connection by one of the caller's own devices. ended_at is null while the session is live. ip is the address the coordination server saw the connection come from, which behind a reverse proxy is the proxy rather than the device: the control channel authenticates itself (ADR-0011) and does not read a forwarded-for header, because a header the client sets is not evidence of where the client is.
 type MySession struct {
+	// Device The device name its owner gave it
 	Device    string     `json:"device"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	Ip        *string    `json:"ip,omitempty"`
