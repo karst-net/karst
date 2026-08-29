@@ -51,7 +51,7 @@ no code ever wrote. 55 is beside it: a head exchange
 that had ten passing unit tests and sent in only one direction, because the
 event it hooked fires for one of the two roles.
 
-**Four findings are open, and none is a live defect.** 53 is scope, and it is
+**Six findings are open.** Two of them — 67 and 68 — are a live gap rather than scope or design: deprovisioning does not meet the timing PLAN.md §4.4 requires, and the work planned to fix it was costed against a stream the node does not hold. The other four are as they were. 53 is scope, and it is
 now load-bearing: **CNSA 2.0 is a mandate as of 2026-08-25 (ADR-0015)**, so
 AES-256-GCM — named in the suite registry and, for a long time, implemented
 nowhere — is the first item of a Category 5 transition rather than a
@@ -180,8 +180,87 @@ carries both the new wording and the original, struck through.
 | 64 | Medium | The portal's Playwright suite has never run in CI — only the console's | Fixed 2026-08-28 |
 | 65 | Medium | The download manifest generator named a Windows MSI and a `.deb` the pipeline does not build, so it could not succeed, and the fixture served the same invented names | Fixed 2026-08-28 |
 | 66 | Medium | Exporting an audit anchor before the Bedrock genesis answered 500, where every sibling precondition on the same surface answers 412 | Fixed 2026-08-28 |
+| 67 | High | Deprovisioning takes as long as the netmap poll — measured at 48.9 s on a settled node, over the 30 s CI gate | Open |
+| 68 | High | The push that would fix 67 was costed against a persistent control stream the node does not hold: it opens one per sync and closes it | Open |
 
 ## Closed
+
+### 68. High: the netmap push was costed against a stream that does not exist
+
+**Found 2026-08-28** while scoping the push that finding 67 needs. Open.
+
+`plans/phase-5/08-scim-and-groups.md` §2 chooses server-initiated push over a
+shorter poll, and justifies the cost this way:
+
+> The stream is already bidirectional and already exists for exactly this
+> reason. The server loop becomes a select over "a request arrived" and "this
+> node's map changed"; the node's reader must accept an unsolicited envelope.
+
+**The node holds no such stream.** `Connection::open` appears exactly once in
+production code — inside `Client::sync` in `bins/karstd/src/control.rs` — and
+the connection it returns is a local that is dropped when `sync` returns. A
+node opens a control connection every 60 seconds, logs in or fetches, and
+closes it. Between syncs the server has nothing to push *to*.
+
+The server half of the description is accurate: `Session` is a bidirectional
+RPC and its loop is strictly receive-then-send. The node half is not, and it is
+the half the estimate rested on.
+
+So the work is not "a select and a reader". It is:
+
+1. karstd holding a control connection open across syncs, with the reconnect,
+   backoff and keepalive that a long-lived connection needs and a
+   once-per-minute one does not;
+2. a way to tell a push from a response on the wire, since
+   `Connection::request` currently treats the next server message as its own
+   answer and would consume a push as one;
+3. the server tracking which nodes are attached and to which account, so a
+   change can be aimed;
+4. and only then the select.
+
+Recorded rather than fixed because the estimate is what changes: "one week of
+Go and half a week of Rust in W6" was costed against item 4. Items 1–3 are the
+work, item 1 is a change to how the daemon talks to the control plane at all,
+and none of it should be started against a plan that says the stream is already
+there.
+
+### 67. High: deprovisioning takes as long as the poll, and the poll is the budget
+
+**Found 2026-08-28** by building the measurement
+`plans/phase-5/08-scim-and-groups.md` §3 asks for. Open.
+
+PLAN.md §4.4 requires that removing a user "must expire their node keys and
+drop their sessions **within 60 seconds**", and
+`plans/phase-5/09-exit-criteria.md` §6 wants it "measured under 30 s in CI".
+Neither had ever been measured.
+
+`a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget` measures
+it: two nodes converge on a direct path and carry TCP, the fixture removes one
+from the account, and the survivor probes the overlay once a second until it
+stops answering.
+
+**48.9 seconds.** Comfortably past the 30-second CI gate, and inside the
+60-second requirement only because that is where this sample happened to land —
+a settled node notices a revocation on its next netmap refresh, and the refresh
+interval *is* 60 seconds, so the observed delay is spread across it. SCIM's own
+latency then lands on top of whatever it was.
+
+**§3's other question is answered, and answered well.** The plan asked whether
+removal from the netmap even tears an established session down, warning that if
+it did not, "the deprovisioning requirement is unmeetable regardless of how
+fast the netmap arrives". It does: the survivor's roster loses the peer, its
+flow cache is cleared, and traffic stops. The problem is entirely latency,
+which is the better of the two answers — the datapath is right and only the
+notification is slow.
+
+**The first version of this measurement said 4.1 seconds and was wrong.** The
+control loop syncs early whenever the node's home relay changes, and a node
+that has just started changes it several times while AVEN and the reflector
+settle, so the revocation was picked up by a sync that a node connected for an
+hour would never have made. The row now settles the node first, which is the
+node the requirement is about. A measurement of a freshly-started daemon would
+have reported this problem as already solved.
+
 
 ### 66. Medium: the audit-anchor export answered a missing precondition with a 500
 

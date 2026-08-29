@@ -24,9 +24,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -66,12 +68,14 @@ func main() {
 	var handler control.Handler
 	lookup := func([]byte) []byte { return nil }
 
+	var netmapRouter *router
 	if n, ok := netmapMode(); ok {
 		r, err := buildNetmapServer(n, dnsZone())
 		if err != nil {
 			fail("netmap fixture: %v", err)
 		}
 		handler = r
+		netmapRouter = r
 		// Real identity lookup, so a returning node is recognised by its handle
 		// rather than having to present its key again.
 		lookup = r.nodes.LookupFunc()
@@ -105,10 +109,62 @@ func main() {
 	// The Rust side blocks on this line, so it must not sit in a buffer.
 	_ = os.Stdout.Sync()
 
+	// An out-of-band way to change the account while nodes are connected.
+	//
+	// The end-to-end deprovisioning check needs to revoke a device *during* a
+	// live session and time how long the other node keeps talking to it. There
+	// is no other way in: the control channel only carries node-initiated
+	// requests, and this fixture stands in for the account manager a console
+	// would otherwise drive.
+	if addr := controlAddr(); addr != "" && netmapRouter != nil {
+		go serveControl(addr, netmapRouter)
+	}
+
 	srv := grpc.NewServer()
 	proto.RegisterKarstControlServiceServer(srv, svc)
 	if err := srv.Serve(lis); err != nil {
 		fail("serve: %v", err)
+	}
+}
+
+// controlAddr reads `--control ADDR`. Empty means no control surface, which is
+// what every test but the deprovisioning one wants.
+func controlAddr() string {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--control" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// serveControl exposes the one operation the fixture needs driven from
+// outside: remove a peer from the account.
+//
+//	GET  /peers                    -> [{handle, label, ip}, ...]
+//	POST /remove?handle=<handle>   -> 200 removed / 404 no such peer
+func serveControl(addr string, r *router) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(r.account.list())
+	})
+	mux.HandleFunc("/remove", func(w http.ResponseWriter, req *http.Request) {
+		handle := req.URL.Query().Get("handle")
+		if handle == "" {
+			http.Error(w, "handle is required", http.StatusBadRequest)
+			return
+		}
+		if !r.account.remove(handle) {
+			http.Error(w, "no such peer", http.StatusNotFound)
+			return
+		}
+		fmt.Fprintln(w, "removed")
+	})
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	if err := server.ListenAndServe(); err != nil {
+		fail("control surface: %v", err)
 	}
 }
 

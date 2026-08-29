@@ -328,8 +328,12 @@ jobs:
         run: |
           sudo systemctl mask miniupnpd tayga dnsmasq || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          # curl is for the revocation row, which drives the fixture's control
+          # surface from inside a namespace. It is on the runner image already;
+          # naming it here keeps the install list and the suite's declared
+          # prerequisites the same set.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            miniupnpd nftables tayga dnsmasq || true
+            miniupnpd nftables tayga dnsmasq curl || true
           # These install into /usr/sbin, and every run below is
           # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
           # `secure_path`. Without the sbin directories on it the suites would

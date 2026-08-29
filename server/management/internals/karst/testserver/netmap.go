@@ -83,6 +83,59 @@ func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
 	return p
 }
 
+// remove deletes a peer, the way deprovisioning a user or revoking a device
+// does. It reports whether anything was there.
+//
+// The netmap handler recomputes from this map on every request, so the removal
+// is visible to every *other* node the moment their next netmap is assembled —
+// which is precisely the latency plans/phase-5/08-scim-and-groups.md §2 is
+// about, and what `a_revoked_peer_loses_its_session` measures.
+func (m *memoryAccount) remove(handle string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.peers[handle]; !ok {
+		return false
+	}
+	delete(m.peers, handle)
+	for i, h := range m.order {
+		if h == handle {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
+// listing is one row of the control surface's peer list.
+type listing struct {
+	Handle string `json:"handle"`
+	Label  string `json:"label"`
+	IP     string `json:"ip"`
+}
+
+// list returns the account's peers in registration order.
+//
+// The end-to-end test needs to name a specific device to revoke, and the only
+// identifier it can see from the outside is the overlay address its peer holds
+// — `karst status` prints allowed_ips and not handles. Both aquifer nodes run
+// on one machine and therefore register the same hostname, so the label cannot
+// discriminate either. The address can.
+func (m *memoryAccount) list() []listing {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := make([]listing, 0, len(m.order))
+	for _, handle := range m.order {
+		p, ok := m.peers[handle]
+		if !ok {
+			continue
+		}
+		out = append(out, listing{Handle: handle, Label: p.DNSLabel, IP: p.IP.String()})
+	}
+	return out
+}
+
 // ── control.PeerLoginer ─────────────────────────────────────────────────────
 
 func (m *memoryAccount) GetAccountIDForPeerKey(_ context.Context, key string) (string, error) {

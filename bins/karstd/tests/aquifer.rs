@@ -124,6 +124,17 @@ const RELAY_PORT_2: u16 = 8444;
 /// mapping is not the one AVEN needs.
 const REFLECT_PORT: u16 = 3478;
 const SERVER_PORT: u16 = 9443;
+/// The fixture's out-of-band control surface. Only the revocation row uses it:
+/// there is no other way to change the account while nodes are connected,
+/// because the control channel carries node-initiated requests only.
+const CONTROL_PORT: u16 = 9444;
+/// The netmap poll plus room for one probe interval and convergence.
+///
+/// Not a requirement — `control.rs`'s `REFRESH` is 60 seconds and a settled
+/// node notices a revocation on the next tick, so this is what the current
+/// implementation can be held to. The requirement it does *not* meet is
+/// FINDINGS.md 67.
+const REFRESH_BOUND: Duration = Duration::from_secs(75);
 
 /// Seeds for the two nodes' control identities. Fixed, so the relay roster can
 /// be written before either daemon has ever run.
@@ -173,6 +184,8 @@ fn missing_prerequisites() -> Vec<&'static str> {
         ("miniupnpd", "--help"),
         ("tayga", "--help"),
         ("dnsmasq", "--version"),
+        // The revocation row drives the fixture's control surface with it.
+        ("curl", "--version"),
     ] {
         // `miniupnpd --help` exits non-zero, as usage output usually does, so
         // the test is whether the program ran at all.
@@ -3155,4 +3168,261 @@ fn two_nodes_on_two_relays_reach_each_other() {
          relays:\n{}",
         net.log("a.log")
     );
+}
+
+/// **How long does a revoked device keep working?**
+///
+/// PLAN.md §4.4 and the Phase 5 exit criterion both put a number on this:
+/// removing a user in the identity provider "must expire their node keys and
+/// drop their sessions **within 60 seconds**", and
+/// `plans/phase-5/09-exit-criteria.md` §6 wants it measured under 30 seconds in
+/// CI. `plans/phase-5/08-scim-and-groups.md` §2 says the requirement cannot be
+/// met by a 60-second poll and §3 says to find out, before building a push,
+/// whether removal from the netmap even tears an established session down.
+///
+/// This is that measurement. Two nodes converge on a direct path and prove it
+/// carries traffic; the fixture then removes one of them from the account, the
+/// way deprovisioning a user or revoking a device does; and the surviving node
+/// is pinged over the overlay once a second until it stops answering.
+///
+/// It asserts two separate things, and the difference between them is the
+/// point:
+///
+///   - **The session dies at all.** If a peer removed from the netmap keeps its
+///     established PHREATIC session, no amount of push latency work would meet
+///     the requirement and the fix would be in the datapath instead.
+///   - **It dies inside the budget.** The elapsed time is printed either way,
+///     because the number is the deliverable — a pass that took 58 seconds and
+///     a pass that took 2 are different engineering situations.
+#[test]
+#[ignore = "privileged: needs root and network namespaces"]
+fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
+    if !have_prerequisites() {
+        return;
+    }
+    let mut net = Aquifer {
+        dir: std::env::temp_dir().join(format!("karst-aquifer-revoke-{}", std::process::id())),
+        services: Vec::new(),
+        nodes: Vec::new(),
+    };
+    let _ = std::fs::remove_dir_all(&net.dir);
+    std::fs::create_dir_all(&net.dir).expect("temp dir");
+    let ips = build_topology(&mut net, Shape::SameLan);
+    let (ca, relay_pk) = start_relay(&mut net);
+    let pins = start_server_with_options(
+        &mut net,
+        &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk)],
+        "",
+        0,
+        &["--control".to_owned(), format!("{IP_PUB}:{CONTROL_PORT}")],
+    );
+    write_node_configs(&net, &pins, &ca, ips);
+
+    // Same bring-up as every other row: A has to start twice for its first
+    // netmap to include B.
+    start_node(&mut net, "a", NS_A);
+    wait_for(&net, "node A to come up", Duration::from_secs(30), || {
+        net.log("a.log").contains("up, mtu")
+    });
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to see its peer",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "name").is_some(),
+    );
+    net.stop_node("a", NS_A);
+    start_node(&mut net, "a", NS_A);
+    converge(&net, Shape::SameLan);
+
+    // The overlay address A holds for B, read from A rather than assumed: the
+    // fixture assigns addresses in registration order and this row restarts a
+    // node, so hardcoding one would be a guess.
+    let peer_ip = overlay_peer_address(&net, "a", NS_A);
+
+    // A TCP probe rather than a ping. The fixture's policy accepts port 22 and
+    // nothing else, so ICMP is denied by the ACL — a pinged peer looks revoked
+    // from the first probe, and this row would report a revocation that had
+    // not happened yet.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{peer_ip}',22)); s.listen(8)\n\
+         while True:\n\
+         \x20   c,_=s.accept(); c.sendall(b'still here'); c.close()\n"
+    );
+    net.spawn_service(NS_B, "python3", &["-c", &listener], "listener.log");
+    wait_for(
+        &net,
+        "the peer's listener to accept",
+        Duration::from_secs(20),
+        || overlay_reachable(&peer_ip),
+    );
+
+    // **Let the node settle before starting the clock.**
+    //
+    // `run.rs`'s control loop syncs early whenever this node's home relay
+    // changes — "a move is published at once rather than on the timer" — and a
+    // node that has just started changes it several times while AVEN and the
+    // relay reflector settle. Revoking during that window measures relay churn
+    // rather than revocation: the first run of this row reported 4.1s, and the
+    // removal had been picked up by an early sync that would not have happened
+    // on a node that had been connected for an hour.
+    //
+    // A settled node is the one the requirement is about, so the test waits for
+    // one. Longer than the startup churn, shorter than the refresh interval, so
+    // the sync that notices the revocation is the timer's.
+    std::thread::sleep(Duration::from_secs(15));
+    assert!(
+        overlay_reachable(&peer_ip),
+        "the peer stopped answering while the node settled, before anything \
+         was revoked:\n{}",
+        status(&net, "a", NS_A)
+    );
+
+    let handle = fixture_handle_for(&peer_ip);
+    let removed = fixture_remove(&handle);
+    assert!(
+        removed,
+        "the fixture did not remove {handle} ({peer_ip}); the account listing \
+         was:\n{}",
+        fixture_peers()
+    );
+
+    // The measurement. One probe a second, up to twice the poll interval, so a
+    // failure reports how far past it got rather than just "no".
+    //
+    // The bound asserted below is the *poll*, not the requirement. On a settled
+    // node the only thing that notices a revocation is the 60-second netmap
+    // refresh, so the observed time is spread across that interval — 48.9s on
+    // the run that produced FINDINGS.md 67. Asserting PLAN.md §4.4's 60 seconds
+    // would be asserting the top of that spread and would flake; asserting
+    // §6's 30-second CI gate would fail every other run. What this row can
+    // honestly protect is the property underneath: a peer removed from the
+    // netmap loses its session, and the only cost is the poll.
+    let budget = REFRESH_BOUND;
+    let started = Instant::now();
+    let mut elapsed = None;
+    while started.elapsed() < budget * 2 {
+        if !overlay_reachable(&peer_ip) {
+            elapsed = Some(started.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
+    let Some(elapsed) = elapsed else {
+        panic!(
+            "a revoked peer was still reachable at {peer_ip} after {:?}. \
+             Removal from the netmap did not tear the session down, which is \
+             plans/phase-5/08-scim-and-groups.md §3's datapath case rather \
+             than its latency one.\nnode A:\n{}\nserver log:\n{}",
+            budget * 2,
+            status(&net, "a", NS_A),
+            net.log("server.log")
+        );
+    };
+
+    println!(
+        "revocation took effect in {:.1}s (poll bound {}s; PLAN.md §4.4 wants \
+         60s end to end, exit-criteria §6 wants 30s measured in CI)",
+        elapsed.as_secs_f64(),
+        budget.as_secs()
+    );
+    assert!(
+        elapsed <= budget,
+        "revocation took {:.1}s, past even the {}s poll bound — the netmap \
+         refresh is not what noticed, and something slower is involved",
+        elapsed.as_secs_f64(),
+        budget.as_secs()
+    );
+}
+
+/// The overlay address of the one peer `tag` holds.
+fn overlay_peer_address(net: &Aquifer, tag: &str, ns: &str) -> String {
+    let text = status(net, tag, ns);
+    let allowed =
+        field(&text, "allowed_ips").unwrap_or_else(|| panic!("node {tag} lists no peer:\n{text}"));
+    // `allowed_ips = ["100.64.0.3/32"]` — take the first address, without its
+    // prefix length.
+    allowed
+        .trim_matches(|c| c == '[' || c == ']')
+        .split(',')
+        .next()
+        .and_then(|entry| entry.trim().trim_matches('"').split('/').next())
+        .map(str::to_owned)
+        .unwrap_or_else(|| panic!("could not read a peer address from {allowed:?}"))
+}
+
+/// One TCP connect over the overlay from node A's namespace.
+///
+/// Port 22 because that is the only thing the fixture's ACL accepts. The probe
+/// is deliberately short-lived and repeated rather than one long-lived
+/// connection: the question is whether a *new* flow can still be established
+/// through the revoked peer's session, which is what an attacker with a
+/// deprovisioned laptop would be trying.
+fn overlay_reachable(peer_ip: &str) -> bool {
+    let probe = format!(
+        "import socket,sys\n\
+         try:\n\
+         \x20   s=socket.create_connection(('{peer_ip}',22),timeout=2)\n\
+         \x20   sys.exit(0 if s.recv(32) else 1)\n\
+         except Exception:\n\
+         \x20   sys.exit(1)\n"
+    );
+    Command::new("ip")
+        .args(["netns", "exec", NS_A, "python3", "-c", &probe])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn fixture_peers() -> String {
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_PUB,
+            "curl",
+            "-s",
+            &format!("http://{IP_PUB}:{CONTROL_PORT}/peers"),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// The fixture's handle for the peer holding `peer_ip`.
+fn fixture_handle_for(peer_ip: &str) -> String {
+    let listing = fixture_peers();
+    let rows: serde_json::Value =
+        serde_json::from_str(&listing).unwrap_or_else(|e| panic!("peer listing {listing:?}: {e}"));
+    rows.as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["ip"].as_str() == Some(peer_ip))
+        .and_then(|row| row["handle"].as_str())
+        .unwrap_or_else(|| panic!("no fixture peer holds {peer_ip}; listing was {listing}"))
+        .to_owned()
+}
+
+fn fixture_remove(handle: &str) -> bool {
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_PUB,
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "POST",
+            &format!("http://{IP_PUB}:{CONTROL_PORT}/remove?handle={handle}"),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+        .unwrap_or(false)
 }

@@ -31,7 +31,7 @@ Twelve checkable claims hide in that sentence:
 | 7 | An ACL is written, validated, and saved in the console | [04](04-admin-console.md) §5.1 |
 | 8 | The ACL takes effect — a permitted flow works, a denied one does not | aquifer suite |
 | 9 | Network lock is enabled from the console | [02](02-bedrock.md) |
-| 10 | A user is deprovisioned and their sessions die in under 60 s | [08](08-scim-and-groups.md) §7 |
+| 10 | A user is deprovisioned and their sessions die in under 60 s | **Measured 2026-08-28 at 48.9 s and not met as a bound** — FINDINGS.md 67 |
 | 11 | The docs are sufficient — no source reading, no maintainer questions | §4 |
 | 12 | The person doing it is not one of us | §3 |
 

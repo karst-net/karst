@@ -25,6 +25,26 @@ change, and it is worth reading before the schedule.
 
 ## 2. The 60-second requirement cannot be met by the current architecture
 
+> **Measured 2026-08-28, and the costing below is wrong.** §3's question is
+> answered: removal from the netmap *does* tear an established session down —
+> the survivor's roster loses the peer, its flow cache is cleared, and traffic
+> stops. The problem is purely latency, and it is now a number rather than an
+> argument: **48.9 seconds** on a settled node
+> (`a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`), past
+> the 30-second CI gate and inside the 60-second requirement only by where the
+> sample landed in the poll interval.
+>
+> **The push is bigger than this section says.** "The stream is already
+> bidirectional and already exists for exactly this reason" is true of the
+> server and false of the node: `Connection::open` appears once in production
+> code, inside `Client::sync`, and the connection is dropped when `sync`
+> returns. A node opens a control connection per refresh and holds none in
+> between, so there is nothing to push to. Before the select described below
+> there is a persistent-connection lifecycle in `karstd` — reconnect, backoff,
+> keepalive — and a wire change to tell a push from a response, because
+> `Connection::request` would otherwise consume a push as its own answer. See
+> FINDINGS.md 67 and 68; re-estimate before starting.
+
 `bins/karstd/src/control.rs:55`:
 
 ```rust
