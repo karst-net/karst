@@ -218,13 +218,20 @@ unstated.
 ## 6. Datagram format
 
 ```mermaid
-flowchart LR
-    Magic["magic<br/>4 B"] --> Version["version<br/>1 B"] --> Type["type<br/>1 B"] --> Tag["peer_tag<br/>8 B"] --> Epoch["epoch<br/>4 B"] --> Body["body<br/>0–305 B"] --> Mac["mac<br/>16 B"]
+packet-beta
+    title AVEN datagram header
+    0-31: "magic (4 B)"
+    32-39: "version (1 B)"
+    40-47: "type (1 B)"
+    48-111: "peer_tag (8 B)"
+    112-143: "epoch (4 B)"
 ```
 
 Header is 18 bytes. `mac` is HMAC-SHA-512 truncated to 16, keyed by the pair
 disco key, over **everything preceding it** — magic, version, type, tag, epoch
 and body. Verified in constant time.
+
+The variable-length `body` begins at bit 144; the 16-byte `mac` follows it.
 
 A receiver MUST reject a datagram longer than **339** bytes — the largest
 legal one, a sixteen-candidate `CallMeMaybe` — before doing anything else, and MUST reject one whose length does not match what its type
@@ -263,8 +270,11 @@ about what was said.
 Nineteen bytes, fixed:
 
 ```mermaid
-flowchart LR
-    Family["family<br/>1 B"] --> Address["address<br/>16 B"] --> Port["port<br/>2 B"]
+packet-beta
+    title AVEN endpoint encoding
+    0-7: "family (1 B)"
+    8-135: "address (16 B)"
+    136-151: "port (2 B)"
 ```
 
 `family` is `0x04` or `0x06`. An IPv4 address occupies the first four bytes and

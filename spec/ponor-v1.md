@@ -325,9 +325,13 @@ identical.
 Every message after the 101 is a frame:
 
 ```mermaid
-flowchart LR
-    Type["type<br/>1 B"] --> Length["length<br/>24 bits"] --> Payload["payload<br/>length bytes"]
+packet-beta
+    title Ponor frame header
+    0-7: "type (1 B)"
+    8-31: "length (24 bits)"
 ```
+
+The variable-length payload follows this four-byte header.
 
 - `type` — one byte, §6.1.
 - `length` — 24-bit big-endian payload length.

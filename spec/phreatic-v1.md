@@ -195,9 +195,17 @@ in the netmap.
 Every PHREATIC datagram is a single UDP payload subject to §10.
 
 ```mermaid
-flowchart LR
-    Reassembly["reassembly_id<br/>4 B"] --> Idx["idx<br/>2 bits"] --> Count["cnt<br/>2 bits"] --> ReservedBits["rsv<br/>4 bits"] --> Reserved["reserved<br/>3 B"] --> FragMac["frag_mac<br/>16 B"] --> Payload["fragment payload<br/>≤ 1208 B"]
+packet-beta
+    title PHREATIC fragment header
+    0-31: "reassembly_id (4 B)"
+    32-33: "idx"
+    34-35: "cnt"
+    36-39: "rsv"
+    40-63: "reserved (3 B)"
+    64-191: "frag_mac (16 B)"
 ```
+
+The variable-length fragment payload follows the header at bit 192.
 
 - `reassembly_id` — sender-chosen, MUST be drawn from a CSPRNG.
 - `idx` — 2 bits, 0-based fragment index.
@@ -406,9 +414,16 @@ real one.
 ## 8. Transport phase
 
 ```mermaid
-flowchart LR
-    Type["type = 0x04<br/>1 B"] --> Reserved["reserved<br/>3 B"] --> Receiver["receiver_index<br/>4 B"] --> Counter["counter<br/>8 B"] --> Sealed["AEAD(T, counter, ε, padded_packet)<br/>+ tag (16 B)"]
+packet-beta
+    title PHREATIC transport header
+    0-7: "type = 0x04 (1 B)"
+    8-31: "reserved (3 B)"
+    32-63: "receiver_index (4 B)"
+    64-127: "counter (8 B)"
 ```
+
+The variable-length AEAD ciphertext and its 16-byte tag follow the header at
+bit 128.
 
 - `counter` is a 64-bit little-endian nonce counter, never reused under a key.
 - AEAD nonce is `LE32(0) ‖ LE64(counter)`.
