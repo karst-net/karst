@@ -2,13 +2,13 @@
 
 **PLAN.md §9 · W2–W8 · Rust 2.**
 
-## 0. Status — started 2026-08-28
+## 0. Status — started 2026-08-28, continued 2026-08-28
 
-**W2–W3 and W7 are done; W4–W6 and W8 are not.** What exists is a client that
-builds, opens a real `utun`, carries packets, and ships as an installable
-package — and does not yet resolve mesh names, recover from sleep, or carry an
-Apple signature. Read that as "the port is done and the platform integration is
-not", which is the honest split.
+**W2–W7 are done; W8 is not, and one piece of W5 is deliberately not built.**
+What exists is a client that builds, opens a real `utun`, carries TCP between
+two daemons on one Mac, resolves mesh names system-wide, recovers promptly from
+sleep, and ships as an installable package. What it does not have is an Apple
+signature, and a resolver *search* list — the second for a stated reason, below.
 
 ### Done
 
@@ -16,8 +16,22 @@ not", which is the honest split.
 |---|---|---|
 | W2 | `utun` open, AF prefix, read/write, unit tests | `crates/karst-tun/src/macos.rs`, `sys_macos.rs`, `macos_wire.rs` |
 | W3 | Addressing, routes, `local_addresses`, `default_gateway`; the name audit | as above, plus `TunConfig::name` redefined as a preference |
+| W4 | Loopback pair: two daemons, a real `utun`, 64 KiB of TCP each way, and the address-level filter | `bins/karstd/tests/macos_pair.rs`, `just macos-test-pair` |
+| W5 | `/etc/resolver` apply, revert, crash recovery, cache flush; `host_integration = "macos"`, selected by `auto` | `crates/karst-dns/src/host/macos.rs`, `bins/karstd/src/dns.rs` |
+| W6 | Resume detection and prompt rediscovery — every peer's schedule restarted, stale reflexive addresses dropped, interfaces re-enumerated on the same tick | `bins/karstd/src/wake.rs`, `Disco::rediscover`, `Engine::rediscover` |
 | W7 | `.pkg`, universal binary, install/uninstall scripts, LaunchDaemon | `packaging/macos/`, `scripts/build-macos-pkg.sh` |
-| — | CI: build both arches, unit + privileged `utun` tests, package build | `.github/workflows/ci.yml` (`macos`), `deliverables.yml` (`macos-package`) |
+| — | CI: build both arches, unit + privileged `utun` tests, the pair suite, package build | `.github/workflows/ci.yml` (`macos`), `deliverables.yml` (`macos-package`) |
+
+Three of those were built to run their tests **on the Linux job as well as the
+macOS one**, and that is a deliberate pattern rather than an accident of
+convenience. `karst_dns::host::macos`, `bins/karstd/tests/macos_pair.rs` and
+`karst_tun::macos_wire` contain no macOS API: they are byte formats, path
+handling, a crash-recovery protocol, and two child processes talking TCP. Gating
+them behind `#[cfg(target_os = "macos")]` would mean the only machine that ever
+type-checks them is the release runner. They compile everywhere, skip at run
+time where they must, and what the Mac adds — a kernel reading the resolver
+files, a `utun` carrying the packets — is what the macOS job and the walkthrough
+are for.
 
 Two things had to be fixed below `karst-tun` before any of it could compile,
 and both are worth knowing about:
@@ -37,16 +51,45 @@ and both are worth knowing about:
 
 | Week | Work | Consequence today |
 |---|---|---|
-| W4 | Loopback pair test (`bins/karstd/tests/macos_pair.rs`) | Two daemons on one Mac are untested; the datapath is proven per-packet, not end to end |
-| W5 | `/etc/resolver`, dynamic store, revert, cache flush | **Mesh names do not resolve system-wide.** `HostIntegration::Auto` selects nothing and announces it |
-| W6 | Sleep/wake, network-change re-probe | A laptop that suspends recovers on the keepalive timeout rather than promptly |
+| W5 | The resolver **search list** — the SystemConfiguration half | A fully-qualified mesh name resolves; a bare `laptop` does not become `laptop.aquifer.karst`. Everything else in W5 is done |
 | W8 | Signing, notarization, stapling, clean-machine verification | The `.pkg` is unsigned; Gatekeeper refuses it anywhere but the build machine |
+
+**The search list is not a shortcut taken, it is a mechanism that does not
+exist at this layer.** §5 below proposed `scutil` for the global case. That does
+not work, and the reason is worth writing down rather than discovering twice: a
+value put into the `SCDynamicStore` belongs to the session that set it and is
+removed when that session closes, so a `scutil` child process would have its
+entry dropped the moment it exits. Shipping it would have produced a
+configuration step that appeared to succeed and changed nothing.
+
+`/etc/resolver` has no key for the search list either — it routes names that are
+already qualified, which is exactly what it is for. Doing this properly means
+linking SystemConfiguration and holding an `SCDynamicStore` open for as long as
+`karstd` runs, which under ADR-0003 puts the FFI in `karst-tun` beside the other
+`unsafe`. That is the shape of the remaining work, and it is a Phase 6 item: it
+is FFI on the connectivity path, it cannot be exercised anywhere but a Mac, and
+none of the exit criteria in §10 depend on it. `networksetup -setsearchdomains`
+is the file-free alternative worth weighing against it — it persists, it is
+revertible, and it is per-network-service, which on a laptop that moves between
+networks is a moving target.
 
 W8 is **blocked on paperwork, not on code.** The pipeline is written and
 conditional: `scripts/build-macos-pkg.sh` signs, notarizes and staples the
 moment the credentials exist, and `--require-signing` makes their absence fatal
 so a tag cannot quietly ship unsigned. §7 below is still the critical path —
 somebody has to start the Apple Developer Program enrolment.
+
+### Still manual, and stated as such
+
+Two of the exit criteria in §10 cannot be reached by any suite in this tree, and
+the code that serves them is written so a person can check it in one sitting:
+
+- **Sleep and wake (§10.4).** `karstd` logs `this machine did not run for N s`
+  and then rediscovers. The detection is unit-tested against both clock
+  behaviours in `bins/karstd/src/wake.rs`, and what a real suspend adds is
+  whether five seconds is the right threshold on a machine that has genuinely
+  slept. Close the lid, open it, and read the log.
+- **Gatekeeper on a clean machine (§10.1).** Unchanged, and blocked on W8.
 
 ### On the App Store
 
@@ -172,11 +215,36 @@ Two macOS-specific behaviours to build and test:
   is that wake triggers it promptly rather than after a keepalive timeout.
   **Test by actually suspending a Mac**, which means this is a manual test in
   the W8 walkthrough, and say so rather than pretending CI covers it.
+
+  **Built as neither of those**, and the third option turned out to be better
+  than both. `bins/karstd/src/wake.rs` watches the interval between ticks of
+  the run loop, which already runs every hundred milliseconds: a tick that
+  arrives five seconds late is a tick the machine did not run, which is exactly
+  the condition that invalidates every measurement discovery holds. No `IOKit`
+  FFI, no bus subscription, no platform code at all — and it covers a stalled
+  process and a resumed VM as well as a closed lid. It reads both the monotonic
+  and the wall clock and takes the larger gap, because whether a monotonic
+  clock counts time spent asleep is a platform decision and this has to work on
+  either kind. `Engine::rediscover` is what it triggers: every candidate's
+  backoff restarts, the chosen path is pinged on that poll, stale reflexive
+  addresses are dropped, and one `CallMeMaybe` per peer goes out — because a
+  node whose external address just changed has to tell its peers as well as go
+  looking for them. The manual suspend is still the confirmation, and §0 says
+  what it is confirming.
 - **The revert file matters more here.** [01](01-karstdns.md) §7.1's stale-DNS
   failure mode is worse on a laptop that moves between networks than on a
   server that does not.
 
 ## 5. DNS integration
+
+> **Built, in part — see §0.** `crates/karst-dns/src/host/macos.rs` implements
+> the first row of the table below, with revert, crash recovery and the cache
+> flush; `karstd` selects it as `host_integration = "macos"` and `auto` picks it
+> on macOS. The second row's `scutil` suggestion is **wrong** and was not built:
+> a dynamic-store value is removed when the session that set it closes, so a
+> child process cannot leave one behind. §0 records what doing it properly
+> costs. The rest of this section is the reasoning the implementation followed
+> and is unchanged.
 
 Two mechanisms, both needed:
 
@@ -261,7 +329,8 @@ how a client ships broken.
 |---|---|---|
 | Unit | AF-prefix strip/prepend, name resolution, MTU validation | `crates/karst-tun/src/macos.rs`, runs on any macOS runner |
 | Integration | Open a real `utun`, assign an address, write and read a packet | `macos-14` GitHub runner with `sudo`, gated on `target_os` |
-| Loopback | Two `karstd` instances on one Mac over loopback, real `utun` each, TCP under an ACL | New `bins/karstd/tests/macos_pair.rs`. This is the closest thing to `two_nodes.rs` that macOS allows |
+| Loopback | Two `karstd` instances on one Mac over loopback, real `utun` each, TCP under an ACL | `bins/karstd/tests/macos_pair.rs`, `just macos-test-pair`. **"Real `utun` each" is not achievable and the row is built without it** — one IP stack cannot be made to route between two of its own addresses through a tunnel, and macOS has no namespaces to separate them, so a pair built that way would pass with the datapath deleted. The pair is one `utun` node and one userspace node, which is the only two-daemon shape on a single Mac where every byte has to cross the tunnel; the `utun` is still on the path in both directions. "Under an ACL" is the roster's `allowed_ips` rather than a port-scoped ACL, which needs a netmap — `two_nodes.rs` measures that against the same filter code on Linux |
+| DNS | `/etc/resolver` apply, revert, recovery from a real `SIGKILL`, and the refusal of a netmap domain that would escape the directory | `crates/karst-dns/src/host/macos.rs` and `bins/karstd/tests/dns_host.rs`, both of which run on **every** job rather than only the Mac — see §0 |
 | Cross-platform | A Mac and a Linux host, real NAT, direct path | `scripts/two-host-test.sh` already exists for exactly this shape and takes two ssh destinations; extend it to cope with a non-Linux host |
 | Manual | Sleep/wake, network change, Gatekeeper on a clean machine, the full install from a downloaded `.pkg` | The W8–W10 walkthrough, [09](09-exit-criteria.md) |
 

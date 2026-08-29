@@ -274,6 +274,26 @@ jobs:
         run: |
           sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
             "$UTUN_TEST_BIN" --ignored --test-threads=1
+      # The tier above proves the *device*: an interface comes up and a packet
+      # survives the round trip. This proves the *product* on it — two daemons,
+      # PHREATIC, and a TCP conversation whose every byte crosses a real utun in
+      # both directions. It is the closest thing to the Linux `aquifer` job that
+      # a machine without network namespaces allows, and the file says why.
+      #
+      # `cargo build --workspace` first, for the reason `just _privileged` gives:
+      # the suite drives the `karst` CLI, which lives in another package and
+      # which `cargo test -p karstd` therefore never builds.
+      - name: Build the utun pair suite
+        run: |
+          cargo build --workspace
+          bin=$(cargo test -p karstd --test macos_pair --no-run --message-format=json \
+                  | grep -o '"executable":"[^"]*macos_pair[^"]*"' | head -1 | cut -d'"' -f4)
+          [ -n "$bin" ] || { echo "::error::could not locate the macos_pair test binary"; exit 1; }
+          echo "PAIR_TEST_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Two daemons over a real utun (privileged)
+        run: |
+          sudo env PATH="$PATH" KARST_REQUIRE_PREREQUISITES=1 \
+            "$PAIR_TEST_BIN" --ignored --test-threads=1 --nocapture
 
   # PLAN.md §6's exit criterion is measured here and nowhere else.
   #

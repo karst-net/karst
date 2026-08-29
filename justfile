@@ -115,6 +115,14 @@ macos-check:
 macos-test-utun:
     @just _privileged karst-tun utun
 
+# Two daemons, one Mac, a real utun carrying TCP between them.
+#
+# macOS has no network namespaces, so this is not `two_nodes` — the pair is one
+# utun node and one userspace node, which is the only two-daemon shape on a
+# single host where the traffic cannot take a shortcut. The file explains why.
+macos-test-pair:
+    @just _privileged karstd macos_pair
+
 # The universal .pkg. Signed and notarized only if the credentials are in the
 # environment — see the script's header for which ones.
 macos-package:
