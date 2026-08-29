@@ -384,6 +384,17 @@ func (h *handler) bedrockAuditAnchorExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	entry, _, err := store.PrepareAnchor(r.Context(), user.AccountId, auditHead, time.Now().UTC())
+	// An account with no Bedrock log has nothing to anchor *into*. This is the
+	// state every account is in before the genesis ceremony, so it is the
+	// first thing an administrator who clicks this hits — and without this
+	// branch it arrived as a bare 500, while the sibling export three
+	// handlers up answered the same missing genesis with a 412 and a sentence
+	// saying what to do (FINDINGS.md 66).
+	if errors.Is(err, bedrock.ErrNoLog) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed,
+			"Bedrock genesis must be imported before an audit anchor can be exported"), w)
+		return
+	}
 	if errors.Is(err, audit.ErrEmpty) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cannot anchor an empty audit log"), w)
 		return

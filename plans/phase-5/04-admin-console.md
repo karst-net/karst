@@ -4,14 +4,21 @@
 
 ## 1. Starting point
 
-> **Re-baselined 2026-08-27.** The console workspace and its principal views
-> now exist. Prioritize integration correctness over building shells: its setup
-> screen still instructs users to run nonexistent `karst up`; Bedrock signing
-> controls cannot complete because their API is stubbed; audit export does not
-> supply the API's required format; and sink creation currently promises
-> forwarding that the server does not perform. Reconcile the getting-started
-> guide's claims that groups/relays/settings are read-only with the current UI
-> and real-server behavior, then cover each mutation with E2E tests.
+> **Re-baselined 2026-08-27; coverage closed 2026-08-28.** The console
+> workspace and its principal views now exist, and the four integration defects
+> this note listed are fixed: the setup screen emits `karstd.toml`
+> configuration rather than a nonexistent `karst up`, Bedrock import and export
+> are implemented, audit export selects the API's required format, and sinks
+> drain through a durable retrying outbox.
+>
+> The documentation drift is reconciled: the getting-started guide no longer
+> claims groups, relays or settings are read-only, and its deployment advice no
+> longer contradicts [05](05-user-portal.md) §4 by telling self-hosters to put
+> the console and portal on separate hostnames.
+>
+> Mutation coverage now exists at both layers: 54 console and 7 portal
+> Playwright tests against the contract mock, and every mutating route driven
+> against the real server — see [03](03-control-api.md).
 
 The following is the historical empty-workspace baseline, retained for context
 only; the re-baseline above is the current work list.

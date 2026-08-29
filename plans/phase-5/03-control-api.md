@@ -8,9 +8,18 @@
 > surface exists, including nodes, policy, relays, posture, audit, Bedrock
 > status/mode, and self-service devices. Bedrock export/import, audit JSON/CSV
 > export, durable webhook/TLS-syslog delivery, and the offline audit-anchor
-> ceremony are implemented. The remaining work is broader real-server
-> authorization and mutation coverage for every console route. Auditor
-> read-only access is implemented and covered by the role matrix.
+> ceremony are implemented. Auditor read-only access is implemented and covered
+> by the role matrix.
+>
+> **Real-server coverage landed 2026-08-28.** Every mutating console route is
+> now driven against the real account manager, the real permissions manager and
+> the real Karst stores — as an administrator, who must never be refused, and
+> as a member of the same account, who must always be. The table is checked
+> against the router itself, so a route added later without coverage fails
+> `TestEveryMutatingConsoleRouteHasRealServerCoverage` rather than shipping
+> unexercised. Writing it found FINDINGS.md 66: an export that answered a
+> missing precondition with a 500 where its sibling answered 412, invisible to
+> the handler tests because their double cannot produce the error.
 
 The following coverage table is the original gap analysis, retained as a record
 of why the namespace exists; it is superseded by the re-baseline above.

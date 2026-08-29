@@ -629,10 +629,19 @@ location /     { root /var/www/karst-console; try_files $uri /index.html; }
 Both apps authenticate as the operator does: every `/api/karst/v1` route is
 behind the management server's authorization middleware, so this only works
 once `HttpConfig.AuthIssuer`, `AuthAudience` and `AuthKeysLocation` in
-`management.json` name a working OIDC provider. Serve the console and the
-portal on separate hostnames — `/api/karst/v1/me/…` derives its subject from
-the token and accepts no user parameter, and keeping the two origins apart
-keeps that boundary visible.
+`management.json` name a working OIDC provider.
+
+**Serve them from two paths on one origin**, as above — `/` for the console
+and, say, `/portal/` for the portal. A second hostname means a second TLS name
+and a second CORS configuration to get right, and it buys nothing: the boundary
+is the API's authorization, not the browser's. A member reaching the console's
+JavaScript is not a vulnerability; a member's token succeeding against an admin
+route would be, and that is enforced server-side and tested as such — a Member
+is refused on every one of the thirty-four admin route/method pairs, and every
+mutating route is exercised against the real permissions manager by
+`TestConsoleMutationsAreRefusedForAMember`. `/api/karst/v1/me/…` derives its
+subject from the token and accepts no user parameter at all, so there is no
+path on which one user can name another.
 
 Checks: `just web-check` (`tsc --noEmit` plus lint, both workspaces),
 `corepack pnpm --filter @karst-net/console test`, and Playwright end-to-end

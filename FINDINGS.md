@@ -179,8 +179,41 @@ carries both the new wording and the original, struck through.
 | 63 | Medium | The portal's session history was audit rows: every entry reported a null end time and a null address | Fixed 2026-08-28 |
 | 64 | Medium | The portal's Playwright suite has never run in CI — only the console's | Fixed 2026-08-28 |
 | 65 | Medium | The download manifest generator named a Windows MSI and a `.deb` the pipeline does not build, so it could not succeed, and the fixture served the same invented names | Fixed 2026-08-28 |
+| 66 | Medium | Exporting an audit anchor before the Bedrock genesis answered 500, where every sibling precondition on the same surface answers 412 | Fixed 2026-08-28 |
 
 ## Closed
+
+### 66. Medium: the audit-anchor export answered a missing precondition with a 500
+
+**Found 2026-08-28** by driving every mutating console route against the real
+account manager for the first time. Fixed the same day.
+
+`POST /bedrock/audit-anchor/export` handles two preconditions by name —
+`audit.ErrEmpty` and `bedrock.ErrNothingToAnchor` — and both become a 412 with
+a sentence explaining what is missing. `PrepareAnchor` has a third,
+`bedrock.ErrNoLog`, returned when the account has no Bedrock log at all. The
+handler had no branch for it, so it fell through to the generic error path:
+
+```
+POST /karst/v1/bedrock/audit-anchor/export -> 500 {"message":"internal server error"}
+```
+
+**That is the state every account is in before the genesis ceremony**, which
+makes it the first thing an administrator who finds this button hits. They are
+told the server broke.
+
+The comparison is what makes it clearly a defect rather than a rough edge:
+`POST /bedrock/requests/export`, three handlers away, answers the *same*
+missing genesis with `412` and "Bedrock genesis must be imported before node
+signing requests can be created". One export explains the missing ceremony; its
+sibling reported a fault.
+
+Found because the new real-server table asserts an administrator is never
+refused and lands on an expected status, and 500 is not a status any route on
+this surface should reach from an empty account. None of the handler-level
+tests could have found it: they drive the same route against a `bedrockLog`
+double whose `PrepareAnchor` never returns `ErrNoLog`.
+
 
 ### 65. Medium: the download manifest described artefacts nothing builds
 
