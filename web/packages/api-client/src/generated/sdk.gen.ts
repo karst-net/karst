@@ -66,7 +66,7 @@ export const listMyDevices = <ThrowOnError extends boolean = false>(options?: Op
     ...options
 });
 
-export const EnrollMyDevice = <ThrowOnError extends boolean = false>(options?: Options<EnrollMyDeviceData, ThrowOnError>): RequestResult<EnrollMyDeviceResponses, EnrollMyDeviceErrors, ThrowOnError> => (options?.client ?? client).post<EnrollMyDeviceResponses, EnrollMyDeviceErrors, ThrowOnError>({
+export const enrollMyDevice = <ThrowOnError extends boolean = false>(options?: Options<EnrollMyDeviceData, ThrowOnError>): RequestResult<EnrollMyDeviceResponses, EnrollMyDeviceErrors, ThrowOnError> => (options?.client ?? client).post<EnrollMyDeviceResponses, EnrollMyDeviceErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/devices/enroll',
     ...options

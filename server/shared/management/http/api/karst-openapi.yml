@@ -72,7 +72,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
   /me/devices/enroll:
     post:
-      operationId: EnrollMyDevice
+      operationId: enrollMyDevice
       tags: [portal]
       responses:
         '200': {description: Short-lived single-use device key, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceEnrollment'}}}}
