@@ -87,9 +87,15 @@ fails in that crate rather than at the end.
 **To build the coordination server:**
 
 ```sh
-sudo apt-get install -y gcc
-# Go 1.27+. server/go.mod pins a release candidate, because crypto/mldsa is a
-# 1.27 addition; GOTOOLCHAIN=auto lets the installed Go fetch it.
+sudo apt-get install -y gcc golang-go
+```
+
+The archive's Go is older than `server/go.mod` pins (Ubuntu 24.04 ships 1.22;
+the pin is a 1.27 release candidate, because `crypto/mldsa` is a 1.27
+addition) — that's fine, it does not need to match:
+
+```sh
+# GOTOOLCHAIN=auto lets the installed Go fetch and run the pinned toolchain.
 export GOTOOLCHAIN=auto
 ```
 
@@ -98,7 +104,22 @@ built with cgo off it links into a working-*looking* binary that dies at first
 use with `Binary was compiled with 'CGO_ENABLED=0' … This is a stub`.
 
 **To build the console and portal:** Node 22+ and `corepack` (pnpm 9 is pinned
-by `web/package.json`).
+by `web/package.json`). The Ubuntu archive's `nodejs` is too old (18.x on
+24.04) to satisfy that; use NodeSource instead:
+
+```sh
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+sudo corepack enable
+```
+
+Node bundles `corepack` but does not put it on `PATH` until `corepack enable`
+runs once — that's the source of a bare `corepack: command not found`. `sudo`
+is required for that step here: NodeSource installs into `/usr/bin`, owned by
+root, and `corepack enable` writes shims there. On a Node install where
+corepack isn't bundled at all (it stopped shipping by default from Node 25
+on), install it as a package instead: `sudo npm install -g corepack && sudo
+corepack enable`.
 
 **To run `karstd` in its default TUN mode:** a kernel with `/dev/net/tun`, and
 `CAP_NET_ADMIN` — in practice, root. `karstd` also runs with **no capabilities
@@ -106,6 +127,48 @@ at all** in userspace mode (§6.4), which is the option when you cannot have
 root.
 
 **For the container path only:** `docker`, `docker compose`, and `openssl`.
+
+**To run the gate in §3:** `just`, the command runner, and `cargo-deny`:
+
+```sh
+sudo apt-get install -y just
+cargo +stable install cargo-deny --locked
+```
+
+`cargo-deny` has to come from the `stable` toolchain, not the pinned one
+(`rustup toolchain install stable` first if you don't have it) — the advisory
+database carries CVSS 4.0 scores that an older `cargo-deny` can't parse, and
+it fails to load the database entirely rather than skipping the entry, so an
+out-of-date tool silently stops checking advisories at all.
+
+`just go-test` also needs a reachable Docker daemon: the coordination
+server's store tests (e.g. `TestPostgresql_GetAccount_LoadsCustomDomains`)
+spin up real Postgres containers via testcontainers-go. Your user has to be
+in the `docker` group, not just have `docker` installed — running as your own
+user without it fails with `permission denied while trying to connect to the
+Docker daemon socket`:
+
+```sh
+sudo usermod -aG docker "$USER"
+```
+
+Log out and back in (a new SSH session is enough) for the group membership to
+take effect — it isn't picked up by the current shell.
+
+`just go-lint` needs `staticcheck` on `PATH`, which nothing above installs:
+
+```sh
+GOTOOLCHAIN=go1.27rc3 go install honnef.co/go/tools/cmd/staticcheck@latest
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+Pin `GOTOOLCHAIN` to the same `go1.27rc3` release `server/go.mod` pins —
+don't leave it at `auto` for this one. `honnef.co/go/tools`'s own `go.mod`
+only requires `go >= 1.26.0`, so under `GOTOOLCHAIN=auto` the install is
+satisfied by downloading go1.26 and building `staticcheck` against *that*
+stdlib, producing a binary that then fails on every file in this repo needing
+go1.27: `package requires newer Go version go1.27 (application built with
+go1.26)`.
 
 ---
 
