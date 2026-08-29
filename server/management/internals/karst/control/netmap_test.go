@@ -1073,8 +1073,7 @@ func TestDeltaEntriesAreComplete(t *testing.T) {
 	full := requestNetmap(t, f, 0)
 	holds := digestsOf(full)
 
-	target := string(full.GetPeers()[0].GetNodeId())
-	f.handler.Peers.(*fakePeers).byKey[target].DNSLabel = "x"
+	f.handler.Peers.(*fakePeers).byKey[string(full.GetPeers()[0].GetNodeId())].DNSLabel = "x"
 
 	d := requestDelta(t, f, holds)
 	if len(d.GetPeers()) != 1 {

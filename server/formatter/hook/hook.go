@@ -14,8 +14,10 @@ import (
 
 type ExecutionContext string
 
+type ctxKey string
+
 const (
-	ExecutionContextKey = "executionContext"
+	ExecutionContextKey ctxKey = "executionContext"
 
 	HTTPSource   ExecutionContext = "HTTP"
 	GRPCSource   ExecutionContext = "GRPC"
@@ -94,18 +96,18 @@ func (hook ContextHook) parseSrc(filePath string) string {
 
 func addFields(entry *logrus.Entry) {
 	if ctxReqID, ok := entry.Context.Value(context.RequestIDKey).(string); ok {
-		entry.Data[context.RequestIDKey] = ctxReqID
+		entry.Data[string(context.RequestIDKey)] = ctxReqID
 	}
 	if ctxAccountID, ok := entry.Context.Value(context.AccountIDKey).(string); ok {
-		entry.Data[context.AccountIDKey] = ctxAccountID
+		entry.Data[string(context.AccountIDKey)] = ctxAccountID
 	}
 	if ctxUserAgent, ok := entry.Context.Value(context.UserAgentKey).(string); ok {
-		entry.Data[context.UserAgentKey] = ctxUserAgent
+		entry.Data[string(context.UserAgentKey)] = ctxUserAgent
 	}
 	if ctxInitiatorID, ok := entry.Context.Value(context.UserIDKey).(string); ok {
-		entry.Data[context.UserIDKey] = ctxInitiatorID
+		entry.Data[string(context.UserIDKey)] = ctxInitiatorID
 	}
 	if ctxDeviceID, ok := entry.Context.Value(context.PeerIDKey).(string); ok {
-		entry.Data[context.PeerIDKey] = ctxDeviceID
+		entry.Data[string(context.PeerIDKey)] = ctxDeviceID
 	}
 }

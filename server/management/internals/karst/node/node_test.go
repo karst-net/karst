@@ -68,7 +68,8 @@ func TestHandleIsWireGuardKeyShaped(t *testing.T) {
 
 func TestHandleIsStableAndDistinct(t *testing.T) {
 	a, b := newIdentity(t), newIdentity(t)
-	if node.Handle(a.Public()) != node.Handle(a.Public()) {
+	first, second := node.Handle(a.Public()), node.Handle(a.Public())
+	if first != second {
 		t.Fatal("handle is not stable for one identity")
 	}
 	if node.Handle(a.Public()) == node.Handle(b.Public()) {

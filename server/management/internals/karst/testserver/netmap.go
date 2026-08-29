@@ -181,7 +181,6 @@ const (
 )
 
 type router struct {
-	login   *control.LoginHandler
 	netmap  *control.NetmapHandler
 	bedrock *control.BedrockHandler
 	// bedrockFixture countersigns nodes as they register, when Bedrock is on.
@@ -524,14 +523,6 @@ func (m *memoryBedrockLog) State(context.Context, string) (*bedrock.State, error
 		return nil, bedrock.ErrNoLog
 	}
 	return bedrock.VerifyLog(entries)
-}
-
-func patternBytes(n int, seed byte) []byte {
-	out := make([]byte, n)
-	for i := range out {
-		out[i] = seed + byte(i)
-	}
-	return out
 }
 
 func (m *memoryBedrockLog) Entries(_ context.Context, _ string, sinceSeq uint64, limit int) ([]bedrock.Entry, error) {

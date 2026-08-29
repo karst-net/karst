@@ -143,7 +143,8 @@ func TestConcurrentFirstStartConverges(t *testing.T) {
 func TestCurrentEpochIsDerivedFromTheClock(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0).UTC()
 
-	if CurrentEpoch(base) != CurrentEpoch(base) {
+	first, second := CurrentEpoch(base), CurrentEpoch(base)
+	if first != second {
 		t.Fatal("the epoch is not a function of its input")
 	}
 	if CurrentEpoch(base) != CurrentEpoch(base.Add(time.Hour)) {

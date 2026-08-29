@@ -382,12 +382,6 @@ func (d *Document) matchingSource(selectors []string, n Node) string {
 	return ""
 }
 
-// sourcesInclude reports whether any of the rule's source selectors describes
-// the node.
-func (d *Document) sourcesInclude(selectors []string, n Node) bool {
-	return d.matchingSource(selectors, n) != ""
-}
-
 // Permits reports whether the egress filter allows traffic to dst on port.
 //
 // Default deny, for the same reason Filter.Permits is: a policy typo must
