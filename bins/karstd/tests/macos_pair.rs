@@ -95,6 +95,12 @@ const INTERFACE_2: &str = "karstm2";
 const LISTEN_TUN_2: u16 = 51863;
 const LISTEN_USERSPACE_2: u16 = 51864;
 const SERVICE_PORT_2: u16 = 19011;
+/// The second row never speaks SOCKS, and its userspace node needs a listener
+/// anyway: `network_mode = "userspace"` with neither a SOCKS listener nor a
+/// published port is refused at startup, because a stack with no attachment can
+/// carry nothing. Without it the node exits before the peer can establish and
+/// the row fails thirty seconds later complaining about the wrong thing.
+const SOCKS_PORT_2: u16 = 11086;
 /// Inside the `utun`'s on-link prefix, so the host routes it to the tunnel, and
 /// outside every peer's `allowed_ips`, so nothing should carry it.
 const OVERLAY_UNOWNED: &str = "10.89.1.9";
@@ -116,6 +122,18 @@ fn effective_uid() -> u32 {
         .unwrap_or(1)
 }
 
+/// Whether the interface under the pair is the kernel's `utun`, and therefore
+/// whether the assertions about its name mean anything.
+///
+/// See [`have_prerequisites`]: off macOS this suite runs only when it is asked
+/// to, and what it exercises there is a Linux TUN.
+fn on_utun() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os(ON_HOST).is_none()
+}
+
+/// Run the pair against this host's own TUN device instead of skipping.
+const ON_HOST: &str = "KARST_PAIR_ON_HOST";
+
 /// Whether to run.
 ///
 /// **Not being macOS is not a missing prerequisite.** It is the wrong machine,
@@ -123,9 +141,19 @@ fn effective_uid() -> u32 {
 /// variable governs only the things a macOS runner could be missing, and the
 /// platform check skips unconditionally. Getting this backwards would turn
 /// every Linux CI job red for a suite that was never meant to run there.
+///
+/// `KARST_PAIR_ON_HOST=1` overrides that, and it earns its place. Everything
+/// this file drives above the interface — the roster, PHREATIC, smoltcp, SOCKS5
+/// and the copy loop — is the same code on both platforms, so a Linux box with
+/// root and `/dev/net/tun` can run the whole row against a Linux TUN in half a
+/// second. That is how the first macOS failure of this suite was diagnosed: the
+/// row passed on Linux, which said the fault was in the platform and not in the
+/// arrangement, and turned a ten-minute CI round trip into a local one. It is
+/// not the gate — the name assertions below stand down when it is set, because
+/// Linux honours the configured interface name and macOS does not.
 fn have_prerequisites() -> bool {
-    if !cfg!(target_os = "macos") {
-        eprintln!("skipping: the utun pair needs macOS");
+    if !cfg!(target_os = "macos") && std::env::var_os(ON_HOST).is_none() {
+        eprintln!("skipping: the utun pair needs macOS (or {ON_HOST}=1 to run it here)");
         return false;
     }
     if effective_uid() == 0 {
@@ -548,17 +576,23 @@ fn a_tcp_conversation_crosses_a_real_utun_in_both_directions() {
     // is a *preference*, macOS declines it, and everything downstream reads the
     // name the interface actually got. A daemon that reported the configured
     // name here would be reporting a name no tool on the machine can find.
-    let name = field(&status(&tun), "interface").unwrap_or_default();
-    assert!(
-        name.starts_with("utun"),
-        "the reported interface is {name:?}, not the utunN the kernel assigns\n{}",
-        status(&tun)
-    );
-    assert_ne!(
-        name, INTERFACE,
-        "the configured name was reported back, so something is repeating the \
-         request instead of reading the result"
-    );
+    //
+    // Only on macOS. Linux honours the requested name, so under `ON_HOST` the
+    // correct answer is the opposite one and asserting either would be
+    // asserting the platform rather than the daemon.
+    if on_utun() {
+        let name = field(&status(&tun), "interface").unwrap_or_default();
+        assert!(
+            name.starts_with("utun"),
+            "the reported interface is {name:?}, not the utunN the kernel assigns\n{}",
+            status(&tun)
+        );
+        assert_ne!(
+            name, INTERFACE,
+            "the configured name was reported back, so something is repeating \
+             the request instead of reading the result"
+        );
+    }
 
     let request = pattern(0x5a, PAYLOAD);
     let reply = pattern(0xa5, PAYLOAD);
@@ -627,7 +661,7 @@ fn an_overlay_address_no_peer_owns_is_not_carried() {
         listen: LISTEN_USERSPACE_2,
         peer_listen: LISTEN_TUN_2,
         interface: INTERFACE_2,
-        socks: None,
+        socks: Some(SOCKS_PORT_2),
     });
     let tun = start(&Spec {
         tag: "utun-acl",

@@ -33,6 +33,24 @@ time where they must, and what the Mac adds — a kernel reading the resolver
 files, a `utun` carrying the packets — is what the macOS job and the walkthrough
 are for.
 
+**W4 paid for itself on its first CI run**, which is the argument for running
+the product on the platform rather than only its parts. It found FINDINGS.md
+69: userspace mode's SOCKS5 attachment had never worked on macOS, because BSD
+accepts inherit the listener's `O_NONBLOCK` and Linux accepts do not, so a
+`read_exact` in the SOCKS negotiation returned `WouldBlock` as an error on every
+connection. `tests/userspace.rs` covers that surface and is Linux-only by
+construction — it drives `setpriv` and reads `/proc` — so it could never have
+seen it, and `karst status` kept working throughout because the control socket's
+accept already cleared the flag. The same defect was latent in KarstDNS's TCP
+listener.
+
+`KARST_PAIR_ON_HOST=1` is what localised it. The rows above the interface are
+the same code on both platforms, so the suite will run against this host's own
+TUN when asked; the row passing on Linux in half a second said the fault was in
+the platform and not in the arrangement, without a CI round trip per hypothesis.
+It is not the gate — the interface-name assertions stand down under it, because
+Linux honours the configured name and macOS does not.
+
 Two things had to be fixed below `karst-tun` before any of it could compile,
 and both are worth knowing about:
 

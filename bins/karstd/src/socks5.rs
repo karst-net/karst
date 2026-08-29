@@ -25,9 +25,35 @@ pub(crate) fn serve(stack: &Userspace, listen: SocketAddr, shutdown: &Shutdown) 
         while !shutdown.requested() {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    // **Back to blocking for the conversation itself.** BSD
+                    // accepts inherit the listener's `O_NONBLOCK` and Linux
+                    // accepts do not — POSIX leaves it unspecified — so without
+                    // this the negotiation below runs non-blocking on macOS and
+                    // blocking on Linux. It fails in the least visible way
+                    // possible: SOCKS5 is a round trip, the client sends its
+                    // CONNECT only after reading the method selection, and the
+                    // daemon's `read_exact` for the request therefore arrives
+                    // before the bytes do and returns `WouldBlock` as an error.
+                    // The client sees its greeting answered and then an EOF, so
+                    // userspace mode's whole outbound attachment was dead on
+                    // macOS while every Linux test passed.
+                    //
+                    // `run.rs`'s control socket already does this, for this
+                    // reason, and says so. Two other accept sites did not.
+                    let _ = stream.set_nonblocking(false);
                     let stack = stack.clone();
                     connections.spawn(move || {
-                        let _ = proxy(stream, &stack, shutdown);
+                        // **Reported, not discarded.** Every failure below
+                        // closes the client's connection, and SOCKS5 has no
+                        // reply for most of them — a client that asked for a
+                        // name, or spoke HTTP, or named an overlay address the
+                        // stack cannot reach, sees an EOF and nothing else. The
+                        // operator debugging a sidecar that will not connect
+                        // has this log and the client's silence, so the log has
+                        // to carry the reason.
+                        if let Err(error) = proxy(stream, &stack, shutdown) {
+                            eprintln!("karstd: socks5 connection failed: {error}");
+                        }
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -48,9 +74,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn proxy(mut client: TcpStream, stack: &Userspace, shutdown: &Shutdown) -> io::Result<()> {
     let destination = negotiate(&mut client)?;
+    // The destination is in the message because it is the client's choice and
+    // the most common reason this fails is that it named an address the stack
+    // has no source address for — which the stack reports as "unaddressable"
+    // and nothing else.
     let tunnel = stack
         .connect_tcp(destination.ip(), destination.port())
-        .map_err(|e| io::Error::other(e.to_string()))?;
+        .map_err(|e| io::Error::other(format!("overlay connection to {destination}: {e}")))?;
     // **Bounded, because the overlay address came from the client.** A SOCKS
     // client may ask for any address in the tailnet, including one nothing
     // answers at; waiting for the handshake without a deadline holds a thread

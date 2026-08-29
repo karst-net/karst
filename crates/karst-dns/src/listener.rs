@@ -33,6 +33,14 @@ pub fn serve_udp_once(socket: &UdpSocket, resolver: &Resolver) -> io::Result<()>
 /// Receive and answer one RFC 7766 length-prefixed TCP DNS request.
 pub fn serve_tcp_once(listener: &TcpListener, resolver: &Resolver) -> io::Result<()> {
     let (mut stream, _) = listener.accept()?;
+    // The caller polls a non-blocking listener, and whether an accepted socket
+    // inherits that flag is a platform decision POSIX declines to make: BSD and
+    // macOS inherit it, Linux does not. The reads below are `read_exact`, which
+    // reports `WouldBlock` as a failure rather than waiting, so on an inheriting
+    // platform a request whose bytes had not all arrived by this line would be
+    // dropped — intermittently, and only there. Asked for explicitly so both
+    // platforms answer DNS the same way.
+    stream.set_nonblocking(false)?;
     let mut prefix = [0u8; 2];
     stream.read_exact(&mut prefix)?;
     let length = usize::from(u16::from_be_bytes(prefix));

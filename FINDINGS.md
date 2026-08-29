@@ -185,6 +185,53 @@ carries both the new wording and the original, struck through.
 
 ## Closed
 
+### 69. High: userspace mode's SOCKS5 attachment never worked on macOS
+
+**Found 2026-08-29** by the first CI run of `bins/karstd/tests/macos_pair.rs`.
+Fixed the same day.
+
+`socks5::serve` polls a non-blocking listener, and **whether an accepted socket
+inherits `O_NONBLOCK` is a platform decision POSIX declines to make.** Linux's
+`accept(2)` explicitly does not inherit it; BSD's and macOS's explicitly do. So
+the negotiation that follows ran blocking on Linux and non-blocking on macOS,
+and `negotiate` uses `read_exact`, which reports `WouldBlock` as a failure
+rather than waiting for the bytes.
+
+SOCKS5 is a round trip, and that is what made this total rather than
+intermittent. The client sends its `CONNECT` only after reading the method
+selection, so the daemon's `read_exact` for the request is always issued before
+those bytes can have arrived. Every connection failed at the same place, every
+time. The client saw its greeting answered and then an EOF — no SOCKS error
+code, because the failure is upstream of the code path that sends one.
+
+ADR-0012's whole outbound attachment was therefore dead on macOS while every
+Linux test passed, and nothing said so. `tests/userspace.rs` is the suite that
+covers this surface and it is Linux-only by construction — it drives `setpriv`
+and reads `/proc` — so no amount of running it could have found this.
+
+**The knowledge was already in the tree.** `run.rs`'s control-socket accept
+clears the flag and carries a comment saying why, which is why `karst status`
+kept working on macOS and made the daemon look healthy. Two other accept sites
+behind a non-blocking listener never got the same treatment.
+
+The second is `karst_dns::listener::serve_tcp_once`, fixed here as well. Its
+exposure is smaller and its failure worse to diagnose: a DNS client sends its
+query without waiting for anything, so the bytes are usually already there and
+the request usually succeeds — it would have dropped TCP DNS requests
+intermittently on macOS, under load, and only there.
+
+Both now ask for blocking explicitly rather than inheriting whatever the
+platform decided. What found it was running the product on the platform: the
+pair test reproduces the failure on macOS and passes after the fix, and
+`KARST_PAIR_ON_HOST=1` runs the same rows against a Linux TUN, which is how the
+fault was localised to the platform rather than the arrangement.
+
+Noted and not fixed, because it is neither new nor platform-specific:
+`serve_tcp_once`'s `read_exact` on an accepted socket has no timeout, so a
+client that connects to the tunnel's TCP DNS port and sends nothing holds that
+worker thread indefinitely. That is today's behaviour on Linux too, and this
+change makes macOS match it rather than introducing it.
+
 ### 68. High: the netmap push was costed against a stream that does not exist
 
 **Found 2026-08-28** while scoping the push that finding 67 needs. Open.

@@ -123,6 +123,22 @@ macos-test-utun:
 macos-test-pair:
     @just _privileged karstd macos_pair
 
+# The same rows against *this* host's TUN device, wherever this host is.
+#
+# Everything the pair drives above the interface is the same code on every
+# platform, so a Linux box with root can run it in half a second. That is how
+# FINDINGS.md 69 was localised: the row passed here and failed on the macOS
+# runner, which said the fault was the platform rather than the arrangement.
+# Not the gate — `macos-test-pair` is.
+macos-test-pair-here:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --workspace
+    bin=$(cargo test -p karstd --test macos_pair --no-run --message-format=json 2>/dev/null \
+          | grep -o "\"executable\":\"[^\"]*macos_pair[^\"]*\"" | head -1 | cut -d'"' -f4)
+    [ -n "$bin" ] || { echo "could not locate the macos_pair test binary"; exit 1; }
+    sudo env "PATH=$PATH" KARST_PAIR_ON_HOST=1 "$bin" --ignored --test-threads=1 --nocapture
+
 # The universal .pkg. Signed and notarized only if the credentials are in the
 # environment — see the script's header for which ones.
 macos-package:
