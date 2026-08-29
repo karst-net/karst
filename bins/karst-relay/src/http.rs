@@ -11,7 +11,7 @@
 //! one of those is on the pre-authentication surface.
 //!
 //! The parser is written accordingly: bounded, allocation-free until it
-//! succeeds, and it never treats a header it does not recognise as
+//! succeeds, and it never treats a header it does not recognize as
 //! significant.
 
 use std::fmt::Write as _;
@@ -158,7 +158,7 @@ pub fn parse(buf: &[u8]) -> Result<Option<Upgrade>, Reject> {
             declared_version = Some(value);
         }
         // Everything else is ignored, and ignoring it is safe precisely
-        // because nothing here is authorisation: admission is §5.3's job and
+        // because nothing here is authorization: admission is §5.3's job and
         // happens after the 101, against the roster.
     }
 
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn an_unrelated_header_is_ignored() {
-        // Safe because nothing here is authorisation — admission happens after
+        // Safe because nothing here is authorization — admission happens after
         // the 101, against the roster.
         let extra = "GET /ponor HTTP/1.1\r\nX-Forwarded-For: 10.0.0.1\r\n\
              Connection: Upgrade\r\nUpgrade: ponor\r\n\r\n";

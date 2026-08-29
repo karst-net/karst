@@ -184,7 +184,7 @@ func (s *SqlStore) CompletePeerJob(ctx context.Context, job *types.Job) error {
 	return nil
 }
 
-// job was pending for too long and has been cancelled
+// job was pending for too long and has been canceled
 func (s *SqlStore) MarkPendingJobsAsFailed(ctx context.Context, accountID, peerID, jobID, reason string) error {
 	now := time.Now().UTC()
 	result := s.db.
@@ -202,7 +202,7 @@ func (s *SqlStore) MarkPendingJobsAsFailed(ctx context.Context, accountID, peerI
 	return nil
 }
 
-// job was pending for too long and has been cancelled
+// job was pending for too long and has been canceled
 func (s *SqlStore) MarkAllPendingJobsAsFailed(ctx context.Context, accountID, peerID, reason string) error {
 	now := time.Now().UTC()
 	result := s.db.
@@ -524,7 +524,7 @@ func (s *SqlStore) SavePeerStatus(ctx context.Context, accountID, peerID string,
 	return nil
 }
 
-// MarkPeerConnectedIfNewerSession is an atomic optimistic-locked update.
+// MarkPeerConnectedIfNewerSession is an atomic optimiztic-locked update.
 // The peer is marked connected with the given session token only when
 // the stored SessionStartedAt is strictly smaller than the incoming
 // one — equivalently, when no newer stream has already taken ownership.
@@ -559,7 +559,7 @@ func (s *SqlStore) MarkPeerConnectedIfNewerSession(ctx context.Context, accountI
 	return result.RowsAffected > 0, nil
 }
 
-// MarkPeerDisconnectedIfSameSession is an atomic optimistic-locked update.
+// MarkPeerDisconnectedIfSameSession is an atomic optimiztic-locked update.
 // The peer is marked disconnected only when the stored SessionStartedAt
 // matches the incoming token — meaning the stream that owns the current
 // session is the one ending. If a newer stream has already replaced the
@@ -5717,7 +5717,7 @@ func (s *SqlStore) CreateAccessLog(ctx context.Context, logEntry *accesslogs.Acc
 }
 
 // CreateAgentNetworkAccessLog persists a flattened agent-network access-log
-// entry together with its authorising-group child rows in a single
+// entry together with its authorizing-group child rows in a single
 // transaction.
 func (s *SqlStore) CreateAgentNetworkAccessLog(ctx context.Context, entry *agentNetworkTypes.AgentNetworkAccessLog, groups []agentNetworkTypes.AgentNetworkAccessLogGroup) error {
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -5745,7 +5745,7 @@ func (s *SqlStore) CreateAgentNetworkAccessLog(ctx context.Context, entry *agent
 }
 
 // CreateAgentNetworkUsage persists a stripped agent-network usage record
-// together with its authorising-group child rows in a single transaction.
+// together with its authorizing-group child rows in a single transaction.
 func (s *SqlStore) CreateAgentNetworkUsage(ctx context.Context, usage *agentNetworkTypes.AgentNetworkUsage, groups []agentNetworkTypes.AgentNetworkUsageGroup) error {
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Idempotent on the usage id / (usage_id, group_id) so a proxy resend of
@@ -5771,7 +5771,7 @@ func (s *SqlStore) CreateAgentNetworkUsage(ctx context.Context, usage *agentNetw
 }
 
 // DeleteOldAgentNetworkAccessLogs deletes an account's access-log rows (and
-// their authorising-group child rows) older than the cutoff. Usage records are
+// their authorizing-group child rows) older than the cutoff. Usage records are
 // untouched — they are the long-term aggregate. Returns the number of log rows
 // deleted.
 func (s *SqlStore) DeleteOldAgentNetworkAccessLogs(ctx context.Context, accountID string, olderThan time.Time) (int64, error) {
@@ -5853,7 +5853,7 @@ func (s *SqlStore) applyAgentNetworkUsageFilters(query *gorm.DB, filter agentNet
 }
 
 // GetAgentNetworkAccessLogs retrieves flattened agent-network access logs for
-// an account with server-side pagination, filtering and sorting. Authorising
+// an account with server-side pagination, filtering and sorting. Authorizing
 // group ids are hydrated from the group child table for the returned page.
 func (s *SqlStore) GetAgentNetworkAccessLogs(ctx context.Context, lockStrength LockingStrength, accountID string, filter agentNetworkTypes.AgentNetworkAccessLogFilter) ([]*agentNetworkTypes.AgentNetworkAccessLog, int64, error) {
 	var logs []*agentNetworkTypes.AgentNetworkAccessLog
@@ -5934,7 +5934,7 @@ func (s *SqlStore) applyAgentNetworkAccessLogFilters(query *gorm.DB, filter agen
 	return query
 }
 
-// hydrateAgentNetworkAccessLogGroups loads the authorising group ids for the
+// hydrateAgentNetworkAccessLogGroups loads the authorizing group ids for the
 // given page of entries and assigns them onto each entry's GroupIDs field.
 func (s *SqlStore) hydrateAgentNetworkAccessLogGroups(ctx context.Context, accountID string, logs []*agentNetworkTypes.AgentNetworkAccessLog) error {
 	if len(logs) == 0 {

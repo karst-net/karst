@@ -107,7 +107,7 @@ func TestGRPCExtensionShutdownHookReceivesCallerContext(t *testing.T) {
 }
 
 // TestGRPCExtensionShutdownHookObservesCancellation documents, by test, that
-// hooks can honor cancellation/deadlines: a hook given an already-cancelled
+// hooks can honor cancellation/deadlines: a hook given an already-canceled
 // context must see ctx.Err() != nil and a closed Done() channel.
 func TestGRPCExtensionShutdownHookObservesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,12 +118,12 @@ func TestGRPCExtensionShutdownHookObservesCancellation(t *testing.T) {
 		Shutdown: func(hookCtx context.Context) {
 			called = true
 			if hookCtx.Err() == nil {
-				t.Error("hook context Err() = nil, want non-nil for a cancelled context")
+				t.Error("hook context Err() = nil, want non-nil for a canceled context")
 			}
 			select {
 			case <-hookCtx.Done():
 			default:
-				t.Error("hook context Done() channel is not closed for a cancelled context")
+				t.Error("hook context Done() channel is not closed for a canceled context")
 			}
 		},
 	}

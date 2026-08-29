@@ -573,7 +573,7 @@ mod tests {
         let oldest = batch(0);
         assert!(
             newest.iter().all(|c| held(c.0)),
-            "the peer's current addresses were refused in favour of stale ones"
+            "the peer's current addresses were refused in favor of stale ones"
         );
         assert!(
             oldest.iter().all(|c| !held(c.0)),

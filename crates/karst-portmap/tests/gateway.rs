@@ -13,7 +13,7 @@
 //! So this drives **miniupnpd**, an independent implementation of both
 //! protocols with a nftables backend, in a network namespace. It is the same
 //! argument `crates/karst-disco/tests/nat_matrix.rs` makes about NAT
-//! behaviour, one layer up: an instrument that only agrees with itself is not
+//! behavior, one layer up: an instrument that only agrees with itself is not
 //! an instrument.
 //!
 //! Needs `CAP_NET_ADMIN` and `miniupnpd` on `PATH`, so it is `#[ignore]`d:

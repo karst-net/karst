@@ -382,7 +382,7 @@ func (a *Account) getPeersGroupsPoliciesRoutes(
 		// equivalence path doesn't surface this — but the dependency is
 		// real once a client actually tries to use the route.
 		// Gate by validatedPeersMap so non-validated advertisers stay out
-		// (matches the network-resource router behaviour at the bottom of
+		// (matches the network-resource router behavior at the bottom of
 		// this loop, and the legacy invariant that only validated peers
 		// reach a client's view).
 		if r.Peer != "" {
@@ -729,7 +729,7 @@ func (a *Account) getPostureValidPeersSaveFailed(inputPeers []string, postureChe
 // deleted from the map — they're kept so the components wire encoder can
 // still resolve seq references from routes/policies/access-control groups
 // that name them. Calculate() tolerates groups with empty Peers (the inner
-// loops simply iterate zero times), so retaining them is behaviourally a
+// loops simply iterate zero times), so retaining them is behaviorally a
 // no-op for the legacy path that consumes the same NetworkMapComponents.
 func filterGroupPeers(groups *map[string]*ComponentGroup, peers map[string]*ComponentPeer) {
 	for groupID, groupInfo := range *groups {

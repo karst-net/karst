@@ -634,12 +634,12 @@ fn a_relay_id_is_the_digest_of_its_identity_key() {
             checked += 1;
         }
     }
-    // Guards against the quiet failure: a renamed field deserialises to no
+    // Guards against the quiet failure: a renamed field deserializes to no
     // relays at all, and a loop over nothing passes every assertion in it.
     assert!(
         checked >= 4,
         "only {checked} relay entries in the vector; the cases carrying \
-         registries did not deserialise"
+         registries did not deserialize"
     );
 }
 

@@ -53,7 +53,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Extract `--config PATH`, rejecting anything unrecognised.
+/// Extract `--config PATH`, rejecting anything unrecognized.
 ///
 /// An unknown option is an error rather than something to skip: a mistyped
 /// flag that is silently ignored is a relay running with settings its operator

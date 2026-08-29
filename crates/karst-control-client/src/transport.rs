@@ -83,7 +83,7 @@ impl From<tonic::Status> for Error {
     }
 }
 
-/// What a node must be given out of band at enrolment.
+/// What a node must be given out of band at enrollment.
 ///
 /// Both halves are required. The KEM key authenticates the server implicitly;
 /// the verification key is what makes the per-connection ephemeral
@@ -106,7 +106,7 @@ pub struct ServerPins {
 ///
 /// Supplied by the caller rather than drawn here, matching the rest of this
 /// crate: it has no RNG dependency, and a library that quietly picks its own
-/// entropy source is one whose behaviour under a seeded or restricted RNG is
+/// entropy source is one whose behavior under a seeded or restricted RNG is
 /// invisible. Both fields MUST come from a CSPRNG and MUST NOT be reused —
 /// repeating either would repeat the corresponding shared secret.
 #[derive(Clone)]

@@ -16,14 +16,14 @@
 //
 // CANNOT: quantitative or computational claims. Verifpal is symbolic — it says
 // nothing about concrete security margins, side channels, or implementation
-// behaviour. ProVerif with explicit equational theories remains a release gate
+// behavior. ProVerif with explicit equational theories remains a release gate
 // (spec/phreatic-v1.md §14 item 2); this is a design check, not a proof of the
 // implementation.
 //
-// Modelling notes:
+// Modeling notes:
 //  - Netmap-distributed public keys use guarded messages [x]: the coordination
 //    server is authenticated for key distribution (THREAT-MODEL §4, B2).
-//  - Fragmentation, cookies and the fragment MAC are NOT modelled. They are a
+//  - Fragmentation, cookies and the fragment MAC are NOT modeled. They are a
 //    DoS/availability mechanism, and Verifpal reasons about secrecy and
 //    authentication, not resource exhaustion. They are covered by the
 //    spoofed-source test suite instead.

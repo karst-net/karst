@@ -29,7 +29,7 @@
 //!
 //! # Keyed from this node's point of view
 //!
-//! One flow produces one key whichever direction a packet is travelling, by
+//! One flow produces one key whichever direction a packet is traveling, by
 //! naming the local and remote halves rather than the source and destination
 //! halves. The direction decides which is which, and that is the whole of the
 //! bookkeeping.
@@ -54,7 +54,7 @@ const MAX_FLOWS: usize = 4096;
 /// Two minutes, which is longer than a TCP handshake and shorter than a
 /// half-open connection is interesting. There is deliberately no per-protocol
 /// tuning: this is a permission lifetime, not a connection-state machine, and a
-/// table that modelled TCP state would be a second, subtly different TCP
+/// table that modeled TCP state would be a second, subtly different TCP
 /// implementation living in the datapath.
 const IDLE_MS: u64 = 120_000;
 

@@ -257,7 +257,7 @@ impl ResultCode {
     /// **The distinction is operational rather than cosmetic.** A node that
     /// retries `UnsupportedVersion` every thirty seconds is generating traffic
     /// that cannot ever work; a node that gives up on `NoResources` never
-    /// recovers when the gateway's table drains. Everything unrecognised is
+    /// recovers when the gateway's table drains. Everything unrecognized is
     /// treated as permanent, so a code this crate has never heard of costs one
     /// attempt rather than an indefinite retry loop.
     #[must_use]

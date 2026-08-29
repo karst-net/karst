@@ -92,7 +92,7 @@ func TestTheDerivationMatchesTheSpecDigest(t *testing.T) {
 	}
 }
 
-func TestAnEmptyRegistryIsRefused(t *testing.T) {
+func TestAnEmptiregistryIsRefused(t *testing.T) {
 	// This is the failure the package exists to end: a server that publishes
 	// no relay hands every node an empty registry, and relaying silently never
 	// happens. An operator who wrote a registry file meant to publish one.

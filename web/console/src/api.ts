@@ -9,7 +9,7 @@ const base = "/api/karst/v1";
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly body: Record<string, unknown>) { super(message); this.name = "ApiError"; }
   get code() { return typeof this.body.code === "string" ? this.body.code : undefined; }
-  /** The set PUT /bedrock/mode requires be acknowledged, present on an acknowledgement_mismatch. */
+  /** The set PUT /bedrock/mode requires be acknowledged, present on an acknowledgment_mismatch. */
   get requiredCutOff() { return Array.isArray(this.body.required_cut_off_handles) ? this.body.required_cut_off_handles as string[] : undefined; }
 }
 

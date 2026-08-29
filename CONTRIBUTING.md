@@ -11,7 +11,7 @@ git commit -s
 ```
 
 That appends `Signed-off-by: Your Name <you@example.com>`, certifying you have
-the right to submit the work under the file's existing licence. CI enforces it
+the right to submit the work under the file's existing license. CI enforces it
 on every commit in a pull request.
 
 We do not ask contributors to sign over rights, and as a consequence the
@@ -32,7 +32,7 @@ project cannot unilaterally relicense. That constraint is intentional —
 just check
 ```
 
-Runs formatting, clippy with `-D warnings`, tests, the dependency licence
+Runs formatting, clippy with `-D warnings`, tests, the dependency license
 allowlist, and SPDX header verification. CI additionally runs secret scanning,
 `govulncheck`, and the formal models.
 
@@ -40,7 +40,7 @@ allowlist, and SPDX header verification. CI additionally runs secret scanning,
 
 - A commit without `Signed-off-by`.
 - A source file without an `SPDX-License-Identifier` in its first three lines.
-- A dependency outside the licence allowlist in `deny.toml`. A GPL dependency
+- A dependency outside the license allowlist in `deny.toml`. A GPL dependency
   in the Rust crates would break both iOS App Store and kernel-datapath
   viability — this is a hard gate, not a preference.
 - Anything gitleaks flags. Netmaps carry per-pair PSKs and TURN credentials;
@@ -48,7 +48,7 @@ allowlist, and SPDX header verification. CI additionally runs secret scanning,
   (THREAT-MODEL.md R5), which is why the scan runs on every commit rather
   than once.
 
-## Licences by path
+## Licenses by path
 
 `crates/` and `bins/` are `MIT OR Apache-2.0`. `server/` and `web/` are
 `AGPL-3.0-or-later`. `spec/` and `docs/` are `CC-BY-4.0`. Match the file you

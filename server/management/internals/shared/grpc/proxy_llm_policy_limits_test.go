@@ -15,7 +15,7 @@ import (
 )
 
 // fakeAgentNetworkLimits records the PolicySelectionInput it was invoked with
-// and returns a pre-programmed result, so tests can assert what the handler
+// and returns a pre-programd result, so tests can assert what the handler
 // forwards to the selector.
 type fakeAgentNetworkLimits struct {
 	gotInput agentnetwork.PolicySelectionInput

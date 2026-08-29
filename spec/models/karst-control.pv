@@ -19,9 +19,9 @@
  * it; the variant karst-control-nofs.pv drops the ephemeral half and is
  * expected to FAIL the forward-secrecy query.
  *
- * NOT modelled: the record layer's sequence numbers and replay window, gRPC
+ * NOT modeled: the record layer's sequence numbers and replay window, gRPC
  * framing, TLS. TLS is deliberately outside: the whole point of this layer is
- * to hold up when a TLS terminator is hostile, so modelling it would assume
+ * to hold up when a TLS terminator is hostile, so modeling it would assume
  * away the threat.
  *)
 
@@ -65,7 +65,7 @@ fun v2b(spkey): bitstring [data, typeConverter].
 fun H(bitstring): bitstring.
 
 (* HKDF-SHA-512 over (ss_static || ss_eph) with the transcript as salt. One
-   key per direction; modelled as two derivations from the same inputs. *)
+   key per direction; modeled as two derivations from the same inputs. *)
 fun kdf_c2s(bitstring, bitstring): bitstring.
 fun kdf_s2c(bitstring, bitstring): bitstring.
 
@@ -78,7 +78,7 @@ reduc forall k: bitstring, m: bitstring, ad: bitstring;
 (* The netmap the server sends down the channel. It contains per-pair PSKs,
    which is precisely why this layer exists (ADR-0011). *)
 free nsk: sskey [private].   (* the honest node's identity *)
-free ssg: sskey [private].   (* the server's signing identity, pinned at enrolment *)
+free ssg: sskey [private].   (* the server's signing identity, pinned at enrollment *)
 
 free secretNetmap: bitstring [private].
 
@@ -116,7 +116,7 @@ query k: bitstring;
 (* ─── Node (ADR-0011 §2, the Initiate side) ────────────────────────────── *)
 
 (* pinS is the node's PINNED copy of the server's static encapsulation key,
-   obtained out of band at enrolment. The node encapsulates to the pinned key,
+   obtained out of band at enrollment. The node encapsulates to the pinned key,
    never to whatever arrives on the wire — which is what makes an impostor
    server derive a different key and fail closed. *)
 let node(nsk: sskey, pinS: pkem, pinV: spkey) =

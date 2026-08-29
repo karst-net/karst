@@ -10,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// StartDeliveryWorker drains the durable outbox until ctx is cancelled. It
+// StartDeliveryWorker drains the durable outbox until ctx is canceled. It
 // makes one immediate pass at startup so a restart recovers queued events
 // without waiting for the ticker.
 func (l *Log) StartDeliveryWorker(ctx context.Context, deliverer SinkDeliverer, interval time.Duration, batch int) {

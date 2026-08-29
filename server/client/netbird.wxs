@@ -52,7 +52,7 @@
 
 		<!-- Per-user component: HKCU keypath (auto GUID via "*"), separate from
 		     the per-machine NetbirdFiles component to satisfy ICE57. -->
-		<StandardDirectory Id="ProgramMenuFolder">
+		<StandardDirectory Id="programnuFolder">
 			<Component Id="NetbirdAumidRegistry" Guid="*">
 				<RegistryKey Root="HKCU" Key="Software\Classes\AppUserModelId\NetBird" ForceDeleteOnUninstall="yes">
 					<RegistryValue Name="InstalledByMSI" Type="integer" Value="1" KeyPath="yes" />

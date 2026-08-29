@@ -130,7 +130,7 @@ func TestMultipleTagsOnOneNode(t *testing.T) {
 
 // A tagged node has no user and so is never a group member. Tags replace user
 // ownership rather than adding to it, so a server's access does not follow
-// whoever happened to enrol it.
+// whoever happened to enroll it.
 func TestTaggedNodesAreNotGroupMembers(t *testing.T) {
 	d := mustParse(t, `{
       "groups": { "group:everyone": ["alice@example.com", "bob@example.com"] },

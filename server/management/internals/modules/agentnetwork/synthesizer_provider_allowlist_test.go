@@ -8,7 +8,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/modules/agentnetwork/types"
 )
 
-// policyForProviders builds an enabled policy authorising the given providers
+// policyForProviders builds an enabled policy authorizing the given providers
 // under the given guardrails (both optional). Groups are irrelevant to
 // buildProviderAllowlists, which keys purely on destination provider.
 func policyForProviders(id string, guardrailIDs []string, providerIDs ...string) *types.Policy {
@@ -27,7 +27,7 @@ func TestBuildProviderAllowlists(t *testing.T) {
 		"g-disabled": {ID: "g-disabled", Checks: types.GuardrailChecks{ModelAllowlist: types.GuardrailModelAllowlist{Enabled: false, Models: []string{"gpt-4o"}}}},
 	}
 
-	t.Run("all authorising policies restrict yields per-provider union", func(t *testing.T) {
+	t.Run("all authorizing policies restrict yields per-provider union", func(t *testing.T) {
 		policies := []*types.Policy{
 			policyForProviders("p1", []string{"g-4o"}, "prov-x"),
 			policyForProviders("p2", []string{"g-opus"}, "prov-x"),
@@ -66,7 +66,7 @@ func TestBuildProviderAllowlists(t *testing.T) {
 		assert.Equal(t, []string{"claude-opus-4"}, got["prov-y"], "prov-y keeps only its own model")
 	})
 
-	t.Run("one policy authorising two providers restricts both", func(t *testing.T) {
+	t.Run("one policy authorizing two providers restricts both", func(t *testing.T) {
 		policies := []*types.Policy{
 			policyForProviders("p1", []string{"g-4o"}, "prov-x", "prov-y"),
 		}

@@ -10,7 +10,7 @@
 //! per-primitive negotiation, no runtime-extensible registry, and no
 //! operator-defined parameter set.
 //!
-//! That constraint is the primary defence against the failure mode that
+//! That constraint is the primary defense against the failure mode that
 //! produced FREAK, Logjam and JWT's `alg: none`: **an attacker cannot express a
 //! weak combination because weak combinations have no wire representation.**
 //!
@@ -547,7 +547,7 @@ mod tests {
 
     /// `KARST_1` fits two fragments; **`KARST_2` does not**. The CNSA profile
     /// uses `ML-KEM-1024` (1568 B keys and ciphertexts) and needs three, which
-    /// changes its loss and `DoS` behaviour. Recorded in spec §6.5 so it is a
+    /// changes its loss and `DoS` behavior. Recorded in spec §6.5 so it is a
     /// known property rather than a surprise in the field.
     #[test]
     fn fragment_counts_are_as_documented() {

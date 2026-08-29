@@ -26,7 +26,7 @@
 //! **Two layers, because neither sees the other's half.**
 //! `karst-transport`'s `a_dual_stack_socket_reports_an_ipv4_peer_at_its_ipv4_address`
 //! binds real sockets and pins what the *kernel* does — that the mapped source
-//! is real, and that `UdpTransport` normalises it away. This file drives two
+//! is real, and that `UdpTransport` normalizes it away. This file drives two
 //! engines with no socket at all and pins what the daemon *does with* the
 //! result. It models the receive path through the same
 //! [`karst_transport::canonical`] the daemon calls, so removing that call fails
@@ -82,7 +82,7 @@ impl Family {
     /// of it.
     ///
     /// The second step is the daemon's own line, called here rather than
-    /// reimplemented — a test that normalised addresses its own way would pass
+    /// reimplemented — a test that normalized addresses its own way would pass
     /// while the daemon did not.
     fn reports(self, addr: SocketAddr) -> SocketAddr {
         let from_kernel = match (self, addr.ip()) {

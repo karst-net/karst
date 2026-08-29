@@ -53,7 +53,7 @@ pub struct Addresses {
 
 /// Read the version nibble.
 ///
-/// Returns `None` for an empty buffer or an unrecognised version. Note that a
+/// Returns `None` for an empty buffer or an unrecognized version. Note that a
 /// version nibble is *claimed*, not proven: [`addresses`] additionally checks
 /// that the buffer is long enough for the header it claims.
 #[must_use]

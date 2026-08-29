@@ -143,8 +143,8 @@ func (m *managerImpl) prefetchConsumption(ctx context.Context, in PolicySelectio
 //
 // Returns Allow=true with empty SelectedPolicyID when no policy in
 // the account targets the (provider, caller-groups) combination —
-// llm_router is the gate that owns "no policy authorises this
-// request" semantics; this function trusts that authorisation has
+// llm_router is the gate that owns "no policy authorizes this
+// request" semantics; this function trusts that authorization has
 // already happened upstream and only does the limit-aware
 // attribution.
 func (m *managerImpl) SelectPolicyForRequest(ctx context.Context, in PolicySelectionInput) (*PolicySelectionResult, error) {
@@ -321,7 +321,7 @@ func policyPermitsModel(p *types.Policy, byID map[string]*types.Guardrail, model
 	if p == nil {
 		return false
 	}
-	wanted := normaliseModelID(model)
+	wanted := normalizeModelID(model)
 	restricted := false
 	for _, gID := range p.GuardrailIDs {
 		g, ok := byID[gID]
@@ -333,7 +333,7 @@ func policyPermitsModel(p *types.Policy, byID map[string]*types.Guardrail, model
 			continue
 		}
 		for _, allowed := range g.Checks.ModelAllowlist.Models {
-			if normaliseModelID(allowed) == wanted {
+			if normalizeModelID(allowed) == wanted {
 				return true
 			}
 		}
@@ -341,10 +341,10 @@ func policyPermitsModel(p *types.Policy, byID map[string]*types.Guardrail, model
 	return !restricted
 }
 
-// normaliseModelID lowercases and trims a model identifier so the allowlist
+// normalizeModelID lowercases and trims a model identifier so the allowlist
 // compare is case-insensitive and trim-tolerant. Mirrors the proxy guardrail's
-// normaliseModel so both layers agree on what "same model" means.
-func normaliseModelID(model string) string {
+// normalizeModel so both layers agree on what "same model" means.
+func normalizeModelID(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
@@ -352,7 +352,7 @@ func normaliseModelID(model string) string {
 // rejection. The model is quoted when known; an undetermined model is reported
 // as such so the access log distinguishes "wrong model" from "no model".
 func modelBlockedReason(model string) string {
-	if normaliseModelID(model) == "" {
+	if normalizeModelID(model) == "" {
 		return "request model could not be determined for the policy allowlist"
 	}
 	return fmt.Sprintf("model %q is not permitted by any applicable policy allowlist", model)

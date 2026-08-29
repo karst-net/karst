@@ -50,7 +50,7 @@ func GenerateKeyPair() (*KeyPair, error) {
 
 // SignToken mints a session JWT for the given user and domain. email,
 // groups, and groupNames, when non-empty, are embedded so the proxy can
-// authorise and stamp identity for policy-aware middlewares without a
+// authorize and stamp identity for policy-aware middlewares without a
 // management round-trip on every cookie-bearing request. groupNames
 // pairs positionally with groups; pass nil when names couldn't be
 // resolved.

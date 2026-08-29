@@ -121,7 +121,7 @@ tcp::Socket::new(
 
 A TCP receive buffer *is* the window the stack advertises. A 1280-byte window
 permits exactly one segment in flight, so the sender waits for an
-acknowledgement after every segment — stop-and-wait, whatever the path can
+acknowledgment after every segment — stop-and-wait, whatever the path can
 carry, and no amount of batching or polling below it can help. Sizing the
 buffers at 64 KiB — an ordinary kernel starting window — moved the mode from
 7.3 to 516 Mbps, a **71× change**, and cost the 128 kB per connection visible
@@ -129,8 +129,8 @@ in the memory row.
 
 The order matters to how this reads: step 2 was tried before step 3 because it
 was the visible thing, and it is exactly the mistake PLAN.md §3.4 records
-making with the datapath — batching and micro-optimisation attempted before the
-serialisation was found. Same lesson, a different layer, four months later.
+making with the datapath — batching and micro-optimization attempted before the
+serialization was found. Same lesson, a different layer, four months later.
 
 ## What this does not measure
 

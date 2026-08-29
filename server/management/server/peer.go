@@ -81,7 +81,7 @@ func (am *DefaultAccountManager) PortalPeers(ctx context.Context, accountID stri
 	return am.Store.GetAccountPeers(ctx, store.LockingStrengthNone, accountID, "", "")
 }
 
-// MarkPeerConnected marks a peer as connected with optimistic-locked
+// MarkPeerConnected marks a peer as connected with optimiztic-locked
 // fencing on PeerStatus.SessionStartedAt. The sessionStartedAt argument
 // is the start time of the gRPC sync stream that owns this update,
 // expressed as Unix nanoseconds — only the call whose token is greater

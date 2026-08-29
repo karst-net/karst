@@ -5840,7 +5840,7 @@ components:
           description: NetBird agent-network provider id that served the request.
         selected_policy_id:
           type: string
-          description: Agent-network policy id that authorised (or denied) the request.
+          description: Agent-network policy id that authorized (or denied) the request.
         decision:
           type: string
           description: Policy decision for the request (e.g. allow, deny).
@@ -5910,7 +5910,7 @@ components:
           type: array
           items:
             type: string
-          description: NetBird group ids that authorised the request (the caller's groups intersected with the policy's source groups).
+          description: NetBird group ids that authorized the request (the caller's groups intersected with the policy's source groups).
         request_prompt:
           type: string
           description: Captured request prompt. Present only when prompt collection is enabled.
@@ -5979,7 +5979,7 @@ components:
           type: array
           items:
             type: string
-          description: Union of the authorising group ids across the session's entries.
+          description: Union of the authorizing group ids across the session's entries.
         started_at:
           type: string
           format: date-time
@@ -13419,7 +13419,7 @@ paths:
               type: string
           style: form
           explode: true
-          description: Filter by authorising group id. Repeat for multiple (matches any).
+          description: Filter by authorizing group id. Repeat for multiple (matches any).
         - in: query
           name: provider_id
           schema:
@@ -13534,7 +13534,7 @@ paths:
               type: string
           style: form
           explode: true
-          description: Filter by authorising group id. Repeat for multiple (matches any).
+          description: Filter by authorizing group id. Repeat for multiple (matches any).
         - in: query
           name: provider_id
           schema:
@@ -13634,7 +13634,7 @@ paths:
               type: string
           style: form
           explode: true
-          description: Filter by authorising group id. Repeat for multiple (matches any).
+          description: Filter by authorizing group id. Repeat for multiple (matches any).
         - in: query
           name: provider_id
           schema:

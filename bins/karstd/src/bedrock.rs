@@ -79,7 +79,7 @@ impl Mode {
 
     /// The mode a server advertised, from the wire enum.
     ///
-    /// An unrecognised value is treated as [`Mode::Off`] rather than as an
+    /// An unrecognized value is treated as [`Mode::Off`] rather than as an
     /// error: it can only come from a server newer than this node, and guessing
     /// *upward* would let a future value silently cut a node off from its
     /// network. The local floor still applies, so an operator who configured
@@ -243,7 +243,7 @@ impl Log {
         Ok(Outcome::Advanced { to })
     }
 
-    /// Serialise for the on-disk copy.
+    /// Serialize for the on-disk copy.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         encode_log(&self.entries)
@@ -303,7 +303,7 @@ impl Log {
 
     /// Whether a head reported by the server matches what this node verified.
     ///
-    /// A mismatch is not by itself proof of misbehaviour — the server may
+    /// A mismatch is not by itself proof of misbehavior — the server may
     /// simply be ahead — so this reports only equality, and the caller decides
     /// what a difference means. Divergence at a *common* sequence is the thing
     /// that proves equivocation, and that comparison belongs with the peer
@@ -561,7 +561,7 @@ mod mode_tests {
         }
     }
 
-    /// An unrecognised wire value means `Off`, never something stronger.
+    /// An unrecognized wire value means `Off`, never something stronger.
     ///
     /// It can only come from a server newer than this node, and guessing upward
     /// would let a future enum value cut a node off from its own network. The

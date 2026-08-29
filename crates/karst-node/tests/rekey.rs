@@ -10,7 +10,7 @@
 //! stutters every two minutes.
 //!
 //! These run on a virtual clock. A real soak is a separate exercise; this pins
-//! the behaviour that soak would depend on, in milliseconds rather than hours.
+//! the behavior that soak would depend on, in milliseconds rather than hours.
 
 #![allow(
     clippy::panic,

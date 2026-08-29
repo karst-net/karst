@@ -137,7 +137,7 @@ fn push(h: &mut Sha256, field: &[u8]) {
     h.update(field);
 }
 
-/// Summarise a peer entry so the server can be told what this node already has.
+/// Summarize a peer entry so the server can be told what this node already has.
 ///
 /// Delta push works by the *request* carrying the state rather than the server
 /// remembering it, which is what keeps server state O(1). Both ends must

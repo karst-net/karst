@@ -15,7 +15,7 @@ compliance date". That is no longer true.** CNSA 2.0 is a requirement.
 
 Nearly every cryptographic decision in this project was made downstream of that
 answer. ADR-0001 chose Category 3 and ChaCha20-Poly1305 *because* the audience
-was "hobbyists and security-minded commercial organisations" with no compliance
+was "hobbyists and security-minded commercial organizations" with no compliance
 deadline. ADR-0006 built the agility layer and put the CNSA profile in it as
 suite 3, explicitly "not urgent". PLAN.md §10 scheduled that suite for Phase 7.
 All three follow from a premise that has changed.
@@ -94,7 +94,7 @@ the work moves out of Phase 7.** Specifically:
      generics moves the decision earlier. `KemKind::for_public_key_len` is where
      a netmap or roster entry's class is inferred, and ML-KEM encodings are
      distinguished by length alone, so that one function is the whole
-     suite-confusion defence.
+     suite-confusion defense.
    - **SHA-384.** `karst_crypto::hash` holds both suite hashes and the HKDF over
      them. The transcript stops being a `[u8; 64]` and becomes a `Digest`
      carrying its own length — a 48-byte transcript zero-padded to 64 would
@@ -170,7 +170,7 @@ the work moves out of Phase 7.** Specifically:
    changes to libraries already in the tree, and both change message sizes —
    ADR-0004's fragment budget already records that `KARST_3` needs three
    fragments rather than two, which is a real change to its loss and DoS
-   behaviour. **Done, 2026-08-25** (ML-DSA-87 under item 5).
+   behavior. **Done, 2026-08-25** (ML-DSA-87 under item 5).
 
    `karst_crypto::kem::MlKem1024Backend` implements the existing `Kem` trait.
    Go needed nothing: `crypto/mlkem` has carried both parameter sets all along.
@@ -195,7 +195,7 @@ the work moves out of Phase 7.** Specifically:
 
    Both parameter sets also refuse each other's keys and ciphertexts, in both
    directions and in both languages. ML-KEM encodings are distinguished by
-   length alone, so the length check is the entire defence against a suite
+   length alone, so the length check is the entire defense against a suite
    confusion, and it is worth a test rather than an assumption.
 4. **The control channel needs a suite mechanism, or a build-time choice.**
    **Mechanism done, 2026-08-25; the second suite's primitives are items 2
@@ -230,7 +230,7 @@ the work moves out of Phase 7.** Specifically:
    purpose: a node handle is a hash of its identity key, so every handle in the
    project changed with it — and handles index peer records, ACL rules, PSK pair
    derivation and Bedrock coverage. There is no rotation path; a deployed
-   network would have had to re-enrol every node and re-countersign every one of
+   network would have had to re-enroll every node and re-countersign every one of
    them through the offline ceremony. **That was affordable exactly once, before
    anything shipped.**
 
@@ -311,7 +311,7 @@ the work moves out of Phase 7.** Specifically:
      there being two ciphers. The first is gone; the second was rewritten to
      rest on the *keys* instead, which is stronger — the two suites hash
      differently, so identical handshake inputs still derive different transport
-     keys. `TransportSession` also lost its `new`/`with_aead` pair in favour of
+     keys. `TransportSession` also lost its `new`/`with_aead` pair in favor of
      a single `for_suite`, removing the last constructor that could pick an
      AEAD independently of the suite the transcript bound.
 
@@ -404,7 +404,7 @@ drawer.
 
 **Option C, requiring both an ML-DSA-87 and an SLH-DSA signature on root
 operations, is probably not available.** It would preserve diversity while
-resting authorisation on the approved algorithm, and it has some precedent in
+resting authorization on the approved algorithm, and it has some precedent in
 NSA's tolerance of hybrid key exchange. But "not approved for **any** use in
 NSS" reads as a prohibition on use rather than on reliance, and reading it
 otherwise is not a call to make without the accreditor.
@@ -419,7 +419,7 @@ latter, if `k`-of-`n` is read as distributed signing.
 
 **The exclusion appears to be policy, not cryptanalysis.** Discussion on the
 NIST PQC forum reads the SLH-DSA entry as an interoperability and
-transition-complexity decision rather than a security judgement — NSA's stated
+transition-complexity decision rather than a security judgment — NSA's stated
 reasoning elsewhere in the same FAQ is that more algorithms make interoperability
 harder. Germany's BSI takes the opposite position and recommends SLH-DSA
 explicitly as a hedge against lattice weaknesses, which is the argument

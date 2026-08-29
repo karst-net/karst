@@ -15,7 +15,7 @@
 //!    cannot exhaust memory — it can only cause rejections.
 //! 2. **No panic path.** No indexing, no slicing, no `unwrap`.
 //! 3. **Sans-io.** Time is a parameter. There is no clock access, which is what
-//!    makes the timeout behaviour deterministically testable.
+//!    makes the timeout behavior deterministically testable.
 //!
 //! What this module does *not* do: verify `frag_mac`. The caller must have
 //! validated it (§9.2) before calling [`Reassembler::push`], and must pass

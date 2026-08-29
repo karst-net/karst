@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # AVEN v1 — Path Discovery Protocol
 
-- **Status:** Draft 0.1 — Phase 4 deliverable, not yet modelled, not externally reviewed
+- **Status:** Draft 0.1 — Phase 4 deliverable, not yet modeled, not externally reviewed
 - **Date:** 2026-08-14
-- **Licence:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
-  in software under any licence. Independent implementations are wanted.
+- **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
+  in software under any license. Independent implementations are wanted.
 
 > **Implementable.** §4–§8 are stable enough to build against and match
 > `crates/karst-disco/`. §12 lists what remains open, and the list is long:
@@ -82,7 +82,7 @@ traffic it exists to find a path for.
 ## 4. Sharing a socket with PHREATIC
 
 AVEN datagrams travel on **the same UDP socket** as PHREATIC, to and from the
-same ports. This is not an optimisation and MUST NOT be changed to a separate
+same ports. This is not an optimization and MUST NOT be changed to a separate
 port: a path is only useful if it is the path PHREATIC will actually use, and a
 NAT binding proven on one port says nothing about another.
 
@@ -306,7 +306,7 @@ discarded.
 
 Outstanding `tx_id`s MUST expire — five seconds is RECOMMENDED — and the number
 of them MUST be bounded per peer. They are state allocated in response to a
-peer's behaviour, which makes them worth counting.
+peer's behavior, which makes them worth counting.
 
 ### 7.2 Reflexive addresses
 
@@ -388,7 +388,7 @@ It MAY also be sent on an established direct path when candidates change — a
 node that acquires a new interface should not have to wait for a relay round
 trip to say so.
 
-### 7.4 Answering a probe at most once — the flaw modelling found
+### 7.4 Answering a probe at most once — the flaw modeling found
 
 **A responder MUST answer each `tx_id` at most once**, within a bounded window
 per peer. **A prober MUST use a fresh `tx_id` for every probe, including
@@ -701,7 +701,7 @@ sustained across **three** consecutive measurements.
 Switching costs more than the latency difference usually recovers: the datapath
 keeps both paths warm and cuts over on receipt of the first packet on the new
 one, but a node that oscillates does so for every peer at once and turns a
-measurement artefact into a network-wide event. Rule 2 is exempt — a direct
+measurement artifact into a network-wide event. Rule 2 is exempt — a direct
 path that starts working displaces a relay immediately, because that transition
 is what the whole protocol exists to cause.
 
@@ -775,7 +775,7 @@ The attacker holds **a different peer of A's disco key** throughout. An aquifer
 is not a trust boundary — PLAN.md §1.1 lists a malicious peer inside one as in
 scope — so this is the ordinary configuration rather than an exotic one.
 
-Not modelled: §7.1's transaction-to-endpoint association, which lives in the
+Not modeled: §7.1's transaction-to-endpoint association, which lives in the
 receiver's bookkeeping rather than on the wire and is enforced by the
 implementation's types; path selection, which is availability rather than
 security; and §7.4's replay window, for the reason below.
@@ -809,7 +809,7 @@ must not be carried across to AVEN, where the MAC's job is different.
 ## 12. Open items — this draft is incomplete
 
 1. **No external review.** A symbolic model says nothing about implementation
-   behaviour.
+   behavior.
 2. **Epoch rotation is specified only in outline.** The disco key rotates with
    the PSK epoch, but nothing here says what a node does with in-flight probes
    across a rotation, or whether it accepts epoch *n−1* the way
@@ -894,5 +894,5 @@ must not be carried across to AVEN, where the MAC's job is different.
    `Pong` and the disco key. The reflect exchange adds a second key and a second
    authenticated message pair, and the property worth proving — that a node
    learns an `observed` value only from the reflector that minted its key — is
-   stated and implemented rather than proved. It should be modelled before this
+   stated and implemented rather than proved. It should be modeled before this
    draft stops being a draft.

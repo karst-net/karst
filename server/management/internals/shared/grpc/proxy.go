@@ -472,7 +472,7 @@ func (s *ProxyServiceServer) validateProxyConnect(proxyID, address string, ctx c
 
 // registerProxyConnection creates a proxyConnection, registers it with the
 // proxy manager and cluster, and stores it in connectedProxies. The caller
-// provides a partially initialised connSeed with stream-specific fields set;
+// provides a partially initialized connSeed with stream-specific fields set;
 // the remaining fields are filled in here.
 func (s *ProxyServiceServer) registerProxyConnection(ctx context.Context, params proxyConnectParams, connSeed *proxyConnection) (*proxyConnection, *proxy.Proxy, error) {
 	peerInfo := PeerIPFromContext(ctx)
@@ -1632,7 +1632,7 @@ func sameAccount(userAccountID, serviceAccountID string) bool {
 
 // GenerateSessionToken creates a signed session JWT for the given domain and
 // user. The user's group memberships are embedded in the token so policy-aware
-// middlewares on the proxy can authorise without an extra management round-trip.
+// middlewares on the proxy can authorize without an extra management round-trip.
 // A user the store cannot resolve, or whose account is pending approval or
 // blocked, gets no token at all, so the browser never receives a session cookie.
 func (s *ProxyServiceServer) GenerateSessionToken(ctx context.Context, domain, userID string, method proxyauth.Method) (string, error) {
@@ -1661,7 +1661,7 @@ func (s *ProxyServiceServer) GenerateSessionToken(ctx context.Context, domain, u
 	// Bind the OIDC identity to the service's account before signing anything
 	// with that service's session key. The proxy validates an installed cookie
 	// locally against the service public key, so a token minted for a user of
-	// another account would be honoured without a management round-trip.
+	// another account would be honored without a management round-trip.
 	if !sameAccount(user.AccountID, service.AccountID) {
 		return "", fmt.Errorf("user %s does not belong to the service account", userID)
 	}
@@ -1939,7 +1939,7 @@ func ptr[T any](v T) *T { return &v }
 // ValidateTunnelPeer resolves an inbound peer by its WireGuard tunnel IP and
 // checks the peer's group membership against the service's access groups.
 // Peers without a user (machine agents, automation workloads) are first-class
-// callers; authorisation runs off peer-group memberships rather than the
+// callers; authorization runs off peer-group memberships rather than the
 // optional owning user's auto-groups. On success a session JWT is minted so
 // the proxy can install a cookie and skip subsequent management round-trips.
 func (s *ProxyServiceServer) ValidateTunnelPeer(ctx context.Context, req *proto.ValidateTunnelPeerRequest) (*proto.ValidateTunnelPeerResponse, error) {
@@ -2134,9 +2134,9 @@ func (s *ProxyServiceServer) getTunnelPeerInfo(ctx context.Context, domain strin
 }
 
 // checkPeerGroupAccess gates ValidateTunnelPeer by the service's required
-// groups. Private services authorise against AccessGroups (empty list fails
+// groups. Private services authorize against AccessGroups (empty list fails
 // closed — Validate() rejects that at save time but the RPC is the security
-// boundary and must not trust upstream state). Bearer-auth services authorise
+// boundary and must not trust upstream state). Bearer-auth services authorize
 // against DistributionGroups when populated. Non-private non-bearer services
 // are open.
 func checkPeerGroupAccess(service *rpservice.Service, peerGroupIDs []string) error {

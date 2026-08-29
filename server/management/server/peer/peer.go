@@ -85,7 +85,7 @@ type PeerStatus struct { //nolint:revive
 	// the database (CURRENT_TIMESTAMP) — callers do not supply it.
 	LastSeen time.Time
 	// SessionStartedAt records when the currently-active sync stream began,
-	// stored as Unix nanoseconds. It acts as the optimistic-locking token
+	// stored as Unix nanoseconds. It acts as the optimiztic-locking token
 	// for status updates: a stream is only allowed to mutate the peer's
 	// status when its own token strictly exceeds the stored token (when connecting)
 	// or matches it exactly (for disconnects). Zero means "no
@@ -566,7 +566,7 @@ func (p *Peer) EventMeta(dnsDomain string) map[string]any {
 // Copy PeerStatus. SessionStartedAt must be propagated so clone-based
 // callers (Peer.Copy, MarkLoginExpired, UpdateLastLogin) don't silently
 // reset the fencing token to zero — that would let any subsequent
-// SavePeerStatus write reopen the optimistic-lock window.
+// SavePeerStatus write reopen the optimiztic-lock window.
 func (p *PeerStatus) Copy() *PeerStatus {
 	return &PeerStatus{
 		LastSeen:         p.LastSeen,

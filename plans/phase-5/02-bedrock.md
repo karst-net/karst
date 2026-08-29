@@ -29,7 +29,7 @@ says.**
 What it does not do, and the docs must say so:
 
 - It does not stop a compromised server **denying** service. It can drop a
-  node from the netmap, refuse enrolment, or hand out a stale map. Bedrock
+  node from the netmap, refuse enrollment, or hand out a stale map. Bedrock
   makes lying detectable, not impossible.
 - It does not protect a node whose own key is stolen. That is revocation's
   job, and revocation is a Bedrock operation with the propagation delay of the
@@ -46,7 +46,7 @@ Three comments and no code.
 |---|---|
 | `karst/identity/identity.go:16` | circl "**will come back for Bedrock**, which needs SLH-DSA-SHA2-192s (ADR-0001) and which the standard library has no implementation of" |
 | `karst/audit/audit.go:24` | "Bedrock's quorum signing is the intended home for" the external anchor that makes tail truncation detectable |
-| `karst/channel/channel.go:317` | enrolment decides "whether to accept it (auth key, OIDC, **Bedrock countersignature**)" |
+| `karst/channel/channel.go:317` | enrollment decides "whether to accept it (auth key, OIDC, **Bedrock countersignature**)" |
 
 ADR-0001 has already made the algorithm decision and corrected it once:
 **SLH-DSA-SHA2-192s** for the offline root (pk 48 B, sig 16 224 B), Category 3,
@@ -67,7 +67,7 @@ times ever, authorities sign once per node.
 | **Node** | ML-DSA-65 | The node, in its keystore | Nothing in Bedrock — it is the subject, not a signer |
 
 **Why authorities are ML-DSA and not SLH-DSA.** An authority signature is
-produced every time a node enrols and travels in the log to every node. At
+produced every time a node enrolls and travels in the log to every node. At
 16 224 bytes an SLH-DSA countersignature with a quorum of three costs 48 KB per
 node; a thousand-node network's log becomes 48 MB that every node replicates
 and verifies. ML-DSA-65's 3 309 bytes makes the same thing 10 MB, and the
@@ -90,7 +90,7 @@ simpler and circl stays out of the module.
 | If | Then |
 |---|---|
 | `crypto/slhdsa` exists in Go 1.27 | Use it. Mirror `identity.go`'s FIPS-mode error handling |
-| It does not | `cloudflare/circl` returns, BSD-3-Clause, already allowed by `deny.toml`'s Go equivalent — check the Go licence gate too. Wrap it as thinly as `identity.go` originally wrapped circl for ML-DSA, with the same "written to be deleted" comment |
+| It does not | `cloudflare/circl` returns, BSD-3-Clause, already allowed by `deny.toml`'s Go equivalent — check the Go license gate too. Wrap it as thinly as `identity.go` originally wrapped circl for ML-DSA, with the same "written to be deleted" comment |
 
 Rust side: **`slh-dsa` from RustCrypto**, `MIT OR Apache-2.0`, consistent with
 the `ml-dsa = "0.1"` already in `karstd`. Verify it exposes SHA2-192s
@@ -130,7 +130,7 @@ entry_hash_n = SHA-512("karst-bedrock-v1" ‖ entry_hash_{n-1} ‖ BE64(seq)
 ```
 
 SHA-512, not the audit log's SHA-256, per ADR-0001's hash choice — the audit
-log predates that convention and is a Go-internal artefact; Bedrock is on the
+log predates that convention and is a Go-internal artifact; Bedrock is on the
 wire and verified by two implementations. `LP` is the same four-byte
 length-prefix construction as `karst-control-v1.md` §5.5, so a reviewer who has
 read that spec has read this one.
@@ -146,12 +146,12 @@ because the algorithms will not always differ.
 Two implementations must produce byte-identical bodies or every signature
 fails. Protobuf is not canonical. Either define the body as an explicit
 length-prefixed field sequence, exactly as §5.5 of the control spec does for
-the version hash, or serialise once on the signer and treat the bytes as
+the version hash, or serialize once on the signer and treat the bytes as
 opaque everywhere else.
 
 **Take the second.** The signer emits bytes; the log stores those bytes; every
 verifier hashes what it was given and parses it separately for display. A
-parse-then-reserialise round trip is where canonicalisation bugs live, and this
+parse-then-reserialize round trip is where canonicalization bugs live, and this
 design has no round trip in it. The cost is that the log is slightly larger and
 that a malformed body is detected after signature verification rather than
 before, which is the correct order anyway.
@@ -181,7 +181,7 @@ the attack Bedrock exists to stop, so the design has to address it explicitly.
    session exchange their head hash and sequence in the first control frame
    after the handshake. Divergence at a common sequence is proof of
    equivocation: log it loudly, surface it in `karst status` and the console,
-   and — this is a judgement call — **do not tear the session down.** Both
+   and — this is a judgment call — **do not tear the session down.** Both
    nodes verified their peer against a valid chain; the right response is a
    screaming alarm to a human, not a self-inflicted outage on the network the
    human needs to investigate it.
@@ -212,7 +212,7 @@ In `karstd`, this is a filter between "the netmap said this peer exists" and
 
 **Three modes, and the middle one is what makes this deployable:**
 
-| Mode | Behaviour |
+| Mode | Behavior |
 |---|---|
 | `off` | No verification. The default until an operator turns it on |
 | `advisory` | Verify, report, do not drop. Console shows exactly which nodes would be excluded |
@@ -227,7 +227,7 @@ feature has learned that from a support ticket.
 ## 8. Signing, off the server
 
 Authority keys must be usable from a machine that never touches the coordination
-server, or the offline story is theatre.
+server, or the offline story is theater.
 
 **New binary: `bins/karst-bedrock/`.** No network, no dependencies beyond the
 signing crate and the log crate.
@@ -288,11 +288,11 @@ and detectable only if someone is watching the mode field).
 >    shipped a placebo.** That field does not exist on `KarstNetmapPeer`, and
 >    adding it would not have helped: `phreatic-v1.md` §4 says the identity key
 >    "is **not** used by PHREATIC". Sessions authenticate on the static ML-KEM
->    and X25519 keys, so covering only the identity key authorises a node to
+>    and X25519 keys, so covering only the identity key authorizes a node to
 >    exist without constraining which session keys are its. `node-sign` now
 >    covers all three — spec §6.1.
 > 2. **§5.2's chain-hash sketch left `op` unprefixed** while length-prefixing
->    everything else, which is the canonicalisation hazard §5.3 exists to
+>    everything else, which is the canonicalization hazard §5.3 exists to
 >    remove. Fixed, and recorded in spec §3.2.
 > 3. **Nothing here mentions duplicate signer indices.** Without that rule one
 >    compromised authority reaches any quorum by signing twice, reducing `q` to
@@ -302,7 +302,7 @@ and detectable only if someone is watching the mode field).
 >    the DNS block landed first.
 >
 > Two items were narrower than written. **10.11**'s "Bedrock countersignature"
-> as an enrolment credential needs a fork-surface decision the plan does not
+> as an enrollment credential needs a fork-surface decision the plan does not
 > anticipate; what was built is the disclosure gate (spec §6.2), which is the
 > half with security value. **10.14**'s "on a schedule" cannot mean automatic:
 > an anchor needs an authority signature, and anything holding an authority key
@@ -320,7 +320,7 @@ and detectable only if someone is watching the mode field).
 | 10.8 | `KarstBedrockRequest`/`Response`, both ends | W5 | 10.5 |
 | 10.9 | `bins/karst-bedrock` offline signer | W5 | 10.4 |
 | 10.10 | Node enforcement, three modes, cache persistence | W5–W6 | 10.4, 10.8 |
-| 10.11 | Enrolment hook at `channel.go:317` | W6 | 10.5 |
+| 10.11 | Enrollment hook at `channel.go:317` | W6 | 10.5 |
 | 10.12 | Peer-to-peer head comparison | W6–W7 | 10.10 |
 | 10.13 | Console: inventory, pending requests, log viewer, mode switch, setup wizard | W7–W8 | [03](03-control-api.md), [04](04-admin-console.md) |
 | — | *API half done; views blocked on `karst-console` not existing* | — | — |
@@ -330,7 +330,7 @@ and detectable only if someone is watching the mode field).
 
 - **Vectors.** A fixed genesis, a fixed authority list, a fixed node-sign, with
   known-good hashes and signatures, verified by both implementations. This is
-  the artefact that keeps Go and Rust honest, and it goes in `spec/vectors/`
+  the artifact that keeps Go and Rust honest, and it goes in `spec/vectors/`
   next to the two that are already there.
 - **Negative chain tests**, one per way to lie: reordered entries, a dropped
   entry, an entry signed by `q-1` authorities, an authority signature on a

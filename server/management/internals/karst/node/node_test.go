@@ -97,7 +97,7 @@ func TestRegisterThenLookup(t *testing.T) {
 	}
 }
 
-// A node re-running enrolment after losing local state must not be an error.
+// A node re-running enrollment after losing local state must not be an error.
 func TestRegisterIsIdempotent(t *testing.T) {
 	s := newStore(t)
 	k := newIdentity(t)

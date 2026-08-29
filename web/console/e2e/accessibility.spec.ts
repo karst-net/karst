@@ -18,7 +18,7 @@ const background = (page: Page) => page.evaluate(() => getComputedStyle(document
 
 // Assert the page actually went dark before running axe against it. The
 // previous version clicked a button that toggled a class no stylesheet
-// matched, under Playwright's default light colour scheme, and graded a white
+// matched, under Playwright's default light color scheme, and graded a white
 // page as a passing dark mode.
 for (const route of ["posture", "machines", "access"]) {
   test(`${route} renders dark and has no accessibility violations`, async ({ page }) => {
@@ -87,7 +87,7 @@ test("policy syntax errors surface their line number", async ({ page }) => {
 test("first-run setup produces a copyable daemon configuration", async ({ page }) => {
   await page.goto("/#/setup");
   await page.getByLabel("Server URL").fill("https://control.example.test");
-  await page.getByRole("button", { name: "Create enrolment key" }).click();
+  await page.getByRole("button", { name: "Create enrollment key" }).click();
   await expect(page.getByLabel("Control configuration")).toHaveValue('[control]\nserver = "https://control.example.test"\nserver_kem_pin = "…"\nserver_verify_pin = "…"\nsetup_key = "setup-fixture-secret"');
   await expect(page.getByText("sudo systemctl enable --now karstd")).toBeVisible();
 });
@@ -95,11 +95,11 @@ test("first-run setup produces a copyable daemon configuration", async ({ page }
 test("setup cannot mint a key before it knows the server URL", async ({ page }) => {
   await page.goto("/#/setup");
   await page.getByLabel("Server URL").fill("");
-  // A key issued without a URL produces an enrolment command that cannot work,
+  // A key issued without a URL produces an enrollment command that cannot work,
   // and the key is one-time — the admin burns it discovering that.
-  await expect(page.getByRole("button", { name: "Create enrolment key" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeDisabled();
   await page.getByLabel("Server URL").fill("https://control.example.test");
-  await expect(page.getByRole("button", { name: "Create enrolment key" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeEnabled();
 });
 
 test("setup progress and server URL survive leaving the page", async ({ page }) => {
@@ -114,7 +114,7 @@ test("setup progress and server URL survive leaving the page", async ({ page }) 
   await expect(page.getByRole("listitem").filter({ hasText: "Configure the coordination server" }).getByRole("button")).toHaveText("Complete");
 });
 
-test("quickstart documents the daemon configuration enrolment flow", async ({ page }) => {
+test("quickstart documents the daemon configuration enrollment flow", async ({ page }) => {
   await page.goto("/#/setup");
   await page.getByRole("link", { name: "Read the quickstart" }).click();
   await expect(page.getByText("There is no")).toContainText("karst up");
@@ -177,8 +177,8 @@ test("adding a machine issues a key and explains where it goes", async ({ page }
   await page.getByRole("button", { name: "Add machine" }).click();
   await page.getByLabel("New machine name").fill("laptop-bob");
   await page.getByRole("button", { name: "Issue auth key" }).click();
-  await expect(page.getByLabel("Enrolment key")).toHaveValue("setup-fixture-secret");
-  // A machine is not created by an admin; it enrols itself. The dialog has to
+  await expect(page.getByLabel("Enrollment key")).toHaveValue("setup-fixture-secret");
+  // A machine is not created by an admin; it enrolls itself. The dialog has to
   // say what to do with the key or the flow stops here.
   await expect(page.getByText("setup_key")).toBeVisible();
 });
@@ -313,7 +313,7 @@ test("a nameserver group cannot be both primary and domain-scoped", async ({ pag
   await expect(page.locator("tbody tr").filter({ hasText: "split-brain" })).toContainText("corp.example.test");
 });
 
-test("network lock can be lowered to advisory without an acknowledgement", async ({ page }) => {
+test("network lock can be lowered to advisory without an acknowledgment", async ({ page }) => {
   await page.goto("/#/bedrock");
   // Only enforcing can cut a machine off, so only enforcing needs the list
   // acknowledged. Requiring it to stand down would make the safe direction the
@@ -329,7 +329,7 @@ test("the network lock view shows the signed log and pending coverage", async ({
   await expect(page.getByRole("heading", { name: "Signed log" })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "node.sign" }).first()).toBeVisible();
   // The fixture has a signed authority entry and separately identifies the
-  // uncovered node in the acknowledgement list; do not infer coverage from a
+  // uncovered node in the acknowledgment list; do not infer coverage from a
   // signing-row count.
   await expect(page.getByRole("row").filter({ hasText: "node-0002-karst-fixture-handle" })).toContainText("authority");
   await expect(page.getByText("node-0001-karst-fixture-handle")).toBeVisible();
@@ -445,9 +445,9 @@ test("empty-account list views explain what happens next", async ({ page }) => {
   }
 });
 
-test("network lock acknowledgement is keyboard accessible", async ({ page }) => {
+test("network lock acknowledgment is keyboard accessible", async ({ page }) => {
   await page.goto("/#/bedrock");
-  // The acknowledgement must be the server's uncovered set. sre-laptop is
+  // The acknowledgment must be the server's uncovered set. sre-laptop is
   // healthy and online and uncovered; the stale nodes are covered. A console
   // deriving this list from posture would list the wrong machines here.
   await expect(page.getByRole("listitem").filter({ hasText: "sre-laptop" })).toBeVisible();
@@ -463,7 +463,7 @@ test("network lock acknowledgement is keyboard accessible", async ({ page }) => 
 test("network lock re-acknowledges when the cut-off set moves under it", async ({ page }) => {
   await page.goto("/#/bedrock");
   await page.getByLabel("I understand these machines may be cut off.").check();
-  // A node enrols, or a signature lands, after the admin read the list.
+  // A node enrolls, or a signature lands, after the admin read the list.
   await setUncovered(page, [...uncovered, "node-0017-karst-fixture-handle"]);
   await page.getByRole("button", { name: "Enable network lock" }).click();
   await expect(page.getByRole("status")).toContainText("changed while you were reviewing it");

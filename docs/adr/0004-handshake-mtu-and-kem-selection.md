@@ -193,7 +193,7 @@ for high-assurance deployments — small, fixed, server-class aquifers where
 - Fragmentation + cookie DoS design and its test suite replace the Phase 1
   McEliece spike.
 - PSK key-schedule and rotation semantics enter `spec/phreatic-v1.md` and the
-  Verifpal model; the PSK-absent fallback must be modelled explicitly, since a
+  Verifpal model; the PSK-absent fallback must be modeled explicitly, since a
   downgrade-to-zero-PSK attack is the obvious thing to look for.
 - Crypto posture view gains a "lattice-only sessions" indicator.
 - Revisit if a customer presents a code-based-crypto mandate, or if lattice

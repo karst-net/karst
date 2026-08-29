@@ -17,7 +17,7 @@
 //!    removed without copying the packet and without the caller seeing it.
 //! 2. **The interface name is not ours to choose.** macOS assigns `utunN`.
 //!    [`crate::TunConfig::name`] is therefore a *preference*: a `utunN` request
-//!    is honoured, anything else — including the `karst0` default — lets the
+//!    is honored, anything else — including the `karst0` default — lets the
 //!    kernel allocate, and [`Tun::name`] reports what it actually got.
 //! 3. **There is no offload.** `utun` has no counterpart to `TUNSETOFFLOAD`,
 //!    so [`Tun::offload`] is always false and `recv_segments` yields exactly
@@ -60,7 +60,7 @@ const UTUN_PREFIX: &str = "utun";
 ///
 /// Dropping this closes the descriptor, and the kernel removes the interface.
 /// `utun` devices have no persistence flag at all, so unlike Linux this is not
-/// a choice — but it is the same behaviour, and for the same reason: a crashed
+/// a choice — but it is the same behavior, and for the same reason: a crashed
 /// daemon must not leave a dead interface routing traffic into a black hole.
 #[derive(Debug)]
 pub struct Tun {
@@ -437,7 +437,7 @@ impl AsFd for Tun {
 /// and **unit 0 asks the kernel to allocate the first free interface**, which
 /// is what anything not of the form `utunN` gets. That includes the `karst0`
 /// default, deliberately: a Linux-shaped name is a preference macOS cannot
-/// honour, and refusing to start over it would be worse than allocating.
+/// honor, and refusing to start over it would be worse than allocating.
 fn requested_unit(preference: &str) -> u32 {
     preference
         .strip_prefix(UTUN_PREFIX)
@@ -508,14 +508,14 @@ mod tests {
     /// reaches here on every ordinary run, so this is the common path rather
     /// than the edge case it looks like.
     #[test]
-    fn a_name_macos_cannot_honour_lets_the_kernel_choose() {
+    fn a_name_macos_cannot_honor_lets_the_kernel_choose() {
         for name in ["karst0", "", "utun", "utunx", "eth0", "utun-1"] {
             assert_eq!(requested_unit(name), 0, "{name:?} must not pin a unit");
         }
     }
 
     #[test]
-    fn tolerated_conditions_are_recognised_case_insensitively() {
+    fn tolerated_conditions_are_recognized_case_insensitively() {
         assert!(mentions(
             "route: writing to routing socket: File exists",
             &["file exists"]

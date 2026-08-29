@@ -31,7 +31,7 @@ type EnvelopeResult struct {
 //
 // localPeerKey is the receiving peer's WG pub key (used to derive
 // includeIPv6 / useSourcePrefixes from the receiving peer's own record in
-// the components struct, mirroring legacy ToSyncResponse behaviour).
+// the components struct, mirroring legacy ToSyncResponse behavior).
 //
 // dnsName is the account's DNS domain ("netbird.cloud" etc.); used when
 // rebuilding the per-peer FQDNs that proto.RemotePeerConfig carries.
@@ -176,7 +176,7 @@ func trimKey(s string) string {
 	return s
 }
 
-// canonicalizeWgKey normalises a base64-encoded WireGuard public key so it
+// canonicalizeWgKey normalizes a base64-encoded WireGuard public key so it
 // matches the canonical encoding emitted by the envelope decoder. Returns
 // the input unchanged when it does not decode to 32 raw bytes (caller will
 // hit a miss in the peer map and surface the error).

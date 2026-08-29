@@ -39,7 +39,7 @@ responder's static key. The responder decrypts it and learns who is calling.
 
 That is unaffordable here. An ML-KEM-768 public key is **1184 bytes**. Carrying
 it would take msg1 from 2378 B to 3530 B — **three fragments instead of two**,
-a 50% increase in handshake packets and materially worse loss behaviour,
+a 50% increase in handshake packets and materially worse loss behavior,
 breaking the budget established in ADR-0004.
 
 The alternative is to send a short hint and have the responder recover the full
@@ -163,4 +163,4 @@ matching WireGuard's treatment of unknown peers.
   Duplicate hints detected at netmap ingest are logged as a control-plane bug.
 - 32 bytes is retained rather than truncating to 16. The saving is marginal
   against the fragment margin and not worth reasoning about collision
-  behaviour.
+  behavior.

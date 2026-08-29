@@ -30,15 +30,15 @@
 
 ADR-0001 specifies **SLH-DSA-SHA2-192s** for "the offline root (Bedrock)" and
 says nothing about the tier beneath it. Bedrock needs two signing tiers, not
-one: offline roots that authorise *who may countersign*, and online-ish
-authorities that actually countersign each node as it enrols.
+one: offline roots that authorize *who may countersign*, and online-ish
+authorities that actually countersign each node as it enrolls.
 
 Leaving the second tier unstated is not a neutral omission. The next reader
 assumes the omission means SLH-DSA throughout, and the sizes make that a
 material decision rather than a detail.
 
 **The numbers that decide it.** An authority signature is produced every time a
-node enrols and travels in the replicated log to every node in the network.
+node enrolls and travels in the replicated log to every node in the network.
 
 | | SLH-DSA-SHA2-192s | ML-DSA-65 |
 |---|---|---|

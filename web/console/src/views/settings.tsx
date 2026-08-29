@@ -62,7 +62,7 @@ export function Settings() {
           </tr>)}
         </Rows>}
 
-    <h3>Organisation</h3>
+    <h3>Organization</h3>
     <p className="lede">Single sign-on, SCIM provisioning and webhooks are configured on the coordination server rather than here — they are server startup configuration, and a console that pretended to own them would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide.</p>
 
     <Dialog open={Boolean(draft)} title="Create personal access token" onClose={() => setDraft(undefined)}>

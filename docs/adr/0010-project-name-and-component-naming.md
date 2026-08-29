@@ -10,7 +10,7 @@
 ## Context
 
 The project was originally called **Mycelium**, chosen for the metaphor: a vast
-distributed organism, connected below the surface, resilient and self-healing.
+distributed organizm, connected below the surface, resilient and self-healing.
 
 The prior-art review in ADR-0009 established a direct collision. ThreeFold's
 [Mycelium](https://github.com/threefoldtech/mycelium) is an actively developed
@@ -20,8 +20,8 @@ name, same product category, same language, same binary.
 
 Two things make this more serious than an ordinary naming clash:
 
-1. **ADR-0007 forecloses licence-based defensibility.** With no CLA and no
-   commercial licence, **trademark is the only defensive instrument the project
+1. **ADR-0007 forecloses license-based defensibility.** With no CLA and no
+   commercial license, **trademark is the only defensive instrument the project
    has.** A weak or contested mark leaves nothing.
 2. **The name is structural.** It is baked into repo paths, crate names, binary
    names, the DNS suffix, and every SPDX header. Renaming is nearly free before
@@ -46,7 +46,7 @@ Karst was the only one at or near the top of all three.
 
 | | Karst | Pando | Kelp | Cenote | Ponor |
 |---|---|---|---|---|---|
-| Metaphor | Hidden interconnected passages | One organism, many nodes | Dense canopy | Nodes onto a hidden network | Entry into the network |
+| Metaphor | Hidden interconnected passages | One organizm, many nodes | Dense canopy | Nodes onto a hidden network | Entry into the network |
 | Mark strength | **Very high** — rare, essentially no tech prior use | Moderate — defunct Pando Networks (P2P) | Low — common word, existing tech uses | High | Very high |
 | Ergonomics | **One syllable, unmisspellable** | Good | Good | 3 syllables, pronunciation beat | Good |
 
@@ -78,7 +78,7 @@ for it:
 the maps they make, and it fits the system neatly. It was rejected because
 `netmap` is the established industry term for this object and the documents
 must stay legible to people arriving from Tailscale, Headscale or NetBird.
-Branding an internal data structure buys flavour at the cost of clarity, and
+Branding an internal data structure buys flavor at the cost of clarity, and
 clarity wins. "Survey" remains available as user-facing wording in the console
 if it ever helps.
 
@@ -99,7 +99,7 @@ technical terms do not.**
 ### Negative
 
 - Every document, path, crate and header changes. Done now, before scaffolding,
-  this is a text substitution; after Phase 0 it would touch published artefacts.
+  this is a text substitution; after Phase 0 it would touch published artifacts.
 - The mycology metaphor was a genuinely good fit and is lost.
 
 ### Clearance — complete
@@ -135,14 +135,14 @@ situation forces.
 **crates.io policy note.** Pre-publishing empty `karst-*` stubs to reserve names
 would be squatting, which crates.io policy discourages and which is the same
 free-riding logic ADR-0008 rejected. Crates are published as they become real
-during Phases 1–2, with genuine content — README, licence, and a doc comment.
+during Phases 1–2, with genuine content — README, license, and a doc comment.
 
 ### The namespace is crowded — recorded for future reference
 
 Four independent claimants to "karst" were found: a personal GitHub account
 (Karst is a common Dutch given name), an active PyPI project in AI developer
 tooling, a crates.io placeholder for volumetric rendering, and a karst-geology
-research organisation. None are in networking, so the trademark position is
+research organization. None are in networking, so the trademark position is
 sound, but the name will be contended in most namespaces indefinitely.
 
 Ponor returned clean on three of four registries. **Had this been known before

@@ -119,8 +119,8 @@ type NetmapHandler struct {
 //
 // A node that is refused here is not stuck: it keeps polling, and the moment an
 // authority countersigns it the next poll succeeds. That is the ordinary
-// enrol-then-countersign order, and it costs the node a poll interval rather
-// than a re-enrolment.
+// enroll-then-countersign order, and it costs the node a poll interval rather
+// than a re-enrollment.
 func (h *NetmapHandler) refuseIfUncovered(ctx context.Context, accountID, self string) error {
 	if h.Bedrock == nil || h.BedrockMode == nil {
 		return nil
@@ -533,7 +533,7 @@ func (h *NetmapHandler) parsedPolicy(version *policy.Version) (*policy.Document,
 		return existing, nil
 	}
 	if len(h.policyCache) >= maxCachedPolicyDocuments {
-		// Versions are immutable and the cache is only a parse optimisation, so
+		// Versions are immutable and the cache is only a parse optimization, so
 		// arbitrary eviction preserves correctness while bounding memory under a
 		// stream of policy edits.
 		for stale := range h.policyCache {
@@ -553,7 +553,7 @@ func portRanges(in []policy.PortRange) []*proto.KarstPortRange {
 	return out
 }
 
-// PeerDigest summarises one peer entry, so a node can tell the server what it
+// PeerDigest summarizes one peer entry, so a node can tell the server what it
 // already holds without sending the entry back.
 //
 // Exported because both ends must compute it identically: the node derives it

@@ -36,7 +36,7 @@ Two independent reasons, either sufficient:
 
 ### 2. No DERP wire compatibility
 
-Reusing the protocol would be licence-clean — DERP is BSD-3, which our
+Reusing the protocol would be license-clean — DERP is BSD-3, which our
 dependency allowlist permits, and reimplementing a wire protocol in Rust from a
 BSD-3 Go codebase is legitimate. It is rejected on other grounds:
 
@@ -49,9 +49,9 @@ BSD-3 Go codebase is legitimate. It is rejected on other grounds:
   A 32-byte node ID mapping is possible but is not compatibility.
 - **Decisively: wire compatibility would create the free-riding vector rather
   than close it.** A client able to speak to any unverified `derper` is a
-  product whose default behaviour consumes strangers' bandwidth.
+  product whose default behavior consumes strangers' bandwidth.
 
-**This is a standing constraint, not a one-time judgement.** `karst-relay`
+**This is a standing constraint, not a one-time judgment.** `karst-relay`
 must not gain a DERP compatibility mode, and the relay registry must reject
 `derp://` endpoints. Recorded here so a future contributor does not add it as a
 helpful-looking feature.
@@ -85,7 +85,7 @@ coverage and SPOF problems without anyone donating bandwidth.
   `karst-relay` retains bootstrap and presence; TURN carries the sustained
   fallback where regional coverage matters.
 - **ChannelData framing** (4-byte header) rather than Send/Data indications, to
-  minimise MTU impact. Total of datapath MTU plus PHREATIC overhead plus 4 bytes
+  minimize MTU impact. Total of datapath MTU plus PHREATIC overhead plus 4 bytes
   must fit the path MTU; asserted in tests.
 - **Ephemeral credentials.** The control server mints time-limited HMAC
   credentials (the standard TURN REST scheme) and distributes them via netmap.
@@ -125,7 +125,7 @@ conditions that §5 currently leaves optional:
 ### Positive
 
 - Q4 largely dissolves for the self-hosted-first target: zero marginal cost,
-  one deployment artefact.
+  one deployment artifact.
 - Regional coverage and SPOF are solvable with commodity infrastructure the
   operator already has or can rent cheaply.
 - No dependence on, or extraction of value from, another project's

@@ -6,7 +6,7 @@
 #
 # ## Read this before wiring it up
 #
-# The artefact `scripts/build-macos-pkg.sh` produces **cannot be accepted by
+# The artifact `scripts/build-macos-pkg.sh` produces **cannot be accepted by
 # the Mac App Store**, and no amount of credentials changes that. The App Store
 # requires a sandboxed application; Karst's macOS client is a root LaunchDaemon
 # that opens a `utun` device, which is neither sandboxed nor an application.
@@ -27,7 +27,7 @@
 #      up the NetworkExtension variant learns what is missing in one run
 #      instead of by reading Apple's documentation twice.
 #   3. The command shapes below are the ones that will actually be used, so the
-#      remaining work is building an App Store-eligible artefact — not
+#      remaining work is building an App Store-eligible artifact — not
 #      discovering how to upload one.
 #
 # It therefore refuses unless KARST_APPSTORE_READY=1 is set, which nobody
@@ -67,14 +67,14 @@ if [ "$missing" -ne 0 ]; then
   echo
   echo "Nothing was submitted: the credentials above are not available."
   echo "This is the expected outcome until the Apple Developer Program"
-  echo "enrolment completes — see plans/phase-5/06-macos-client.md §7."
+  echo "enrollment completes — see plans/phase-5/06-macos-client.md §7."
   exit 0
 fi
 
 if [ "${KARST_APPSTORE_READY:-0}" != "1" ]; then
   cat >&2 <<'EOF'
 
-Credentials are present, and the submission is still blocked — on the artefact,
+Credentials are present, and the submission is still blocked — on the artifact,
 not on the paperwork.
 
 The .pkg built by this repository installs a root LaunchDaemon. The Mac App
@@ -90,7 +90,7 @@ different build entirely:
 
 None of those exist yet. See plans/phase-5/06-macos-client.md §3.
 
-Set KARST_APPSTORE_READY=1 only once an App Store-eligible artefact is being
+Set KARST_APPSTORE_READY=1 only once an App Store-eligible artifact is being
 built, and change $package above to point at it.
 EOF
   exit 1
@@ -100,7 +100,7 @@ fi
 #
 # Everything below runs today if KARST_APPSTORE_READY=1. It is not
 # pseudocode — it is the sequence, in order, and it is here so the remaining
-# work is producing the artefact rather than working this out.
+# work is producing the artifact rather than working this out.
 
 echo "==> productsign with the App Store installer certificate"
 productsign --sign "$KARST_APPSTORE_IDENTITY" "$package" "$package.appstore"

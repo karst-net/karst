@@ -43,7 +43,7 @@ decision made in W2 rather than a panic.**
 
 | Rank | View | Why | Cut to |
 |---|---|---|---|
-| 1 | **First-run setup** | *Not in §8.1.* The exit criterion is "a non-expert admin can install the server … following only the published docs". Nothing else matters if enrolment has no front door | — must ship |
+| 1 | **First-run setup** | *Not in §8.1.* The exit criterion is "a non-expert admin can install the server … following only the published docs". Nothing else matters if enrollment has no front door | — must ship |
 | 2 | Machines | The primary object. Everything else is configuration of it | — must ship |
 | 3 | Access controls | Writing an ACL is named in the exit criterion | Editor + validate; **preview diff can slip** |
 | 4 | Auth keys | You cannot connect a node without one | — must ship |
@@ -67,7 +67,7 @@ web/
   packages/
     api-client/     generated from karst-openapi.yml; CI fails on drift
     ui/             the shared component library — both apps import it
-    tokens/         design tokens: colour, type, spacing, dark mode
+    tokens/         design tokens: color, type, spacing, dark mode
   console/
   portal/
 ```
@@ -178,14 +178,14 @@ full week and expect to redo half of it.
 ## 7. Quality bar and how it is enforced
 
 §8.3 sets WCAG 2.2 AA, keyboard navigation throughout, dark mode, and no
-colour-only status. Enforced, not aspired to:
+color-only status. Enforced, not aspired to:
 
 - `@axe-core/playwright` runs on every E2E route; violations fail CI.
 - One Playwright spec per critical flow driven **keyboard-only**: create an
   auth key, edit and save a policy, deprovision a user. If it cannot be done
   with the keyboard it is not done.
 - Dark mode is a token-level concern in `packages/tokens`; no component
-  defines a colour literal, checked by an ESLint rule on hex literals in
+  defines a color literal, checked by an ESLint rule on hex literals in
   `.tsx`.
 - Every source file carries an SPDX header — `just licenses-check` already
   walks `web/` for `.ts` and `.tsx` and will start failing the moment the

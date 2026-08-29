@@ -111,7 +111,7 @@ pub(crate) fn utun_connect(fd: BorrowedFd<'_>, ctl_id: u32, unit: u32) -> io::Re
     };
 
     // SAFETY: `fd` is an open `PF_SYSTEM` socket for the duration of the call.
-    // `addr` is a live, fully initialised `sockaddr_ctl` and the length passed
+    // `addr` is a live, fully initialized `sockaddr_ctl` and the length passed
     // is exactly its size, so the kernel reads only bytes this frame owns. The
     // cast to `*const sockaddr` is the documented calling convention for every
     // address family.
@@ -278,7 +278,7 @@ pub(crate) fn local_addresses() -> io::Result<Vec<IpAddr>> {
 ///
 /// **Bytewise, not a pointer cast and dereference.** `getifaddrs` hands back a
 /// `*mut sockaddr`, which is aligned to 1; reading a `sockaddr_in` through a
-/// cast of it is undefined behaviour if the allocation happens not to be
+/// cast of it is undefined behavior if the allocation happens not to be
 /// 4-aligned, whatever libc does in practice today. Copying the bytes into a
 /// local of the target type sidesteps the question entirely and costs 16 or 28
 /// bytes of `memcpy` per address, once per enumeration.
@@ -389,6 +389,6 @@ pub(crate) fn default_gateway() -> io::Result<Option<IpAddr>> {
     }
     // Four consecutive races is not a transient. Report no gateway rather than
     // looping: the caller treats that as "no port mapping to ask for", which
-    // is the correct behaviour when the routing table cannot be read.
+    // is the correct behavior when the routing table cannot be read.
     Ok(None)
 }

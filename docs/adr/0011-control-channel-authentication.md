@@ -92,7 +92,7 @@ primary-index role costs nothing to split.
 ### 2. Channel establishment, once per stream
 
 The server holds a **static** ML-KEM-768 key *and* an **ML-DSA-65 identity**,
-both pinned at enrolment and distributed with the auth key or setup token, and
+both pinned at enrollment and distributed with the auth key or setup token, and
 generates an **ephemeral** ML-KEM-768 keypair per connection.
 
 ```
@@ -143,7 +143,7 @@ ProVerif found the trace (`spec/models/karst-control.pv`):
 The attacker needs no key material of their own. So the server holds an
 **ML-DSA-65 identity** and signs `H("karst-control-hello-v1" ‖ server_random ‖
 eph_kem_pk)`; the node pins that verification key alongside the KEM key at
-enrolment and aborts before sending anything if it does not verify.
+enrollment and aborts before sending anything if it does not verify.
 
 Both ciphertexts are bound into `k` and into the node's signature, so a
 man-in-the-middle cannot mix and match halves from two exchanges.
@@ -247,9 +247,9 @@ has no implementation of.
   spec and a ProVerif model; this has neither yet, and shipping it without both
   would be inconsistent with how the datapath was treated. That work is not
   costed in Phase 3's estimate.
-- Key pinning becomes an enrolment concern: a node that accepts any server KEM
+- Key pinning becomes an enrollment concern: a node that accepts any server KEM
   key on first contact is trust-on-first-use, with the usual consequences. The
-  pinned key must travel with the auth key or setup token, and an enrolment
+  pinned key must travel with the auth key or setup token, and an enrollment
   path that omits it silently downgrades server authentication to whatever TLS
   provides.
 - **Forward secrecy holds only for the *channel*, not for what crosses it.**

@@ -143,7 +143,7 @@ func (snap *Snapshot) loadDNS(ctx context.Context, s store.Store, accountID stri
 // agent-network services are never persisted, so without synthesising them here
 // collectFromProxyServices can't fold the embedded proxy peer into the affected
 // set when a client's group changes, and the proxy never learns a newly
-// authorised client until it reconnects (full network-map resync).
+// authorized client until it reconnects (full network-map resync).
 func (snap *Snapshot) loadProxyServices(ctx context.Context, s store.Store, accountID string) error {
 	var err error
 	if snap.proxyByCluster, err = s.GetEmbeddedProxyPeerIDsByCluster(ctx, accountID); err != nil {

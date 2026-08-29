@@ -79,7 +79,7 @@ type Signer interface {
 type IdentityLookup func(nodeID []byte) []byte
 
 // StaticKey is the server's long-lived ML-KEM-768 key. Nodes pin its public
-// half at enrolment; encapsulating to it is what authenticates the server.
+// half at enrollment; encapsulating to it is what authenticates the server.
 type StaticKey struct {
 	dk *mlkem.DecapsulationKey768
 }
@@ -229,7 +229,7 @@ func SigningInput(serverRandom, ctStatic, ctEph, nodeID []byte) []byte {
 // implicitly, because only the holder of the pinned static key can decapsulate
 // it. ct_eph provides forward secrecy: compromising the server's static key
 // later does not decrypt a recorded session, and recorded sessions carry PSKs.
-// ServerPins is what a node is given out of band at enrolment. Both halves
+// ServerPins is what a node is given out of band at enrollment. Both halves
 // must be pinned: the KEM key authenticates the server implicitly, and the
 // verification key is what makes the ephemeral key trustworthy — and so what
 // makes forward secrecy real.

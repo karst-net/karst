@@ -446,7 +446,7 @@ fn the_cli_reports_a_live_tunnel() {
     assert!(!status.contains(&private), "private key material in status");
     assert!(!status.to_lowercase().contains("psk = "), "PSK in status");
 
-    // And the bug report, over the same socket. This is the artefact most
+    // And the bug report, over the same socket. This is the artifact most
     // likely to be pasted somewhere public, so it is checked on a *running*
     // node rather than only in the unit scan — the two catch different
     // mistakes, and this one covers the path the socket actually serves.

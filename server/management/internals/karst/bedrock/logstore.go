@@ -9,7 +9,7 @@
 // every read that produces state verifies again. That is more work than
 // strictly necessary and it is the point: the server holds no key that can
 // sign an entry, so the only thing it can contribute is corruption, and the
-// only defence against corruption it can offer is to refuse to store anything
+// only defense against corruption it can offer is to refuse to store anything
 // that does not verify.
 //
 // A node never trusts this store either — it re-verifies everything it is sent
@@ -40,7 +40,7 @@ const MaxEntriesPerResponse = 32
 
 // LogEntry is one stored entry.
 //
-// Encoded is the §3.6 serialisation, kept verbatim. The parsed fields beside it
+// Encoded is the §3.6 serialization, kept verbatim. The parsed fields beside it
 // exist for indexing and for the console; they are derived from Encoded and are
 // never the thing that is verified or served. If the two could disagree,
 // Encoded is right — it is what the signatures cover.
@@ -238,7 +238,7 @@ func (l *Log) Head(ctx context.Context, accountID string) ([]byte, uint64, error
 // State verifies the stored log and returns the state it establishes.
 //
 // Verified on every call rather than cached. The log is small by construction —
-// one entry per enrolment plus revocations — and a cached State is a thing that
+// one entry per enrollment plus revocations — and a cached State is a thing that
 // can be stale at exactly the moment a revocation matters.
 func (l *Log) State(ctx context.Context, accountID string) (*State, error) {
 	entries, err := l.All(ctx, accountID)

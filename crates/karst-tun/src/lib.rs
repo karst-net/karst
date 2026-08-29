@@ -33,7 +33,7 @@
 //!
 //! # Interface names
 //!
-//! [`TunConfig::name`] is a **preference**, not a request. Linux honours it;
+//! [`TunConfig::name`] is a **preference**, not a request. Linux honors it;
 //! macOS assigns `utunN` itself and cannot be told otherwise. Callers must read
 //! [`Tun::name`] for the name the interface actually has — anything that
 //! assumes the configured one is correct on Linux and silently wrong on macOS.
@@ -102,7 +102,7 @@ pub struct TunConfig {
     ///
     /// Best-effort: if the kernel declines, the device still comes up and
     /// returns one packet per read. Check [`Tun::offload`] for what actually
-    /// happened rather than assuming this was honoured.
+    /// happened rather than assuming this was honored.
     pub offload: bool,
 }
 

@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # KARST-CONTROL v1 — Protocol Specification
 
-- **Status:** Draft 0.1 — Phase 3 deliverable, modelled but not externally reviewed
+- **Status:** Draft 0.1 — Phase 3 deliverable, modeled but not externally reviewed
 - **Date:** 2026-08-13
-- **Licence:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
-  in software under any licence. Independent implementations are wanted.
+- **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
+  in software under any license. Independent implementations are wanted.
 
 > **Implementable.** §4–§7 are stable enough to build against and match the Go
 > implementation in `server/management/internals/karst/`. §11 lists what
@@ -13,9 +13,9 @@
 > All four ProVerif queries verify (§10), including content secrecy under
 > post-session compromise of the server's static key. **No external
 > cryptographic review has happened**, and symbolic models say nothing about
-> implementation behaviour.
+> implementation behavior.
 >
-> §9 records a flaw found by modelling *after* the design had been reviewed,
+> §9 records a flaw found by modeling *after* the design had been reviewed,
 > written up, implemented and tested: the server's ephemeral key was
 > unauthenticated, which silently cost forward secrecy against an active
 > attacker holding no key material.
@@ -34,7 +34,7 @@ and provides mutual authentication and confidentiality independently of it.
 Karst already has PHREATIC (`phreatic-v1.md`) for the data plane. Reusing it
 here was considered and rejected — see ADR-0011.
 
-PHREATIC is a Noise `IK` analogue: the responder identifies the initiator by
+PHREATIC is a Noise `IK` analog: the responder identifies the initiator by
 looking up `peer_id_hint` in its roster (ADR-0005). **A registering node is by
 definition not yet in any roster**, so its identity must be *presented* and
 verified rather than looked up. That is a different pattern, and bending
@@ -164,7 +164,7 @@ Two consequences worth stating:
 | **Static ML-KEM-768** | Long-lived. Nodes encapsulate to it; only the real server can decapsulate, which authenticates the server implicitly |
 | **ML-DSA-87 identity** | Long-lived. Signs the per-connection ephemeral key, which is what makes forward secrecy real (§9) |
 
-A node MUST be given **both** public halves out of band at enrolment,
+A node MUST be given **both** public halves out of band at enrollment,
 alongside its auth key or setup token. Distributing only the KEM half silently
 downgrades forward secrecy to nothing against an active attacker; an
 implementation MUST refuse to proceed without a pinned verification key.
@@ -448,7 +448,7 @@ counters under a key the peer has already used.
 
 ---
 
-## 9. The flaw modelling found
+## 9. The flaw modeling found
 
 Recorded because the reasoning was plausible, survived review, and was wrong.
 
@@ -498,11 +498,11 @@ different property.
 authentication queries still pass. That is the intended result and a run in
 which it passes means the model has stopped testing anything.
 
-Not modelled: the record layer's sequence numbers, gRPC framing, and TLS. TLS
+Not modeled: the record layer's sequence numbers, gRPC framing, and TLS. TLS
 is deliberately excluded — the point of this layer is to hold up when a TLS
-terminator is hostile, so modelling it would assume away the threat.
+terminator is hostile, so modeling it would assume away the threat.
 
-Two red results during development were **modelling artefacts**, recorded so
+Two red results during development were **modeling artifacts**, recorded so
 future readers do not mistake them for findings: an unscoped agreement query
 (the attacker may legitimately register as itself) and an event-ordering
 mistake (the node emitted completion after its send, though the implementation
@@ -516,8 +516,8 @@ derives keys first).
    gap.
 2. **Key rotation is specified only in outline.** `server_kem_pk_id` exists so
    the server can rotate, but the rotation procedure, overlap window and node
-   behaviour on an unrecognised id are unwritten.
-3. **Enrolment is out of scope here** and is where pinning actually happens. A
+   behavior on an unrecognized id are unwritten.
+3. **Enrollment is out of scope here** and is where pinning actually happens. A
    node that accepts any server key on first contact is trust-on-first-use,
    with the usual consequences. This needs its own specification.
 4. **No downgrade protection**, because there is nothing to downgrade to yet.

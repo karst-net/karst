@@ -76,7 +76,7 @@ func main() {
 		}
 		handler = r
 		netmapRouter = r
-		// Real identity lookup, so a returning node is recognised by its handle
+		// Real identity lookup, so a returning node is recognized by its handle
 		// rather than having to present its key again.
 		lookup = r.nodes.LookupFunc()
 	} else {

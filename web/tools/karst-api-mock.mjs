@@ -43,7 +43,7 @@ const prefix = "/api/karst/v1";
 // Shaped like scripts/release-manifest.sh output, and named the way the
 // pipeline actually names things — `karst-client_<version>_<arch>.deb`, not the
 // `karst-linux-amd64.deb` this fixture used to invent. A fixture that describes
-// artefacts nothing builds lets the download test pass for a page that would be
+// artifacts nothing builds lets the download test pass for a page that would be
 // empty in production, which is the fixture-only failure FINDINGS.md 42 and 43
 // are about.
 //
@@ -122,7 +122,7 @@ const server = http.createServer((request, response) => {
 
   if (path === "/releases/manifest.json" && method === "GET") return json(response, 200, { assets: releaseAssets });
 
-  // ── fixture control, not modelled endpoints ────────────────────────────────
+  // ── fixture control, not modeled endpoints ────────────────────────────────
   // Lets a test move the uncovered set between a page load and a save, which is
   // the race PUT /bedrock/mode's 409 exists for.
   if (path === "/__mock__/bedrock/uncovered" && method === "PUT") {
@@ -150,7 +150,7 @@ const server = http.createServer((request, response) => {
       const key = {
         id: id("key"),
         name: draft.name ?? "First node",
-        // Fixed on purpose: a test asserting the enrolment command has to be
+        // Fixed on purpose: a test asserting the enrollment command has to be
         // able to assert the whole string, secret included.
         key: "setup-fixture-secret",
         type: draft.type ?? "one-off",
@@ -197,7 +197,7 @@ const server = http.createServer((request, response) => {
       const token = { id: id("token"), name: draft.name ?? "token", expiration_date: inDays(draft.expires_in ?? 30), created_at: new Date().toISOString(), last_used: null };
       tokens[tokenList[1]] = [...(tokens[tokenList[1]] ?? []), token];
       // The secret exists exactly once, in this response. Mirroring that is the
-      // point: a console that could re-read it later would be modelling a
+      // point: a console that could re-read it later would be modeling a
       // server that stores it, and this one does not.
       return json(response, 201, { plain_token: "pat-fixture-secret", personal_access_token: token });
     });
@@ -257,7 +257,7 @@ const server = http.createServer((request, response) => {
   // router. Fixtures only expose the member's own devices; there is no user
   // identifier to forge in any of these paths.
   if (method === "GET" && karst === "/me/devices") return json(response, 200, memberDevices);
-  if (method === "POST" && karst === "/me/devices/enrol") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
+  if (method === "POST" && karst === "/me/devices/enroll") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
   if (method === "GET" && karst === "/me/access") return json(response, 200, memberAccess);
   if (method === "GET" && karst === "/me/sessions") return json(response, 200, memberSessions);
   const memberDevice = karst.match(/^\/me\/devices\/([^/]+)$/);
@@ -319,17 +319,17 @@ const server = http.createServer((request, response) => {
   if (method === "POST" && karst === "/bedrock/audit-anchor/export") return json(response, 200, { format: "bedrock-signed-bundle-v1", payload: btoa(JSON.stringify({ bundle: "bedrock-bundle-v1", kind: "request" })) });
   if (method === "POST" && karst === "/bedrock/responses/import") return error(response, 501, "not_implemented", "Bedrock response import is not implemented");
   if (method === "PUT" && karst === "/bedrock/mode") {
-    // Mirrors bedrock.Store.SetMode: the acknowledgement is required **only**
+    // Mirrors bedrock.Store.SetMode: the acknowledgment is required **only**
     // for enforcing, because only enforcing can cut anyone off. Demanding it
     // for advisory and off — as this mock used to — made the safe direction
-    // harder than the dangerous one and modelled a server that does not exist.
+    // harder than the dangerous one and modeled a server that does not exist.
     return readBody(request).then((body) => {
       const mode = typeof body.mode === "string" ? body.mode : "enforcing";
       if (!["off", "advisory", "enforcing"].includes(mode)) return error(response, 400, "invalid_argument", `invalid mode ${mode}`);
       if (mode === "enforcing") {
         const acknowledged = Array.isArray(body.acknowledged_cut_off_handles) ? body.acknowledged_cut_off_handles : [];
         if (!sameStrings(acknowledged, bedrock.uncovered_handles)) {
-          return json(response, 409, { code: "acknowledgement_mismatch", message: `bedrock: acknowledgement list does not match uncovered nodes: required [${bedrock.uncovered_handles.join(" ")}]`, required_cut_off_handles: bedrock.uncovered_handles });
+          return json(response, 409, { code: "acknowledgment_mismatch", message: `bedrock: acknowledgment list does not match uncovered nodes: required [${bedrock.uncovered_handles.join(" ")}]`, required_cut_off_handles: bedrock.uncovered_handles });
         }
       }
       bedrock.mode = mode;

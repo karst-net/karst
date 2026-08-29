@@ -5,7 +5,7 @@ product, so security reports are treated as first-class work, not interruptions.
 
 The full threat model — assets, adversary tiers, trust boundaries, accepted
 risks and residual risks — is at [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
-Reading §7 (accepted risks) before reporting will tell you whether a behaviour
+Reading §7 (accepted risks) before reporting will tell you whether a behavior
 is a bug or a documented limitation.
 
 ## Reporting a vulnerability
@@ -25,7 +25,7 @@ helps more.
 
 | Stage | Target |
 |---|---|
-| Acknowledgement | 3 working days |
+| Acknowledgment | 3 working days |
 | Initial assessment | 10 working days |
 | Fix or mitigation plan agreed with you | 30 days |
 | Public disclosure | Coordinated, default 90 days from report |
@@ -38,7 +38,7 @@ report sit unanswered.
 
 If you make a good-faith effort to comply with this policy, we will:
 
-- consider your research **authorised** under the Computer Fraud and Abuse Act
+- consider your research **authorized** under the Computer Fraud and Abuse Act
   and equivalent legislation, and not initiate or support legal action against
   you;
 - consider it **exempt** from anti-circumvention provisions (DMCA §1201 and
@@ -50,7 +50,7 @@ If you make a good-faith effort to comply with this policy, we will:
   conducted under this policy.
 
 Good faith means: only test against infrastructure you own or are explicitly
-authorised to test; do not access, modify, or retain data belonging to others;
+authorized to test; do not access, modify, or retain data belonging to others;
 do not degrade service for others; stop as soon as you have demonstrated the
 issue; and give us reasonable time to remediate before disclosure.
 

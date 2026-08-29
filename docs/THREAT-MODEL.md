@@ -1,6 +1,6 @@
 # Karst — Threat Model
 
-- **Status:** Draft for review · Phase 0 artefact
+- **Status:** Draft for review · Phase 0 artifact
 - **Date:** 2026-08-09
 - **Scope:** Karst v1 — self-hosted, single-tenant coordination server
 - **Related:** PLAN.md §1, ADR-0001 through ADR-0010
@@ -32,11 +32,11 @@ Ranked by consequence of loss.
 |---|---|---|
 | A1 | Traffic confidentiality, **including retroactively** | Total product failure — this is the reason Karst exists |
 | A2 | Node static KEM and identity keys | Impersonation; decryption of that node's sessions |
-| A3 | Bedrock root keys | Adversary can authorise arbitrary nodes into the network |
+| A3 | Bedrock root keys | Adversary can authorize arbitrary nodes into the network |
 | A4 | PSK derivation master | Removes the diversity hedge; with a lattice break, total compromise |
 | A5 | Netmap contents (PSKs, TURN credentials, packet filters) | Per-pair secrets and full network topology |
 | A6 | Access-control policy integrity | Silent lateral movement inside the network |
-| A7 | Identity-provider trust path | Unauthorised enrolment of users and devices |
+| A7 | Identity-provider trust path | Unauthorized enrollment of users and devices |
 | A8 | Availability of the datapath | Denial of service; not a confidentiality loss |
 | A9 | Communication metadata (who talks to whom, when, volume) | Partially exposed by design — see §7 |
 
@@ -88,7 +88,7 @@ but v1 does not claim resistance to an active adversary who already has a CRQC.
 | ID | Boundary | Trust assumption |
 |---|---|---|
 | B1 | node ↔ node | Peer is authenticated but **not trusted** — ACLs enforced at both ends |
-| B2 | node ↔ control server | Server is authorised to distribute policy, **not** to read traffic |
+| B2 | node ↔ control server | Server is authorized to distribute policy, **not** to read traffic |
 | B3 | node ↔ relay/TURN | Fully untrusted; carries ciphertext only |
 | B4 | admin ↔ console | Authenticated, role-limited, fully audited |
 | B5 | control server ↔ IdP | IdP is authoritative for user identity only |
@@ -109,7 +109,7 @@ everything else holds.
 | Coordination server **+** full lattice break | **Everything** | — |
 | PSK master alone | Removes the diversity hedge | Nothing decryptable while ML-KEM holds |
 | One node's static keys | That node's sessions and impersonation of it | Other nodes' sessions (per-pair PSKs, per-session KEM) |
-| Bedrock quorum (k of n roots) | Authorise arbitrary nodes | Retroactive decryption |
+| Bedrock quorum (k of n roots) | Authorize arbitrary nodes | Retroactive decryption |
 | Retroactive ML-KEM break, recorded traffic | Nothing, absent the PSK (ADR-0002, §2.6) | — |
 | Retroactive ML-KEM break **+** netmap | Session plaintext; identity as **pseudonym only** (ADR-0005) | Raw identity keys |
 
@@ -132,7 +132,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Handshake DoS via reassembly state | Per-fragment MACs; mandatory cookie under load; zero pre-validation state; 4-fragment cap; bounded per-source budget | ADR-0004 | Spoofed-source flood tests; `kani` on reassembler |
 | Amplification | Never act on partial reassembly; never emit more than received; msg1 (2378 B) > msg2 (2236 B) | ADR-0004 | Asserted ratio tests in CI |
 | Suite downgrade | Suite ID bound into transcript; server-published minimum suite enforced **at the node** | ADR-0006 | ProVerif downgrade case |
-| PSK downgrade to all-zero fallback | Fallback modelled explicitly; lattice-only sessions flagged in console | ADR-0004, §8.1 | Verifpal + ProVerif no-downgrade property |
+| PSK downgrade to all-zero fallback | Fallback modeled explicitly; lattice-only sessions flagged in console | ADR-0004, §8.1 | Verifpal + ProVerif no-downgrade property |
 | Replay | Timestamp in AEAD payload; session indices; 64-bit counters | §2.2 | Protocol tests |
 | Roster-membership oracle | Hint misses dropped silently, never answered | ADR-0005 | Prober test |
 | Identity exposure to passive observer | `peer_id_hint` inside AEAD; degrades to pseudonymity, not identity | ADR-0005 | Model + review |
@@ -148,7 +148,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | PSK master extraction (A4) | HSM/KMS custody where available; documented software fallback; O(1) derived, not stored | ADR-0004 | Key-custody review |
 | Control-channel interception | TLS 1.3 with `X25519MLKEM768` | ADR-0001 | Config tests |
 | Stale netmap → silent connectivity loss (A8) | Netmap age surfaced in `karst status`; `karst doctor` diagnoses hint misses | ADR-0005 | Phase 3 |
-| Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorised admin/auditor views | Phase 5 control API | Route × role secret/authorisation scan |
+| Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views | Phase 5 control API | Route × role secret/authorization scan |
 
 ### B3 — Relay and TURN
 
@@ -182,9 +182,9 @@ ADR-0007 chose AGPL — so a modified server must be published.
 
 | Threat | Mitigation | Decided | Validated by |
 |---|---|---|---|
-| Malicious or vulnerable dependency | `cargo deny`, `govulncheck`, licence allowlist, Dependabot, quarterly review | LICENSING.md, §11 | CI gates |
+| Malicious or vulnerable dependency | `cargo deny`, `govulncheck`, license allowlist, Dependabot, quarterly review | LICENSING.md, §11 | CI gates |
 | **NetBird fork inherits upstream vulnerabilities** | Fork enters the dependency review cycle as a **first-class component, not a library** | ADR-0009 | Quarterly review; rebase discipline |
-| Build tampering | Reproducible builds, signed artefacts, SBOM per release, transparency-logged releases | §11 | Release pipeline |
+| Build tampering | Reproducible builds, signed artifacts, SBOM per release, transparency-logged releases | §11 | Release pipeline |
 
 ---
 
@@ -205,8 +205,8 @@ Stated plainly, because a reviewer will find them anyway.
    ADR-0004.
 4. **A real-time quantum adversary is out of scope for v1 authentication.**
 5. **The IdP is a trusted root.** Compromise of the identity provider yields
-   the ability to enrol users. Bedrock limits what a *server* compromise can
-   do, but does not constrain a legitimately-authenticated enrolment.
+   the ability to enroll users. Bedrock limits what a *server* compromise can
+   do, but does not constrain a legitimately-authenticated enrollment.
 6. **A malicious admin is auditable, not prevented.** Bedrock's k-of-n quorum
    raises the bar for node injection specifically; it does not constrain
    policy changes.

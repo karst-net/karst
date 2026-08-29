@@ -246,7 +246,7 @@ func TestAuthMiddleware_Handler(t *testing.T) {
 // routinely aborts in-flight requests on re-render/navigation; if the sync ran in
 // the request context, the cancellation would roll back the DB transaction and the
 // synced groups would silently never persist. The sync must receive a context that
-// is not cancelled even when the originating request is.
+// is not canceled even when the originating request is.
 func TestAuthMiddleware_SyncUserJWTGroupsDetachedFromRequestCancellation(t *testing.T) {
 	var (
 		syncCalled bool
@@ -283,7 +283,7 @@ func TestAuthMiddleware_SyncUserJWTGroupsDetachedFromRequestCancellation(t *test
 
 	handlerToTest := authMiddleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	// Simulate the dashboard aborting the request: it arrives already cancelled.
+	// Simulate the dashboard aborting the request: it arrives already canceled.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -297,7 +297,7 @@ func TestAuthMiddleware_SyncUserJWTGroupsDetachedFromRequestCancellation(t *test
 		t.Fatal("syncUserJWTGroups was not called")
 	}
 	if syncCtxErr != nil {
-		t.Fatalf("syncUserJWTGroups received a cancelled context (%v); the group-sync write must be detached from request cancellation", syncCtxErr)
+		t.Fatalf("syncUserJWTGroups received a canceled context (%v); the group-sync write must be detached from request cancellation", syncCtxErr)
 	}
 }
 

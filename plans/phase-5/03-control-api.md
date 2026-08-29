@@ -61,7 +61,7 @@ ours", recorded there as an obligation rather than an aspiration. A clean path
 boundary makes that boundary mechanical — everything under `/api/karst/` is
 ours and AGPL, everything else is a fork change that might be offered back.
 A `crypto_posture` field grafted onto NetBird's `Peer` schema makes it a
-judgement call in every future review.
+judgment call in every future review.
 
 Mechanically:
 
@@ -72,7 +72,7 @@ Mechanically:
   registrations, so it inherits `metricsMiddleware`, `corsMiddleware`, and
   `authMiddleware` without a second auth path. **Do not build a second auth
   path.** A separate namespace with its own token handling is how an
-  authorisation bypass ships.
+  authorization bypass ships.
 - `server/shared/management/http/api/karst-openapi.yml` — our own document,
   generated into Go types by the same `oapi-codegen` config the fork uses
   (`api/cfg.yaml`) and into a TypeScript client for the console.
@@ -88,7 +88,7 @@ Concretely, by Friday of W2:
 - `karst-openapi.yml` describes every endpoint in §5, with response schemas,
   error shapes, and pagination.
 - `just api-mock` runs Prism (or `oapi-codegen`'s server stub with fixtures) on
-  a local port serving realistic example payloads — a fifty-node account, two
+  a local port serving realiztic example payloads — a fifty-node account, two
   relays, a Bedrock chain, mixed crypto posture, an audit log with a break in
   it. **Fixtures with interesting data, not empty arrays.** A console built
   against three tidy peers looks fine and falls apart on the first real
@@ -129,7 +129,7 @@ observation — and refuses a malformed one rather than ignoring it. Extend that
 report with the session facts the console needs, store them on the node record
 with an observation timestamp, and **render them in the console as "as of
 14:32", never as current truth.** A node that has been offline for a day should
-show its last known posture greyed out with the age, not a stale green dot.
+show its last known posture grayed out with the age, not a stale green dot.
 
 ### 5.2 Policy — `/api/karst/v1/policy`
 
@@ -148,7 +148,7 @@ POST   /policy/test                run the policy unit tests in the document
 hard: `karst/policy` already compiles a document to a per-node filter for the
 netmap. Compile the current document and the proposed one for every node,
 diff the rule sets, and return the delta as flows. **Budget a week for it
-anyway** — the diff is cheap and presenting it in terms an admin recognises
+anyway** — the diff is cheap and presenting it in terms an admin recognizes
 ("`group:sre` loses `tag:prod:22`", not "rule 7 changed") is not.
 
 `validate` must return line and column. A HuJSON editor with schema-aware
@@ -255,7 +255,7 @@ The API test performs this exact prepare → authority-sign → import →
 authority able to sign anchors could also countersign nodes unless a future,
 capability-scoped authority design is adopted.
 
-## 6. Authorisation
+## 6. Authorization
 
 PLAN.md §4.4 specifies six roles — Owner, Admin, Network Admin, IT Admin,
 Auditor, Member — "enforced by a central authorization middleware with a
@@ -316,5 +316,5 @@ plaintext boundary. So:
    after creation — asserted by a scan, not by review.
 4. `POST /policy/preview` returns the flow-level diff for a fifty-node fixture
    in under a second.
-5. Moving Bedrock to `enforcing` with an out-of-date acknowledgement list
+5. Moving Bedrock to `enforcing` with an out-of-date acknowledgment list
    returns 409.

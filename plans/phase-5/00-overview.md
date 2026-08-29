@@ -24,7 +24,7 @@ is:
    hashed owner binding that registration consumes only after the inherited
    manager accepts the key; real registration, device visibility, key
    issuance, and self-revocation are covered together. The matching console
-   test creates and invites a member, enrols that member's Linux peer, and
+   test creates and invites a member, enrolls that member's Linux peer, and
    proves administrator deprovisioning deletes the peer as well as the user.
 2. Audit operations are complete: JSON/CSV exports select the required server
    format; configured webhook/TLS-syslog sinks drain through a durable retrying
@@ -68,9 +68,9 @@ criterion says so in as many words:
 > installers, following only the published docs.
 
 The following was the original phase rationale. Its claim that the console,
-network lock, and all enrolment surfaces do not exist is superseded by §0;
+network lock, and all enrollment surfaces do not exist is superseded by §0;
 non-Linux installers and a non-expert walkthrough remain dependencies. Phase 4
-said when it shipped the compose artefact ("*What is left is enrolment, and it is
+said when it shipped the compose artifact ("*What is left is enrollment, and it is
 Phase 5's*", PLAN.md §10 Phase 4).
 
 The phase therefore has an unusual shape for this project: **the protocol work
@@ -108,7 +108,7 @@ risk whose mitigation is "start certificate acquisition in Phase 3, not Phase
 5". Phase 3 is closed and no certificate was acquired. An EV code-signing
 certificate for the Windows kernel-mode path is a two-to-six week identity
 verification with a hardware token shipped physically; Apple's Developer
-Program enrolment for an organisation is one to four weeks on a D-U-N-S number
+Program enrollment for an organization is one to four weeks on a D-U-N-S number
 lookup. **Both must be started in W1 as paperwork, in parallel with everything
 else, or W8's packaging work has nothing to sign.** See
 [06](06-macos-client.md) §7 and [07](07-windows-client.md) §8.
@@ -207,7 +207,7 @@ first option**; the exit criterion names the console explicitly.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| macOS signing/notarization not in hand by W7 | **High** — nothing started | **High** — no completed non-Linux installer, exit criterion unreachable | Start Apple enrolment W1 day 1; treat as SRE's first task ahead of any CI work. Windows signing is Phase 8 work. |
+| macOS signing/notarization not in hand by W7 | **High** — nothing started | **High** — no completed non-Linux installer, exit criterion unreachable | Start Apple enrollment W1 day 1; treat as SRE's first task ahead of any CI work. Windows signing is Phase 8 work. |
 | API contract churn after W2 | Medium | High — frontend rework | Freeze as OpenAPI + mock server; changes after W2 go through an explicit amendment with both frontend engineers in the room |
 | Platform DNS integration exceeds estimate | **High** — it always does | Medium | The Linux mechanisms are implemented; budget macOS resolver work with its client. Windows NRPT is Phase 8 work. |
 | Bedrock single-reader risk | Medium | **High** — a flaw in a fail-closed crypto path | Pair Rust 1 from W5; Phase 6's internal review takes Bedrock as its second subject after PHREATIC |

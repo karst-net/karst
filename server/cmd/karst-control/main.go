@@ -77,7 +77,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Cancelled when main returns, which is the only shutdown signal this
+	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()

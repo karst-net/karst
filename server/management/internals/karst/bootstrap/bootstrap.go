@@ -63,7 +63,7 @@ func CurrentEpoch(now time.Time) uint32 {
 
 // ServerKeys is the singleton row holding the server's long-lived secrets.
 //
-// These MUST persist. Nodes **pin** the public halves at enrolment, so
+// These MUST persist. Nodes **pin** the public halves at enrollment, so
 // regenerating them on restart does not degrade gracefully — it breaks every
 // enrolled node at once, with each one reporting that the server failed to
 // authenticate. Losing this row is an outage that looks like an attack.
@@ -258,11 +258,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	return k, nil
 }
 
-// migrateMu serialises first-start within a single process.
+// migrateMu serializes first-start within a single process.
 //
 // Concurrent callers contend on the schema, and on SQLite that surfaces as
 // "database table is locked: sqlite_master" rather than as anything the
-// original "table already exists" tolerance recognised. Inside one process
+// original "table already exists" tolerance recognized. Inside one process
 // there is no reason to race at all, so this removes the contention outright
 // instead of recovering from it. Cross-process contention — two replicas
 // against one database, the case the tolerance below was written for — a mutex
@@ -341,7 +341,7 @@ func tryLoadOrCreateKeys(db *gorm.DB) (*ServerKeys, error) {
 		PSKMaster:    master,
 		CreatedAt:    time.Now().UTC(),
 	}
-	// A plain Create, not an upsert: two processes racing to initialise a
+	// A plain Create, not an upsert: two processes racing to initialize a
 	// fresh database must not both succeed with different keys, which would
 	// give half the nodes an unusable pin. The loser re-reads the winner's row.
 	if err := db.Create(&keys).Error; err != nil {

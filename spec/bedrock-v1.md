@@ -14,7 +14,7 @@ Stated first, because a security mechanism that is believed to do more than it
 does is worse than none.
 
 - It does not stop a compromised server **denying** service. The server can
-  drop a node from the netmap, refuse enrolment, or serve a stale log. Bedrock
+  drop a node from the netmap, refuse enrollment, or serve a stale log. Bedrock
   makes lying detectable, not impossible.
 - It does not protect a node whose own key is stolen. That is revocation, and
   revocation propagates at the speed of the log.
@@ -113,11 +113,11 @@ entry_hash_n = SHA-512("karst-bedrock-v1"
 these are human-scale policy times and an admin reasons about them in seconds.
 
 SHA-512, not the audit log's SHA-256, per ADR-0001's hash choice. The audit log
-predates that convention and is a Go-internal artefact; Bedrock is on the wire
+predates that convention and is a Go-internal artifact; Bedrock is on the wire
 and verified by two implementations.
 
 **Every field is length-prefixed, including `op`.** PLAN.md's sketch of this
-construction left `op` bare. That would have been a canonicalisation hazard of
+construction left `op` bare. That would have been a canonicalization hazard of
 exactly the kind §3.3 exists to avoid — a bare variable-length field followed
 by a length prefix admits ambiguity — so the prefix was added. The shape now
 matches `audit.go`'s `chainHash` exactly: a bare constant label, then every
@@ -131,8 +131,8 @@ canonical form and hoping:
 
 **The signer emits body bytes; the log stores those bytes; every verifier
 hashes what it was given and parses it separately for display.** There is no
-parse-then-reserialise round trip anywhere in the verification path, because
-that round trip is where canonicalisation bugs live.
+parse-then-reserialize round trip anywhere in the verification path, because
+that round trip is where canonicalization bugs live.
 
 The cost is that a malformed body is detected *after* signature verification
 rather than before, which is the correct order anyway: an unauthenticated body
@@ -204,10 +204,10 @@ would always be "the computed one" — so the carried one is only a way to be
 wrong.
 
 On the control plane an entry travels as an opaque `bytes` field
-(`KarstBedrockResponse.entries`), never as a modelled protobuf message.
+(`KarstBedrockResponse.entries`), never as a modeled protobuf message.
 Protobuf is not canonical, and every signature is over a hash of exactly these
-bytes; modelling an entry as a message would require two implementations to
-agree on a protobuf serialiser's internal field ordering, which neither can
+bytes; modeling an entry as a message would require two implementations to
+agree on a protobuf serializer's internal field ordering, which neither can
 promise. Putting the entry inside a `bytes` field removes the question.
 
 ## 4. Verification
@@ -302,7 +302,7 @@ of the first is capable of the second.
 
 Three modes:
 
-| Mode | Behaviour |
+| Mode | Behavior |
 |---|---|
 | `off` | No verification. The default until an operator turns it on |
 | `advisory` | Verify, report, do not drop |
@@ -375,14 +375,14 @@ what enforcement *would* do before anyone is cut off, and a server that refused
 netmaps in advisory mode would do the thing advisory exists to avoid.
 
 A refused node is not stuck: it keeps polling, and the next poll after an
-authority countersigns it succeeds. That is the ordinary enrol-then-countersign
-order and it costs a poll interval, not a re-enrolment.
+authority countersigns it succeeds. That is the ordinary enroll-then-countersign
+order and it costs a poll interval, not a re-enrollment.
 
-**A countersignature is not yet an enrolment credential.** `channel.go`'s
-enrolment comment lists "auth key, OIDC, Bedrock countersignature" as the three
+**A countersignature is not yet an enrollment credential.** `channel.go`'s
+enrollment comment lists "auth key, OIDC, Bedrock countersignature" as the three
 ways to admit a node, and the third is not implemented. It would be *stronger*
-than the other two — a setup key authorises whoever holds it, while a
-countersignature authorises one specific key that the node proves possession of
+than the other two — a setup key authorizes whoever holds it, while a
+countersignature authorizes one specific key that the node proves possession of
 during the handshake — but it needs the account to be resolvable before the
 node is known, and the forked account manager exposes only `LoginPeer`, which
 requires a setup key or a user. Widening that interface is a fork-coupling
@@ -412,7 +412,7 @@ passes even when one side signs the wrong message under the right key.
 ## 9. Deliberately not in v1
 
 - **Root rotation.** There is no operation that replaces the root list. Adding
-  one would be safe in itself — it would require `k` roots to authorise — but
+  one would be safe in itself — it would require `k` roots to authorize — but
   §7's "no recovery path" property is easier to reason about when the root set
   is fixed at `genesis`, and no deployment has yet needed it. Revisit when one
   does.

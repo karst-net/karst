@@ -62,7 +62,7 @@ func TestLoadProxyServices_MergesSynthesizedAgentNetworkServices(t *testing.T) {
 }
 
 // With no synthesiser registered, loadProxyServices falls back to persisted
-// services only (no panic, no behaviour change for non-agent-network builds).
+// services only (no panic, no behavior change for non-agent-network builds).
 func TestLoadProxyServices_NoSynthesizerRegistered(t *testing.T) {
 	prev := agentNetworkSynthesizer
 	t.Cleanup(func() { agentNetworkSynthesizer = prev })

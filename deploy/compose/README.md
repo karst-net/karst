@@ -26,7 +26,7 @@ every node is told about exactly that relay.
 
 Not done for you: **enrolling nodes**. A node needs a setup key, and issuing one
 needs an account, which needs the admin console — Phase 5. Until then this
-artefact stands up the infrastructure; it does not finish the walk-through.
+artifact stands up the infrastructure; it does not finish the walk-through.
 Saying so here rather than letting you discover it after the third command.
 
 Each node also needs three things from this deployment, all printed by

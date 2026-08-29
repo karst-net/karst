@@ -638,7 +638,7 @@ fn the_senders_acl_drops_a_packet_before_it_is_encrypted() {
     let allowed = a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 443), 11);
     assert!(!allowed.datagrams.is_empty());
     assert_eq!(a.stats().tx_packets, 1);
-    let _ = b; // established above so the send path is realistic
+    let _ = b; // established above so the send path is realiztic
 }
 
 /// **Fragmenting must not be a way around the filter.** A non-first fragment
@@ -752,7 +752,7 @@ allowed_ips = ["10.77.0.3/32"]
 
 /// **The property live reconfiguration exists for.** Adding a peer must not
 /// cost a rehandshake with every other one — on a large aquifer a single
-/// enrolment would otherwise produce a fleet-wide reconnect, each costing two
+/// enrollment would otherwise produce a fleet-wide reconnect, each costing two
 /// ML-KEM operations and a window where traffic is dropped for want of a
 /// session.
 #[test]

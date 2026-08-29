@@ -5,7 +5,7 @@
 The longest of the three client ports and the one with an unresolved licensing
 question at the front of it. Start W1 with §1, not with code.
 
-## 1. The Wintun licence question — resolve before writing a line
+## 1. The Wintun license question — resolve before writing a line
 
 > **Re-baselined 2026-08-27.** There is no Karst Windows client datapath,
 > service, installer, key store, or NRPT integration. Existing `server/client`
@@ -33,7 +33,7 @@ aggregation.
 
 **It is still a lawyer's call and not an engineer's.** Actions for W1:
 
-1. Read Wintun's licence text as shipped, not as remembered.
+1. Read Wintun's license text as shipped, not as remembered.
 2. Get a written answer on distributing the unmodified DLL alongside an
    MIT/Apache binary in one MSI.
 3. Record the answer as **ADR-0015, "Windows TUN provider"**, because this is
@@ -189,17 +189,17 @@ signing service.
 
 | Option | Lead time | Notes |
 |---|---|---|
-| **Azure Trusted Signing** | Days, if the org qualifies | Cheapest and CI-friendliest. Requires a verified organisation with three years of history — check this in W1, it is a hard gate |
+| **Azure Trusted Signing** | Days, if the org qualifies | Cheapest and CI-friendliest. Requires a verified organization with three years of history — check this in W1, it is a hard gate |
 | OV certificate on a hardware token | 1–3 weeks | Token ships physically. Awkward in CI; needs a self-hosted signing runner or a manual release step |
 | EV certificate | 2–6 weeks | Immediate SmartScreen reputation, which OV has to earn over weeks of downloads |
 
 **Check the Azure Trusted Signing eligibility in W1 and fall back to EV if the
-organisation is too young.** SmartScreen matters for this project's audience:
+organization is too young.** SmartScreen matters for this project's audience:
 an unsigned or reputation-less installer shows "Windows protected your PC" to
 exactly the non-expert admin the exit criterion is about.
 
 Sign `karstd.exe`, `karst.exe`, and the MSI, with a timestamp, and verify with
-`signtool verify /pa /v` on a machine that has not seen the artefact.
+`signtool verify /pa /v` on a machine that has not seen the artifact.
 
 ## 9. Testing
 
@@ -218,7 +218,7 @@ signing on tags only.
 
 | Week | Work |
 |---|---|
-| W1 | Wintun licence answer, ADR-0015, signing-certificate route decided |
+| W1 | Wintun license answer, ADR-0015, signing-certificate route decided |
 | W2 | `windows.rs`: adapter, session, ring I/O, shutdown event |
 | W3 | Addressing, routes, IP Helper; `local_addresses`, `default_gateway` |
 | W4 | `karstd` runs end to end on Windows; loopback pair test |
@@ -237,7 +237,7 @@ collides with the walkthrough.
 
 1. A signed MSI installs on a clean Windows 11 machine with no SmartScreen
    block, and the service starts on boot.
-2. The node enrols from the console's auth key and reaches a peer across a NAT.
+2. The node enrolls from the console's auth key and reaches a peer across a NAT.
 3. Mesh names resolve through NRPT; a split-DNS route resolves internally.
 4. Uninstall removes the service, the adapter, the firewall rule, and every
    NRPT rule, and leaves DNS working.

@@ -219,7 +219,7 @@ func TestSetupKeyStillWorksAlongsideOIDC(t *testing.T) {
 	}
 }
 
-// Single use: a captured token must not enrol a second node.
+// Single use: a captured token must not enroll a second node.
 func TestTokenIsSingleUse(t *testing.T) {
 	claimer := &fakeClaimer{}
 	newOIDC := func() *control.OIDC {
@@ -298,7 +298,7 @@ func TestExpiredTokenRejected(t *testing.T) {
 	}
 }
 
-// Authenticated but not authorised is PermissionDenied, not Unauthenticated:
+// Authenticated but not authorized is PermissionDenied, not Unauthenticated:
 // the distinction tells an operator whether to fix the login or the groups.
 func TestGroupRejectionIsPermissionDenied(t *testing.T) {
 	accounts := &fakeAccounts{}
@@ -315,7 +315,7 @@ func TestGroupRejectionIsPermissionDenied(t *testing.T) {
 		t.Fatalf("got %v want PermissionDenied", err)
 	}
 	if accounts.calls != 0 {
-		t.Fatal("an unauthorised user reached the business layer")
+		t.Fatal("an unauthorized user reached the business layer")
 	}
 }
 

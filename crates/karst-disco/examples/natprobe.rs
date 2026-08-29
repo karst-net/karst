@@ -15,7 +15,7 @@
 //! VPN rather than a two-line probe.
 //!
 //! It is deliberately not `karst-disco`: this measures the *network*, so it
-//! must not share code with the thing whose behaviour on that network is in
+//! must not share code with the thing whose behavior on that network is in
 //! question.
 
 use std::env;

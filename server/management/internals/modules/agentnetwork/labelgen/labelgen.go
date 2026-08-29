@@ -20,7 +20,7 @@ var (
 )
 
 // uniqueWords returns the wordlist deduplicated and sorted for
-// deterministic exhaustion behaviour. Lazy-built once per process.
+// deterministic exhaustion behavior. Lazy-built once per process.
 func uniqueWords() []string {
 	dedupOnce.Do(func() {
 		seen := make(map[string]struct{}, len(words))

@@ -1,4 +1,4 @@
-(* Experiment C — ML-KEM broken, modelled as targeted leakage.
+(* Experiment C — ML-KEM broken, modeled as targeted leakage.
  *
  * Instead of a universally-quantified destructor
  *     reduc forall p: pkem, r: rnd; break_kem(encap_ct(p,r)) = encap_ss(p,r).
@@ -228,7 +228,7 @@ process
     let DR  = exp(g, xR) in
 
     (* Public keys are public. Their *distribution* is authenticated by the
-       coordination server (THREAT-MODEL §4, B2), which is modelled by the
+       coordination server (THREAT-MODEL §4, B2), which is modeled by the
        processes using the real key terms rather than attacker-supplied ones. *)
     out(c, (pkI, pkR, DI, DR));
 

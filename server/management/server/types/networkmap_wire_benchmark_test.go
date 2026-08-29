@@ -28,7 +28,7 @@ var wireBenchScales = []benchmarkScale{
 // 32-byte string. The default scalableTestAccount uses unparsable strings
 // like "key-peer-0", which makes the components encoder emit a nil WgPubKey
 // and the legacy encoder ship 10-char placeholders — both shrink the wire
-// size in unrealistic ways. Production peers always have valid 44-char base64
+// size in unrealiztic ways. Production peers always have valid 44-char base64
 // keys, so any benchmark/breakdown that wants honest numbers must call this.
 func assignValidWgKeys(account *types.Account) {
 	for _, p := range account.Peers {

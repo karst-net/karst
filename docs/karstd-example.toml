@@ -27,7 +27,7 @@ listen = "0.0.0.0:51820"
 # never made persistent, so a crashed daemon cannot leave an interface behind
 # black-holing everything the kernel still routes to it.
 #
-# This is a *preference*, not a request. Linux honours it; macOS names its
+# This is a *preference*, not a request. Linux honors it; macOS names its
 # `utun` devices itself and will hand back `utunN` whatever is written here.
 # `karst status` reports the name the interface actually got, and that is the
 # one to use with `ifconfig`, `route` or anything else.

@@ -65,7 +65,7 @@ func DecodeEnvelope(env *proto.NetworkMapEnvelope) (*types.NetworkMapComponents,
 	// snapshots. peerIDByIndex lets downstream phases resolve wire indexes
 	// back to that key. A peer with a missing or malformed wg_pub_key is
 	// skipped (and its index keeps "" so any cross-reference falls into the
-	// same missing-peer branch downstream) — matches legacy behaviour, which
+	// same missing-peer branch downstream) — matches legacy behavior, which
 	// degrades gracefully rather than aborting the whole sync on a single
 	// bad row.
 	peerIDByIndex := make([]string, len(full.Peers))

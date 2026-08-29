@@ -383,7 +383,7 @@ async fn the_servers_policy_arrives_and_is_enforced() {
 }
 
 /// **A second fetch must be cheap.** The node sends the version it holds, the
-/// server recognises it, and no peer entry crosses the wire. That is the whole
+/// server recognizes it, and no peer entry crosses the wire. That is the whole
 /// point of the content-hash version, and it is the property that silently
 /// breaks if the two implementations disagree about how to compute it.
 #[tokio::test]
@@ -631,7 +631,7 @@ async fn a_real_offline_ceremony_admits_only_covered_aquifer_members() {
     std::fs::write(&log, offline_ceremony_for(identity_seed, &static_keys))
         .expect("write ceremony");
 
-    // The preloaded peer enrols normally, but is deliberately absent from the
+    // The preloaded peer enrolls normally, but is deliberately absent from the
     // offline authority response. It therefore reaches the netmap but not the
     // datapath; the test would fail if the testserver re-signed it on our
     // behalf.

@@ -64,7 +64,7 @@ type consoleCase struct {
 	// path is the route template with its parameters filled in.
 	path string
 	body string
-	// headers the console sends. Policy writes are optimistic-concurrency
+	// headers the console sends. Policy writes are optimiztic-concurrency
 	// controlled, so If-Match is part of the request rather than optional.
 	headers map[string]string
 	// want is the status an administrator should get. Not always 2xx: a

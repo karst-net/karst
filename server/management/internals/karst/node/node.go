@@ -261,7 +261,7 @@ const (
 // ValidateRegistration checks the identity and data-plane keys without
 // persisting anything, and returns the handle Register will use.
 //
-// Callers that must authorize an enrolment before making any durable change
+// Callers that must authorize an enrollment before making any durable change
 // use this before calling their business layer. Register repeats the check so
 // it remains safe when used directly.
 func ValidateRegistration(pub []byte, keys DataPlaneKeys) (string, error) {
@@ -293,7 +293,7 @@ func ValidateRegistration(pub []byte, keys DataPlaneKeys) (string, error) {
 // Register records an identity, returning its handle.
 //
 // Idempotent: re-registering the same key is a no-op, which is what a node
-// re-running enrolment after losing its local state does. Registering a
+// re-running enrollment after losing its local state does. Registering a
 // *different* key under an existing handle is impossible without a SHA-256
 // collision, but it is checked rather than assumed — the cost is one
 // comparison and the alternative is a silent identity takeover.
@@ -392,7 +392,7 @@ func (s *Store) SetHomeRelay(handle string, relayID []byte) error {
 	if len(relayID) != 0 && len(relayID) != relayIDSize {
 		return fmt.Errorf("%w: %d bytes, want %d or 0", ErrBadHomeRelay, len(relayID), relayIDSize)
 	}
-	// Normalised to empty rather than nil so the comparison below has one
+	// Normalized to empty rather than nil so the comparison below has one
 	// representation of "no relay" to test against.
 	if relayID == nil {
 		relayID = []byte{}

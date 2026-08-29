@@ -346,7 +346,7 @@ fn a_captured_client_auth_does_not_replay_onto_a_second_connection() {
 #[test]
 fn the_relay_will_not_forward_between_aquifers() {
     // §5.4, end to end: both nodes are admitted, and traffic still does not
-    // cross. Admission and authorisation are different questions.
+    // cross. Admission and authorization are different questions.
     let relay = identity(0x10);
     let alice = identity(0x21);
     let bob = identity(0x22);

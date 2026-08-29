@@ -83,12 +83,12 @@ NetBird is BSD-3; ADR-0007 chose AGPL-3.0-or-later for our control server. BSD-3
 is one-way compatible with AGPL, so distributing the combined work under AGPL
 is permitted provided BSD-3 notices are retained. But relicensing a permissive
 project's work under copyleft, and then being unable to give anything back, is
-exactly the behaviour ADR-0008 rejected in another context.
+exactly the behavior ADR-0008 rejected in another context.
 
 **Policy:** we distribute the combined server under AGPL-3.0-or-later as
 planned, **and we offer our own contributions upstream under BSD-3.** We own
 our changes and may license them twice; nothing prevents contributing a fix to
-NetBird under their licence while distributing our fork under ours. Generic
+NetBird under their license while distributing our fork under ours. Generic
 improvements — bug fixes, IdP integrations, performance, accessibility — are
 offered upstream by default. PQ-specific work is ours and stays ours.
 
@@ -154,7 +154,7 @@ real and worth pursuing; it is not transformative.
 - A security product now depends on an external codebase's security posture.
   NetBird enters the dependency review cycle (§11) as a first-class component,
   not a library.
-- Two licences and two provenance stories to explain clearly to users.
+- Two licenses and two provenance stories to explain clearly to users.
 
 ### Spike outcome — two amendments
 
@@ -175,7 +175,7 @@ Two consequences recorded above therefore change:
   fork-and-diverge we are the only party patching our copy.
 
 **2. Delta netmap push is new work that this ADR did not cost.** NetBird pushes
-**full** network maps — it optimises fan-out, not payload. At Karst's ~3200 B
+**full** network maps — it optimizes fan-out, not payload. At Karst's ~3200 B
 per peer (32 B hint + 1184 B ML-KEM + 1952 B ML-DSA + 32 B PSK, roughly 100×
 NetBird's 32-byte WireGuard key), a 1,000-peer aquifer would push 3.2 MB to
 every notified peer on every membership change. Delta push must be built.

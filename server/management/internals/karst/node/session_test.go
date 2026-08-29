@@ -200,7 +200,7 @@ func TestRevokingADeviceClosesItsLiveSessions(t *testing.T) {
 //
 // It does **not** demonstrate the explicit guard in SessionsForHandles: with
 // that guard deleted this test still passes, because gorm renders an empty
-// `IN ?` as a condition matching nothing on SQLite. The guard stays as defence
+// `IN ?` as a condition matching nothing on SQLite. The guard stays as defense
 // in depth — what an empty IN does is a property of the driver, not of this
 // package — and this comment says so rather than letting the test read as
 // proof of something it does not show.

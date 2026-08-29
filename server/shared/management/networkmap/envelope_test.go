@@ -100,7 +100,7 @@ func TestEnvelopeToNetworkMap_FullPayloadMissing(t *testing.T) {
 // TestDecodeEnvelope_MalformedWgKeyPeerSkipped feeds an envelope where one
 // peer has a wg_pub_key that is not 32 bytes long. The decoder must skip
 // that peer (keeping the rest of the snapshot usable) instead of aborting
-// the whole sync — mirrors legacy behaviour that tolerates an occasional
+// the whole sync — mirrors legacy behavior that tolerates an occasional
 // bad row.
 func TestDecodeEnvelope_MalformedWgKeyPeerSkipped(t *testing.T) {
 	c, localPeerKey := buildSmokeComponents(t)

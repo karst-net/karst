@@ -111,7 +111,7 @@ setup keys, DNS settings, activity log, posture checks.
 
 Net-new: the **crypto posture view** (§8.1) and the **Bedrock** views — key
 inventory, quorum configuration, pending signing requests, signed-log viewer.
-Neither has any analogue; both are the product's differentiating surface.
+Neither has any analog; both are the product's differentiating surface.
 
 Rough order: 6–9 engineer-weeks of console work, dominated by Bedrock. Unmeasured.
 
@@ -184,7 +184,7 @@ ToSyncResponse(..., networkMap *types.NetworkMap, turnCredentials *Token,
                relayCredentials *Token, ...) *proto.SyncResponse
 ```
 
-NetBird optimises **fan-out**, not payload: `affectedPeerIDsFromNetworkMap`,
+NetBird optimizes **fan-out**, not payload: `affectedPeerIDsFromNetworkMap`,
 `syncPeerAffectedPeers` and `markConnectedAffectedPeers` compute *which* peers
 to notify, but each notified peer receives a full map. That bounds the damage —
 not every change notifies everyone — but a group or policy change can affect

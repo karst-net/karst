@@ -30,7 +30,7 @@
     <p>Open the Karst administration console and complete <strong>First-run setup</strong>. You need the public HTTPS URL of your coordination server.</p>
     <ol>
       <li>Enter the public server URL in <strong>First-run setup</strong>.</li>
-      <li>Create a one-time enrolment key. Copy it immediately; it is shown only once.</li>
+      <li>Create a one-time enrollment key. Copy it immediately; it is shown only once.</li>
       <li>Install the Karst node package on the machine you want to connect. Put the one-time key in <code>[control] setup_key</code> in <code>/etc/karst/karstd.toml</code>, alongside the server URL and pins from the installation guide. Validate it with <code>sudo karstd check --config /etc/karst/karstd.toml</code>, then start it with <code>sudo systemctl enable --now karstd</code>. There is no <code>karst up</code> command.</li>
       <li>Open <strong>Machines</strong> and confirm the new node has a current observation and crypto posture.</li>
     </ol>

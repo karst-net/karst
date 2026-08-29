@@ -87,7 +87,7 @@ pub trait Kem {
     /// reproducible failures possible; callers supply seeds from a CSPRNG.
     fn keypair_from_seed(seed: &[u8; 64]) -> (Self::SecretKey, Self::PublicKey);
 
-    /// Serialise an encapsulation key for transmission or netmap storage.
+    /// Serialize an encapsulation key for transmission or netmap storage.
     fn public_key_bytes(pk: &Self::PublicKey) -> Vec<u8>;
 
     /// Parse an encapsulation key. Returns `None` on the wrong length or an
@@ -229,7 +229,7 @@ mod dispatch {
         ///
         /// ML-KEM encodings carry no type tag, so length is the only thing that
         /// distinguishes them — which makes this the entire suite-confusion
-        /// defence and the reason it is written once here rather than at each
+        /// defense and the reason it is written once here rather than at each
         /// caller. Returns `None` for any other length, including lengths that
         /// belong to some other KEM entirely.
         #[must_use]
@@ -355,7 +355,7 @@ mod dispatch {
             }
         }
 
-        /// Serialise for transmission or netmap storage.
+        /// Serialize for transmission or netmap storage.
         #[must_use]
         pub fn to_bytes(&self) -> Vec<u8> {
             match self {
@@ -449,7 +449,7 @@ mod tests {
 
     // ── The battery, written once and run against both parameter sets ──────
     //
-    // Both backends come from one macro, so a behavioural difference between
+    // Both backends come from one macro, so a behavioral difference between
     // them would have to come from the library rather than from this crate.
     // Running the same assertions against both is what would catch that — and
     // it matters more than usual here, because ML-KEM-1024 is on the suite no
@@ -512,7 +512,7 @@ mod tests {
     /// ML-KEM's FO transform rejects implicitly: a corrupted ciphertext of the
     /// right length decapsulates to a *pseudorandom* secret rather than an
     /// error, denying an attacker a decryption oracle. The mismatch surfaces
-    /// later as an AEAD tag failure. This pins that behaviour so nobody
+    /// later as an AEAD tag failure. This pins that behavior so nobody
     /// "fixes" it into an early error return.
     fn corrupted_ciphertext_yields_a_different_secret_not_an_error<K: Kem>() {
         let (dk, ek) = K::keypair_from_seed(&seed(8));
@@ -604,7 +604,7 @@ mod tests {
     /// **A Category 5 key is not a Category 3 key.** Parsing is where a suite
     /// confusion would either be caught or become a mystery, and ML-KEM's
     /// encodings are distinguished only by length — so the length check is the
-    /// whole defence, and it has to be in both directions.
+    /// whole defense, and it has to be in both directions.
     #[test]
     fn the_two_parameter_sets_reject_each_others_keys() {
         let (_, ek_768) = MlKem768Backend::keypair_from_seed(&seed(20));
@@ -629,7 +629,7 @@ mod tests {
     // ── Runtime dispatch (ADR-0015 item 1) ─────────────────────────────────
     //
     // These assert that the enum agrees with the trait rather than reproducing
-    // it. Every variant delegates, so the behavioural battery above already
+    // it. Every variant delegates, so the behavioral battery above already
     // covers the cryptography; what can go wrong here is the *routing*.
 
     use super::{keypair_from_seed, KemKind, KemPublicKey};
@@ -707,7 +707,7 @@ mod tests {
     }
 
     /// **A key of one parameter set must not parse as the other**, even when
-    /// the caller names a kind explicitly. This is the same defence as
+    /// the caller names a kind explicitly. This is the same defense as
     /// `the_two_parameter_sets_reject_each_others_keys`, asserted through the
     /// dispatch layer because that is what the handshake now uses.
     #[test]

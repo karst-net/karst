@@ -17,7 +17,7 @@ Karst must satisfy three goals that pull against each other:
    third-party protocol implementations all depend on low licensing friction.
 3. **Commercial defensibility.** Preventing a hosted "Managed Karst."
 
-**The project owner has explicitly deprioritized (3)** in favour of community
+**The project owner has explicitly deprioritized (3)** in favor of community
 and security. This ADR is written on that basis; the decision below would look
 different for a revenue-driven project, and any future reader considering a
 change should start by re-examining that premise.
@@ -117,7 +117,7 @@ have unknown terms.
   §13 Q5. The project's original name collided directly with ThreeFold's
   Mycelium, an encrypted overlay network in the same category and language;
   it was renamed to **Karst** ([ADR-0010](0010-project-name-and-component-naming.md)).
-  Because this ADR forecloses licence-based defensibility, mark distinctiveness
+  Because this ADR forecloses license-based defensibility, mark distinctiveness
   carries more weight here than it would for most projects, and formal
   clearance is a Phase 0 exit criterion.
 - License allowlists in CI (`cargo deny`, `go-licenses`) from Phase 0, before a

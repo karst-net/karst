@@ -152,7 +152,7 @@ pub struct TransportSession {
     /// Nonce counter. Atomic rather than behind the session lock: allocating a
     /// counter is the only part of sealing that must be serial, and it costs
     /// one instruction. Holding a lock across the AEAD instead — which is what
-    /// a `&mut self` API forces a caller to do — serialises every flow to a
+    /// a `&mut self` API forces a caller to do — serializes every flow to a
     /// peer behind every other, and measured as a hard ~500 Mbps ceiling
     /// regardless of flow count (PLAN.md §3.4).
     send_counter: AtomicU64,

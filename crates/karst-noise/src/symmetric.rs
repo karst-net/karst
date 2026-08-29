@@ -319,7 +319,7 @@ mod tests {
 
     /// §7.2 / §13.2 — `suite_id` and `psk_epoch` are bound before any secret,
     /// so flipping either produces a different transcript and the handshake
-    /// cannot complete. This is the downgrade defence.
+    /// cannot complete. This is the downgrade defense.
     #[test]
     fn suite_and_epoch_binding_prevents_downgrade() {
         let build = |suite: u16, epoch: u32| {
@@ -402,7 +402,7 @@ mod tests {
     /// **The two suites must not derive the same keys** from identical inputs.
     /// The suite id is mixed into the transcript before any secret material, so
     /// in a real handshake they would already have diverged — this checks the
-    /// algorithms themselves also differ, so the defence does not rest on that
+    /// algorithms themselves also differ, so the defense does not rest on that
     /// one field alone.
     ///
     /// Note what carries the separation: the *hash*, not the AEAD. Both suites

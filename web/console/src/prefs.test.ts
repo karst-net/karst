@@ -12,11 +12,11 @@ function root(): FakeRoot {
 }
 
 /** The suite runs in the node environment, so storage is whatever we install. */
-function installStorage(behaviour: "working" | "throws") {
+function installStorage(behavior: "working" | "throws") {
   const store = new Map<string, string>();
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
-    value: behaviour === "throws"
+    value: behavior === "throws"
       ? { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } }
       : { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
   });
@@ -36,7 +36,7 @@ test("an explicit theme is stamped and system clears the attribute", () => {
   expect(element.attributes.has("data-theme")).toBe(false);
 });
 
-test("an unrecognised stored theme falls back to system rather than stamping it", () => {
+test("an unrecognized stored theme falls back to system rather than stamping it", () => {
   installStorage("working");
   writePref("theme", "chartreuse");
   expect(isTheme("chartreuse")).toBe(false);

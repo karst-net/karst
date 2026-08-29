@@ -84,7 +84,7 @@ func (l *geolocationsHandler) getCitiesByCountry(w http.ResponseWriter, r *http.
 
 	cities := make([]api.City, 0, len(allCities))
 	for _, city := range allCities {
-		cities = append(cities, toCityResponse(city))
+		cities = append(cities, toCitiresponse(city))
 	}
 	util.WriteJSONObject(r.Context(), w, cities)
 }
@@ -96,7 +96,7 @@ func toCountryResponse(country geolocation.Country) api.Country {
 	}
 }
 
-func toCityResponse(city geolocation.City) api.City {
+func toCitiresponse(city geolocation.City) api.City {
 	return api.City{
 		CityName:  city.CityName,
 		GeonameId: city.GeoNameID,

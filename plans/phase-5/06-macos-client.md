@@ -49,7 +49,7 @@ the same code on both platforms, so the suite will run against this host's own
 TUN when asked; the row passing on Linux in half a second said the fault was in
 the platform and not in the arrangement, without a CI round trip per hypothesis.
 It is not the gate — the interface-name assertions stand down under it, because
-Linux honours the configured name and macOS does not.
+Linux honors the configured name and macOS does not.
 
 Two things had to be fixed below `karst-tun` before any of it could compile,
 and both are worth knowing about:
@@ -58,7 +58,7 @@ and both are worth knowing about:
   are Linux-only and `karstd`'s receive loop uses them unconditionally.
   `src/portable.rs` implements the same two calls as a safe loop over
   `sendto`/`recvfrom`, so the daemon has one datapath rather than two. It is
-  not an optimisation and does not pretend to be — see the module header.
+  not an optimization and does not pretend to be — see the module header.
 - **PREF64 router solicitation is Linux-only** (`RouterSocket`, and
   `/proc/net/if_inet6`). It now returns "unavailable" on macOS rather than
   failing to compile, and RFC 7050 discovery through `ipv4only.arpa` still
@@ -95,7 +95,7 @@ W8 is **blocked on paperwork, not on code.** The pipeline is written and
 conditional: `scripts/build-macos-pkg.sh` signs, notarizes and staples the
 moment the credentials exist, and `--require-signing` makes their absence fatal
 so a tag cannot quietly ship unsigned. §7 below is still the critical path —
-somebody has to start the Apple Developer Program enrolment.
+somebody has to start the Apple Developer Program enrollment.
 
 ### Still manual, and stated as such
 
@@ -104,7 +104,7 @@ the code that serves them is written so a person can check it in one sitting:
 
 - **Sleep and wake (§10.4).** `karstd` logs `this machine did not run for N s`
   and then rediscovers. The detection is unit-tested against both clock
-  behaviours in `bins/karstd/src/wake.rs`, and what a real suspend adds is
+  behaviors in `bins/karstd/src/wake.rs`, and what a real suspend adds is
   whether five seconds is the right threshold on a machine that has genuinely
   slept. Close the lid, open it, and read the log.
 - **Gatekeeper on a clean machine (§10.1).** Unchanged, and blocked on W8.
@@ -125,7 +125,7 @@ LaunchDaemon split is the right call anyway.
 > **Re-baselined 2026-08-27.** No Karst macOS client implementation, package,
 > key-storage integration, or host DNS integration exists. Linux-only code and
 > userspace abstractions do not satisfy this use case. This workstream remains
-> a Phase 5 exit dependency; its acceptance test must include enrolment,
+> a Phase 5 exit dependency; its acceptance test must include enrollment,
 > direct/relay connectivity, DNS apply/revert after abnormal exit, signed and
 > notarized install/upgrade/uninstall, and portal download metadata.
 >
@@ -223,7 +223,7 @@ starts unblocked; if it never comes back, nothing was lost.
 `/Library/Application Support/Karst/` — pick one, document it, and match what
 the installer writes).
 
-Two macOS-specific behaviours to build and test:
+Two macOS-specific behaviors to build and test:
 
 - **Sleep and wake.** A laptop suspends, the network changes, and every UDP
   socket's source address is now wrong. Subscribe to
@@ -306,15 +306,15 @@ supporting older costs testing time for a shrinking population.
 
 ## 7. Signing and notarization — start in W1
 
-| Artefact | Certificate |
+| Artifact | Certificate |
 |---|---|
 | `karstd`, `karst` binaries | Developer ID Application |
 | The `.pkg` | Developer ID Installer |
 
-Both come from an Apple Developer Program organisation membership: $99/yr, a
-D-U-N-S number, and an enrolment that takes **one to four weeks** and can stall
+Both come from an Apple Developer Program organization membership: $99/yr, a
+D-U-N-S number, and an enrollment that takes **one to four weeks** and can stall
 on a legal-entity mismatch. ADR-0007 and ADR-0010 have the project's naming and
-entity situation; whoever owns that needs to start the enrolment on the first
+entity situation; whoever owns that needs to start the enrollment on the first
 day of W1. PLAN.md §12 said to do this in Phase 3 and it did not happen.
 
 The pipeline:
@@ -325,7 +325,7 @@ The pipeline:
 3. `xcrun notarytool submit --wait` with an App Store Connect API key.
 4. `xcrun stapler staple` the `.pkg`.
 5. Verify with `spctl --assess --type install` **on a machine that has never
-   seen the artefact**, because a locally-built package passes Gatekeeper for
+   seen the artifact**, because a locally-built package passes Gatekeeper for
    reasons that have nothing to do with whether a user's would.
 
 Common notarization rejections to expect: a binary without the hardened
@@ -373,7 +373,7 @@ queue is a per-push wait.
 
 1. A downloaded, notarized `.pkg` installs on a clean macOS 13+ machine with
    no Gatekeeper warning and no terminal.
-2. The node enrols from the console's auth key and reaches a peer directly
+2. The node enrolls from the console's auth key and reaches a peer directly
    across a NAT.
 3. Mesh names resolve; `/etc/resolver` state is reverted on uninstall and
    after a `SIGKILL`.

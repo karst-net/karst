@@ -489,7 +489,7 @@ fn userspace_handle_wire(
         }),
         // Global upstreams are ordinary Internet nameservers, not mesh
         // services. Keep their existing host-socket path (including cache and
-        // retry behaviour); only a split route promises mesh reachability.
+        // retry behavior); only a split route promises mesh reachability.
         karst_dns::service::Decision::Forward { split: false, .. } => {
             karst_dns::service::handle_wire(resolver, request)
         }

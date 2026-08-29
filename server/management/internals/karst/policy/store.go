@@ -127,7 +127,7 @@ func (s *Store) Write(ctx context.Context, document, author string, expected uin
 			return ErrVersionConflict
 		}
 		written = Version{AccountID: accountID, Version: current.Version + 1, Document: document, Author: author, CreatedAt: time.Now().UTC()}
-		// The optimistic version check above is necessary but not sufficient:
+		// The optimiztic version check above is necessary but not sufficient:
 		// two requests can both read the same current revision before either
 		// inserts. Let the composite primary key decide that race and translate
 		// the losing insert into the contract's version-conflict response rather

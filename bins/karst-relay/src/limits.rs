@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn a_rejected_frame_does_not_spend_the_other_bucket() {
         // Otherwise a peer over its frame budget still drains its byte
-        // allowance, and is throttled twice over for one offence.
+        // allowance, and is throttled twice over for one offense.
         let budget = Budget {
             bytes_per_sec: 1_000_000,
             byte_burst: 1_000_000,

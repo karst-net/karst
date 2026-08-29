@@ -69,7 +69,7 @@ demonstration into a decoration, and nothing else would notice.
 `aven-headeronly.pv` is not a hypothetical. `phreatic-v1.md` §13.8 made exactly
 that trade on the data path — deliberately, after profiling showed the fragment
 MAC costing five times the AEAD it gated — and this variant is why the same
-optimisation must not be carried across to AVEN. With `tx_id` outside the MAC,
+optimization must not be carried across to AVEN. With `tx_id` outside the MAC,
 an attacker rewrites it on a captured `Pong` and confirms a path the peer never
 answered from.
 
@@ -157,9 +157,9 @@ still widening after 28 minutes. This is divergence, not slowness.
 | **Bounded sessions** (`P \| P`, not `!P`) | minutes | Guaranteed termination | Bounded-session only — Verifpal already gives this |
 | **`set attacker = passive`** | minutes | Terminates easily | Much weaker claim |
 | **Tamarin** | weeks | Backward search with user-supplied lemmas and induction; built for the case where forward saturation will not converge. Used for the WireGuard and TLS 1.3 mechanised proofs | Steep; usually needs an oracle script to steer heuristics |
-| **CryptoVerif** | expert | Computational bounds rather than symbolic | Realistically needs its authors; complements rather than replaces |
+| **CryptoVerif** | expert | Computational bounds rather than symbolic | realiztically needs its authors; complements rather than replaces |
 
-**Recommendation — now evidence-backed rather than a judgement call.** Four
+**Recommendation — now evidence-backed rather than a judgment call.** Four
 independent approaches have failed, including ProVerif's own canonical
 anti-divergence mechanism, which had *literally zero* effect. Further ProVerif
 work is not a good use of anyone's time.
@@ -172,7 +172,7 @@ the Phase 6 external-review brief.**
 ### Verification environment
 
 The base and `dh-broken` results were re-confirmed on `lovelace` (48 cores,
-251 GB, x86-64) rather than a transient VM, so they are not artefacts of a
+251 GB, x86-64) rather than a transient VM, so they are not artifacts of a
 truncated run. ProVerif 2.05 built from source there — the Ubuntu package is
 not in the enabled repositories, and the opam package pulls in `lablgtk` →
 `libgtk2.0-dev`, which is needed only for the GUI.
@@ -208,7 +208,7 @@ Both are in `../phreatic-v1.md` §12.5–12.6 and are easy to implement wrongly:
 
 1. **HandshakeInit is unauthenticated by design.** Anyone holding the
    responder's public keys can fabricate one, which is why the cookie mechanism
-   is load-bearing rather than defence in depth.
+   is load-bearing rather than defense in depth.
 2. **The responder has no assurance until the first transport message.** The
    agreement query is *false* if the responder claims completion on sending
    HandshakeResponse and *true* if it waits.
@@ -221,11 +221,11 @@ external binaries — never vendored, linked, or added as dependencies. The
 
 ## Not covered
 
-- Fragmentation, cookies, the fragment MAC — resource-exhaustion defences.
+- Fragmentation, cookies, the fragment MAC — resource-exhaustion defenses.
   Neither tool reasons about DoS; the spoofed-source test suite and the
   `reassembly` fuzz target cover those.
 - Anything computational: concrete margins, side channels, implementation
-  behaviour.
+  behavior.
 
 ## Running the long models
 
@@ -276,7 +276,7 @@ attacker-derivable secret family.**
 | **Bound sessions** (`P \| P` not `!P`) | minutes | Guaranteed termination | Bounded-session only — `Verifpal` already gives this |
 | **`set attacker = passive`** | minutes | Terminates easily | Much weaker claim |
 | **Tamarin** | weeks | Backward search with user-supplied lemmas and induction; the tool used for WireGuard and TLS 1.3 | Steep; usually needs an oracle script to steer heuristics |
-| **CryptoVerif** | expert | Computational bounds, not just symbolic | Realistically needs its authors; complements rather than replaces |
+| **CryptoVerif** | expert | Computational bounds, not just symbolic | realiztically needs its authors; complements rather than replaces |
 
 **Recommended split:** the nested model proves ordering and agreement; a
 flattened model proves the broken-primitive claims. Two models, two purposes,

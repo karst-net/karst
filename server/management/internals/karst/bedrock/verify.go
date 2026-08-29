@@ -245,7 +245,7 @@ func (st *State) apply(e *Entry, genesis *Genesis) error {
 		// once, rather than at every coverage query: it makes the handle
 		// self-certifying, so nothing downstream has to treat it as a label the
 		// log merely asserts. A quorum that signed a mismatched pair would be
-		// naming one node while authorising another's key.
+		// naming one node while authorizing another's key.
 		if want := node.Handle(n.IdentityKey); want != n.Handle {
 			return fmt.Errorf("node-sign handle %q does not match its identity key (want %q)", n.Handle, want)
 		}
@@ -321,7 +321,7 @@ func validateGenesis(g *Genesis) error {
 // **The datapath keys are what is compared.** Checking the identity key here
 // would not do: it is not used by PHREATIC (phreatic-v1.md §4) and does not
 // appear in a netmap, so a check that ignored the static KEM and DH keys would
-// authorise a node to exist without constraining which session keys are its —
+// authorize a node to exist without constraining which session keys are its —
 // and a compromised server would still substitute the keys a handshake actually
 // runs against. Spec §6.1. The identity key is bound to the handle during chain
 // verification instead.

@@ -13,7 +13,7 @@
  *   An attacker who does not hold the pair disco key must not be able to make
  *   a node treat a path as working.
  *
- * WHAT IS MODELLED
+ * WHAT IS MODELED
  *   The Ping/Pong exchange under a symmetric per-pair MAC, with a THIRD PEER
  *   WHOSE KEY THE ATTACKER HOLDS. That last part is the configuration worth
  *   testing: a node holds a disco key per peer, and "one of your peers is
@@ -21,12 +21,12 @@
  *   boundary, which is why PLAN.md §1.1 lists a malicious peer inside the
  *   aquifer as in scope.
  *
- * WHAT IS NOT MODELLED, AND WHY
+ * WHAT IS NOT MODELED, AND WHY
  *   - The tx -> endpoint association of §7.1. That rule lives in the
  *     receiver's bookkeeping, not on the wire: `PathSet::on_pong` takes a
  *     transaction id and no source address, so the mistake is not expressible
  *     in the implementation. A model of it would be a model of this file's own
- *     process definition and would pass by construction — the "modelling
+ *     process definition and would pass by construction — the "modeling
  *     artifact" trap karst-control.pv §10 records. Stated here so the absence
  *     is not read as an oversight.
  *   - Path selection and hysteresis. Availability, not security.
@@ -45,7 +45,7 @@
  *   observed address unauthenticated. It is expected to FAIL. That variant is
  *   not hypothetical: phreatic-v1.md §13.8 made exactly that trade on the data
  *   path, deliberately and for a measured 5x saving, and this model is why the
- *   same optimisation must not be carried over here.
+ *   same optimization must not be carried over here.
  *)
 
 (* ─── Types ────────────────────────────────────────────────────────────── *)
@@ -65,7 +65,7 @@ free TAG_C: bitstring.
 
 (* ─── MAC ──────────────────────────────────────────────────────────────── *)
 
-(* HMAC-SHA-512 truncated to 16 bytes. Modelled as an unforgeable function of
+(* HMAC-SHA-512 truncated to 16 bytes. Modeled as an unforgeable function of
    the key and the message: with no key there is no way to build the term. *)
 fun mac(key, bitstring): bitstring.
 
@@ -120,7 +120,7 @@ query tx: bitstring;
       by anyone who can capture one datagram and needing no key at all.
 
       spec §7.5 is the fix, and it is a rule about the responder's memory
-      rather than about the wire, so it is not modelled here — see the header.
+      rather than about the wire, so it is not modeled here — see the header.
       This query is stated in the form ProVerif proves. Claiming the injective
       form would be claiming something no run of this file establishes. *)
 query tx: bitstring;

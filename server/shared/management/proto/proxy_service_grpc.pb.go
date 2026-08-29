@@ -45,7 +45,7 @@ type ProxyServiceClient interface {
 	ValidateTunnelPeer(ctx context.Context, in *ValidateTunnelPeerRequest, opts ...grpc.CallOption) (*ValidateTunnelPeerResponse, error)
 	// CheckLLMPolicyLimits is the pre-flight RPC the proxy calls before each
 	// LLM request. Management runs the per-policy headroom selection across
-	// every policy authorising the caller's user / groups for the resolved
+	// every policy authorizing the caller's user / groups for the resolved
 	// provider and returns the chosen attribution policy + group, or a deny
 	// when no applicable policy has headroom > 0.
 	CheckLLMPolicyLimits(ctx context.Context, in *CheckLLMPolicyLimitsRequest, opts ...grpc.CallOption) (*CheckLLMPolicyLimitsResponse, error)
@@ -238,7 +238,7 @@ type ProxyServiceServer interface {
 	ValidateTunnelPeer(context.Context, *ValidateTunnelPeerRequest) (*ValidateTunnelPeerResponse, error)
 	// CheckLLMPolicyLimits is the pre-flight RPC the proxy calls before each
 	// LLM request. Management runs the per-policy headroom selection across
-	// every policy authorising the caller's user / groups for the resolved
+	// every policy authorizing the caller's user / groups for the resolved
 	// provider and returns the chosen attribution policy + group, or a deny
 	// when no applicable policy has headroom > 0.
 	CheckLLMPolicyLimits(context.Context, *CheckLLMPolicyLimitsRequest) (*CheckLLMPolicyLimitsResponse, error)

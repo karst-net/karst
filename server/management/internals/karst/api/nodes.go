@@ -230,7 +230,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	// no route accepts a user id, so an IDOR cannot be expressed.
 	me := karstRouter.PathPrefix("/me").Subrouter()
 	me.HandleFunc("/devices", h.meDevices).Methods(http.MethodGet, http.MethodOptions)
-	me.HandleFunc("/devices/enrol", h.meEnrol).Methods(http.MethodPost, http.MethodOptions)
+	me.HandleFunc("/devices/enroll", h.meenroll).Methods(http.MethodPost, http.MethodOptions)
 	me.HandleFunc("/devices/{handle}", h.meRenameDevice).Methods(http.MethodPatch, http.MethodOptions)
 	me.HandleFunc("/devices/{handle}", h.meRevokeDevice).Methods(http.MethodDelete, http.MethodOptions)
 	me.HandleFunc("/sessions", h.meSessions).Methods(http.MethodGet, http.MethodOptions)
@@ -538,7 +538,7 @@ func (h *handler) meRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *handler) meEnrol(w http.ResponseWriter, r *http.Request) {
+func (h *handler) meenroll(w http.ResponseWriter, r *http.Request) {
 	user, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
@@ -546,7 +546,7 @@ func (h *handler) meEnrol(w http.ResponseWriter, r *http.Request) {
 	}
 	issuer, ok := h.peerWriter.(setupKeyIssuer)
 	if !ok {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "device enrolment is not configured"), w)
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "device enrollment is not configured"), w)
 		return
 	}
 	key, err := issuer.CreateSetupKey(r.Context(), user.AccountId, "portal device", types.SetupKeyOneOff, 15*time.Minute, nil, 1, user.UserId, false, false)
@@ -1208,11 +1208,11 @@ func (h *handler) bedrockMode(w http.ResponseWriter, r *http.Request) {
 	}
 	at := time.Now().UTC().Unix()
 	configuration, err := h.bedrock.SetMode(r.Context(), user.AccountId, request.Mode, request.Acknowledged, state, enrolled, at)
-	if errors.Is(err, bedrock.ErrAcknowledgementMismatch) {
+	if errors.Is(err, bedrock.ErracknowledgmentMismatch) {
 		required := bedrock.UncoveredAt(state, enrolled, at)
 		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": "acknowledgement_mismatch", "message": err.Error(), "required_cut_off_handles": required})
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": "acknowledgment_mismatch", "message": err.Error(), "required_cut_off_handles": required})
 		return
 	}
 	if err != nil {

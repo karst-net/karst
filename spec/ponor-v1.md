@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # PONOR v1 — Relay Protocol Specification
 
-- **Status:** Draft 0.2 — Phase 4 deliverable, modelled but not externally reviewed
+- **Status:** Draft 0.2 — Phase 4 deliverable, modeled but not externally reviewed
 - **Date:** 2026-08-14
-- **Licence:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
-  in software under any licence. Independent implementations are wanted.
+- **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
+  in software under any license. Independent implementations are wanted.
 
 > **Implementable.** §4–§9 are stable enough to build against and match the
 > Rust implementation in `crates/karst-relay-proto/`. §13 lists what remains
@@ -69,7 +69,7 @@ technical second. The prior art is credited; the protocol is ours.
 - **It does not inspect the payload.** A relay MUST treat a forwarded payload as
   opaque octets (§7.1). It is not a PHREATIC parser and a relay compromise
   therefore cannot be a PHREATIC parsing bug.
-- **It does not authorise.** Whether two nodes may exchange traffic is an ACL
+- **It does not authorize.** Whether two nodes may exchange traffic is an ACL
   question, decided by the packet filter at both endpoints
   (PLAN.md §4.3). Ponor enforces only that both ends are admitted members of the
   same aquifer (§5.4) — an abuse control, not an access-control decision.
@@ -168,7 +168,7 @@ insufficient on its own:
    would be the one hop in Karst with no post-quantum authentication at all,
    which is not a defensible thing to ship in a product whose claim is that it
    has none of those.
-2. **Self-hosting.** The realistic deployment is a self-hoster with an internal
+2. **Self-hosting.** The realiztic deployment is a self-hoster with an internal
    CA, a self-signed certificate, or a certificate for a hostname that is not
    the relay's own. Pinning an ML-DSA key distributed through the netmap works
    in all of those; pinning a certificate chain works in none of them
@@ -184,7 +184,7 @@ Per ADR-0008 §2, a relay registry entry whose scheme is `derp://` MUST be
 rejected at parse time, and `karst-relay` MUST NOT implement a DERP
 compatibility mode. This is a standing constraint recorded so that a future
 contributor does not add it as a helpful-looking feature: wire compatibility
-would produce a client whose default behaviour consumes strangers' bandwidth.
+would produce a client whose default behavior consumes strangers' bandwidth.
 
 ---
 
@@ -248,7 +248,7 @@ looks like a convenience feature. It is now not expressible.
 
 The same reasoning appears throughout Karst and is worth naming: **an absent
 value must never read as permissive.** An empty roster admits nobody. An
-unrecognised `relay_id` is rejected, not trusted. A missing relay public key
+unrecognized `relay_id` is rejected, not trusted. A missing relay public key
 stops the connection rather than falling back to the certificate.
 
 Cost, stated plainly: roster distribution becomes a hard operational
@@ -345,7 +345,7 @@ per-type lengths below, not instead of them.
 
 A reader MUST reject a frame whose `length` does not match the exact length its
 `type` requires, and MUST reject an unknown `type`. Ponor v1 has **no
-forward-compatible extension point**: a frame nobody recognises is an error, not
+forward-compatible extension point**: a frame nobody recognizes is an error, not
 something to skip. Silently ignoring unknown frames is how a downgrade is
 mounted against a protocol that has no other negotiation to attack.
 
@@ -469,7 +469,7 @@ This is a correctness requirement, not a tuning parameter. A relay that lets
 one slow destination apply backpressure to a source's read loop has made every
 *other* peer of that source hostage to the slowest one — a single stalled
 mobile client degrading a node's entire relayed traffic. Dropping is also the
-honest behaviour: the payload is a datagram from a protocol that already
+honest behavior: the payload is a datagram from a protocol that already
 tolerates loss.
 
 Recommended default queue depth is **32 frames** per destination, and on
@@ -560,7 +560,7 @@ reflector is conformant, and discovery degrades to §7.2 with the pair staying o
 the relay when that is not enough.
 
 **This is a flag day, and pretending otherwise would be worse than saying so.**
-§6 gives Ponor no forward-compatible extension point — an unrecognised frame
+§6 gives Ponor no forward-compatible extension point — an unrecognized frame
 type closes the connection, deliberately, because silently ignoring unknown
 frames is how a downgrade is mounted on a protocol with no other negotiation to
 attack. So a relay sending `0x0d` to an older client disconnects it, and there
@@ -733,16 +733,16 @@ relay's signing key. ADR-0008 §6 supports a community relay pool, so "a relay
 you use is hostile" is a configuration this product offers rather than a
 contrived one.
 
-TLS is deliberately not modelled, as in `karst-control-v1.md` §10. The
+TLS is deliberately not modeled, as in `karst-control-v1.md` §10. The
 authentication established here must not depend on it.
 
-### 12.1 What is not modelled
+### 12.1 What is not modeled
 
 The frames after the handshake — and that is not an omission for tidiness. See
 §13.3; it is a real property of the design that a symbolic model cannot show,
 because an absent property produces no failing query.
 
-Also absent: §10.1's timing defence (ProVerif reasons about what an attacker can
+Also absent: §10.1's timing defense (ProVerif reasons about what an attacker can
 derive, not about how long a rejection takes), rate limits, presence, and
 queueing.
 
@@ -757,7 +757,7 @@ reasoning was wrong, and the correction is worth keeping.
 disjoint key spaces. A client's `ClientAuth` replayed with `role = MESH` names
 an id the mesh directory cannot contain, and is rejected on the lookup before
 the signature is examined. Binding `role` is correct and costs one byte, but it
-is defence against a misconfiguration, not against an attack.
+is defense against a misconfiguration, not against an attack.
 
 **`relay_id` is a different matter**, and `spec/models/ponor-norelayid.pv`
 demonstrates it: dropping `relay_id` from the client's signing input makes
@@ -788,7 +788,7 @@ somewhere else.
 ## 13. Open items — this draft is incomplete
 
 1. **No external review.** As with the other two specs, the largest gap. A
-   symbolic model says nothing about implementation behaviour.
+   symbolic model says nothing about implementation behavior.
 2. **Roster provenance is not yet independently verifiable.** §5.3 now bounds
    freshness and revocation at the trusted local roster source, but this draft
    does not yet define a coordination-server signature, issued timestamp, or
@@ -820,7 +820,7 @@ somewhere else.
    A symbolic model cannot surface this: an absent property produces no failing
    query. It is stated in `ponor.pv`'s header for the same reason.
 4. **Relay key rotation.** `relay_id` is a hash of a key with no rotation
-   procedure, overlap window, or defined client behaviour on an unrecognised
+   procedure, overlap window, or defined client behavior on an unrecognized
    `relay_id` — the same gap as `karst-control-v1.md` §11.2.
 5. **TCP head-of-line blocking is unaddressed.** All of a client's relayed
    peers share one TCP connection, so a lost segment stalls every one of them,
@@ -830,7 +830,7 @@ somewhere else.
 6. **No congestion signal to the client.** §7.3 drops silently. A client cannot
    distinguish relay-side drop from path loss, so it cannot back off usefully,
    and a `Dropped` frame would itself be a channel a hostile relay could use to
-   shape a peer's behaviour. Unresolved.
+   shape a peer's behavior. Unresolved.
 7. **No downgrade protection.** The version byte is the only negotiation, and
    with one version there is nothing to downgrade to. When a second version
    exists, the byte alone will not be enough — §6's rejection of unknown frame

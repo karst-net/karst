@@ -364,7 +364,7 @@ func (x *ProxyCapabilities) GetSupportsPrivateService() bool {
 	return false
 }
 
-// GetMappingUpdateRequest is sent to initialise a mapping stream.
+// GetMappingUpdateRequest is sent to initialize a mapping stream.
 type GetMappingUpdateRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -686,7 +686,7 @@ type MiddlewareConfig struct {
 	// Clamped to [10ms, 5s] at apply time; zero → 500ms default.
 	Timeout *durationpb.Duration `protobuf:"bytes,6,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	// When true, the middleware may mutate request headers or body (subject to
-	// policy). Honoured only when the implementation also declares
+	// policy). Honored only when the implementation also declares
 	// MutationsSupported.
 	CanMutate bool `protobuf:"varint,7,opt,name=can_mutate,json=canMutate,proto3" json:"can_mutate,omitempty"`
 }
@@ -2312,7 +2312,7 @@ type ValidateSessionResponse struct {
 	UserEmail    string `protobuf:"bytes,3,opt,name=user_email,json=userEmail,proto3" json:"user_email,omitempty"`
 	DeniedReason string `protobuf:"bytes,4,opt,name=denied_reason,json=deniedReason,proto3" json:"denied_reason,omitempty"`
 	// peer_group_ids carries the calling user's group memberships so the
-	// proxy can authorise policy-aware middlewares without an additional
+	// proxy can authorize policy-aware middlewares without an additional
 	// management round-trip.
 	PeerGroupIds []string `protobuf:"bytes,5,rep,name=peer_group_ids,json=peerGroupIds,proto3" json:"peer_group_ids,omitempty"`
 	// peer_group_names carries the human-readable display names for the
@@ -2478,7 +2478,7 @@ type ValidateTunnelPeerResponse struct {
 	// tunnel fast-path is indistinguishable from OIDC for subsequent requests.
 	SessionToken string `protobuf:"bytes,5,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	// peer_group_ids carries the resolved peer's user group memberships so
-	// the proxy can authorise policy-aware middlewares without an additional
+	// the proxy can authorize policy-aware middlewares without an additional
 	// management round-trip.
 	PeerGroupIds []string `protobuf:"bytes,6,rep,name=peer_group_ids,json=peerGroupIds,proto3" json:"peer_group_ids,omitempty"`
 	// peer_group_names carries the human-readable display names for the
@@ -2834,7 +2834,7 @@ func (x *SyncMappingsResponse) GetInitialSyncComplete() bool {
 
 // CheckLLMPolicyLimitsRequest carries the resolved caller identity and the
 // upstream provider already chosen by llm_router. Management computes which
-// policies authorise the request, picks the one with the most remaining
+// policies authorize the request, picks the one with the most remaining
 // headroom, and returns the attribution decision.
 type CheckLLMPolicyLimitsRequest struct {
 	state         protoimpl.MessageState

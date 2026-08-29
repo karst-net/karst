@@ -241,7 +241,7 @@ func (am *MockAccountManager) OnPeerDisconnected(ctx context.Context, accountID 
 	// Mirror DefaultAccountManager.OnPeerDisconnected: drive the fencing
 	// hook so tests that inject MarkPeerDisconnectedFunc actually observe
 	// disconnect events. Falls through to nil when no hook is set, which
-	// is the original behaviour.
+	// is the original behavior.
 	if am.MarkPeerDisconnectedFunc != nil {
 		return am.MarkPeerDisconnectedFunc(ctx, peerPubKey, accountID, streamStartTime.UnixNano())
 	}

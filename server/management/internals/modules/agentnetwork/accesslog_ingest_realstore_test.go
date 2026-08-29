@@ -45,7 +45,7 @@ func newIngestTestEntry() *accesslogs.AccessLogEntry {
 			metaKeyRequestPrompt:       "hello",
 			metaKeyResponseCompletion:  "world",
 			// repeated id must be de-duplicated before the group rows insert.
-			metaKeyAuthorisingGroups: "grp-eng,grp-eng,grp-ops",
+			metaKeyauthorizingGroups: "grp-eng,grp-eng,grp-ops",
 		},
 	}
 }

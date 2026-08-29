@@ -7,7 +7,7 @@
 //! to answer, gets a short-TTL response pointing at its own login page. The
 //! wrong fix is a resolver that "helpfully" detects and bypasses that: the
 //! failure mode it would create is a portal a user cannot log in to at all,
-//! which is worse than any answer being wrong. The right behaviour, and the
+//! which is worse than any answer being wrong. The right behavior, and the
 //! only thing this file checks, is that `KarstDNS` does not try: the mesh zone
 //! keeps answering out of the netmap regardless of what the hijacking
 //! upstream says, and everything else gets forwarded unmodified — hijacked

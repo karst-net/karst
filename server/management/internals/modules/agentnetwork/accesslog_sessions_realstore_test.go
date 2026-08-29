@@ -82,7 +82,7 @@ func withGroups(gids ...string) func(*types.AgentNetworkAccessLog) {
 	return func(e *types.AgentNetworkAccessLog) { e.GroupIDs = gids }
 }
 
-// seedAccessLogs writes rows (and their authorising-group child rows) directly
+// seedAccessLogs writes rows (and their authorizing-group child rows) directly
 // into the store, bypassing ingest so a test can control every dimension.
 func seedAccessLogs(t *testing.T, s store.Store, rows ...*types.AgentNetworkAccessLog) {
 	t.Helper()
@@ -159,7 +159,7 @@ func TestAccessLogSessions_FoldAndAggregate(t *testing.T) {
 	assert.Equal(t, "deny", a.Decision, "any deny makes the session a deny")
 	assert.ElementsMatch(t, []string{"openai", "anthropic"}, a.Providers, "distinct providers")
 	assert.ElementsMatch(t, []string{"gpt-5.4", "claude-haiku-4-5"}, a.Models, "distinct models")
-	assert.ElementsMatch(t, []string{"grp-eng", "grp-ops"}, a.GroupIDs, "union of authorising groups")
+	assert.ElementsMatch(t, []string{"grp-eng", "grp-ops"}, a.GroupIDs, "union of authorizing groups")
 	assert.Equal(t, baseTime, a.StartedAt.UTC(), "started at is the earliest entry")
 	assert.Equal(t, baseTime.Add(2*time.Minute), a.EndedAt.UTC(), "ended at is the latest entry")
 	assert.Len(t, a.Entries, 3, "entries carried through")
@@ -283,7 +283,7 @@ func TestAccessLogSessions_Filtering(t *testing.T) {
 			wantTot: 1,
 		},
 		{
-			name:    "by authorising group",
+			name:    "by authorizing group",
 			filter:  types.AgentNetworkAccessLogFilter{GroupIDs: []string{"grp-eng"}},
 			wantIDs: []string{"sess-3"},
 			wantTot: 1,

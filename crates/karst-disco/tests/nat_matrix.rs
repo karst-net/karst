@@ -124,7 +124,7 @@ fn matrix_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Which NAT behaviour the middle namespace is configured for.
+/// Which NAT behavior the middle namespace is configured for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Nat {
     /// Linux conntrack's default masquerade: one external port reused across
@@ -374,7 +374,7 @@ fn add_ipv6() {
 /// Built separately rather than as another arm of [`build`] because it is a
 /// different shape, not a different NAT: one more namespace and one more
 /// translation stage. Folding it in would have made `build` take a topology
-/// *and* a NAT behaviour and pretend they were one parameter.
+/// *and* a NAT behavior and pretend they were one parameter.
 ///
 /// The subscriber NAT keeps the interface name `kn-no` on its outward side, so
 /// [`apply_nat`]'s rules apply to it unchanged.
@@ -587,7 +587,7 @@ fn enable_hairpin(external_port: u16) {
 
 /// An IPv6-only inside, an IPv4-only outside, and `tayga` between them.
 ///
-/// A **topology** rather than a NAT behaviour, so it gets its own builder like
+/// A **topology** rather than a NAT behavior, so it gets its own builder like
 /// `build_double_nat` and no `Nat` variant — `apply_nat` configures a middle
 /// namespace, and there is nothing here it could configure.
 ///
@@ -712,7 +712,7 @@ fn start_translator(dir: &std::path::Path) -> std::process::Child {
     // is stateless: it hands each IPv6 client its own address out of the pool,
     // ports untouched. An ordinary masquerade behind it collapses the pool onto
     // one address and shares it by port — which is what a carrier does, and
-    // which is a behaviour the other rows in this file already characterise.
+    // which is a behavior the other rows in this file already characterize.
     must(&nsr(NS_NAT, &["nft", "add", "table", "ip", "karst"]));
     must(&nsr(
         NS_NAT,
@@ -1376,7 +1376,7 @@ fn an_ipv6_path_is_not_translated() {
 /// subscriber reachable the way row 5 of the topology table is reachable, from
 /// any port, and symmetric-CGNAT-to-anything would stop being the hard case.
 ///
-/// So this asserts the pair that actually characterises the row: the mapping
+/// So this asserts the pair that actually characterizes the row: the mapping
 /// **does** carry the reply it was opened for, and **does not** carry a
 /// datagram from an address the inside never contacted. Both halves are needed;
 /// the negative one alone would also pass against a topology that carries

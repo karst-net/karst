@@ -527,7 +527,7 @@ pub(crate) fn route_ack(reply: &[u8], seq: u32) -> io::Result<()> {
 /// The kernel answers a delete for a route it does not hold with `ESRCH`, and
 /// occasionally `ENOENT`. Neither maps to `io::ErrorKind::NotFound` — `ESRCH`
 /// arrives as `Uncategorized` — so matching on the kind silently fails to
-/// recognise the one case a caller wants to tolerate. The raw errno is the only
+/// recognize the one case a caller wants to tolerate. The raw errno is the only
 /// reliable answer.
 pub(crate) fn is_absent(e: &io::Error) -> bool {
     matches!(e.raw_os_error(), Some(libc::ESRCH | libc::ENOENT))
@@ -545,7 +545,7 @@ pub(crate) fn netlink_socket() -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
-/// Send one route request and wait for its acknowledgement.
+/// Send one route request and wait for its acknowledgment.
 pub(crate) fn route(
     sock: BorrowedFd<'_>,
     op: RouteOp,
@@ -608,7 +608,7 @@ pub(crate) fn new_address_message(
     msg
 }
 
-/// Send a secondary-address request and wait for its acknowledgement.
+/// Send a secondary-address request and wait for its acknowledgment.
 ///
 /// Adding an address that is already present succeeds rather than failing —
 /// the kernel treats an identical `RTM_NEWADDR` as idempotent — so a daemon
@@ -629,7 +629,7 @@ pub(crate) fn new_address(
 /// send/receive/ack sequence around it does not.
 fn send_netlink_request(sock: BorrowedFd<'_>, msg: &[u8], seq: u32) -> io::Result<()> {
     // SAFETY: `sock` is open for the call, and `msg` is a live slice of exactly
-    // `msg.len()` initialised bytes. `send` reads that many and writes none.
+    // `msg.len()` initialized bytes. `send` reads that many and writes none.
     let sent = unsafe {
         libc::send(
             sock.as_raw_fd(),
@@ -856,7 +856,7 @@ fn ip_from_bytes(family: u8, payload: &[u8]) -> Option<IpAddr> {
 pub(crate) fn local_addresses(sock: BorrowedFd<'_>, seq: u32) -> io::Result<Vec<IpAddr>> {
     let msg = addr_dump_message(seq);
     // SAFETY: as `route` — `sock` is open for the call and `msg` is a live
-    // slice of exactly `msg.len()` initialised bytes, which `send` only reads.
+    // slice of exactly `msg.len()` initialized bytes, which `send` only reads.
     let sent = unsafe {
         libc::send(
             sock.as_raw_fd(),
@@ -1014,7 +1014,7 @@ pub(crate) fn default_gateway(sock: BorrowedFd<'_>, seq: u32) -> io::Result<Opti
     let msg = default_route_message(seq);
 
     // SAFETY: as `route` — `sock` is open for the call and `msg` is a live
-    // slice of exactly `msg.len()` initialised bytes.
+    // slice of exactly `msg.len()` initialized bytes.
     let sent = unsafe {
         libc::send(
             sock.as_raw_fd(),
@@ -1169,7 +1169,7 @@ mod route_tests {
         assert_ne!(flags & NLM_F_ACK, 0);
     }
 
-    // ── the acknowledgement ─────────────────────────────────────────────────
+    // ── the acknowledgment ─────────────────────────────────────────────────
 
     fn ack(seq: u32, code: i32) -> Vec<u8> {
         let mut m = Vec::new();
@@ -1197,12 +1197,12 @@ mod route_tests {
 
         // ESRCH is what a delete for a route the kernel does not hold returns.
         // It does *not* map to `ErrorKind::NotFound` — it arrives as
-        // `Uncategorized` — so recognising it has to go through the raw errno.
+        // `Uncategorized` — so recognizing it has to go through the raw errno.
         let err = route_ack(&ack(5, -libc::ESRCH), 5).expect_err("ESRCH must surface");
         assert_eq!(err.raw_os_error(), Some(libc::ESRCH));
         assert!(
             is_absent(&err),
-            "removing an absent route must be recognisable as absent"
+            "removing an absent route must be recognizable as absent"
         );
         assert!(is_absent(&std::io::Error::from_raw_os_error(libc::ENOENT)));
         assert!(

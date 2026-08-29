@@ -160,7 +160,7 @@ fn copy(
         // this waits until the connection has been ready at least once before
         // it will believe the socket is finished. `publish` no longer hands
         // over a socket in `SYN-RECEIVED` (FINDINGS.md 49) and this is the
-        // second line of defence, because the cost of confusing the two is a
+        // second line of defense, because the cost of confusing the two is a
         // half-close sent to a backend that has not yet seen a single byte of
         // the request it is being asked to answer.
         was_ready |= stack.tcp_may_recv(tunnel) || stack.tcp_can_recv(tunnel);

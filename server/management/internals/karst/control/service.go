@@ -82,7 +82,7 @@ func (s *Service) RecordSessionsWith(recorder SessionRecorder) { s.sessions = re
 // New builds the service.
 //
 // static is the server's long-lived ML-KEM-768 key and identity is its
-// ML-DSA-65 signing key. Nodes pin *both* public halves at enrolment: the KEM
+// ML-DSA-65 signing key. Nodes pin *both* public halves at enrollment: the KEM
 // key authenticates the server implicitly, and the verification key is what
 // makes the per-connection ephemeral trustworthy, and so what makes forward
 // secrecy real (ADR-0011, spec/models/karst-control.pv).
@@ -90,7 +90,7 @@ func New(static *channel.StaticKey, identity channel.Signer, lookup channel.Iden
 	return &Service{static: static, identity: identity, lookup: lookup, verifier: verifier, handler: handler}
 }
 
-// Pins are what a node must be given out of band at enrolment. Handing out
+// Pins are what a node must be given out of band at enrollment. Handing out
 // only the KEM half silently downgrades forward secrecy.
 func (s *Service) Pins() channel.ServerPins {
 	return channel.ServerPins{StaticKEM: s.static.PublicKey(), VerifyKey: s.identity.PublicKey()}
@@ -155,8 +155,8 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			log.WithContext(ctx).Warnf("karst: recording session start for %x: %v", nodeID, err)
 		}
 		defer func() {
-			// ctx is cancelled by the time this runs on a client hangup, and a
-			// cancelled context is one no write will be accepted on — so the
+			// ctx is canceled by the time this runs on a client hangup, and a
+			// canceled context is one no write will be accepted on — so the
 			// close gets its own.
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCloseTimeout)
 			defer cancel()

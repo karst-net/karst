@@ -643,7 +643,7 @@ func TestCleanupOrphanedResources_SkipsWhenForeignKeyExists(t *testing.T) {
 
 // legacyCostRow is the pre-breakdown shape of the usage table: cost was stored
 // as a total plus a cache portion, with no per-bucket columns. Used to build a
-// realistic pre-upgrade table for the fold migration to run against.
+// realiztic pre-upgrade table for the fold migration to run against.
 type legacyCostRow struct {
 	ID           string `gorm:"primaryKey"`
 	AccountID    string
@@ -717,7 +717,7 @@ func TestFoldCostAggregatesIntoBuckets_SkipsAlreadyMigrated(t *testing.T) {
 	require.NoError(t, db.Migrator().DropTable(&agentNetworkTypes.AgentNetworkUsage{}))
 
 	require.NoError(t, db.AutoMigrate(&agentNetworkTypes.AgentNetworkUsage{}))
-	// Timestamp must be set explicitly: a zero time.Time serialises as
+	// Timestamp must be set explicitly: a zero time.Time serializes as
 	// '0000-00-00 00:00:00', which MySQL rejects under strict mode.
 	require.NoError(t, db.Create(&agentNetworkTypes.AgentNetworkUsage{
 		ID: "u1", AccountID: "acct-1", Model: "claude-sonnet-4-6",

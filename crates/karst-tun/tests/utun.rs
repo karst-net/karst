@@ -182,7 +182,7 @@ fn creates_an_interface_the_kernel_agrees_exists() {
 }
 
 /// The configured name is a **preference** on macOS, and `karst0` is one the
-/// platform cannot honour. The contract is that this is not an error and that
+/// platform cannot honor. The contract is that this is not an error and that
 /// `name()` reports the truth — anything downstream reading the config value
 /// instead would be looking at an interface that does not exist.
 #[test]

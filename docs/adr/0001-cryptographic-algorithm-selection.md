@@ -40,7 +40,7 @@ NIST finalised the core standards in August 2024 — FIPS 203 (ML-KEM), FIPS 204
 a research problem. The task is choosing parameter sets and filling the gaps
 the standards do not cover.
 
-The audience is **hobbyists and security-minded commercial organisations**
+The audience is **hobbyists and security-minded commercial organizations**
 (PLAN.md §13 Q6), with no identified CNSA 2.0 mandate and no compliance
 deadline. That pushes toward defaults that are safe without a security team and
 performant on modest hardware, with stronger parameters available through the
@@ -115,19 +115,19 @@ where performance matters more than ubiquity.
 | **Classic McEliece** | 524 KB public keys break memory, mobile, rotation, offline operation and the CNSA path. Retained as an optional profile only — ADR-0004 |
 | **HQC** | NIST's backup KEM, but ~2.2 KB pk / ~4.5 KB ct at Category 1 — worse for a packet budget than anything chosen |
 | **FrodoKEM** | Conservative but far too large for a handshake |
-| **NTRU / sntrup761** | Comparable sizes to ML-KEM with no NIST standardisation |
+| **NTRU / sntrup761** | Comparable sizes to ML-KEM with no NIST standardization |
 | **FN-DSA / Falcon** | Floating-point signing side-channel risk; standard not final |
 
 ### Implementation
 
-**Amended 2026-08-09 — the default backend is chosen by licence, not by
+**Amended 2026-08-09 — the default backend is chosen by license, not by
 cryptography.**
 
 This ADR originally named `libcrux-ml-kem` as the default because it is
 formally verified via hax/F*, which is consistent with gating release on a
 ProVerif proof of the protocol. Implementing the KEM trait surfaced a conflict:
 
-| Crate | Licence | GPLv2-compatible? |
+| Crate | License | GPLv2-compatible? |
 |---|---|---|
 | `libcrux-ml-kem` | **Apache-2.0 only** | **No** |
 | `ml-kem` (RustCrypto) | Apache-2.0 **OR** MIT | Yes, via the MIT arm |
@@ -164,7 +164,7 @@ dependency graph.
 
 ### Positive
 
-- Entirely standardised primitives — no bespoke cryptography, no unvetted
+- Entirely standardized primitives — no bespoke cryptography, no unvetted
   parameter sets.
 - Category 3 throughout, with the trust root no longer weaker than what it
   anchors.

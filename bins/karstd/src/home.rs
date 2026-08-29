@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn a_silent_relay_cannot_make_this_node_allocate() {
-        // Probes are state a relay's behaviour causes this node to hold. One
+        // Probes are state a relay's behavior causes this node to hold. One
         // that never answers is measured by its silence, not by more pings.
         let mut p = RttProbes::default();
         let mut admitted = 0;

@@ -124,7 +124,7 @@ fn report_rate(written: usize, elapsed: Duration) {
 /// **This is a throughput assertion in a correctness suite, and it is here
 /// because finding 41 could not be caught by anything else.** Every TCP socket
 /// was built with a one-MTU receive buffer — a 1280-byte advertised window, so
-/// one segment in flight and an acknowledgement between each — and the mode
+/// one segment in flight and an acknowledgment between each — and the mode
 /// was *correct* at 7.3 Mbps. Every test passed. A window is invisible to
 /// assertions about bytes.
 ///
@@ -711,7 +711,7 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
         peer_listen: LISTEN_PEER,
         // Userspace mode never creates this; it is here because the field is
         // required, and asserting on the reported name below is what shows it
-        // was ignored rather than quietly honoured.
+        // was ignored rather than quietly honored.
         interface: PEER_INTERFACE,
         socks: Some(SOCKS_PORT),
         publish: &[],
@@ -916,7 +916,7 @@ fn a_half_closed_request_still_receives_its_reply() {
 /// **8 MiB, and a clock — the row that would have caught finding 41.**
 ///
 /// Userspace mode shipped with every TCP socket advertising a 1280-byte
-/// window: one segment in flight, an acknowledgement between each, 7.3 Mbps on
+/// window: one segment in flight, an acknowledgment between each, 7.3 Mbps on
 /// a path carrying 1380. Nothing in this file caught it, and nothing in this
 /// file could have — the gate moves 64 KiB and asserts the bytes match, which
 /// is true at any speed. It took ADR-0012's gate-1 measurement to see it.

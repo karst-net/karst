@@ -29,7 +29,7 @@ func scalableTestAccountWithoutDefaultPolicy(numPeers, numGroups int) (*types.Ac
 	return buildScalableTestAccount(numPeers, numGroups, false)
 }
 
-// scalableTestAccount creates a realistic account with a blanket "Allow All" policy
+// scalableTestAccount creates a realiztic account with a blanket "Allow All" policy
 // plus per-group policies, routes, network resources, posture checks, and DNS settings.
 func scalableTestAccount(numPeers, numGroups int) (*types.Account, map[string]struct{}) {
 	return buildScalableTestAccount(numPeers, numGroups, true)

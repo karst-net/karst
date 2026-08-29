@@ -37,7 +37,7 @@ type costMeterPricing struct {
 // buildCostMeterConfigJSON assembles the cost_meter middleware config
 // from the default pricing table plus the operator's stored per-provider
 // model prices. Same orphan rule as the router: a provider no enabled
-// policy authorises is unreachable, so its prices are not shipped.
+// policy authorizes is unreachable, so its prices are not shipped.
 //
 // Overlay semantics per model row:
 //   - The row's model id is normalized exactly the way the proxy's

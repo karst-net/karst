@@ -399,8 +399,8 @@ type AccessExplanation struct {
 	Rule        int       `json:"rule"`
 }
 
-// AcknowledgementMismatch defines model for AcknowledgementMismatch.
-type AcknowledgementMismatch struct {
+// AcknowledgmentMismatch defines model for AcknowledgmentMismatch.
+type AcknowledgmentMismatch struct {
 	Code                  string   `json:"code"`
 	Message               string   `json:"message"`
 	RequiredCutOffHandles []string `json:"required_cut_off_handles"`
@@ -522,8 +522,8 @@ type ChainVerification struct {
 	Verified         *bool     `json:"verified,omitempty"`
 }
 
-// DeviceEnrolment defines model for DeviceEnrolment.
-type DeviceEnrolment struct {
+// DeviceEnrollment defines model for DeviceEnrollment.
+type DeviceEnrollment struct {
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Key Returned once when the one-use device key is created.

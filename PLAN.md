@@ -227,7 +227,7 @@ theory. Both live in `spec/models/`
 and are checked in CI. If the ProVerif model does not verify, the protocol
 does not ship — this is a hard gate, not a best-effort task.
 
-The **PSK-absent fallback (§2.6) must be modelled explicitly** — a
+The **PSK-absent fallback (§2.6) must be modeled explicitly** — a
 downgrade-to-zero-PSK attack is the obvious thing an adversary would reach for.
 
 **The rule generalised, 2026-08-14: every Karst protocol gets a ProVerif model
@@ -416,14 +416,14 @@ script builds `--release` for this reason.)
 
 **Four flows are no faster than one, and that is the finding.** Per-packet cost
 would still scale with concurrency on a 48-core machine; a flat line means
-*serialisation*. During transfer only two daemon threads are busy (80% and 60%
+*serialization*. During transfer only two daemon threads are busy (80% and 60%
 of one core each) while 46 cores idle. A UDP control at the same 1232-byte
 datagram size reached 782 Mbps (79,000 packets/s) on the same path, so neither
 the NIC nor the packet rate itself is the ceiling. The bottleneck is the
 datapath's shape, not its arithmetic:
 
 1. **One mutex around the whole engine.** Every packet in both directions
-   serialises on it. This is the flat line.
+   serializes on it. This is the flat line.
 2. **One syscall per packet.** No `sendmmsg`/`recvmmsg`, no GSO/GRO.
 3. **Allocation per packet** — `seal` copies the plaintext, `fragment` returns
    a `Vec<Vec<u8>>`.
@@ -454,7 +454,7 @@ reassembler off the outbound path. Same hosts, same method:
 disappointment.** All four go to the *same peer*, so they share that peer's
 session lock; per-peer locking buys scaling across peers, and this benchmark has
 one. The +32% on a single flow is what removing the engine-wide lock was
-actually worth — the two directions of one peer no longer serialise against each
+actually worth — the two directions of one peer no longer serialize against each
 other.
 
 **Change 2 came out of a profile, not a guess.** `perf` on a loaded node put
@@ -570,7 +570,7 @@ rather than falling below it. Against the 884 Mbps ceiling computed below, that
 is **80% of what the link can physically carry**.
 
 Two of the seven changes so far were locks, and both were worth more than
-everything else combined. The three micro-optimisations between them — pre-keying,
+everything else combined. The three micro-optimizations between them — pre-keying,
 allocation removal, batched syscalls — bought 3% between them despite removing
 98% of syscalls and most of the allocations. The lesson is recorded because it
 is the opposite of the intuition §3.3 was written with.
@@ -602,7 +602,7 @@ was never measured, and measuring it says the opposite of what was hoped.
 
 **And it is not CPU-bound.** During the 4-flow run the two datapath threads sit
 at **70% each** — 1.4 cores of 48 — while retransmits rise from 624 to 10679.
-Something serialises the datapath that is neither the engine lock (removed,
+Something serializes the datapath that is neither the engine lock (removed,
 change 1) nor the session lock (removed, change 7), and it gives up before it
 runs out of CPU. Two threads is itself the likeliest answer: one reads the TUN
 and one reads the UDP socket, so *all* flows for *all* peers funnel through a
@@ -777,7 +777,7 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
   identity model settled; a 1952-byte ML-DSA key on every forwarded frame was
   never the intent.* Relays hold no long-term state and see only PHREATIC
   ciphertext. What the operator learns is enumerated in spec §11 rather than
-  summarised — "and nothing else" was too generous, since the traffic graph, the
+  summarized — "and nothing else" was too generous, since the traffic graph, the
   timing and the exact packet sizes are all visible and none of it is padded.
 - Every connection begins over a relay and **upgrades to a direct path** when
   discovery succeeds, with no packet loss during the switch (the datapath
@@ -805,7 +805,7 @@ out both, and `karst-relay` must never gain a DERP compatibility mode.
   at coturn you already run, or rent commodity TURN for cents. Supplement, not
   replacement — DERP-style always-connected presence has no TURN equivalent, so
   `karst-relay` keeps bootstrap and presence. ChannelData framing (4-byte
-  header) to minimise MTU impact; ephemeral HMAC credentials minted by the
+  header) to minimize MTU impact; ephemeral HMAC credentials minted by the
   control server and shipped in the netmap, never static ones (one more netmap
   secret — see §2.6).
 - Relay registry validation rejects `derp://` endpoints.
@@ -991,7 +991,7 @@ onwards, anchored on the week of 2026-08-10.
 
 - 🔶 `karst-crypto`: **suite registry, downgrade protection, `Kem` trait and a
   working ML-KEM-768 backend done** (21 tests). Backend is RustCrypto `ml-kem`,
-  not libcrux — see the ADR-0001 amendment; the choice is licence-driven.
+  not libcrux — see the ADR-0001 amendment; the choice is license-driven.
   Remaining: signature/AEAD traits, ML-DSA-65, SLH-DSA, libcrux and aws-lc-rs
   backends, NIST KAT vectors.
 - ✅ `karst-proto`: **fragment codec, §6.4 invariants, reassembly sublayer,
@@ -1037,7 +1037,7 @@ onwards, anchored on the week of 2026-08-10.
   58.6M / 3.6M / 114k executions. **The handshake target is corpus-seeded from
   real messages** (`--example dump_corpus`); unseeded it stalled at the length
   check with 380 covered edges against 1038 seeded. Wired into CI; OSS-Fuzz
-  enrolment outstanding.
+  enrollment outstanding.
 - **Exit:** two in-process peers complete a handshake and exchange authenticated
   data; both messages fit in 2 fragments with the anti-amplification invariant
   asserted; a spoofed-source flood allocates zero responder state; **Verifpal
@@ -1045,7 +1045,7 @@ onwards, anchored on the week of 2026-08-10.
   agreement and no-PSK-downgrade, including under a total break of either
   cryptographic family; **✅ fuzzers clean for 24 core-hours** — 24.01 core-hours
   on 2026-08-10 (3 targets × 15 workers × 1921 s, ~6.7 billion executions),
-  **zero crash artefacts**.
+  **zero crash artifacts**.
 
 ### Phase 2 — Node agent, first packets (8 weeks) — ✅ complete
 
@@ -1056,7 +1056,7 @@ onwards, anchored on the week of 2026-08-10.
   refused locally rather than left to the kernel — IP fragmentation would defeat
   §5 and the DoS analysis built on it. Remaining: GSO/GRO and batched I/O.
 - ✅ **Datapath concurrency — the first measured bottleneck (§3.4).** The engine
-  sat behind one mutex, so every packet in both directions serialised on it.
+  sat behind one mutex, so every packet in both directions serialized on it.
   Replaced with per-peer session locks, atomic counters, and the reassembler off
   the outbound path; the engine now takes `&self` throughout and the run loop
   shares it by reference with no outer lock. **Measured: 298 → 393 Mbps** on a
@@ -1400,7 +1400,7 @@ onwards, anchored on the week of 2026-08-10.
   prevent. 216 KB restored; the lesson is that a pruned fork needs its tests
   *run*, not merely compiled.
 
-  **The control channel is modelled, and the model found a real flaw.**
+  **The control channel is modeled, and the model found a real flaw.**
   `spec/models/karst-control.pv` (ProVerif 2.05) now discharges four queries,
   including content secrecy in both directions under **post-session compromise
   of the server's static key**. Getting there required fixing the protocol.
@@ -1424,7 +1424,7 @@ onwards, anchored on the week of 2026-08-10.
   **54 tests**, race-clean, including a regression test for the exact
   substitution the model found.
 
-  This is the argument for modelling before shipping, not after: the flaw was
+  This is the argument for modeling before shipping, not after: the flaw was
   in a design that had already been reviewed, written up, implemented and
   tested, and no test would have caught it, because every test agreed with the
   same wrong reasoning.
@@ -1512,7 +1512,7 @@ onwards, anchored on the week of 2026-08-10.
   `prost` to a deliberately lean workspace stays a separate decision.
 
   The vectors were **mutation-tested** rather than assumed to have teeth.
-  Three realistic interop bugs, each injected and confirmed caught:
+  Three realiztic interop bugs, each injected and confirmed caught:
 
   | Injected bug | Caught by |
   |---|---|
@@ -1676,13 +1676,13 @@ onwards, anchored on the week of 2026-08-10.
     rule naming it is dead code that compiles quietly to nothing.
   - **Tagged nodes are never group members.** Tags replace user ownership
     rather than adding to it, so a server's access does not follow whoever
-    happened to enrol it.
+    happened to enroll it.
   - **Destinations split from the right**: `tag:prod:22` is `tag:prod` on port
     22, not `tag` on `prod:22`. Writing it the other way would compile every
     tagged rule into something matching nothing.
   - **Compilation is deterministic.** Unsorted output would change the netmap's
     content hash on every recompilation and defeat the unchanged-fetch
-    optimisation entirely.
+    optimization entirely.
 
   **The filter now ships in the netmap**, as §4.3 requires, and the netmap
   version covers it. That last part is not a detail: without it a policy edit
@@ -1706,7 +1706,7 @@ onwards, anchored on the week of 2026-08-10.
 
   Reading the fork's path closely mattered here. It calls `claimLoginToken`,
   which is easy to skip as bookkeeping and is in fact **single-use enforcement**:
-  without it a captured ID token enrols unlimited nodes. It is kept, and
+  without it a captured ID token enrolls unlimited nodes. It is kept, and
   **fails closed** when the claim store is unavailable, because proceeding
   would drop the guarantee at exactly the moment its enforcer is broken.
 
@@ -1916,7 +1916,7 @@ onwards, anchored on the week of 2026-08-10.
     than falling back to a bare address, because a node that comes up and
     reaches nothing is worse than one that does not come up.
   - **One unusable peer took down the whole netmap.** `node.Register` validated
-    the data-plane keys by *length*, so a node could enrol 1184 bytes of
+    the data-plane keys by *length*, so a node could enroll 1184 bytes of
     anything, and that key was then shipped to every peer in the account. The
     node refused the entire netmap over it — so a single bad registration would
     take every node in the account off the network. Fixed at both ends: the
@@ -1950,7 +1950,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **The point is what it does *not* disturb.** A peer present before and after
   keeps its live session and its learned endpoint. Adding one peer must not
-  cost a rehandshake with every other: on a large aquifer a single enrolment
+  cost a rehandshake with every other: on a large aquifer a single enrollment
   would otherwise produce a fleet-wide reconnect, each costing two ML-KEM
   operations and a window where traffic is dropped for want of a session. "The
   same peer" means the same **KEM public key** — what `peer_id_hint` derives
@@ -1983,7 +1983,7 @@ onwards, anchored on the week of 2026-08-10.
   Two things worth recording:
 
   - **`PeerPublic` could derive `Clone` all along.** The engine carried a
-    comment saying it could not, and rebuilt the key through its serialisation
+    comment saying it could not, and rebuilt the key through its serialization
     to work around it. That was true of an earlier KEM backend and had
     outlived it.
   - **Nothing in the refresh loop is fatal.** A server that has gone away, a
@@ -2030,7 +2030,7 @@ onwards, anchored on the week of 2026-08-10.
   - **Every request sets `NLM_F_ACK` and the reply's sequence number is
     checked.** Not waiting for the ack would make every failure silent; not
     checking the sequence would let one route operation succeed on the strength
-    of another's acknowledgement.
+    of another's acknowledgment.
 
   Verified against the real kernel: `/proc/net/route` and `/proc/net/ipv6_route`
   hold what was added, in both families, and no longer hold it after removal.
@@ -2040,7 +2040,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **`karst bugreport` landed, and with it the last exit clause.**
 
-  The design decision is what it *omits*. A bug report is the artefact most
+  The design decision is what it *omits*. A bug report is the artifact most
   likely to be pasted into an issue tracker or a vendor's support portal, so it
   reports **facts about** the configuration and never the configuration itself.
   The tempting shortcut — "attach the config file so we can see what they set"
@@ -2138,7 +2138,7 @@ onwards, anchored on the week of 2026-08-10.
   with an ML-DSA-65 key published in the relay registry. Three reasons, of
   which the third is the practical one: WebPKI is classical and this would
   otherwise be the one hop in Karst with no PQ authentication; a certificate is
-  no evidence of identity behind a shared load balancer; and the realistic
+  no evidence of identity behind a shared load balancer; and the realiztic
   self-hoster has an internal CA or a self-signed certificate, where pinning a
   key distributed through the netmap works and pinning a chain does not.
 
@@ -2165,7 +2165,7 @@ onwards, anchored on the week of 2026-08-10.
   guess. The relay now verifies against a decoy key on a miss so both paths do
   the same work. The claim is bounded in the spec rather than overstated — it
   closes the lookup asymmetry, not every asymmetry.
-- ✅ **Ponor modelled — `spec/models/ponor.pv`, 4/4 in ProVerif 2.05**, seconds.
+- ✅ **Ponor modeled — `spec/models/ponor.pv`, 4/4 in ProVerif 2.05**, seconds.
   Injective authentication in both directions for both roles, against an
   attacker that **operates a relay honest clients legitimately connect to** —
   which is not a contrived adversary but the community pool ADR-0008 §6 offers.
@@ -2275,7 +2275,7 @@ onwards, anchored on the week of 2026-08-10.
   "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
   for path selection. Written fresh, this read the rule as an **OR** — either
   margin suffices — under which a 1 ms gain on a 3 ms path clears the 20% test
-  and a node switches on jitter, which is the exact behaviour §9.2 exists to
+  and a node switches on jitter, which is the exact behavior §9.2 exists to
   prevent. `karst_disco::margin` had it right; it is now public and there is one
   implementation rather than two free to disagree.
 
@@ -2322,7 +2322,7 @@ onwards, anchored on the week of 2026-08-10.
   the datapath would see rather than one taken past the traffic. A live relay
   answering a real ping is a test (`relay_live.rs`), because the two halves were
   proven separately and neither showed that `karstd` sends a frame this relay
-  recognises: a `Pong` the client failed to parse would leave the selector
+  recognizes: a `Pong` the client failed to parse would leave the selector
   receiving nothing, which looks exactly like a relay that is merely slow.
 
   **A probe is matched by token, and an unmatched token measures nothing.** The
@@ -2531,7 +2531,7 @@ onwards, anchored on the week of 2026-08-10.
     rounds against a hysteresis needing three consecutive wins, so a single lost
     `Pong` costs it that turn and it waits for the next one.
   - ✅ **Co-location with the control server in the default deployment
-    artefact.** §5 makes this both the adoption lever and the answer to who
+    artifact.** §5 makes this both the adoption lever and the answer to who
     pays for bandwidth: the same `docker-compose`, the same static binary, a
     self-hoster relaying in under five minutes without deciding anything.
 
@@ -2565,7 +2565,7 @@ onwards, anchored on the week of 2026-08-10.
     registry entry, end to end, which is the check `karstd` performs before it
     will accept a netmap at all.
 
-    **What is left is enrolment, and it is Phase 5's.** The artefact stands up
+    **What is left is enrollment, and it is Phase 5's.** The artifact stands up
     the infrastructure; it cannot walk a self-hoster to a connected node,
     because a node needs a setup key, a setup key needs an account, and an
     account needs the admin console. The five-minute path exists as far as the
@@ -2740,12 +2740,12 @@ onwards, anchored on the week of 2026-08-10.
   The hysteresis tests were checked against the defect rather than trusted:
   dropping the three-consecutive-wins requirement fails exactly the three
   hysteresis tests and nothing else.
-- ✅ **AVEN modelled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
+- ✅ **AVEN modeled — `spec/models/aven.pv`, 4/4 in ProVerif 2.05.** The
   attacker holds **a different peer of A's disco key** throughout, because a
   aquifer is not a trust boundary (§1.1 lists a malicious peer inside one as in
   scope).
 
-  **The model found a reflector, and draft 0.1 of the spec had no defence.**
+  **The model found a reflector, and draft 0.1 of the spec had no defense.**
   The injective form of "the responder answers only probes the prober sent"
   came back `is false`, with ProVerif noting the non-injective form is true —
   which in words is: *the responder answered a `Ping` the prober really did
@@ -2865,7 +2865,7 @@ onwards, anchored on the week of 2026-08-10.
   **A relay-carried advertisement has its own entry point, and that is the
   design decision worth defending.** `inbound_from_relay` is separate from
   `inbound` rather than a flag on it, because the two differ in what they are
-  allowed to authorise: the AVEN tag proves *who wrote* a message and says
+  allowed to authorize: the AVEN tag proves *who wrote* a message and says
   nothing about whether an arbitrary UDP source is a permitted delivery path for
   a fresh endpoint list. It additionally requires the relay-stamped source id
   and the tag to name the same peer, so one admitted peer cannot replay
@@ -3057,7 +3057,7 @@ onwards, anchored on the week of 2026-08-10.
 
   **A relay with a self-signed certificate had no working configuration**, which
   is FINDINGS.md finding 16 and was found by trying to write an integration test
-  against a real one. `ponor-v1.md` §4.2 names that deployment as the realistic
+  against a real one. `ponor-v1.md` §4.2 names that deployment as the realiztic
   self-hosted case and `relay_tls` loaded the system trust store alone.
   `[control] relay_ca_file` now supplements it. It cannot weaken relay
   authentication, structurally rather than by promise: §4.2 already makes the
@@ -3235,7 +3235,7 @@ onwards, anchored on the week of 2026-08-10.
   B: endpoint = "10.99.0.1:51820"   state = "established" transport = "direct"
   ```
 
-  Enrolment, a netmap carrying disco keys and a relay registry, a Ponor
+  Enrollment, a netmap carrying disco keys and a relay registry, a Ponor
   connection over TLS with a self-signed CA, a PHREATIC handshake **through the
   relay**, an AVEN rendezvous over it, probes on the shared UDP socket, and the
   upgrade. That is the Phase 4 headline and it had never been run.
@@ -3295,7 +3295,7 @@ onwards, anchored on the week of 2026-08-10.
 - ✅ **The live run is a test now** — `bins/karstd/tests/aquifer.rs`, wired into
   `just test-privileged`. Four processes: the Go coordination server,
   `karst-relay`, and two `karstd` daemons in separate namespaces with real TUN
-  devices. First enrolment to a direct path carrying TCP under a port-scoped
+  devices. First enrollment to a direct path carrying TCP under a port-scoped
   ACL, in **four seconds**.
 
   It found a third defect before it first passed. **Nothing learned a candidate
@@ -3406,7 +3406,7 @@ onwards, anchored on the week of 2026-08-10.
   and not symmetric-to-symmetric, which still needs port prediction.
 
   One debt recorded rather than hidden: adding `ReflectOffer` was a **flag day**.
-  §6 gives Ponor no forward-compatible extension point — an unrecognised frame
+  §6 gives Ponor no forward-compatible extension point — an unrecognized frame
   type closes the connection, deliberately — and neither version byte can carry
   the signal. Acceptable exactly once, while nothing is deployed;
   `ponor-v1.md` §13.10 records that the next such change will not have that
@@ -3439,7 +3439,7 @@ onwards, anchored on the week of 2026-08-10.
   **The suites now refuse to be quietly green** — *all* of them, as of
   2026-08-21. They used to skip when their
   prerequisites were absent, which for a privileged suite in CI is the worst
-  possible behaviour: a runner image that stopped shipping `miniupnpd` would
+  possible behavior: a runner image that stopped shipping `miniupnpd` would
   have turned the two mapped rows into a no-op and reported success.
 
   **This paragraph was written on 2026-08-20 and was true of three suites out of
@@ -3615,7 +3615,7 @@ onwards, anchored on the week of 2026-08-10.
   `managed`, which are 0BSD, and that was not on the allow list. Now allowed
   deliberately with the reasoning written down — 0BSD is OSI-approved and
   strictly more permissive than MIT, the same grant minus attribution — because
-  a new licence in the tree is a decision rather than a discovery.
+  a new license in the tree is a decision rather than a discovery.
 
   The SOCKS5 negotiation had **no tests at all**, in a project that walks every
   truncation of every codec. It parses bytes from a local process, so it now
@@ -3712,15 +3712,15 @@ onwards, anchored on the week of 2026-08-10.
   Step 3 is **where the throughput was**: every TCP socket was built with
   receive and transmit buffers of exactly one MTU. A receive buffer *is* the
   window this stack advertises, so 1280 bytes permits one segment in flight and
-  an acknowledgement between each — stop-and-wait, whatever the path can carry,
+  an acknowledgment between each — stop-and-wait, whatever the path can carry,
   and nothing below it can compensate. 64 KiB buffers moved the mode 7.3 → 516
   Mbps, **71×**.
 
   **That order is the same mistake this plan records making one layer down.**
   §3.4 prescribed batching and offload before anything had been measured, and
   the two lock removals turned out to be worth more than all the
-  micro-optimisation combined. Here batching was again tried before the
-  serialisation was found, and again bought nothing. The lesson did not
+  micro-optimization combined. Here batching was again tried before the
+  serialization was found, and again bought nothing. The lesson did not
   transfer the first time it was written down; it is written down again.
 
   A third thing worth naming: the mode **worked** throughout. Its release gate
@@ -3889,7 +3889,7 @@ onwards, anchored on the week of 2026-08-10.
   path — and on that socket every IPv4 peer arrived as `[::ffff:a.b.c.d]`. The
   node *worked*, which is why nothing caught it; what leaked was
   `Pong.observed`, so a dual-stack node told its IPv4 peers they were at
-  addresses no IPv4-only node can send to. Fixed by normalising at the socket
+  addresses no IPv4-only node can send to. Fixed by normalizing at the socket
   boundary, plus the matching wire rule — §6.2 already refuses a second spelling
   of an address and the mapped form is one.
 
@@ -3911,7 +3911,7 @@ onwards, anchored on the week of 2026-08-10.
 
   The prefix is learned by **RFC 8781's PREF64 first and RFC 7050 second**, and
   gated: `auto` will not ask unless the datapath is IPv6 *and* the host holds no
-  IPv4 address of its own. The second gate is not an optimisation — a host with
+  IPv4 address of its own. The second gate is not an optimization — a host with
   both would route every IPv4 flow through a translator it does not need and
   learn a reflexive address belonging to the translator.
 
@@ -4065,7 +4065,7 @@ onwards, anchored on the week of 2026-08-10.
   and is the common pairing** — a CGNAT subscriber talking to somebody on a
   home router.
 
-  **Measured against our own NAT flavours on 2026-08-19, and it holds** —
+  **Measured against our own NAT flavors on 2026-08-19, and it holds** —
   `docs/measurements/hard-easy-2026-08-19.md`, with the harness beside it:
 
   | N sockets (hard) | M probes (easy) | Packets | Measured | Trials | Predicted |
@@ -4128,7 +4128,7 @@ onwards, anchored on the week of 2026-08-10.
   upgrade/uninstall, and DNS recovery remain unimplemented.
 - The console/portal **client-user lifecycle vertical slice is verified against
   the real manager**: an administrator creates and invites a user, that user
-  enrols a Linux device, sees it in the portal, can revoke it, and
+  enrolls a Linux device, sees it in the portal, can revoke it, and
   administrator deprovisioning removes the user's peer access. The remaining
   console/portal work is coverage for the other mutating screens plus any
   documented/read-only-versus-implemented control-surface drift.
@@ -4166,7 +4166,7 @@ onwards, anchored on the week of 2026-08-10.
   assumptions get written down — but it must not be reported as a review
   having happened.
 - **Internal penetration test** of the control plane and console, against a
-  deployment stood up from the published artefacts rather than a lab rig, so
+  deployment stood up from the published artifacts rather than a lab rig, so
   that what is tested is what a self-hoster actually runs.
 - ⬅️ **TURN fallback**, slipped from Phase 4 on 2026-08-20 under the option that
   bullet reserved: client-side allocation, permissions, channel binding and
@@ -4198,7 +4198,7 @@ onwards, anchored on the week of 2026-08-10.
 - **Shard the datapath.** Carried from Phase 2, where it was measured and
   scoped out: throughput does not rise with flow count (686 → 708 Mbps for
   1 → 4 flows) while both datapath threads sit at 70% CPU. One TUN-reader
-  thread and one UDP-reader thread serialise every flow of every peer, so the
+  thread and one UDP-reader thread serialize every flow of every peer, so the
   fix is multiple queues (`IFF_MULTI_QUEUE`, `SO_REUSEPORT`) rather than
   tuning. This is the gate on the ≥ 3 Gbps target in §3.3. See §3.4.
 - **Measure the absolute ≥ 1 Gbps figure**, deferred from Phase 2's exit
@@ -4225,7 +4225,7 @@ reports an assurance it will not have.
 - Windows client: Wintun integration, Windows service, signed MSI installer,
   and WinTUN driver signing.
 - **Exit:** all high/critical findings remediated and re-tested, and the report
-  published or summarised publicly; the Windows client is installable and
+  published or summarized publicly; the Windows client is installable and
   connects successfully to the control plane.
 
 **What this costs, stated plainly.** v1.0 ships without external cryptographic
@@ -4265,9 +4265,9 @@ carved out of Phase 6 rather than added to the end.
 | Control plane | Table-driven ACL tests, Postgres-backed integration tests via testcontainers, exhaustive RBAC matrix tests |
 | Frontend | Vitest units, Playwright E2E against a real server, axe-core accessibility gate |
 | Security | `cargo deny` + `govulncheck` + Dependabot in CI, SBOM per release, quarterly dependency review |
-| Release | Reproducible builds, signed artefacts, transparency-logged releases |
+| Release | Reproducible builds, signed artifacts, transparency-logged releases |
 
-**Deterministic simulation testing deserves emphasis.** A virtual-clock,
+**Deterministic simulation testing deserves emphasiz.** A virtual-clock,
 virtual-network harness that can replay a failing seed exactly is the
 difference between debugging a distributed handshake bug in an afternoon and
 losing a week to it. Build it in Phase 2, before it's desperately needed.

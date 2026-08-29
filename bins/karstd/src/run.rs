@@ -7,7 +7,7 @@
 //! a datagram from a peer arrive on unrelated schedules, and neither may be
 //! starved by the other. That is two threads plus a timer, sharing the engine
 //! by reference — **not behind a lock**. The engine synchronises per peer
-//! internally, and an outer mutex here would serialise the whole datapath,
+//! internally, and an outer mutex here would serialize the whole datapath,
 //! which is precisely the bottleneck PLAN.md §3.4 measured.
 //!
 //! An async runtime would do the same job with more machinery. The engine is
@@ -1645,7 +1645,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
     // response to a relayed `HandshakeInit` is what completes the
     // handshake, and until it does there is no session and no direct
     // path to upgrade to. The engine has already chosen the transport,
-    // so this only has to honour it — and the queue is non-blocking, so
+    // so this only has to honor it — and the queue is non-blocking, so
     // handing work to the send task cannot stall this one.
     dispatch(
         out,
@@ -2649,7 +2649,7 @@ fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::
 ///
 /// # The thing this must never do
 ///
-/// A bug report is the artefact most likely to be pasted into an issue tracker,
+/// A bug report is the artifact most likely to be pasted into an issue tracker,
 /// a chat window, or a vendor's support portal. So it reports **facts about**
 /// the node's configuration and never the configuration itself. The tempting
 /// shortcut — "attach the config file so we can see what they set" — would ship
@@ -2665,7 +2665,7 @@ fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::
 /// - **No private keys and no identity seed.** A peer is identified by its name
 ///   and the first eight bytes of its `peer_id_hint` — enough to correlate two
 ///   nodes' reports, not enough to be a key.
-/// - **No setup key**, which is a bearer credential that enrols a node.
+/// - **No setup key**, which is a bearer credential that enrolls a node.
 /// - **No file contents**, only paths and the facts derived from them.
 fn bug_report(
     config: &Config,

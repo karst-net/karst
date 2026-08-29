@@ -35,7 +35,7 @@ const (
 	metaKeyCostUSDOutput       = "cost.usd_output"
 	metaKeyStream              = "llm.stream"
 	metaKeySessionID           = "llm.session_id"
-	metaKeyAuthorisingGroups   = "llm.authorising_groups"
+	metaKeyauthorizingGroups   = "llm.authorizing_groups"
 	metaKeyRequestPrompt       = "llm.request_prompt"
 	metaKeyResponseCompletion  = "llm.response_completion"
 )
@@ -88,7 +88,7 @@ func IngestAccessLog(ctx context.Context, s store.Store, logEntry *accesslogs.Ac
 
 // flattenAccessLog converts a reverse-proxy AccessLogEntry (whose LLM
 // dimensions live in the opaque Metadata map) into the flattened
-// agent-network row + authorising-group child rows.
+// agent-network row + authorizing-group child rows.
 func flattenAccessLog(e *accesslogs.AccessLogEntry) (*types.AgentNetworkAccessLog, []types.AgentNetworkAccessLogGroup) {
 	meta := e.Metadata
 
@@ -135,7 +135,7 @@ func flattenAccessLog(e *accesslogs.AccessLogEntry) (*types.AgentNetworkAccessLo
 	}
 
 	var groups []types.AgentNetworkAccessLogGroup
-	for _, gid := range parseGroupCSV(meta[metaKeyAuthorisingGroups]) {
+	for _, gid := range parseGroupCSV(meta[metaKeyauthorizingGroups]) {
 		groups = append(groups, types.AgentNetworkAccessLogGroup{
 			LogID:     entry.ID,
 			GroupID:   gid,
@@ -205,7 +205,7 @@ func parseMetaBool(meta map[string]string, key string) bool {
 	return v
 }
 
-// parseGroupCSV splits the comma-separated authorising-group id list the proxy
+// parseGroupCSV splits the comma-separated authorizing-group id list the proxy
 // emits, trimming blanks and de-duplicating. Dedup matters because the group
 // rows are keyed by (log_id, group_id) / (usage_id, group_id): a repeated id
 // in the CSV would otherwise produce a duplicate primary key and fail the

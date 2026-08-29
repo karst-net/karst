@@ -38,7 +38,7 @@ run`'s own redirect instead.
 
 ## Result of record
 
-**2026-08-10 — 24.01 core-hours, zero crash artefacts.** 3 targets × 15 workers
+**2026-08-10 — 24.01 core-hours, zero crash artifacts.** 3 targets × 15 workers
 × 1921 s on a 48-core host; roughly 6.7 billion executions. This satisfies the
 Phase 1 exit criterion in PLAN.md §10.
 

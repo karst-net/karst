@@ -7,13 +7,13 @@ import { readPref, writePref } from "../prefs";
 
 const steps: Array<[string, string]> = [
   ["Configure the coordination server", "Open the installation guide and enter its public URL."],
-  ["Create an enrolment key", "Create a short-lived auth key for the first node."],
+  ["Create an enrollment key", "Create a short-lived auth key for the first node."],
   ["Connect a node", "Install Karst, add the key to its daemon configuration, then start the service."],
   ["Confirm the node", "Return to Machines and confirm the node reports a current posture."],
 ];
 
 export function Setup({ go }: { go: (route: string) => void }) {
-  // Setup spans a restart and a trip to another machine to run the enrolment
+  // Setup spans a restart and a trip to another machine to run the enrollment
   // command. Progress and the server URL live in the browser rather than in
   // component state, which used to lose both on the first navigation and left
   // step 1 configuring nothing at all.
@@ -36,7 +36,7 @@ export function Setup({ go }: { go: (route: string) => void }) {
       <div>
         <strong>{title}</strong><p>{description}</p>
         {index === 0 && <label>Server URL<input aria-label="Server URL" placeholder="https://karst.example.com" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} /></label>}
-        {index === 1 && <><button disabled={!serverUrl} onClick={() => void create()}>Create enrolment key</button>{!serverUrl && <p>Enter the server URL in step 1 first — the enrolment command needs it.</p>}{error && <p role="alert">{error}</p>}</>}
+        {index === 1 && <><button disabled={!serverUrl} onClick={() => void create()}>Create enrollment key</button>{!serverUrl && <p>Enter the server URL in step 1 first — the enrollment command needs it.</p>}{error && <p role="alert">{error}</p>}</>}
         {index === 2 && (key
           ? <><p>On the machine you are adding, put this one-time key in <code>/etc/karst/karstd.toml</code>. Keep the server pins from the installation guide; the key is shown only once.</p><label>Control configuration<textarea aria-label="Control configuration" readOnly rows={5} value={`[control]\nserver = "${serverUrl}"\nserver_kem_pin = "…"\nserver_verify_pin = "…"\nsetup_key = "${key}"`} /></label><p>Then validate and start the daemon: <code>sudo karstd check --config /etc/karst/karstd.toml</code> followed by <code>sudo systemctl enable --now karstd</code>.</p></>
           : <p>The configuration snippet appears here once you have created a key.</p>)}

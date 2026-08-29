@@ -318,8 +318,8 @@ mod tests {
     #[test]
     fn a_deletion_forces_the_external_port_to_zero() {
         // RFC 6886 §3.4. Sending a suggested port with a zero lifetime is a
-        // malformed deletion; some gateways honour it and others ignore it,
-        // and "sometimes deletes" is the worst of the three behaviours.
+        // malformed deletion; some gateways honor it and others ignore it,
+        // and "sometimes deletes" is the worst of the three behaviors.
         let wire = encode_map(Transport::Udp, 51820, 40000, Duration::ZERO);
         assert_eq!(be16(&wire, 4), Some(51820), "internal port is kept");
         assert_eq!(be16(&wire, 6), Some(0), "external port is forced to zero");

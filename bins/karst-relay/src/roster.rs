@@ -535,7 +535,7 @@ mod tests {
     fn two_rosters_have_different_decoys() {
         // Generated per load and never written. A constant would still cost
         // the right work, but a per-process value costs nothing extra and
-        // leaves nothing to recognise across relays.
+        // leaves nothing to recognize across relays.
         let a = FileRoster::empty();
         let b = FileRoster::empty();
         assert_ne!(a.decoy_key(), b.decoy_key());

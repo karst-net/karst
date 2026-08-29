@@ -93,7 +93,7 @@ type AgentNetworkAccessLogFilter struct {
 	Search      *string    // log id, host, path, model, user email/name
 	UserID      *string    // exact user id (the dashboard sends the picked user's id)
 	SessionID   *string    // exact session id — groups one conversation / coding session
-	GroupIDs    []string   // authorising group ids (match any)
+	GroupIDs    []string   // authorizing group ids (match any)
 	ProviderIDs []string   // resolved provider ids (match any)
 	Models      []string   // models (match any)
 	Decision    *string    // policy decision (allow/deny)
@@ -155,7 +155,7 @@ func (f *AgentNetworkAccessLogFilter) GetSessionSortExpr() string {
 	return sessionSortExprs[accessLogDefaultSortBy]
 }
 
-// GetSortOrder returns the normalised sort order ("ASC"/"DESC").
+// GetSortOrder returns the normalized sort order ("ASC"/"DESC").
 func (f *AgentNetworkAccessLogFilter) GetSortOrder() string {
 	if strings.EqualFold(f.SortOrder, "asc") {
 		return "ASC"

@@ -75,7 +75,7 @@ const OVERLAY_TUN: &str = "10.89.0.2";
 /// which is what forces the traffic through the tunnel.
 const OVERLAY_USERSPACE: &str = "10.89.0.1";
 
-/// Deliberately its own name, and deliberately one macOS will not honour: the
+/// Deliberately its own name, and deliberately one macOS will not honor: the
 /// kernel assigns `utunN` regardless, and asserting on the reported name is how
 /// W3's "the configured name is a preference" stops being a claim in a comment.
 const INTERFACE: &str = "karstm0";
@@ -150,7 +150,7 @@ const ON_HOST: &str = "KARST_PAIR_ON_HOST";
 /// row passed on Linux, which said the fault was in the platform and not in the
 /// arrangement, and turned a ten-minute CI round trip into a local one. It is
 /// not the gate — the name assertions below stand down when it is set, because
-/// Linux honours the configured interface name and macOS does not.
+/// Linux honors the configured interface name and macOS does not.
 fn have_prerequisites() -> bool {
     if !cfg!(target_os = "macos") && std::env::var_os(ON_HOST).is_none() {
         eprintln!("skipping: the utun pair needs macOS (or {ON_HOST}=1 to run it here)");
@@ -577,7 +577,7 @@ fn a_tcp_conversation_crosses_a_real_utun_in_both_directions() {
     // name the interface actually got. A daemon that reported the configured
     // name here would be reporting a name no tool on the machine can find.
     //
-    // Only on macOS. Linux honours the requested name, so under `ON_HOST` the
+    // Only on macOS. Linux honors the requested name, so under `ON_HOST` the
     // correct answer is the opposite one and asserting either would be
     // asserting the platform rather than the daemon.
     if on_utun() {
@@ -637,7 +637,7 @@ fn a_tcp_conversation_crosses_a_real_utun_in_both_directions() {
 /// The `utun`'s on-link prefix sends the whole /24 to the tunnel, so the host
 /// hands the daemon a packet for an address no peer owns. It must be dropped.
 /// A datapath that guessed — sent it to the only peer it has, say — would carry
-/// traffic for an address the roster never authorised, which is the same defect
+/// traffic for an address the roster never authorized, which is the same defect
 /// a missing ACL is.
 ///
 /// The positive control is the row above: the same host, the same daemon and

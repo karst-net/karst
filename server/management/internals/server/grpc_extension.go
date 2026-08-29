@@ -25,7 +25,7 @@ type GRPCExtension struct {
 	// Shutdown, if non-nil, is called once during Stop() with the context
 	// governing server shutdown, which carries a deadline. The hook MUST
 	// return promptly and MUST abandon its work once that context is
-	// cancelled or expires: it runs before the rest of Stop()'s cleanup
+	// canceled or expires: it runs before the rest of Stop()'s cleanup
 	// (store, event store, embedded IdP) and before Stop() itself checks the
 	// context's deadline, so a hook that ignores the context will delay all
 	// of that cleanup and prevent Stop() from returning on time. May be nil.

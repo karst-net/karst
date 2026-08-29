@@ -50,7 +50,7 @@ const MAX_BATCH: usize = 64;
 /// plausible until you remember what a receive buffer *is* on a TCP socket: the
 /// window this stack advertises. An MTU-sized buffer advertises a 1280-byte
 /// window, so the far end may have exactly one segment in flight and must wait
-/// for an acknowledgement before sending the next — stop-and-wait, whatever the
+/// for an acknowledgment before sending the next — stop-and-wait, whatever the
 /// path underneath could carry. The transmit side is the mirror: one segment of
 /// application data at a time, so every write costs a round trip.
 ///
@@ -80,7 +80,7 @@ const RETIRE_GRACE: Duration = Duration::from_secs(5);
 
 /// A handle to a TCP socket owned by [`Userspace`].
 ///
-/// It is intentionally opaque: socket state remains serialised with polling,
+/// It is intentionally opaque: socket state remains serialized with polling,
 /// so callers cannot accidentally mutate a socket while its packets are being
 /// constructed.
 ///
@@ -237,7 +237,7 @@ impl Stack {
     /// Resolve a handle, or `None` if it has been released.
     ///
     /// Every accessor goes through this. smoltcp's own `get_mut` panics on a
-    /// handle it does not recognise, and this crate's discipline is that no
+    /// handle it does not recognize, and this crate's discipline is that no
     /// input reaches a panic — a released handle is a caller's bookkeeping
     /// mistake, and it should surface as "this socket can do nothing" rather
     /// than as a dead daemon.

@@ -158,7 +158,7 @@ impl Identity {
     ///
     /// Creating it here rather than requiring an operator to generate one is
     /// deliberate: the node's identity is not a secret anyone else needs to
-    /// know, and a step that must be done by hand before enrolment is a step
+    /// know, and a step that must be done by hand before enrollment is a step
     /// that gets done badly.
     ///
     /// # Errors
@@ -310,7 +310,7 @@ impl std::fmt::Debug for Client {
             .field("identity", &self.identity)
             .field("registered", &!self.node_id.is_empty())
             .field("netmap", &self.netmap)
-            // Not the setup key: it is a bearer credential that enrols a node.
+            // Not the setup key: it is a bearer credential that enrolls a node.
             .finish_non_exhaustive()
     }
 }
@@ -935,7 +935,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         ));
     }
     if !file.node.addresses.is_empty() {
-        // A server-managed node is *assigned* its address. Honouring a local
+        // A server-managed node is *assigned* its address. Honoring a local
         // one would give the interface an address the server does not know
         // about, and every packet it originated would be dropped by a peer's
         // cryptokey routing check.
@@ -1042,7 +1042,7 @@ fn randomness() -> EncapRandomness {
     }
 }
 
-/// The name this node enrols under.
+/// The name this node enrolls under.
 ///
 /// The fallback is a last resort, not a default: every node that reached it
 /// would appear in the console under the *same* name, which is worse than no
@@ -1057,7 +1057,7 @@ fn hostname() -> String {
 ///
 /// `gethostname(3)` is the direct route and is `unsafe`; ADR-0003 confines
 /// that to `karst-tun` and `karst-transport`, and adding a third exception —
-/// plus a `libc` dependency to this crate — to read a string once at enrolment
+/// plus a `libc` dependency to this crate — to read a string once at enrollment
 /// is a poor trade. `hostname(1)` is POSIX, is in `/bin` on macOS, and this
 /// runs once per daemon start.
 #[cfg(not(target_os = "linux"))]
@@ -1225,7 +1225,7 @@ mod tests {
     use crate::scratch::Scratch;
 
     /// **The identity must survive a restart.** The node's handle is derived
-    /// from it, so a new key on every start would enrol a new node each time —
+    /// from it, so a new key on every start would enroll a new node each time —
     /// filling the account with orphans and losing every ACL written about the
     /// old one.
     #[test]
@@ -1414,7 +1414,7 @@ mod tests {
         )
         .expect("client");
 
-        // A netmap with a recognisable PSK.
+        // A netmap with a recognizable PSK.
         let psk = vec![0xAB; 32];
         let mut resp = pb::KarstNetmapResponse {
             psk_epoch: 4,

@@ -85,7 +85,7 @@ export function Bedrock() {
   };
 
   // The server decides who is cut off, from the signed Bedrock log, and PUT
-  // /bedrock/mode requires the acknowledgement to equal that set exactly.
+  // /bedrock/mode requires the acknowledgment to equal that set exactly.
   // Deriving it here from liveness would be a different set and a certain 409:
   // a node can be healthy and online and still uncovered by the log.
   const handles = override ?? resource.value?.uncovered_handles ?? [];
@@ -120,7 +120,7 @@ export function Bedrock() {
     <div className="actions">
       <button className="danger" disabled={!acknowledged} onClick={() => void setMode("enforcing", "Network lock is enforcing.")}>Enable network lock</button>
       {/* Advisory and off cannot cut anyone off, so neither is gated on the
-          acknowledgement — the server only requires it for enforcing. Gating
+          acknowledgment — the server only requires it for enforcing. Gating
           them anyway would make the safe direction harder than the dangerous
           one, which is the wrong way round for an incident. */}
       <button disabled={status?.mode === "advisory"} onClick={() => void setMode("advisory", "Network lock is advisory. Unsigned machines are reported and still connect.")}>Set advisory</button>

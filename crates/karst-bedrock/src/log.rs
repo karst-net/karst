@@ -7,10 +7,10 @@
 //!
 //! An entry's body is a `Vec<u8>`. This module builds bodies (for the offline
 //! signer) and parses them (for display and policy), but it never
-//! *re-serialises* one it was given: the bytes that were signed are the bytes
+//! *re-serializes* one it was given: the bytes that were signed are the bytes
 //! that are hashed.
 //!
-//! A parse-then-reserialise round trip is where canonicalisation bugs live, and
+//! A parse-then-reserialize round trip is where canonicalization bugs live, and
 //! §3.3 exists to ensure this code has none. If a `fn encode(&self)` on a
 //! parsed body ever appears on the verification path, that is the bug this
 //! comment is here to prevent.
@@ -145,7 +145,7 @@ impl Entry {
         chain_hash(prev, self.seq, self.time, self.op, &self.body)
     }
 
-    /// Serialise this entry — see [`encode_log`].
+    /// Serialize this entry — see [`encode_log`].
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -242,10 +242,10 @@ pub fn chain_hash(prev: &[u8], seq: u64, time: i64, op: Op, body: &[u8]) -> Vec<
 // One encoder serves storage, the offline signer's bundles, the node's cache,
 // and the control-plane wire (carried as opaque `bytes` in the proto message).
 // Protobuf is not canonical, so putting the entry *inside* a bytes field rather
-// than modelling it as a message is what keeps the two implementations from
-// having to agree on a protobuf serialiser's field ordering.
+// than modeling it as a message is what keeps the two implementations from
+// having to agree on a protobuf serializer's field ordering.
 
-/// Serialise a whole log: `BE32(count) ‖ count × LP(entry)`.
+/// Serialize a whole log: `BE32(count) ‖ count × LP(entry)`.
 #[must_use]
 pub fn encode_log(entries: &[Entry]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -527,7 +527,7 @@ pub fn authority_list_body(authorities: &[Vec<u8>], q: u32) -> Vec<u8> {
 /// Build a `node-sign` body — §3.4.
 ///
 /// All three keys, not just the identity key. See spec §6.1: the identity key
-/// is not used by PHREATIC, so covering only it would authorise a node to exist
+/// is not used by PHREATIC, so covering only it would authorize a node to exist
 /// without constraining which session keys are its.
 #[must_use]
 #[allow(clippy::cast_sign_loss)] // times are a fixed 64-bit field

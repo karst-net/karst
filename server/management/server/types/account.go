@@ -1712,7 +1712,7 @@ func (a *Account) injectPrivateServicePolicies(svc *service.Service, proxyPeers 
 	}
 	// A service's AccessGroups can name groups that no longer exist — persisted
 	// services and the agent-network synthesiser both carry the ids verbatim from
-	// their own state. An unresolvable source authorises nothing, so drop it here
+	// their own state. An unresolvable source authorizes nothing, so drop it here
 	// rather than let the network-map assembly resolve it to a nil group.
 	sources := a.existingGroupIDs(svc.AccessGroups)
 	if len(sources) == 0 {

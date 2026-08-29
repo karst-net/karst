@@ -25,7 +25,7 @@ protoc -I ./ ./karst_control.proto --go_out=../ --go-grpc_out=../
 #
 # Stamping it here rather than by hand: a header added by hand to a generated
 # file is one the next regeneration silently strips, and the failure then
-# resurfaces as a licence-check error nobody associates with running this
+# resurfaces as a license-check error nobody associates with running this
 # script. Only Karst's own generated files are stamped — the upstream ones stay
 # byte-identical to the fork point.
 stamp_spdx() {

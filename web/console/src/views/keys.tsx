@@ -42,7 +42,7 @@ export function Keys() {
 
   return <section>
     <h2>Auth keys</h2>
-    <p className="lede">A key is how a machine enrols. Store it securely and use it only for the enrolment command.</p>
+    <p className="lede">A key is how a machine enrolls. Store it securely and use it only for the enrollment command.</p>
     <div className="actions"><button className="primary" onClick={() => { setCreated(undefined); setDraft(blank); }}>Create auth key</button></div>
     <Notice message={message} />
     {created && <label>New auth key<input aria-label="New auth key" readOnly value={created.key} /></label>}

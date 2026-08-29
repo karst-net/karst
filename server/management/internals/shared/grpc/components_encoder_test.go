@@ -745,7 +745,7 @@ func TestEncodeNetworkMapEnvelope_ProxyPatchPropagated(t *testing.T) {
 
 func TestEncodeNetworkMapEnvelope_NilComponentsGracefulDegrade(t *testing.T) {
 	// nil Components → minimal envelope, no crash. Matches the legacy
-	// behaviour for missing/unvalidated peers.
+	// behavior for missing/unvalidated peers.
 	env := EncodeNetworkMapEnvelope(ComponentsEnvelopeInput{
 		Components: emptyNetworkMapComponents(),
 		DNSDomain:  "netbird.cloud",

@@ -18,7 +18,7 @@ input[readonly] { color: var(--muted); }
 .actions input, .actions select { width: auto; margin-top: 0; }
 td .actions { margin: 0; }
 
-/* The platform's modal. `showModal()` supplies the behaviour; this supplies
+/* The platform's modal. `showModal()` supplies the behavior; this supplies
    only the appearance, including a backdrop that works in both themes. */
 dialog { width: min(40rem, calc(100vw - 2rem)); padding: var(--space-3); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 dialog::backdrop { background: rgb(0 0 0 / 55%); }

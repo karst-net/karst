@@ -164,7 +164,7 @@ mkdir -p /run/karst
 # into place — the only way to swap a resolver configuration without a window
 # where it is empty — and `rename(2)` onto a mount point is EBUSY. On a real
 # machine the file is an ordinary file or a symlink and the rename is fine, so
-# this is an artefact of running the test in a container.
+# this is an artifact of running the test in a container.
 #
 # It is detached rather than skipped around. A check that quietly does nothing
 # in the environment it usually runs in is finding 48, which reported success

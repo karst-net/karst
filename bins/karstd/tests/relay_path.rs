@@ -297,7 +297,7 @@ fn a_peer_with_no_endpoint_is_reachable_through_the_relay() {
 }
 
 /// The same node with no relay configured drops the packet, which is the
-/// behaviour before this work and still correct when there is nowhere to send.
+/// behavior before this work and still correct when there is nowhere to send.
 /// Without this the test above would pass on a build that relayed everything.
 #[test]
 fn a_peer_with_no_endpoint_and_no_relay_is_still_undeliverable() {
@@ -497,7 +497,7 @@ fn a_published_endpoint_that_has_gone_stale_falls_back_to_the_relay() {
         true,
     );
 
-    // The datapath starts on the published address, which is the behaviour to
+    // The datapath starts on the published address, which is the behavior to
     // preserve: until discovery has evidence, the control plane is right.
     assert_eq!(node.engine.endpoint(0), Some(stale));
     assert_eq!(

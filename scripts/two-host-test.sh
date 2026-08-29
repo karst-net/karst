@@ -191,7 +191,7 @@ sh_b "setsid --fork iperf3 -s -B $SUBNET.2 -D >/dev/null 2>&1 || true; sleep 1"
 sh_a "iperf3 -c $SUBNET.2 -t $DURATION -f m" | grep -E 'sender|receiver' || true
 
 # Parallel streams separate two very different explanations for a low number.
-# If throughput does not rise with more flows, the bottleneck is serialisation
+# If throughput does not rise with more flows, the bottleneck is serialization
 # inside the daemon rather than per-packet cost.
 say "Through the tunnel, 4 parallel streams"
 sh_a "iperf3 -c $SUBNET.2 -t $DURATION -P 4 -f m" | grep -E 'SUM.*(sender|receiver)' || true

@@ -71,7 +71,7 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 	// failure must not leave an orphan identity or rotate an existing node's
 	// data-plane keys (FINDINGS.md #2).
 	//
-	// The node's PHREATIC keys are recorded only after enrolment because peers
+	// The node's PHREATIC keys are recorded only after enrollment because peers
 	// cannot handshake without them, and the netmap is how they are distributed
 	// (phreatic-v1.md §4).
 	keys := node.DataPlaneKeys{

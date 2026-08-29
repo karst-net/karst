@@ -1,19 +1,19 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # PHREATIC v1 — Protocol Specification
 
-- **Status:** Draft 0.2 — Phase 1 deliverable, modelled but not externally reviewed
+- **Status:** Draft 0.2 — Phase 1 deliverable, modeled but not externally reviewed
 - **Date:** 2026-08-09
-- **Licence:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
-  in software under any licence. Independent implementations are wanted.
+- **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
+  in software under any license. Independent implementations are wanted.
 
 > **Partially implementable.** §5, §6 and §9 are stable enough to build
 > against; §14 lists what remains. All three Verifpal models verify; ProVerif
 > verifies the base model and the X25519-broken variant, but the ML-KEM-broken
 > variant **does not terminate** — see §13.3, and do not read ADR-0002's
 > either-family claim as fully proved. **No external cryptographic review has
-> happened**, and symbolic models say nothing about implementation behaviour.
+> happened**, and symbolic models say nothing about implementation behavior.
 >
-> §13 records four changes discovered while writing and modelling this
+> §13 records four changes discovered while writing and modeling this
 > document: a **static X25519 key added to node identity** (§13.1), `psk_epoch`
 > **bound into the transcript** (§13.2), and two properties that are easy to
 > implement wrongly — HandshakeInit is unauthenticated by design (§12.5), and
@@ -47,7 +47,7 @@ interoperable with WireGuard.
 - It does not hide traffic metadata beyond fixed-size padding buckets.
 - It does not resist an adversary holding a CRQC *at the time of the handshake*
   (see `docs/THREAT-MODEL.md` §3, T9).
-- It does not authorise peers. Authorisation is the coordination server's job;
+- It does not authorize peers. Authorization is the coordination server's job;
   PHREATIC only proves a peer holds the keys the netmap attributes to it.
 
 ---
@@ -146,7 +146,7 @@ A Karst node holds **three** long-term keypairs:
 
 | Key | Algorithm | Size (pk) | Purpose |
 |---|---|---|---|
-| Identity `I` | ML-DSA-87 | 2592 B | Signed by the Bedrock chain; establishes the node is authorised to exist |
+| Identity `I` | ML-DSA-87 | 2592 B | Signed by the Bedrock chain; establishes the node is authorized to exist |
 | Static KEM `S` | ML-KEM-768 or ML-KEM-1024 | 1184 B or 1568 B | Post-quantum authentication in the handshake |
 | Static DH `D` | X25519 | 32 B | Classical authentication in the handshake |
 
@@ -294,7 +294,7 @@ Implementations MUST enforce, and test suites MUST assert:
 
 > **The 38-byte headroom is the tightest constraint in this specification.**
 > Any field added to HandshakeInit larger than 38 bytes forces a third fragment,
-> degrading loss behaviour by roughly 50% and changing the DoS analysis.
+> degrading loss behavior by roughly 50% and changing the DoS analysis.
 > Proposals that grow HandshakeInit MUST be evaluated against this budget before
 > anything else.
 
@@ -314,7 +314,7 @@ carries no X25519:
 
 Anti-amplification still holds (3210 > 3164, margin 46 bytes) and three is
 within the four-fragment cap, but the CNSA profile has **materially worse loss
-behaviour**: three fragments must arrive for a handshake to complete, so at 5%
+behavior**: three fragments must arrive for a handshake to complete, so at 5%
 path loss per-message success falls to roughly 86% against 90% for two.
 
 This is a property of the parameter sizes, not a defect, and it is recorded
@@ -597,7 +597,7 @@ an error.
    The consequence is a denial-of-service requirement, not a secrecy one: a
    responder MUST NOT commit expensive state on HandshakeInit alone. This is
    what §9 exists for, and the Verifpal model confirms the cookie mechanism is
-   load-bearing rather than defence in depth. Implementers who assume accepting
+   load-bearing rather than defense in depth. Implementers who assume accepting
    a HandshakeInit means anything about peer identity will build a
    vulnerability.
 
@@ -931,7 +931,7 @@ to avoid the universal destructor, or by taking it to Tamarin — belongs in the
 external cryptographic review brief (`spec/models/README.md`).
 
 **These are symbolic design checks, not proofs of an implementation.** They say
-nothing about concrete security margins, side channels, or code behaviour. In
+nothing about concrete security margins, side channels, or code behavior. In
 particular neither tool reasons about denial of service, so §9 is unverified by
 them and rests on the spoofed-source test suite instead.
 
@@ -971,7 +971,7 @@ Phase 1 DoS suite rather than here.
 
 **Item 9 grew a concrete gap on 2026-08-20.** Two nodes that each know the
 other's endpoint dial *simultaneously*, which is not an edge case but the
-standing behaviour of any pair with reachable addresses on both sides. Each is
+standing behavior of any pair with reachable addresses on both sides. Each is
 then initiator and responder at once, and this draft says nothing about it —
 §12.6 covers what a responder must not do to a **working** session and is
 silent on a handshake in flight. An implementation that resolves it by

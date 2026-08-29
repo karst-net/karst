@@ -163,9 +163,9 @@ func clusterFromDomain(domain string) string {
 // policies — in any of those cases there's nothing useful to expose.
 //
 // One service per (account, settings.Cluster) is emitted. The router
-// middleware encodes a denormalised model→provider routing table
+// middleware encodes a denormalized model→provider routing table
 // (auth headers + decrypted API keys baked in); the policy_check
-// middleware encodes per-provider authorised group IDs derived from
+// middleware encodes per-provider authorized group IDs derived from
 // the account's enabled policies.
 //
 // Services are NEVER persisted — callers regenerate them on every
@@ -243,7 +243,7 @@ func SynthesizeServices(ctx context.Context, s store.Store, accountID string) ([
 	// The proxy guardrail is a per-provider fail-closed backstop; the
 	// authoritative per-policy/group decision is management's
 	// SelectPolicyForRequest. A provider lands in this map only when every
-	// authorising policy restricts models.
+	// authorizing policy restricts models.
 	providerAllowlists := buildProviderAllowlists(enabledPolicies, guardrailsByID)
 	guardrailJSON, err := marshalGuardrailConfig(providerAllowlists, mergedGuardrails.PromptCapture)
 	if err != nil {
@@ -384,7 +384,7 @@ type routerProviderRoute struct {
 
 // indexProviderGroups walks the enabled policies and returns, per
 // provider id, the sorted union of source group ids across every
-// policy that authorises the provider. Providers with no authorising
+// policy that authorizes the provider. Providers with no authorizing
 // policy are absent from the map. The router consumes this to filter
 // candidate routes by the caller's group memberships before the
 // path-prefix tiebreak runs.
@@ -422,16 +422,16 @@ func indexProviderGroups(policies []*types.Policy) map[string][]string {
 	return out
 }
 
-// buildRouterConfigJSON denormalises the account's enabled providers
+// buildRouterConfigJSON denormalizes the account's enabled providers
 // into the router middleware's first-match-wins routing table.
 // Providers are listed in created_at order so the table is
 // deterministic and stable across synth cycles.
 //
 // AllowedGroupIDs is the union of source group ids across every enabled
-// policy that authorises the provider. The router uses it as a hard
+// policy that authorizes the provider. The router uses it as a hard
 // filter — a route whose AllowedGroupIDs has no intersection with the
 // caller's user groups is removed from the candidate list before the
-// path-prefix tiebreak. Providers no enabled policy authorises
+// path-prefix tiebreak. Providers no enabled policy authorizes
 // (orphans) are intentionally OMITTED so the router never observes a
 // route with an empty ACL.
 func buildRouterConfigJSON(providers []*types.Provider, groupIndex map[string][]string) ([]byte, error) {
@@ -439,7 +439,7 @@ func buildRouterConfigJSON(providers []*types.Provider, groupIndex map[string][]
 	for _, p := range providers {
 		groups, hasPolicy := groupIndex[p.ID]
 		if !hasPolicy {
-			// Orphan: skip. No enabled policy authorises this
+			// Orphan: skip. No enabled policy authorizes this
 			// provider, so it must not be reachable.
 			continue
 		}
@@ -560,7 +560,7 @@ type identityInjectJSONMetadata struct {
 // no identity-stamping provider is configured.
 //
 // The caller passes groupIndex so we can mirror the synthesiser's own
-// "drop orphans" rule — providers no enabled policy authorises don't
+// "drop orphans" rule — providers no enabled policy authorizes don't
 // reach the router, so injecting identity for them would never fire.
 // We could leave them in for symmetry, but skipping is cheaper and
 // clearer.
@@ -687,12 +687,12 @@ func buildIdentityExtraHeaders(p *types.Provider, extras []catalog.ExtraHeader) 
 }
 
 // buildMiddlewareChain assembles the per-target middleware chain that
-// implements the Agent Network behaviour at the proxy. Slot order on
+// implements the Agent Network behavior at the proxy. Slot order on
 // the request leg is the slice order; on the response leg it runs in
 // reverse, so cost_meter must come BEFORE llm_response_parser so the
 // parser populates token counts before the cost meter reads them.
 //
-// Authorisation is fused into llm_router: the router carries
+// Authorization is fused into llm_router: the router carries
 // AllowedGroupIDs per provider and filters candidates by the caller's
 // user-groups before the path-prefix tiebreak. Per-policy
 // enforcement (token / budget caps) lives in llm_limit_check, which
@@ -856,7 +856,7 @@ func marshalGuardrailConfig(providerAllowlists map[string][]string, capture Merg
 }
 
 // buildProviderAllowlists returns the proxy's per-provider backstop: a provider
-// is included only when every authorising policy restricts models (their union);
+// is included only when every authorizing policy restricts models (their union);
 // if any leaves it unrestricted it is omitted, so management decides per group.
 func buildProviderAllowlists(policies []*types.Policy, byID map[string]*types.Guardrail) map[string][]string {
 	type providerAcc struct {
@@ -949,7 +949,7 @@ func buildAccountService(
 		Private:      true,
 		// AccessGroups gates tunnel-peer access (ValidateTunnelPeer) to the
 		// synthesised agent-network endpoint. Agents reach the gateway over
-		// the WireGuard tunnel and are authorised by their peer→user group
+		// the WireGuard tunnel and are authorized by their peer→user group
 		// membership — the union of every enabled policy's source groups.
 		AccessGroups:      unionSourceGroups(enabledPolicies),
 		PassHostHeader:    false,
@@ -1016,7 +1016,7 @@ func providerAuthHeader(p *types.Provider) (name, value, gcpSAKeyB64 string, err
 
 // parseUpstreamHost splits provider.UpstreamURL into (scheme, host, path)
 // where host carries an explicit ":port" suffix when the URL set one
-// and path is the URL's path component normalised by stripping a
+// and path is the URL's path component normalized by stripping a
 // trailing slash. The router uses path to disambiguate providers that
 // claim the same model. Used by the router config so the rewrite
 // carries an authority the reverse proxy can dial verbatim.

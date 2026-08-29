@@ -56,8 +56,8 @@ func (u *AgentNetworkUsage) CacheCostUSD() float64 {
 	return u.CachedInputCostUSD + u.CacheCreationCostUSD
 }
 
-// AgentNetworkUsageGroup is the normalised many-to-many row linking a usage
-// record to one authorising group, mirroring AgentNetworkAccessLogGroup so the
+// AgentNetworkUsageGroup is the normalized many-to-many row linking a usage
+// record to one authorizing group, mirroring AgentNetworkAccessLogGroup so the
 // usage overview can filter by group with a `group_id IN (...)` join.
 type AgentNetworkUsageGroup struct {
 	UsageID   string `gorm:"primaryKey"`

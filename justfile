@@ -23,7 +23,7 @@ test:
 # Tests needing CAP_NET_ADMIN: TUN devices and two-daemon network namespaces.
 # Build unprivileged, then run the test binary under sudo — `sudo cargo` would
 # not find the rustup toolchain, and building as root would leave root-owned
-# artefacts in target/.
+# artifacts in target/.
 #
 # Single-threaded: these create interfaces and namespaces with fixed names.
 test-privileged: test-tun test-karstd test-userspace test-dns test-nat-matrix test-portmap test-aquifer
@@ -160,7 +160,7 @@ test-dns:
     @just _privileged karstd dns_host
 
 # The whole stack: coordination server, relay, and two daemons in namespaces,
-# from first enrolment to a direct path carrying TCP under an ACL.
+# from first enrollment to a direct path carrying TCP under an ACL.
 #
 # Needs a Go toolchain as well as CAP_NET_ADMIN, and `sudo` resets PATH, so the
 # environment is passed through explicitly rather than relying on it surviving.
@@ -201,7 +201,7 @@ _privileged package target:
     [ -n "$bin" ] || { echo "could not locate the {{target}} test binary"; exit 1; }
     sudo "$bin" --ignored --test-threads=1
 
-# Dependency licence allowlist + advisories (LICENSING.md, ADR-0007).
+# Dependency license allowlist + advisories (LICENSING.md, ADR-0007).
 #
 # Install cargo-deny with the *stable* toolchain, not the pinned one:
 #   cargo +stable install cargo-deny --locked
@@ -245,7 +245,7 @@ web-install:
 web-check:
     cd web && corepack pnpm -r exec tsc --noEmit && corepack pnpm -r lint
 
-# ── Licences ────────────────────────────────────────────────────────────────
+# ── Licenses ────────────────────────────────────────────────────────────────
 licenses:
     ./scripts/fetch-licenses.sh
 
@@ -255,7 +255,7 @@ licenses:
 # checked. Two reasons, either sufficient:
 #
 #   - Those files are BSD-3-Clause and somebody else's copyright. Stamping
-#     `AGPL-3.0-or-later` on them would be a false licence claim on code we did
+#     `AGPL-3.0-or-later` on them would be a false license claim on code we did
 #     not write; stamping BSD-3 on them would be editing it to say what it
 #     already says. What BSD-3 actually requires is notice retention, and that
 #     lives in server/LICENSE-NETBIRD-BSD-3 and server/LICENSES/.

@@ -265,7 +265,7 @@ func TestReSigningReadmitsARevokedNode(t *testing.T) {
 
 func TestQuorumChangeIsVerifiedUnderTheOldThreshold(t *testing.T) {
 	f := newFixture(t)
-	// q is 2 here; moving to 3 must be authorised by 2 signatures, not 3.
+	// q is 2 here; moving to 3 must be authorized by 2 signatures, not 3.
 	f.appendAuth(t, 1200, OpQuorumChange, QuorumChangeBody(3))
 
 	st, err := f.b.Verify()
@@ -700,7 +700,7 @@ func TestGeneratedKeysWork(t *testing.T) {
 	}
 	restoredPub := restored.Public()
 	if !bytes.Equal(pub, restoredPub) {
-		t.Error("a generated root key did not survive serialisation")
+		t.Error("a generated root key did not survive serialization")
 	}
 
 	authority, err := GenerateAuthority()
@@ -735,7 +735,7 @@ func TestGeneratedRootsAreDistinct(t *testing.T) {
 // A node-sign must name the handle its identity key derives to.
 //
 // Without this, a quorum could sign "handle alice, identity key bob's" — naming
-// one node while authorising another's. The check makes the handle
+// one node while authorizing another's. The check makes the handle
 // self-certifying, so nothing downstream has to treat it as a label the log
 // merely asserts.
 func TestNodeSignHandleMustMatchItsIdentityKey(t *testing.T) {

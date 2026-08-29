@@ -1759,7 +1759,7 @@ type AgentNetworkAccessLog struct {
 	// DurationMs Duration of the request in milliseconds.
 	DurationMs int `json:"duration_ms"`
 
-	// GroupIds NetBird group ids that authorised the request (the caller's groups intersected with the policy's source groups).
+	// GroupIds NetBird group ids that authorized the request (the caller's groups intersected with the policy's source groups).
 	GroupIds *[]string `json:"group_ids,omitempty"`
 
 	// Host Upstream host the request was routed to. Empty when log collection is disabled.
@@ -1801,7 +1801,7 @@ type AgentNetworkAccessLog struct {
 	// ResponseCompletion Captured response completion. Present only when prompt collection is enabled.
 	ResponseCompletion *string `json:"response_completion,omitempty"`
 
-	// SelectedPolicyId Agent-network policy id that authorised (or denied) the request.
+	// SelectedPolicyId Agent-network policy id that authorized (or denied) the request.
 	SelectedPolicyId *string `json:"selected_policy_id,omitempty"`
 
 	// ServiceId ID of the synthesised agent-network service that handled the request.
@@ -1858,7 +1858,7 @@ type AgentNetworkAccessLogSession struct {
 	// Entries The session's access-log entries, oldest first.
 	Entries []AgentNetworkAccessLog `json:"entries"`
 
-	// GroupIds Union of the authorising group ids across the session's entries.
+	// GroupIds Union of the authorizing group ids across the session's entries.
 	GroupIds *[]string `json:"group_ids,omitempty"`
 
 	// InputCostUsd Total cost of non-cached input tokens across the session.
@@ -5839,7 +5839,7 @@ type GetApiAgentNetworkAccessLogSessionsParams struct {
 	// SessionId Filter to a single conversation / coding session id.
 	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
 
-	// GroupId Filter by authorising group id. Repeat for multiple (matches any).
+	// GroupId Filter by authorizing group id. Repeat for multiple (matches any).
 	GroupId *[]string `form:"group_id,omitempty" json:"group_id,omitempty"`
 
 	// ProviderId Filter by resolved provider id. Repeat for multiple (matches any).
@@ -5890,7 +5890,7 @@ type GetApiAgentNetworkAccessLogsParams struct {
 	// SessionId Filter to a single conversation / coding session id (groups all requests of one session).
 	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
 
-	// GroupId Filter by authorising group id. Repeat for multiple (matches any).
+	// GroupId Filter by authorizing group id. Repeat for multiple (matches any).
 	GroupId *[]string `form:"group_id,omitempty" json:"group_id,omitempty"`
 
 	// ProviderId Filter by resolved provider id. Repeat for multiple (matches any).
@@ -5935,7 +5935,7 @@ type GetApiAgentNetworkUsageOverviewParams struct {
 	// SessionId Filter to a single conversation / coding session id.
 	SessionId *string `form:"session_id,omitempty" json:"session_id,omitempty"`
 
-	// GroupId Filter by authorising group id. Repeat for multiple (matches any).
+	// GroupId Filter by authorizing group id. Repeat for multiple (matches any).
 	GroupId *[]string `form:"group_id,omitempty" json:"group_id,omitempty"`
 
 	// ProviderId Filter by resolved provider id. Repeat for multiple (matches any).

@@ -41,7 +41,7 @@ type DeviceSession struct {
 	ID     uint64 `gorm:"primaryKey;autoIncrement"`
 	Handle string `gorm:"size:64;not null;index"`
 	// ClientAddr is an IP without a port. The port is the ephemeral source of
-	// one TCP connection and identifies nothing a user would recognise.
+	// one TCP connection and identifies nothing a user would recognize.
 	ClientAddr string    `gorm:"size:64"`
 	StartedAt  time.Time `gorm:"not null;index"`
 	// LastSeenAt advances on every request the device makes on this stream.

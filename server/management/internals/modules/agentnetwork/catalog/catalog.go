@@ -172,7 +172,7 @@ type HeaderPairInjection struct {
 	TagsHeader string
 	// TagsInBody, when true, additionally writes the tag list into
 	// the request body's metadata.tags array (a JSON path the
-	// gateway parses for budget enforcement). LiteLLM only honours
+	// gateway parses for budget enforcement). LiteLLM only honors
 	// metadata.tags for tag-budget gating — its x-litellm-tags
 	// header path feeds spend tracking but bypasses
 	// _tag_max_budget_check entirely. Body inject is skipped when
@@ -588,7 +588,7 @@ var providers = []Provider{
 		// cost meter skips with skipMissingProvider — degraded but
 		// non-fatal.
 		ParserID: "",
-		// Identity-injection headers are operator-customisable. The
+		// Identity-injection headers are operator-customizable. The
 		// HeaderPair values below are PLACEHOLDERS surfaced by the
 		// dashboard; the actual values stamped on the wire come from
 		// the provider record's IdentityHeaderUserID /
@@ -638,7 +638,7 @@ var providers = []Provider{
 		// up to five string/number/boolean values per request. NetBird
 		// occupies two slots (user id + groups CSV) and leaves three
 		// for operator-added context. JSON keys are operator-
-		// customisable so Cloudflare-side log filters can use the
+		// customizable so Cloudflare-side log filters can use the
 		// operator's existing label conventions instead of NetBird's
 		// defaults — hence Customizable=true. The dashboard surfaces
 		// the catalog values as placeholders; only the values stored

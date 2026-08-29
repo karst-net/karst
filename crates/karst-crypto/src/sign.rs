@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn root_key_survives_serialisation() {
+    fn root_key_survives_serialization() {
         let k = test_root();
         let restored = RootKey::from_seed(&k.seed()).unwrap();
         assert_eq!(k.public_key(), restored.public_key());

@@ -130,7 +130,7 @@ func (c *Controller) OnPeerDisconnected(ctx context.Context, accountID string, p
 // them up alongside persisted reverse-proxy services. Synthesised services
 // are never persisted; the account is loaded fresh per cycle so re-prepending
 // is safe and idempotent. Accounts without agent-network providers get an
-// empty synth slice — no behaviour change.
+// empty synth slice — no behavior change.
 func (c *Controller) injectAllProxyPolicies(ctx context.Context, account *types.Account) {
 	synth, err := c.repo.SynthesizeAgentNetworkServices(ctx, account.Id)
 	if err != nil {
@@ -717,7 +717,7 @@ func (c *Controller) BufferUpdateAffectedPeers(ctx context.Context, accountID st
 	b.stopTimer()
 
 	// The send and the debounced timer outlive the calling request, so detach from
-	// its context to avoid sending with a cancelled context once the handler returns.
+	// its context to avoid sending with a canceled context once the handler returns.
 	bgCtx := context.WithoutCancel(ctx)
 
 	collected := b.drainPeerIDs()

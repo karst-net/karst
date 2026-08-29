@@ -11,7 +11,7 @@
 //!
 //! # What this is and is not
 //!
-//! It is **not** an optimisation. Every datagram costs a syscall, exactly as
+//! It is **not** an optimization. Every datagram costs a syscall, exactly as
 //! [`crate::UdpTransport::send_to`] does; what it buys is that `karstd` has
 //! one datapath rather than two. The alternative — `#[cfg]` at the call site
 //! in the daemon's receive loop — would mean the *unbatched* path was the one

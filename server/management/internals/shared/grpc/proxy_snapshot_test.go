@@ -17,7 +17,7 @@ import (
 )
 
 // recordingStream captures all messages sent via Send so tests can inspect
-// batching behaviour without a real gRPC transport.
+// batching behavior without a real gRPC transport.
 type recordingStream struct {
 	grpc.ServerStream
 	messages []*proto.GetMappingUpdateResponse

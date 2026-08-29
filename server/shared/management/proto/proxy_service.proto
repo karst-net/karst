@@ -46,7 +46,7 @@ service ProxyService {
 
   // CheckLLMPolicyLimits is the pre-flight RPC the proxy calls before each
   // LLM request. Management runs the per-policy headroom selection across
-  // every policy authorising the caller's user / groups for the resolved
+  // every policy authorizing the caller's user / groups for the resolved
   // provider and returns the chosen attribution policy + group, or a deny
   // when no applicable policy has headroom > 0.
   rpc CheckLLMPolicyLimits(CheckLLMPolicyLimitsRequest) returns (CheckLLMPolicyLimitsResponse);
@@ -75,7 +75,7 @@ message ProxyCapabilities {
   optional bool supports_private_service = 5;
 }
 
-// GetMappingUpdateRequest is sent to initialise a mapping stream.
+// GetMappingUpdateRequest is sent to initialize a mapping stream.
 message GetMappingUpdateRequest {
   string proxy_id = 1;
   string version = 2;
@@ -169,7 +169,7 @@ message MiddlewareConfig {
   // Clamped to [10ms, 5s] at apply time; zero → 500ms default.
   google.protobuf.Duration timeout = 6;
   // When true, the middleware may mutate request headers or body (subject to
-  // policy). Honoured only when the implementation also declares
+  // policy). Honored only when the implementation also declares
   // MutationsSupported.
   bool can_mutate = 7;
 }
@@ -366,7 +366,7 @@ message ValidateSessionResponse {
   string user_email = 3;
   string denied_reason = 4;
   // peer_group_ids carries the calling user's group memberships so the
-  // proxy can authorise policy-aware middlewares without an additional
+  // proxy can authorize policy-aware middlewares without an additional
   // management round-trip.
   repeated string peer_group_ids = 5;
   // peer_group_names carries the human-readable display names for the
@@ -403,7 +403,7 @@ message ValidateTunnelPeerResponse {
   // tunnel fast-path is indistinguishable from OIDC for subsequent requests.
   string session_token = 5;
   // peer_group_ids carries the resolved peer's user group memberships so
-  // the proxy can authorise policy-aware middlewares without an additional
+  // the proxy can authorize policy-aware middlewares without an additional
   // management round-trip.
   repeated string peer_group_ids = 6;
   // peer_group_names carries the human-readable display names for the
@@ -447,7 +447,7 @@ message SyncMappingsResponse {
 
 // CheckLLMPolicyLimitsRequest carries the resolved caller identity and the
 // upstream provider already chosen by llm_router. Management computes which
-// policies authorise the request, picks the one with the most remaining
+// policies authorize the request, picks the one with the most remaining
 // headroom, and returns the attribution decision.
 message CheckLLMPolicyLimitsRequest {
   // account_id is the netbird account the request belongs to.

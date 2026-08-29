@@ -195,7 +195,7 @@ impl VerifiedRequest {
     }
 }
 
-// ── JSON serialisation ──────────────────────────────────────────────────────
+// ── JSON serialization ──────────────────────────────────────────────────────
 //
 // Hand-rolled rather than derived, so the crate does not take a serde
 // dependency for a format only the offline tool reads. The shapes are small and

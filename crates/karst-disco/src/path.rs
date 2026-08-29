@@ -238,7 +238,7 @@ impl PathSet {
     ///
     /// # Errors
     /// [`ProbeError::TooManyOutstanding`] once the per-peer cap is reached.
-    /// Outstanding probes are state a peer's behaviour causes us to allocate,
+    /// Outstanding probes are state a peer's behavior causes us to allocate,
     /// so they are counted.
     pub fn on_ping_sent(
         &mut self,
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn outstanding_probes_are_bounded() {
-        // They are state a peer's behaviour causes us to allocate.
+        // They are state a peer's behavior causes us to allocate.
         let mut s = PathSet::new();
         for i in 0..MAX_OUTSTANDING {
             s.on_ping_sent(tx(u8::try_from(i).unwrap()), v4(1), 0)
@@ -597,7 +597,7 @@ mod tests {
             .expect("expired probes freed room");
     }
 
-    // ── §7.4, the flaw modelling found ────────────────────────────────────
+    // ── §7.4, the flaw modeling found ────────────────────────────────────
 
     #[test]
     fn a_probe_is_answered_once() {

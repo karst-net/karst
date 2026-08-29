@@ -38,7 +38,7 @@ const UDP_SEGMENT: libc::c_int = 103;
 /// A control-message buffer with the alignment `cmsghdr` requires.
 ///
 /// **A bare `[u8; N]` is not sufficient**, and the difference is undefined
-/// behaviour rather than a warning: `CMSG_FIRSTHDR` returns a `*mut cmsghdr`
+/// behavior rather than a warning: `CMSG_FIRSTHDR` returns a `*mut cmsghdr`
 /// into this buffer, and writing through a pointer that is not 8-byte aligned
 /// is UB on every target Karst builds for. A `[u8; 64]` happened to work in
 /// release and aborted under debug assertions — which is how this was found.
@@ -157,7 +157,7 @@ fn from_sockaddr(storage: &libc::sockaddr_storage) -> Option<SocketAddr> {
                     mem::size_of::<libc::sockaddr_in6>(),
                 );
             }
-            // Canonicalised here as well as in `recv_from`, because these are
+            // canonicalized here as well as in `recv_from`, because these are
             // two independent receive paths into the same daemon and an address
             // that took the batched one must not be a different value from the
             // same address that took the other.
@@ -220,7 +220,7 @@ pub(crate) fn send_batch(
         msg.msg_hdr.msg_iovlen = 1;
     }
 
-    // SAFETY: `fd` is open for the call. `msgs` holds `n` initialised headers,
+    // SAFETY: `fd` is open for the call. `msgs` holds `n` initialized headers,
     // each pointing at an `iovec` and a `sockaddr_storage` in the arrays above,
     // all of which outlive this statement. The kernel reads through those
     // pointers and writes only `msg_len` back into `msgs`. `n <= BATCH` is the

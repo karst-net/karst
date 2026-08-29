@@ -117,7 +117,7 @@ KARST_POLICY_FILE=policy.json ./karst-control management \
 
 `cmd/karst-control` is the fork's daemon with `KarstControlService` attached —
 built as a *separate main* so `management/main.go` stays untouched. It logs the
-two pins a node must be given at enrolment; handing out only the KEM half
+two pins a node must be given at enrollment; handing out only the KEM half
 silently downgrades forward secrecy, so both are logged together.
 
 With no `KARST_POLICY_FILE` the packet filter is empty, which is **default

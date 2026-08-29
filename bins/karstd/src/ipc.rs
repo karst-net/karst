@@ -20,7 +20,7 @@
 //! confines to `karst-tun`. So the directory is created `0700` *before* the
 //! bind: without execute permission on it, no other user can reach the socket
 //! at any point, whatever mode it briefly has. The socket is then set to `0600`
-//! as well, which is defence in depth rather than the mechanism.
+//! as well, which is defense in depth rather than the mechanism.
 //!
 //! **Nothing here reports key material.** Peer identities appear as names and
 //! the first bytes of a `peer_id_hint`; PSKs and private keys never leave the
@@ -158,7 +158,7 @@ pub fn request(path: &Path, command: &Command) -> std::io::Result<String> {
     Ok(out)
 }
 
-/// The socket path to use, honouring an explicit override.
+/// The socket path to use, honoring an explicit override.
 #[must_use]
 pub fn socket_path(explicit: Option<&str>) -> PathBuf {
     explicit.map_or_else(|| PathBuf::from(DEFAULT_SOCKET), PathBuf::from)

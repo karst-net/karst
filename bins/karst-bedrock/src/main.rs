@@ -8,14 +8,14 @@
 //! karst-bedrock init root|authority FILE   generate a key, print the public key
 //! karst-bedrock pubkey FILE                print a key's public key
 //! karst-bedrock inspect FILE               decode and print a bundle or log
-//! karst-bedrock sign REQUEST KEY OUT       verify, summarise, confirm, sign
+//! karst-bedrock sign REQUEST KEY OUT       verify, summarize, confirm, sign
 //! karst-bedrock verify FILE                verify a chain offline
 //! ```
 //!
 //! # Why this is a separate binary
 //!
 //! Authority keys must be usable from a machine that never touches the
-//! coordination server, or the offline story is theatre. This tool has no
+//! coordination server, or the offline story is theater. This tool has no
 //! network dependency in its manifest — that is the claim, and the manifest is
 //! where it is checked.
 //!
@@ -23,7 +23,7 @@
 //!
 //! An admin who signs a bundle without reading it has reduced Bedrock to a
 //! slower way of trusting the server. So `sign` renders each entry as a
-//! sentence a human can check against what they *meant* to authorise, and
+//! sentence a human can check against what they *meant* to authorize, and
 //! requires a typed confirmation — not a keypress, which is too easy to give
 //! reflexively.
 //!
@@ -86,7 +86,7 @@ fn usage() {
 Both tiers are ML-DSA-87, so a key seed is 32 bytes either way and the tier is
 decided by which list in the log contains the key, not by the file.
   inspect FILE                decode and print a bundle or an encoded log
-  sign REQUEST KEY OUT        verify a request, summarise it, sign it
+  sign REQUEST KEY OUT        verify a request, summarize it, sign it
   combine REQUEST OUT RESPONSE...
                               combine verified signatures into a raw log
   verify FILE                 verify an encoded log offline
@@ -596,7 +596,7 @@ fn describe(seq: u64, op: Op, body: &[u8], time: i64) -> String {
                     (nb, ex) => format!("from {}, expires {}", utc(nb), utc(ex)),
                 };
                 // All three fingerprints, because all three are what the
-                // countersignature authorises (spec §6.1) and an admin who
+                // countersignature authorizes (spec §6.1) and an admin who
                 // checked only the identity key would be approving datapath
                 // keys they never saw.
                 format!(

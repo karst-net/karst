@@ -15,7 +15,7 @@ export function Machines() {
   const [filter, setFilter] = useState("");
   const [renaming, setRenaming] = useState<{ node: Node; name: string }>();
   const [paths, setPaths] = useState<{ node: Node; value?: Paths; error?: string }>();
-  const [enrolment, setEnrolment] = useState<{ name: string; key?: string }>();
+  const [enrollment, setEnrollment] = useState<{ name: string; key?: string }>();
 
   const nodes = resource.value?.items ?? [];
   const shown = useMemo(() => {
@@ -42,14 +42,14 @@ export function Machines() {
     try { setPaths({ node, value: await api.nodePaths(node.handle) }); }
     catch (error) { setPaths({ node, error: (error as Error).message }); }
   };
-  // A machine is not created here and cannot be: it enrols itself with a key.
+  // A machine is not created here and cannot be: it enrolls itself with a key.
   // The honest "add" flow is therefore to mint the key and hand over the
   // command, rather than a form that pretends the server can conjure a node.
-  const mintEnrolmentKey = async () => {
-    const name = enrolment?.name.trim() || "New machine";
+  const mintEnrollmentKey = async () => {
+    const name = enrollment?.name.trim() || "New machine";
     try {
       const created = await api.createSetupKey({ name, type: "one-off", expires_in: 86_400, usage_limit: 1, auto_groups: [], ephemeral: false });
-      setEnrolment({ name, key: created.key });
+      setEnrollment({ name, key: created.key });
       setMessage(`Auth key issued for ${name}. It is single-use and expires in 24 hours.`);
     } catch (error) { setMessage((error as Error).message); }
   };
@@ -58,12 +58,12 @@ export function Machines() {
     <h2>Machines</h2>
     <p className="lede">Connection state always includes its last observation time. A machine joins by enrolling with an auth key; it is never created here.</p>
     <div className="actions">
-      <button className="primary" onClick={() => setEnrolment({ name: "" })}>Add machine</button>
+      <button className="primary" onClick={() => setEnrollment({ name: "" })}>Add machine</button>
       <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
     </div>
     <Notice message={message} />
     {nodes.length === 0
-      ? <EmptyState title="No machines yet">Create an auth key, install Karst on a node, and enrol it to see it here.</EmptyState>
+      ? <EmptyState title="No machines yet">Create an auth key, install Karst on a node, and enroll it to see it here.</EmptyState>
       : shown.length === 0
         ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
         : <Rows head={<><th>Name</th><th>Owner</th><th>Tags</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
@@ -104,19 +104,19 @@ export function Machines() {
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
     </Dialog>
 
-    <Dialog open={Boolean(enrolment)} title="Add a machine" onClose={() => { setEnrolment(undefined); resource.reload(); }}>
-      {enrolment?.key
+    <Dialog open={Boolean(enrollment)} title="Add a machine" onClose={() => { setEnrollment(undefined); resource.reload(); }}>
+      {enrollment?.key
         ? <>
           <p>Run this on the machine you are adding. The key is single-use and is not shown again.</p>
-          <label>Enrolment key<input aria-label="Enrolment key" readOnly value={enrolment.key} /></label>
+          <label>Enrollment key<input aria-label="Enrollment key" readOnly value={enrollment.key} /></label>
           <p className="lede">Put it in <code>/etc/karst/karstd.toml</code> under <code>[control] setup_key</code>, then start <code>karstd</code>. The machine appears in this list once it has enrolled.</p>
         </>
-        : <form onSubmit={(event) => { event.preventDefault(); void mintEnrolmentKey(); }}>
-          <p>Issues a single-use auth key valid for 24 hours. Name it for the machine it is meant for, so an unused key can be recognised later.</p>
-          <label>Machine name<input aria-label="New machine name" placeholder="laptop-alice" value={enrolment?.name ?? ""} onChange={(event) => setEnrolment({ name: event.target.value })} /></label>
-          <div className="actions"><button type="button" onClick={() => setEnrolment(undefined)}>Cancel</button><button className="primary" type="submit">Issue auth key</button></div>
+        : <form onSubmit={(event) => { event.preventDefault(); void mintEnrollmentKey(); }}>
+          <p>Issues a single-use auth key valid for 24 hours. Name it for the machine it is meant for, so an unused key can be recognized later.</p>
+          <label>Machine name<input aria-label="New machine name" placeholder="laptop-alice" value={enrollment?.name ?? ""} onChange={(event) => setEnrollment({ name: event.target.value })} /></label>
+          <div className="actions"><button type="button" onClick={() => setEnrollment(undefined)}>Cancel</button><button className="primary" type="submit">Issue auth key</button></div>
         </form>}
-      {enrolment?.key && <div className="actions"><button onClick={() => { setEnrolment(undefined); resource.reload(); }}>Done</button></div>}
+      {enrollment?.key && <div className="actions"><button onClick={() => { setEnrollment(undefined); resource.reload(); }}>Done</button></div>}
     </Dialog>
   </section>;
 }

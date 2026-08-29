@@ -352,7 +352,7 @@ pub struct NodeSection {
 pub struct ControlSection {
     /// Server URL, e.g. `https://karst.example.com:443`.
     pub server: String,
-    /// The server's static ML-KEM-768 key, hex. Pinned at enrolment.
+    /// The server's static ML-KEM-768 key, hex. Pinned at enrollment.
     pub server_kem_pin: String,
     /// The server's ML-DSA-65 verification key, hex.
     ///
@@ -380,7 +380,7 @@ pub struct ControlSection {
     /// downgraded server serving a weaker suite than the operator configured.
     /// Version 2 is the CNSA 2.0 profile and is not implemented, so setting it
     /// today refuses every server rather than quietly falling back — which is
-    /// the correct behaviour and the reason the version is reserved rather than
+    /// the correct behavior and the reason the version is reserved rather than
     /// omitted.
     pub control_minimum_version: Option<u32>,
     /// The lowest Bedrock enforcement level this node will accept: `off`,
@@ -401,7 +401,7 @@ pub struct ControlSection {
     /// Extra PEM certificate authorities to trust for relay TLS, in addition to
     /// the operating system's.
     ///
-    /// **`ponor-v1.md` §4.2 names three realistic self-hosted deployments, and
+    /// **`ponor-v1.md` §4.2 names three realiztic self-hosted deployments, and
     /// the system trust store covers only one of them.** An internal CA can be
     /// installed as a system root; a *self-signed* relay certificate cannot be,
     /// not without making that one host a trust anchor for every TLS connection
@@ -1079,7 +1079,7 @@ impl Peer {
     ///
     /// The name is the peer's DNS label rather than its handle: a 44-character
     /// base64 string in every log line and every row of `karst status` is
-    /// unreadable, and the label is what an operator recognises. A peer with no
+    /// unreadable, and the label is what an operator recognizes. A peer with no
     /// label falls back to a short prefix of the handle, which is ugly but
     /// unambiguous — inventing a name like "peer-3" would make two different
     /// peers look the same across restarts.
@@ -1488,7 +1488,7 @@ allowed_ips = ["10.99.0.2/32"]
     /// could be forgotten and the mistake would only surface as every peer
     /// holding the wrong key.
     #[test]
-    fn load_keys_honours_the_crypto_profile() {
+    fn load_keys_honors_the_crypto_profile() {
         let dir = Scratch::new("cfg-pubkey");
         let path = cnsa_roster(dir.path());
         let keys = load_keys(&path).expect("load_keys");
@@ -1704,7 +1704,7 @@ host_integration = "resolvconf"
     }
 
     #[test]
-    fn publishing_is_refused_for_the_configurations_that_cannot_honour_it() {
+    fn publishing_is_refused_for_the_configurations_that_cannot_honor_it() {
         for (label, keys, tables, expect) in [
             (
                 "TUN mode has an interface and does not need this",

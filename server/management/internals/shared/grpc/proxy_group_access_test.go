@@ -633,7 +633,7 @@ func TestValidateTunnelPeerUserEmailEnrichment(t *testing.T) {
 // TestDeniedReasonValues pins the wire values of the account status denied
 // reasons. The proxy logs them and operators filter access logs on them, so a
 // rename is a breaking change rather than an internal detail.
-// TestSameAccount pins the fail-closed behaviour of the account binding: an
+// TestSameAccount pins the fail-closed behavior of the account binding: an
 // unset account on either side must never compare equal into a grant.
 func TestSameAccount(t *testing.T) {
 	assert.True(t, sameAccount("account1", "account1"), "matching accounts should bind")

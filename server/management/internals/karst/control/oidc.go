@@ -108,7 +108,7 @@ func (o *OIDC) authenticate(ctx context.Context, handle, token string) (string, 
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				return "", status.Error(codes.Canceled, "cancelled while validating token")
+				return "", status.Error(codes.Canceled, "canceled while validating token")
 			}
 		}
 	}
@@ -135,7 +135,7 @@ func (o *OIDC) authenticate(ctx context.Context, handle, token string) (string, 
 	userAuth, err = o.Tokens.EnsureUserAccessByJWTGroups(ctx, userAuth, parsed)
 	if err != nil {
 		// A user whose JWT groups do not grant access is authenticated but not
-		// authorised. That is PermissionDenied, not Unauthenticated: the
+		// authorized. That is PermissionDenied, not Unauthenticated: the
 		// distinction tells an operator whether to fix the login or the groups.
 		return "", status.Error(codes.PermissionDenied, err.Error())
 	}
@@ -155,7 +155,7 @@ func (o *OIDC) authenticate(ctx context.Context, handle, token string) (string, 
 	return userAuth.UserId, nil
 }
 
-// claim enforces single use, so a captured token cannot enrol a second node.
+// claim enforces single use, so a captured token cannot enroll a second node.
 func (o *OIDC) claim(ctx context.Context, handle, token string, parsed *jwtv5.Token) error {
 	if o.Claimer == nil {
 		log.WithContext(ctx).Warnf(

@@ -19,12 +19,12 @@ configuration, and risks should be managed separately.
 
 | Component | Runs where | Primary responsibility | Principal interactions |
 | --- | --- | --- | --- |
-| Linux client (`karstd` and `karst`) | Linux endpoint or gateway | Creates the overlay interface, enforces local policy, establishes peer paths, and integrates DNS. Linux is the currently documented deployment target. | Enrols with control; receives the netmap, policy, DNS, routes, and relay registry; talks directly to peers or through a relay. |
-| macOS client | macOS endpoint | Intended client role equivalent to the Linux client, using macOS networking, DNS, secure storage, and installer conventions. | Enrolment and use are the same logical flow; platform integration and release packaging are a delivery requirement. |
-| Windows client | Windows endpoint | Intended client role equivalent to the Linux client, using Windows networking, DNS, secure storage, and installer conventions. | Enrolment and use are the same logical flow; installer/service operation must be suitable for a managed Windows endpoint. |
-| `karst-control` | Operator-controlled coordination host | Control plane: enrolment, authenticated netmap distribution, policy, user/SSO integration, relay registry, posture, and audit. | Authenticates users and nodes; distributes configuration; records administrative activity. |
+| Linux client (`karstd` and `karst`) | Linux endpoint or gateway | Creates the overlay interface, enforces local policy, establishes peer paths, and integrates DNS. Linux is the currently documented deployment target. | Enrolls with control; receives the netmap, policy, DNS, routes, and relay registry; talks directly to peers or through a relay. |
+| macOS client | macOS endpoint | Intended client role equivalent to the Linux client, using macOS networking, DNS, secure storage, and installer conventions. | Enrollment and use are the same logical flow; platform integration and release packaging are a delivery requirement. |
+| Windows client | Windows endpoint | Intended client role equivalent to the Linux client, using Windows networking, DNS, secure storage, and installer conventions. | Enrollment and use are the same logical flow; installer/service operation must be suitable for a managed Windows endpoint. |
+| `karst-control` | Operator-controlled coordination host | Control plane: enrollment, authenticated netmap distribution, policy, user/SSO integration, relay registry, posture, and audit. | Authenticates users and nodes; distributes configuration; records administrative activity. |
 | Admin console | Browser | Administrative user interface for users, groups, policy, nodes, DNS, routes, relays, Bedrock, posture, and audit. | Calls the authenticated administrative API. |
-| User portal | Browser | Self-service interface for a user’s devices, device enrolment, reachability explanation, and sessions. | Calls the authenticated portal API as the current user. |
+| User portal | Browser | Self-service interface for a user’s devices, device enrollment, reachability explanation, and sessions. | Calls the authenticated portal API as the current user. |
 | `karst-relay` (Ponor) | Publicly reachable relay host | Authenticated fallback forwarding, presence, rate limiting, and AVEN reflection. It carries ciphertext, not plaintext overlay traffic. | Receives its admission roster from control and accepts only registered/published clients. |
 | AVEN discovery | Clients and relay reflector | NAT discovery, candidate exchange, and direct-path selection. | Starts relayed when necessary, then upgrades to a direct path when available. |
 | KarstDNS | Node-local client service | Resolves mesh names and applies group-scoped global or split-DNS upstream configuration. | Receives DNS configuration in the netmap; safely applies and reverts host DNS settings. |
@@ -61,10 +61,10 @@ can have several non-human operators over its lifetime.
 
 | Actor | Goal | Identity used | Authority boundary |
 | --- | --- | --- | --- |
-| Client user | Use private connectivity and manage their own devices. | IdP subject/session for portal; node identity for each device. | May enrol, name, view, and revoke only their own devices; receives only access granted by policy. |
+| Client user | Use private connectivity and manage their own devices. | IdP subject/session for portal; node identity for each device. | May enroll, name, view, and revoke only their own devices; receives only access granted by policy. |
 | Administrator | Operate the organization’s Karst account. | IdP subject and administrator role; optionally a scoped API token for automation. | Manages users, groups, access policy, relays, DNS, routes, settings, and lifecycle actions. Actions must be audited. |
 | Auditor / security reviewer | Establish what happened and whether controls are effective. | Distinct IdP subject with read/verify/export permission, not an admin credential. | Reads audit, posture, policy history, and permitted topology data; cannot change live configuration. |
-| Platform / client installer | Put a supported client on an endpoint. | Local OS administrator privilege; after enrolment, the device’s node identity. | Installs software and grants only the host privileges needed for networking and DNS integration. |
+| Platform / client installer | Put a supported client on an endpoint. | Local OS administrator privilege; after enrollment, the device’s node identity. | Installs software and grants only the host privileges needed for networking and DNS integration. |
 | Relay operator | Provide fallback connectivity without joining the protected data plane. | Relay ML-DSA identity, pinned by clients; OS/service identity on the relay host. | Operates the relay and observes relay metadata, but has no policy-administration authority and no plaintext access. |
 | Bedrock root or authority operator | Independently authorize membership-related changes. | Offline Bedrock root/authority signing key; separate human custody and approval process. | Signs only reviewed request bundles. It does not administer policy or run the online control plane. |
 | Control service | Admit nodes and distribute the account configuration. | Pinned static ML-KEM public key and ML-DSA-87 server identity. | Authoritative for account configuration, but Bedrock can prevent it from silently authorizing an uncovered node. |
@@ -76,7 +76,7 @@ can have several non-human operators over its lifetime.
 1. An IdP authenticates a person. Control maps that person to an account,
    role, and groups.
 2. An administrator issues a setup key or a portal issues a short-lived,
-   single-use device-enrolment key to the authenticated owner.
+   single-use device-enrollment key to the authenticated owner.
 3. Before first contact, the client receives the setup key and both pinned
    public halves of the control-service identity. The node generates and seals
    its own identity key locally.
@@ -90,7 +90,7 @@ can have several non-human operators over its lifetime.
 The control protocol details these pins, node handles, and registration rules
 in [KARST-CONTROL v1](../spec/karst-control-v1.md). In particular, a known
 handle presenting a different identity key is identity substitution, not a
-re-enrolment.
+re-enrollment.
 
 ## Use cases
 
@@ -112,17 +112,17 @@ platform-specific package, driver, service, secure-store, and DNS integration.
 1. The installer installs the client daemon and CLI/UI and registers a service
    that can start at boot or user login as appropriate.
 2. The user or administrator supplies the control endpoint, the two control
-   pins, and an enrolment credential through protected local configuration.
+   pins, and an enrollment credential through protected local configuration.
 3. The daemon starts, creates the overlay interface (or explicitly selected
    userspace stack), seals its node identity in platform-appropriate storage,
-   and attempts enrolment.
+   and attempts enrollment.
 4. The daemon applies the resulting policy, routes, relay registry, and DNS
    configuration. The user verifies peer and DNS status.
 
 **Success:** the device has a node handle, an active authenticated control
 channel, and an applied netmap.  
 **Failure / control:** missing pins or an invalid setup key must prevent
-enrolment; failure to configure host DNS must not leave the host without its
+enrollment; failure to configure host DNS must not leave the host without its
 previous resolvers. Userspace mode must not claim host DNS integration it
 cannot provide.
 
@@ -181,7 +181,7 @@ administrative events.
 **Control:** use a separate service user and narrowly scoped token for
 automation rather than a shared human administrator account.
 
-### UC-04 — Enrol and manage a device
+### UC-04 — Enroll and manage a device
 
 **Primary actors:** client user or administrator; client daemon; control.
 
@@ -194,7 +194,7 @@ automation rather than a shared human administrator account.
 2. The credential and control pins are placed in protected client
    configuration; the daemon starts.
 3. The daemon presents its freshly generated identity during registration and
-   proves possession of the enrolment credential over the pinned control
+   proves possession of the enrollment credential over the pinned control
    channel.
 4. Control associates the node with its owner/groups, issues the encrypted
    netmap, and records the node handle and lifecycle event.
@@ -205,7 +205,7 @@ automation rather than a shared human administrator account.
 **Success:** the device has a stable node identity and receives configuration
 appropriate to its owner and groups.  
 **Control:** setup keys admit new devices but are not long-lived device
-identity. Revoking a key stops future enrolments; revoking a device must drop
+identity. Revoking a key stops future enrollments; revoking a device must drop
 that device’s session and remove it from future maps.
 
 ### UC-05 — Grant and validate connectivity permissions
@@ -271,7 +271,7 @@ one or more enrolled gateway clients.
 
 **Main flow:**
 
-1. The gateway operator installs and enrols a client on a host that can reach
+1. The gateway operator installs and enrolls a client on a host that can reach
    the target LAN, VPC, or Internet egress and enables forwarding according to
    the host platform’s security model.
 2. The administrator places gateway nodes in a routing group, defines the
@@ -378,7 +378,7 @@ authorized administrator from making a harmful change.
 | Capability | Client user | Administrator | Auditor | Relay operator | Bedrock authority |
 | --- | --- | --- | --- | --- | --- |
 | Use policy-granted mesh connectivity | Yes | Yes, if also a user/client | No need | No | No |
-| Enrol/manage own device | Yes | May do so | No | No | No |
+| Enroll/manage own device | Yes | May do so | No | No | No |
 | Manage all users, groups, policy, DNS, routes, relays | No | Yes | No | Only relay host itself | No |
 | Read/verify/export audit and posture | Own session/access only | As permitted | Yes | Relay-local metrics only | Bedrock artifacts only |
 | Operate fallback relay | No | Can register it | No | Yes | No |
@@ -390,7 +390,7 @@ authorized administrator from making a harmful change.
   secure-key-storage, TUN/userspace, and DNS-revert story. The current
   [getting-started guide](GETTING-STARTED.md) documents the Linux path; macOS
   and Windows should not be represented as equivalent until these are tested.
-- A node never enrols on a setup key alone: it must have both pinned control
+- A node never enrolls on a setup key alone: it must have both pinned control
   public keys, and a local node identity must be protected at rest.
 - User ownership, administrator authority, node identity, relay identity, and
   Bedrock signing authority remain distinct in data model, UI, and audit.

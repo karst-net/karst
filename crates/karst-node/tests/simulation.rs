@@ -85,7 +85,7 @@ impl Network {
 
     fn send(&mut self, to_responder: bool, bytes: Vec<u8>, now_ms: u64) {
         // A real link cannot carry more than this. The harness must enforce it,
-        // or it silently validates behaviour that could never work on the wire.
+        // or it silently validates behavior that could never work on the wire.
         //
         // §13.6 makes the budget two-tier: an unfragmented transport datagram
         // may reach TRANSPORT_DATAGRAM_MAX, but anything with count > 1 is held

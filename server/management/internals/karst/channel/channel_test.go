@@ -271,7 +271,7 @@ func TestTamperedCiphertextBreaksSignature(t *testing.T) {
 
 // A node the server already knows must not be able to present a different
 // identity key: that is identity substitution, not re-registration.
-func TestKnownNodePresentingDifferentIdentityRejected(t *testing.T) {
+func TestKnownNodePresentingDifferentIdentitirejected(t *testing.T) {
 	static, err := GenerateStatic()
 	if err != nil {
 		t.Fatalf("static: %v", err)
@@ -317,7 +317,7 @@ func TestKnownNodeWrongSignatureRejected(t *testing.T) {
 	}
 }
 
-func TestRegistrationWithoutIdentityRejected(t *testing.T) {
+func TestRegistrationWithoutIdentitirejected(t *testing.T) {
 	static, err := GenerateStatic()
 	if err != nil {
 		t.Fatalf("static: %v", err)
@@ -427,7 +427,7 @@ func TestSequenceIncreasesMonotonically(t *testing.T) {
 // *static* public key. A node that does not authenticate the hello then
 // encapsulates BOTH ciphertexts to one long-term key, and every byte it sends
 // decrypts later, when that key leaks. "The channel fails closed" is no
-// defence: the node transmits before it can possibly notice.
+// defense: the node transmits before it can possibly notice.
 //
 // The hello signature is what stops it, so the substituted hello must be
 // refused outright rather than merely producing a divergent key.

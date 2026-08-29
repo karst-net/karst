@@ -22,10 +22,10 @@ Twelve checkable claims hide in that sentence:
 
 | # | Claim | Owner |
 |---|---|---|
-| 1 | The server installs from published artefacts | SRE |
+| 1 | The server installs from published artifacts | SRE |
 | 2 | First-run setup completes in the console | [04](04-admin-console.md) |
-| 3 | A Linux node installs from a CI-produced package and enrols | **§2 — package definitions exist; release proof is required** |
-| 4 | A completed non-Linux client installs from its signed installer and enrols | [06](06-macos-client.md) |
+| 3 | A Linux node installs from a CI-produced package and enrolls | **§2 — package definitions exist; release proof is required** |
+| 4 | A completed non-Linux client installs from its signed installer and enrolls | [06](06-macos-client.md) |
 | 5 | Windows client installation is a Phase 8 acceptance criterion, not a Phase 5 gate | [07](07-windows-client.md) |
 | 6 | Two of the three nodes are behind different NATs and reach direct paths | Phase 4's matrix, re-run with the new client |
 | 7 | An ACL is written, validated, and saved in the console | [04](04-admin-console.md) §5.1 |
@@ -49,7 +49,7 @@ superseded. The proof now exists and is wired into `deliverables.yml`:
 | Install, upgrade, uninstall on Debian 12, Ubuntu 24.04, Fedora 41, RHEL 9 | `packages-verify`, 8 jobs (4 distributions × amd64/arm64) |
 | The packaged unit under a real systemd, including DNS recovery after `SIGKILL` | `packages-systemd` |
 | Binaries link against the oldest supported glibc | `scripts/glibc-floor.sh`, asserted in the build job |
-| `SHA256SUMS`, detached signature, CycloneDX SBOM per artefact | `release-artefacts` |
+| `SHA256SUMS`, detached signature, CycloneDX SBOM per artifact | `release-artifacts` |
 
 All three checks are runnable without a push — `just packages`,
 `just packages-verify`, `just packages-verify-systemd`.
@@ -66,13 +66,13 @@ Two items remain before this row can be called finished:
 
 - **Container image signing.** §5's table says cosign; the `images` job builds
   and does not sign. It needs a key or an OIDC identity decided first.
-- **The published location.** Producing signed artefacts is not publishing
+- **The published location.** Producing signed artifacts is not publishing
   them. Nothing yet uploads to a release, and `scripts/release-manifest.sh` —
   which the portal's download page reads — is still wired to nothing and still
   expects a Windows MSI that is Phase 8's.
 
 Phase 4 half-noticed this from the other side, recording that the compose
-artefact "cannot walk a self-hoster to a connected node, because a node needs a
+artifact "cannot walk a self-hoster to a connected node, because a node needs a
 setup key, a setup key needs an account, and an account needs the admin
 console". The missing packaging is the same observation one layer down: a node
 needs to be installed before it can be enrolled, and on Linux there is nothing
@@ -142,7 +142,7 @@ Pages publishes from the repository root, so there is a place to publish to.
 | **Installing the coordination server** | Compose, Kubernetes, and the `.deb`/`.rpm`; TLS; sizing; backup | SRE | W7 |
 | **Installing a node** | One page per OS, with the actual installer flow and screenshots | Client owners | W8 |
 | **Access control** | HuJSON by example, from "everyone can reach everything" to tag-scoped; how to test a change before applying it | Go 1 | W8 |
-| **KarstDNS** | What resolves, split DNS, per-platform behaviour, and the troubleshooting section this will need | Rust 1 | W8 |
+| **KarstDNS** | What resolves, split DNS, per-platform behavior, and the troubleshooting section this will need | Rust 1 | W8 |
 | **Network lock** | The key ceremony, quorum choice, offline signing, and **the recovery section including the case with no recovery** ([02](02-bedrock.md) §9) | Crypto | W8 |
 | **Identity and SCIM** | OIDC setup for Okta/Entra/Authentik/Keycloak, SCIM token, group sync | Go 2 | W8 |
 | **Troubleshooting** | Symptom-first: no connection, relay-only, DNS broken, node rejected. Each entry names the command that shows the truth | All | W9 |
@@ -156,18 +156,18 @@ Two standing rules:
 - **No page tells the reader to read the source.** If it needs to, the feature
   is not finished.
 
-## 5. Release artefacts
+## 5. Release artifacts
 
 By W10 a tagged release produces:
 
-| Artefact | Signed | CI |
+| Artifact | Signed | CI |
 |---|---|---|
 | `karst_<ver>_{amd64,arm64}.deb` / `.rpm` (node + server) | Repo GPG key | Yes |
 | `karst-<ver>-macos.pkg`, universal | Developer ID + notarized + stapled | Tag only |
 | `karst-<ver>-x64.msi` | Code-signing cert, timestamped | Tag only |
 | Container images for `karstd`, `karst-relay`, `karst-control` | cosign | Yes |
 | `SHA256SUMS` + detached signature | Yes | Yes |
-| SBOM per artefact (CycloneDX) | — | Yes |
+| SBOM per artifact (CycloneDX) | — | Yes |
 
 The checksums file matters more than it looks: the portal's download page
 ([05](05-user-portal.md)) tells users to verify, and the docs explain how, so it

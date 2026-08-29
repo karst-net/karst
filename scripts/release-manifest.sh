@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright the Karst contributors.
 #
-# Generate the portal's download manifest from release artefacts that exist.
+# Generate the portal's download manifest from release artifacts that exist.
 #
 #   scripts/release-manifest.sh RELEASE_DIR OUTPUT_JSON
 #
@@ -18,7 +18,7 @@
 # `karst-windows-amd64.msi`. There is no Windows client — it is Phase 8 — so
 # the script could not succeed against any real release directory, and nothing
 # ran it. Meanwhile the portal's fixture served that same invented filename, so
-# its download test passed against a manifest describing artefacts that have
+# its download test passed against a manifest describing artifacts that have
 # never been built.
 #
 # Discovery also handles the thing the fixed list could not express: there is
@@ -27,7 +27,7 @@
 # one that will install.
 #
 # Only the *client* is listed. karst-relay and karst-control are operator
-# artefacts installed from the docs on a server, and offering them on an
+# artifacts installed from the docs on a server, and offering them on an
 # end-user download page invites somebody to install a coordination server on
 # their laptop.
 
@@ -51,7 +51,7 @@ while IFS= read -r path; do
   name=$(basename "$path")
   case "$name" in
     # Debian names the architecture amd64/arm64; RPM says x86_64/aarch64. The
-    # manifest normalises to the Debian spelling so the portal has one word per
+    # manifest normalizes to the Debian spelling so the portal has one word per
     # architecture rather than two.
     karst-client_*_amd64.deb)      assets+=("$(emit_asset "$path" linux amd64 deb)") ;;
     karst-client_*_arm64.deb)      assets+=("$(emit_asset "$path" linux arm64 deb)") ;;
@@ -64,7 +64,7 @@ while IFS= read -r path; do
 done < <(find "$release_dir" -maxdepth 2 -type f | sort)
 
 if [ "${#assets[@]}" -eq 0 ]; then
-  echo "release-manifest: no client artefacts found under $release_dir" >&2
+  echo "release-manifest: no client artifacts found under $release_dir" >&2
   echo "release-manifest: the portal's download page would offer nothing" >&2
   exit 1
 fi

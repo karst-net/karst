@@ -113,7 +113,7 @@ fn step(
     }
     for (datagram, _target) in out.datagrams {
         let Verdict::Handled(replies) = to.inbound(&datagram, via, now) else {
-            panic!("a genuine AVEN datagram was not recognised");
+            panic!("a genuine AVEN datagram was not recognized");
         };
         for (reply, _back) in replies {
             // §7.1: what the answer confirms is the endpoint the `Ping` went

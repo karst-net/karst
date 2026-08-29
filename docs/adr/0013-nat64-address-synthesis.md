@@ -88,14 +88,14 @@ answer — but only after two gates:
    socket cannot send to an IPv6 address at all. A prefix on such a node would
    rewrite every *reachable* destination into an unreachable one.
 2. **The host must hold no IPv4 address of its own.** This is not an
-   optimisation. A host with working IPv4 and a NAT64 translator would, if it
+   optimization. A host with working IPv4 and a NAT64 translator would, if it
    synthesised, route every IPv4 flow through the translator — and so learn a
    reflexive address belonging to the translator rather than to itself,
    advertise it, and be reached there by peers that could have reached it
    directly.
 
 An explicit prefix skips the second gate and not the first: the first is a hard
-incompatibility, the second is a judgement an operator may overrule.
+incompatibility, the second is a judgment an operator may overrule.
 
 **RFC 8781's PREF64 is implemented and tried first — revised 2026-08-21.**
 This ADR originally declined it: reading ICMPv6 router advertisements needs a

@@ -22,7 +22,7 @@ const REFLECT_TAG_LABEL: &[u8] = b"aven-reflect-v1";
 /// A per-pair disco key from the netmap.
 ///
 /// The key bytes are held and the HMAC schedule is built per call, rather than
-/// pre-keyed the way `karst-proto`'s `FragMacKey` is. That optimisation was
+/// pre-keyed the way `karst-proto`'s `FragMacKey` is. That optimization was
 /// worth 6% of CPU on a datapath running 50,000 packets a second (PLAN.md
 /// §3.4); AVEN sends a handful of probes a second, and holding only the array
 /// is what keeps the zeroize-on-drop honest — a pre-keyed `Hmac` retains

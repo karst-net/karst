@@ -61,7 +61,7 @@ use std::time::Duration;
 ///
 /// Declared here rather than in `sys`, because it is part of the API a caller
 /// sizes its buffers against and not a detail of the syscall: the portable
-/// path honours the same bound so that a caller's buffers are correct on
+/// path honors the same bound so that a caller's buffers are correct on
 /// either platform.
 pub const BATCH: usize = 32;
 
@@ -104,7 +104,7 @@ pub type SourceKey = [u8; 18];
 ///
 /// Everything above this layer compares addresses for equality — the engine
 /// attributes a datagram to a peer that way, AVEN hands the source straight
-/// back as `Pong.observed`, and `karst status` prints it. Normalising here
+/// back as `Pong.observed`, and `karst status` prints it. Normalizing here
 /// rather than at each of those means there is one representation of an
 /// address in the daemon, and it is the one every other node can reach: a
 /// v4-mapped address advertised as a candidate is one that no IPv4-only peer
@@ -337,7 +337,7 @@ impl UdpTransport {
     ///
     /// That is `sendmmsg(2)` on Linux and a loop over `sendto` elsewhere; see
     /// [`portable`] for what the difference costs and why the API does not
-    /// expose it. Both honour the same [`BATCH`] bound, so a caller sizes its
+    /// expose it. Both honor the same [`BATCH`] bound, so a caller sizes its
     /// buffers once.
     ///
     /// Returns how many the kernel accepted. A short count is normal and the
@@ -536,14 +536,14 @@ mod tests {
         assert_eq!(v4.get(10..12), Some(&[0xFF, 0xFF][..]));
     }
 
-    /// **The kernel's behaviour, not a belief about it.**
+    /// **The kernel's behavior, not a belief about it.**
     ///
     /// Everything `canonical` exists for rests on one claim: that a dual-stack
     /// socket reports an IPv4 peer as `[::ffff:a.b.c.d]`. That is a property of
     /// the operating system, so it is checked against a real socket pair rather
     /// than asserted — and the first assertion here is the claim itself, so a
     /// platform on which it were false would say so rather than leave the
-    /// normalisation looking like superstition.
+    /// normalization looking like superstition.
     #[test]
     fn a_dual_stack_socket_reports_an_ipv4_peer_at_its_ipv4_address() {
         let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
@@ -580,7 +580,7 @@ mod tests {
     /// so it gets the same requirement rather than inheriting it.
     #[cfg(target_os = "linux")]
     #[test]
-    fn the_batched_path_canonicalises_the_same_way() {
+    fn the_batched_path_canonicalizes_the_same_way() {
         let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
             return;
         };

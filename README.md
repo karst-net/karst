@@ -6,7 +6,7 @@
 user management.**
 
 > **Status: pre-alpha. Do not deploy this.** Phase 4 of 7. There is a working
-> end-to-end tunnel — two nodes enrol with a coordination server, meet over a
+> end-to-end tunnel — two nodes enroll with a coordination server, meet over a
 > relay, punch through NATs and carry TCP under a policy — but **nothing here
 > has had external cryptographic or security review**, the wire formats are
 > still changing without compatibility guarantees, and several protocol gaps are
@@ -36,13 +36,13 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | Area | Status |
 |---|---|
 | **PHREATIC** — handshake and datapath ([spec](spec/phreatic-v1.md)) | Draft 0.2. ML-KEM-768 + X25519, fragmentation, stateless-under-load responder, rekey |
-| **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrolment, netmap, per-pair PSKs and disco keys, encrypted cache |
+| **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrollment, netmap, per-pair PSKs and disco keys, encrypted cache |
 | **Ponor** — relay ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 relay identity, structural admission |
 | **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
 | `karstd` — node agent | TUN, datapath, stateful packet filter, discovery, relay client |
 | `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
 | `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
-| `karst-control` — coordination server (Go) | Enrolment, netmap, policy, audit, relay registry |
+| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry |
 | Console / portal (TypeScript) | **not started** |
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Phase 5. Resolver, split DNS, `systemd-resolved`/NetworkManager/`resolv.conf` host integration, `karst dns` CLI |
 | **Bedrock** network lock | **not started** — Phase 5 |
@@ -152,7 +152,7 @@ Notable decisions, each with an ADR:
 | Hybrid X25519 + ML-KEM-768, ML-DSA-65, SLH-DSA-192s | [0001](docs/adr/0001-cryptographic-algorithm-selection.md), [0002](docs/adr/0002-hybrid-key-agreement.md) |
 | Greenfield Rust datapath — a 2378-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
 | Fragmentation with a stateless-under-load responder; per-pair PSK hedge | [0004](docs/adr/0004-handshake-mtu-and-kem-selection.md) |
-| MIT/Apache clients, AGPL server, DCO not CLA, no commercial licence | [0007](docs/adr/0007-licensing.md) |
+| MIT/Apache clients, AGPL server, DCO not CLA, no commercial license | [0007](docs/adr/0007-licensing.md) |
 | Relay co-located with the coordination server; TURN fallback | [0008](docs/adr/0008-relay-infrastructure-and-funding.md) |
 | Control plane forked from NetBird rather than greenfield | [0009](docs/adr/0009-control-plane-fork-vs-greenfield.md) |
 | NAT64 synthesis at the socket boundary; RFC 7050 over RFC 8781 | [0013](docs/adr/0013-nat64-address-synthesis.md) |
@@ -192,7 +192,7 @@ Full list: [THREAT-MODEL.md §7](docs/THREAT-MODEL.md).
 
 ```sh
 just                   # list targets
-just check             # the Rust gate: fmt, clippy, tests, cargo-deny, licences
+just check             # the Rust gate: fmt, clippy, tests, cargo-deny, licenses
 just go-test go-lint   # the coordination server
 just test-privileged   # namespaces, TUN devices, the NAT matrix — needs sudo
 just verify            # Verifpal ×3 + every ProVerif model, must-fail ones included
@@ -224,9 +224,9 @@ harbour for good-faith research. Review is actively wanted — the specification
 carry a royalty-free implementation grant precisely so that a second
 implementation can exist to disagree with this one.
 
-## Licence
+## License
 
-| Path | Licence |
+| Path | License |
 |---|---|
 | `crates/`, `bins/` | `MIT OR Apache-2.0` |
 | `server/`, `web/` | `AGPL-3.0-or-later` |
@@ -245,7 +245,7 @@ its `disco` shaped AVEN; we borrow the designs and deliberately not the
 protocols or the fleet. The handshake builds on **PQNoise** and
 **PQ-WireGuard**, and owes **Rosenpass** its approach to DoS resistance and
 stateless responders. The coordination server is a fork of **NetBird** under
-their BSD-3 licence ([ADR-0009](docs/adr/0009-control-plane-fork-vs-greenfield.md)),
+their BSD-3 license ([ADR-0009](docs/adr/0009-control-plane-fork-vs-greenfield.md)),
 with generic improvements offered upstream.
 
 *Karst* is a trademark of the project. Anyone may fork the code; nobody may

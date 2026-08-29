@@ -59,7 +59,7 @@ impl Prefix {
     /// Build a prefix, masking off host bits so that `10.0.0.5/24` and
     /// `10.0.0.0/24` are the same range.
     ///
-    /// Normalising rather than rejecting matters: an operator who writes their
+    /// Normalizing rather than rejecting matters: an operator who writes their
     /// own address with a network prefix length — the single most common way to
     /// write it — gets the range they meant, not a config error or, worse, a
     /// range that silently fails to match.
@@ -174,7 +174,7 @@ fn mask(addr: IpAddr, len: u8) -> IpAddr {
 /// An address to assign to the interface: a **host** address plus the length of
 /// the on-link prefix.
 ///
-/// Deliberately not a [`Prefix`]. A prefix normalises `10.0.0.1/24` to the
+/// Deliberately not a [`Prefix`]. A prefix normalizes `10.0.0.1/24` to the
 /// network `10.0.0.0/24`, which is right for routing and catastrophic for an
 /// interface — assigning the network address leaves the node with no address of
 /// its own, and every packet it originates carries a source the peer will
@@ -434,7 +434,7 @@ mod tests {
         let err = AllowedIps::build([(p("10.0.0.0/8"), 0), (p("10.0.0.0/8"), 1)]).unwrap_err();
         assert_eq!(err.first, 0);
         assert_eq!(err.second, 1);
-        // Normalisation means these are the same claim written two ways.
+        // Normalization means these are the same claim written two ways.
         assert!(AllowedIps::build([(p("10.0.0.0/8"), 0), (p("10.4.4.4/8"), 1)]).is_err());
     }
 

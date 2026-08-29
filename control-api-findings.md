@@ -12,7 +12,7 @@ the control channel, the OpenAPI contract, and a generated TypeScript client.
 --all-targets`, `cargo clippy --workspace --all-targets --all-features -D
 warnings`, `cargo fmt --all --check`, `go build ./...`, `go vet
 ./management/internals/karst/...`, `go test ./management/internals/karst/...
-./management/server/permissions/...`, and the CI licence gate's own `find`
+./management/server/permissions/...`, and the CI license gate's own `find`
 expression.
 
 Clippy is clean and every Go test passes. Two CI gates fail. Thirty-five other
@@ -37,7 +37,7 @@ Three hunks in `bins/karstd/src/run.rs`:
 ### 2. Missing SPDX header on a CI-checked generated file
 
 `server/shared/management/http/api/karst/types.gen.go` has no
-`SPDX-License-Identifier`. CI's licence gate matches
+`SPDX-License-Identifier`. CI's license gate matches
 
 ```
 find server -type f -name '*.go' \( -path '*/karst/*' -o -name 'karst_*' \) -not -name '*.pb.go'
@@ -204,7 +204,7 @@ In the other direction: after first boot, any edit to
 `KARST_RELAY_REGISTRY_FILE` is silently ignored. A documented configuration
 mechanism becomes a no-op with no log line.
 
-### 19. Startup policy seeding stores a re-serialised document
+### 19. Startup policy seeding stores a re-serialized document
 
 `json.Marshal(pol)` writes the parsed struct, not the operator's source. This
 contradicts `Version`'s own doc comment about keeping "exactly what was

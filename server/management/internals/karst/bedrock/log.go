@@ -7,10 +7,10 @@
 // # Bodies are opaque here, on purpose
 //
 // An entry's body is a []byte. This package builds bodies (for a signer) and
-// parses them (for display and policy), but it never *re-serialises* one it was
+// parses them (for display and policy), but it never *re-serializes* one it was
 // given: the bytes that were signed are the bytes that are hashed and stored.
 //
-// A parse-then-reserialise round trip is where canonicalisation bugs live, and
+// A parse-then-reserialize round trip is where canonicalization bugs live, and
 // the whole point of §3.3 is that this code has no such round trip in it. If
 // you find yourself adding a `func (b *NodeSignBody) Encode()` that gets called
 // on the verification path, that is the bug this comment exists to prevent.
@@ -221,10 +221,10 @@ func ChainHash(prev []byte, seq uint64, t int64, op Op, body []byte) []byte {
 // One encoder serves storage, the offline signer's bundles, the node's cache,
 // and the control-plane wire (carried as opaque `bytes` in the proto message).
 // Protobuf is not canonical, so putting the entry *inside* a bytes field rather
-// than modelling it as a message is what keeps the two implementations from
-// having to agree on a protobuf serialiser's field ordering.
+// than modeling it as a message is what keeps the two implementations from
+// having to agree on a protobuf serializer's field ordering.
 
-// Encode serialises an entry:
+// Encode serializes an entry:
 //
 //	LP(BE64(seq)) ‖ LP(BE64(time)) ‖ LP(op) ‖ LP(body)
 //	   ‖ BE32(sig_count) ‖ sig_count × ( BE32(index) ‖ LP(sig) )
@@ -302,7 +302,7 @@ func decodeEntry(b []byte) (Entry, error) {
 // many roots or authorities has a different problem.
 const maxSigners = 64
 
-// EncodeLog serialises a whole log: BE32(count) ‖ count × LP(entry).
+// EncodeLog serializes a whole log: BE32(count) ‖ count × LP(entry).
 func EncodeLog(entries []Entry) []byte {
 	out := appendBE32(nil, uint32(len(entries)))
 	for i := range entries {
@@ -339,7 +339,7 @@ func DecodeLog(b []byte) ([]Entry, error) {
 	return entries, nil
 }
 
-// maxLogEntries bounds a decoded log. One entry per node per enrolment plus
+// maxLogEntries bounds a decoded log. One entry per node per enrollment plus
 // revocations and anchors; a million is far past any real deployment and still
 // far short of an allocation attack.
 const maxLogEntries = 1 << 20
@@ -427,7 +427,7 @@ const (
 // NodeSignBody builds a node-sign body — spec §3.4.
 //
 // All three keys, not just the identity key. See spec §6.1: the identity key is
-// not used by PHREATIC, so covering only it would authorise a node to exist
+// not used by PHREATIC, so covering only it would authorize a node to exist
 // without constraining which session keys are its.
 func NodeSignBody(handle string, identityKey, kemKey, dhKey []byte, notBefore, expiry int64) []byte {
 	out := appendLP(nil, []byte(handle))

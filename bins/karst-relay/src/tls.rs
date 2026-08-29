@@ -160,7 +160,7 @@ pub fn server_config(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, Error
 /// **The certificate is not what authenticates the peer, and §4.2 says why.** A
 /// relay proves itself with an ML-DSA-65 signature over its registry key;
 /// `WebPKI` is classical, a certificate is no evidence of identity behind a
-/// shared load balancer, and the realistic self-hoster has an internal CA or a
+/// shared load balancer, and the realiztic self-hoster has an internal CA or a
 /// self-signed certificate. The same argument holds relay-to-relay: the mesh
 /// handshake verifies `sig_relay` against the roster's `identity_pk`, and that
 /// is the security property. TLS here is confidentiality and integrity for the

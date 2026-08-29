@@ -50,7 +50,7 @@ func EncodeNetworkMapEnvelope(in ComponentsEnvelopeInput) *proto.NetworkMapEnvel
 	c := in.Components
 
 	// Graceful degrade when components is nil — matches the legacy path's
-	// behaviour for missing/unvalidated peers (return a NetworkMap with only
+	// behavior for missing/unvalidated peers (return a NetworkMap with only
 	// Network populated). The receiver gets an envelope it can decode
 	// without crashing; AccountSettings stays non-nil so client-side
 	// dereferences are safe.

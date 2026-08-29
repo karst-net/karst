@@ -347,7 +347,7 @@ func TestEnforceAccountScope_BlocksMismatchedAccount(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
-func TestEnforceAccountScope_BlocksEmptyRequestAccountID(t *testing.T) {
+func TestEnforceAccountScope_BlocksEmptirequestAccountID(t *testing.T) {
 	err := enforceAccountScope(scopedCtx("acc-1"), "")
 	require.Error(t, err)
 	st, ok := grpcstatus.FromError(err)

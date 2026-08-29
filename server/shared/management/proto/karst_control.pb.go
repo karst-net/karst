@@ -127,7 +127,7 @@ type KarstLoginRequest struct {
 	// the token claimed.
 	//
 	// Single-use. The server registers each token so a captured one cannot
-	// enrol a second node.
+	// enroll a second node.
 	JwtToken string `protobuf:"bytes,6,opt,name=jwt_token,json=jwtToken,proto3" json:"jwt_token,omitempty"`
 }
 
@@ -1009,10 +1009,10 @@ type KarstBedrockResponse struct {
 
 	// Entries encoded by bedrock-v1.md §3.6, one opaque blob each.
 	//
-	// Opaque bytes rather than a modelled protobuf message, and that is the
+	// Opaque bytes rather than a modeled protobuf message, and that is the
 	// whole reason this message is so small. Protobuf is not canonical: two
-	// conformant serialisers may order or pack fields differently, and every
-	// Bedrock signature is over a hash of exactly these bytes. Modelling an
+	// conformant serializers may order or pack fields differently, and every
+	// Bedrock signature is over a hash of exactly these bytes. Modeling an
 	// entry as a message would make the two implementations agree on a protobuf
 	// encoder's internal choices, which is not a thing either can promise.
 	Entries [][]byte `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -1787,7 +1787,7 @@ type ChannelHello struct {
 	//
 	// This is what makes the ephemeral key genuinely ephemeral, and so what
 	// makes forward secrecy real. The node pins the server's verification key at
-	// enrolment alongside its static KEM key, and MUST abort if this does not
+	// enrollment alongside its static KEM key, and MUST abort if this does not
 	// verify — before sending anything, because ChannelInit is followed
 	// immediately by a request that may carry an auth key.
 	Signature []byte `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`

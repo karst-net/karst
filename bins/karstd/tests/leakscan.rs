@@ -80,7 +80,7 @@ fn encodings(secret: &[u8]) -> Vec<String> {
     // base64, standard alphabet.
     let b64 = base64(secret);
     // Half of it: a truncated leak is still a leak, and halving the search
-    // space of a 32-byte key is not a defence.
+    // space of a 32-byte key is not a defense.
     let half_hex: String = secret[..16].iter().map(|b| format!("{b:02x}")).collect();
 
     vec![
@@ -374,7 +374,7 @@ fn every_encoding_the_scanner_looks_for_is_detectable() {
     ] {
         assert!(
             leak(&format!("some log line: {rendering} and more"), &PSK).is_some(),
-            "the scanner does not recognise {rendering:.24}…"
+            "the scanner does not recognize {rendering:.24}…"
         );
     }
 }
@@ -391,7 +391,7 @@ fn the_scanner_does_not_fire_on_unrelated_output() {
     assert!(leak(&rendered, &other).is_none());
 }
 
-/// The bug report is the artefact most likely to be pasted somewhere public,
+/// The bug report is the artifact most likely to be pasted somewhere public,
 /// so it says what it does and does not contain.
 #[test]
 fn the_bug_report_is_useful_and_says_what_it_omits() {

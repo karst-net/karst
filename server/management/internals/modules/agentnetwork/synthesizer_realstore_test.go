@@ -18,7 +18,7 @@ import (
 
 // decodeServiceRouterConfig finds the llm_router middleware on the synthesised
 // service's single target and decodes its config — the model→provider routing
-// table the proxy authorises against.
+// table the proxy authorizes against.
 func decodeServiceRouterConfig(t *testing.T, svc *rpservice.Service) routerConfig {
 	t.Helper()
 	require.NotEmpty(t, svc.Targets, "synth service must carry a target")
@@ -130,7 +130,7 @@ func (noopAccountManager) UpdateAccountPeers(context.Context, string, nbtypes.Up
 // that broke in production — provider disable then re-enable — and asserts the
 // mapping reconcile pushes to the cluster after re-enable is Private=true and
 // carries the routable provider. If reconcile ever pushes private=false (the
-// symptom that left UserGroups empty → no_authorised_provider), this fails.
+// symptom that left UserGroups empty → no_authorized_provider), this fails.
 func TestReconcile_RealStore_PushesPrivateAfterStatusToggle(t *testing.T) {
 	ctx := context.Background()
 	s, cleanup, err := store.NewTestStoreFromSQL(ctx, "", t.TempDir())
@@ -165,10 +165,10 @@ func TestReconcile_RealStore_PushesPrivateAfterStatusToggle(t *testing.T) {
 
 	assert.Equal(t, newSynthTestSettings().Endpoint(), last.GetDomain(), "synth domain on the wire")
 	assert.True(t, last.GetPrivate(),
-		"reconcile-pushed mapping after re-enable MUST be Private=true; a false here is the exact bug — the proxy skips ValidateTunnelPeer, UserGroups stays empty, and llm_router denies no_authorised_provider")
+		"reconcile-pushed mapping after re-enable MUST be Private=true; a false here is the exact bug — the proxy skips ValidateTunnelPeer, UserGroups stays empty, and llm_router denies no_authorized_provider")
 
 	cfg := decodeMappingRouterConfig(t, last)
 	require.Len(t, cfg.Providers, 1, "re-enabled provider must be back in the pushed router config")
 	assert.Equal(t, []string{"gpt-5.4"}, cfg.Providers[0].Models, "model must be routable again after re-enable")
-	assert.Equal(t, []string{"grp-eng"}, cfg.Providers[0].AllowedGroupIDs, "authorised groups must be present after re-enable")
+	assert.Equal(t, []string{"grp-eng"}, cfg.Providers[0].AllowedGroupIDs, "authorized groups must be present after re-enable")
 }

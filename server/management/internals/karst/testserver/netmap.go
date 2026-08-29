@@ -561,7 +561,7 @@ func (m *memoryBedrockLog) Head(context.Context, string) ([]byte, uint64, error)
 // bedrockFixture builds and extends a chain at runtime.
 //
 // Countersignatures are issued as nodes register, which is what lets the test
-// cover the node under test — it enrols dynamically and its handle is not known
+// cover the node under test — it enrolls dynamically and its handle is not known
 // until it does. That models an admin who countersigns promptly; the
 // interesting cases are the ones where they have not, which the fixture
 // produces by leaving `cover` false.
@@ -572,7 +572,7 @@ type bedrockFixture struct {
 	log       *memoryBedrockLog
 	at        int64
 	covered   map[string]struct{}
-	// coverEnrolling countersigns nodes as they enrol. False leaves them
+	// coverEnrolling countersigns nodes as they enroll. False leaves them
 	// uncovered, which is what a test needs to see a refusal.
 	coverEnrolling bool
 }

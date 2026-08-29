@@ -311,7 +311,7 @@ func TestBusinessLayerErrorPropagates(t *testing.T) {
 	}
 }
 
-// A refused enrolment must not create an identity row. In particular, the
+// A refused enrollment must not create an identity row. In particular, the
 // control handshake proved the identity key before this point, but possession
 // of that key is not authorization to consume durable server state.
 func TestRejectedLoginDoesNotPersistAnIdentity(t *testing.T) {

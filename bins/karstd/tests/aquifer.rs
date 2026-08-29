@@ -104,7 +104,7 @@ const NAT64_GW_V6: &str = "fd00:11::1";
 /// RFC 6052 §3.1 forbids pairing `64:ff9b::/96` with non-global IPv4 addresses,
 /// and `tayga` enforces it — `nat_matrix.rs` uses a local prefix for exactly
 /// that reason, since its outside is 10.10.2.0/24. This aquifer's public
-/// segment is 51.75.10.0/24, which is global address space, so the realistic
+/// segment is 51.75.10.0/24, which is global address space, so the realiztic
 /// prefix is also the legal one here.
 const NAT64_PREFIX: &str = "64:ff9b::/96";
 /// `tayga`'s own two addresses and the pool it draws client mappings from.
@@ -443,7 +443,7 @@ enum Shape {
     /// relay speaks TCP and Ponor has no frame for reporting an observed
     /// address. PLAN.md §6 lists "STUN against our relays" as the piece that
     /// closes this and it is unbuilt, so the honest expectation is a permanent
-    /// relay path — and this row exists to hold that behaviour to *graceful*,
+    /// relay path — and this row exists to hold that behavior to *graceful*,
     /// which is the other half of the exit criterion.
     BothNat,
     /// Node A behind a **symmetric** NAT; node B public.
@@ -619,11 +619,11 @@ enum Shape {
 ///
 /// The distinction that matters to AVEN is whether one external port is reused
 /// across destinations. `crates/karst-disco/tests/nat_matrix.rs` pins each of
-/// these behaviours with a negative assertion before any of them is used to
+/// these behaviors with a negative assertion before any of them is used to
 /// draw a conclusion about the product — finding 23 is what that discipline
 /// costs when it is skipped.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Flavour {
+enum Flavor {
     /// Linux's default masquerade: one external port reused across
     /// destinations, return traffic accepted per flow.
     PortRestrictedCone,
@@ -634,7 +634,7 @@ enum Flavour {
     /// reserve its datapath port explicitly.
     SymmetricWithPortMapping,
     /// A port-restricted cone that also runs `miniupnpd` — **an ordinary home
-    /// router**, which is the point of the flavour.
+    /// router**, which is the point of the flavor.
     ///
     /// The mapping does something different here than it does on a symmetric
     /// NAT, and the difference is the whole of row 8b. A cone's external port
@@ -740,26 +740,26 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
     must(&nsr(NS_PUB, &["ip", "addr", "add", &cidr, "dev", "ktn-br"]));
 
     // One NAT with both nodes behind it is a different shape rather than a
-    // different flavour, so it gets its own builder instead of a third arm in
+    // different flavor, so it gets its own builder instead of a third arm in
     // each of the two matches below.
     if shape == Shape::SameLan {
         return build_same_lan(net);
     }
     // Two translation stages is a different shape rather than a different
-    // flavour, by the same argument as the row above: `nat_in_front_of` puts a
+    // flavor, by the same argument as the row above: `nat_in_front_of` puts a
     // NAT's outward leg on the public bridge, and this one's belongs on the
     // carrier's segment.
     if shape == Shape::DoubleNat {
         return build_double_nat(net);
     }
-    // An IPv6-only inside is a topology rather than a NAT flavour: `nat_rules`
+    // An IPv6-only inside is a topology rather than a NAT flavor: `nat_rules`
     // configures how a translation allocates ports, and this row changes which
     // address family arrives at it in the first place.
     if shape == Shape::Nat64 {
         return build_nat64(net);
     }
 
-    // Node A is behind a NAT in every shape but `Flat`; only the flavour
+    // Node A is behind a NAT in every shape but `Flat`; only the flavor
     // changes.
     let ip_a = match shape {
         // Handled by their own builders above, which return before this match.
@@ -781,15 +781,15 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted
         | Shape::SymmetricAndPortRestrictedMapped => {
-            let flavour = match shape {
-                Shape::SymmetricAndMapped => Flavour::SymmetricWithPortMapping,
+            let flavor = match shape {
+                Shape::SymmetricAndMapped => Flavor::SymmetricWithPortMapping,
                 Shape::SymmetricA
                 | Shape::BothSymmetric
                 | Shape::SymmetricAndAddressRestricted
                 | Shape::SymmetricAndPortRestricted
-                | Shape::SymmetricAndPortRestrictedMapped => Flavour::Symmetric,
-                Shape::UdpBlocked => Flavour::UdpBlocked,
-                _ => Flavour::PortRestrictedCone,
+                | Shape::SymmetricAndPortRestrictedMapped => Flavor::Symmetric,
+                Shape::UdpBlocked => Flavor::UdpBlocked,
+                _ => Flavor::PortRestrictedCone,
             };
             nat_in_front_of(
                 net,
@@ -799,7 +799,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
                 NAT_A_INNER,
                 NS_A,
                 IP_A_PRIVATE,
-                flavour,
+                flavor,
             );
             IP_A_PRIVATE
         }
@@ -821,11 +821,11 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
         | Shape::SymmetricAndAddressRestricted
         | Shape::SymmetricAndPortRestricted
         | Shape::SymmetricAndPortRestrictedMapped => {
-            let flavour = match shape {
-                Shape::SymmetricAndMapped | Shape::BothSymmetric => Flavour::Symmetric,
-                Shape::SymmetricAndAddressRestricted => Flavour::AddressRestrictedCone,
-                Shape::SymmetricAndPortRestrictedMapped => Flavour::PortRestrictedWithPortMapping,
-                _ => Flavour::PortRestrictedCone,
+            let flavor = match shape {
+                Shape::SymmetricAndMapped | Shape::BothSymmetric => Flavor::Symmetric,
+                Shape::SymmetricAndAddressRestricted => Flavor::AddressRestrictedCone,
+                Shape::SymmetricAndPortRestrictedMapped => Flavor::PortRestrictedWithPortMapping,
+                _ => Flavor::PortRestrictedCone,
             };
             nat_in_front_of(
                 net,
@@ -835,7 +835,7 @@ fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static st
                 NAT_B_INNER,
                 NS_B,
                 IP_B_PRIVATE,
-                flavour,
+                flavor,
             );
             IP_B_PRIVATE
         }
@@ -923,7 +923,7 @@ fn build_same_lan(net: &mut Aquifer) -> (&'static str, &'static str) {
         "ktn-lan",
         IP_A_PRIVATE,
         NAT_A_OUTER,
-        Flavour::PortRestrictedCone,
+        Flavor::PortRestrictedCone,
     );
     (IP_A_PRIVATE, IP_B_SAME_LAN)
 }
@@ -931,7 +931,7 @@ fn build_same_lan(net: &mut Aquifer) -> (&'static str, &'static str) {
 /// Node A behind its own router, behind a carrier's — [`Shape::DoubleNat`].
 ///
 /// Four namespaces on A's side of the wire: the node, its router, the carrier,
-/// and the public segment. The stages are deliberately **different flavours**,
+/// and the public segment. The stages are deliberately **different flavors**,
 /// because that is what the deployment is: an ordinary consumer masquerade at
 /// home, and carrier equipment that scatters ports. Two cones would make the
 /// row a long path rather than a hard one.
@@ -1017,7 +1017,7 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
         "ktn-ai",
         IP_A_PRIVATE,
         NAT_A_CG,
-        Flavour::PortRestrictedCone,
+        Flavor::PortRestrictedCone,
     );
     // Stage two: the carrier's, symmetric — which is what makes this the hard
     // shape and not merely a long one. What sits behind it is the router, so
@@ -1028,12 +1028,12 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
         "ktn-cgi",
         NAT_A_CG,
         CG_OUTER,
-        Flavour::Symmetric,
+        Flavor::Symmetric,
     );
 
     // **The router serves PCP and can grant nothing**, which is the case the
     // row exists to put in front of the port-mapping client. Started here
-    // rather than through a `Flavour`, because the mapping flavours also pin a
+    // rather than through a `Flavor`, because the mapping flavors also pin a
     // fixed source translation for the mapping to be consistent with, and there
     // is going to be no mapping.
     start_miniupnpd(net, "a", NS_NAT_A, "ktn-ao", "ktn-ai", IP_A_PRIVATE);
@@ -1049,7 +1049,7 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
 /// row, and deliberately so: `tayga` does the protocol translation and an
 /// **ordinary masquerade** behind it does the port sharing, so the NAT
 /// semantics this row runs a daemon on are the ones that file has already
-/// characterised rather than a second implementation's taken on trust.
+/// characterized rather than a second implementation's taken on trust.
 /// FINDINGS.md 27 records why, and why an out-of-tree kernel module was not
 /// needed to get here.
 ///
@@ -1234,7 +1234,7 @@ fn start_translator(net: &mut Aquifer) {
     // on its own is barely distinguishable from a plain IPv6 path and would
     // report a comfortable result about a topology nobody is on. The masquerade
     // collapses the pool onto one address and shares it by port, which is what
-    // a carrier does — and it is Linux's default masquerade, so the flavour
+    // a carrier does — and it is Linux's default masquerade, so the flavor
     // node A ends up behind is the port-restricted cone `Shape::NatA` uses.
     must(&nsr(NS_NAT_A, &["nft", "add", "table", "ip", "karst"]));
     must(&nsr(
@@ -1287,7 +1287,7 @@ fn public_leg(dev: &str, ns: &str, ip: &str) {
     must(&nsr(ns, &["ip", "route", "add", "default", "via", IP_PUB]));
 }
 
-/// Put a NAT of the given flavour between a node and the public segment.
+/// Put a NAT of the given flavor between a node and the public segment.
 ///
 /// **No route from the public side into the private prefix**, which is what
 /// makes this a NAT rather than a router. An earlier version added one "so the
@@ -1303,7 +1303,7 @@ fn nat_in_front_of(
     inner: &str,
     node_ns: &str,
     node: &str,
-    flavour: Flavour,
+    flavor: Flavor,
 ) {
     must(&["ip", "netns", "add", nat_ns]);
     must(&nsr(nat_ns, &["ip", "link", "set", "lo", "up"]));
@@ -1356,10 +1356,10 @@ fn nat_in_front_of(
         nat_ns,
         &["sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward"],
     ));
-    nat_rules(nat_ns, &out_dev, &in_dev, node, outer, flavour);
+    nat_rules(nat_ns, &out_dev, &in_dev, node, outer, flavor);
     if matches!(
-        flavour,
-        Flavour::SymmetricWithPortMapping | Flavour::PortRestrictedWithPortMapping
+        flavor,
+        Flavor::SymmetricWithPortMapping | Flavor::PortRestrictedWithPortMapping
     ) {
         start_miniupnpd(net, tag, nat_ns, &out_dev, &in_dev, node);
     }
@@ -1375,7 +1375,7 @@ const DATA_PORT: u16 = 51820;
 /// endpoint-*independent* — `outer:51820` reaches the node whatever the source,
 /// which plain masquerade will not do, because masquerade's reverse translation
 /// only exists for a flow the inside started. A `seen` set then restores the
-/// restriction that gives the flavour its name: an address the node has sent to
+/// restriction that gives the flavor its name: an address the node has sent to
 /// may come back **on any port**, and an address it has not may not come back
 /// at all.
 ///
@@ -1440,8 +1440,8 @@ fn address_restricted(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str) {
 }
 
 /// The translation and filtering rules, which are all that distinguishes one
-/// [`Flavour`] from another.
-fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str, flavour: Flavour) {
+/// [`Flavor`] from another.
+fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str, flavor: Flavor) {
     // Linux conntrack's default masquerade: one external port reused across
     // destinations, return traffic accepted per flow — a port-restricted cone,
     // which `karst-disco`'s NAT matrix pins as behaving the way that name says.
@@ -1468,8 +1468,8 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
     // heuristic. It grants nothing on its own — with the mapping refused, the
     // inbound side is still dropped, which is what the defect check turns on.
     if matches!(
-        flavour,
-        Flavour::SymmetricWithPortMapping | Flavour::PortRestrictedWithPortMapping
+        flavor,
+        Flavor::SymmetricWithPortMapping | Flavor::PortRestrictedWithPortMapping
     ) {
         let fixed = format!(
             "oifname {out_dev} ip saddr {node} udp sport {DATA_PORT} snat to {outer}:{DATA_PORT}"
@@ -1480,14 +1480,14 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
         ));
     }
 
-    let rule = match flavour {
-        Flavour::Symmetric | Flavour::SymmetricWithPortMapping => {
+    let rule = match flavor {
+        Flavor::Symmetric | Flavor::SymmetricWithPortMapping => {
             format!("oifname {out_dev} masquerade fully-random")
         }
-        Flavour::PortRestrictedCone
-        | Flavour::PortRestrictedWithPortMapping
-        | Flavour::UdpBlocked
-        | Flavour::AddressRestrictedCone => {
+        Flavor::PortRestrictedCone
+        | Flavor::PortRestrictedWithPortMapping
+        | Flavor::UdpBlocked
+        | Flavor::AddressRestrictedCone => {
             format!("oifname {out_dev} masquerade")
         }
     };
@@ -1496,7 +1496,7 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
         &["nft", "add", "rule", "ip", "karst", "post", &rule],
     ));
 
-    if flavour == Flavour::AddressRestrictedCone {
+    if flavor == Flavor::AddressRestrictedCone {
         address_restricted(nat_ns, out_dev, in_dev, node);
     }
 
@@ -1505,7 +1505,7 @@ fn nat_rules(nat_ns: &str, out_dev: &str, in_dev: &str, node: &str, outer: &str,
     // the datapath socket in both directions, so AVEN cannot probe, cannot be
     // probed, and cannot reach the reflector either. That is the whole point of
     // the row — the relay has to be the answer, not merely the current best.
-    if flavour == Flavour::UdpBlocked {
+    if flavor == Flavor::UdpBlocked {
         must(&nsr(
             nat_ns,
             &[
@@ -1710,7 +1710,7 @@ fn relay_tls(net: &Aquifer) -> (PathBuf, PathBuf) {
     let key_path = net.dir.join("relay.pem");
     if !cert_path.exists() {
         // Self-signed, which §4.2 makes fine and finding 16 made expressible:
-        // this is the deployment `ponor-v1.md` calls the realistic self-hosted
+        // this is the deployment `ponor-v1.md` calls the realiztic self-hosted
         // one.
         let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
             .expect("self-signed certificate");
@@ -2103,7 +2103,7 @@ fn field(status: &str, key: &str) -> Option<String> {
 
 /// **The Phase 4 deliverable, end to end.**
 ///
-/// Enrolment, a netmap carrying disco keys and a relay registry, a Ponor
+/// Enrollment, a netmap carrying disco keys and a relay registry, a Ponor
 /// connection over TLS, a PHREATIC handshake **through the relay**, an AVEN
 /// rendezvous over it, probes on the shared UDP socket, the upgrade to a direct
 /// path, and a TCP conversation under a port-scoped ACL.
@@ -2246,7 +2246,7 @@ fn a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_direct
     run(Shape::SymmetricAndMapped);
 }
 
-/// **The CGNAT-to-CGNAT row, asserting today's behaviour rather than the
+/// **The CGNAT-to-CGNAT row, asserting today's behavior rather than the
 /// intended one.**
 ///
 /// Both nodes are behind symmetric NATs, so each reflexive address predicts a
@@ -2604,7 +2604,7 @@ fn run(shape: Shape) {
 
     // **A first, then B, then A again.** Each node's netmap is a snapshot taken
     // when it asks, and the server has no way to push. Starting A, letting it
-    // enrol, then starting B gives B a netmap that already names A; restarting A
+    // enroll, then starting B gives B a netmap that already names A; restarting A
     // gives A one that names B. The alternative is waiting out the sixty-second
     // refresh, which is a real property of the daemon and a poor use of a test's
     // time.
@@ -2791,7 +2791,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
     }
     if shape == Shape::SymmetricAndPortRestrictedMapped {
         // **The mapping is on B here, not on A** — the router side, not the
-        // CGNAT side, which is what makes this row the realistic one. A is
+        // CGNAT side, which is what makes this row the realiztic one. A is
         // behind carrier equipment it cannot ask for anything.
         let s = status(net, "b", NS_B);
         let mapped = field(&s, "portmap_external").unwrap_or_default();
@@ -3030,7 +3030,7 @@ fn exchange_tcp_under_the_acl(net: &mut Aquifer) {
 /// relay a node is not admitted to looks like from the outside (§10.1 makes a
 /// roster miss deliberately indistinguishable from a relay that is down). So B
 /// has to leave the relay its registry lists first and take the other, which is
-/// the behaviour a per-region or per-tenant registry needs and which nothing
+/// the behavior a per-region or per-tenant registry needs and which nothing
 /// else here exercises.
 ///
 /// Then A — still on relay 1, and with no way to know where B is — has to

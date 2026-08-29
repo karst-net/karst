@@ -159,17 +159,17 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 		router.ServeHTTP(response, req)
 		return response
 	}
-	response := portalRequest(http.MethodPost, "/karst/v1/me/devices/enrol")
+	response := portalRequest(http.MethodPost, "/karst/v1/me/devices/enroll")
 	if response.Code != http.StatusOK {
-		t.Fatalf("create portal enrolment key: status=%d body=%s", response.Code, response.Body.String())
+		t.Fatalf("create portal enrollment key: status=%d body=%s", response.Code, response.Body.String())
 	}
-	var enrolment struct {
+	var enrollment struct {
 		Key string `json:"key"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &enrolment); err != nil || enrolment.Key == "" {
-		t.Fatalf("portal enrolment response: key=%q err=%v", enrolment.Key, err)
+	if err := json.Unmarshal(response.Body.Bytes(), &enrollment); err != nil || enrollment.Key == "" {
+		t.Fatalf("portal enrollment response: key=%q err=%v", enrollment.Key, err)
 	}
-	setupKey := enrolment.Key
+	setupKey := enrollment.Key
 
 	static, err := channel.GenerateStatic()
 	if err != nil {
@@ -350,7 +350,7 @@ func TestConsoleUserLifecycleAgainstTheRealAccountManager(t *testing.T) {
 		Meta: nbpeer.PeerSystemMeta{Hostname: "portal-member-linux", GoOS: "linux", Platform: "linux"},
 	}, false)
 	if err != nil {
-		t.Fatalf("enrol member Linux client: %v", err)
+		t.Fatalf("enroll member Linux client: %v", err)
 	}
 	if memberPeer.UserID != memberID || memberPeer.Meta.GoOS != "linux" {
 		t.Fatalf("enrolled member peer: %#v", memberPeer)

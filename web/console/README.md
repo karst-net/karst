@@ -33,7 +33,7 @@ upstream is still a cherry-pick.
 Each of these is a place where an obvious button would produce a request the
 server rejects, or an action that is unsafe to take from a web page.
 
-- **Create a machine.** A machine is not created by an administrator; it enrols
+- **Create a machine.** A machine is not created by an administrator; it enrolls
   itself with an auth key and its own identity key. *Add machine* therefore
   mints a single-use key and shows where to put it, rather than presenting a
   form for a resource the server cannot conjure.
@@ -55,9 +55,9 @@ server rejects, or an action that is unsafe to take from a web page.
   `SocketAddr`, which does not resolve, so a DNS name there is not one broken
   relay — it is a netmap **every node rejects in full**. The form refuses it
   before it is sent and points at the TLS server name field instead.
-- **The network lock's acknowledgement is required only for *enforcing*.**
+- **The network lock's acknowledgment is required only for *enforcing*.**
   Advisory and off cannot cut anyone off, so they are one click. Gating them
-  behind the same acknowledgement would make the safe direction harder than the
+  behind the same acknowledgment would make the safe direction harder than the
   dangerous one, which is backwards during an incident.
 
 ## Not yet exposed

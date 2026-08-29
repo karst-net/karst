@@ -303,7 +303,7 @@ func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 		}
 	}
 
-	f.Rules = normalise(f.Rules)
+	f.Rules = normalize(f.Rules)
 	return f, nil
 }
 
@@ -369,7 +369,7 @@ func (d *Document) CompileEgress(target Node, all []Node) (*EgressFilter, error)
 		}
 	}
 
-	f.Rules = normaliseEgress(f.Rules)
+	f.Rules = normalizeEgress(f.Rules)
 	return f, nil
 }
 
@@ -413,10 +413,10 @@ func (f *EgressFilter) Permits(dst string, port uint16) bool {
 	return false
 }
 
-// normaliseEgress is normalise for the outbound direction, and exists for the
+// normalizeEgress is normalize for the outbound direction, and exists for the
 // same reason: without a stable order, map iteration would make every
 // recompilation look like a change and defeat the netmap's version hash.
-func normaliseEgress(rules []EgressRule) []EgressRule {
+func normalizeEgress(rules []EgressRule) []EgressRule {
 	for i := range rules {
 		sort.Slice(rules[i].Ports, func(a, b int) bool {
 			if rules[i].Ports[a].First != rules[i].Ports[b].First {
@@ -450,7 +450,7 @@ func (d *Document) matches(selector string, n Node) bool {
 		// A tagged node has no user, so it is never a member of a group. This
 		// is deliberate and matches Tailscale: tags replace user ownership
 		// rather than adding to it, so that a server's access does not follow
-		// the person who happened to enrol it.
+		// the person who happened to enroll it.
 		if n.User == "" {
 			return false
 		}
@@ -489,10 +489,10 @@ func (d *Document) resolveSources(selectors []string, all []Node) []string {
 	return out
 }
 
-// normalise sorts and deduplicates so that an unchanged policy compiles to a
+// normalize sorts and deduplicates so that an unchanged policy compiles to a
 // byte-identical filter. Without it, map iteration order would make every
 // recompilation look like a change and defeat the netmap's version hash.
-func normalise(rules []FilterRule) []FilterRule {
+func normalize(rules []FilterRule) []FilterRule {
 	for i := range rules {
 		sort.Slice(rules[i].Ports, func(a, b int) bool {
 			if rules[i].Ports[a].First != rules[i].Ports[b].First {

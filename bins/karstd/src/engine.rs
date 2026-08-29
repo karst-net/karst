@@ -534,7 +534,7 @@ impl Engine {
     ///
     /// A peer present in both rosters **keeps its live session and its learned
     /// endpoint**. Adding one peer must not cost a rehandshake with every
-    /// other: on a large aquifer a single enrolment would otherwise produce a
+    /// other: on a large aquifer a single enrollment would otherwise produce a
     /// fleet-wide reconnect, and each reconnect is two ML-KEM operations and a
     /// window where traffic is dropped for want of a session.
     ///
@@ -917,7 +917,7 @@ impl Engine {
     /// Shared by [`Self::outbound`], which arrives here after routing and the
     /// ACL, and by the Bedrock head claim, which is not an IP packet and so has
     /// neither. Keeping one sealing path means a control frame cannot acquire
-    /// different framing, replay or counter behaviour from tunnelled traffic by
+    /// different framing, replay or counter behavior from tunnelled traffic by
     /// drifting apart from it.
     fn send_sealed(
         &self,
@@ -934,7 +934,7 @@ impl Engine {
 
         // **The lock is held only to clone two handles**, not across the
         // cryptography. Sealing needs no exclusive access — the counter is
-        // atomic — so holding the session lock around it would serialise every
+        // atomic — so holding the session lock around it would serialize every
         // flow to this peer behind every other, which measured as a hard
         // ~500 Mbps ceiling regardless of flow count (PLAN.md §3.4).
         let handles = {
@@ -1366,7 +1366,7 @@ impl Engine {
     /// One call to `respond` performs **one** ML-KEM decapsulation and resolves
     /// the initiator through `peer_id_hint` — the O(1) lookup §4 exists for.
     /// Offering the message to each session in turn would instead cost a
-    /// decapsulation per peer for every unrecognised handshake, so a stream of
+    /// decapsulation per peer for every unrecognized handshake, so a stream of
     /// garbage from one address would consume CPU proportional to roster size.
     fn accept_handshake(
         &self,
@@ -1411,7 +1411,7 @@ impl Engine {
                 let peer = peers.get(index)?;
                 matched = Some(index);
                 // A plain clone. This used to rebuild the key through its
-                // serialisation, on the belief that `PeerPublic` could not be
+                // serialization, on the belief that `PeerPublic` could not be
                 // `Clone` because the KEM key is opaque — true of an earlier
                 // backend, and it had outlived it.
                 Some((*peer.public).clone())

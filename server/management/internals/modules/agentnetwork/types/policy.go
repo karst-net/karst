@@ -9,7 +9,7 @@ import (
 )
 
 // Policy is an Agent Network policy persisted per account. A policy
-// authorises members of SourceGroups to reach the listed
+// authorizes members of SourceGroups to reach the listed
 // DestinationProviderIDs under the attached GuardrailIDs and Limits.
 //
 // Token and budget limits live on the Policy itself (Limits field);

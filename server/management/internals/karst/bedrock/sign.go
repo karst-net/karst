@@ -91,7 +91,7 @@ const (
 // guaranteed by the algorithm split alone.
 //
 // These follow identity.ControlContext's precedent, and deliberately share its
-// "karst-…-v1" shape so that a reader who has seen one recognises the other.
+// "karst-…-v1" shape so that a reader who has seen one recognizes the other.
 const (
 	RootContext      = "karst-bedrock-v1 root"
 	AuthorityContext = "karst-bedrock-v1 authority"

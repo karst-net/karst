@@ -41,7 +41,7 @@ commit apart, and both are components that exist only in the test harness — a
 roster refresher and a relay registry — with production reading the field the
 harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
-artefact, which is the only vantage point from which either is visible.
+artifact, which is the only vantage point from which either is visible.
 
 58 is the most recent closed one: a two-kilobyte signature increase aborting
 the relay's tests with a stack overflow, which was a margin problem rather than
@@ -121,7 +121,7 @@ carries both the new wording and the original, struck through.
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | 1 | Critical | Netmap cache sealed with a public-derived key | Fixed 2026-08-15 |
-| 2 | High | Identity persistence precedes enrolment authorization | Fixed 2026-08-18 |
+| 2 | High | Identity persistence precedes enrollment authorization | Fixed 2026-08-18 |
 | 3 | High | AVEN candidate state unbounded | Fixed 2026-08-18 |
 | 4 | High | AVEN never selects a confirmed path | Fixed 2026-08-16 |
 | 5 | High | The AVEN integration is not driven by the daemon | Superseded by 10 |
@@ -229,7 +229,7 @@ fault was localised to the platform rather than the arrangement.
 Noted and not fixed, because it is neither new nor platform-specific:
 `serve_tcp_once`'s `read_exact` on an accepted socket has no timeout, so a
 client that connects to the tunnel's TCP DNS port and sends nothing holds that
-worker thread indefinitely. That is today's behaviour on Linux too, and this
+worker thread indefinitely. That is today's behavior on Linux too, and this
 change makes macOS match it rather than introducing it.
 
 ### 68. High: the netmap push was costed against a stream that does not exist
@@ -341,7 +341,7 @@ tests could have found it: they drive the same route against a `bedrockLog`
 double whose `PrepareAnchor` never returns `ErrNoLog`.
 
 
-### 65. Medium: the download manifest described artefacts nothing builds
+### 65. Medium: the download manifest described artifacts nothing builds
 
 **Found 2026-08-28** by tracing the portal's download page back to what
 produces its data. Fixed the same day.
@@ -359,7 +359,7 @@ existed, for a page that would have been empty in production. That is findings
 42 and 43's category again — a component that exists only in the test harness —
 and it is the third time this shape has appeared.
 
-The generator now discovers artefacts and fails if it finds none, which also
+The generator now discovers artifacts and fails if it finds none, which also
 fixed something the fixed list could not express: since finding 59 the client
 ships as `.deb` and `.rpm` for amd64 and arm64, so "the Linux download" names
 four files. The page offered exactly one, chosen by first match, and was
@@ -522,7 +522,7 @@ distributions plans/phase-5/09-exit-criteria.md §2 says the docs will claim.
 in the right place with the right mode, and the failure arrives when the
 operator starts the service. Nothing upstream of an install on a real
 distribution could see it: the build was green, the packaging was correct, and
-the artefact was broken.
+the artifact was broken.
 
 Fixed by building in a `rockylinux:9` container — RHEL 9's glibc, public
 repositories, no subscription — which puts the floor at the oldest distribution
@@ -689,7 +689,7 @@ engines completing a real handshake and both being asked what they concluded.
 The fix stops hooking an event. The claim is now driven from `poll`, gated on
 comparing the current head against the last one claimed to that peer, which
 both roles reach and which no future path to "established" can bypass. It is
-also better behaviour than the original intent: once per *head* rather than
+also better behavior than the original intent: once per *head* rather than
 once per session, so a node whose log advances tells its peers instead of
 waiting for the next handshake.
 
@@ -902,7 +902,7 @@ interface, and that what comes back starts at the byte the parser expects.
 `node.listen` decides the datapath's address family, because §4 gives it one
 shared socket. A node listening on an IPv4 address has an `AF_INET` socket,
 which cannot send to an IPv6 address at all — the kernel refuses with
-`EAFNOSUPPORT`. That is correct behaviour for a node with no IPv6 connectivity.
+`EAFNOSUPPORT`. That is correct behavior for a node with no IPv6 connectivity.
 
 **The problem was that every send path drops errors on purpose.** A full buffer
 or an unreachable host must not take the daemon down, and the protocol
@@ -1041,7 +1041,7 @@ on loopback that only NAT64 extraction turns back into an IPv4 one. Removing
 either half now fails it.
 
 **The general shape is worth keeping.** A test written against a boundary that
-already normalises will silently measure the normalisation instead of the thing
+already normalizes will silently measure the normalization instead of the thing
 under test, and it looks identical from the outside: same assertion, same green.
 The only way to tell the two apart is to break the code on purpose. Every fix in
 this report is checked that way; this is the first time the check caught the
@@ -1058,7 +1058,7 @@ starting. Fixed the same day.
 comes from its own configuration file, the relay from the netmap, the peer from
 a call-me-maybe. On an ordinary network that is fine. On a NAT64-only network
 the node has no IPv4 address and no IPv4 route, so all three are unreachable and
-the node never gets past enrolment.
+the node never gets past enrollment.
 
 Nothing in Karst knew what a NAT64 prefix was. FINDINGS.md 45 had already
 recorded that — "not RFC 7050's `ipv4only.arpa` heuristic, not RFC 8781's
@@ -1160,7 +1160,7 @@ What breaks is everything that lets that address out of the node:
   every symptom of it is silence: the sender's error is dropped, and the
   advertiser sees a peer that never answers.
 
-The fix is one normalisation at the socket boundary — `karst_transport::canonical`,
+The fix is one normalization at the socket boundary — `karst_transport::canonical`,
 applied in both receive paths, so no v4-mapped address ever enters the daemon
 and there is exactly one representation of an address above the socket.
 `source_key` maps the *other* way and stays as it is: a reassembly key wants
@@ -1177,13 +1177,13 @@ candidate that only dual-stack nodes can probe.
 `karst-transport`'s `a_dual_stack_socket_reports_an_ipv4_peer_at_its_ipv4_address`
 binds real sockets and pins what the *kernel* does — the first assertion is the
 mapped-source claim itself, so a platform where it were false would say so
-rather than leave the normalisation looking like superstition.
+rather than leave the normalization looking like superstition.
 `bins/karstd/tests/dual_stack.rs` drives two engines with no socket at all and
-pins what the daemon *does with* the result, modelling the receive path through
+pins what the daemon *does with* the result, modeling the receive path through
 the same `canonical` the daemon calls. Removing that call fails both.
 
 **Still open, and named rather than fixed**: an `AF_INET` node silently drops
-every send to an IPv6 candidate. That is correct behaviour for a node with no
+every send to an IPv6 candidate. That is correct behavior for a node with no
 IPv6 connectivity, and the silence is `dispatch`'s deliberate policy, but it
 means "this node cannot use IPv6" is a fact no operator can read anywhere. It
 belongs with the NAT64 row, which is the remaining Phase 4 shape.
@@ -1240,7 +1240,7 @@ stale one resolves to nothing. `a_released_handle_cannot_reach_the_socket_that_
 replaces_it` asks a released handle every question the API has, against a live
 connection sitting in its old slot, and requires all of them to come back empty.
 It also removes the last way a caller could panic this crate: smoltcp's own
-`get_mut` panics on a handle it does not recognise.
+`get_mut` panics on a handle it does not recognize.
 
 *Somewhere to see it.* `karst status` reports `userspace_sockets` in userspace
 mode, and the end-to-end row waits for the count to come back down after its
@@ -1316,7 +1316,7 @@ jitter each fail exactly the tests that name them.
 ### 43. High: a production coordination server published no relays at all
 
 **Found 2026-08-21** by reading, one commit after finding 42, while writing the
-`docker-compose` artefact both findings block. Fixed the same day.
+`docker-compose` artifact both findings block. Fixed the same day.
 
 A node learns which relays exist, and which key authenticates each one, from
 exactly one place: the `relays` field of its signed netmap. That is deliberate —
@@ -1377,7 +1377,7 @@ passed before this change.
 ### 42. High: nothing outside the test fixture kept a relay's roster fresh
 
 **Found 2026-08-21** while starting on PLAN.md §5's co-located deployment
-artefact — the `docker-compose` that is supposed to have a self-hoster relaying
+artifact — the `docker-compose` that is supposed to have a self-hoster relaying
 in five minutes. Fixed the same day.
 
 Ponor's admission is structural and deliberately unforgiving: `ClientAuth`
@@ -1448,7 +1448,7 @@ tcp::Socket::new(
 One MTU reads like the right unit for a packet-oriented stack, and for a
 *device* buffer it would be. For a TCP socket it is not: **the receive buffer is
 the window the stack advertises**. At 1280 bytes the far end may hold exactly one
-segment in flight and must wait for an acknowledgement before sending the next.
+segment in flight and must wait for an acknowledgment before sending the next.
 The transmit side mirrors it — one segment of application data at a time, so
 every write costs a round trip.
 
@@ -1468,9 +1468,9 @@ offload — was found first, fixed first, written up as the explanation, and mov
 the number from 7.3 Mbps to 7.3 Mbps. That change is kept (it is strictly
 cheaper and will matter when something else is the constraint) and the negative
 result is recorded beside it, because attempting batching before finding the
-serialisation is **exactly** what PLAN.md §3.4 records doing to the privileged
+serialization is **exactly** what PLAN.md §3.4 records doing to the privileged
 datapath: there the two lock removals were worth more than every
-micro-optimisation combined. The lesson had been written down and did not
+micro-optimization combined. The lesson had been written down and did not
 transfer.
 
 And nothing that existed could have caught it. The mode worked. ADR-0012's
@@ -1652,7 +1652,7 @@ Fixed the same day.
 
 Two nodes that both know the other's endpoint both dial at startup —
 `connect_all` runs on every node, so a *simultaneous open* is not an unlucky
-case but the standing behaviour of any pair with a static endpoint on both
+case but the standing behavior of any pair with a static endpoint on both
 sides, and of any pair that has learned each other's addresses. Each node is
 then initiator and responder at once, and the order the four messages land in
 is a race on the wire.
@@ -1977,7 +1977,7 @@ reported a comfortable result about a topology nobody is on — the same failure
 as findings 23 and 25, arrived at a third way.
 
 The resolution keeps `tayga` and adds the missing half from a mechanism this
-matrix has already characterised: **`tayga` does the protocol translation,
+matrix has already characterized: **`tayga` does the protocol translation,
 nftables does the port sharing.** No out-of-tree module, and the NAT semantics
 under test are the same masquerade every other row is built on rather than a
 second implementation taken on trust. It is also a real deployment shape;
@@ -2076,7 +2076,7 @@ birthday-paradox port prediction (`aven-v1.md` §12.4). **Prediction requires th
 NAT's port allocation to be predictable, and measurement says the ones that
 matter are not.**
 
-One socket, twenty-four destinations, a fresh topology per flavour:
+One socket, twenty-four destinations, a fresh topology per flavor:
 
 | nftables rule | Distinct external ports | Adjacent steps within ±8 |
 |---|---|---|
@@ -2084,7 +2084,7 @@ One socket, twenty-four destinations, a fresh topology per flavour:
 | `masquerade fully-random` | **24** of 24 | **0** of 23 |
 | `masquerade random` | **24** of 24 | **0** of 23 |
 
-The two symmetric flavours scatter across the whole ephemeral range with no
+The two symmetric flavors scatter across the whole ephemeral range with no
 locality whatever — sample deltas of −48061, +47375, +30529. There is no window
 of any practical width to probe. This is not a Linux quirk to be routed around
 either: RFC 6056 *recommends* unpredictable transport-port selection precisely
@@ -2123,7 +2123,7 @@ wrongly treated them as one.** Published analysis of the technique splits them:
 So the recommendation below applies to **row 6 only**. Row 8 is winnable and the
 measurement above does not argue against it — that measurement shows there is no
 *sequential* structure to predict, which rules out the cheap heuristic and
-leaves the random-probe method, whose arithmetic is favourable precisely because
+leaves the random-probe method, whose arithmetic is favorable precisely because
 only one side is randomising.
 
 Row 8 carries an architectural cost that belongs in the estimate. The technique
@@ -2189,7 +2189,7 @@ checks the mode and refuses an existing group- or world-readable cache.
 `overwriting_a_readable_secret_repairs_its_permissions` and
 `a_readable_cache_is_refused` cover the write- and read-side cases.
 
-### 2. High: identity persistence and data-plane key rotation preceded enrolment authorization
+### 2. High: identity persistence and data-plane key rotation preceded enrollment authorization
 
 **Fixed 2026-08-18.** `LoginHandler.Handle` now validates identity and
 data-plane keys without writing, authenticates any OIDC token, and calls
@@ -2601,7 +2601,7 @@ passed with the adoption removed, which the mutation check caught.
 relay, which could not be written because the node had no way to trust one.
 
 `relay_tls::client_config` loaded the operating system's trust store and nothing
-else. `ponor-v1.md` §4.2 names three realistic self-hosted deployments and the
+else. `ponor-v1.md` §4.2 names three realiztic self-hosted deployments and the
 system store covers one of them: an internal CA can be installed as a system
 root, a certificate for a different hostname is handled by the netmap's
 `tls_server_name` — and a **self-signed relay certificate** could only be used
@@ -2901,7 +2901,7 @@ product bug and both would have made the matrix lie.
 
 `bins/karstd/tests/aquifer.rs` was run privileged and passes: the Go
 coordination server, `karst-relay` and two daemons in separate namespaces, from
-first enrolment to a direct path carrying TCP under a port-scoped ACL — in two
+first enrollment to a direct path carrying TCP under a port-scoped ACL — in two
 topologies, one flat and one with node A behind a port-restricted cone NAT.
 
 It is checked against the defects it was written for. Reintroducing finding 17
@@ -3007,7 +3007,7 @@ quoting it: running it the CI way changed nothing about what it measures.
 The refusal to skip is checked in both directions, on all three suites, because
 a gate that cannot be observed failing is a gate nobody has tested:
 
-| Condition | Required behaviour | Observed |
+| Condition | Required behavior | Observed |
 |---|---|---|
 | `KARST_REQUIRE_PREREQUISITES=1`, non-root | fail | `missing: ["root"]` |
 | `KARST_REQUIRE_PREREQUISITES=1`, root, `PATH` without `/usr/sbin` | fail | `missing: ["nft", "miniupnpd"]` |
@@ -3058,7 +3058,7 @@ Three mutations, each restored:
 | the carrier made a cone rather than symmetric | **passes**, direct in 35 s |
 
 The third is reported because it is a negative result and belongs in the record:
-the row does not depend on the carrier's flavour for its outcome. The symmetric
+the row does not depend on the carrier's flavor for its outcome. The symmetric
 carrier is there because that is what carriers are — the instrument row
 `a_subscriber_behind_a_carrier_nat_is_translated_twice` pins it — and not
 because the row would pass without it.

@@ -75,7 +75,7 @@ func capPolicy(id, account string, sourceGroups []string, providerID string, tok
 }
 
 // TestSelectPolicy_NoApplicablePolicies covers the pass-through path:
-// llm_router authorisation is upstream of selection; when the
+// llm_router authorization is upstream of selection; when the
 // selector finds no policy targeting the (provider, caller-groups)
 // combination, it returns Allow with no attribution and lets the
 // request continue without consumption tracking.
@@ -220,7 +220,7 @@ func TestSelectPolicy_FallsThroughToSmallerPoolWhenLargerExhausted(t *testing.T)
 
 	policyA := capPolicy("pol-A-200", "acc-1", []string{"grp-engineers"}, "prov-1", 200, 86_400)
 	// B uses a different window length so it has an INDEPENDENT counter — the
-	// realistic shape for fall-through. On the SAME (group, window) tuple the
+	// realiztic shape for fall-through. On the SAME (group, window) tuple the
 	// counter is shared, so A's cap of 200 being reached would also exhaust B's
 	// 150; independent counters are what let A exhaust while B retains headroom.
 	policyB := capPolicy("pol-B-150", "acc-1", []string{"grp-engineers"}, "prov-1", 150, 3_600)
@@ -457,7 +457,7 @@ func TestSelectPolicy_StoreErrorPropagates(t *testing.T) {
 }
 
 // TestSelectPolicy_RejectsEmptyAccount is the input-validation guard:
-// empty account_id is a programmer error and must surface as
+// empty account_id is a programr error and must surface as
 // InvalidArgument, not as a silent zero-result lookup.
 func TestSelectPolicy_RejectsEmptyAccount(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -511,7 +511,7 @@ func TestSelectPolicy_SharesGroupCounterAcrossPolicies(t *testing.T) {
 }
 
 // TestSelectPolicy_AntiFallThroughOnLowestGroup locks the no-fall-
-// through behaviour: when a caller is in multiple of a policy's
+// through behavior: when a caller is in multiple of a policy's
 // source_groups and the lowest-by-sort group is exhausted, we DENY
 // rather than fall through to a less-loaded sibling. Per-group caps
 // are independent (each group has its own bucket), but attribution
@@ -519,7 +519,7 @@ func TestSelectPolicy_SharesGroupCounterAcrossPolicies(t *testing.T) {
 // separate policies.
 //
 // This nails down semantics future contributors might "improve" into
-// fall-through behaviour by accident.
+// fall-through behavior by accident.
 func TestSelectPolicy_AntiFallThroughOnLowestGroup(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mgr, mockStore := newSelectorMgr(t, ctrl)

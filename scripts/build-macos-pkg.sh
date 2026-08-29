@@ -8,7 +8,7 @@
 # ## Why the signing is conditional rather than required
 #
 # The Developer ID certificates come from an Apple Developer Program
-# organisation membership, which takes weeks to obtain and can stall on a
+# organization membership, which takes weeks to obtain and can stall on a
 # legal-entity mismatch (plans/phase-5/06-macos-client.md §7). Until it lands,
 # and on every pull request from a fork afterwards, there are no secrets to
 # sign with. Two ways to handle that:
@@ -169,7 +169,7 @@ if [ -n "${KARST_NOTARY_KEY:-}" ] && [ -n "${KARST_NOTARY_KEY_ID:-}" ] \
 
   # `spctl` is what Gatekeeper actually consults. It passes here on the build
   # machine for reasons that have nothing to do with a user's — the real check
-  # is on a machine that has never seen the artefact, and that is a manual step
+  # is on a machine that has never seen the artifact, and that is a manual step
   # in the release walkthrough (plans/phase-5/09-exit-criteria.md).
   spctl --assess --type install -vv "$product" || true
 else

@@ -92,7 +92,7 @@ type PolicySelectionInput struct {
 	UserID     string
 	GroupIDs   []string
 	ProviderID string
-	// Model is the already-normalised upstream model id the proxy extracted
+	// Model is the already-normalized upstream model id the proxy extracted
 	// (parser strips Bedrock region/version, Vertex @version), so a
 	// case-insensitive compare suffices. Empty = undetermined → not permitted
 	// (fail closed).
@@ -209,7 +209,7 @@ func (m *managerImpl) CreateProvider(ctx context.Context, userID string, provide
 	if strings.TrimSpace(bootstrapCluster) != "" {
 		if _, err := m.bootstrapSettingsIfNeeded(ctx, m.store, provider.AccountID, bootstrapCluster); err != nil {
 			// The provider create has already succeeded; logging the
-			// bootstrap miss matches the plan's PoC behaviour. The synth
+			// bootstrap miss matches the plan's PoC behavior. The synth
 			// path treats a missing settings row as a no-op, and the next
 			// provider create retries the bootstrap.
 			log.WithContext(ctx).Debugf("agent-network bootstrap settings for account %s on cluster %s: %v", provider.AccountID, bootstrapCluster, err)

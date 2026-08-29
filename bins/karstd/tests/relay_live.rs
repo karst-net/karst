@@ -268,7 +268,7 @@ async fn a_packet_crosses_between_two_admitted_nodes() {
 ///
 /// The two halves are proven separately elsewhere — `karst-relay`'s listener
 /// suite answers a `Ping`, and `home.rs` matches tokens — and neither one shows
-/// that `karstd` sends a frame this relay recognises. A token echoed back under
+/// that `karstd` sends a frame this relay recognizes. A token echoed back under
 /// a different length or a `Pong` the client did not parse would leave the
 /// selector receiving nothing at all, which looks exactly like a relay that is
 /// merely slow: the home relay would never be re-elected and nothing would say

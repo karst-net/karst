@@ -48,7 +48,7 @@ type AgentNetworkAccessLog struct {
 	// bills separately. These four are the only cost state stored: the total
 	// and the cache portion are derived on read (TotalCostUSD / CacheCostUSD)
 	// rather than stored alongside, so a stored aggregate can never drift out
-	// of step with the components it summarises.
+	// of step with the components it summarizes.
 	//
 	// default:0 matters on upgrade: these columns are ALTER TABLE ADD COLUMN
 	// on an existing table, and without it every historical row holds NULL —
@@ -67,7 +67,7 @@ type AgentNetworkAccessLog struct {
 
 	CreatedAt time.Time
 
-	// GroupIDs is the authorising group ids for this entry, hydrated from the
+	// GroupIDs is the authorizing group ids for this entry, hydrated from the
 	// group child table on read. Not a column.
 	GroupIDs []string `gorm:"-"`
 }
@@ -139,7 +139,7 @@ func (a *AgentNetworkAccessLog) ToAPIResponse() api.AgentNetworkAccessLog {
 }
 
 // strPtr returns a pointer to s, or nil when s is empty — so empty optional
-// fields are omitted from the JSON rather than serialised as "".
+// fields are omitted from the JSON rather than serialized as "".
 func strPtr(s string) *string {
 	if s == "" {
 		return nil
@@ -155,7 +155,7 @@ func strPtr(s string) *string {
 type AgentNetworkAccessLogSession struct {
 	SessionID            string // empty for a session-less (singleton) request
 	UserID               string
-	GroupIDs             []string // union of the entries' authorising groups
+	GroupIDs             []string // union of the entries' authorizing groups
 	StartedAt            time.Time
 	EndedAt              time.Time
 	RequestCount         int
@@ -344,8 +344,8 @@ func (sess *AgentNetworkAccessLogSession) ToAPIResponse() api.AgentNetworkAccess
 	return out
 }
 
-// AgentNetworkAccessLogGroup is the normalised many-to-many row linking a log
-// entry to one authorising group, so the access-log endpoint can filter by
+// AgentNetworkAccessLogGroup is the normalized many-to-many row linking a log
+// entry to one authorizing group, so the access-log endpoint can filter by
 // group with a simple `group_id IN (...)` join instead of substring-matching a
 // CSV column.
 type AgentNetworkAccessLogGroup struct {

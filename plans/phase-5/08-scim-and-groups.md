@@ -80,7 +80,7 @@ Two ways out:
 
 ADR-0009's revised estimate already contemplates "new delta-push work". This is
 that work, and Phase 5 is where it becomes load-bearing rather than an
-optimisation. **Budget one week of Go and half a week of Rust in W6**, and
+optimization. **Budget one week of Go and half a week of Rust in W6**, and
 treat it as a dependency of the deprovisioning test rather than as a nice
 improvement to netmap freshness.
 

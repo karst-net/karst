@@ -76,7 +76,7 @@ func TestBuildCostMeterConfig_CacheRateNilVsZero(t *testing.T) {
 }
 
 // TestBuildCostMeterConfig_OrphanAndGatewayProviders: an orphan (no
-// authorising policy) is unreachable so its prices must not ship; a
+// authorizing policy) is unreachable so its prices must not ship; a
 // gateway with no model rows relies on the defaults table and gets no
 // per-record entry.
 func TestBuildCostMeterConfig_OrphanAndGatewayProviders(t *testing.T) {

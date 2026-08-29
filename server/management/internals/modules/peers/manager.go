@@ -41,7 +41,7 @@ type Manager interface {
 	// callers (the proxy's ValidateTunnelPeer RPC) are trusted server components.
 	GetPeerByTunnelIP(ctx context.Context, accountID string, ip net.IP) (*peer.Peer, error)
 	// GetPeerWithGroups returns the peer and the list of *types.Group it belongs
-	// to. Used by the proxy's auth path to authorise a request by the calling
+	// to. Used by the proxy's auth path to authorize a request by the calling
 	// peer's group memberships.
 	GetPeerWithGroups(ctx context.Context, accountID, peerID string) (*peer.Peer, []*types.Group, error)
 }

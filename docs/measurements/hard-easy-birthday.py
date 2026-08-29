@@ -3,7 +3,7 @@
 
 Topology, built once and reused across trials with fresh source ports so no
 conntrack entry is ever reused (the mistake that made the port-prediction
-experiment report all three NAT flavours as cones):
+experiment report all three NAT flavors as cones):
 
     A (private) -- NAT_A: masquerade fully-random  --\\
                                                       >-- public bridge

@@ -44,7 +44,7 @@ func TestRenderIsTheFormatTheRelayParses(t *testing.T) {
 	}, "t1"))
 
 	// Field names are the relay's, not ours: bins/karst-relay/src/roster.rs
-	// deserialises `[[client]]` rows of `identity_pk` and `aquifer`. A
+	// deserializes `[[client]]` rows of `identity_pk` and `aquifer`. A
 	// mismatch here is a relay that admits nobody and a file that looks fine.
 	if strings.Count(out, "[[client]]") != 2 {
 		t.Fatalf("want two client rows, got:\n%s", out)

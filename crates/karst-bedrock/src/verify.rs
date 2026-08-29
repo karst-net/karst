@@ -92,7 +92,7 @@ impl State {
     /// **The datapath keys are what is compared.** Checking the identity key
     /// here would not do: it is not used by PHREATIC (`phreatic-v1.md` §4) and
     /// does not appear in a netmap, so a check that ignored the static KEM and
-    /// DH keys would authorise a node to exist without constraining which
+    /// DH keys would authorize a node to exist without constraining which
     /// session keys are its — and a compromised server would still substitute
     /// the keys a handshake actually runs against. Spec §6.1. The identity key
     /// is bound to the handle during chain verification instead.

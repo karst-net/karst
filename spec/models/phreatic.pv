@@ -14,8 +14,8 @@
  *                           X25519 break, i.e. the quantum adversary.
  * ADR-0002 requires confidentiality to survive BOTH.
  *
- * NOT modelled: fragmentation, cookies, the fragment MAC. Those are resource
- * -exhaustion defences; ProVerif reasons about secrecy and correspondence, not
+ * NOT modeled: fragmentation, cookies, the fragment MAC. Those are resource
+ * -exhaustion defenses; ProVerif reasons about secrecy and correspondence, not
  * DoS. Covered by the spoofed-source test suite instead.
  *)
 
@@ -230,7 +230,7 @@ process
     let DR  = exp(g, xR) in
 
     (* Public keys are public. Their *distribution* is authenticated by the
-       coordination server (THREAT-MODEL §4, B2), which is modelled by the
+       coordination server (THREAT-MODEL §4, B2), which is modeled by the
        processes using the real key terms rather than attacker-supplied ones. *)
     out(c, (pkI, pkR, DI, DR));
 

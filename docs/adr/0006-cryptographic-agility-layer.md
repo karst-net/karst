@@ -53,7 +53,7 @@ system.
   OIDs on the wire, no user-supplied parameters.
 - Unknown suite IDs are rejected, not negotiated around.
 
-This is the primary defence against the TLS/JWT failure mode: an attacker
+This is the primary defense against the TLS/JWT failure mode: an attacker
 cannot express a weak combination because weak combinations have no
 representation.
 

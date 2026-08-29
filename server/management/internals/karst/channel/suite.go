@@ -43,7 +43,7 @@
 // ML-KEM-768 and cannot be anything else. So the suite fixes the expected pin
 // sizes, and a deployment configured for one version with pins from another
 // fails at startup with a sentence naming both — rather than at the handshake,
-// where the symptom is a node that cannot enrol for no visible reason.
+// where the symptom is a node that cannot enroll for no visible reason.
 package channel
 
 import (

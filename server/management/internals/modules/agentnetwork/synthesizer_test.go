@@ -386,7 +386,7 @@ func TestSynthesizeServices_PolicyCheckConfig_UnionsSourceGroups(t *testing.T) {
 			break
 		}
 	}
-	require.Len(t, routerCfg.Providers, 1, "single provider authorised by both policies")
+	require.Len(t, routerCfg.Providers, 1, "single provider authorized by both policies")
 	assert.Equal(t, provider.ID, routerCfg.Providers[0].ID)
 	assert.Equal(t, []string{"grp-eng", "grp-ops", "grp-shared"}, routerCfg.Providers[0].AllowedGroupIDs,
 		"source groups must be unioned and sorted; the duplicate grp-shared collapses")
@@ -398,8 +398,8 @@ func TestSynthesizeServices_OrphanProvider_HasEmptyAllowedGroups(t *testing.T) {
 	defer ctrl.Finish()
 	mockStore := store.NewMockStore(ctrl)
 
-	authorised := newSynthTestProvider()
-	authorised.ID = "prov-authed"
+	authorized := newSynthTestProvider()
+	authorized.ID = "prov-authed"
 
 	orphan := newSynthTestProvider()
 	orphan.ID = "prov-orphan"
@@ -408,11 +408,11 @@ func TestSynthesizeServices_OrphanProvider_HasEmptyAllowedGroups(t *testing.T) {
 	orphan.APIKey = "sk-ant"
 	orphan.CreatedAt = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 
-	// Policy authorises the first provider only.
-	policy := newSynthTestPolicy(authorised.ID, "grp-eng", "")
+	// Policy authorizes the first provider only.
+	policy := newSynthTestPolicy(authorized.ID, "grp-eng", "")
 
 	expectSynthBaseInputs(mockStore, ctx, newSynthTestSettings(),
-		[]*types.Provider{authorised, orphan},
+		[]*types.Provider{authorized, orphan},
 		[]*types.Policy{policy},
 		[]*types.Guardrail{})
 
@@ -434,12 +434,12 @@ func TestSynthesizeServices_OrphanProvider_HasEmptyAllowedGroups(t *testing.T) {
 	// default for non-agent-network targets, wrong default here), so
 	// we don't ship them at all. Peers attempting to call models only
 	// the orphan claims see model_not_routable; peers calling models
-	// shared with the authorised provider get routed there.
-	require.Len(t, routerCfg.Providers, 1, "only the authorised provider reaches the router")
-	assert.Equal(t, authorised.ID, routerCfg.Providers[0].ID,
-		"authorised provider must be in router config")
+	// shared with the authorized provider get routed there.
+	require.Len(t, routerCfg.Providers, 1, "only the authorized provider reaches the router")
+	assert.Equal(t, authorized.ID, routerCfg.Providers[0].ID,
+		"authorized provider must be in router config")
 	assert.Equal(t, []string{"grp-eng"}, routerCfg.Providers[0].AllowedGroupIDs,
-		"authorised provider inherits the policy's source groups")
+		"authorized provider inherits the policy's source groups")
 }
 
 // TestSynthesizeServices_IdentityInject_LiteLLM pins that a LiteLLM
@@ -956,7 +956,7 @@ func TestSynthesizeServices_IdentityInject_OpenRouter(t *testing.T) {
 // authoritative and any IdentityHeader* values on the provider
 // record are ignored. Without this guard, an operator who set those
 // fields on a non-Bifrost provider could accidentally break the
-// gateway's wire protocol (LiteLLM only honours x-litellm-end-user-
+// gateway's wire protocol (LiteLLM only honors x-litellm-end-user-
 // id; renaming it would silently drop spend tracking).
 func TestSynthesizeServices_IdentityInject_NonCustomizable_UsesCatalog(t *testing.T) {
 	ctx := context.Background()

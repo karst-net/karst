@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: CC-BY-4.0
-# Fetch and summarise results from a run-remote.sh launch.
+# Fetch and summarize results from a run-remote.sh launch.
 set -euo pipefail
 HOST="${1:?usage: collect-remote.sh <ssh-host> <remote-dir>}"
 DIR="${2:?usage: collect-remote.sh <ssh-host> <remote-dir>}"

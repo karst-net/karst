@@ -13,7 +13,7 @@
 // The relay also refuses to serve a roster nobody is maintaining. Its lease is
 // 90 seconds (`roster::MAX_AGE` in bins/karst-relay); when the file has not
 // changed within that window, admission is replaced with an empty roster and
-// the relay stops admitting anyone. That is the correct behaviour for a
+// the relay stops admitting anyone. That is the correct behavior for a
 // membership list — a stale one is one nobody is curating — and it has a
 // consequence that was unwritten until FINDINGS.md 42: **something must rewrite
 // that file, forever, or every deployment stops working ninety seconds after it

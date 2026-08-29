@@ -35,7 +35,7 @@ nounif ct: bitstring; attacker(break_kem(ct)).
 ```
 
 It applies to facts over *constructors* only, so the break itself cannot be
-de-prioritised — only the terms it produces. The three surviving declarations
+de-prioritized — only the terms it produces. The three surviving declarations
 were on `encap_ss`, `mixck` and `mixk`.
 
 ## What this settles
@@ -51,7 +51,7 @@ All four ProVerif avenues are now exhausted:
 
 A–C attacked the term space from three angles; D attacked selection strategy.
 Nothing moved. **The recommendation to take this to Tamarin now rests on
-measurement rather than judgement.**
+measurement rather than judgment.**
 
 ## Why this is the remaining option
 

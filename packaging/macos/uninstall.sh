@@ -46,7 +46,7 @@ rmdir /var/db/karst 2>/dev/null || true
 /usr/sbin/pkgutil --forget dev.karst.karstd 2>/dev/null || true
 
 # 4. **Not** /etc/karst. It holds the node's private key and its configuration,
-#    and deleting those would make a reinstall a re-enrolment — the node would
+#    and deleting those would make a reinstall a re-enrollment — the node would
 #    come back with a new identity and the old one would linger in the console
 #    as a device nobody can account for. Say where it is and leave it.
 if [ -d /etc/karst ]; then

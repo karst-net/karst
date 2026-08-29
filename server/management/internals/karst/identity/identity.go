@@ -37,7 +37,7 @@
 // In that mode every constructor here returns an error rather than a key, which
 // surfaces at startup as a failure to load an identity. That is the right
 // failure: a build that cannot do ML-DSA cannot run Karst's control plane at
-// all, and the alternative to failing loudly would be a node that enrols with
+// all, and the alternative to failing loudly would be a node that enrolls with
 // no post-quantum authentication.
 package identity
 
@@ -55,7 +55,7 @@ const (
 	// SeedSize is 32 bytes; the seed is the thing worth protecting.
 	//
 	// crypto/mldsa calls this PrivateKeySize, because a seed is the only
-	// private key it will serialise — the expanded form never leaves the
+	// private key it will serialize — the expanded form never leaves the
 	// package. The name here stays SeedSize because that is what the rest of
 	// Karst calls it and because it is the more honest of the two.
 	SeedSize = mldsa.PrivateKeySize
@@ -134,7 +134,7 @@ func (k *Key) Sign(ctx, msg []byte) ([]byte, error) {
 	return sig, nil
 }
 
-// Verify checks a signature against a serialised public key.
+// Verify checks a signature against a serialized public key.
 //
 // It returns false rather than an error on a malformed key, because every
 // caller is in the middle of authenticating an attacker-supplied message and

@@ -22,7 +22,7 @@ const (
 	ModeEnforcing = "enforcing"
 )
 
-var ErrAcknowledgementMismatch = errors.New("bedrock: acknowledgement list does not match uncovered nodes")
+var ErracknowledgmentMismatch = errors.New("bedrock: acknowledgment list does not match uncovered nodes")
 
 // Configuration is the account-scoped operator-controlled Bedrock configuration.
 // It intentionally has no key columns: roots and authority private keys stay
@@ -72,7 +72,7 @@ func (s *Store) Configuration(ctx context.Context, accountID string) (*Configura
 	return &c, nil
 }
 
-// SetMode requires an exact acknowledgement set when moving to enforcing.
+// SetMode requires an exact acknowledgment set when moving to enforcing.
 // Exactness matters: accepting a superset makes a stale console confirmation
 // appear valid after a new uncovered node joins; accepting a subset hides a
 // node that will be cut off.
@@ -89,7 +89,7 @@ func (s *Store) SetMode(ctx context.Context, accountID, mode string, acknowledge
 	if mode == ModeEnforcing {
 		uncovered := UncoveredAt(state, enrolled, at)
 		if !sameStrings(uncovered, acknowledged) {
-			return nil, fmt.Errorf("%w: required %v", ErrAcknowledgementMismatch, uncovered)
+			return nil, fmt.Errorf("%w: required %v", ErracknowledgmentMismatch, uncovered)
 		}
 	}
 	if _, err := s.Configuration(ctx, accountID); err != nil {

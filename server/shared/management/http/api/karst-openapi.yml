@@ -70,12 +70,12 @@ paths:
       responses:
         '200': {description: Devices owned by the authenticated subject, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/MyDevice'}}}}}
         default: {$ref: '#/components/responses/Error'}
-  /me/devices/enrol:
+  /me/devices/enroll:
     post:
-      operationId: enrolMyDevice
+      operationId: EnrollMyDevice
       tags: [portal]
       responses:
-        '200': {description: Short-lived single-use device key, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceEnrolment'}}}}
+        '200': {description: Short-lived single-use device key, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceEnrollment'}}}}
         default: {$ref: '#/components/responses/Error'}
   /me/devices/{handle}:
     parameters: [{$ref: '#/components/parameters/handle'}]
@@ -269,7 +269,7 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockModeWrite'}}}}
       responses:
         '200': {description: Updated status, content: {application/json: {schema: {$ref: '#/components/schemas/BedrockStatus'}}}}
-        '409': {$ref: '#/components/responses/AcknowledgementMismatch'}
+        '409': {$ref: '#/components/responses/AcknowledgmentMismatch'}
         default: {$ref: '#/components/responses/Error'}
   /posture:
     get:
@@ -347,7 +347,7 @@ components:
     Error: {description: Error response, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     ValidationError: {description: Validation error, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
-    AcknowledgementMismatch: {description: Enforcing acknowledgement does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgementMismatch'}}}}
+    AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
     Error:
       type: object
@@ -384,7 +384,7 @@ components:
       required: [name]
       additionalProperties: false
       properties: {name: {type: string, minLength: 1}}
-    DeviceEnrolment:
+    DeviceEnrollment:
       type: object
       required: [key, expires_at]
       properties: {key: {type: string, readOnly: true, description: Returned once when the one-use device key is created.}, expires_at: {type: string, format: date-time}}
@@ -463,7 +463,7 @@ components:
       type: object
       required: [mode, quorum, roots, authorities, uncovered_handles]
       # uncovered_handles is the server's answer to "who would be cut off", and
-      # PUT /bedrock/mode compares its acknowledgement against exactly this set.
+      # PUT /bedrock/mode compares its acknowledgment against exactly this set.
       # A client that computes its own list from node liveness gets a 409:
       # coverage is a property of the signed log, not of whether a node is up.
       # The fields below zone are present only once a log has been verified.
@@ -498,10 +498,10 @@ components:
       type: object
       required: [mode, acknowledged_cut_off_handles]
       properties: {mode: {type: string, enum: [off, advisory, enforcing]}, acknowledged_cut_off_handles: {type: array, items: {type: string}, uniqueItems: true}}
-    AcknowledgementMismatch:
+    AcknowledgmentMismatch:
       type: object
       required: [code, message, required_cut_off_handles]
-      properties: {code: {type: string, const: acknowledgement_mismatch}, message: {type: string}, required_cut_off_handles: {type: array, items: {type: string}, uniqueItems: true}}
+      properties: {code: {type: string, const: acknowledgment_mismatch}, message: {type: string}, required_cut_off_handles: {type: array, items: {type: string}, uniqueItems: true}}
     PostureAggregate:
       type: object
       required: [as_of, window_start, observed_sessions, eligible_sessions, pq_covered_sessions, lattice_only_sessions, stale_nodes, suites]

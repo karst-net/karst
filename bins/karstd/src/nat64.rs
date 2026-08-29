@@ -29,7 +29,7 @@
 //!
 //! A prefix written into the configuration skips the second gate and not the
 //! first, because the first is a hard incompatibility and the second is a
-//! judgement the operator is entitled to overrule.
+//! judgment the operator is entitled to overrule.
 //!
 //! # Discovery
 //!
@@ -550,7 +550,7 @@ mod tests {
     /// **The gate that matters.** A prefix on an `AF_INET` datapath rewrites
     /// every reachable destination into one the socket cannot send to at all,
     /// so a node that has both must ignore the prefix — and say so, because the
-    /// operator asked for something that cannot be honoured.
+    /// operator asked for something that cannot be honored.
     #[test]
     fn a_prefix_is_refused_on_an_ipv4_datapath() {
         let listen: SocketAddr = "0.0.0.0:51820".parse().unwrap();

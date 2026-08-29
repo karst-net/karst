@@ -192,7 +192,7 @@ func (f fakeOwnDevices) PortalPeers(context.Context, string) ([]*peer.Peer, erro
 	return f.peers, nil
 }
 
-type enrolmentWriter struct {
+type enrollmentWriter struct {
 	fakeOwnDevices
 	got *struct {
 		keyType   types.SetupKeyType
@@ -203,7 +203,7 @@ type enrolmentWriter struct {
 	}
 }
 
-func (w enrolmentWriter) CreateSetupKey(_ context.Context, _ string, _ string, keyType types.SetupKeyType, expiry time.Duration, _ []string, limit int, user string, ephemeral bool, _ bool) (*types.SetupKey, error) {
+func (w enrollmentWriter) CreateSetupKey(_ context.Context, _ string, _ string, keyType types.SetupKeyType, expiry time.Duration, _ []string, limit int, user string, ephemeral bool, _ bool) (*types.SetupKey, error) {
 	*w.got = struct {
 		keyType   types.SetupKeyType
 		expiry    time.Duration
@@ -470,7 +470,7 @@ func TestMemberAccessExplainsCompiledDestinationWithRuleAndGroup(t *testing.T) {
 	}{{Destination: "db-prod:5432", Group: "group:sre", Rule: 1}}, items)
 }
 
-func TestMemberEnrolmentIssuesShortLivedSingleUseKey(t *testing.T) {
+func TestMemberEnrollmentIssuesShortLivedSingleUseKey(t *testing.T) {
 	devices := fakePeers{{ID: "mine", Key: "handle-a", UserID: "user-a"}}
 	got := &struct {
 		keyType   types.SetupKeyType
@@ -480,8 +480,8 @@ func TestMemberEnrolmentIssuesShortLivedSingleUseKey(t *testing.T) {
 		ephemeral bool
 	}{}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, devices, enrolmentWriter{fakeOwnDevices: fakeOwnDevices{peers: devices}, got: got}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
-	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enrol", nil)
+	RegisterEndpoints(fakeNodes{}, devices, enrollmentWriter{fakeOwnDevices: fakeOwnDevices{peers: devices}, got: got}, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
+	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enroll", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
@@ -527,7 +527,7 @@ func TestPolicyPreviewCompilesFiftyNodesUnderOneSecond(t *testing.T) {
 	require.Len(t, result.Added, 50)
 }
 
-func TestBedrockEnforcingStaleAcknowledgementReturnsConflict(t *testing.T) {
+func TestBedrockEnforcingStaleacknowledgmentReturnsConflict(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:api-bedrock-409?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	store, err := bedrock.NewStore(db)
@@ -539,7 +539,7 @@ func TestBedrockEnforcingStaleAcknowledgementReturnsConflict(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	require.JSONEq(t, `{"code":"acknowledgement_mismatch","message":"bedrock: acknowledgement list does not match uncovered nodes: required [node-a node-b]","required_cut_off_handles":["node-a","node-b"]}`, response.Body.String())
+	require.JSONEq(t, `{"code":"acknowledgment_mismatch","message":"bedrock: acknowledgment list does not match uncovered nodes: required [node-a node-b]","required_cut_off_handles":["node-a","node-b"]}`, response.Body.String())
 }
 
 // GET /bedrock must publish the same set PUT /bedrock/mode demands back. Without

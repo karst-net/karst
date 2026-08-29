@@ -13,7 +13,7 @@ portal, and the offline Bedrock signer.
 > [FINDINGS.md](../FINDINGS.md) first.
 
 **Where this walkthrough stops.** Paths A, B and C below get you a running
-relay, a running coordination server, and a node that enrols and carries
+relay, a running coordination server, and a node that enrolls and carries
 traffic. They do **not** get you a self-service front door: issuing a setup key
 needs an account, and an account needs an identity provider wired into the
 coordination server (§8). Said here rather than left to be discovered after the
@@ -44,7 +44,7 @@ spending anyone else's.
         │       │  writes roster.toml  ▲              │
         │       └──────────────────────┘              │
         └────────▲───────────────────────────▲────────┘
-        enrol,   │                           │  relayed frames,
+        enroll,   │                           │  relayed frames,
         netmap   │                           │  then a direct path
             ┌────┴─────┐                ┌────┴─────┐
             │  karstd  │◀── PHREATIC ──▶│  karstd  │
@@ -132,7 +132,7 @@ and `web/portal/dist`.
 Before trusting any of it, run the gate the CI runs:
 
 ```sh
-just check              # fmt, clippy, 874 Rust tests, cargo-deny, licences
+just check              # fmt, clippy, 874 Rust tests, cargo-deny, licenses
 just go-test go-lint    # the coordination server
 just test-privileged    # namespaces, TUN devices, the NAT matrix — needs sudo
 ```
@@ -305,7 +305,7 @@ outcome than an error —
 [`spec/karst-control-v1.md`](../spec/karst-control-v1.md) §9.
 
 Two things about this deployment that are worth watching once, so that the
-behaviour is familiar before it happens in production:
+behavior is familiar before it happens in production:
 
 ```sh
 # The roster's mtime advances every 25s while its contents stay byte-identical.
@@ -495,7 +495,7 @@ Notes:
 - gRPC and HTTP share port 33073, on one listener. It is plain TCP unless you
   pass `--letsencrypt-domain` or a certificate pair; the control channel does
   not depend on that, but the REST API the console uses does.
-- For a single-organisation deployment, add
+- For a single-organization deployment, add
   `--single-account-mode-domain karst.example.com` to `ExecStart=`.
 - `/var/lib/netbird` and `/etc/netbird/management.json` hold the server keys
   every enrolled node has pinned. Back them up; losing them breaks every node
@@ -664,7 +664,7 @@ curl -X POST http://karst.example.com:33073/api/setup-keys \
 `$TOKEN` is a JWT from the identity provider configured in `management.json`.
 **This is the step that has no offline path.** Until an IdP is configured there
 is no account, without an account there is no setup key, and without a setup
-key a node cannot enrol. The console's first-run view drives exactly this
+key a node cannot enroll. The console's first-run view drives exactly this
 endpoint (Auth keys → Create auth key) once authentication works.
 
 Two things in the console are aspirational and will not work as shown:
@@ -676,7 +676,7 @@ Two things in the console are aspirational and will not work as shown:
 - Bedrock is an offline ceremony: the console exports node-sign requests and
   imports verified responses. It never receives an authority private key.
 
-Once a node holds a setup key and both pins, enrolment is automatic on start:
+Once a node holds a setup key and both pins, enrollment is automatic on start:
 `karstd` registers, receives a netmap, and `karst status` shows peers with
 `state = established`, first over the relay and then — within seconds, if
 AVEN can find a path — `transport = direct`.
@@ -688,7 +688,7 @@ AVEN can find a path — `transport = direct`.
 `karst-bedrock` is a separate binary with no network dependency in its
 manifest, and that is the claim the manifest exists to check. Authority keys
 must be usable from a machine that never touches the coordination server, or
-the offline story is theatre.
+the offline story is theater.
 
 ```sh
 karst-bedrock init root /media/hsm/root.key         # writes root.key and root.key.pub
@@ -775,7 +775,7 @@ The failure modes below are the ones that do not announce themselves.
 | Nodes reject the netmap entirely, no relay used | a DNS name in `relays.json` `address` | use `IP:port`; the name goes in `tls_server_name` |
 | Relay logs `roster lease expired`, admits nobody after 90 s | nothing is rewriting `roster.toml` | set `KARST_RELAY_ROSTER_FILE` on the server |
 | Nodes never dial a relay and never go direct | no `relays.json`, so the netmap carries no relays | set `KARST_RELAY_REGISTRY_FILE` |
-| Everything enrols; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
+| Everything enrolls; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
 | Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt` |
 | `karstd` refuses to start over a key file | key is readable by group or other | `chmod 600` — a key readable by anyone is not a key |
 | Two nodes never handshake, both look healthy | mismatched `crypto_profile` | a `cnsa2` node and a `default` node cannot talk; moving a fleet between profiles is a re-keying |

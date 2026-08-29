@@ -1918,7 +1918,7 @@ func domainIsUpToDate(domain string, domainCategory string, userAuth auth.UserAu
 // SyncAndMarkPeer is the per-Sync entry point: it refreshes the peer's
 // network map and then marks the peer connected with a session token
 // derived from syncTime (the moment the gRPC stream opened). Any
-// concurrent stream that started earlier loses the optimistic-lock race
+// concurrent stream that started earlier loses the optimiztic-lock race
 // in MarkPeerConnected and bails without writing.
 func (am *DefaultAccountManager) SyncAndMarkPeer(ctx context.Context, accountID string, peerPubKey string, meta nbpeer.PeerSystemMeta, realIP net.IP, syncTime time.Time) (*nbpeer.Peer, *types.NetworkMap, []*posture.Checks, int64, error) {
 	peer, netMap, postureChecks, dnsfwdPort, err := am.SyncPeer(ctx, types.PeerSync{WireGuardPubKey: peerPubKey, Meta: meta, RealIP: realIP}, accountID)

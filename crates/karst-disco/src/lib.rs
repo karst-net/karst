@@ -126,7 +126,7 @@ pub mod consts {
     /// An outstanding `tx_id` expires after this — §7.1.
     pub const TX_TIMEOUT_MS: u64 = 5_000;
 
-    /// Most outstanding probes per peer. They are state a peer's behaviour
+    /// Most outstanding probes per peer. They are state a peer's behavior
     /// causes us to allocate, so they are counted.
     pub const MAX_OUTSTANDING: usize = 16;
 

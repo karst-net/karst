@@ -74,11 +74,11 @@ type TargetOptions struct {
 	CaptureMaxResponseBytes int64              `json:"capture_max_response_bytes,omitempty"`
 	CaptureContentTypes     []string           `gorm:"serializer:json" json:"capture_content_types,omitempty"`
 	// AgentNetwork marks targets synthesised from Agent Network state. The
-	// proxy uses it to gate agent-network-specific behaviour (access log
+	// proxy uses it to gate agent-network-specific behavior (access log
 	// tagging, observability, etc.).
 	AgentNetwork bool `json:"agent_network,omitempty"`
 	// DisableAccessLog suppresses the per-request access-log emission for this
-	// target. Defaults false to preserve access-log behaviour for every
+	// target. Defaults false to preserve access-log behavior for every
 	// non-agent-network target. The agent-network synthesizer sets this true
 	// only when the account's EnableLogCollection toggle is off.
 	DisableAccessLog bool `json:"disable_access_log,omitempty"`
@@ -1002,7 +1002,7 @@ func validateClusterTarget(idx int, target *Target) error {
 // allowed — the lookup fills in the default peer IP / resource address.
 // Without DirectUpstream the Host value is silently overwritten by
 // replaceHostByLookup, so we don't validate it (preserves the historical
-// behaviour where APIs accepted any value and dropped it). Non-empty
+// behavior where APIs accepted any value and dropped it). Non-empty
 // Host with DirectUpstream must look like a hostname or IP and must
 // not carry a port (port lives on Target.Port).
 func validateDirectUpstreamHost(idx int, target *Target) error {

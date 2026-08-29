@@ -53,7 +53,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The first bytes of every resolver file Karst writes. It is what makes an
-/// orphaned file recognisable as ours after the revert record is lost, so it is
+/// orphaned file recognizable as ours after the revert record is lost, so it is
 /// matched as a prefix and must not be reworded without reading
 /// [`Macos::recover`].
 const MARKER: &str = "# Managed by KarstDNS";
@@ -118,7 +118,7 @@ struct Revert {
 ///
 /// macOS caches negative results aggressively enough that skipping this makes
 /// the first minute after connecting look broken, so it is part of apply and of
-/// revert rather than an optimisation. It is an enum because the alternative
+/// revert rather than an optimization. It is an enum because the alternative
 /// spelling — a boxed closure — costs the struct its `Debug`, and because the
 /// counting variant lets the tests assert the flush happened at all.
 #[derive(Debug)]

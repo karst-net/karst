@@ -140,7 +140,7 @@ impl NetworkManager {
     }
 
     fn reapply(&self, settings: Settings) -> Result<(), NetworkManagerError> {
-        // The version is optimistic-concurrency metadata. Read it immediately
+        // The version is optimiztic-concurrency metadata. Read it immediately
         // before every write: a persisted pre-Karst version is necessarily
         // stale after the initial Reapply.
         let (_, version): (Settings, u64) = self.proxy()?.call("GetAppliedConnection", &0u32)?;

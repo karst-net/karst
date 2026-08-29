@@ -47,7 +47,7 @@ export type DeviceRename = {
     name: string;
 };
 
-export type DeviceEnrolment = {
+export type DeviceEnrollment = {
     /**
      * Returned once when the one-use device key is created.
      */
@@ -235,7 +235,7 @@ export type BedrockModeWrite = {
     acknowledged_cut_off_handles: Array<string>;
 };
 
-export type AcknowledgementMismatch = {
+export type AcknowledgmentMismatch = {
     code: string;
     message: string;
     required_cut_off_handles: Array<string>;
@@ -316,7 +316,7 @@ export type NodeWritable = {
     posture: NodePosture;
 };
 
-export type DeviceEnrolmentWritable = {
+export type DeviceEnrollmentWritable = {
     expires_at: string;
 };
 
@@ -553,30 +553,30 @@ export type ListMyDevicesResponses = {
 
 export type ListMyDevicesResponse = ListMyDevicesResponses[keyof ListMyDevicesResponses];
 
-export type EnrolMyDeviceData = {
+export type EnrollMyDeviceData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/me/devices/enrol';
+    url: '/me/devices/enroll';
 };
 
-export type EnrolMyDeviceErrors = {
+export type EnrollMyDeviceErrors = {
     /**
      * Error response
      */
     default: Error;
 };
 
-export type EnrolMyDeviceError = EnrolMyDeviceErrors[keyof EnrolMyDeviceErrors];
+export type EnrollMyDeviceError = EnrollMyDeviceErrors[keyof EnrollMyDeviceErrors];
 
-export type EnrolMyDeviceResponses = {
+export type EnrollMyDeviceResponses = {
     /**
      * Short-lived single-use device key
      */
-    200: DeviceEnrolment;
+    200: DeviceEnrollment;
 };
 
-export type EnrolMyDeviceResponse = EnrolMyDeviceResponses[keyof EnrolMyDeviceResponses];
+export type EnrollMyDeviceResponse = EnrollMyDeviceResponses[keyof EnrollMyDeviceResponses];
 
 export type RevokeMyDeviceData = {
     body?: never;
@@ -1229,9 +1229,9 @@ export type SetBedrockModeData = {
 
 export type SetBedrockModeErrors = {
     /**
-     * Enforcing acknowledgement does not equal the server-computed cut-off set
+     * Enforcing acknowledgment does not equal the server-computed cut-off set
      */
-    409: AcknowledgementMismatch;
+    409: AcknowledgmentMismatch;
     /**
      * Error response
      */

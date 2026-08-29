@@ -12,7 +12,7 @@
  * *who* is at each end of a relay connection. This model checks exactly that
  * and claims nothing else.
  *
- * WHAT IS MODELLED
+ * WHAT IS MODELED
  *   Mutual authentication of the three-message handshake, in both directions,
  *   for both roles (a node connecting as a client, a relay connecting as a
  *   mesh peer), against an attacker who OPERATES A RELAY OF ITS OWN that
@@ -21,8 +21,8 @@
  *   supports a community relay pool, so "a relay you use is hostile" is a
  *   configuration the product offers rather than a contrived one.
  *
- * WHAT IS NOT MODELLED, AND WHY
- *   - TLS. Deliberately absent, as in karst-control.pv. Modelling it would
+ * WHAT IS NOT MODELED, AND WHY
+ *   - TLS. Deliberately absent, as in karst-control.pv. Modeling it would
  *     assume away every attacker this model is trying to see.
  *   - The frames after the handshake. This is not an omission for tidiness; it
  *     is a real property of the design and is recorded in spec §13.3.
@@ -181,7 +181,7 @@ let peer(sk: sskey, myid: bitstring, role: bitstring,
    §5.3. There is no third branch, and that absence is the model of "a relay
    with no roster entry for an id cannot verify that id's signature at all".
 
-   The timing defence of §10.1 is not modelled: ProVerif reasons about what an
+   The timing defense of §10.1 is not modeled: ProVerif reasons about what an
    attacker can derive, not about how long a rejection takes. *)
 let relay(rsk: sskey, clientVk: spkey, meshVk: spkey) =
     new rrand: bitstring;

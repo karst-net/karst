@@ -32,7 +32,7 @@ impl Role {
 
     /// # Errors
     /// [`Error::BadRole`] for any byte outside the defined set. There is no
-    /// default: an unrecognised role must not fall through to `Client`.
+    /// default: an unrecognized role must not fall through to `Client`.
     pub fn from_wire(b: u8) -> Result<Self, Error> {
         match b {
             Self::CLIENT => Ok(Self::Client),

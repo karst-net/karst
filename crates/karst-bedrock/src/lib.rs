@@ -29,7 +29,7 @@
 //! # What it does not do
 //!
 //! - It does not stop a compromised server **denying** service. The server can
-//!   drop a node from the netmap, refuse enrolment, or serve a stale log.
+//!   drop a node from the netmap, refuse enrollment, or serve a stale log.
 //!   Bedrock makes lying detectable, not impossible.
 //! - It does not detect equivocation on its own. A hash chain proves history
 //!   was not edited, not that everyone was told the same history; that needs

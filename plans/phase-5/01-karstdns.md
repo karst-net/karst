@@ -13,7 +13,7 @@ integrations inside their own client weeks.**
 > install/upgrade/uninstall and recovery testing. Userspace mode deliberately
 > has no host DNS integration. DoH/DoT upstream transport remains out of scope.
 
-`crates/karst-dns/src/lib.rs` is five lines: a licence header, a doc string,
+`crates/karst-dns/src/lib.rs` is five lines: a license header, a doc string,
 and `#![forbid(unsafe_code)]`. It has no dependencies and no code. Everything
 below is new.
 
@@ -55,7 +55,7 @@ because two implementations (node and server) must agree:
 
 1. **The name grammar.** `<hostname>.<aquifer>.karst.` Which characters a
    label may hold, how a conflicting hostname is disambiguated, and that
-   comparison is case-insensitive ASCII. The server already normalises labels
+   comparison is case-insensitive ASCII. The server already normalizes labels
    via `server/dns/dns.go`'s `invalidHostLabel` regexp and IDNA handling;
    the spec records what the node may assume rather than re-deriving it.
 2. **Which questions the resolver answers authoritatively** and which it
@@ -175,7 +175,7 @@ It is `MIT OR Apache-2.0`, so it clears `deny.toml` and ADR-0007's GPLv2
 compatibility constraint. Take the codec and write the ~400 lines of policy
 above it ourselves; pulling `hickory-resolver` would bring a second async
 runtime configuration, a second cache, and a system-configuration reader whose
-behaviour we would then have to constrain. Hand-rolling the codec instead is
+behavior we would then have to constrain. Hand-rolling the codec instead is
 not worth it: name compression and the escaping rules are exactly the kind of
 parsing that has a CVE history, and there is a `#![forbid(unsafe_code)]`,
 fuzz-tested, widely-used crate for it. **Add a fuzz target anyway** —
@@ -184,7 +184,7 @@ resolver parses attacker-controlled upstream responses.
 
 ### 5.2 What it answers, and what it must not
 
-| Question | Behaviour |
+| Question | Behavior |
 |---|---|
 | `A`/`AAAA` for `*.<zone>` matching a netmap peer | Authoritative answer from the netmap, TTL 60 |
 | `A`/`AAAA` for `*.<zone>` with no matching peer | **Authoritative NXDOMAIN.** Never forwarded — forwarding a mesh name to the LAN resolver publishes the internal hostname to whoever runs it |
@@ -318,7 +318,7 @@ the portal's own hijack still works for everything else, which is the correct
 outcome — but the node will also keep trying to reach a control server it
 cannot reach.
 
-The behaviour to specify and test: when the upstream returns an answer for a
+The behavior to specify and test: when the upstream returns an answer for a
 name the portal does not own with a TTL of a few seconds and a private
 address, **do nothing special**. Do not attempt portal detection. The failure
 mode to avoid is a resolver that "helpfully" bypasses the portal and leaves

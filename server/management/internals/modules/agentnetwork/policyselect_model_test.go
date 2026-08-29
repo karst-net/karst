@@ -14,7 +14,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/store"
 )
 
-// guardedPolicy builds an enabled, uncapped policy that authorises sourceGroups
+// guardedPolicy builds an enabled, uncapped policy that authorizes sourceGroups
 // to reach providerID under the given guardrails. Uncapped keeps the selector's
 // headroom scoring trivial so these tests isolate the model-allowlist gate.
 func guardedPolicy(id, account string, sourceGroups []string, providerID string, guardrailIDs ...string) *types.Policy {
@@ -54,7 +54,7 @@ func expectGuardrails(mockStore *store.MockStore, account string, guardrails ...
 }
 
 // TestSelectPolicy_ModelBlockedByAllowlist proves the authoritative allowlist
-// decision: a policy authorises the (provider, group) but restricts the model,
+// decision: a policy authorizes the (provider, group) but restricts the model,
 // and the requested model isn't on the list, so the request is denied.
 func TestSelectPolicy_ModelBlockedByAllowlist(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -101,7 +101,7 @@ func TestSelectPolicy_ModelAllowedByAllowlist(t *testing.T) {
 }
 
 // TestSelectPolicy_CaseInsensitiveModelMatch proves the compare tolerates case
-// and surrounding whitespace, matching the proxy guardrail's normalisation.
+// and surrounding whitespace, matching the proxy guardrail's normalization.
 func TestSelectPolicy_CaseInsensitiveModelMatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mgr, mockStore := newSelectorMgr(t, ctrl)
@@ -122,7 +122,7 @@ func TestSelectPolicy_CaseInsensitiveModelMatch(t *testing.T) {
 }
 
 // TestSelectPolicy_UnguardedPolicyIsUnrestricted is the false-deny fix: when two
-// policies authorise the same (provider, group) and one has no guardrail, that
+// policies authorize the same (provider, group) and one has no guardrail, that
 // policy makes the request unrestricted — not caught by the other's allowlist.
 func TestSelectPolicy_UnguardedPolicyIsUnrestricted(t *testing.T) {
 	ctrl := gomock.NewController(t)

@@ -6,7 +6,7 @@ off the read-only views.**
 ## 1. Scope, which is the whole design
 
 > **Re-baselined 2026-08-27; data contract closed 2026-08-28.** The portal
-> exists and has subject-derived device list, one-time enrolment key,
+> exists and has subject-derived device list, one-time enrollment key,
 > rename/revoke, access explanation, session, and download views.
 >
 > The four contract gaps this note listed are closed. Device platform comes
@@ -14,9 +14,9 @@ off the read-only views.**
 > control-channel connections — `node.DeviceSession`, written around the
 > authenticated part of the stream — with a genuine end time, a genuine
 > address, and a null end meaning "still connected" rather than "unknown"
-> (FINDINGS.md 63). The download manifest is generated from the artefacts a
+> (FINDINGS.md 63). The download manifest is generated from the artifacts a
 > release actually contains and lists every build for the platform, since the
-> client now ships four Linux packages (FINDINGS.md 65). The enrolment
+> client now ships four Linux packages (FINDINGS.md 65). The enrollment
 > instruction already matched the daemon's configuration flow.
 >
 > Two things surfaced while closing them and are worth carrying forward: the
@@ -35,9 +35,9 @@ layout.
 
 | # | Capability | Endpoint | Notes |
 |---|---|---|---|
-| 1 | Download the client | Static, from the release artefacts | Detect the platform, offer the right installer, show the checksum and how to check it |
+| 1 | Download the client | Static, from the release artifacts | Detect the platform, offer the right installer, show the checksum and how to check it |
 | 2 | List and rename own devices | `GET/PATCH /api/karst/v1/me/devices` | Rename is the only mutation on a device besides revoke |
-| 3 | Add a device | `POST /api/karst/v1/me/devices/enrol` | Issues a short-lived, single-use, non-reusable auth key scoped to the user |
+| 3 | Add a device | `POST /api/karst/v1/me/devices/enroll` | Issues a short-lived, single-use, non-reusable auth key scoped to the user |
 | 4 | Revoke a device | `DELETE /api/karst/v1/me/devices/{handle}` | Must actually drop sessions, not just mark a row |
 | 5 | What can I reach, and why | `GET /api/karst/v1/me/access` | See §3 |
 | 6 | Own session history | `GET /api/karst/v1/me/sessions` | From the audit log, filtered to the caller |
@@ -85,7 +85,7 @@ Same origin as the console or a different one? **Different path on the same
 origin, different route tree, different bundle.** A separate origin needs a
 second TLS name and a second CORS story for a self-hoster to get right, and the
 self-hoster is the audience. Sharing an origin is safe here because the
-security boundary is the API's authorisation, not the browser's — the portal
+security boundary is the API's authorization, not the browser's — the portal
 bundle being reachable by an admin, or vice versa, is not a vulnerability.
 
 What is a vulnerability is the portal calling an admin endpoint successfully.
@@ -110,7 +110,7 @@ Plus:
   a real node in the nightly compose run — the same 60-second requirement
   PLAN.md §4.4 sets for deprovisioning, because a user revoking their own
   stolen laptop is the more urgent case.
-- The enrolment key issued by the add-device flow is single-use: use it twice,
+- The enrollment key issued by the add-device flow is single-use: use it twice,
   assert the second attempt fails.
 - axe on every route; keyboard-only completion of the add-device flow.
 

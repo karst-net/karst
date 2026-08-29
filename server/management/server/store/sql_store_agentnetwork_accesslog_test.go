@@ -24,7 +24,7 @@ func TestAgentNetworkUsage_RealStore_RoundTrip(t *testing.T) {
 	const accountID = "acc-anet-usage-1"
 	now := time.Now().UTC()
 
-	// Populated (allowed) usage row with two authorising groups.
+	// Populated (allowed) usage row with two authorizing groups.
 	usage := &agentNetworkTypes.AgentNetworkUsage{
 		ID:                 "log-allowed-1",
 		AccountID:          accountID,
@@ -210,13 +210,13 @@ func TestAgentNetworkAccessLogSessions_RealStore(t *testing.T) {
 	assert.InDelta(t, 0.30, s1.TotalCostUSD(), 1e-9, "cost summed across the session")
 	assert.Equal(t, "alice", s1.UserID)
 	assert.Equal(t, "allow", s1.Decision)
-	// SQLite hands times back in time.Local; normalise to UTC so the instant is
+	// SQLite hands times back in time.Local; normalize to UTC so the instant is
 	// compared, not the (differing) *Location pointer.
 	assert.Equal(t, at(1), s1.StartedAt.UTC(), "started = earliest entry")
 	assert.Equal(t, at(2), s1.EndedAt.UTC(), "ended = latest entry")
 	assert.ElementsMatch(t, []string{"openai"}, s1.Providers)
 	assert.ElementsMatch(t, []string{"gpt-4o"}, s1.Models)
-	assert.ElementsMatch(t, []string{"grp-eng", "grp-oncall"}, s1.GroupIDs, "union of the entries' authorising groups")
+	assert.ElementsMatch(t, []string{"grp-eng", "grp-oncall"}, s1.GroupIDs, "union of the entries' authorizing groups")
 
 	// Denied session rolls up to deny.
 	assert.Equal(t, "deny", sessions[1].Decision, "any denied request makes the session deny")

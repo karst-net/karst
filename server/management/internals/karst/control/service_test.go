@@ -222,7 +222,7 @@ func TestEnvelopeBeforeHandshakeRejected(t *testing.T) {
 // A node signing with the wrong key must be rejected uniformly, and the error
 // must not distinguish "unknown node" from "bad signature" — that difference
 // is a node-ID oracle for an unauthenticated caller.
-func TestWrongIdentityRejected(t *testing.T) {
+func TestWrongIdentitirejected(t *testing.T) {
 	enrolled, err := identity.Generate()
 	if err != nil {
 		t.Fatalf("identity: %v", err)

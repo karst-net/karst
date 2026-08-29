@@ -759,7 +759,7 @@ impl Session {
     /// A daemon resolves `peer_id_hint` across the whole roster in one call to
     /// [`karst_noise::handshake::respond`], which is the O(1) lookup §4 exists
     /// to enable. Offering the message to each session in turn would instead
-    /// cost one ML-KEM decapsulation *per peer* for every unrecognised
+    /// cost one ML-KEM decapsulation *per peer* for every unrecognized
     /// `HandshakeInit` — a denial-of-service amplifier that grows with the
     /// roster. Having resolved the peer, the caller hands the result here.
     ///

@@ -232,7 +232,7 @@ impl Config {
     ///
     /// # Errors
     /// [`Error::Syntax`] for malformed TOML, a missing required field, or an
-    /// unrecognised one.
+    /// unrecognized one.
     pub fn parse(text: &str) -> Result<Self, Error> {
         // `deny_unknown_fields`, so a mistyped key is an error rather than a
         // setting that silently does nothing. A relay whose rate limit is
