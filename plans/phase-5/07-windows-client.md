@@ -160,13 +160,14 @@ enterprise.
 
 WiX (v4 or v5) producing a single per-machine MSI:
 
-```
-karst-<version>-x64.msi
-├── karstd.exe, karst.exe   → %ProgramFiles%\Karst\
-├── wintun.dll              → %ProgramFiles%\Karst\   (see §1)
-├── karstd.toml.example     → %ProgramData%\Karst\
-├── ServiceInstall + ServiceControl   (install, start, stop-on-uninstall)
-└── Firewall exception for the UDP port
+```mermaid
+flowchart TD
+    MSI["karst-&lt;version&gt;-x64.msi"]
+    MSI --> Binaries["karstd.exe, karst.exe → %ProgramFiles%\\Karst\\"]
+    MSI --> Wintun["wintun.dll → %ProgramFiles%\\Karst\\ (see §1)"]
+    MSI --> Config["karstd.toml.example → %ProgramData%\\Karst\\"]
+    MSI --> Service["ServiceInstall + ServiceControl<br/>(install, start, stop on uninstall)"]
+    MSI --> Firewall["Firewall exception for the UDP port"]
 ```
 
 Requirements that are easy to miss and expensive to add later:

@@ -324,13 +324,9 @@ identical.
 
 Every message after the 101 is a frame:
 
-```
- 0        1        2        3        4
- +--------+--------+--------+--------+
- |  type  |      length (24 bits)    |
- +--------+--------+--------+--------+
- |  payload (length bytes)           |
- +-----------------------------------+
+```mermaid
+flowchart LR
+    Type["type<br/>1 B"] --> Length["length<br/>24 bits"] --> Payload["payload<br/>length bytes"]
 ```
 
 - `type` — one byte, §6.1.
@@ -404,15 +400,16 @@ A rejection during the handshake carries no reason at all (§9).
 
 ### 7.1 Establishment
 
-```
-Client                                                Relay
-  |                    TLS 1.3 + HTTP upgrade            |
-  |<-- RelayHello   (relay_id, relay_random) ------------|
-  |--- ClientAuth   (role=CLIENT, node_id, ------------->|
-  |                  client_random, sig_client)          |
-  |<-- RelayAuth    (sig_relay) -------------------------|
-  |--- SendPacket / Ping / ... ------------------------->|
-  |<-- RecvPacket / PeerGone / ... ----------------------|
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Relay
+    Note over Client,Relay: TLS 1.3 + HTTP upgrade
+    Relay->>Client: RelayHello (relay_id, relay_random)
+    Client->>Relay: ClientAuth (role=CLIENT, node_id,<br/>client_random, sig_client)
+    Relay->>Client: RelayAuth (sig_relay)
+    Client->>Relay: SendPacket / Ping / ...
+    Relay->>Client: RecvPacket / PeerGone / ...
 ```
 
 **The relay speaks first**, for the same reason the server does in

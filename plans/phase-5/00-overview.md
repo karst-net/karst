@@ -134,26 +134,21 @@ workstream of its own and it is the critical path for the whole frontend; it is
 
 ## 3. Dependency graph
 
-```
-W1        W2      W3      W4      W5      W6      W7      W8      W9      W10
-│
-├─ control-api ─────────────────────────────┐
-│   (03)  contract frozen end W2 ───────────┼──────► console (04) ──────────────►
-│                                           │        portal (05) ──────►
-├─ KarstDNS wire + resolver (01) ───────────┤
-│   netmap fields land W3 ──────────────────┤
-│   platform integration W4–W7 ─────────────┤
-│                                           │
-├─ Bedrock crypto + log (02) ───────────────┤
-│   SLH-DSA in karst-crypto W1–W2           │
-│   chain + quorum W3–W5 ───────────────────┤
-│   node enforcement W5–W6 ─────────────────┤
-│   console signing UI W7–W8 ───────────────┘
-│
-├─ macOS (06) ── utun W2–W4 ─ resolver W5 ─ pkg W6–W8 ─ notarize W8
-├─ Windows (07) ── Phase 8 handoff; re-estimate before implementation
-├─ SCIM (08) ──────────────── W5–W8
-└─ exit walkthrough (09) ─────────────────────────────── W8–W10
+```mermaid
+flowchart LR
+    API["Control API (03)<br/>W1–W6"] --> Contract["Contract frozen<br/>end W2"]
+    Contract --> Console["Console (04)"]
+    Contract --> Portal["Portal (05)"]
+    DNS["KarstDNS (01)<br/>wire + resolver"] --> DNSFields["Netmap fields<br/>W3"]
+    DNSFields --> DNSPlatform["Platform integration<br/>W4–W7"]
+    Bedrock["Bedrock (02)<br/>crypto + log"] --> SLH["SLH-DSA<br/>W1–W2"]
+    Bedrock --> Chain["Chain + quorum<br/>W3–W5"] --> Enforce["Node enforcement<br/>W5–W6"]
+    Enforce --> SigningUI["Console signing UI<br/>W7–W8"]
+    Mac["macOS (06): utun W2–W4 → resolver W5 → package W6–W8 → notarize W8"]
+    Windows["Windows (07): Phase 8 handoff"]
+    SCIM["SCIM (08): W5–W8"]
+    Exit["Exit walkthrough (09): W8–W10"]
+    Enforce --> Exit
 ```
 
 Three hard ordering constraints, and everything else can float:

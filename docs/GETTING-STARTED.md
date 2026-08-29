@@ -38,17 +38,18 @@ The default deployment co-locates the relay and the coordination server on one
 host — PLAN.md §5 — because a self-hoster who relays their own traffic is not
 spending anyone else's.
 
-```
-        ┌──────────────── public host ────────────────┐
-        │  karst-control :33073   karst-relay :443    │
-        │       │  writes roster.toml  ▲              │
-        │       └──────────────────────┘              │
-        └────────▲───────────────────────────▲────────┘
-        enroll,   │                           │  relayed frames,
-        netmap   │                           │  then a direct path
-            ┌────┴─────┐                ┌────┴─────┐
-            │  karstd  │◀── PHREATIC ──▶│  karstd  │
-            └──────────┘   UDP 51820    └──────────┘
+```mermaid
+flowchart TB
+    subgraph Host[public host]
+        Control["karst-control :33073"]
+        Relay["karst-relay :443"]
+        Control -->|writes roster.toml| Relay
+    end
+    NodeA[karstd] -->|enroll, netmap| Control
+    NodeB[karstd] -->|enroll, netmap| Control
+    NodeA -->|relayed frames, then a direct path| Relay
+    NodeB -->|relayed frames, then a direct path| Relay
+    NodeA <-->|PHREATIC<br/>UDP 51820| NodeB
 ```
 
 Two files tie the relay and the server together, and having only one of them

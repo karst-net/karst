@@ -217,16 +217,9 @@ unstated.
 
 ## 6. Datagram format
 
-```
- 0        4        5        6                14           18
- +--------+--------+--------+---------------+------------+
- | magic  |version |  type  |   peer_tag    |   epoch    |
- |  (4)   |  (1)   |  (1)   |     (8)       |    (4)     |
- +--------+--------+--------+---------------+------------+
- |  body (0..305)                                        |
- +-------------------------------------------------------+
- |  mac (16)                                             |
- +-------------------------------------------------------+
+```mermaid
+flowchart LR
+    Magic["magic<br/>4 B"] --> Version["version<br/>1 B"] --> Type["type<br/>1 B"] --> Tag["peer_tag<br/>8 B"] --> Epoch["epoch<br/>4 B"] --> Body["body<br/>0–305 B"] --> Mac["mac<br/>16 B"]
 ```
 
 Header is 18 bytes. `mac` is HMAC-SHA-512 truncated to 16, keyed by the pair
@@ -269,11 +262,9 @@ about what was said.
 
 Nineteen bytes, fixed:
 
-```
- +--------+-----------------------------------+--------+
- | family |            address (16)           |  port  |
- |  (1)   |                                   |  (2)   |
- +--------+-----------------------------------+--------+
+```mermaid
+flowchart LR
+    Family["family<br/>1 B"] --> Address["address<br/>16 B"] --> Port["port<br/>2 B"]
 ```
 
 `family` is `0x04` or `0x06`. An IPv4 address occupies the first four bytes and
@@ -494,13 +485,15 @@ supply a confidently wrong candidate.
 saw.** A relay MAY run one; §7.6 does not require it, and a node MUST work
 without one, staying on the relay exactly as it does today.
 
-```
-Node                                                  Relay
-  |  ── Ponor over TLS ──────────────────────────────>  |
-  |<── ReflectOffer (reflect_key, reflector endpoint) ── |
-  |                                                      |
-  |  ══ Reflect (tx_id, pad)  ═══════════════════════>  |   ← UDP, from the
-  |<═ Reflection (tx_id, observed) ══════════════════   |     PHREATIC socket
+```mermaid
+sequenceDiagram
+    participant Node
+    participant Relay
+    Node->>Relay: Ponor over TLS
+    Relay->>Node: ReflectOffer (reflect_key, reflector endpoint)
+    Note over Node,Relay: UDP from the PHREATIC socket
+    Node->>Relay: Reflect (tx_id, pad)
+    Relay->>Node: Reflection (tx_id, observed)
 ```
 
 **The node MUST send `Reflect` from the socket PHREATIC and AVEN already

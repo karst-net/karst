@@ -68,21 +68,17 @@ but v1 does not claim resistance to an active adversary who already has a CRQC.
 
 ## 4. Trust boundaries
 
-```
-                     ┌──────────────────┐
-        (B5) IdP ────┤  karst-control   ├──── (B4) admin/console
-                     │  + Bedrock chain │
-                     └────────┬─────────┘
-                              │ (B2) netmap: PSKs, filters, creds
-                     ┌────────┴─────────┐
-      (B6) host OS ──┤     karstd       ├── (B1) PHREATIC datapath ──▶ peer
-       TUN/DNS/keys  └────────┬─────────┘
-                              │ (B3) relay / TURN — untrusted
-                     ┌────────┴─────────┐
-                     │  Ponor / coturn  │
-                     └──────────────────┘
-
-              (B7) supply chain crosses every component
+```mermaid
+flowchart TD
+    IdP[IdP] -->|B5| Control["karst-control<br/>+ Bedrock chain"]
+    Admin[admin / console] -->|B4| Control
+    Control -->|B2: netmap, PSKs, filters, credentials| Node[karstd]
+    Host["host OS<br/>TUN / DNS / keys"] -->|B6| Node
+    Node -->|B1: PHREATIC datapath| Peer[peer]
+    Node -->|B3: relay / TURN, untrusted| Relay["Ponor / coturn"]
+    Supply["B7: supply chain"] -. crosses every component .-> Control
+    Supply -.-> Node
+    Supply -.-> Relay
 ```
 
 | ID | Boundary | Trust assumption |

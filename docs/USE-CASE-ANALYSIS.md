@@ -35,21 +35,17 @@ configuration, and risks should be managed separately.
 
 ### Connectivity and control-plane relationship
 
-```text
-Human identity ──IdP──> portal / console ──> karst-control ──> audit log / sink
-                                      │             │
-                              policy, groups,       ├──> signed relay roster
-                              routes, DNS, relays   │
-                                      │             │
-                           authenticated netmap     │
-                                      ▼             ▼
-                         Linux / macOS / Windows clients ──> Ponor relay
-                                      │                         (fallback)
-                                      └──── direct encrypted peer path ────┘
-                                      │
-                                  KarstDNS / exit or subnet route
-
-Offline Bedrock authority ── signs reviewed requests ──> karst-control ──> clients
+```mermaid
+flowchart TD
+    Human[Human identity] --> IdP --> Portal[Portal / console] --> Control[karst-control] --> Audit[Audit log / sink]
+    Control --> Roster[Signed relay roster]
+    Portal -->|policy, groups, routes, DNS, relays| Clients[Linux / macOS / Windows clients]
+    Control -->|authenticated netmap| Clients
+    Clients -->|fallback| Relay[Ponor relay]
+    Clients <-->|direct encrypted peer path| Clients
+    Clients --> Routing[KarstDNS / exit or subnet route]
+    Bedrock[Offline Bedrock authority] -->|signs reviewed requests| Control
+    Control --> Clients
 ```
 
 ## Actors and identities

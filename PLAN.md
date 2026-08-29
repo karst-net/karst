@@ -122,24 +122,15 @@ Prior art to read before writing a line of protocol code:
 
 ### 2.2 Message flow
 
-```
-Initiator                                          Responder
-  |-- msg1 (~2378 B, 2 fragments):                     |
-  |     type, sender_idx, suite_id, psk_epoch,         |
-  |     eph_kem_pk (1184), eph_x25519_pk (32),         |
-  |     kem_ct_to_static_S (1088),                     |
-  |     enc(peer_id_hint || timestamp)                 |
-  |     [each fragment carries its own MAC]            |
-  |--------------------------------------------------->|
-  |                                                     | decaps, derive
-  |<-- msg2 (~2236 B, 2 fragments):                     |
-  |      type, sender_idx, receiver_idx,                |
-  |      kem_ct_to_eph (1088),                          |
-  |      kem_ct_to_initiator_static (1088),             |
-  |      eph_x25519_pk (32), enc(empty)                 |
-  |<----------------------------------------------------|
-  |-- transport data (ChaCha20-Poly1305, 64-bit ctr)    |
-  |<--------------------------------------------------->|
+```mermaid
+sequenceDiagram
+    participant Initiator
+    participant Responder
+    Initiator->>Responder: msg1 (~2378 B, 2 fragments)<br/>type, sender_idx, suite_id, psk_epoch<br/>eph_kem_pk (1184), eph_x25519_pk (32)<br/>kem_ct_to_static_S (1088)<br/>enc(peer_id_hint || timestamp)<br/>each fragment carries its own MAC
+    Note right of Responder: decaps, derive
+    Responder->>Initiator: msg2 (~2236 B, 2 fragments)<br/>type, sender_idx, receiver_idx<br/>kem_ct_to_eph (1088)<br/>kem_ct_to_initiator_static (1088)<br/>eph_x25519_pk (32), enc(empty)
+    Initiator->>Responder: transport data (ChaCha20-Poly1305, 64-bit ctr)
+    Responder->>Initiator: transport data (ChaCha20-Poly1305, 64-bit ctr)
 ```
 
 Key schedule: HKDF chain over protocol label → suite id → responder static key

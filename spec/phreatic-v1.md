@@ -194,19 +194,9 @@ in the netmap.
 
 Every PHREATIC datagram is a single UDP payload subject to §10.
 
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      reassembly_id (4)                        |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|idx|cnt|rsv|             reserved (3 bytes)                     |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                                                               |
-+                        frag_mac (16)                          +
-|                                                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                    fragment payload (≤ 1208)                  |
+```mermaid
+flowchart LR
+    Reassembly["reassembly_id<br/>4 B"] --> Idx["idx<br/>2 bits"] --> Count["cnt<br/>2 bits"] --> ReservedBits["rsv<br/>4 bits"] --> Reserved["reserved<br/>3 B"] --> FragMac["frag_mac<br/>16 B"] --> Payload["fragment payload<br/>≤ 1208 B"]
 ```
 
 - `reassembly_id` — sender-chosen, MUST be drawn from a CSPRNG.
@@ -415,16 +405,9 @@ real one.
 
 ## 8. Transport phase
 
-```
- 0                   1                   2                   3
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| type=0x04     |             reserved (3)                      |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      receiver_index (4)                       |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         counter (8)                           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          AEAD(T, counter, ε, padded_packet)  ‖  tag (16)      |
+```mermaid
+flowchart LR
+    Type["type = 0x04<br/>1 B"] --> Reserved["reserved<br/>3 B"] --> Receiver["receiver_index<br/>4 B"] --> Counter["counter<br/>8 B"] --> Sealed["AEAD(T, counter, ε, padded_packet)<br/>+ tag (16 B)"]
 ```
 
 - `counter` is a 64-bit little-endian nonce counter, never reused under a key.

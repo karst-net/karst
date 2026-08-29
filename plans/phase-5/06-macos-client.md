@@ -286,14 +286,15 @@ looks broken. Do it on apply, and on revert.
 
 ## 6. Packaging
 
-```
-karst-<version>-macos.pkg
-├── karstd, karst              → /usr/local/bin/
-├── dev.karst.karstd.plist     → /Library/LaunchDaemons/
-├── karstd.toml.example        → /etc/karst/
-└── scripts/
-    ├── preinstall             stop and unload an existing daemon
-    └── postinstall            create /var/log/karst, load the daemon
+```mermaid
+flowchart TD
+    Package["karst-&lt;version&gt;-macos.pkg"]
+    Package --> Binaries["karstd, karst → /usr/local/bin/"]
+    Package --> Daemon["dev.karst.karstd.plist → /Library/LaunchDaemons/"]
+    Package --> Config["karstd.toml.example → /etc/karst/"]
+    Package --> Scripts[scripts]
+    Scripts --> Pre["preinstall: stop and unload an existing daemon"]
+    Scripts --> Post["postinstall: create /var/log/karst; load the daemon"]
 ```
 
 Universal binary: build `aarch64-apple-darwin` and `x86_64-apple-darwin`, join
