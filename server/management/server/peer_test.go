@@ -1231,7 +1231,7 @@ func TestToSyncResponse(t *testing.T) {
 	assert.Equal(t, "route1", response.NetworkMap.Routes[0].NetID)
 	// assert network map DNSConfig
 	assert.Equal(t, true, response.NetworkMap.DNSConfig.ServiceEnable)
-	//nolint
+	//lint:ignore SA1019 testing that ForwarderPort stays populated for backward compatibility
 	assert.Equal(t, int64(dnsForwarderPort), response.NetworkMap.DNSConfig.ForwarderPort)
 	assert.Equal(t, 1, len(response.NetworkMap.DNSConfig.CustomZones))
 	assert.Equal(t, 2, len(response.NetworkMap.DNSConfig.NameServerGroups))
@@ -1252,7 +1252,7 @@ func TestToSyncResponse(t *testing.T) {
 	assert.Equal(t, int64(53), response.NetworkMap.DNSConfig.NameServerGroups[0].NameServers[0].GetPort())
 	// assert network map Firewall
 	assert.Equal(t, 1, len(response.NetworkMap.FirewallRules))
-	//nolint:staticcheck // testing backward-compatible field
+	//lint:ignore SA1019 testing that PeerIP stays populated for backward compatibility
 	assert.Equal(t, "192.168.1.2", response.NetworkMap.FirewallRules[0].PeerIP)
 	assert.Equal(t, proto.RuleDirection_IN, response.NetworkMap.FirewallRules[0].Direction)
 	assert.Equal(t, proto.RuleAction_ACCEPT, response.NetworkMap.FirewallRules[0].Action)

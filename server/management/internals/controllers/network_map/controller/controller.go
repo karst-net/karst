@@ -1024,6 +1024,7 @@ func (c *Controller) OnPeersDeleted(ctx context.Context, accountID string, peerI
 					FirewallRules:        []*proto.FirewallRule{},
 					FirewallRulesIsEmpty: true,
 					DNSConfig: &proto.DNSConfig{
+						//lint:ignore SA1019 ForwarderPort is kept populated for older clients
 						ForwarderPort: dnsFwdPort,
 					},
 				},

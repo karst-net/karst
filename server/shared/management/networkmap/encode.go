@@ -63,8 +63,9 @@ func ToProtocolFirewallRules(rules []*types.FirewallRule, includeIPv6, useSource
 		rule := rules[i]
 
 		fwRule := &proto.FirewallRule{
-			PolicyID:  []byte(rule.PolicyID),
-			PeerIP:    rule.PeerIP, //nolint:staticcheck // populated for backward compatibility
+			PolicyID: []byte(rule.PolicyID),
+			//lint:ignore SA1019 PeerIP is kept populated for backward compatibility
+			PeerIP:    rule.PeerIP,
 			Direction: GetProtoDirection(rule.Direction),
 			Action:    GetProtoAction(rule.Action),
 			Protocol:  GetProtoProtocol(rule.Protocol),
@@ -106,7 +107,8 @@ func populateSourcePrefixes(fwRule *proto.FirewallRule, rule *types.FirewallRule
 	}
 
 	v6Rule := goproto.Clone(fwRule).(*proto.FirewallRule)
-	v6Rule.PeerIP = "::" //nolint:staticcheck // populated for backward compatibility
+	//lint:ignore SA1019 PeerIP is kept populated for backward compatibility
+	v6Rule.PeerIP = "::"
 	v6Wildcard, _ := netiputil.EncodePrefix(netip.PrefixFrom(netip.IPv6Unspecified(), 0))
 	v6Rule.SourcePrefixes = [][]byte{v6Wildcard}
 	if ShouldUsePortRange(v6Rule) {
@@ -247,7 +249,8 @@ func ToProtocolDNSConfig(update nbdns.Config, cache DNSConfigCache, forwardPort 
 		ServiceEnable:    update.ServiceEnable,
 		CustomZones:      make([]*proto.CustomZone, 0, len(update.CustomZones)),
 		NameServerGroups: make([]*proto.NameServerGroup, 0, len(update.NameServerGroups)),
-		ForwarderPort:    forwardPort,
+		//lint:ignore SA1019 ForwarderPort is kept populated for older clients
+		ForwarderPort: forwardPort,
 	}
 
 	for _, zone := range update.CustomZones {

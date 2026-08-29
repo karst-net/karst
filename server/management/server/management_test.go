@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
-	pb "github.com/golang/protobuf/proto" //nolint
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/netbirdio/netbird/encryption"
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map/controller"
@@ -150,9 +151,8 @@ func createRawClient(t *testing.T, addr string) (mgmtProto.ManagementServiceClie
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, addr,
+	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    10 * time.Second,
 			Timeout: 2 * time.Second,
@@ -161,7 +161,29 @@ func createRawClient(t *testing.T, addr string) (mgmtProto.ManagementServiceClie
 		t.Fatalf("failed to dial gRPC server: %v", err)
 	}
 
+	if err := waitForReady(ctx, conn); err != nil {
+		t.Fatalf("gRPC server never became ready: %v", err)
+	}
+
 	return mgmtProto.NewManagementServiceClient(conn), conn
+}
+
+// waitForReady blocks until conn reaches connectivity.Ready, replicating the
+// blocking behavior grpc.WithBlock() gave DialContext. NewClient connects
+// lazily and dropped WithBlock, so callers that need a connected client
+// before issuing RPCs (as opposed to grpc's own per-RPC retry/wait) must
+// drive the state machine themselves.
+func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return ctx.Err()
+		}
+	}
 }
 
 func startServer(

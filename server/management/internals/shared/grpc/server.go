@@ -15,7 +15,6 @@ import (
 	"time"
 
 	jwtv5 "github.com/golang-jwt/jwt/v5"
-	pb "github.com/golang/protobuf/proto" // nolint
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/realip"
 	log "github.com/sirupsen/logrus"
@@ -23,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	pb "google.golang.org/protobuf/proto"
 
 	"github.com/netbirdio/netbird/shared/management/client/common"
 	"github.com/netbirdio/netbird/shared/management/grpc"
@@ -1139,7 +1139,8 @@ func (s *Server) GetDeviceAuthorizationFlow(ctx context.Context, req *proto.Encr
 		flowInfoResp = &proto.DeviceAuthorizationFlow{
 			Provider: proto.DeviceAuthorizationFlowProvider(provider),
 			ProviderConfig: &proto.ProviderConfig{
-				ClientID:           s.config.DeviceAuthorizationFlow.ProviderConfig.ClientID,
+				ClientID: s.config.DeviceAuthorizationFlow.ProviderConfig.ClientID,
+				//lint:ignore SA1019 ClientSecret is kept populated for older clients that need it for device-auth flow
 				ClientSecret:       s.config.DeviceAuthorizationFlow.ProviderConfig.ClientSecret,
 				Domain:             s.config.DeviceAuthorizationFlow.ProviderConfig.Domain,
 				Audience:           s.config.DeviceAuthorizationFlow.ProviderConfig.Audience,
@@ -1209,8 +1210,9 @@ func (s *Server) GetPKCEAuthorizationFlow(ctx context.Context, req *proto.Encryp
 
 		initInfoFlow = &proto.PKCEAuthorizationFlow{
 			ProviderConfig: &proto.ProviderConfig{
-				Audience:              s.config.PKCEAuthorizationFlow.ProviderConfig.Audience,
-				ClientID:              s.config.PKCEAuthorizationFlow.ProviderConfig.ClientID,
+				Audience: s.config.PKCEAuthorizationFlow.ProviderConfig.Audience,
+				ClientID: s.config.PKCEAuthorizationFlow.ProviderConfig.ClientID,
+				//lint:ignore SA1019 ClientSecret is kept populated for older clients that need it for PKCE flow
 				ClientSecret:          s.config.PKCEAuthorizationFlow.ProviderConfig.ClientSecret,
 				TokenEndpoint:         s.config.PKCEAuthorizationFlow.ProviderConfig.TokenEndpoint,
 				AuthorizationEndpoint: s.config.PKCEAuthorizationFlow.ProviderConfig.AuthorizationEndpoint,

@@ -204,7 +204,8 @@ func TestEnvelopeRoundTrip_AllGroupShortCircuitParity(t *testing.T) {
 	}
 	clientRules := make([]string, 0, len(clientNM.FirewallRules))
 	for _, r := range clientNM.FirewallRules {
-		clientRules = append(clientRules, fmt.Sprintf("%s/%d", r.PeerIP, r.Direction)) // nolint:staticcheck
+		//lint:ignore SA1019 testing that PeerIP stays populated for backward compatibility
+		clientRules = append(clientRules, fmt.Sprintf("%s/%d", r.PeerIP, r.Direction))
 	}
 	require.ElementsMatch(t, serverRules, clientRules,
 		"client-side Calculate must expand destination groups exactly like the server")

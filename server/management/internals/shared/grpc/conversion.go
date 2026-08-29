@@ -310,7 +310,8 @@ func buildJWTConfig(config *nbconfig.HttpServerConfig, deviceFlowConfig *nbconfi
 	}
 
 	return &proto.JWTConfig{
-		Issuer:       issuer,
+		Issuer: issuer,
+		//lint:ignore SA1019 Audience is kept populated for older clients; Audiences is the replacement
 		Audience:     audience,
 		Audiences:    audiences,
 		KeysLocation: keysLocation,
