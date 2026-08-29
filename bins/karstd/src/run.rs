@@ -648,9 +648,35 @@ pub fn run_with_control(
         // §9.1. First probe promptly: a node that has just started has nothing
         // published, and peers cannot reach it until it does.
         let mut next_probe = Instant::now() + Duration::from_secs(2);
+        // A laptop that suspends comes back on a network its measurements do
+        // not describe. This is what turns that into promptness rather than a
+        // wait for whichever timer fires first — see `crate::wake`.
+        let mut wake = crate::wake::Detector::new();
         while !shutdown.requested() {
             std::thread::sleep(TICK);
             let now = now_ms(started);
+            // **Before the scan, deliberately.** Setting `next_scan` into the
+            // past here is what makes the enumeration below happen on this tick
+            // instead of up to fifteen seconds later, and re-enumerating is the
+            // first thing a resumed machine needs: the addresses discovery is
+            // about to advertise are the ones it has now.
+            if let Some(gap) = wake.tick() {
+                eprintln!(
+                    "karstd: this machine did not run for {} s — re-enumerating \
+                     interfaces and rediscovering every peer path",
+                    gap.as_secs()
+                );
+                next_scan = Instant::now();
+                // The relay is a path too, and the connection carrying it went
+                // with the rest. Re-measuring promptly is what keeps a node
+                // that woke on a worse network from staying on a relay it can
+                // no longer reach.
+                next_probe = Instant::now();
+                disco
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .rediscover(now);
+            }
             // Interfaces change — a laptop moves between networks, a VPN comes
             // up, DHCP renews. Re-enumerating on a slow timer rather than on
             // every tick keeps a netlink dump off the 100 ms path, and

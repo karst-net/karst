@@ -480,6 +480,45 @@ impl Disco {
         }
     }
 
+    /// Start discovery over for every peer, because the host's network moved.
+    ///
+    /// A laptop that suspends and resumes, or one that changes network, comes
+    /// back with every NAT binding gone and a source address that may be
+    /// different. Everything discovery measured before that moment was measured
+    /// through bindings that no longer exist.
+    ///
+    /// Two things happen, and the second is the one that is easy to miss:
+    ///
+    /// - **Every peer's schedule restarts** ([`Engine::rediscover`]), so a
+    ///   candidate written off before the move is tried again at once instead of
+    ///   waiting out the re-probe sweep.
+    /// - **Every reflexive address is dropped.** §7.2's reflexive candidate is
+    ///   a peer's report of where it saw us, and after the move that report
+    ///   names the mapping this node no longer has. Keeping it would put a dead
+    ///   address at the front of the candidate list this node advertises to
+    ///   everybody — worse than having no reflexive candidate at all, because
+    ///   peers would spend probes on it. They are re-learned from the next
+    ///   `Pong` that answers, which is what the restarted schedule is about to
+    ///   ask for.
+    ///
+    /// The reflectors a relay offered are deliberately left alone: their
+    /// lifetime is the Ponor connection, and the relay worker replaces them when
+    /// it reconnects.
+    ///
+    /// This queues no I/O. The next [`Disco::poll`] turns it into probes.
+    pub fn rediscover(&mut self, now_ms: u64) {
+        for peer in &mut self.peers {
+            peer.reflexive = None;
+        }
+        // Rebuild first: the reflexive addresses just dropped were part of the
+        // advertised list, and `rediscover` below decides what to advertise
+        // from the list as it stands.
+        self.republish();
+        for peer in &mut self.peers {
+            peer.engine.rediscover(now_ms);
+        }
+    }
+
     /// Withdraw every endpoint this node installed, against the roster they
     /// were installed on.
     ///
@@ -1487,6 +1526,55 @@ mod tests {
         assert!(
             candidates.iter().all(|c| interfaces.contains(&c.0.ip())),
             "a peer's claim displaced an address this node observed itself"
+        );
+    }
+
+    /// A resume invalidates the *reflexive* candidate first of all. It names
+    /// the NAT mapping this node held on the network it was on, and after the
+    /// move it is an address nothing answers — advertised, by §7.2's ordering,
+    /// ahead of the interface addresses that still work.
+    #[test]
+    fn a_resume_drops_the_reflexive_address_a_peer_reported() {
+        let mut d = Disco::new(7);
+        let key = DiscoKey::new([0x11; KEY_LEN]);
+        assert!(d.add_peer(key.clone(), OUR_ID, THEIR_ID));
+        d.set_interfaces(&[ip(4)], 51820);
+        let stale = SocketAddr::from(([203, 0, 113, 7], 40000));
+        report_reflexive(&mut d, &key, 0, stale, 1_000);
+        assert!(
+            d.candidates().iter().any(|c| c.0 == stale),
+            "the reflexive address should be a candidate before the resume"
+        );
+
+        d.rediscover(2_000);
+        assert!(
+            d.candidates().iter().all(|c| c.0 != stale),
+            "a mapping from before the resume must not still be advertised"
+        );
+        assert_eq!(
+            d.candidates(),
+            vec![Endpoint(SocketAddr::new(ip(4), 51820))],
+            "what this node observed itself is what survives"
+        );
+    }
+
+    /// The peers have to be *told*. A node that re-probes silently is looking
+    /// for peers at addresses they may no longer be at, while they go on
+    /// probing the address it no longer has.
+    #[test]
+    fn a_resume_re_advertises_to_every_peer() {
+        let mut d = peers(3);
+        d.set_interfaces(&[ip(4)], 51820);
+        // Consume the advertisement the interface change already owed, so what
+        // is left is only what the resume produced.
+        let _ = d.poll(1_000, || TxId([1; 12]));
+
+        d.rediscover(2_000);
+        let relayed = d.poll(2_000, || TxId([2; 12])).relayed;
+        assert_eq!(
+            relayed.len(),
+            3,
+            "every peer must be told where this node is now"
         );
     }
 

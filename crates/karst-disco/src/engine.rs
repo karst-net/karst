@@ -207,6 +207,49 @@ impl Engine {
         }
     }
 
+    /// Start discovery over, because everything it measured may now be false.
+    ///
+    /// This is for the caller that has just learned the host's network moved
+    /// underneath it — a laptop waking from sleep, an interface changing, a
+    /// default route replaced. Every measurement in the queue was taken through
+    /// a NAT binding that no longer exists, so a candidate written off before
+    /// the move deserves a fresh attempt and the one currently chosen deserves
+    /// an immediate keepalive rather than the rest of its interval.
+    ///
+    /// The effect is deliberately identical to a `CallMeMaybe` arriving for
+    /// every candidate at once: attempts reset, everything due now, and one
+    /// advertisement queued, because a node whose external address just changed
+    /// has to *tell* its peers as well as go looking for them.
+    ///
+    /// Cheap and idempotent — it queues no I/O of its own, and the next
+    /// [`Engine::poll`] is what turns it into probes. Calling it on a node that
+    /// has no candidates does nothing at all.
+    ///
+    /// The re-probe clock is set rather than cleared, because this poll is
+    /// about to probe everything: leaving it due would send the sweep over the
+    /// top of the probes it duplicates.
+    ///
+    /// The *advertise* clock is cleared instead, and the asymmetry is the
+    /// point. §7.5's floor exists to stop a node that re-enumerates constantly
+    /// from advertising constantly, and it is measured against a caller-supplied
+    /// stamp — which on a machine that has just resumed may not have advanced
+    /// at all, depending on whether its monotonic clock counts time spent
+    /// asleep. Clearing the stamp makes the advertisement happen on the next
+    /// poll on either kind of host, and nothing on the network can reach this
+    /// call to abuse it: only the local host detecting its own resume does.
+    pub fn rediscover(&mut self, now_ms: u64) {
+        for scheduled in &mut self.queue {
+            scheduled.attempts = 0;
+            scheduled.due_ms = now_ms;
+        }
+        self.last_keepalive_ms = None;
+        self.last_reprobe_ms = Some(now_ms);
+        if !self.local.is_empty() {
+            self.advertise_pending = true;
+            self.last_advertise_ms = None;
+        }
+    }
+
     /// Decide what to send now.
     ///
     /// `mint` supplies transaction ids; it must draw from a CSPRNG in
@@ -355,7 +398,7 @@ mod tests {
 
     use super::*;
     use crate::consts::{MAX_OUTSTANDING, MAX_PATHS_PER_PEER};
-    use crate::path::PongOutcome;
+    use crate::path::{PongOutcome, Selection};
 
     fn v4(a: u8) -> SocketAddr {
         SocketAddr::from(([10, 0, 0, a], 51820))
@@ -825,5 +868,101 @@ mod tests {
             sent += probes(&e.poll(t, &mut mint)).len();
         }
         assert!(sent >= PROBE_BACKOFF_MS.len(), "only {sent} probes");
+    }
+
+    /// A laptop that suspends comes back with every NAT binding gone. §7.5's
+    /// schedule would have written a candidate off long before the machine
+    /// woke, and a give-up is not something the passage of sleep undoes on its
+    /// own — so `rediscover` has to put every one of them back in play.
+    #[test]
+    fn a_resume_puts_every_written_off_candidate_back_in_play() {
+        let mut e = Engine::new();
+        let mut mint = counter();
+        e.add_peer_candidate(v4(7), 0, false);
+        e.add_peer_candidate(v6(9), 0, false);
+        // Run past the end of the backoff schedule with nothing answering.
+        for t in 0..2_000u64 {
+            let _ = e.poll(t, &mut mint);
+        }
+        assert!(e.exhausted(), "the schedule must have given up first");
+
+        e.rediscover(2_000);
+        assert!(!e.exhausted());
+        let mut resumed = probes(&e.poll(2_000, &mut mint));
+        resumed.sort_by_key(std::string::ToString::to_string);
+        assert_eq!(resumed, vec![v4(7), v6(9)]);
+    }
+
+    /// The other half: a node whose external address has just changed has to
+    /// say so, not only go looking. Without the advertisement the peer keeps
+    /// probing the address this node held before it slept.
+    #[test]
+    fn a_resume_advertises_this_nodes_candidates_again() {
+        let mut e = Engine::new();
+        let mut mint = counter();
+        e.set_local_candidates(vec![Endpoint(v4(1))]);
+        e.add_peer_candidate(v4(7), 0, false);
+        // The advertisement §7.5 already owed, so the floor below is measured
+        // against a real previous send rather than against nothing.
+        assert!(e
+            .poll(0, &mut mint)
+            .iter()
+            .any(|a| matches!(a, Action::Advertise { .. })));
+        assert!(
+            !e.poll(1, &mut mint)
+                .iter()
+                .any(|a| matches!(a, Action::Advertise { .. })),
+            "§7.5's floor still applies to an ordinary poll"
+        );
+
+        // Deliberately the *same* stamp: a host whose monotonic clock does not
+        // count time spent asleep resumes with the clock it went to sleep with,
+        // and the advertisement still has to go out.
+        e.rediscover(1);
+        assert!(
+            e.poll(1, &mut mint)
+                .iter()
+                .any(|a| matches!(a, Action::Advertise { .. })),
+            "a resume must re-advertise even when no time appears to have passed"
+        );
+    }
+
+    /// The chosen path is the one carrying traffic, so it is the one whose
+    /// silence costs most. It must be probed on the resume poll rather than
+    /// at the end of whatever remained of its keepalive interval.
+    #[test]
+    fn a_resume_pings_the_chosen_path_immediately() {
+        let mut e = Engine::new();
+        let mut mint = counter();
+        e.add_peer_candidate(v4(7), 0, false);
+        let tx = match e.poll(0, &mut mint).first() {
+            Some(Action::Probe { tx, .. }) => *tx,
+            other => panic!("expected a probe, got {other:?}"),
+        };
+        assert!(matches!(
+            e.paths_mut().on_pong(tx, 1),
+            PongOutcome::Confirmed { .. }
+        ));
+        e.on_confirmed(v4(7));
+        assert_eq!(e.paths_mut().select(1), Selection::Chose(v4(7)));
+        // Consume the keepalive this poll owes, so the next one owes nothing.
+        let _ = e.poll(2, &mut mint);
+        assert!(probes(&e.poll(3, &mut mint)).is_empty());
+
+        e.rediscover(3);
+        assert!(
+            probes(&e.poll(3, &mut mint)).contains(&v4(7)),
+            "the chosen path must be re-probed on the resume poll"
+        );
+    }
+
+    /// Nothing to rediscover is not an error, and must not manufacture an
+    /// advertisement out of an empty candidate list.
+    #[test]
+    fn rediscovering_a_peer_with_nothing_known_does_nothing() {
+        let mut e = Engine::new();
+        let mut mint = counter();
+        e.rediscover(0);
+        assert!(e.poll(0, &mut mint).is_empty());
     }
 }

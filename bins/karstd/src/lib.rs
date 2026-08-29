@@ -37,6 +37,7 @@ pub mod run;
 #[cfg(test)]
 mod scratch;
 mod socks5;
+pub mod wake;
 
 pub use config::{Config, ConfigError};
 pub use engine::Engine;
