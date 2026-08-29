@@ -3345,13 +3345,15 @@ fn overlay_peer_address(net: &Aquifer, tag: &str, ns: &str) -> String {
         field(&text, "allowed_ips").unwrap_or_else(|| panic!("node {tag} lists no peer:\n{text}"));
     // `allowed_ips = ["100.64.0.3/32"]` — take the first address, without its
     // prefix length.
-    allowed
+    let address = allowed
         .trim_matches(|c| c == '[' || c == ']')
         .split(',')
         .next()
-        .and_then(|entry| entry.trim().trim_matches('"').split('/').next())
-        .map(str::to_owned)
-        .unwrap_or_else(|| panic!("could not read a peer address from {allowed:?}"))
+        .and_then(|entry| entry.trim().trim_matches('"').split('/').next());
+    match address {
+        Some(address) => address.to_owned(),
+        None => panic!("could not read a peer address from {allowed:?}"),
+    }
 }
 
 /// One TCP connect over the overlay from node A's namespace.
