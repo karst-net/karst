@@ -31,6 +31,13 @@
 //! the remaining piece of `plans/phase-5/06-macos-client.md` §5 and it is
 //! recorded there rather than half-built here.
 //!
+//! Because the absence is invisible from the outside — every search domain
+//! still gets a resolver file, and names below it still resolve when qualified
+//! — `karstd` states it rather than leaving it to be discovered: `karst dns
+//! status` reports `search_list = "not applied"` beneath the search-domain
+//! list, and the daemon warns once on the first netmap that carries one. See
+//! `karstd`'s `HostRuntime::search_list`.
+//!
 //! # Crash recovery
 //!
 //! The revert record is written before the first resolver file and removed

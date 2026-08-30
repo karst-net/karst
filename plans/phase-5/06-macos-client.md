@@ -2,13 +2,40 @@
 
 **PLAN.md §9 · W2–W8 · Rust 2.**
 
-## 0. Status — started 2026-08-28, continued 2026-08-28
+## 0. Status — started 2026-08-28, continued 2026-08-28, reviewed 2026-08-30
 
 **W2–W7 are done; W8 is not, and one piece of W5 is deliberately not built.**
 What exists is a client that builds, opens a real `utun`, carries TCP between
 two daemons on one Mac, resolves mesh names system-wide, recovers promptly from
 sleep, and ships as an installable package. What it does not have is an Apple
 signature, and a resolver *search* list — the second for a stated reason, below.
+
+**The 2026-08-30 review closed the two items that were closable and confirmed
+the third is not.** In order:
+
+- §8's **cross-platform row is built**: `scripts/two-host-test.sh` now takes a
+  Mac as either of its two hosts. That is the only thing in the tree that puts
+  a macOS node on a real NIC behind a real NAT, which is exit criterion 2's
+  second half; the `macos_pair` suite is two daemons on one machine over
+  loopback by construction and cannot reach it. The row records what differed.
+- The **search-list gap is now announced rather than silent.** It is still not
+  implemented and still Phase 6 — see below — but `karst dns status` printed
+  `search_domains = ["corp.example"]` on macOS exactly as it does on Linux,
+  with nothing to say that this mechanism will not act on them. It now prints
+  `search_list = "not applied"` beneath the list, and the daemon says so once
+  on the first netmap that carries a search domain. The mechanism refused to
+  ship a step that appeared to succeed and changed nothing; the status output
+  should not have been doing the same thing to the operator.
+- **W8 is unchanged and unchangeable from here.** The pipeline is written, the
+  CI job is conditional, install-and-uninstall is verified on a real runner,
+  and none of it can produce a signed artifact until somebody enrolls the
+  organization in the Apple Developer Program. §7 is still the critical path.
+
+**So the workstream cannot be closed, and the reason is a single external
+dependency.** Every engineering item is either done or scheduled into Phase 6
+with its cost written down. Exit criteria 2–5 are reachable today with a Mac,
+a second host and an afternoon; criterion 1 is reachable the week the
+certificates arrive.
 
 ### Done
 
@@ -69,7 +96,7 @@ and both are worth knowing about:
 
 | Week | Work | Consequence today |
 |---|---|---|
-| W5 | The resolver **search list** — the SystemConfiguration half | A fully-qualified mesh name resolves; a bare `laptop` does not become `laptop.aquifer.karst`. Everything else in W5 is done |
+| W5 | The resolver **search list** — the SystemConfiguration half | A fully-qualified mesh name resolves; a bare `laptop` does not become `laptop.aquifer.karst`. Everything else in W5 is done. Since 2026-08-30 the daemon and `karst dns status` both say so, so this is a stated limitation rather than a surprise |
 | W8 | Signing, notarization, stapling, clean-machine verification | The `.pkg` is unsigned; Gatekeeper refuses it anywhere but the build machine |
 
 **The search list is not a shortcut taken, it is a mechanism that does not
@@ -89,7 +116,20 @@ is FFI on the connectivity path, it cannot be exercised anywhere but a Mac, and
 none of the exit criteria in §10 depend on it. `networksetup -setsearchdomains`
 is the file-free alternative worth weighing against it — it persists, it is
 revertible, and it is per-network-service, which on a laptop that moves between
-networks is a moving target.
+networks is a moving target. **Weigh one more thing against it than the last
+pass did:** setting manual search domains on a service *replaces* the ones DHCP
+supplied for it, so on a machine that gets `corp.example` from its office
+network, adding the mesh zone that way silently removes the corporate one. That
+makes the naive version a regression rather than a partial feature, and it is
+the second reason not to reach for the cheap mechanism.
+
+What did land on 2026-08-30 is the honest reporting of the gap, because the
+absence was invisible from outside: `karst dns status` prints
+`search_list = "not applied"` under the search-domain list, and `karstd` warns
+once on the first netmap that carries one. `HostRuntime::search_list` is where
+that lives, and it is a property of the mechanism — `resolved`, NetworkManager
+and the `resolv.conf` controller all report `applied`, because all three do
+install a search list.
 
 W8 is **blocked on paperwork, not on code.** The pipeline is written and
 conditional: `scripts/build-macos-pkg.sh` signs, notarizes and staples the
@@ -350,7 +390,7 @@ how a client ships broken.
 | Integration | Open a real `utun`, assign an address, write and read a packet | `macos-14` GitHub runner with `sudo`, gated on `target_os` |
 | Loopback | Two `karstd` instances on one Mac over loopback, real `utun` each, TCP under an ACL | `bins/karstd/tests/macos_pair.rs`, `just macos-test-pair`. **"Real `utun` each" is not achievable and the row is built without it** — one IP stack cannot be made to route between two of its own addresses through a tunnel, and macOS has no namespaces to separate them, so a pair built that way would pass with the datapath deleted. The pair is one `utun` node and one userspace node, which is the only two-daemon shape on a single Mac where every byte has to cross the tunnel; the `utun` is still on the path in both directions. "Under an ACL" is the roster's `allowed_ips` rather than a port-scoped ACL, which needs a netmap — `two_nodes.rs` measures that against the same filter code on Linux |
 | DNS | `/etc/resolver` apply, revert, recovery from a real `SIGKILL`, and the refusal of a netmap domain that would escape the directory | `crates/karst-dns/src/host/macos.rs` and `bins/karstd/tests/dns_host.rs`, both of which run on **every** job rather than only the Mac — see §0 |
-| Cross-platform | A Mac and a Linux host, real NAT, direct path | `scripts/two-host-test.sh` already exists for exactly this shape and takes two ssh destinations; extend it to cope with a non-Linux host |
+| Cross-platform | A Mac and a Linux host, real NAT, direct path | `scripts/two-host-test.sh`, **extended for it**. It asks each host `uname -s` once and branches on the answer. Every difference it carries is a command present on both systems that means something different on each, which is the dangerous kind: `ping -W 2` is two seconds on Linux and two *milliseconds* on macOS, so the unbranched script would have reported every packet lost rather than failing on an unknown option. Also `-M do` versus `-D` for the DF bit, `hostname -I` versus the default route plus `ipconfig getifaddr`, `top -b -n1 -H -p` versus `top -l 1 -pid`, and `setsid --fork` — which macOS does not have at all — versus `sudo -b` with the redirection moved inside the `sh -c`. **Two ssh destinations and a real NAT are still an operator's to supply**, so this is a harness rather than a CI job |
 | Manual | Sleep/wake, network change, Gatekeeper on a clean machine, the full install from a downloaded `.pkg` | The W8–W10 walkthrough, [09](09-exit-criteria.md) |
 
 Add a `macos` job to `.github/workflows/ci.yml` building both architectures and

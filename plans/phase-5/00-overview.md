@@ -36,6 +36,21 @@ is:
    documented supported client platform. Windows has the same implementation
    gap, but PLAN.md now schedules its delivery in Phase 8; retain
    [07-windows-client.md](07-windows-client.md) as the Phase 8 handoff plan.
+
+   **Reviewed 2026-08-30 and all but done.** W2–W7 shipped: `utun`, addressing
+   and routes, a two-daemon pair suite, `/etc/resolver` with revert and crash
+   recovery, resume detection, and a `.pkg` with install and uninstall verified
+   on a real runner. Two things remain and only one of them is engineering.
+   The resolver **search list** is Phase 6 — it needs a held-open
+   `SCDynamicStore`, and the cheap alternatives either evaporate when the child
+   process exits or delete the search domains DHCP supplied; the daemon and
+   `karst dns status` now state the limitation rather than leaving it to be
+   discovered. **Signing and notarization are blocked on Apple Developer
+   Program enrollment and nothing else** — `scripts/build-macos-pkg.sh` signs,
+   notarizes and staples the moment credentials exist, and `--require-signing`
+   makes their absence fatal on a tag. That is the one item on this list whose
+   critical path runs through paperwork rather than through the team, and it is
+   the phase's highest-likelihood risk in §5.
 4. Deliver SCIM/group-sync deprovisioning and Linux packages.
 
 Managed subnet routing and exit nodes are explicitly excluded: there is no

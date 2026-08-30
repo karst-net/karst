@@ -10,11 +10,18 @@
 # throughput means nothing. This script is the other half — PLAN.md's Phase 2
 # exit criterion is stated in Mbps over a LAN, and that has to be measured.
 #
+# Either host may be a Mac. That is the point of the branching below, and it is
+# plans/phase-5/06-macos-client.md §8's "cross-platform" row: a Mac and a Linux
+# host, a real NIC, a real NAT, and the exit criterion's "reaches a peer
+# directly across a NAT" measured rather than asserted. Nothing else in the tree
+# puts a macOS node on a real network — the `macos_pair` suite is two daemons on
+# one machine over loopback, by construction.
+#
 # Usage:
 #     scripts/two-host-test.sh HOST_A HOST_B [OPTIONS]
 #
-#     HOST_A, HOST_B    ssh destinations. Both need passwordless sudo, a Rust
-#                       toolchain, and a checkout at ~/karst.
+#     HOST_A, HOST_B    ssh destinations, Linux or macOS. Both need passwordless
+#                       sudo, a Rust toolchain, and a checkout at ~/karst.
 #
 # Options:
 #     --addr-a IP       underlay address of A, as B should dial it
@@ -23,6 +30,8 @@
 #     --port PORT       UDP port                       (default: 51820)
 #     --subnet PREFIX   tunnel /24, first three octets (default: 10.88.0)
 #     --iface NAME      interface name                 (default: karst0)
+#                       A preference, not a promise: macOS names utun devices
+#                       itself and karstd reports the name it actually got.
 #     --duration SECS   iperf3 run length              (default: 10)
 #     --no-bench        set the tunnel up and stop; do not measure
 #     --keep            leave the daemons running on exit
@@ -81,6 +90,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ── what each host is ───────────────────────────────────────────────────────
+#
+# Asked once, because every difference below is a command that exists on both
+# systems and means something different there. Those are worse than a command
+# that is simply missing: `ping -W 2` waits two seconds on Linux and two
+# *milliseconds* on macOS, so a harness that does not branch here does not fail
+# with "unknown option" — it reports every packet lost and sends somebody
+# looking for a datapath bug that is not there.
+OS_A=$(sh_a 'uname -s')
+OS_B=$(sh_b 'uname -s')
+say "Hosts: $HOST_A is $OS_A, $HOST_B is $OS_B"
+
+# ping's reply timeout: seconds on Linux, milliseconds on macOS.
+ping_wait() { case $1 in Darwin) echo "-W 2000" ;; *) echo "-W 2" ;; esac; }
+# ping's "set DF and do not fragment": `-M do` on Linux, `-D` on macOS.
+ping_df()   { case $1 in Darwin) echo "-D" ;; *) echo "-M do" ;; esac; }
+PING_A=$(ping_wait "$OS_A"); PING_B=$(ping_wait "$OS_B")
+
+# The host's own underlay address, when no `--addr-*` was given. `hostname -I`
+# is glibc's and macOS has no counterpart, so there the default route names the
+# interface and `ipconfig` reads the address off it. Both parsed here rather
+# than in the remote shell, which keeps the quoting legible.
+host_address() {
+    local host=$1 os=$2 iface
+    if [ "$os" = Darwin ]; then
+        iface=$(ssh -n -o BatchMode=yes "$host" "route -n get default 2>/dev/null" \
+                | sed -n 's/.*interface: *//p' | head -1)
+        [ -n "$iface" ] || die "$host has no default route; pass its address with --addr-*"
+        ssh -n -o BatchMode=yes "$host" "ipconfig getifaddr $iface"
+    else
+        ssh -n -o BatchMode=yes "$host" "hostname -I" | cut -d' ' -f1
+    fi
+}
+
 # ── build ───────────────────────────────────────────────────────────────────
 say "Building on both hosts"
 for h in "$HOST_A" "$HOST_B"; do
@@ -89,10 +132,11 @@ for h in "$HOST_A" "$HOST_B"; do
 done
 
 # ── addresses ───────────────────────────────────────────────────────────────
-# Default to whatever each host's hostname resolves to locally. Override for a
-# dedicated link — a bonded or 10G interface is usually not what DNS returns.
-[ "$ADDR_A_SET" -eq 1 ] || ADDR_A=$(sh_a "hostname -I | awk '{print \$1}'")
-[ "$ADDR_B_SET" -eq 1 ] || ADDR_B=$(sh_b "hostname -I | awk '{print \$1}'")
+# Default to each host's own idea of its primary address — see `host_address`.
+# Override for a dedicated link: a bonded or 10G interface is usually neither
+# what DNS returns nor where the default route points.
+[ "$ADDR_A_SET" -eq 1 ] || ADDR_A=$(host_address "$HOST_A" "$OS_A")
+[ "$ADDR_B_SET" -eq 1 ] || ADDR_B=$(host_address "$HOST_B" "$OS_B")
 [ -n "$ADDR_B" ] || die "B needs a reachable address: at least one side must be dialable"
 
 # ── keys ────────────────────────────────────────────────────────────────────
@@ -148,46 +192,83 @@ write_config "$HOST_B" 2 "$HOST_A" "$A_KEM" "$A_DH" "$ADDR_A" 1
 say "Starting daemons"
 cleanup_quiet() { ssh -n -o BatchMode=yes "$1" "sudo -n pkill -x karstd 2>/dev/null; true"; }
 cleanup_quiet "$HOST_A"; cleanup_quiet "$HOST_B"
-for h in "$HOST_B" "$HOST_A"; do
-    # `setsid` and a redirected stdin, or the ssh channel stays open holding the
-    # daemon's stdio and this script blocks forever.
-    # `setsid --fork`, not `setsid ... &` — with `&` the ssh session never
-    # closes and this loop hangs forever. See scripts/soak.sh for the detail.
-    ssh -n -o BatchMode=yes "$h" "cd $RUN && sudo -n setsid --fork $BIN/karstd \
-        --config $RUN/karstd.toml --socket $RUN/karstd.sock \
-        < /dev/null > $RUN/karstd.log 2>&1"
+
+# The daemon has to be detached before ssh will hang up, and the two systems
+# spell that differently.
+#
+# Linux: `setsid --fork`, not `setsid ... &` — with `&` the ssh session never
+# closes and this loop hangs forever. See scripts/soak.sh for the measurement.
+#
+# macOS: there is no setsid(1) at all. `sudo -b` is the equivalent that matters
+# here — sudo forks and the parent returns without waiting — and the inner
+# `sh -c` does the redirection, which `sudo -b` does not do for you.
+#
+# **Paths are relative in the macOS branch, deliberately.** `$RUN` and `$BIN`
+# both start with `~`, and a tilde does not expand inside the quotes that
+# `sh -c` needs; it would travel to root's shell as a literal. `cd $RUN`
+# already ran in the outer, unquoted position, so the config and the socket are
+# named relative to it, and the binary is reached through `$HOME` expanded by
+# the *user's* shell before sudo — root's `$HOME` is /var/root and would not
+# find the checkout.
+start_daemon() {
+    local host=$1 os=$2
+    if [ "$os" = Darwin ]; then
+        ssh -n -o BatchMode=yes "$host" "cd $RUN && bin=\$HOME/karst/target/release && \
+            sudo -n -b /bin/sh -c \"exec \$bin/karstd \
+                --config karstd.toml --socket karstd.sock \
+                < /dev/null > karstd.log 2>&1\""
+    else
+        ssh -n -o BatchMode=yes "$host" "cd $RUN && sudo -n setsid --fork $BIN/karstd \
+            --config $RUN/karstd.toml --socket $RUN/karstd.sock \
+            < /dev/null > $RUN/karstd.log 2>&1"
+    fi
     sleep 2
-    ssh -n -o BatchMode=yes "$h" "head -2 $RUN/karstd.log 2>/dev/null || true"
-done
+    ssh -n -o BatchMode=yes "$host" "head -2 $RUN/karstd.log 2>/dev/null || true"
+}
+start_daemon "$HOST_B" "$OS_B"
+start_daemon "$HOST_A" "$OS_A"
 
 # ── verify ──────────────────────────────────────────────────────────────────
 say "Connectivity"
-sh_a "ping -c4 -W2 $SUBNET.2" | tail -2
+sh_a "ping -c4 $PING_A $SUBNET.2" | tail -2
 say "Reverse direction"
-sh_b "ping -c4 -W2 $SUBNET.1" | tail -2
+sh_b "ping -c4 $PING_B $SUBNET.1" | tail -2
 
 # 1280 bytes of IP packet with DF set. This is the case spec §13.6 exists for:
 # it must cross without IP fragmentation anywhere on the path.
 say "Full-MTU, DF set (spec §13.6)"
-sh_a "ping -c3 -W2 -s 1252 -M do $SUBNET.2" | tail -2
+sh_a "ping -c3 $PING_A -s 1252 $(ping_df "$OS_A") $SUBNET.2" | tail -2
 
+# On macOS the interface name in the roster is a preference the kernel declines,
+# so this is also where the name karstd actually got is read back rather than
+# assumed. Nothing below depends on it; it is here for the operator.
 say "Status"
 sh_a "sudo -n $BIN/karst status --socket $RUN/karstd.sock"
 
 [ "$BENCH" -eq 1 ] || exit 0
 
 # ── measure ─────────────────────────────────────────────────────────────────
-command -v iperf3 >/dev/null 2>&1 || sh_a "command -v iperf3" >/dev/null 2>&1 || {
-    say "iperf3 is not installed on $HOST_A; skipping the benchmark"
-    exit 0
-}
+#
+# Both hosts, not this one. The check used to consult the local machine first,
+# which passed on any workstation with iperf3 installed and then failed inside
+# the run — and neither remote host is necessarily this machine. macOS has no
+# iperf3 in the base system, so a Mac is the host that usually lacks it.
+for h in "$HOST_A" "$HOST_B"; do
+    ssh -n -o BatchMode=yes "$h" "command -v iperf3" >/dev/null 2>&1 || {
+        say "iperf3 is not installed on $h; skipping the benchmark"
+        exit 0
+    }
+done
 
+# No `setsid` on either line: `iperf3 -D` already forks and detaches itself,
+# which is the whole reason the daemon above needs the treatment and this does
+# not. It is also the only spelling that works on macOS.
 say "Baseline: underlay, no tunnel"
-sh_b "setsid iperf3 -s -B $ADDR_B -p 5202 -D >/dev/null 2>&1; sleep 1"
+sh_b "iperf3 -s -B $ADDR_B -p 5202 -D >/dev/null 2>&1; sleep 1"
 sh_a "iperf3 -c $ADDR_B -p 5202 -t $DURATION -f m" | grep -E 'sender|receiver' || true
 
 say "Through the Karst tunnel"
-sh_b "setsid --fork iperf3 -s -B $SUBNET.2 -D >/dev/null 2>&1 || true; sleep 1"
+sh_b "iperf3 -s -B $SUBNET.2 -D >/dev/null 2>&1 || true; sleep 1"
 sh_a "iperf3 -c $SUBNET.2 -t $DURATION -f m" | grep -E 'sender|receiver' || true
 
 # Parallel streams separate two very different explanations for a low number.
@@ -196,6 +277,15 @@ sh_a "iperf3 -c $SUBNET.2 -t $DURATION -f m" | grep -E 'sender|receiver' || true
 say "Through the tunnel, 4 parallel streams"
 sh_a "iperf3 -c $SUBNET.2 -t $DURATION -P 4 -f m" | grep -E 'SUM.*(sender|receiver)' || true
 
+# `top` agrees on neither the batch flag nor the per-PID flag: Linux wants
+# `-b -n1 -H -p PID`, macOS wants `-l 1 -pid PID`, and macOS has no per-thread
+# mode at all — so the Mac row is the process total where the Linux row breaks
+# out threads. Worth having anyway: what this measures is whether the daemon is
+# CPU-bound during the transfer, and that reads the same either way.
 say "Daemon CPU during transfer"
+case $OS_A in
+    Darwin) cpu='top -l 1 -pid $(pgrep -x karstd) -stats pid,command,cpu 2>/dev/null | tail -3' ;;
+    *)      cpu='top -b -n1 -H -p $(pgrep -x karstd) 2>/dev/null | tail -5' ;;
+esac
 sh_a "iperf3 -c $SUBNET.2 -t 8 -f m >/dev/null 2>&1 &
-      sleep 3; top -b -n1 -H -p \$(pgrep -x karstd) 2>/dev/null | tail -5; wait" || true
+      sleep 3; $cpu; wait" || true

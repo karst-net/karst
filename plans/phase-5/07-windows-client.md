@@ -209,7 +209,7 @@ Sign `karstd.exe`, `karst.exe`, and the MSI, with a timestamp, and verify with
 | Unit | Ring accounting, packet framing, NRPT rule encode/decode, revert-file round trip | `crates/karst-tun/src/windows.rs`; runs on any Windows runner |
 | Integration | Create a real adapter, assign an address, send and receive | `windows-latest` GitHub runner — runners are administrators, so this works |
 | Loopback | Two `karstd` instances, two adapters, one machine, TCP under an ACL | `bins/karstd/tests/windows_pair.rs`, the counterpart to `two_nodes.rs` |
-| Cross-platform | Windows ↔ Linux over a real NAT | `scripts/two-host-test.sh`, extended |
+| Cross-platform | Windows ↔ Linux over a real NAT | `scripts/two-host-test.sh`, extended. **The seam already exists**: the macOS work gave it a `uname -s` probe per host and a branch per differing command, so Windows is a third case rather than a rewrite — see [06](06-macos-client.md) §8 for what macOS needed and why the dangerous differences were the flags that exist on both systems and mean different things. Expect the Windows list to be longer and blunter, since the target is a shell under MSYS/Git-Bash or an `ssh` to PowerShell and neither spells `ping`, `route` or process listing the way either Unix does |
 | Manual | Install, upgrade, uninstall, SmartScreen, domain-joined NRPT, sleep/wake | W9–W10 walkthrough |
 
 Add a `windows` job to CI for the unit and integration tiers on every push;

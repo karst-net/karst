@@ -31,7 +31,43 @@ pub enum HostRuntime {
     /// macOS's `/etc/resolver` directory. The variant is compiled on every
     /// platform even though only macOS selects it, so a Linux build type-checks
     /// this path rather than discovering it on the release runner.
-    Macos(karst_dns::host::Macos),
+    Macos {
+        host: karst_dns::host::Macos,
+        /// Whether the operator has been told that this mechanism carries no
+        /// search list. Once per daemon, not once per netmap poll: the netmap
+        /// refreshes on a timer and a warning repeated every minute is a
+        /// warning nobody reads.
+        announced_search_gap: bool,
+    },
+}
+
+/// What a mechanism does with the netmap's search domains.
+///
+/// Reported because [`HostRuntime::Macos`] is the one mechanism that cannot
+/// honor them and every mechanism prints the same `search_domains` list. An
+/// operator reading that list next to `host_integration = "/etc/resolver"` would
+/// otherwise have no way to tell that a bare `laptop` will not become
+/// `laptop.aquifer.karst` — the exact "appeared to succeed and changed nothing"
+/// outcome `karst_dns::host::macos` refuses to ship in the mechanism itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchList {
+    /// The mechanism installs the search domains as a resolver search list, so
+    /// a bare name is qualified with each of them in turn.
+    Applied,
+    /// It does not. Names below the search domains still route to the stub —
+    /// that is what the per-domain resolver files do — but they must arrive
+    /// fully qualified.
+    NotApplied,
+}
+
+impl SearchList {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::NotApplied => "not applied",
+        }
+    }
 }
 
 impl HostRuntime {
@@ -73,7 +109,10 @@ impl HostRuntime {
         let macos = || {
             let mut host = karst_dns::host::Macos::system();
             host.recover().map_err(|error| error.to_string())?;
-            Ok::<_, String>(Self::Macos(host))
+            Ok::<_, String>(Self::Macos {
+                host,
+                announced_search_gap: false,
+            })
         };
         match settings.host_integration {
             HostIntegration::None => Ok(Self::None),
@@ -168,23 +207,43 @@ impl HostRuntime {
                     &config.netmap_dns.search_domains,
                 )
                 .map_err(|error| error.to_string()),
-            Self::Macos(macos) => {
+            Self::Macos {
+                host,
+                announced_search_gap,
+            } => {
                 if enabled {
-                    macos.apply(
+                    host.apply(
                         config.dns.stub_address,
                         &config.netmap_dns.zone,
                         &config.netmap_dns.search_domains,
                     )
                 } else {
-                    macos.revert()
+                    host.revert()
                 }
                 .map_err(|error| error.to_string())?;
+                // The netmap asked for a search list and this mechanism has no
+                // key for one. Said once, at the moment it first matters,
+                // because the alternative is an operator who reads
+                // `search_domains` in `karst dns status` and concludes that
+                // bare names work. `plans/phase-5/06-macos-client.md` §0 has
+                // what supplying one would cost.
+                if enabled && !*announced_search_gap && !config.netmap_dns.search_domains.is_empty()
+                {
+                    *announced_search_gap = true;
+                    eprintln!(
+                        "karstd: the netmap supplies search domains {:?}, and the \
+                         /etc/resolver mechanism has no search list — names below \
+                         them resolve when fully qualified, but a bare hostname \
+                         still needs its domain",
+                        config.netmap_dns.search_domains
+                    );
+                }
                 // The resolver files are already correct when this is set; the
                 // flush that follows them is what stops `mDNSResponder` serving
                 // the answers it cached before the change. Reporting it as an
                 // apply failure would say the opposite of what happened, so it
                 // is a warning on its own.
-                if let Some(detail) = macos.flush_error() {
+                if let Some(detail) = host.flush_error() {
                     eprintln!(
                         "karstd: resolver files applied, but the DNS cache was \
                          not flushed ({detail}); names may resolve to their \
@@ -206,7 +265,7 @@ impl HostRuntime {
             Self::ResolvConf(controller) => {
                 controller.shutdown().map_err(|error| error.to_string())
             }
-            Self::Macos(macos) => macos.revert().map_err(|error| error.to_string()),
+            Self::Macos { host, .. } => host.revert().map_err(|error| error.to_string()),
         }
     }
 
@@ -244,7 +303,7 @@ impl HostRuntime {
                     }
                 })
                 .map_err(|error| error.to_string()),
-            Self::Macos(macos) => macos
+            Self::Macos { host, .. } => host
                 .observe()
                 .map(|applied| {
                     if applied {
@@ -264,7 +323,24 @@ impl HostRuntime {
             Self::Resolved(_) => "systemd-resolved",
             Self::NetworkManager(_) => "networkmanager",
             Self::ResolvConf(_) => "resolv.conf",
-            Self::Macos(_) => "/etc/resolver",
+            Self::Macos { .. } => "/etc/resolver",
+        }
+    }
+
+    /// Whether the selected mechanism turns the netmap's search domains into a
+    /// resolver search list. See [`SearchList`] for why this is reported at all.
+    #[must_use]
+    pub const fn search_list(&self) -> SearchList {
+        match self {
+            // `resolved` sets them as link search domains, NetworkManager as
+            // the connection's `dns-search`, and the `resolv.conf` controller
+            // writes them to the `search` line. All three qualify a bare name.
+            Self::Resolved(_) | Self::NetworkManager(_) | Self::ResolvConf(_) => {
+                SearchList::Applied
+            }
+            // No host integration at all, and the one mechanism that has files
+            // per domain and no key for a search list.
+            Self::None | Self::Macos { .. } => SearchList::NotApplied,
         }
     }
 }
@@ -793,9 +869,30 @@ mod tests {
     fn every_mechanism_names_itself() {
         assert_eq!(HostRuntime::None.mechanism(), "none");
         assert_eq!(
-            HostRuntime::Macos(karst_dns::host::Macos::system()).mechanism(),
+            HostRuntime::Macos {
+                host: karst_dns::host::Macos::system(),
+                announced_search_gap: false,
+            }
+            .mechanism(),
             "/etc/resolver"
         );
+    }
+
+    /// The macOS mechanism is the only one that prints a search domain it will
+    /// not act on, and `karst dns status` has to say so — see [`SearchList`].
+    #[test]
+    fn only_the_resolver_directory_reports_no_search_list() {
+        assert_eq!(
+            HostRuntime::Macos {
+                host: karst_dns::host::Macos::system(),
+                announced_search_gap: false,
+            }
+            .search_list(),
+            SearchList::NotApplied
+        );
+        assert_eq!(HostRuntime::None.search_list(), SearchList::NotApplied);
+        assert_eq!(SearchList::Applied.as_str(), "applied");
+        assert_eq!(SearchList::NotApplied.as_str(), "not applied");
     }
 
     #[test]

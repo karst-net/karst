@@ -565,6 +565,7 @@ pub fn run_with_control(
                                     listener_live,
                                     host.mechanism(),
                                     host_state,
+                                    host.search_list(),
                                     cache,
                                     &failures,
                                 );
@@ -2252,6 +2253,7 @@ fn dns_report(
     listener_live: bool,
     host_integration: &str,
     host_state: &str,
+    search_list: crate::dns::SearchList,
     cache: Option<karst_dns::cache::Stats>,
     failures: &[String],
 ) -> String {
@@ -2271,6 +2273,10 @@ fn dns_report(
         "search_domains = {:?}",
         config.netmap_dns.search_domains
     );
+    // Directly under the list it qualifies, because the two are only meaningful
+    // together: `/etc/resolver` routes every name below these domains to the
+    // stub and still leaves a bare hostname unqualified.
+    let _ = writeln!(out, "search_list = \"{}\"", search_list.as_str());
     let _ = writeln!(out, "split_routes = {}", config.netmap_dns.routes.len());
     let cache = cache.unwrap_or_default();
     let _ = writeln!(out, "cache_entries = {}", cache.entries);
@@ -2875,11 +2881,35 @@ mod route_tests {
             zone: "aquifer.karst".to_owned(),
             magic_dns: true,
         };
-        let report = dns_report(&cfg, true, "systemd-resolved", "configured", None, &[]);
+        let report = dns_report(
+            &cfg,
+            true,
+            "systemd-resolved",
+            "configured",
+            crate::dns::SearchList::Applied,
+            None,
+            &[],
+        );
         assert!(report.contains("listener = true"));
         assert!(report.contains("host_integration = \"systemd-resolved\""));
         assert!(report.contains("magic_dns = true"));
         assert!(report.contains("split_routes = 1"));
+        assert!(report.contains("search_list = \"applied\""));
+
+        // The macOS mechanism prints the same search domains and does not
+        // install them. An operator has to be able to tell the two apart from
+        // the status output alone.
+        let resolver_directory = dns_report(
+            &cfg,
+            true,
+            "/etc/resolver",
+            "configured",
+            crate::dns::SearchList::NotApplied,
+            None,
+            &[],
+        );
+        assert!(resolver_directory.contains("search_domains = [\"corp.example\"]"));
+        assert!(resolver_directory.contains("search_list = \"not applied\""));
     }
 
     #[test]
