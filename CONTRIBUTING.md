@@ -36,10 +36,35 @@ Runs formatting, clippy with `-D warnings`, tests, the dependency license
 allowlist, and SPDX header verification. CI additionally runs secret scanning,
 `govulncheck`, and the formal models.
 
+## Editing the deployment walkthrough
+
+[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) is executed, not just read:
+CI extracts its commands and runs paths A, B and C against a real deployment
+(`just walkthrough-a`, `-b`, `-c`). So every fenced block in that file carries
+a tag saying which path it belongs to, and CI rejects one that does not:
+
+````
+```sh walkthrough=A step=genkey
+```toml walkthrough=B,C step=node-config file=/etc/karst/karstd.toml
+```sh walkthrough=none reason="needs an identity provider"
+````
+
+If a block cannot run — a diagram, a prerequisite the runner already has, a
+command that waits for Ctrl-C — tag it `walkthrough=none` with a reason. That
+is not a way out; it is the record of what the walkthrough does not cover,
+kept next to the thing it does not cover. `just walkthrough-tags` checks this
+in a second, and `scripts/getting-started-blocks.py` documents the grammar.
+
+Values a reader has to paste in are written as ellipses (`server_kem_pin =
+"…2368 hex characters…"`). The runner resolves each from the step that
+produces it, so a *new* field written that way fails loudly, naming the field,
+rather than being written into a config file as a literal `…`.
+
 ## Things CI will reject
 
 - A commit without `Signed-off-by`.
 - A source file without an `SPDX-License-Identifier` in its first three lines.
+- A fenced block in `docs/GETTING-STARTED.md` with no `walkthrough=` tag.
 - A dependency outside the license allowlist in `deny.toml`. A GPL dependency
   in the Rust crates would break both iOS App Store and kernel-datapath
   viability — this is a hard gate, not a preference.

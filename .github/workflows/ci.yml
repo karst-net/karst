@@ -587,6 +587,116 @@ jobs:
   # image builds — but it does refuse the ways it rots silently: a compose file
   # that no longer parses, a bootstrap script with a syntax error, and the two
   # environment variables whose absence is the whole of both findings.
+  # ── docs/GETTING-STARTED.md, walked ────────────────────────────────────────
+  #
+  # Everything above this line tests the *code*. Nothing above it runs a
+  # command from the deployment walkthrough, and the gap that leaves is not
+  # small: `two_nodes.rs` builds its configuration programmatically and never
+  # invokes `karstd genkey`; the aquifer fixture starts
+  # `management/internals/karst/testserver`, not `karst-control`, so
+  # management.json, the KARST_* variables, the SQLite store and the systemd
+  # units have no test at all; and the `compose` job below parses the compose
+  # file without ever bringing it up.
+  #
+  # The three jobs here close that, by extracting the document's own commands
+  # and running them (scripts/getting-started-blocks.py). Separate jobs rather
+  # than one, because they fail for unrelated reasons: merged, "path C's
+  # systemd unit regressed" and "the pin conversion broke" would be one red X
+  # with one log to read.
+  walkthrough-tags:
+    name: Walkthrough tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Seconds, on every PR, and it is the mechanism the other two rest on: a
+      # fenced block added to the walkthrough without a `walkthrough=` tag
+      # fails here rather than quietly falling outside every test below.
+      - run: ./scripts/getting-started-walkthrough.sh tags
+
+  walkthrough-a:
+    name: Walkthrough path A (privileged)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Two namespaces on a veth pair stand in for §4's two hosts. Cheap enough
+      # for every PR, and it is the only place the documented commands
+      # themselves are exercised: `genkey` into a mode-600 file, `pubkey`
+      # before any peer exists, the roster written by hand, `check`, and a
+      # status listing that has to say `transport = "direct"` because there is
+      # no relay in this path to fall back to.
+      - name: Path A — two nodes and nothing else
+        run: sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-a
+
+  # Paths B and C bring whole deployments up, so they run nightly and on main
+  # rather than on every pull request: between them they build two container
+  # images, wait out a ninety-second admission lease, and enable systemd units.
+  # A pull request that changes either path can still be checked by hand with
+  # `just walkthrough-b` / `just walkthrough-c` on a throwaway host.
+  walkthrough-b:
+    name: Walkthrough path B (containers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The compose deployment PLAN.md §5 makes the default, brought up for
+      # real: the images built, bootstrap.sh run, the pins converted with §5's
+      # own base64→hex pipeline, a node enrolled with the key §8.1 mints, and
+      # the roster lease watched through an expiry and a recovery (FINDINGS.md
+      # 42). None of that has ever run in CI.
+      - name: Path B — a coordination server and a relay, with containers
+        run: sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-b
+      - name: The relay and control logs, however it ended
+        if: always()
+        run: |
+          cd deploy/compose
+          docker compose logs --no-color --tail=200 control || true
+          docker compose logs --no-color --tail=200 relay || true
+
+  walkthrough-c:
+    name: Walkthrough path C (systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # GitHub's Ubuntu runners are full virtual machines with systemd as PID
+      # 1, so `systemctl enable --now` here is the real thing rather than a
+      # stand-in — which matters, because this is the *only* job in this file
+      # that runs the production `karst-control` binary. Everything else that
+      # touches the coordination server uses the test server.
+      - name: systemd is running as PID 1
+        run: |
+          systemctl is-system-running || true
+          [ "$(ps -p 1 -o comm=)" = "systemd" ] \
+            || { echo "::error::path C needs systemd as PID 1"; exit 1; }
+      - name: Path C — bare metal, with systemd
+        run: sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-c
+      - name: The journal for all three units, however it ended
+        if: always()
+        run: |
+          for unit in karst-relay karst-control karstd; do
+            echo "── $unit ───────────────────────────────"
+            sudo journalctl -u "$unit" --no-pager --lines=200 || true
+          done
+
   compose:
     name: Deployment artefact
     runs-on: ubuntu-latest
@@ -606,7 +716,12 @@ jobs:
           # up clean and never carries a packet, so their absence is checked
           # here rather than discovered by a self-hoster.
           fail=0
-          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER; do
+          # KARST_BOOTSTRAP_SETUP_KEY_FILE is the third of the same kind: a
+          # deployment without it comes up perfectly and can enroll nothing,
+          # because a setup key needs an account and an account needs an
+          # identity provider (§8.1).
+          for var in KARST_RELAY_ROSTER_FILE KARST_RELAY_REGISTRY_FILE KARST_AQUIFER \
+                     KARST_BOOTSTRAP_SETUP_KEY_FILE; do
             grep -q "$var" deploy/compose/docker-compose.yml \
               || { echo "::error::docker-compose.yml no longer sets $var"; fail=1; }
           done
@@ -628,7 +743,10 @@ jobs:
           # under it is both correct on a fresh tree and a closer statement of
           # the thing that matters, which is that a secret cannot be committed.
           fail=0
-          for f in tls/relay.key management.json relay.toml; do
+          # bootstrap.key is a standing enrollment credential for the whole
+          # deployment (§8.1) and is generated into this directory on first
+          # boot, so it belongs in this list beside the TLS key.
+          for f in tls/relay.key management.json relay.toml bootstrap.key; do
             git check-ignore -q "deploy/compose/state/$f" \
               || { echo "::error::deploy/compose/state/$f is not gitignored"; fail=1; }
           done

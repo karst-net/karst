@@ -245,6 +245,35 @@ web-install:
 web-check:
     cd web && corepack pnpm -r exec tsc --noEmit && corepack pnpm -r lint
 
+# ── The deployment walkthrough (docs/GETTING-STARTED.md) ────────────────────
+#
+# These run the *document's* commands, extracted from its tagged fenced blocks
+# rather than copied here. Every other suite in this file tests the code; these
+# test the surface a self-hoster touches, which until now nothing did — the
+# aquifer fixture runs the Karst test server rather than `karst-control`, and
+# no test has ever invoked `karstd genkey`, `bootstrap.sh`, or a systemd unit.
+#
+# `walkthrough-tags` is the anti-drift mechanism and costs seconds: a fenced
+# block added to the walkthrough without a `walkthrough=` tag fails it, so a
+# new step cannot quietly fall outside all of the below.
+walkthrough-tags:
+    ./scripts/getting-started-walkthrough.sh tags
+
+# Two namespaces on a veth pair, standing in for §4's two hosts. Needs root.
+walkthrough-a:
+    sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-a
+
+# **Destructive to the host.** Paths B and C install binaries into
+# /usr/local/bin, write /etc/karst and /etc/netbird, and enable systemd units,
+# because that is what the document tells a reader to do and running something
+# adjacent to it would test something adjacent to it. Run them on a throwaway
+# machine or a VM; CI runs them on a fresh runner.
+walkthrough-b:
+    sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-b
+
+walkthrough-c:
+    sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-c
+
 # ── Licenses ────────────────────────────────────────────────────────────────
 licenses:
     ./scripts/fetch-licenses.sh

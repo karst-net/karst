@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# The bare-metal relay unit, for a host that built from this tree rather than
+# installing a package.
+#
+# It differs from packaging/systemd/karst-relay.service in one line, and that
+# line is the whole reason both exist: `nfpm` installs the binary to
+# /usr/bin, while GETTING-STARTED.md §6.1 and the README beside this file
+# install it to /usr/local/bin, which is where a locally built binary belongs.
+# Copying the packaging unit after a local `install` produces a service that
+# fails at start with a path error naming a file the operator never meant to
+# use.
+
+[Unit]
+Description=Karst relay
+Documentation=https://github.com/karst-net/karst
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/karst-relay --config /etc/karst/relay.toml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
