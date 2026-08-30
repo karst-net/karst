@@ -1,7 +1,8 @@
 # SCIM 2.0 provisioning and group sync
 
 **PLAN.md §4.4 · W5–W8 · Go 2, with a Rust change in W6 that is not optional —
-see §2.**
+see §2.** *Amended 2026-08-29: the Rust change is not a change, it is the
+larger half of §2, and it is unestimated. Do not schedule W6 from this line.*
 
 ## 1. Scope
 
@@ -44,6 +45,24 @@ change, and it is worth reading before the schedule.
 > keepalive — and a wire change to tell a push from a response, because
 > `Connection::request` would otherwise consume a push as its own answer. See
 > FINDINGS.md 67 and 68; re-estimate before starting.
+>
+> **Where the server work actually is, checked 2026-08-29.** Not in tracking
+> attached nodes: `update_channel/updatechannel.go` already keeps a per-peer
+> channel registry, and both deprovisioning paths already drive it — device
+> removal via `modules/peers/manager.go:213`, user removal (the SCIM path) via
+> `server/user.go:1388` into `controller.go:1003`, which empties the removed
+> peer's map, closes its channel, and fans out to the survivors without
+> debouncing the first event. Karst subscribes to that rather than building it.
+> The cost is on the other side: `sendUpdateAccountPeers` computes a full
+> upstream `SyncResponse` per subscribed peer *before* sending, and a Karst
+> node needs a `KarstNetmapResponse` from a different handler — so every
+> subscribed Karst node triggers a network-map build it discards. Deciding
+> between a Karst-aware skip in forked upstream code and a second, lighter
+> fan-out is the real §2 server question, and it is half a week, not a week.
+> Two details to carry into it: the registry is keyed by `peer.ID` while a
+> Karst node is known by the handle stored as the peer's `Key`, and a mismatch
+> is silent; and a registering node has no peer row until `LoginPeer` runs, so
+> the channel must be created from login rather than from the handshake.
 
 `bins/karstd/src/control.rs:55`:
 
@@ -76,19 +95,41 @@ Two ways out:
 | Option | Cost | Verdict |
 |---|---|---|
 | Shorten `REFRESH` | One constant, and N× the request rate against the control server for every node in every account, forever | **No.** It trades a real scaling property for a worst case that is still not a bound |
-| Server-initiated push on the existing stream | The stream is already bidirectional and already exists for exactly this reason. The server loop becomes a select over "a request arrived" and "this node's map changed"; the node's reader must accept an unsolicited envelope | **Yes** |
+| Server-initiated push on the existing stream | ~~The stream is already bidirectional and already exists for exactly this reason. The server loop becomes a select over "a request arrived" and "this node's map changed"; the node's reader must accept an unsolicited envelope~~ — **struck 2026-08-29, this is the sentence FINDINGS.md 68 is about.** The server's stream exists; the node's does not. The cost is a persistent-connection lifecycle in `karstd`, a push/response discriminator on the wire, a subscription to the inherited update channel, and only then the select | **Yes**, but not at this price |
 
 ADR-0009's revised estimate already contemplates "new delta-push work". This is
 that work, and Phase 5 is where it becomes load-bearing rather than an
-optimization. **Budget one week of Go and half a week of Rust in W6**, and
-treat it as a dependency of the deprovisioning test rather than as a nice
-improvement to netmap freshness.
+optimization.
+
+~~**Budget one week of Go and half a week of Rust in W6**~~ — **void as of
+2026-08-29.** That figure was costed against the select alone. The work, and
+where it actually sits:
+
+| | Work | Side | Estimate |
+|---|---|---|---|
+| 1 | A control connection held across syncs: reconnect, backoff, keepalive, and the async restructuring `refresh_netmap` needs to have a reactor running between syncs at all | Rust | **Not yet estimated.** The largest item |
+| 2 | A push/response discriminator *inside* the sealed payload — never in `KarstEnvelope`, which is FINDINGS.md 54's bug — plus spec and vectors on both sides | Rust + Go | **Not yet estimated** |
+| 3 | Subscribe the Karst session to the inherited update channel; resolve handle → `peer.ID`; create the channel from login; decide how a subscribed Karst peer avoids an upstream `SyncResponse` build it discards | Go | ~half a week, including a forked-code decision |
+| 4 | A writer goroutine and the select. Not a bare `select` in the `Recv` loop: `stream.Send` is not safe from concurrent goroutines | Go | The week originally budgeted |
+| 5 | Push support in `karst/testserver`, which today has none — see §7 | Go | Not previously counted |
+
+**The split inverts.** The plan budgeted twice as much Go as Rust; items 1 and
+2 are the bulk and both are Rust. Re-estimate 1 and 2 before W6 is scheduled,
+and treat the whole of it as a dependency of the deprovisioning test rather
+than as a nice improvement to netmap freshness.
 
 Keep the 60-second poll as the floor. Push is an accelerator, not a
 replacement: a node whose stream dropped must still converge, and a node that
 missed a push must not stay stale forever.
 
 ## 3. Does a node actually drop a session when a peer disappears?
+
+> **Answered 2026-08-29: yes, and cleanly.** The survivor's roster loses the
+> peer, its flow cache is cleared, and traffic stops — so this section's bad
+> case does not obtain and §2's latency work is sufficient. The test it asked
+> for exists as
+> `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`. The rest
+> of this section is kept as the record of what was checked and why.
 
 Unverified, and it decides whether §2's work is sufficient. Check in W5, before
 building anything: when a peer is removed from the netmap, does
@@ -210,14 +251,35 @@ Put it in the privileged suite next to the aquifer tests, which already stand
 up whole topologies ending in a TCP conversation under an ACL — this is that
 harness with a revocation in the middle.
 
+> **The harness is there; the push is not, on either side.** The latency half
+> of this test exists —
+> `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget` in
+> `bins/karstd/tests/aquifer.rs` — and it reported 48.9 s on 2026-08-28
+> (FINDINGS.md 67). It
+> runs against `karst/testserver`, whose `/remove` deletes from an in-memory
+> map and which never reaches `modules/peers`, `OnPeersDeleted` or the update
+> channel. **So the fixture has no push at all**, and §2's item 5 has to land
+> before this test can measure a pushed revocation rather than a poll. Budget
+> it here rather than discovering it in W8 — this is the test the whole of §2
+> exists to satisfy, and it is the last thing to be built.
+>
+> Note also that the row above asserts the *poll* bound, deliberately: at a
+> 60-second refresh the 30-second gate fails on roughly half of all runs and
+> the 60-second one flakes at the top of the spread. The 30-second assertion
+> in step 5 becomes honest once push lands, and not before.
+
 ## 8. Schedule
 
 | Week | Work |
 |---|---|
-| W5 | §3 investigation; SCIM schema, discovery documents, token auth |
-| W6 | Users and Groups CRUD, filter, PATCH; **push on the control stream** (Go 1 and Rust 1 pair) |
-| W7 | Group sync into the policy compiler; console Settings surface for the token |
+| W5 | ~~§3 investigation~~ (done, 2026-08-29); SCIM schema, discovery documents, token auth; re-estimate §2 items 1 and 2 |
+| W6 | Users and Groups CRUD, filter, PATCH; **push on the control stream** (Go 1 and Rust 1 pair) — §2's items 1–4, on a re-estimate rather than the struck figure. Items 1 and 2 are Rust and are the bulk, so the pairing is not symmetric |
+| W7 | Group sync into the policy compiler; console Settings surface for the token; **§2 item 5**: push in `karst/testserver`, so §7 can measure a pushed revocation rather than a poll |
 | W8 | Okta and Entra interop; deprovisioning test; docs |
+
+§3's investigation is done — see the note under §2 — so W5 carries only the
+SCIM work. That does not create slack: it is where the re-estimate of §2's
+items 1 and 2 should happen, before W6 commits to a pair.
 
 ## 9. Exit criteria
 

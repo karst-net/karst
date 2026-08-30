@@ -187,7 +187,7 @@ and what depends on it.
 | The twelve claims in §1 all demonstrated | §1 |
 | No secret material in any REST response, under any role | [03](03-control-api.md) §7 |
 | Bedrock chain verifies identically in Go and Rust against shared vectors | [02](02-bedrock.md) §12 |
-| Deprovisioning measured under 30 s in CI | [08](08-scim-and-groups.md) §7 |
+| Deprovisioning measured under 30 s in CI — **measured 2026-08-28 at 48.9 s, and blocked on [08](08-scim-and-groups.md) §2's push, not on the test** (FINDINGS.md 67, 68) | [08](08-scim-and-groups.md) §7 |
 | DNS reverts after `SIGKILL` on Linux and the completed non-Linux platform | [01](01-karstdns.md) §10 |
 | The NAT matrix still passes with the completed non-Linux client row added | Phase 4's matrix |
 | Rust and Go test suites green; `just verify` and `just test-privileged` pass | `justfile` |

@@ -268,15 +268,57 @@ So the work is not "a select and a reader". It is:
 2. a way to tell a push from a response on the wire, since
    `Connection::request` currently treats the next server message as its own
    answer and would consume a push as one;
-3. the server tracking which nodes are attached and to which account, so a
-   change can be aimed;
+3. attaching the Karst session to the inherited update channel, and deciding
+   what a subscribed Karst peer costs the server when it does;
 4. and only then the select.
 
+**Item 3 was checked on 2026-08-29 and is smaller than this entry first
+claimed.** The registry and the trigger both exist already, inherited.
+`update_channel/updatechannel.go` keeps `peerChannels map[string]chan
+*UpdateMessage` behind `CreateChannel`, `CloseChannel`, `HasChannel` and
+`SendUpdate`, and both deprovisioning paths already drive it: device removal
+through `modules/peers/manager.go:213`, and user removal — the path SCIM will
+use — through `server/user.go:1388` into
+`network_map/controller/controller.go:1003`, which sends each removed peer an
+empty map, **closes its channel**, and then fans out to the survivors. That
+fan-out is not debounced on the first event either: `BufferUpdateAccountPeers`
+sends immediately and coalesces only what follows. Karst subscribes to all of
+that rather than building it.
+
+What is not free is what being subscribed costs. `sendUpdateAccountPeers` does
+not send a signal — for every peer holding a channel it computes a full
+upstream `SyncResponse`, posture checks, DNS zones and proxy maps included, and
+sends that. A Karst node needs a `KarstNetmapResponse` from a different handler
+entirely, so every Karst node would trigger a network-map build whose result it
+discards. The node side of that is trivial — treat the message as "re-fetch
+now" and drop the payload, which the content-hash version already makes cheap.
+The server side is not, because the computation happens *before* `SendUpdate`:
+avoiding it means either a Karst-aware skip inside forked upstream code or a
+second, lighter fan-out beside it.
+
+Two smaller things fall out of the same reading. The registry is indexed by
+`peer.ID`, while a Karst node is known by the handle the fork stores as the
+peer's `Key` — `login.go`'s `WireGuardPubKey` field, resolved in `netmap.go`
+by `GetPeerByPeerPubKey(self).ID` — so a lookup stands between the two, and
+getting it wrong is silent: `SendUpdate` logs a missing channel at `Debug` and
+returns. And a registering node has no peer row until `LoginPeer` runs, so the
+channel cannot be created where the handshake completes. It has to hang off
+login, and the `Handler` interface gives no seam for that today.
+
+**Finding 67's measurement exercises none of this.** It runs against
+`karst/testserver`, whose `/remove` deletes from an in-memory map
+(`testserver/netmap.go:97`, `main.go:153`) and which never reaches
+`modules/peers`, `OnPeersDeleted` or the update channel. That is the right
+fixture for measuring poll latency, and it means the fixture has no push at
+all — it needs one before the test that has to prove this fix can measure it.
+
 Recorded rather than fixed because the estimate is what changes: "one week of
-Go and half a week of Rust in W6" was costed against item 4. Items 1–3 are the
-work, item 1 is a change to how the daemon talks to the control plane at all,
-and none of it should be started against a plan that says the stream is already
-there.
+Go and half a week of Rust in W6" was costed against item 4. Items 1 and 2 are
+the bulk of the work and both are Rust, which inverts the plan's split; item 1
+is a change to how the daemon talks to the control plane at all; item 3 is a
+forked-code decision rather than the registry it looked like; and the fixture
+work is not in the estimate anywhere. None of it should be started against a
+plan that says the stream is already there.
 
 ### 67. High: deprovisioning takes as long as the poll, and the poll is the budget
 
