@@ -6,6 +6,12 @@ on:
   pull_request:
   schedule:
     - cron: '0 3 * * *'   # nightly: long-running ProVerif variants
+  # On demand, against any ref. The walkthrough jobs for paths B and C do not
+  # run on pull requests — they bring whole deployments up — so without this
+  # the only way to exercise a change to them was to merge it to main and find
+  # out. That is how the first run of path B failed on a bug a dispatch would
+  # have caught on a branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -640,7 +646,10 @@ jobs:
   walkthrough-b:
     name: Walkthrough path B (containers)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Two container images built from source, plus a ninety-second admission
+    # lease waited out and recovered from. The lease is not compressible: it is
+    # the property being tested.
+    timeout-minutes: 60
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
