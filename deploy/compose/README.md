@@ -146,3 +146,25 @@ cd ../..
 docker build -f deploy/images/karst-control.Dockerfile -t ghcr.io/karst-net/karst-control:dev .
 docker build -f deploy/images/karst-relay.Dockerfile -t ghcr.io/karst-net/karst-relay:dev .
 ```
+
+## Verifying a release image
+
+Release images are keylessly signed by the `deliverables.yml` workflow in
+`karst-net/karst`. Verify the signature before deploying, and then use the
+verified digest rather than a mutable tag:
+
+```sh
+image=ghcr.io/karst-net/karst-control
+tag=v0.1.0 # replace with the release tag
+digest=$(docker buildx imagetools inspect --format '{{.Digest}}' "$image:$tag")
+
+cosign verify \
+  --certificate-identity-regexp 'https://github\\.com/karst-net/karst/\\.github/workflows/deliverables\\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$image@$digest"
+
+docker pull "$image@$digest"
+```
+
+Run the same procedure for `karstd` and `karst-relay`. A development image
+tagged `:dev` is a local build and is intentionally not a release claim.

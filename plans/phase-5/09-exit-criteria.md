@@ -62,10 +62,16 @@ daemon survived its own removal, leaving a dangling enablement symlink), 61
 exist and had no mode), and 62, still open (`RuntimeDirectory=` deletes the DNS
 revert record the manual recovery reads).
 
-Two items remain before this row can be called finished:
+Two items remained before this row could be called finished:
 
-- **Container image signing.** §5's table says cosign; the `images` job builds
-  and does not sign. It needs a key or an OIDC identity decided first.
+- **Container image signing — implemented; release evidence pending.** Release
+  tags matching `v*` publish `karstd`, `karst-relay`, and `karst-control` to
+  GHCR, then sign each pushed digest with keyless Cosign through GitHub Actions
+  OIDC. The workflow verifies the exact repository, workflow path, tag ref,
+  and GitHub issuer before succeeding. Repository administrators must protect
+  the `v*` tag namespace: OIDC proves which workflow signed, while protection
+  decides who may cause that workflow to run. Run one protected test tag and
+  preserve its digest and verification output before calling this gate closed.
 - **The published location.** Producing signed artifacts is not publishing
   them. Nothing yet uploads to a release, and `scripts/release-manifest.sh` —
   which the portal's download page reads — is still wired to nothing and still

@@ -298,7 +298,7 @@ jobs:
         include:
           - name: client
             file: deploy/images/karstd.Dockerfile
-            image: karst-client
+            image: karstd
           - name: relay
             file: deploy/images/karst-relay.Dockerfile
             image: karst-relay
@@ -316,6 +316,76 @@ jobs:
           load: true
           push: false
           tags: local/${{ matrix.image }}:${{ github.sha }}
+
+  # A release image is a digest, not a tag: a tag may move after an operator
+  # has inspected it.  This job consequently pushes and signs only immutable
+  # digests from release tags. The ordinary `images` job above remains the
+  # build-only check for every push and never receives registry or OIDC write
+  # credentials.
+  publish-images:
+    name: Publish and sign container images (${{ matrix.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # GitHub OIDC token for keyless Cosign signing.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: client
+            file: deploy/images/karstd.Dockerfile
+            image: karstd
+          - name: relay
+            file: deploy/images/karst-relay.Dockerfile
+            image: karst-relay
+          - name: control
+            file: deploy/images/karst-control.Dockerfile
+            image: karst-control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Cosign
+        # v4.1.2. Pinning the commit makes the signing dependency itself
+        # reproducible; update the comment and SHA together.
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Build and publish ${{ matrix.name }} image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: |
+            ghcr.io/karst-net/${{ matrix.image }}:${{ github.ref_name }}
+            ghcr.io/karst-net/${{ matrix.image }}:sha-${{ github.sha }}
+      - name: Sign the immutable image digest
+        env:
+          IMAGE: ghcr.io/karst-net/${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          test -n "$DIGEST"
+          cosign sign --yes "$IMAGE@$DIGEST"
+      - name: Verify the release identity and signature
+        env:
+          IMAGE: ghcr.io/karst-net/${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/deliverables.yml@${{ github.ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          test -n "$DIGEST"
+          cosign verify \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            "$IMAGE@$DIGEST"
 
   # The macOS client package: two architectures joined with `lipo`, a .pkg, and
   # — when the Apple credentials exist — signing, notarization and stapling.
