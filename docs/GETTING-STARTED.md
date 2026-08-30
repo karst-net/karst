@@ -382,9 +382,17 @@ cat state/bootstrap.key
 > Convert them:
 >
 > ```sh walkthrough=B step=pins-hex
-> docker compose logs control | grep 'server KEM pin'  | awk '{print $NF}' | base64 -d | xxd -p -c 0
-> docker compose logs control | grep 'server sign pin' | awk '{print $NF}' | base64 -d | xxd -p -c 0
+> docker compose logs control | grep 'server KEM pin'  | tail -1 | awk '{print $NF}' | base64 -d | xxd -p -c 0
+> docker compose logs control | grep 'server sign pin' | tail -1 | awk '{print $NF}' | base64 -d | xxd -p -c 0
 > ```
+>
+> **`tail -1` is not decoration.** The pins are printed once per start and
+> `docker compose logs` keeps every start, so on a server that has restarted —
+> which the very next subsection asks you to do — the pipeline without it
+> decodes *both* copies into one string of twice the right length. That fails
+> with the second message above, about a field whose value looks perfectly
+> well-formed. The pins themselves are stable across restarts, so any one line
+> will do; the last is the one that matches a server running now.
 >
 > The relay registry is *not* affected — `relays.json` takes `identity_key` as
 > base64, exactly as `karst-relay pubkey` prints it.
@@ -935,6 +943,7 @@ The failure modes below are the ones that do not announce themselves.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `server_kem_pin: field key: contains a non-hexadecimal character` | pin pasted as base64 from the log; the field is hex | `base64 -d \| xxd -p -c 0` (§5) |
+| `server_kem_pin is 2368 bytes, but … uses a 1184-byte key` | the conversion ran over a log holding more than one start, so it decoded every copy of the pin into one string | add `\| tail -1` after the `grep` (§5). Exactly double the right length is the tell |
 | Nodes reject the netmap entirely, no relay used | a DNS name in `relays.json` `address` | use `IP:port`; the name goes in `tls_server_name` |
 | Relay logs `roster lease expired`, admits nobody after 90 s | nothing is rewriting `roster.toml` | set `KARST_RELAY_ROSTER_FILE` on the server |
 | Nodes never dial a relay and never go direct | no `relays.json`, so the netmap carries no relays | set `KARST_RELAY_REGISTRY_FILE` |
