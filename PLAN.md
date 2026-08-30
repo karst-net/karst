@@ -4127,9 +4127,36 @@ onwards, anchored on the week of 2026-08-10.
   JSON/CSV export format; successful Karst mutations feed the hash chain;
   configured webhook and TLS-syslog sinks use a durable retrying outbox; and
   the console exports a Bedrock audit-anchor request for offline authority
-  signing and import. Automated anchoring remains intentionally deferred until
+  signing and import. ~~Automated anchoring remains intentionally deferred until
   a capability-scoped anchor authority can be designed without granting node
-  countersigning power.
+  countersigning power.~~
+
+  **The deferral condition was met on 2026-08-29.**
+  [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md) (Proposed)
+  designs the scoped tier: a third context string, `karst-bedrock-v1 anchor`,
+  carried as an optional trailing block in the `genesis` and `authority-list`
+  bodies, so scoping is cryptographic rather than a permission bit a verifier
+  has to remember to check. **The tier itself is Phase 6 work, not Phase 5** —
+  it is a permanent chain-format change and this phase is where the project
+  first acquires nodes it cannot force-upgrade. Phase 5's exit asks for the
+  offline-signing workflow, and the manual ceremony satisfies it.
+
+  **Two pieces belong here and should not wait**, because neither changes a
+  format, neither is a flag day, and both are correct whether or not ADR-0016 is
+  accepted:
+
+  - **An `anchor` entry's `audit_seq` must be checked against the previous
+    anchor's.** Nothing does today — `bedrock/verify.go` assigns `st.Anchor`
+    unconditionally, and the only monotonicity check lives in `PrepareAnchor`,
+    which a compromised server bypasses by not calling it. Harmless while the
+    server holds no signing key; the rewind it permits becomes real the moment
+    ADR-0016 gives it one.
+  - **Wire `VerifyAnchored` into the audit status endpoint.** It has no
+    production caller, so nothing on a running server ever compares the audit
+    log against its anchor. The console reports how far the log has moved since
+    the anchor (`entries_since_anchor`) and never asks whether it still agrees
+    with it — which is the question the anchor exists to answer. `AnchorDue` is
+    likewise uncalled and stays that way until the Phase 6 scheduler needs it.
 - Generate Debian and RHEL packages for the Linux clients and services.
 - SCIM 2.0 provisioning and group sync, including measured deprovisioning.
 - **Do not claim managed subnet routers or exit nodes in Phase 5.** Generic
@@ -4145,6 +4172,32 @@ onwards, anchored on the week of 2026-08-10.
 
 ### Phase 6 — Hardening and beta (8 weeks · Dec 2026–Feb 2027)
 
+- **Capability-scoped anchor tier**
+  ([ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)), carried
+  from Phase 5 where the design was written and the two non-format pieces were
+  taken. This is the wire-format half: the `karst-bedrock-v1 anchor` context
+  string and key kind in both languages, the optional trailing block in the
+  `genesis` and `authority-list` body layouts, the concatenated signer-index
+  space, regenerated `spec/vectors/bedrock-v1.json` including the rejected
+  cases, `karst-bedrock` support for the new key kind, and the scheduler that
+  finally gives `AnchorDue` a caller.
+
+  **It goes early in this phase, and the ordering is the point.** It must land
+  *before* the internal cryptographic review below, or the newest signing tier
+  in the system is the one thing that review did not cover. It must land
+  *before* the public beta, because the first `authority-list` entry carrying
+  anchor keys permanently excludes every node that has not upgraded — the entry
+  cannot be removed from an append-only log, and a later entry setting `s = 0`
+  does not help a node that cannot parse the entries in between. That cost
+  scales with the deployed fleet, so the window between Phase 5's installers
+  settling and this phase's beta opening is the cheapest it will ever be. After
+  GA it is not affordable at all.
+
+  **Sequence it with FINDINGS 53 if that work lands in the same window.** The
+  control channel and netmap cache still hardcode ChaCha20-Poly1305 and
+  ML-KEM-768, and ADR-0015 made CNSA 2.0 a mandate as of 2026-08-25. Both are
+  coordinated fleet upgrades; two flag days cost more than one, and nothing
+  about them conflicts.
 - **Internal cryptographic review** of PHREATIC and its implementation: a
   structured self-review against the spec, the ProVerif and Verifpal models,
   and the vector suite, written up with the same findings discipline as the
