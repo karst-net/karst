@@ -639,17 +639,40 @@ b_reject_pin() {
 b_roster_lease() {
 	say "the roster lease (§5, FINDINGS.md 42)"
 	local roster="$COMPOSE_DIR/state/roster.toml"
-	local mtime1 sum1 mtime2 sum2
-	mtime1=$(stat -c '%Y' "$roster")
-	sum1=$(sha256sum "$roster" | cut -d' ' -f1)
-	sleep 30
-	mtime2=$(stat -c '%Y' "$roster")
-	sum2=$(sha256sum "$roster" | cut -d' ' -f1)
-	[ "$mtime2" -gt "$mtime1" ] \
-		|| die "roster.toml was not rewritten within 30s; the relay's lease expires at 90s"
-	[ "$sum1" = "$sum2" ] \
-		|| die "roster.toml's contents changed while no node joined or left"
-	ok "the roster's mtime advances while its bytes stay identical"
+
+	# The roster must actually hold the node that just enrolled. Without this
+	# the stability check below would pass just as contentedly over a file that
+	# never had anything in it — which is the placeholder bootstrap.sh writes,
+	# and a roster admitting nobody is the failure this section is about.
+	wait_for 90 "the enrolled node reached the relay's roster" -- \
+		grep -q '^\[\[client\]\]' "$roster"
+
+	# §5's claim is about *steady state*: the file is rewritten every 25s
+	# whether or not membership changed, which is what makes "nothing has
+	# changed" and "nothing is running" tell apart.
+	#
+	# Enrolling a node is a membership change, and the first rewrite after one
+	# legitimately differs — the earlier version of this sampled straight after
+	# `karst status` reported the node up and failed on the roster correctly
+	# gaining it. So this waits for two consecutive samples to agree instead of
+	# assuming membership settled the moment the node did.
+	local attempt mtime1 sum1 mtime2 sum2
+	for attempt in 1 2 3; do
+		mtime1=$(stat -c '%Y' "$roster")
+		sum1=$(sha256sum "$roster" | cut -d' ' -f1)
+		sleep 30
+		mtime2=$(stat -c '%Y' "$roster")
+		sum2=$(sha256sum "$roster" | cut -d' ' -f1)
+		[ "$mtime2" -gt "$mtime1" ] \
+			|| die "roster.toml was not rewritten within 30s; the relay's lease expires at 90s"
+		if [ "$sum1" = "$sum2" ]; then
+			ok "the roster's mtime advances while its bytes stay identical"
+			break
+		fi
+		[ "$attempt" -lt 3 ] \
+			|| die "roster.toml's contents changed on three consecutive 30s samples, with no node joining or leaving"
+		note "membership was still settling; sampling again"
+	done
 
 	(cd "$COMPOSE_DIR" && docker compose stop control >/dev/null)
 	wait_for 150 "the relay failed closed once nothing was maintaining the roster" -- \
