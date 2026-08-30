@@ -73,8 +73,8 @@ with an address that only overlay peers can reach.
 ## Host safety
 
 Host integration is transactional. Before changing host DNS the daemon writes
-a revert record to `/run/karst/dns-revert` (resolv.conf's original bytes) or
-`/run/karst/networkmanager-dns-revert` (NetworkManager's applied-connection
+a revert record to `/var/lib/karst/dns-revert` (resolv.conf's original bytes)
+or `/run/karst/networkmanager-dns-revert` (NetworkManager's applied-connection
 snapshot); on startup, or when `karst dns revert` is run without a daemon at
 all, it restores any still-applied record before applying new configuration.
 A normal stop invokes the same revert path, via the systemd unit's
@@ -84,6 +84,18 @@ rewrite. The latter preserves a symlink target by copying the original
 contents rather than moving the link. `systemd-resolved`'s own `RevertLink`
 needs no durable record: a link's DNS state is scoped to the link itself and
 disappears with it.
+
+**The two records live in different places because they have different
+lifetimes, and the difference is normative.** NetworkManager's snapshot
+describes settings applied to the TUN device; the kernel destroys that device
+along with the daemon, and a snapshot restored onto a later device would be
+describing something else, so it belongs under `/run` and is discarded with the
+boot. The resolv.conf record describes an edit to an ordinary file that
+outlives both the daemon and the boot, so it MUST be stored somewhere the unit
+does not clean up: `RuntimeDirectory=` deletes `/run/karst` on every stop,
+including the stop where `ExecStopPost=` failed — which is the only stop the
+record exists for. An implementation MAY read a record from an older location
+during an upgrade, but MUST NOT write one anywhere the service manager reclaims.
 
 When `magic_dns` changes from true to false, host integration is reverted in
 the same netmap application and the original resolvers remain usable.

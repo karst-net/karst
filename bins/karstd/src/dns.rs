@@ -56,10 +56,8 @@ impl HostRuntime {
             karst_dns::host::NetworkManager::connect(interface).map_err(|error| error.to_string())
         };
         let resolvconf = || {
-            let controller = karst_dns::host::Controller::new(karst_dns::host::ResolvConf::new(
-                "/etc/resolv.conf",
-                "/run/karst/dns-revert",
-            ));
+            let controller =
+                karst_dns::host::Controller::new(karst_dns::host::ResolvConf::system());
             controller.recover().map_err(|error| error.to_string())?;
             Ok::<_, String>(Self::ResolvConf(controller))
         };
@@ -694,7 +692,7 @@ fn parse_resolvers(values: &[String]) -> Result<Vec<SocketAddr>, Error> {
 /// A persisted revert record takes precedence over the live file, which may
 /// already name the KarstDNS stub after a prior netmap generation.
 fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
-    let host = karst_dns::host::ResolvConf::new("/etc/resolv.conf", "/run/karst/dns-revert");
+    let host = karst_dns::host::ResolvConf::system();
     let contents = host.original_contents().map_err(|error| Error::Resolver {
         value: error.to_string(),
     })?;

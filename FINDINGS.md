@@ -43,15 +43,15 @@ harness filled in. Neither could fail a test, because in a test the missing
 piece is present. They surfaced the week the tree acquired its first deployment
 artifact, which is the only vantage point from which either is visible.
 
-58 is the most recent closed one: a two-kilobyte signature increase aborting
-the relay's tests with a stack overflow, which was a margin problem rather than
-a size problem. 57 is beside it and the one worth reading: a lockout guard
+58 is a two-kilobyte signature increase aborting the relay's tests with a stack
+overflow, which was a margin problem rather than a size problem. 57 is beside
+it and the one worth reading: a lockout guard
 that always demanded the whole network be acknowledged, because it read a table
 no code ever wrote. 55 is beside it: a head exchange
 that had ten passing unit tests and sent in only one direction, because the
 event it hooked fires for one of the two roles.
 
-**Six findings are open.** Two of them — 67 and 68 — are a live gap rather than scope or design: deprovisioning does not meet the timing PLAN.md §4.4 requires, and the work planned to fix it was costed against a stream the node does not hold. The other four are as they were. 53 is scope, and it is
+**Five findings are open.** Two of them — 67 and 68 — are a live gap rather than scope or design: deprovisioning does not meet the timing PLAN.md §4.4 requires, and the work planned to fix it was costed against a stream the node does not hold. The other three are as they were. 53 is scope, and it is
 now load-bearing: **CNSA 2.0 is a mandate as of 2026-08-25 (ADR-0015)**, so
 AES-256-GCM — named in the suite registry and, for a long time, implemented
 nowhere — is the first item of a Category 5 transition rather than a
@@ -64,11 +64,18 @@ keeps 53 open — and what remains there is dispatch, not cryptography. 54 is a 
 the AEAD, which is harmless while only one encrypted type exists and becomes a
 redirection bug the moment a second one is added. 56 is a design gap: audit
 anchoring cannot run on a timer without a capability-scoped authority, because
-anything holding an authority key can also countersign nodes. 62 is the newest,
-and it is a question rather than a bug: the DNS revert record is written under
-`/run/karst`, which the unit's own `RuntimeDirectory=` deletes on stop, so the
-recovery the docs offer by hand has nothing left to read on the one path the
-record exists for. Among the closed ones, 52 is the most recent and the one worth reading:
+anything holding an authority key can also countersign nodes.
+
+**62 was the sixth, and it closed on 2026-08-29 by being answered rather than
+patched.** It was filed as a question — the DNS revert record was written under
+`/run/karst`, which the unit's own `RuntimeDirectory=` deletes on stop — and
+the answer is that the record's lifetime has to match the lifetime of the thing
+it describes. An edit to `/etc/resolv.conf` outlives the daemon and the boot, so
+the record moved to `/var/lib/karst`; NetworkManager's snapshot describes a TUN
+device the kernel destroys with the daemon, so it stayed under `/run`. The
+finding's own objection to the durable location turned out not to hold, and the
+test it cost — an assertion that could not fail — is back with the case it was
+missing beside it. Among the closed ones, 52 is worth reading:
 RFC 3542's `ICMP6_FILTER` uses a set bit to *block*, this code assumed it meant
 *pass*, and so PREF64 discovery admitted every `ICMPv6` type except the one it
 existed to receive. Every unit test passed — the parser was right, the
@@ -175,7 +182,7 @@ carries both the new wording and the original, struck through.
 | 59 | High | Every Linux package shipped a binary that cannot start on Debian 12 or RHEL 9, and installs cleanly on both | Fixed 2026-08-28 |
 | 60 | Medium | Removing the node package left the daemon running and a dangling enablement symlink behind it | Fixed 2026-08-28 |
 | 61 | Medium | No package created `/var/lib/karst`, so the documented netmap cache path did not exist and had no mode | Fixed 2026-08-28 |
-| 62 | Low | `RuntimeDirectory=karst` deletes the DNS revert record on stop, so the documented manual recovery has nothing to read | Open |
+| 62 | Low | `RuntimeDirectory=karst` deletes the DNS revert record on stop, so the documented manual recovery has nothing to read | Fixed 2026-08-29 |
 | 63 | Medium | The portal's session history was audit rows: every entry reported a null end time and a null address | Fixed 2026-08-28 |
 | 64 | Medium | The portal's Playwright suite has never run in CI — only the console's | Fixed 2026-08-28 |
 | 65 | Medium | The download manifest generator named a Windows MSI and a `.deb` the pipeline does not build, so it could not succeed, and the fixture served the same invented names | Fixed 2026-08-28 |
@@ -432,7 +439,7 @@ Three things that were not obvious until the data existed:
 
 **Found 2026-08-28** while building the packaged-unit systemd check
 (`scripts/package-systemd-verify.sh`), by noticing an assertion that passed
-against a package with a deliberately broken hook path. Open.
+against a package with a deliberately broken hook path. Fixed 2026-08-29.
 
 `karstd.service` sets `RuntimeDirectory=karst`, and systemd's default
 `RuntimeDirectoryPreserve=no` means it **deletes `/run/karst` when the unit
@@ -450,19 +457,50 @@ resolver configuration was. `sudo karst dns revert`, which
 docs/GETTING-STARTED.md §6.3 offers as the manual recovery, finds nothing to
 revert and exits successfully, on a machine where every lookup is failing.
 
-Not fixed here because the fix is a KarstDNS design decision rather than a
-packaging one, and there are at least two:
-`RuntimeDirectoryPreserve=restart`, which keeps the record across a restart but
-still not across a stop; or moving the record to `/var/lib/karst`, which
-survives both and raises its own question, since a record that outlives a
-reboot describes a resolver configuration that `/run` being a tmpfs has already
-reset. §7.1's own test plan says to assert recovery "across a reboot by leaving
-the revert file and starting cold", which cannot happen with the file under
-`/run` at all — so the workstream should settle which of those it meant.
+**The decision.** Of the two candidates — `RuntimeDirectoryPreserve=restart`,
+which keeps the record across a restart but still not across a stop, and moving
+it to `/var/lib/karst` — the second is the one that matches what the record
+describes. The objection recorded against it did not survive checking: a record
+that outlives a reboot was said to describe a resolver configuration that `/run`
+being a tmpfs has already reset, but the `resolvconf` mechanism is selected
+precisely on hosts with no resolver manager (`bins/karstd/src/dns.rs`,
+`HostIntegration::Auto`), where `/etc/resolv.conf` is an ordinary file that
+survives the reboot still naming a stub that will never listen again. Where it
+*is* a symlink into `/run`, a stale record is already harmless: `recover`
+restores nothing unless the live file still matches the applied bytes byte for
+byte, and drops the record when it does not. So the durable location is safe in
+both worlds, and §7.1's test plan — recovery "across a reboot by leaving the
+revert file and starting cold" — becomes writable for the first time.
+
+The record is now `/var/lib/karst/dns-revert`, the directory finding 61 made
+package content at `0700`, and both units carry `StateDirectory=karst` so it
+exists and persists on a hand-installed host too. `RuntimeDirectory=karst`
+stays: the control socket belongs there and should be reclaimed.
+
+**NetworkManager's record stays under `/run`, and the asymmetry is the point.**
+Its snapshot describes settings applied to the TUN device, which the kernel
+destroys along with the daemon — `NetworkManager::recover` already refuses a
+snapshot whose D-Bus object path has changed, so one that outlived the boot
+could only ever be wrong. Lifetime of the record follows lifetime of the thing
+it describes; the two mechanisms genuinely differ, and `spec/karstdns-v1.md`
+now says so normatively rather than leaving it to look like an inconsistency.
+
+**A record written by the older build is still read.** `LEGACY_REVERT_STATE`
+keeps `/run/karst/dns-revert` readable, because an in-place upgrade on a node
+with MagicDNS applied has its only copy there. Dropping it would have been
+worse than never writing one: the next `apply` would have captured the
+*stub-pointing* `resolv.conf` as the original, making the broken state the one
+recovery restores. `apply` now reads the record rather than the live file for
+the same reason, and retires the legacy copy once the durable one is written.
 
 **What it cost as a test.** The check "the revert record was consumed" passed
 whether the hook worked or not, because systemd deleted the directory either
-way. It is removed rather than repaired, with the reason written where it was.
+way — so it was deleted rather than repaired when the finding was written. It
+is back, and it can now fail. Beside it is the case the record exists for,
+which nothing had ever exercised: a drop-in points `ExecStopPost=` at a binary
+that is not there, and the script asserts the record survives the stop and that
+`karst dns revert` then actually restores the resolver — not merely that it
+exits 0 with nothing to do, which is what it had been asserting.
 
 ### 61. Medium: no package created the state directory the docs tell operators to use
 

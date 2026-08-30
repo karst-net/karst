@@ -292,15 +292,24 @@ that is not listening, and **every DNS lookup on the machine fails** — which i
 indistinguishable, to the person it happens to, from "the internet is broken".
 This is the single worst bug this workstream can ship.
 
-- Persist the `Revert` to `/run/karst/dns-revert.json` at apply time,
-  before the change is made.
+- Persist the `Revert` to `/var/lib/karst/dns-revert` at apply time, before the
+  change is made. **Settled 2026-08-29, by FINDINGS.md 62.** This originally
+  said `/run/karst/dns-revert.json`, and both halves of that were wrong: the
+  record is length-prefixed binary rather than JSON, and `/run` is reclaimed by
+  the unit's own `RuntimeDirectory=` on every stop — including the stop where
+  `ExecStopPost=` failed, which is the only stop the record exists for. The
+  units carry `StateDirectory=karst` so the directory exists and persists on a
+  packaged and a hand-installed host alike. NetworkManager's snapshot stays
+  under `/run`: it describes settings on a TUN device the kernel destroys with
+  the daemon, so outliving the boot would make it wrong rather than useful.
 - On startup, if a revert file exists and the config it describes is still in
   place, restore it before doing anything else.
 - Ship the systemd unit with `ExecStopPost=` calling `karst dns revert`, so an
   ordinary stop reverts even on a crash-restart loop.
 - Test: `SIGKILL` the daemon mid-session in a netns, restart, assert the host
   config is the original. Then assert the same across a reboot by leaving the
-  revert file and starting cold.
+  revert file and starting cold — which needs the durable location above; under
+  `/run` this row could not be written at all.
 
 ### 7.2 Leaks
 

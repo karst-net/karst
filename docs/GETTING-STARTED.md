@@ -629,6 +629,12 @@ the same recovery by hand:
 sudo karst dns revert --config /etc/karst/karstd.toml
 ```
 
+That works with no daemon running because the daemon writes down what it
+changed before it changes it: `/var/lib/karst/dns-revert` holds the original
+resolver file, and the unit's `StateDirectory=karst` is what keeps it there
+after a stop. The hook consumes the record on the ordinary path, so if the
+command above reports nothing to revert, nothing is broken.
+
 ### 6.4 A node without root
 
 `karstd` also runs with **no capabilities at all**, using a pure-Rust IP stack

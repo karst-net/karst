@@ -33,6 +33,9 @@
 #   - systemd runs that hook on an unclean exit, not just a clean stop.
 #   - The documented manual recovery, `karst dns revert --config …`, works
 #     against the installed layout.
+#   - The revert record outlives a stop whose hook failed, which is the only
+#     stop it exists for. FINDINGS.md 62: under `RuntimeDirectory=karst` it did
+#     not, and every assertion about it here was one that could not fail.
 
 set -euo pipefail
 
@@ -155,9 +158,9 @@ section "unclean exit"
 # The half being stood in for is the apply. The half under test is the revert,
 # and that is production code reached through the packaged unit's own hook.
 
-state=/run/karst/dns-revert
+state=/var/lib/karst/dns-revert
 original=/etc/resolv.conf
-mkdir -p /run/karst
+mkdir -p /var/lib/karst
 
 # A container runtime bind-mounts /etc/resolv.conf over the image's copy. The
 # resolver integration replaces that file by writing a sibling and renaming it
@@ -236,12 +239,13 @@ else
   printf '    expected: %s\n    actual:   %s\n' \
     "$(tr '\n' ' ' < "$saved")" "$(tr '\n' ' ' < "$original")"
 fi
-# There is deliberately no assertion here that the revert record was consumed.
-# The unit sets `RuntimeDirectory=karst`, so systemd deletes /run/karst — and
-# the record inside it — when the unit stops, whatever the hook did. That check
-# passed identically against a package with a deliberately broken hook path,
-# which makes it a check that cannot fail. See FINDINGS.md 59 for what the
-# interaction costs the documented manual recovery.
+# This assertion could not fail until finding 62 was fixed. The record used to
+# live under /run/karst, which the unit's own `RuntimeDirectory=` deletes on
+# every stop — so "the record is gone" was true whether the hook had consumed it
+# or never run at all, and it passed identically against a package with a
+# deliberately broken hook path. Under StateDirectory= systemd removes nothing,
+# so a surviving record now means exactly one thing: the revert did not happen.
+want "the revert record was consumed" test ! -e "$state"
 
 cp "$saved" "$original"
 rm -f "$saved" "$applied"
@@ -255,6 +259,62 @@ rm -f "$saved" "$applied"
 section "manual recovery"
 want "karst dns revert succeeds with no daemon running" \
   /usr/bin/karst dns revert --config /etc/karst/karstd.toml
+
+# ── Recovery after the hook itself fails — FINDINGS.md 62 ───────────────────
+#
+# Every check above assumes ExecStopPost= worked. This one assumes it did not,
+# which is the only situation the revert record exists for: a wrong binary path,
+# a transient failure, a `systemctl stop` on a daemon that was already SIGKILLed.
+# The unit's leading `-` makes all of those silent, so the record is the entire
+# remaining description of what the host resolver used to be.
+#
+# The drop-in reproduces the wrong-path case exactly — an ExecStopPost that
+# cannot run. An empty assignment first, because drop-ins append to Exec* lists
+# rather than replacing them.
+
+section "recovery after a failed hook"
+
+mkdir -p /run/systemd/system/karstd.service.d
+cat > /run/systemd/system/karstd.service.d/zz-broken-hook.conf <<'DROPIN'
+[Service]
+ExecStopPost=
+ExecStopPost=-/nonexistent/karst dns revert --config /etc/karst/karstd.toml
+DROPIN
+systemctl daemon-reload
+systemctl restart karstd.service
+sleep 2
+
+saved=$(mktemp)
+applied=$(mktemp)
+printf 'nameserver 192.0.2.53\noptions edns0\n' > "$saved"
+printf 'nameserver 100.100.100.100\nsearch karst.test\n' > "$applied"
+{ be64 "$(wc -c < "$saved")"; cat "$saved"; cat "$applied"; } > "$state"
+cp "$applied" "$original"
+
+systemctl kill --signal=SIGKILL karstd.service
+sleep 2
+systemctl stop karstd.service >/dev/null 2>&1 || true
+
+# The finding itself. Under RuntimeDirectory= the record was deleted here, and
+# the operator below had nothing left to recover from.
+want "the revert record survives a stop whose hook failed" test -e "$state"
+
+# And the record is worth surviving: the documented command has to actually put
+# the resolver back, not merely exit 0 with nothing to do.
+/usr/bin/karst dns revert --config /etc/karst/karstd.toml >/dev/null 2>&1 || true
+if cmp -s "$original" "$saved"; then
+  pass "the manual recovery restored the host resolver"
+else
+  fail "the manual recovery did NOT restore the host resolver"
+  printf '    expected: %s\n    actual:   %s\n' \
+    "$(tr '\n' ' ' < "$saved")" "$(tr '\n' ' ' < "$original")"
+fi
+want "the manual recovery consumed the record" test ! -e "$state"
+
+rm -f /run/systemd/system/karstd.service.d/zz-broken-hook.conf
+systemctl daemon-reload
+cp "$saved" "$original"
+rm -f "$saved" "$applied"
 
 # ── Removal leaves nothing running ──────────────────────────────────────────
 

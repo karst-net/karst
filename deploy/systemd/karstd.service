@@ -33,8 +33,17 @@ ExecStart=/usr/local/bin/karstd --config /etc/karst/karstd.toml
 ExecStopPost=-/usr/local/bin/karst dns revert --config /etc/karst/karstd.toml
 Restart=on-failure
 RestartSec=2
+# The control socket, and nothing that has to survive the daemon: systemd
+# deletes this directory on every stop.
 RuntimeDirectory=karst
 RuntimeDirectoryMode=0700
+# The netmap cache and the DNS revert record. systemd never removes a state
+# directory, which is the whole point — the revert record describes how to undo
+# a change to /etc/resolv.conf, so it has to outlive the stop that failed to
+# apply it. FINDINGS.md 62. This also creates /var/lib/karst on a host that
+# installed the binaries by hand rather than from a package.
+StateDirectory=karst
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target
