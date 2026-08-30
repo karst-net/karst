@@ -54,6 +54,14 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BLOCKS="$REPO/scripts/getting-started-blocks.py"
+
+# **Absolute, because the paths change directory.** §5's `up` block ends with
+# `cd deploy/compose`, and the steps after it — `docker compose logs`, `cat
+# state/bootstrap.key` — are written relative to that, so path B runs from
+# there deliberately. With a relative default the extractor then looked for the
+# document under deploy/compose and died with a FileNotFoundError traceback
+# after the deployment was already up.
+export WT_DOC="$REPO/docs/GETTING-STARTED.md"
 WORK=${WT_WORK:-/run/karst-walkthrough}
 KEEP=${WT_KEEP:-}
 
@@ -119,6 +127,23 @@ assert_hex_len() {
 	ok "$3"
 }
 
+# require TOOL...
+#
+# Named up front and fatal, in the spirit of KARST_REQUIRE_PREREQUISITES in the
+# privileged suites: a walkthrough that skips is a walkthrough that reports
+# success for work it never did. `xxd` is the one worth listing explicitly —
+# §5's base64→hex conversion is a documented pipeline, and on an image without
+# vim-common it would fail deep inside a step with an empty pin rather than
+# here with a name.
+require() {
+	local tool missing=()
+	for tool in "$@"; do
+		command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+	done
+	[ ${#missing[@]} -eq 0 ] || die "missing: ${missing[*]}"
+	ok "prerequisites present: $*"
+}
+
 # wait_for SECONDS DESCRIPTION -- COMMAND...
 #
 # Polls rather than sleeping a fixed interval, and fails naming what it was
@@ -168,9 +193,16 @@ _run_step() {
 	local path=$1 step=$2
 	local body="$WORK/.step" out="$WORK/.out"
 
-	local WT_FILE WT_APPEND WT_BG WT_LINE
-	eval "$(python3 "$BLOCKS" attrs "$path" "$step")"
-	python3 "$BLOCKS" emit "$path" "$step" >"$body"
+	# Checked rather than assumed. `eval "$(cmd)"` swallows the exit status of
+	# `cmd`, so an extractor that could not read the document at all reported
+	# itself as a Python traceback in the middle of a step's output and left
+	# whoever read the log to work out which step it belonged to.
+	local WT_FILE WT_APPEND WT_BG WT_LINE attrs
+	attrs=$(python3 "$BLOCKS" attrs "$path" "$step") \
+		|| die "cannot read path $path step $step from $WT_DOC"
+	eval "$attrs"
+	python3 "$BLOCKS" emit "$path" "$step" >"$body" \
+		|| die "cannot extract path $path step $step from $WT_DOC"
 
 	say "path $path · $step   (GETTING-STARTED.md:$WT_LINE)"
 	sed 's/^/   │ /' "$body"
@@ -447,7 +479,7 @@ path_b_cleanup() {
 
 path_b() {
 	[ "$(id -u)" = 0 ] || die "path B needs root: it installs a node agent and a systemd unit"
-	command -v docker >/dev/null || die "path B needs docker"
+	require docker openssl xxd base64
 	trap path_b_cleanup EXIT
 	path_b_cleanup
 	mkdir -p "$WORK"
@@ -649,6 +681,7 @@ path_c() {
 	[ "$(id -u)" = 0 ] || die "path C needs root: it writes /etc and enables systemd units"
 	systemctl is-system-running >/dev/null 2>&1 || systemctl --version >/dev/null 2>&1 \
 		|| die "path C needs systemd; this host has none"
+	require openssl xxd base64 journalctl
 	trap path_c_cleanup EXIT
 	path_c_cleanup
 	mkdir -p "$WORK"
