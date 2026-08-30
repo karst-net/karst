@@ -656,6 +656,29 @@ the `authority-list` body in §3.4 — today the list is bare public keys and ev
 authority may sign every authority op — and it is a genuine addition to the
 trust model rather than a refactor, so it is recorded rather than taken.
 
+**Designed 2026-08-29 as [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md), status Proposed.** A third
+tier with its own context string, carried as an optional trailing block in the
+`genesis` and `authority-list` bodies so that §7's recovery still replaces the
+anchor keys atomically with the authorities. Scoping is cryptographic rather
+than a permission bit: an anchor key's signature is not a valid authority
+signature, so a verifier that does not implement the ADR fails closed instead of
+being fooled. Designing it surfaced two rules the verifier is missing today —
+**an `anchor` entry's `audit_seq` is never checked against the previous
+anchor's** (`verify.go:287` assigns unconditionally; the check lives only in
+`PrepareAnchor`, which a compromised server bypasses by not calling it), and
+nothing forbids a key appearing in two lists. Both are harmless while the server
+holds no key and load-bearing the moment it holds one: without monotonicity, a
+server that truncates its audit log can anchor the truncated head and every node
+accepts the rewind.
+
+**Two of the pieces are dead code, which is the part not visible from the
+writeup.** `AnchorDue` — written so the "anchor now?" decision is at least
+consistent — has no production caller; the audit status endpoint counts entries
+since the anchor inline (`api/nodes.go:1758`) and applies no policy.
+`VerifyAnchored` has none either, so nothing on a running server ever compares
+the audit log against its anchor. The console shows how far the log has moved
+since the anchor and never asks whether it still agrees with it.
+
 Worth noting the cost of *not* doing it: anchoring that depends on a human
 ceremony is anchoring that stops happening, and an anchor that stops advancing
 degrades silently — the old anchor keeps verifying, so nothing fails, and the
