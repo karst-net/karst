@@ -182,4 +182,12 @@ Nodes also need the relay's certificate, since it is self-signed:
 
     $state/tls/relay.crt   ->  [control] relay_ca_file
 
+And an enrollment key. The server mints one on first boot, because a setup key
+would otherwise need an account and an account would need an identity provider:
+
+    $state/bootstrap.key   ->  [control] setup_key
+
+It is reusable and does not expire. Revoke it from the console once
+authentication works — GETTING-STARTED.md §8.1.
+
 EOF

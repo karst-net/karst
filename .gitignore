@@ -53,6 +53,9 @@ blob-report/
 /result
 .direnv/
 CLAUDE.local.md
+# scripts/ has Python in it now (the walkthrough block extractor), and importing
+# it rather than running it leaves a cache directory behind.
+__pycache__/
 
 # ── Fuzzing ─────────────────────────────────────────────────────────────────
 /fuzz/target/

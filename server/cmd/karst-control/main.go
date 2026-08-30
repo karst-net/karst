@@ -22,7 +22,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
+	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -65,6 +68,19 @@ const (
 // nobody who ever arrives, because nobody was told to arrive.
 const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
 
+// karstBootstrapKeyEnv names a file to mint the first enrollment key into.
+//
+// Set, and if the file does not already exist, the server creates one setup
+// key at startup and writes it there — the only way to enroll a node on a
+// deployment with no identity provider, which is every deployment on its first
+// day (GETTING-STARTED.md §8). Unset, nothing happens and the only path to a
+// key is the authenticated API, which is right for a deployment that has one.
+//
+// Existence is the whole idempotence rule: the plaintext is recoverable from
+// nowhere else, so a server that minted a second key on every restart would
+// leave a trail of live credentials nobody could revoke by name.
+const karstBootstrapKeyEnv = "KARST_BOOTSTRAP_SETUP_KEY_FILE"
+
 func main() {
 	pol, err := loadPolicy()
 	if err != nil {
@@ -92,6 +108,7 @@ func main() {
 			log.Fatalf("karst: cannot install the control service: %v", err)
 		}
 		startRosterRefresher(ctx, k)
+		writeBootstrapKey(ctx, s.AccountManager())
 		return s
 	})
 
@@ -130,6 +147,56 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 	}
 	log.Infof("karst: writing the relay roster to %s every %s", path, interval)
 	go r.Run(ctx)
+}
+
+// writeBootstrapKey mints the first enrollment key when there is no IdP.
+//
+// Fatal on every failure, and deliberately so: an operator who set the path is
+// waiting to read a key out of that file, and a server that started without
+// writing one would leave them running `karstd` against a key that is not
+// there, diagnosing an enrollment error whose cause is three layers away.
+//
+// The order below is not incidental. The file is created **empty and
+// exclusively before the key is minted**, so the two failures that would
+// otherwise strand a live credential — the path is unwritable, or another
+// process is doing this at the same moment — happen while there is still
+// nothing to strand.
+func writeBootstrapKey(ctx context.Context, accounts account.Manager) {
+	path := os.Getenv(karstBootstrapKeyEnv)
+	if path == "" {
+		return
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	switch {
+	case errors.Is(err, fs.ErrExist):
+		log.Infof("karst: an enrollment key is already in %s; keeping it", path)
+		return
+	case err != nil:
+		log.Fatalf("karst: %s=%s: %v", karstBootstrapKeyEnv, path, err)
+	}
+
+	key, err := bootstrap.MintBootstrapKey(ctx, accounts, bootstrap.BootstrapKeyOptions{})
+	if err != nil {
+		_ = f.Close()
+		// The placeholder must go, or the next start reads "already there" off
+		// an empty file and never tries again.
+		_ = os.Remove(path)
+		log.Fatalf("karst: %v", err)
+	}
+
+	_, writeErr := fmt.Fprintln(f, key)
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		// The key is real, is in the database, and is now in no file. Say that,
+		// rather than a bare I/O error: it is the difference between an
+		// operator who revokes it and one who does not know it exists.
+		log.Fatalf("karst: an enrollment key was created but could not be saved to %s (%v). "+
+			"It is live and its plaintext is lost; revoke %q from the console once one works.",
+			path, err, bootstrap.BootstrapKeyName)
+	}
+	log.Warnf("karst: wrote a bootstrap enrollment key to %s. Put it in a node's "+
+		"[control] setup_key, and revoke it once an identity provider is configured.", path)
 }
 
 // loadRelays reads the relay registry a node is told about — §4.2.

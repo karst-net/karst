@@ -45,6 +45,13 @@ services:
       # bootstrap.sh writes is allow-all and says so in its first line; narrow
       # it before this is a real deployment.
       KARST_POLICY_FILE: /var/lib/karst/policy.json
+      # The first enrollment key, minted at startup and written here (§8.1).
+      # Without it this deployment comes up perfectly and can enroll nothing,
+      # because a setup key needs an account and an account needs an identity
+      # provider. Set, the key appears in state/bootstrap.key on first boot.
+      # It is a standing credential for the whole deployment: revoke it from
+      # the console once authentication works.
+      KARST_BOOTSTRAP_SETUP_KEY_FILE: /var/lib/karst/bootstrap.key
     volumes:
       - ./state:/var/lib/karst
       - ./state/netbird:/var/lib/netbird

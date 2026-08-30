@@ -14,10 +14,12 @@ portal, and the offline Bedrock signer.
 
 **Where this walkthrough stops.** Paths A, B and C below get you a running
 relay, a running coordination server, and a node that enrolls and carries
-traffic. They do **not** get you a self-service front door: issuing a setup key
-needs an account, and an account needs an identity provider wired into the
-coordination server (§8). Said here rather than left to be discovered after the
-third command. If you only want to see the datapath work,
+traffic. They do **not** get you a self-service front door: the console and the
+setup-key API are behind an identity provider you have to wire into the
+coordination server yourself (§7, §8.2). Enrolling the fleet does not wait on
+that — §8.1 mints a first key with no IdP at all — but administering it from a
+browser does. Said here rather than left to be discovered after the third
+command. If you only want to see the datapath work,
 [Path A](#4-path-a-two-nodes-and-nothing-else) needs no server at all.
 
 ---
@@ -38,7 +40,7 @@ The default deployment co-locates the relay and the coordination server on one
 host — PLAN.md §5 — because a self-hoster who relays their own traffic is not
 spending anyone else's.
 
-```mermaid
+```mermaid walkthrough=none reason="diagram"
 flowchart TB
     subgraph Host[public host]
         Control["karst-control :33073"]
@@ -73,7 +75,7 @@ Per host, only what that host actually runs.
 
 **To build anything Rust** (`karstd`, `karst`, `karst-relay`, `karst-bedrock`):
 
-```sh
+```sh walkthrough=none reason="prerequisites; the workflow installs its own toolchain"
 # Debian/Ubuntu
 sudo apt-get install -y build-essential pkg-config protobuf-compiler
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -86,7 +88,7 @@ fails in that crate rather than at the end.
 
 **To build the coordination server:**
 
-```sh
+```sh walkthrough=none reason="prerequisites; the workflow installs its own toolchain"
 sudo apt-get install -y gcc golang-go
 ```
 
@@ -94,7 +96,7 @@ The archive's Go is older than `server/go.mod` pins (Ubuntu 24.04 ships 1.22;
 the pin is a 1.27 release candidate, because `crypto/mldsa` is a 1.27
 addition) — that's fine, it does not need to match:
 
-```sh
+```sh walkthrough=none reason="an environment variable, not a step"
 # GOTOOLCHAIN=auto lets the installed Go fetch and run the pinned toolchain.
 export GOTOOLCHAIN=auto
 ```
@@ -107,7 +109,7 @@ use with `Binary was compiled with 'CGO_ENABLED=0' … This is a stub`.
 by `web/package.json`). The Ubuntu archive's `nodejs` is too old (18.x on
 24.04) to satisfy that; use NodeSource instead:
 
-```sh
+```sh walkthrough=none reason="prerequisites for the web builds, which no deployment path uses"
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 sudo corepack enable
@@ -130,7 +132,7 @@ root.
 
 **To run the gate in §3:** `just`, the command runner, and `cargo-deny`:
 
-```sh
+```sh walkthrough=none reason="the release gate's own prerequisites, not the walkthrough's"
 sudo apt-get install -y just
 cargo +stable install cargo-deny --locked
 ```
@@ -148,7 +150,7 @@ in the `docker` group, not just have `docker` installed — running as your own
 user without it fails with `permission denied while trying to connect to the
 Docker daemon socket`:
 
-```sh
+```sh walkthrough=none reason="runner users are already in the docker group"
 sudo usermod -aG docker "$USER"
 ```
 
@@ -157,7 +159,7 @@ take effect — it isn't picked up by the current shell.
 
 `just go-lint` needs `staticcheck` on `PATH`, which nothing above installs:
 
-```sh
+```sh walkthrough=none reason="the release gate's own prerequisites, not the walkthrough's"
 GOTOOLCHAIN=go1.27rc3 go install honnef.co/go/tools/cmd/staticcheck@latest
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
@@ -176,16 +178,23 @@ go1.26)`.
 
 From the repository root:
 
-```sh
-# Node agent, CLI, relay, offline signer
+Node agent, CLI, relay, offline signer:
+
+```sh walkthrough=A,B,C step=build-rust
 cargo build --release \
     --package karstd --package karst-cli \
     --package karst-relay --package karst-bedrock
+```
 
-# Coordination server
+Coordination server:
+
+```sh walkthrough=C step=build-control
 cd server && CGO_ENABLED=1 go build -trimpath -o karst-control ./cmd/karst-control && cd ..
+```
 
-# Console and portal
+Console and portal:
+
+```sh walkthrough=none reason="the console and portal are covered by the web job"
 cd web && corepack pnpm install --frozen-lockfile && corepack pnpm -r build && cd ..
 ```
 
@@ -195,7 +204,7 @@ and `web/portal/dist`.
 
 Before trusting any of it, run the gate the CI runs:
 
-```sh
+```sh walkthrough=none reason="the release gate; each recipe is already a CI job of its own"
 just check              # fmt, clippy, 874 Rust tests, cargo-deny, licenses
 just go-test go-lint    # the coordination server
 just test-privileged    # namespaces, TUN devices, the NAT matrix — needs sudo
@@ -208,7 +217,7 @@ your machine.
 
 Installing, on each host that needs them:
 
-```sh
+```sh walkthrough=A,C step=install
 sudo install -m 0755 target/release/karstd target/release/karst /usr/local/bin/
 sudo mkdir -p /etc/karst
 ```
@@ -216,6 +225,14 @@ sudo mkdir -p /etc/karst
 Alternatively build distribution packages with `nfpm` from
 `packaging/nfpm/*.yaml`; they install the same binaries to `/usr/bin` along
 with the systemd units in `packaging/systemd/`.
+
+**The two sets of units are not interchangeable**, and mixing them is the one
+mistake this section can cause: `packaging/systemd/` names `/usr/bin`, because
+that is where the packages put the binaries, and `deploy/systemd/` names
+`/usr/local/bin`, because that is where the `install` above puts them. Path C
+below copies from `deploy/systemd/` throughout. Copying the packaging unit
+after a local build produces a service that fails at start with a path error
+naming a binary you never installed.
 
 ---
 
@@ -233,14 +250,14 @@ is the minimum.
 the ML-KEM key, 32 for X25519 — and `karstd` refuses to read it unless it is
 mode 600:
 
-```sh
+```sh walkthrough=A step=genkey
 sudo sh -c 'umask 077 && karstd genkey > /etc/karst/node.key'
 sudo chmod 600 /etc/karst/node.key
 ```
 
 Write `/etc/karst/karstd.toml`, changing the address per node:
 
-```toml
+```toml walkthrough=A step=node-config file=/etc/karst/karstd.toml
 [node]
 listen = "0.0.0.0:51820"
 interface = "karst0"
@@ -251,7 +268,7 @@ private_key_file = "/etc/karst/node.key"
 
 Print each node's public keys and paste them into the other's file:
 
-```sh
+```sh walkthrough=A step=pubkey
 sudo karstd pubkey --config /etc/karst/karstd.toml
 # kem_public_key = "…2368 hex characters…"
 # dh_public_key  = "…64 hex characters…"
@@ -261,7 +278,7 @@ sudo karstd pubkey --config /etc/karst/karstd.toml
 publish its key precisely in order to be added elsewhere. Append to alice's
 file:
 
-```toml
+```toml walkthrough=A step=peer-config file=/etc/karst/karstd.toml append=1
 [[peer]]
 name = "bob"
 kem_public_key = "…from bob's `karstd pubkey`…"
@@ -285,14 +302,14 @@ PSKs for you, which is one of the reasons to graduate to Path B or C.
 
 Validate, then run:
 
-```sh
+```sh walkthrough=A step=start bg=1
 sudo karstd check --config /etc/karst/karstd.toml
 sudo karstd --config /etc/karst/karstd.toml
 ```
 
 From a second shell:
 
-```sh
+```sh walkthrough=A step=verify
 sudo karst status
 ping 10.77.0.2
 ```
@@ -312,7 +329,7 @@ deployment PLAN.md §5 makes the default.
 
 Build the images and bootstrap the state:
 
-```sh
+```sh walkthrough=B step=up
 docker build -f deploy/images/karst-control.Dockerfile -t ghcr.io/karst-net/karst-control:dev .
 docker build -f deploy/images/karst-relay.Dockerfile   -t ghcr.io/karst-net/karst-relay:dev .
 
@@ -332,18 +349,28 @@ writes the relay identity, a self-signed certificate, `relays.json`,
 `roster.toml`, an allow-all `policy.json`, and `management.json`. Full
 configuration table: [`deploy/compose/README.md`](../deploy/compose/README.md).
 
-Each node then needs three things from this deployment:
+Each node then needs four things from this deployment. Two are pins, printed
+once at startup:
 
-```sh
+```sh walkthrough=B step=pins
 docker compose logs control | grep 'karst: server'
 # karst: server KEM pin  <base64>
 # karst: server sign pin <base64>
+```
+
+One is an enrollment key, minted on the first boot because a setup key would
+otherwise need an account and an account would need an identity provider
+(§8.1):
+
+```sh walkthrough=B step=bootstrap-key
+cat state/bootstrap.key
 ```
 
 | Node config | Where it comes from |
 |---|---|
 | `[control] server_kem_pin` | the `server KEM pin` log line |
 | `[control] server_verify_pin` | the `server sign pin` log line |
+| `[control] setup_key` | `deploy/compose/state/bootstrap.key` |
 | `[control] relay_ca_file` | `deploy/compose/state/tls/relay.crt` |
 
 > ### ⚠ The pins are logged base64 and configured in hex
@@ -354,7 +381,7 @@ docker compose logs control | grep 'karst: server'
 > `server_kem_pin is N bytes, but control version 1 … uses a 1184-byte key`.
 > Convert them:
 >
-> ```sh
+> ```sh walkthrough=B step=pins-hex
 > docker compose logs control | grep 'server KEM pin'  | awk '{print $NF}' | base64 -d | xxd -p -c 0
 > docker compose logs control | grep 'server sign pin' | awk '{print $NF}' | base64 -d | xxd -p -c 0
 > ```
@@ -371,7 +398,7 @@ outcome than an error —
 Two things about this deployment that are worth watching once, so that the
 behavior is familiar before it happens in production:
 
-```sh
+```sh walkthrough=none reason="interactive (watch, docker compose logs -f); the runner asserts the same lease behaviour without them"
 # The roster's mtime advances every 25s while its contents stay byte-identical.
 watch -n5 'stat -c "%y %s" state/roster.toml'
 
@@ -394,7 +421,7 @@ identity is an input to the server's configuration.
 
 ### 6.1 The relay
 
-```sh
+```sh walkthrough=C step=relay-install
 sudo install -m 0755 target/release/karst-relay /usr/local/bin/
 sudo mkdir -p /etc/karst/tls
 ```
@@ -406,7 +433,7 @@ pinned in its netmap — so the certificate only has to get a TLS session
 established. Use a CA-issued one if you prefer; it changes nothing about who the
 relay is proved to be, only which certificates the hop will accept.
 
-```sh
+```sh walkthrough=C step=relay-cert
 sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
     -keyout /etc/karst/tls/relay.key -out /etc/karst/tls/relay.crt \
     -subj "/CN=relay.example.com" \
@@ -416,7 +443,7 @@ sudo chmod 600 /etc/karst/tls/relay.key
 
 `/etc/karst/relay.toml`:
 
-```toml
+```toml walkthrough=C step=relay-config file=/etc/karst/relay.toml
 listen = "0.0.0.0:443"
 identity_key = "/etc/karst/relay.key"     # ML-DSA-87 seed, created on first run
 roster = "/etc/karst/roster.toml"         # required; no default is right
@@ -440,7 +467,7 @@ listen = "127.0.0.1:9105"
 
 Seed the roster with a placeholder so the relay starts, then validate:
 
-```sh
+```sh walkthrough=C step=relay-check
 printf '# Placeholder. karst-control overwrites this every 25s.\n' | sudo tee /etc/karst/roster.toml
 sudo karst-relay check --config /etc/karst/relay.toml
 # relay.toml: ok
@@ -452,7 +479,7 @@ sudo karst-relay check --config /etc/karst/relay.toml
 Print the registry entry — this is what the coordination server publishes to
 every node:
 
-```sh
+```sh walkthrough=C step=relay-pubkey
 sudo karst-relay pubkey --config /etc/karst/relay.toml
 # relay_id     f10dfc0d…
 # identity_pk  rnKUFd9V3/L5PbvmvuWawzAMFNWcPAIkqNhyD2oP4dqg…
@@ -460,8 +487,8 @@ sudo karst-relay pubkey --config /etc/karst/relay.toml
 
 Start it:
 
-```sh
-sudo cp packaging/systemd/karst-relay.service /etc/systemd/system/
+```sh walkthrough=C step=relay-start
+sudo cp deploy/systemd/karst-relay.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now karst-relay
 ```
 
@@ -469,15 +496,15 @@ Run `karst-relay check` after every roster change.
 
 ### 6.2 The coordination server
 
-```sh
+```sh walkthrough=C step=control-install
 sudo install -m 0755 server/karst-control /usr/local/bin/
-sudo mkdir -p /etc/netbird /var/lib/netbird
+sudo mkdir -p /etc/netbird /var/lib/netbird /var/lib/karst
 ```
 
 The relay registry, `/etc/karst/relays.json` — `identity_key` is the
 `identity_pk` printed above, verbatim, base64:
 
-```json
+```json walkthrough=C step=relays-json file=/etc/karst/relays.json
 {
   "relays": [
     {
@@ -500,7 +527,7 @@ empty filter, which is default deny** — the symptom is a network that does not
 work rather than one that works too well. This one is the opposite and is a
 starting point, not a destination:
 
-```json
+```json walkthrough=C step=policy file=/etc/karst/policy.json
 { "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*"] } ] }
 ```
 
@@ -511,7 +538,7 @@ server booting. The full grammar is PLAN.md §4.3.
 Generate `DataStoreEncryptionKey` with `openssl rand -base64 32` and the TURN
 secret with `openssl rand -hex 16`:
 
-```json
+```json walkthrough=C step=management file=/etc/netbird/management.json
 {
   "Stuns": [],
   "TURNConfig": { "Turns": [], "CredentialsTTL": "12h", "Secret": "…", "TimeBasedCredentials": false },
@@ -530,7 +557,7 @@ console and the setup-key API need (§7, §8).
 
 `/etc/karst/control.env`, read by the unit's `EnvironmentFile=`:
 
-```sh
+```sh walkthrough=C step=control-env file=/etc/karst/control.env
 # Rewrites the relay's roster every 25s. Not optional when a relay sits beside
 # this server: the admission lease expires after 90 seconds.
 KARST_RELAY_ROSTER_FILE=/etc/karst/roster.toml
@@ -542,13 +569,23 @@ KARST_POLICY_FILE=/etc/karst/policy.json
 # Scopes relay forwarding. One value for a single-tenant deployment; it is what
 # stops a relay becoming a message bus between any two keys it has heard of.
 KARST_AQUIFER=default
+# The first enrollment key, minted at startup and written here (§8.1). Without
+# it, a deployment with no identity provider can enroll nothing at all.
+KARST_BOOTSTRAP_SETUP_KEY_FILE=/var/lib/karst/bootstrap.key
 ```
 
 Start it:
 
-```sh
-sudo cp packaging/systemd/karst-control.service /etc/systemd/system/
+```sh walkthrough=C step=control-start
+sudo cp deploy/systemd/karst-control.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now karst-control
+```
+
+The first start is not instant — it downloads GeoLite2 databases before it
+serves anything — so give it a moment before looking for the two pins every
+node needs:
+
+```sh walkthrough=C step=control-pins
 sudo journalctl -u karst-control | grep 'karst: server'
 ```
 
@@ -567,7 +604,7 @@ Notes:
 
 ### 6.3 The node agent
 
-```sh
+```sh walkthrough=B,C step=node-install
 sudo install -m 0755 target/release/karstd target/release/karst /usr/local/bin/
 sudo mkdir -p /etc/karst
 sudo sh -c 'umask 077 && karstd genkey > /etc/karst/node.key'
@@ -578,7 +615,7 @@ sudo chmod 600 /etc/karst/node.key
 and packet filter all come from the netmap, so this file is much shorter than
 Path A's:
 
-```toml
+```toml walkthrough=B,C step=node-config file=/etc/karst/karstd.toml
 [node]
 listen = "0.0.0.0:51820"
 interface = "karst0"
@@ -609,13 +646,25 @@ relay_ca_file = "/etc/karst/relay.crt"
 
 Validate and start:
 
-```sh
+```sh walkthrough=B,C step=node-start
 sudo mkdir -p /var/lib/karst
 sudo karstd check --config /etc/karst/karstd.toml
-sudo cp deploy/systemd/karstd.service /etc/systemd/system/   # or packaging/systemd/
+sudo cp deploy/systemd/karstd.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now karstd
+```
+
+Enrollment then happens on its own, and takes a few seconds — the node
+registers, receives a netmap, and applies the addresses and packet filter in
+it. `karst status` is how you watch that land:
+
+```sh walkthrough=B,C step=node-status
 sudo karst status
 ```
+
+A node that has enrolled reports its overlay `addresses` and `enforcing =
+true` under `[policy]`. Both are worth knowing by sight: an empty address list
+means the netmap never arrived, and `enforcing = false` on a node in control
+mode means it is running with no packet filter rather than with the server's.
 
 **`ExecStopPost=` in that unit is not decoration.** `karstd` can be told to
 configure the host's DNS resolver, and that configuration must not survive the
@@ -625,7 +674,7 @@ daemon installs no signal handler (and could not survive `SIGKILL` if it did),
 so the unit runs `karst dns revert` after every stop, clean or not. You can run
 the same recovery by hand:
 
-```sh
+```sh walkthrough=C step=dns-revert
 sudo karst dns revert --config /etc/karst/karstd.toml
 ```
 
@@ -642,7 +691,7 @@ instead of a TUN device — ADR-0012, and the release gate that proves it is
 `just test-userspace`. A userspace node needs at least one attachment, and
 nothing is exposed unless it is written down:
 
-```toml
+```toml walkthrough=none reason="ADR-0012 has its own gate, just test-userspace"
 [node]
 network_mode = "userspace"
 # Outbound: a workload uses this as its SOCKS5 proxy, CONNECTing to literal
@@ -677,7 +726,7 @@ Two apps, one design system, both AGPL-3.0-or-later.
 **Against the frozen API contract**, which needs no server at all and is the
 way to look at the console today:
 
-```sh
+```sh walkthrough=none reason="long-running dev servers"
 just api-mock                                        # http://127.0.0.1:4010/api/karst/v1
 cd web
 corepack pnpm --filter @karst-net/console dev        # proxies /api to the mock
@@ -691,7 +740,7 @@ pending Bedrock signing request, and an audit chain that fails verification.
 **Against a real coordination server**, serve the built `dist/` directories
 from any web server and proxy `/api` to `karst-control` on 33073:
 
-```nginx
+```nginx walkthrough=none reason="configuration for a web server no path deploys"
 location /api/ { proxy_pass http://127.0.0.1:33073; }
 location /     { root /var/www/karst-console; try_files $uri /index.html; }
 ```
@@ -719,12 +768,58 @@ suites in each app.
 
 ---
 
-## 8. Enrolling a node, and where the front door is missing
+## 8. Enrolling a node
 
 A node registers with `[control] setup_key`. That key is a NetBird setup key,
-issued by the forked management API:
+and there are two ways to get one.
 
-```sh
+### 8.1 The first key, with no identity provider
+
+Until an identity provider is configured there is no account, without an
+account there is no setup key, and without a setup key a node cannot enroll —
+so the ordinary route below is closed on a deployment's first day. Point
+`KARST_BOOTSTRAP_SETUP_KEY_FILE` at a path and the coordination server mints
+one key at startup and writes it there:
+
+```sh walkthrough=none reason="one line of control.env, shown beside the variable it names"
+KARST_BOOTSTRAP_SETUP_KEY_FILE=/var/lib/karst/bootstrap.key
+```
+
+The compose deployment (§5) sets this already; `state/bootstrap.key` appears
+on the first `docker compose up`. For §6's systemd deployment, add the line to
+`/etc/karst/control.env` and read the file after the first start:
+
+```sh walkthrough=C step=bootstrap-key
+sudo cat /var/lib/karst/bootstrap.key
+```
+
+That value goes in `[control] setup_key` verbatim. Four things about it:
+
+- **The file is the idempotence rule, not the database.** The plaintext is
+  stored nowhere — the server keeps a SHA-256, exactly as it does for a key
+  issued through the API — so if the file exists the server leaves it alone,
+  and if you delete it the next start mints a *second* live key rather than
+  reprinting the first.
+- **It is reusable, unlimited, and does not expire.** Both alternatives fail in
+  the dark: a usage limit refuses the deployment's Nth node against a console
+  that does not exist yet, and an expiry turns a working file into a rejected
+  one at a moment nothing announces.
+- **It is opt-in and mode 600.** Unset the variable and the server mints
+  nothing.
+- **Revoke it** from the console (Auth keys) once authentication works. It is a
+  standing enrollment credential for the whole deployment.
+
+The bootstrap user lands in the account the first identity-provider user will
+land in, so nodes enrolled this way are visible in the console once there is
+one. That is what `TestAnIdPUserLandsInTheBootstrapAccount` pins; without it a
+deployment would appear to lose its whole fleet on the day it gained a login
+page.
+
+### 8.2 Every key after that
+
+Issued by the forked management API:
+
+```sh walkthrough=none reason="needs an identity provider; 8.1 is the path that does not"
 curl -X POST http://karst.example.com:33073/api/setup-keys \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
@@ -732,10 +827,8 @@ curl -X POST http://karst.example.com:33073/api/setup-keys \
 ```
 
 `$TOKEN` is a JWT from the identity provider configured in `management.json`.
-**This is the step that has no offline path.** Until an IdP is configured there
-is no account, without an account there is no setup key, and without a setup
-key a node cannot enroll. The console's first-run view drives exactly this
-endpoint (Auth keys → Create auth key) once authentication works.
+The console's first-run view drives exactly this endpoint (Auth keys → Create
+auth key) once authentication works.
 
 Two things in the console are aspirational and will not work as shown:
 
@@ -760,7 +853,7 @@ manifest, and that is the claim the manifest exists to check. Authority keys
 must be usable from a machine that never touches the coordination server, or
 the offline story is theater.
 
-```sh
+```sh walkthrough=none reason="covered by scripts/test_bedrock_vertical_slice.sh"
 karst-bedrock init root /media/hsm/root.key         # writes root.key and root.key.pub
 karst-bedrock init authority /media/hsm/alice.key
 # Make one request from three root public-key files; every root signs the same file.
@@ -781,7 +874,7 @@ read from the bundle.
 
 A node's floor is set in its own config and cannot be talked down by the server:
 
-```toml
+```toml walkthrough=none reason="a fragment, not a complete configuration"
 [control]
 bedrock_mode = "enforcing"   # off | advisory | enforcing
 ```
@@ -805,7 +898,7 @@ than the ones above.
 
 ## 11. Verifying it actually works
 
-```sh
+```sh walkthrough=none reason="a menu of diagnostics; each path asserts the ones it can"
 sudo karst status                 # peers, session state, transport, tunnel MTU
 sudo karst dns status             # KarstDNS listener, host integration, routes
 sudo karst dns query db.internal  # explain the resolver path for a name
@@ -819,7 +912,7 @@ know.
 
 What a healthy pair looks like — relayed first, direct shortly after:
 
-```
+``` walkthrough=none reason="sample output"
 A: endpoint = "-"                 state = "connecting"   transport = "relay"
 B: endpoint = "-"                 state = "established"  transport = "relay"
 …
