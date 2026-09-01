@@ -862,6 +862,15 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.2"
+      # opam resolves ProVerif's system dependencies by shelling out to
+      # `apt-get install` itself, with no `apt-get update` in front of it. The
+      # runner image carries a pre-baked apt index, so the moment Ubuntu rotates
+      # any version in that closure the install asks the mirrors for a filename
+      # that is no longer there and 404s. It is not flake: it starts failing on
+      # every branch at once, on the day of the rotation, and stays failing —
+      # bzip2 and util-linux did exactly that on 2026-09-01.
+      - name: Refresh the apt index
+        run: sudo apt-get update
       - name: Install ProVerif
         run: opam install -y proverif.2.05
       # opam installs into a switch that is only on PATH inside `opam exec`.
