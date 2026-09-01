@@ -79,6 +79,65 @@ to be. There is no bug bounty; this is a community project with no revenue
 (see [ADR-0007](docs/adr/0007-licensing.md)). We will not pretend otherwise to
 attract reports.
 
+## Verifying a release
+
+Every tagged release ships `SHA256SUMS` covering the `.deb`, `.rpm` and macOS
+packages, and a detached `SHA256SUMS.asc` signed with the release key in
+[docs/release-key.asc](docs/release-key.asc):
+
+```
+pub   ed25519 2026-09-01 [C] [expires: 2028-08-31]
+      DD5C 7054 DBFA E8D6 9704  95A3 0CFE 3D34 6567 3971
+uid   Karst Release Signing
+sub   ed25519 2026-09-01 [S] [expires: 2028-08-31]
+      95E8 4D07 245E E5CD 73F9  EA0D F07F BCFA 8E79 B334
+```
+
+```sh
+gpg --import docs/release-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS   # must say "Good signature"
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Both steps matter and neither substitutes for the other: the checksum proves
+the file arrived intact, the signature proves we are the ones who computed the
+checksum.
+
+**What this does and does not get you.** The key is distributed in the same
+repository as the code it signs, so anyone who can rewrite this repository can
+replace the key along with the artifacts. That makes the signature a defence
+against a compromised release runner, a substituted download, or a hostile
+mirror — not against a compromised repository. Cross-check the fingerprint
+above against a second source before trusting it for anything consequential.
+Only the signing subkey is held by CI; the certifying primary key is offline,
+so a compromise of the release pipeline can be revoked without changing this
+key's identity.
+
+The macOS `.pkg` is separately signed with a Developer ID Installer certificate
+and notarized by Apple, which is what lets Gatekeeper accept it. Both are
+checkable locally:
+
+```sh
+pkgutil --check-signature karst-macos-universal.pkg
+spctl --assess --type install -vv karst-macos-universal.pkg
+xcrun stapler validate karst-macos-universal.pkg
+```
+
+Container images are signed keylessly with cosign, so there is no public key to
+fetch — the identity is the workflow that built them, recorded in a public
+transparency log:
+
+```sh
+cosign verify \
+  --certificate-identity "https://github.com/karst-net/karst/.github/workflows/deliverables.yml@refs/tags/vX.Y.Z" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/karst-net/karstd:vX.Y.Z
+```
+
+The same applies to `karst-relay` and `karst-control`. Verify against the
+digest rather than the tag where it matters: a tag can be moved, a digest
+cannot.
+
 ## Our commitments
 
 - Advisories published via GitHub Security Advisories with CVEs requested where
