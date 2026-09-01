@@ -93,13 +93,21 @@ cp "$root/packaging/macos/uninstall.sh" "$stage/usr/local/bin/karst-uninstall"
 chmod 0755 "$stage/usr/local/bin/karst-uninstall"
 
 # ── signing the binaries ────────────────────────────────────────────────────
+# The policy argument is not decoration. `-p codesigning` lists only identities
+# valid for signing *code*, and a Developer ID Installer certificate is not one
+# — it signs installer packages, `productsign` is its only consumer, and it is
+# absent from that list even when it is sitting in the keychain. Looking it up
+# under the codesigning policy therefore finds nothing, and a tag build, which
+# passes --require-signing, fails at productsign with the certificate present
+# and correct. The installer identity is looked up under `basic`, which is the
+# plain "is this certificate valid" policy.
 find_identity() {
-  security find-identity -v -p codesigning 2>/dev/null \
+  security find-identity -v -p "$2" 2>/dev/null \
     | grep "$1" | head -1 | sed 's/.*"\(.*\)"/\1/'
 }
 
-codesign_identity="${KARST_CODESIGN_IDENTITY:-$(find_identity 'Developer ID Application' || true)}"
-installer_identity="${KARST_INSTALLER_IDENTITY:-$(find_identity 'Developer ID Installer' || true)}"
+codesign_identity="${KARST_CODESIGN_IDENTITY:-$(find_identity 'Developer ID Application' codesigning || true)}"
+installer_identity="${KARST_INSTALLER_IDENTITY:-$(find_identity 'Developer ID Installer' basic || true)}"
 
 if [ -n "$codesign_identity" ]; then
   for binary in karstd karst; do
