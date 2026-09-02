@@ -24,24 +24,29 @@
 //! decision, neither of which belongs behind a library API that would make the
 //! wrong default invisible.
 
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use karst_crypto::aead::{Algorithm, Cipher, NONCE_LEN};
 use zeroize::Zeroize;
 
 /// Length of the sealing key.
 pub const SEAL_KEY_LEN: usize = 32;
 
-const NONCE_LEN: usize = 12;
+const MAGIC: &[u8; 8] = b"KARSTNMC";
+const SUITE_AES_256_GCM: u16 = 1;
+const HEADER_LEN: usize = MAGIC.len() + size_of::<u16>();
 
 /// Bound into the AEAD's associated data so a cache file cannot be replayed
 /// into a different version of the format.
-const CACHE_AAD: &[u8] = b"karst-netmap-cache-v1";
+const CACHE_AAD: &[u8] = b"karst-netmap-cache-v2";
 
 /// Errors from the cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    /// The file is shorter than a nonce, so it is not a cache file.
+    /// The file is shorter than the format header and nonce.
     Truncated,
+    /// The file does not carry the netmap-cache format marker.
+    InvalidFormat,
+    /// The file names a cache cipher suite this build cannot open.
+    UnsupportedSuite(u16),
     /// Authentication failed: wrong key, or the file was modified.
     ///
     /// These are deliberately the same error. A caller that could tell them
@@ -56,6 +61,10 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::Truncated => "cache file is truncated",
+            Self::InvalidFormat => "cache file has an invalid format marker",
+            Self::UnsupportedSuite(suite) => {
+                return write!(f, "cache file uses unsupported cipher suite {suite}");
+            }
             Self::Unreadable => "cache is unreadable: wrong key or modified file",
             Self::Seal => "sealing the cache failed",
         })
@@ -94,25 +103,22 @@ impl core::fmt::Debug for SealKey {
 /// rather than the crate generating one, because this crate has no RNG
 /// dependency and a caller that already holds one should not gain a second.
 ///
-/// The nonce is stored in the clear ahead of the ciphertext, which is standard
-/// and safe: a nonce is not a secret, only a value that must not repeat.
+/// The output starts with a format marker and cipher-suite identifier, followed
+/// by the nonce and ciphertext. The nonce is cleartext, which is standard and
+/// safe: a nonce is not a secret, only a value that must not repeat.
 ///
 /// # Errors
 ///
 /// [`Error::Seal`] if the AEAD fails, which cannot happen for valid inputs.
 pub fn seal(key: &SealKey, nonce: &[u8; NONCE_LEN], netmap: &[u8]) -> Result<Vec<u8>, Error> {
-    let cipher = ChaCha20Poly1305::new((&key.0).into());
+    let cipher = Cipher::new(Algorithm::Aes256Gcm, &key.0);
     let ct = cipher
-        .encrypt(
-            Nonce::from_slice(nonce),
-            Payload {
-                msg: netmap,
-                aad: CACHE_AAD,
-            },
-        )
+        .seal(nonce, CACHE_AAD, netmap)
         .map_err(|_| Error::Seal)?;
 
-    let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
+    let mut out = Vec::with_capacity(HEADER_LEN + NONCE_LEN + ct.len());
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&SUITE_AES_256_GCM.to_be_bytes());
     out.extend_from_slice(nonce);
     out.extend_from_slice(&ct);
     Ok(out)
@@ -122,18 +128,31 @@ pub fn seal(key: &SealKey, nonce: &[u8; NONCE_LEN], netmap: &[u8]) -> Result<Vec
 ///
 /// # Errors
 ///
-/// [`Error::Truncated`] if the file is too short to contain a nonce, and
-/// [`Error::Unreadable`] if authentication fails.
+/// [`Error::Truncated`] if the file is too short to contain its header and
+/// nonce, [`Error::InvalidFormat`] or [`Error::UnsupportedSuite`] if its format
+/// cannot be opened by this build, and [`Error::Unreadable`] if authentication
+/// fails.
 pub fn open(key: &SealKey, sealed: &[u8]) -> Result<Vec<u8>, Error> {
-    let (nonce, ct) = sealed.split_at_checked(NONCE_LEN).ok_or(Error::Truncated)?;
-    let cipher = ChaCha20Poly1305::new((&key.0).into());
+    let (header, body) = sealed
+        .split_at_checked(HEADER_LEN)
+        .ok_or(Error::Truncated)?;
+    if header.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
+        return Err(Error::InvalidFormat);
+    }
+    let suite = u16::from_be_bytes(
+        header
+            .get(MAGIC.len()..)
+            .ok_or(Error::Truncated)?
+            .try_into()
+            .map_err(|_| Error::Truncated)?,
+    );
+    if suite != SUITE_AES_256_GCM {
+        return Err(Error::UnsupportedSuite(suite));
+    }
+    let (nonce, ct) = body.split_at_checked(NONCE_LEN).ok_or(Error::Truncated)?;
+    let nonce: &[u8; NONCE_LEN] = nonce.try_into().map_err(|_| Error::Truncated)?;
+    let cipher = Cipher::new(Algorithm::Aes256Gcm, &key.0);
     cipher
-        .decrypt(
-            Nonce::from_slice(nonce),
-            Payload {
-                msg: ct,
-                aad: CACHE_AAD,
-            },
-        )
+        .open(nonce, CACHE_AAD, ct)
         .map_err(|_| Error::Unreadable)
 }

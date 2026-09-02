@@ -166,6 +166,36 @@ fn cache_round_trips() {
 }
 
 #[test]
+fn cache_format_selects_aes_256_gcm() {
+    let sealed = cache::seal(&SealKey::new([9u8; 32]), &[1u8; 12], b"netmap").expect("seal");
+
+    assert_eq!(&sealed[..8], b"KARSTNMC");
+    assert_eq!(u16::from_be_bytes(sealed[8..10].try_into().unwrap()), 1);
+}
+
+#[test]
+fn cache_rejects_unknown_cipher_suites() {
+    let key = SealKey::new([9u8; 32]);
+    let mut sealed = cache::seal(&key, &[1u8; 12], b"netmap").expect("seal");
+    sealed[8..10].copy_from_slice(&2u16.to_be_bytes());
+
+    assert_eq!(
+        cache::open(&key, &sealed),
+        Err(cache::Error::UnsupportedSuite(2))
+    );
+}
+
+#[test]
+fn cache_rejects_the_legacy_unversioned_format() {
+    let mut legacy_shape = vec![1u8; 12];
+    legacy_shape.extend_from_slice(&[0u8; 16]);
+    assert_eq!(
+        cache::open(&SealKey::new([9u8; 32]), &legacy_shape),
+        Err(cache::Error::InvalidFormat)
+    );
+}
+
+#[test]
 fn cache_is_unreadable_without_the_key() {
     let netmap = b"secret netmap".to_vec();
     let sealed = cache::seal(&SealKey::new([9u8; 32]), &[1u8; 12], &netmap).expect("seal");
@@ -182,7 +212,9 @@ fn cache_detects_tampering() {
     let key = SealKey::new([9u8; 32]);
     let sealed = cache::seal(&key, &[1u8; 12], b"netmap").expect("seal");
 
-    for i in 0..sealed.len() {
+    // The public format and suite fields have their own parsing errors. Every
+    // nonce/ciphertext bit is authenticated by AES-GCM.
+    for i in 10..sealed.len() {
         let mut bad = sealed.clone();
         bad[i] ^= 0xFF;
         assert_eq!(
@@ -203,9 +235,14 @@ fn cache_rejects_truncated_files() {
         cache::open(&key, &sealed[..8]),
         Err(cache::Error::Truncated)
     );
-    // Long enough for a nonce but with the ciphertext cut off.
     assert_eq!(
         cache::open(&key, &sealed[..14]),
+        Err(cache::Error::Truncated)
+    );
+    // Long enough for the header and nonce but with the authentication tag cut
+    // off.
+    assert_eq!(
+        cache::open(&key, &sealed[..24]),
         Err(cache::Error::Unreadable)
     );
 }

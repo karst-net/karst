@@ -27,11 +27,10 @@
 //! this, and the alternative was a suite that is unusable in the deployments
 //! the project is being held to.
 //!
-//! ChaCha20-Poly1305 still runs on the **control channel** and in the netmap
-//! cache, which have their own registry (`karst-control-client::suite`) and
-//! reach the algorithm directly rather than through this module. That is the
-//! last of it in the tree, and [ADR-0015] item 4's version 2 is what removes
-//! it.
+//! ChaCha20-Poly1305 still runs on the **control channel**, which has its own
+//! registry (`karst-control-client::suite`) and reaches the algorithm directly
+//! rather than through this module. The netmap cache now uses this module's
+//! AES-256-GCM implementation and carries its own suite identifier.
 //!
 //! # One algorithm, and still an enum
 //!
