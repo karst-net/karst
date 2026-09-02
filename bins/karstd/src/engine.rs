@@ -30,7 +30,7 @@ use karst_node::{Action, Session};
 use karst_noise::handshake::{peer_id_hint, PeerPublic, ResponderRandomness};
 use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, FragMacKey};
 use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, Reject};
-use karst_proto::{fragment, split_datagram, MessageType};
+use karst_proto::{fragment, split_datagram, FragmentHeader, MessageType};
 use karst_transport::source_key;
 
 use crate::config::Config;
@@ -1210,6 +1210,62 @@ impl Engine {
             .extend(frags.into_iter().map(|d| (d, Via::Direct(from))));
     }
 
+    /// §9.2 — one key, checked before anything is allocated. The type byte is
+    /// only visible on fragment 0, so later fragments are checked against
+    /// every type they could belong to and the AEAD settles it.
+    ///
+    /// §9.1/§13.10 — a source is address-validated only if the fragment
+    /// instead verifies against `mac2`, keyed by the cookie this address
+    /// would hold only by having received a `CookieReply` sent *to* it — a
+    /// spoofed source cannot have one. The cookie is self-computed
+    /// statelessly (one HMAC, keyed by a secret this node already holds), so
+    /// this costs nothing extra on the ordinary mac1-only path, which is why
+    /// it can run before deciding whether to allocate anything.
+    ///
+    /// Returns `(mac_ok, addr_validated)`.
+    fn check_frag_mac(
+        &self,
+        hdr: &FragmentHeader,
+        payload: &[u8],
+        from: SocketAddr,
+    ) -> (bool, bool) {
+        let claimed = payload.first().copied().unwrap_or(0);
+        let candidates = [claimed, 0x01, 0x02, 0x04];
+        let mac1_ok = candidates.iter().any(|t| {
+            self.in_mac_key.verify(
+                *t,
+                hdr.reassembly_id,
+                hdr.idx,
+                hdr.count,
+                payload,
+                &hdr.frag_mac,
+            )
+        });
+        if mac1_ok {
+            return (true, false);
+        }
+        let source = source_key(from);
+        // Both the current secret's cookie and, during its one-period grace,
+        // the previous one's — a sender that received a cookie moments
+        // before a rotation must still be able to use it.
+        let mac2_ok = Self::lock(&self.cookie).as_ref().is_some_and(|c| {
+            c.candidates(&source).any(|cookie| {
+                let key = FragMacKey::new(&mac2_key(&cookie));
+                candidates.iter().any(|t| {
+                    key.verify(
+                        *t,
+                        hdr.reassembly_id,
+                        hdr.idx,
+                        hdr.count,
+                        payload,
+                        &hdr.frag_mac,
+                    )
+                })
+            })
+        });
+        (mac2_ok, mac2_ok)
+    }
+
     /// A datagram arrived on the UDP socket.
     pub fn inbound(
         &self,
@@ -1262,40 +1318,7 @@ impl Engine {
             return out;
         }
 
-        // §9.2 — one key, checked before anything is allocated. The type byte is
-        // only visible on fragment 0, so later fragments are checked against
-        // every type they could belong to and the AEAD settles it.
-        let claimed = payload.first().copied().unwrap_or(0);
-        let candidates = [claimed, 0x01, 0x02, 0x04];
-        let mac1_ok = candidates.iter().any(|t| {
-            self.in_mac_key
-                .verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
-        });
-
-        // §9.1/§13.10 — a source is address-validated only if the fragment
-        // instead verifies against `mac2`, keyed by the cookie this address
-        // would hold only by having received a `CookieReply` sent *to* it — a
-        // spoofed source cannot have one. The cookie is self-computed
-        // statelessly (one HMAC, keyed by a secret this node already holds),
-        // so this costs nothing extra on the ordinary mac1-only path, which
-        // is why it can run before deciding whether to allocate anything.
-        let (mac_ok, addr_validated) = if mac1_ok {
-            (true, false)
-        } else {
-            let source = source_key(from);
-            // Both the current secret's cookie and, during its one-period
-            // grace, the previous one's — a sender that received a cookie
-            // moments before a rotation must still be able to use it.
-            let mac2_ok = Self::lock(&self.cookie).as_ref().is_some_and(|c| {
-                c.candidates(&source).any(|cookie| {
-                    let key = FragMacKey::new(&mac2_key(&cookie));
-                    candidates.iter().any(|t| {
-                        key.verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
-                    })
-                })
-            });
-            (mac2_ok, mac2_ok)
-        };
+        let (mac_ok, addr_validated) = self.check_frag_mac(&hdr, payload, from);
         if !mac_ok {
             self.stats.mac_failures.fetch_add(1, Ordering::Relaxed);
             return out;
@@ -1423,8 +1446,14 @@ impl Engine {
 
         let claimed = payload.first().copied().unwrap_or(0);
         let mac_ok = [claimed, 0x01, 0x02, 0x04].iter().any(|t| {
-            self.in_mac_key
-                .verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
+            self.in_mac_key.verify(
+                *t,
+                hdr.reassembly_id,
+                hdr.idx,
+                hdr.count,
+                payload,
+                &hdr.frag_mac,
+            )
         });
         if !mac_ok {
             self.stats.mac_failures.fetch_add(1, Ordering::Relaxed);

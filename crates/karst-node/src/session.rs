@@ -583,8 +583,14 @@ impl Session {
         // plausible types and let reassembly + AEAD settle it.
         let ty = payload.first().copied().unwrap_or(0);
         let mac_ok = [ty, 0x02, 0x04].iter().any(|t| {
-            self.in_mac_key
-                .verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
+            self.in_mac_key.verify(
+                *t,
+                hdr.reassembly_id,
+                hdr.idx,
+                hdr.count,
+                payload,
+                &hdr.frag_mac,
+            )
         });
         if !mac_ok {
             return Vec::new(); // §9.2 — dropped before touching a buffer
@@ -958,10 +964,14 @@ impl Session {
         hdr: &FragmentHeader,
         seed: [u8; 32],
     ) -> Option<Vec<Action>> {
-        if !self
-            .out_mac_key
-            .verify(0x03, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
-        {
+        if !self.out_mac_key.verify(
+            0x03,
+            hdr.reassembly_id,
+            hdr.idx,
+            hdr.count,
+            payload,
+            &hdr.frag_mac,
+        ) {
             return None;
         }
         let Some((receiver_index, cookie)) =

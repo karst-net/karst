@@ -109,6 +109,7 @@ fn a_valid_cookie_reply_triggers_a_retry_under_mac2() {
                 rhdr.reassembly_id,
                 rhdr.idx,
                 rhdr.count,
+                rpayload,
                 &rhdr.frag_mac
             ),
             "the retry must be signed under mac2, not mac1"

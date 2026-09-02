@@ -479,12 +479,19 @@ and merging their fragments would corrupt both messages.
 ### 9.2 Fragment MAC
 
 ```
-frag_mac = HMAC(mac_key, type ‖ reassembly_id ‖ idx ‖ cnt)
+frag_mac = HMAC(mac_key, type ‖ reassembly_id ‖ idx ‖ cnt [‖ payload])
            truncated to the leftmost 16 bytes
 ```
 
-The **fragment payload is not covered** — see §13.8. The MAC input is 7 bytes
-regardless of packet size, so its cost is constant.
+**The payload is covered for `HandshakeInit` and `HandshakeResponse` only.**
+For `CookieReply` and `TransportData` the MAC input is 7 bytes regardless of
+packet size, so its cost is constant — see §13.8 for why that's the right
+trade-off on the transport path. For the two handshake types the input is 7
+bytes plus the fragment's payload — see §13.11 for why: §13.8 originally
+removed payload coverage everywhere, and the adversarial reading §14 item 10
+asked for found that didn't hold for `mac2`'s address validation on the
+bounded handshake path, only for the high-volume transport path the original
+measurement was against.
 
 with **HMAC-SHA-512 under every suite** — see §13.9 for why this one is not the
 suite hash — and
@@ -514,16 +521,23 @@ surface. 128-bit truncation is ample for both uses below.
 
 > **What the fragment MAC is, and is not.** `mac1`'s key derives from `S_r_pk`,
 > which is **public**. Anyone who knows the responder's static key can compute
-> valid `mac1` values. It is a cheap filter against scanning and untargeted
-> flooding — exactly WireGuard's `mac1` — **not** an authenticator, and it
-> provides **no reassembly integrity**. `mac2` is keyed by the secret cookie
-> and therefore does authenticate, but only that the sender can receive at the
-> claimed address.
+> valid `mac1` values over any payload they choose, covered or not — it is a
+> cheap filter against scanning and untargeted flooding — exactly WireGuard's
+> `mac1` — **not** an authenticator, and it provides **no reassembly
+> integrity**, regardless of §13.11's payload coverage. `mac2` is keyed by the
+> secret cookie and therefore does authenticate, but only that the sender can
+> receive at the claimed address — and it is specifically `mac2`, on the two
+> handshake types, that payload coverage protects (§13.11): without it, an
+> eavesdropper who captured one valid `mac2`'d fragment — never mind the
+> cookie itself — could splice its header onto a payload of its own choosing.
 >
 > Integrity of the reassembled message comes solely from the message-level AEAD
-> tag. Implementations MUST NOT treat a valid `frag_mac` as evidence about the
-> sender's identity or about fragments belonging together. Doing so would be a
-> vulnerability, and it is the most likely misreading of this section.
+> tag, for `CookieReply` and `TransportData`, and *additionally* from the
+> per-fragment MAC for the two handshake types. Implementations MUST NOT treat
+> a valid `frag_mac` as evidence about the sender's identity or about
+> fragments belonging together for `CookieReply` or `TransportData` — that
+> would be a vulnerability, and it is the most likely misreading of this
+> section.
 
 ### 9.3 Cookies
 
@@ -989,6 +1003,55 @@ already holds for that peer, never with the key it verifies everything else
 against. Implementations MUST follow this correction, not §13.7's general
 row, for `CookieReply` specifically.
 
+### 13.11 Handshake-type fragments cover the payload after all — a correction to §13.8
+
+§14 item 10 asked for the adversarial reading of §13.8 that §13.8's own text
+said it needed — a security construction changed on performance grounds,
+never checked by anyone but its author. That reading, done during Phase 6's
+internal cryptographic review (GitHub issue
+[#81](https://github.com/karst-net/karst/issues/81)), found §13.8's argument
+correct for `mac1` and for the transport data path, but not for `mac2` on the
+two handshake types.
+
+**Where §13.8 still holds.** `mac1`'s key derives from the recipient's
+*public* static key, so an adversary who holds it could already forge a
+valid `mac1` over any payload before §13.8, covered or not — hashing the
+payload bought nothing against that adversary, on any message type.
+`TransportData` is the path the 23%-CPU measurement was actually taken
+against, and it runs at a volume — every packet of a live session, not a
+handful of attempts — where that measurement's conclusion still applies.
+
+**Where it didn't.** `mac2`'s key is the secret, per-source cookie
+(§9.3) — the one case where the pre-§13.8 MAC protected something: an
+eavesdropper without the cookie could only *replay* a captured `mac2`'d
+fragment verbatim, since altering the payload without the key invalidated a
+MAC that covered it. Under §13.8's header-only construction, that same
+eavesdropper could keep a captured fragment's header and `mac2` bytes
+unchanged and substitute *any payload it likes*, producing a fragment that
+still verifies as address-validated but was never sent by, nor derivable by,
+the address it claims to come from. Traced through the implementation: a
+completed reassembly of such a fragment reaches the unconditional ML-KEM
+decapsulation `HandshakeInit` processing performs before it resolves
+anything about the sender — precisely the expensive operation §9.1's
+`LOAD_THRESHOLD`/cookie mechanism exists to gate. §13.8's own regression
+paragraph undersold this as merely "forcing an AEAD open"; above the load
+threshold, it could force the decapsulation the whole apparatus exists to
+prevent, without the eavesdropper ever learning the cookie.
+
+**Resolution.** `HandshakeInit` and `HandshakeResponse` fragments cover the
+payload again; `CookieReply` and `TransportData` do not, keeping §13.8's win
+where it is actually justified. This costs nothing on the transport path and
+is cheap on the handshake path precisely because that path is bounded —
+2–3 fragments per attempt (§6.4/§6.5), nowhere near transport volume.
+`CookieReply` needed no change: its 40-byte body is already AEAD-protected,
+so a tampered one just fails that tag — exactly the narrow, accepted
+regression §13.8 describes for the types it still applies to.
+
+§9.2's normative construction and its "what the fragment MAC is, and is not"
+note are updated to match. §13.8 is otherwise left as written — it remains
+the correct argument for the two message types it was actually measured
+against.
+
 ---
 
 ## 14. Open items — this draft is incomplete
@@ -1004,7 +1067,7 @@ row, for `CookieReply` specifically.
 | ~~7~~ | ~~The CNSA suite's key schedule with no DH contribution~~ — **resolved:** steps 6, 10 and 11 are absent, nothing substituted (§7.1); implemented and tested | — |
 | 8 | Out-of-band-KEM variant (ADR-0004 §4) framing | Optional profile |
 | 9 | Rekey state machine — precise transition table, **including simultaneous open** | Implementation |
-| **10** | **§13.8 — fragment MAC no longer covers the payload.** The one change made on performance grounds; the argument is written out in §13.8 and needs an adversarial reading rather than a self-review | **External review** |
+| ~~10~~ | ~~§13.8 — fragment MAC no longer covers the payload.~~ — **resolved:** the adversarial reading found the argument doesn't hold for `mac2` on the two handshake types; §13.11 restores payload coverage there and leaves §13.8 as written for `CookieReply`/`TransportData` | — |
 
 Items 1 and 2 are gates, not tasks; item 2's base model now passes (§13.3).
 Item 5 is resolved, which unblocks implementation of the fragmentation layer.
@@ -1018,11 +1081,15 @@ internal cryptographic review and closed together (GitHub issue
 [#78](https://github.com/karst-net/karst/issues/78)) — Verifpal first, then
 ProVerif, each run against the tool itself rather than merely written.
 
-**Item 10 is the one to read most sceptically.** Every other change in §13 fixed
-something that was wrong; §13.8 changes a security construction because it was
-expensive. The reasoning is that the property removed was one the construction
-never provided — but that is exactly the kind of claim an author should not be
-the last person to check.
+**Item 10 was the one to read most sceptically, and it did not fully survive
+the reading.** Every other change in §13 fixed something that was wrong;
+§13.8 changed a security construction because it was expensive, reasoning
+that the property removed was one the construction never provided. That held
+for `mac1` and the transport path, and did not hold for `mac2` on the two
+handshake types — see §13.11 (GitHub issue
+[#81](https://github.com/karst-net/karst/issues/81)), closed during Phase 6's
+internal cryptographic review, the same pass that found item 10 needed
+answering rather than left as a standing open item.
 
 Item 4 (`LOAD_THRESHOLD`) cannot be settled on paper — it needs measurement
 against a real responder under a spoofed-source flood, so it belongs with the

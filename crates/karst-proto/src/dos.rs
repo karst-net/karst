@@ -104,7 +104,8 @@ impl FragMacKey {
         Self { keyed }
     }
 
-    /// Compute a fragment MAC over the header fields — §9.2, §13.8.
+    /// Compute a fragment MAC — §9.2, §13.8, and its correction below for
+    /// handshake types (GitHub issue #81).
     #[must_use]
     pub fn compute(
         &self,
@@ -112,12 +113,16 @@ impl FragMacKey {
         reassembly_id: u32,
         idx: u8,
         count: u8,
+        payload: &[u8],
     ) -> [u8; FRAG_MAC_LEN] {
         // The clone is the point: it carries the keyed `ipad` and `opad` states.
         let mut m = self.keyed.clone();
         m.update(&[msg_type]);
         m.update(&reassembly_id.to_le_bytes());
         m.update(&[idx, count]);
+        if covers_payload(msg_type) {
+            m.update(payload);
+        }
         let full = m.finalize().into_bytes();
         let mut out = [0u8; FRAG_MAC_LEN];
         if let Some(head) = full.get(..FRAG_MAC_LEN) {
@@ -134,29 +139,52 @@ impl FragMacKey {
         reassembly_id: u32,
         idx: u8,
         count: u8,
+        payload: &[u8],
         got: &[u8; FRAG_MAC_LEN],
     ) -> bool {
-        self.compute(msg_type, reassembly_id, idx, count)
+        self.compute(msg_type, reassembly_id, idx, count, payload)
             .ct_eq(got)
             .into()
     }
 }
 
+/// Whether `msg_type` covers the fragment payload in the MAC input.
+///
+/// §13.8 removed payload coverage for every type on performance grounds; the
+/// adversarial reading §14 item 10 asked for (GitHub issue #81) found that
+/// argument doesn't hold for handshake-type fragments specifically —
+/// `HandshakeInit`/`HandshakeResponse` are bounded to 2-3 fragments per
+/// attempt (§6.4/§6.5), nowhere near the steady-state data-path volume the
+/// 23%-CPU measurement was against, and `mac2`'s address-validation is
+/// load-bearing there: it gates the ML-KEM decapsulation
+/// `accept_handshake` unconditionally performs, which an eavesdropper who
+/// captured one valid `mac2`'d fragment could otherwise force by splicing in
+/// a substituted payload under the old, header-only MAC. `TransportData`
+/// keeps §13.8's win — that is the path the CPU measurement was actually
+/// against — and `CookieReply` needs no change either: its 40-byte body is
+/// already AEAD-protected, so a tampered one just fails that tag, exactly
+/// the "narrow regression" §13.8 describes and nothing more.
+fn covers_payload(msg_type: u8) -> bool {
+    msg_type == crate::MessageType::HandshakeInit as u8
+        || msg_type == crate::MessageType::HandshakeResponse as u8
+}
+
 /// Compute a fragment MAC — §9.2.
 ///
-/// `HMAC(mac_key, type ‖ reassembly_id ‖ idx ‖ cnt)`, truncated to the leftmost
-/// 16 bytes.
+/// `HMAC(mac_key, type ‖ reassembly_id ‖ idx ‖ cnt [‖ payload])`, truncated to
+/// the leftmost 16 bytes. The payload is included only for handshake-type
+/// fragments — see [`covers_payload`] and §13.8's correction. For
+/// `TransportData` and `CookieReply` the MAC input stays 7 bytes regardless
+/// of packet size, the constant cost §13.8 was written for.
 ///
-/// **The payload is deliberately not covered** (§13.8). This is a scanning
-/// filter, not an authenticator: its key derives from a *public* static key, so
-/// anyone who knows the recipient's public key can already forge a valid MAC
-/// over any payload they like. Hashing the payload therefore bought no property
-/// against an adversary who has that key, and cost time proportional to every
-/// byte — measured at **23% of node CPU under load, about five times the AEAD
-/// it gates**. Message integrity comes from the AEAD tag and always did; §9.2
-/// says so explicitly.
-///
-/// The cost is now constant: 7 bytes of input regardless of packet size.
+/// This is still a scanning filter, not an authenticator, wherever its key is
+/// `mac1`: that key derives from a *public* static key, so anyone who knows
+/// the recipient's public key can forge a valid MAC over any payload they
+/// like, covered or not. Covering the payload for handshake types instead
+/// protects the one case where it matters: `mac2`, keyed by a secret only the
+/// address-validated sender holds, where the old header-only MAC let an
+/// eavesdropper who captured one valid fragment replay its header with an
+/// arbitrary substituted payload.
 #[must_use]
 /// Convenience for callers that hold raw key bytes and are not on the hot path
 /// — it re-derives the HMAC schedule every call. Anything per-packet should
@@ -167,8 +195,9 @@ pub fn frag_mac(
     reassembly_id: u32,
     idx: u8,
     count: u8,
+    payload: &[u8],
 ) -> [u8; FRAG_MAC_LEN] {
-    FragMacKey::new(mac_key).compute(msg_type, reassembly_id, idx, count)
+    FragMacKey::new(mac_key).compute(msg_type, reassembly_id, idx, count, payload)
 }
 
 /// Verify a fragment MAC in constant time.
@@ -179,9 +208,10 @@ pub fn verify_frag_mac(
     reassembly_id: u32,
     idx: u8,
     count: u8,
+    payload: &[u8],
     got: &[u8; FRAG_MAC_LEN],
 ) -> bool {
-    FragMacKey::new(mac_key).verify(msg_type, reassembly_id, idx, count, got)
+    FragMacKey::new(mac_key).verify(msg_type, reassembly_id, idx, count, payload, got)
 }
 
 /// Stateless cookie issuer — §9.3.
@@ -444,53 +474,86 @@ mod tests {
     #[test]
     fn frag_mac_round_trips() {
         let k = key();
-        let m = frag_mac(&k, 0x01, 42, 0, 2);
-        assert!(verify_frag_mac(&k, 0x01, 42, 0, 2, &m));
+        let m = frag_mac(&k, 0x01, 42, 0, 2, b"payload");
+        assert!(verify_frag_mac(&k, 0x01, 42, 0, 2, b"payload", &m));
     }
 
     /// Every input the MAC covers must change it — otherwise an attacker could
-    /// move a fragment between positions or messages.
+    /// move a fragment between positions or messages. `0x01` (`HandshakeInit`)
+    /// covers the payload too (§13.8's correction, GitHub issue #81).
     #[test]
     fn every_covered_field_changes_the_mac() {
         let k = key();
-        let base = frag_mac(&k, 0x01, 42, 0, 2);
+        let base = frag_mac(&k, 0x01, 42, 0, 2, b"payload");
 
-        assert_ne!(base, frag_mac(&k, 0x02, 42, 0, 2), "type");
-        assert_ne!(base, frag_mac(&k, 0x01, 43, 0, 2), "reassembly_id");
-        assert_ne!(base, frag_mac(&k, 0x01, 42, 1, 2), "idx");
-        assert_ne!(base, frag_mac(&k, 0x01, 42, 0, 3), "count");
+        assert_ne!(base, frag_mac(&k, 0x02, 42, 0, 2, b"payload"), "type");
+        assert_ne!(
+            base,
+            frag_mac(&k, 0x01, 43, 0, 2, b"payload"),
+            "reassembly_id"
+        );
+        assert_ne!(base, frag_mac(&k, 0x01, 42, 1, 2, b"payload"), "idx");
+        assert_ne!(base, frag_mac(&k, 0x01, 42, 0, 3, b"payload"), "count");
+        assert_ne!(
+            base,
+            frag_mac(&k, 0x01, 42, 0, 2, b"different"),
+            "payload, for a handshake-type fragment"
+        );
     }
 
-    /// §13.8 — the payload is deliberately **not** covered, and its cost is
-    /// therefore independent of packet size. Asserting this stops the payload
-    /// being quietly folded back in: it would restore 23% of node CPU
-    /// (PLAN.md §3.4) for a property the AEAD already provides.
+    /// §13.8's correction (GitHub issue #81, `spec/phreatic-v1.md` §13.8):
+    /// handshake-type fragments cover the payload, closing the gap the
+    /// adversarial reading found in `mac2`'s address validation.
     #[test]
-    fn the_payload_is_not_covered_and_the_cost_is_constant() {
+    fn handshake_type_fragments_cover_the_payload() {
         let k = key();
-        // The MAC is a pure function of the header fields, so there is no
-        // payload to pass — the signature itself is the guarantee. What can
-        // still be checked is that the cost does not grow with the message.
-        let m = frag_mac(&k, 0x04, 7, 0, 1);
-        assert_eq!(m, frag_mac(&k, 0x04, 7, 0, 1), "deterministic");
-        assert_eq!(m.len(), FRAG_MAC_LEN);
+        for ty in [0x01u8, 0x02u8] {
+            let m = frag_mac(&k, ty, 7, 0, 1, b"one payload");
+            assert_ne!(
+                m,
+                frag_mac(&k, ty, 7, 0, 1, b"another"),
+                "type {ty:#x} must cover the payload"
+            );
+        }
+    }
+
+    /// §13.8 — `TransportData` and `CookieReply` deliberately do **not** cover
+    /// the payload, so their cost stays independent of packet size. Asserting
+    /// this stops the payload being quietly folded back in for these types too:
+    /// it would restore 23% of node CPU (PLAN.md §3.4) on the high-volume
+    /// transport path for a property the AEAD already provides there.
+    #[test]
+    fn transport_and_cookie_reply_fragments_do_not_cover_the_payload() {
+        let k = key();
+        for ty in [0x03u8, 0x04u8] {
+            let m = frag_mac(&k, ty, 7, 0, 1, b"one payload");
+            assert_eq!(
+                m,
+                frag_mac(&k, ty, 7, 0, 1, b"a completely different payload"),
+                "type {ty:#x} must not cover the payload"
+            );
+            assert_eq!(m.len(), FRAG_MAC_LEN);
+        }
     }
 
     #[test]
     fn a_different_responder_key_yields_a_different_mac() {
         let a = mac1_key(b"responder one");
         let b = mac1_key(b"responder two");
-        assert_ne!(frag_mac(&a, 0x01, 1, 0, 1), frag_mac(&b, 0x01, 1, 0, 1));
+        assert_ne!(
+            frag_mac(&a, 0x01, 1, 0, 1, b"x"),
+            frag_mac(&b, 0x01, 1, 0, 1, b"x")
+        );
     }
 
     #[test]
     fn tampered_macs_are_rejected() {
         let k = key();
-        let mut m = frag_mac(&k, 0x01, 7, 0, 1);
+        let mut m = frag_mac(&k, 0x01, 7, 0, 1, b"x");
         if let Some(b) = m.first_mut() {
             *b ^= 0x01;
         }
-        assert!(!verify_frag_mac(&k, 0x01, 7, 0, 1, &m));
+        assert!(!verify_frag_mac(&k, 0x01, 7, 0, 1, b"x", &m));
     }
 
     #[test]

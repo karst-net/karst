@@ -456,13 +456,35 @@ GitHub issue [#80](https://github.com/karst-net/karst/issues/80) closed.
 
 ## Medium — the review §14 item 10 asked for
 
-### 6. §13.8's argument mostly holds, but its own "narrow regression" paragraph undersells what an eavesdropper gains against `mac2`
+### 6. §13.8's argument mostly holds, but its own "narrow regression" paragraph undersold what an eavesdropper gains against `mac2` — **fixed 2026-09-02**
 
-**§14 item 10, closed as a review** (the finding above is what it surfaced;
-no change to §13.8's conclusion is being made here). This is the adversarial
-reading `spec/phreatic-v1.md` §14 flags as "the one to read most
-sceptically" — a security construction changed on performance grounds, never
-externally checked.
+**Closed, with a code change.** This is the adversarial reading
+`spec/phreatic-v1.md` §14 flags as "the one to read most sceptically" — a
+security construction changed on performance grounds, never externally
+checked. Option 2 below was chosen: `HandshakeInit`/`HandshakeResponse`
+fragments cover the payload again; `CookieReply`/`TransportData` do not,
+keeping §13.8's actual justified win where it was actually measured.
+`spec/phreatic-v1.md` gained §13.11 recording the correction, and §9.2's
+normative construction and "what the fragment MAC is, and is not" note were
+updated to match.
+
+`FragMacKey::compute`/`verify` and the `frag_mac`/`verify_frag_mac` free
+functions (`crates/karst-proto/src/dos.rs`) now take the fragment payload and
+a new `covers_payload(msg_type)` decides whether to fold it into the HMAC
+input — `true` only for `HandshakeInit`/`HandshakeResponse`. Every verifier
+(`Session::handle`, `Session::handle_cookie_reply`, and `Engine`'s `mac1`/
+`mac2` candidate loops, consolidated into one `Engine::check_frag_mac` helper
+to keep `Engine::inbound` under the workspace's line-count lint) now passes
+the received payload through. New/updated coverage:
+`crates/karst-proto/src/dos.rs`'s `handshake_type_fragments_cover_the_payload`
+and `transport_and_cookie_reply_fragments_do_not_cover_the_payload`, and
+`crates/karst-noise/tests/fragmented.rs`'s
+`a_tampered_handshake_fragment_is_caught_by_its_own_mac` (replacing a test
+that asserted the pre-fix behavior). GitHub issue
+[#81](https://github.com/karst-net/karst/issues/81) closed.
+
+**What #81's original text below still describes accurately: the reading
+that found the gap.**
 
 **What holds.** §13.8's core argument is correct and this pass could not
 break it: `mac1`'s key, `HASH("Karst mac1 v1" ‖ S_r_pk)`
@@ -520,30 +542,14 @@ without ever learning the cookie itself** — a materially larger claim than
 forgeable `reassembly_id`, requires source-address spoofing to match the
 entry key, and is not a free-standing amplification primitive).
 
-**Assessment.** Not a reason to reverse §13.8 — the transport-path win it
-was written for is real and this doesn't touch it. But §13.8's own
-regression paragraph should say what actually changes for `mac2` rather
-than the milder, suite-independent statement it currently makes for both
-keys at once. Two independent, non-exclusive responses, neither implemented
-here — a call for whoever owns this workstream next, not a self-review
-verdict:
-
-1. **Document only.** Sharpen §13.8's regression paragraph to name the
-   `mac2`/decapsulation path specifically, and accept the residual risk as
-   already-bounded (it needs eavesdropping, which the mesh's threat model
-   already treats as available to an adversary — `docs/THREAT-MODEL.md`).
-2. **Reintroduce payload coverage, but only for handshake-type fragments.**
-   `§13.8`'s 23.4%-of-CPU measurement was against the transport data path,
-   not the handshake path, which is bounded to 2–3 fragments per attempt
-   (§6.4/§6.5) — covering only `type ∈ {HandshakeInit, HandshakeResponse}`
-   payloads in the MAC would close this gap for the one case where `mac2`'s
-   authentication is load-bearing, while keeping §13.8's actual justified
-   win on the high-volume transport path untouched. This is a wire-format
-   change and needs its own spec revision and model re-verification before
-   landing.
-
-GitHub issue [#81](https://github.com/karst-net/karst/issues/81) filed to
-track the decision; not a code change by itself.
+**Assessment, and the choice actually made.** Not a reason to reverse §13.8
+— the transport-path win it was written for is real and untouched. Between
+the two options this pass laid out — document only, or reintroduce payload
+coverage for handshake-type fragments only — the second was chosen: it
+closes the actual gap rather than accepting it, and the handshake path's
+bounded volume (2-3 fragments per attempt, §6.4/§6.5) means the 23.4%-CPU
+measurement that motivated §13.8 never applied there in the first place.
+Implementation above; spec correction at §13.11.
 
 ---
 
@@ -615,10 +621,13 @@ and Finding 4 (secret material never zeroized, GitHub issue [#79](https://github
 **Finding 5 (`reassembly_id` is a predictable counter, not a CSPRNG draw) is
 closed** — GitHub issue [#80](https://github.com/karst-net/karst/issues/80).
 
-**Finding 6 (§14 item 10's adversarial reading of §13.8) is closed as a
-review** — GitHub issue [#81](https://github.com/karst-net/karst/issues/81)
-tracks the decision it surfaced (document vs. reintroduce payload coverage
-for handshake fragments only).
+**Finding 6 (§14 item 10's adversarial reading of §13.8) is closed** — GitHub
+issue [#81](https://github.com/karst-net/karst/issues/81). Handshake-type
+fragments now cover the payload in the MAC (spec §13.11); `CookieReply`/
+`TransportData` keep §13.8's original construction.
+
+**All six findings from this workstream's first pass, and §14 item 10, are
+now closed.**
 
 Next passes for this workstream: constant-time behavior at the primitive
 level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'

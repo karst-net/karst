@@ -333,7 +333,7 @@ pub fn fragment(
             reassembly_id,
             idx,
             count,
-            frag_mac: mac_key.compute(msg_type as u8, reassembly_id, idx, count),
+            frag_mac: mac_key.compute(msg_type as u8, reassembly_id, idx, count, payload),
         };
         let mut datagram = Vec::with_capacity(consts::FRAGMENT_HEADER + payload.len());
         datagram.extend_from_slice(&hdr.encode());

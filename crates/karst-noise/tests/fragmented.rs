@@ -15,8 +15,8 @@ use std::sync::Arc;
 use karst_crypto::kem::KemKind;
 use karst_crypto::{SuiteId, SuitePolicy};
 use karst_noise::handshake::{
-    initiate, peer_id_hint, respond, InitiatorRandomness, PeerPublic, ResponderRandomness,
-    SessionParams, StaticKeys, TIMESTAMP_LEN,
+    initiate, respond, InitiatorRandomness, PeerPublic, ResponderRandomness, SessionParams,
+    StaticKeys, TIMESTAMP_LEN,
 };
 use karst_proto::consts;
 use karst_proto::dos::{mac1_key, mac2_key, verify_frag_mac, CookieSecret, FragMacKey};
@@ -111,6 +111,7 @@ fn a_real_handshake_survives_fragmentation_and_reassembly() {
                 hdr.reassembly_id,
                 hdr.idx,
                 hdr.count,
+                payload,
                 &hdr.frag_mac
             ),
             "fragment MAC must verify"
@@ -157,64 +158,59 @@ fn fragments_reassemble_out_of_order() {
     assert_eq!(out.unwrap(), msg1);
 }
 
-/// **§13.8 — an altered payload passes the fragment MAC and is caught by the
-/// AEAD.**
+/// **§13.8's correction (GitHub issue #81) — a tampered handshake fragment's
+/// payload is now caught by the fragment MAC itself, before reassembly ever
+/// sees it.**
 ///
-/// This is the property the MAC change trades away, so it is asserted rather
-/// than left implicit. §9.2 never claimed message integrity — "it provides no
-/// reassembly integrity […] integrity of the reassembled message comes solely
-/// from the message-level AEAD tag" — and an adversary holding the recipient's
-/// *public* static key could always forge a MAC over any payload. What this
-/// test pins is that the AEAD really is the thing that catches it, because the
-/// MAC no longer will.
+/// This used to pass the MAC and only get caught by the AEAD once reassembled
+/// — see `crates/karst-proto/src/dos.rs`'s
+/// `transport_and_cookie_reply_fragments_do_not_cover_the_payload` for that
+/// property, which `TransportData` and `CookieReply` still have, deliberately
+/// (§13.8's cost argument holds on the high-volume transport path; it did not
+/// hold for `mac2`'s address validation on the bounded handshake path, which
+/// is what the adversarial reading this issue answers found). A real caller
+/// (`Engine::inbound`) checks `frag_mac` before a byte reaches the
+/// reassembler, so a tampered fragment like this one is now discarded right
+/// there and never gets the chance to reassemble into anything the AEAD would
+/// need to reject.
 #[test]
-fn an_altered_payload_passes_the_mac_and_is_caught_by_the_aead() {
+fn a_tampered_handshake_fragment_is_caught_by_its_own_mac() {
     let (initiator, responder) = (alice(), bob());
-    let (msg1, frags, key) = init_fragments(&initiator, &responder);
+    let (_msg1, frags, key) = init_fragments(&initiator, &responder);
 
     let mut bad = frags.first().unwrap().clone();
     if let Some(x) = bad.last_mut() {
         *x ^= 0x01;
     }
-    let (hdr, _) = split_datagram(&bad).unwrap();
+    let (hdr, tampered_payload) = split_datagram(&bad).unwrap();
     assert!(
-        verify_frag_mac(
+        !verify_frag_mac(
             &key,
             MessageType::HandshakeInit as u8,
             hdr.reassembly_id,
             hdr.idx,
             hdr.count,
+            tampered_payload,
             &hdr.frag_mac
         ),
-        "the MAC covers the header only, so a payload edit leaves it valid"
+        "a payload edit must now invalidate a handshake fragment's own MAC"
     );
 
-    // Reassemble the tampered message and offer it to the responder. The AEAD
-    // is what must refuse it.
-    let mut reasm = Reassembler::new(Config::default());
-    let mut tampered = None;
-    for (index, datagram) in frags.iter().enumerate() {
-        let source = if index == 0 { &bad } else { datagram };
-        let (header, body) = split_datagram(source).unwrap();
-        if let Accept::Complete(whole) = reasm.push(SRC, true, &header, body, 0) {
-            tampered = Some(whole.to_vec());
-        }
-    }
-    let tampered = tampered.expect("a tampered message still reassembles");
-    assert_ne!(tampered, msg1, "the message really was altered");
-
-    let expected_hint = peer_id_hint(&initiator.kem_pk.to_bytes());
-    let outcome = respond(
-        &responder,
-        &policy(),
-        &tampered,
-        |hint, _| (*hint == expected_hint).then(|| peer_of(&initiator)),
-        &rrand(),
-        2,
-    );
+    // Confirm it isn't merely the header that changed: the *un*-tampered
+    // fragment's own header, replayed against the tampered payload, must
+    // still fail — it is the payload binding doing the work, not idx/count.
+    let (original_hdr, _) = split_datagram(frags.first().unwrap()).unwrap();
     assert!(
-        outcome.is_err(),
-        "the AEAD must reject a message the MAC no longer protects"
+        !verify_frag_mac(
+            &key,
+            MessageType::HandshakeInit as u8,
+            original_hdr.reassembly_id,
+            original_hdr.idx,
+            original_hdr.count,
+            tampered_payload,
+            &original_hdr.frag_mac
+        ),
+        "the original header's MAC must not validate a substituted payload"
     );
 }
 
@@ -225,7 +221,7 @@ fn a_fragment_cannot_be_relocated_within_the_message() {
     let (_, frags, key) = init_fragments(&a, &b);
 
     let first = frags.first().unwrap();
-    let (hdr, _) = split_datagram(first).unwrap();
+    let (hdr, payload) = split_datagram(first).unwrap();
     // Claim it is fragment 1 rather than 0, keeping the original MAC.
     assert!(
         !verify_frag_mac(
@@ -234,6 +230,7 @@ fn a_fragment_cannot_be_relocated_within_the_message() {
             hdr.reassembly_id,
             1,
             hdr.count,
+            payload,
             &hdr.frag_mac
         ),
         "index is covered by the MAC"
@@ -289,6 +286,7 @@ fn under_load_a_cookie_round_trip_is_required() {
             hdr2.reassembly_id,
             hdr2.idx,
             hdr2.count,
+            payload2,
             &hdr2.frag_mac
         ));
         if let Accept::Complete(msg) = r.push(SRC, true, &hdr2, payload2, 0) {
@@ -399,6 +397,7 @@ fn a_cnsa_handshake_needs_three_fragments_and_still_reassembles() {
                 hdr.reassembly_id,
                 hdr.idx,
                 hdr.count,
+                payload,
                 &hdr.frag_mac
             ),
             "the fragment MAC is suite-independent and must still verify"
