@@ -52,10 +52,29 @@
 //! signature bytes rather than merely asserting that both implementations
 //! verify.
 //!
+//! # The expanded signing key zeroizes on drop because `Cargo.toml` says so
+//!
+//! `seed` below has always been wrapped in `Zeroizing`, but `inner` — the
+//! *expanded* `ml_dsa::ExpandedSigningKey`, the larger structure actually used
+//! for every `sign()` call — was not: `ml-dsa`'s own `Drop` for it exists only
+//! behind a `zeroize` Cargo feature this crate did not turn on until this was
+//! found. See `aead.rs`'s module note, which found the same gap in `ml-kem`
+//! and the AEAD key schedule at the same time.
+//!
 //! [ADR-0001]: ../../../docs/adr/0001-cryptographic-algorithm-selection.md
 //! [ADR-0014]: ../../../docs/adr/0014-bedrock-trust-hierarchy.md
 
 use zeroize::Zeroizing;
+
+// A compile-time guarantee, not a runtime one — this crate forbids
+// `unsafe_code`, which rules out inspecting freed memory directly. If
+// `Cargo.toml`'s `zeroize` feature on `ml-dsa` is ever dropped, the build
+// fails here rather than every Bedrock signing key silently going unzeroized
+// again. See the module note.
+const _: () = {
+    const fn assert_zeroizes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroizes_on_drop::<ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa87>>();
+};
 
 /// ML-DSA-87 public key size.
 pub const ROOT_PUBLIC_KEY: usize = 2_592;

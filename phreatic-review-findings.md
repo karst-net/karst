@@ -17,11 +17,13 @@ document must not be read or cited as though it does. It checks
 Verifpal/ProVerif models in `spec/models/`.
 
 **Scope of this pass:** the handshake and key schedule (§6–7), the transport
-phase (§8), and the denial-of-service machinery (§9) — read against their
+phase (§8), the denial-of-service machinery (§9) — read against their
 implementations and against the open items the spec itself already tracks in
-§14. Not yet covered: `karst-crypto`'s primitive implementations for
-side-channel behavior, the rekey/simultaneous-open transition table (§14 item
-9), and a line-by-line reread of §13.8's adversarial-reading request (§14 item
+§14 — and, in a second reading pass, `karst-crypto`'s primitive-level wrapping
+of `ml-kem`, `ml-dsa`, `x25519-dalek` and `aes-gcm` (Finding 4). Not yet
+covered: constant-time behavior at the primitive level beyond what that pass
+already turned up, the rekey/simultaneous-open transition table (§14 item 9),
+and a line-by-line reread of §13.8's adversarial-reading request (§14 item
 10). Those are next.
 
 **Method:** reading, not running an attack. `cargo test -p karst-noise -p
@@ -268,6 +270,70 @@ highest-value gap in the model suite's coverage before anyone reads
 
 ---
 
+## High — secret material never zeroized on drop — **closed 2026-09-02**
+
+### 4. `ml-kem`, `ml-dsa`, `x25519-dalek` and `aes` each gate their own zeroization behind a Cargo feature nothing turned on
+
+Found in the second reading pass this document's scope note above added:
+`karst-crypto`'s primitive-level wrapping of its four upstream crates.
+
+**Every long-term and ephemeral secret key `karst-crypto` and `karst-noise`
+hold was being freed unzeroized**, for as long as this crate has existed —
+not because the code never tried (the opposite: `SymmetricState`,
+`TransportKeys`, `Psk`, `CookieSecret` and more all hand-roll careful
+`Drop`+`zeroize` impls elsewhere in this codebase), but because the four
+RustCrypto crates these two crates wrap each gate their *own* internal
+`Drop`-based zeroization behind an opt-in Cargo feature named `zeroize`, and
+none of those four features was ever turned on. Depending on the `zeroize`
+*crate* — which this codebase does, extensively — is a different thing from
+enabling *another* crate's own `zeroize` Cargo *feature*, and the former does
+not cascade into the latter.
+
+Verified precisely via `Cargo.lock`: the `zeroize` package is a dependency of
+`aws-lc-rs`, `chacha20poly1305`, `karst-control-client`, `karst-crypto`,
+`karst-disco`, `karst-noise`, `karstd`, `rustls` and a few others — never of
+`ml-kem`, `ml-dsa`, `x25519-dalek`, or `aes`.
+
+**Scope, confirmed by reading each upstream crate's source directly:**
+
+| Crate | Type | What it protects |
+|---|---|---|
+| `ml-kem` | `DecapsulationKey768`/`1024` | Every static *and* ephemeral ML-KEM secret key (`KemSecretKey`), both suites |
+| `ml-dsa` | `ExpandedSigningKey` | Bedrock's `RootKey`/`AuthorityKey`/`AnchorKey` — the seed was already `Zeroizing`-wrapped; the larger expanded key actually used for every `sign()` was not |
+| `x25519-dalek` | `StaticSecret` | Every static and ephemeral X25519 secret (`karst_noise::handshake::StaticKeys`/`Initiator`) |
+| `aes` | round-key schedule inside `Aes256Gcm` | Every live `TransportSession`'s actual send/receive traffic keys |
+
+A real gap against `docs/THREAT-MODEL.md` R5 (secret-material leakage),
+though a different vector from the log/diagnostics-bundle leakage R5's
+existing continuous scan covers — this is heap memory retained after a key
+is no longer needed, recoverable via a core dump, a swap file, or an adjacent
+memory-disclosure bug.
+
+**Fixed — `Cargo.toml` only, no change to the cryptography itself:**
+`ml-kem`/`ml-dsa` gained `features = ["zeroize"]` in
+`crates/karst-crypto/Cargo.toml`; `x25519-dalek` gained it in
+`crates/karst-noise/Cargo.toml`. `aes-gcm` exposes no feature reaching past
+itself into `aes`'s own gate, so `karst-crypto/Cargo.toml` also gained a
+direct, otherwise-unused dependency on `aes` with `features = ["zeroize"]` —
+Cargo unifies features per resolved package rather than per dependent, so
+this flips the bit for the *same* `aes` instance `aes-gcm` links against.
+
+**Compile-time regression guards**, since every crate touched here
+`#![forbid(unsafe_code)]` and so cannot do the raw-memory-inspection test the
+upstream crates themselves use: `kem.rs`, `sign.rs` and `aead.rs` each gained
+a `const _: () = { const fn assert_zeroizes_on_drop<T:
+zeroize::ZeroizeOnDrop>() {} … };`, and `handshake.rs` a `needs_drop`-based
+equivalent for `x25519-dalek` specifically — its `zeroize(drop)` attribute
+predates the crate's `ZeroizeOnDrop` marker trait and does not implement it.
+If any of these four features is ever removed, or a future dependency bump
+drops the upstream impl, the build fails at the assertion rather than the
+regression shipping silently.
+
+GitHub issue [#79](https://github.com/karst-net/karst/issues/79) closed.
+`cargo build`/`clippy -D warnings`/`fmt`/`test` all clean; 1184 tests pass.
+
+---
+
 ## Low / already tracked — re-confirmed, not re-opened
 
 - **§14 item 3, test vectors for the full key schedule, is still absent.**
@@ -328,13 +394,14 @@ tree deserves:
 
 ## Suggested order
 
-**All three findings from this first pass are closed as of 2026-09-02:**
+**All four findings from this pass are closed as of 2026-09-02:**
 Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76)),
 Finding 2 (PSK epoch grace period, GitHub issue [#77](https://github.com/karst-net/karst/issues/77)),
-and Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78)).
+Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78)),
+and Finding 4 (secret material never zeroized, GitHub issue [#79](https://github.com/karst-net/karst/issues/79)).
 
-Next passes for this workstream: `karst-crypto` primitive-level reading
-(constant-time behavior, KEM/DH/AEAD call sites), §14 item 10's adversarial
-reading of §13.8, item 9's rekey/simultaneous-open transition table, and a
-`phreatic-nodh.pv` to close ProVerif's half of the gap Finding 3 closed for
-Verifpal.
+Next passes for this workstream: constant-time behavior at the primitive
+level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'
+branching and comparisons), §14 item 10's adversarial reading of §13.8,
+item 9's rekey/simultaneous-open transition table, and a `phreatic-nodh.pv`
+to close ProVerif's half of the gap Finding 3 closed for Verifpal.

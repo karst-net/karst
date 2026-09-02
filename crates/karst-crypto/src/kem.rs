@@ -50,6 +50,15 @@
 //! deployments that value the verified implementation and do not need kernel
 //! compatibility. See §Consequences in ADR-0001.
 //!
+//! # `KemSecretKey` zeroizes on drop because `Cargo.toml` says so
+//!
+//! `ml-kem::DecapsulationKey`'s `Drop` — which zeroizes every static and
+//! ephemeral decapsulation key this crate ever holds — exists only behind the
+//! crate's own `zeroize` Cargo feature, off by default and not on by anything
+//! in this graph until it was turned on here deliberately. See `aead.rs`'s
+//! module note, which found and fixed the identical gap for the AEAD key
+//! schedule and `ml-dsa`'s signing keys at the same time.
+//!
 //! [ADR-0001]: ../../../docs/adr/0001-cryptographic-algorithm-selection.md
 //! [ADR-0003]: ../../../docs/adr/0003-greenfield-rust-datapath.md
 //! [ADR-0006]: ../../../docs/adr/0006-cryptographic-agility-layer.md
@@ -188,6 +197,18 @@ mod rustcrypto {
         "ML-KEM-1024 (FIPS 203), `RustCrypto` backend. Category 5 — `KARST_2`, the profile \
          CNSA 2.0 mandates ([ADR-0015](../../../docs/adr/0015-cnsa-2-0-as-a-mandate.md))."
     );
+
+    // A compile-time guarantee, not a runtime one — this crate forbids
+    // `unsafe_code`, which rules out actually inspecting freed memory the way
+    // `ml-kem`'s own `zeroize_works` test does. If `Cargo.toml`'s `zeroize`
+    // feature on `ml-kem` is ever dropped, or a future version of the crate
+    // stops implementing this, the build fails here rather than the key
+    // material silently going unzeroized again. See the module note.
+    const _: () = {
+        const fn assert_zeroizes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroizes_on_drop::<ml_kem::DecapsulationKey768>();
+        assert_zeroizes_on_drop::<ml_kem::DecapsulationKey1024>();
+    };
 }
 
 #[cfg(feature = "ml-kem-rustcrypto")]

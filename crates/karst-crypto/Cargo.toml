@@ -23,11 +23,21 @@ ml-kem-rustcrypto = ["dep:ml-kem"]
 # `karst-control-client`, which reaches it directly. Pinned to 0.10 rather than
 # 0.11 because 0.11 moved to `aead` 0.6, and the rest of the graph is on 0.5.
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
-ml-kem = { version = "0.3", optional = true, default-features = false }
+# `aes-gcm` depends on `aes` but exposes no feature to zero its round-key
+# schedule on drop — the option is `aes`'s own, gated behind a Cargo feature
+# `aes-gcm`'s manifest never turns on and cannot be asked to (see aead.rs's
+# module note). Depending on `aes` directly, otherwise unused, is how Cargo's
+# feature unification reaches it: enabling `zeroize` here enables it for the
+# one `aes` package instance the whole build resolves to, which is the same
+# instance `aes-gcm` links against.
+aes = { version = "0.8", default-features = false, features = ["zeroize"] }
+# `zeroize` on `ml-kem`/`ml-dsa` — see aead.rs's module note; the same gap,
+# same fix, for the decapsulation and signing keys these crates hold.
+ml-kem = { version = "0.3", optional = true, default-features = false, features = ["zeroize"] }
 # Bedrock's two signature tiers, both ML-DSA-87 since ADR-0015 Option A.
 # `slh-dsa` was here for the hash-based root and is gone with it: CNSA 2.0
 # excludes SLH-DSA, so nothing in the tree uses it.
-ml-dsa = "0.1"
+ml-dsa = { version = "0.1", features = ["zeroize"] }
 # The two suite hashes and the HKDF over them (ADR-0015 item 1). `alloc` on
 # sha2 is not needed: `hash::Digest` is a fixed buffer precisely so the
 # transcript never allocates.

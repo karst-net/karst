@@ -45,12 +45,52 @@
 //! [`Cipher`]; one that did not would break loudly at these, which is where it
 //! should break.
 //!
+//! # `Cipher`'s round-key schedule is zeroized on drop, and it took a second
+//! # dependency to make that true
+//!
+//! `aes-gcm` declares an optional `zeroize` dependency in its own manifest but
+//! wires it to no feature that turns it on, and exposes nothing to reach past
+//! itself into `aes`'s own `zeroize` feature — which is what actually gates
+//! whether `aes`'s expanded round keys implement `Drop`. Found during Phase 6's
+//! internal cryptographic review: every long-lived AEAD key schedule in the
+//! data plane — every live [`Cipher`], meaning every established
+//! `TransportSession`'s send and receive keys — was being freed unzeroized for
+//! as long as this crate has existed, silently, because turning on `aes-gcm`'s
+//! `aes` feature (needed for hardware acceleration) does not turn on `aes`'s
+//! own `zeroize` feature and nothing else in the graph did either.
+//!
+//! The fix is `Cargo.toml`'s: an otherwise-unused direct dependency on `aes`
+//! with `features = ["zeroize"]`. Cargo unifies features per resolved package,
+//! not per dependent, so enabling it on a direct-but-unused edge is enough to
+//! flip it on for the *same* `aes` instance `aes-gcm` links against — no code
+//! here changes. `ml-kem` and `ml-dsa` had the identical gap for the same
+//! reason (an upstream crate's own zeroize support sitting behind a Cargo
+//! feature nothing turned on) and the fix there is the same shape, in
+//! `kem.rs` and `sign.rs`'s Cargo dependency lines rather than in their
+//! source.
+//!
 //! [ADR-0001]: ../../../docs/adr/0001-cryptographic-algorithm-selection.md
 //! [ADR-0015]: ../../../docs/adr/0015-cnsa-2-0-as-a-mandate.md
 
 use aes_gcm::Aes256Gcm;
 
 use aes_gcm::aead::{Aead as _, AeadInPlace as _, KeyInit as _, Payload};
+
+// A compile-time guarantee, not a runtime one — this crate forbids
+// `unsafe_code`, which rules out inspecting freed memory the way `aes`'s own
+// `zeroize_works` test does. `aes_gcm::Aes256Gcm` has no `ZeroizeOnDrop` of
+// its own to assert against — Rust's default drop glue is what propagates
+// into its round-key field, not a marker on the outer type — so this checks
+// the thing the fix actually depends on: that the `aes` package instance
+// this build resolves to (the same one `aes-gcm` links against, per Cargo's
+// per-package feature unification) has its `zeroize` feature active. If the
+// direct `aes` dependency `Cargo.toml` carries for exactly this reason is
+// ever removed, the build fails here rather than every live
+// `TransportSession`'s key schedule silently going unzeroized again.
+const _: () = {
+    const fn assert_zeroizes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    assert_zeroizes_on_drop::<aes::Aes256>();
+};
 
 use crate::SuiteId;
 

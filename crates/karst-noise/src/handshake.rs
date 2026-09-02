@@ -46,6 +46,19 @@ use x25519_dalek::{PublicKey as DhPublic, StaticSecret as DhSecret};
 
 use crate::symmetric::{SymmetricState, TransportKeys};
 
+// A compile-time guarantee, not a runtime one — this crate forbids
+// `unsafe_code`, which rules out inspecting freed memory directly. `x25519
+// -dalek`'s `zeroize(drop)` attribute predates the crate's `ZeroizeOnDrop`
+// marker trait and does not implement it, so this checks for drop glue
+// directly (`T: Drop` as a bound is a lint-flagged anti-pattern; `needs_drop`
+// is the sanctioned way to ask the same question) rather than the marker —
+// drop glue is what the fix actually needs, and `StaticSecret` has no other
+// reason to carry any. If `Cargo.toml`'s `zeroize` feature on `x25519-dalek`
+// is ever dropped, the build fails here rather than every static and
+// ephemeral X25519 secret this crate holds silently going unzeroized again —
+// see `StaticKeys`'s doc.
+const _: () = assert!(core::mem::needs_drop::<DhSecret>());
+
 /// `peer_id_hint` length — §4.
 pub const HINT_LEN: usize = 32;
 /// TAI64N timestamp — §6.1.
@@ -69,6 +82,11 @@ pub enum HandshakeError {
 
 /// A node's long-term keys — §4. The ML-DSA identity key is not used by
 /// `PHREATIC` and is deliberately absent.
+///
+/// `kem_sk` and `dh_sk` zeroize on drop via their own crates' `Drop` impls —
+/// `Cargo.toml`'s `zeroize` features on `ml-kem` and `x25519-dalek`, not
+/// anything in this struct, is what makes that true (Phase 6 internal review;
+/// see `karst-crypto::aead`'s module note for the AEAD half of the same gap).
 pub struct StaticKeys {
     /// ML-KEM decapsulation key. Its parameter set fixes which suites this node
     /// can speak; see the module docs.
