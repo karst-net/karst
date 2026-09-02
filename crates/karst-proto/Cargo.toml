@@ -12,6 +12,12 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+# CookieReply's `enc_cookie` (§6.3, §9.3). Reached directly rather than through
+# karst-crypto's suite-selected `Algorithm`: cookie encryption is deliberately
+# suite-independent, like the fragment MAC's hash (§13.9) — it runs before any
+# suite is resolved, and this crate does not depend on karst-crypto (see the
+# `sizes` module's note) for the same reason.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 hmac = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 subtle = { version = "2", default-features = false }

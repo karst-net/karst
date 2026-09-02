@@ -781,8 +781,13 @@ so the divergence was accidental rather than considered.
 |---|---|---|
 | `HandshakeInit` | initiator → responder | `HASH(… ‖ responder's static key)` |
 | `HandshakeResponse` | responder → initiator | `HASH(… ‖ initiator's static key)` |
-| `CookieReply` | responder → initiator | `HASH(… ‖ initiator's static key)` |
+| `CookieReply`* | responder → initiator | `HASH(… ‖ initiator's static key)` |
 | transport data | either | `HASH(… ‖ recipient's static key)` |
+
+\* **Corrected by §13.10 — do not follow this row for `CookieReply`.** A
+responder issuing one has not resolved the initiator's identity, so it cannot
+key anything with a key it does not have; §13.10 gives the key it actually
+uses.
 
 **How this went unnoticed.** Every test to date drove the responder by hand
 rather than through `Session`, and the hand-written side used the responder's
@@ -938,6 +943,45 @@ external cryptographic review brief (`spec/models/README.md`).
 nothing about concrete security margins, side channels, or code behavior. In
 particular neither tool reasons about denial of service, so §9 is unverified by
 them and rests on the spoofed-source test suite instead.
+
+### 13.10 `CookieReply`'s construction, and a correction to §13.7's table
+
+§6.3 gives `CookieReply`'s wire layout but not `enc_cookie`'s key, and never
+said so — an omission surfaced only when §9.1 was actually wired into a
+running responder (GitHub issue [#76](https://github.com/karst-net/karst/issues/76)),
+which is what implementing an underspecified message tends to do.
+
+**Key derivation.** `enc_cookie = AEAD_ENC(k, nonce, LE32(receiver_index),
+cookie)`, where `k = HASH("Karst cookie-reply v1" ‖ S_pk)` and `S_pk` is the
+**issuing responder's own** static key — the same convention as `mac1_key`
+(§9.2), and for the same reason: it must be computable by a node that has not
+resolved anything about who it is answering. `receiver_index` is bound as
+associated data so a captured reply cannot be spliced onto a different
+attempt's cleartext `receiver_index` field. `nonce` is 16 bytes on the wire
+(§6.3) but the suite-independent AEAD this construction uses (AES-256-GCM,
+matching §13.9's reasoning for reaching a fixed primitive directly rather than
+the suite's) takes 12; the low 12 bytes carry the caller's randomness and the
+top 4 are reserved zero, per §2's convention for every other reserved field.
+
+**`receiver_index` is the triggering fragment's `reassembly_id`, not a
+message-level `sender_index`.** A responder issuing this under load has not
+reassembled the message it answers, so a field that only exists inside the
+reassembled body is not available to it; `reassembly_id` lives in the
+24-byte fragment header every fragment carries on its own.
+
+**§13.7's table is wrong for this one message type, and deliberately not
+followed.** §13.7 gives `CookieReply`'s `frag_mac` as keyed by "the
+initiator's static key" — correct for `HandshakeResponse`, where the
+responder has by then resolved `peer_id_hint` and knows who it is answering,
+but `CookieReply` is issued **before** that resolution; §9.1 exists precisely
+so a responder under load need not decapsulate anything to answer a flood.
+An implementation cannot sign with a key it does not have. `CookieReply`'s
+`frag_mac` is therefore keyed by the **issuing responder's own** static key —
+the same key the triggering fragment's `mac1` was already checked against —
+and the initiator verifies an inbound `CookieReply` with the `mac1` key it
+already holds for that peer, never with the key it verifies everything else
+against. Implementations MUST follow this correction, not §13.7's general
+row, for `CookieReply` specifically.
 
 ---
 

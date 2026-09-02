@@ -21,9 +21,9 @@ use karst_noise::handshake::{
 };
 use karst_noise::symmetric::TransportKeys;
 use karst_noise::transport::{Role, TransportError, TransportSession, REJECT_AFTER_MS};
-use karst_proto::dos::{mac1_key, FragMacKey};
+use karst_proto::dos::{mac1_key, mac2_key, open_cookie_reply, FragMacKey};
 use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, SourceKey};
-use karst_proto::{fragment, split_datagram, MessageType};
+use karst_proto::{fragment, split_datagram, FragmentHeader, MessageType};
 
 /// First handshake retransmission delay — §10, `HANDSHAKE_RETRY_INITIAL`.
 pub const RETRY_INITIAL_MS: u64 = 300;
@@ -902,6 +902,71 @@ impl Session {
         }
         let response = response.clone();
         Some(self.emit(MessageType::HandshakeResponse, &response))
+    }
+
+    /// A `CookieReply` arrived answering a `HandshakeInit` this session sent —
+    /// §6.3, §9.1, §9.3.
+    ///
+    /// Dispatched apart from [`Self::handle`]: the reply's fragment MAC is
+    /// keyed by the **peer's** own static key (the same key [`Self::out_mac_key`]
+    /// already is), not this node's — the responder that issued it had not
+    /// resolved anything about this session yet, so it could only sign with a
+    /// key it already had. `Engine` verifies that half before calling this;
+    /// `open_cookie_reply` and the `receiver_index` correlation below are
+    /// this method's own checks. See the divergence from §13.7's general
+    /// table recorded at `spec/phreatic-v1.md` §13.10.
+    ///
+    /// On success, retransmits the outstanding `HandshakeInit` **once**,
+    /// immediately, under `mac2` keyed by the cookie — proof this address can
+    /// receive at the address it claims. Deliberately not persisted: a later
+    /// retry (if this one is also lost) falls back to the ordinary `mac1`
+    /// path and may be challenged again, rather than keeping a cookie whose
+    /// validity outlives the responder's own rotation (§9.3) and silently
+    /// wedging every future attempt on a key nothing will accept any more.
+    ///
+    /// Returns `None` only when the reply's own fragment MAC does not verify
+    /// — the caller's cue to count it as an ordinary MAC failure (§9.2), the
+    /// same as any other unverified fragment. Every other outcome (a `Some`,
+    /// possibly carrying no actions) means the MAC *did* verify and whatever
+    /// followed — a decrypt failure, a stale correlation, nothing currently
+    /// outstanding to retry — is not evidence of forgery, just of a reply
+    /// that arrived too late or for the wrong attempt to act on.
+    pub fn handle_cookie_reply(
+        &mut self,
+        payload: &[u8],
+        hdr: &FragmentHeader,
+    ) -> Option<Vec<Action>> {
+        if !self
+            .out_mac_key
+            .verify(0x03, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
+        {
+            return None;
+        }
+        let Some((receiver_index, cookie)) =
+            open_cookie_reply(&self.peer.kem_pk.to_bytes(), payload)
+        else {
+            return Some(Vec::new());
+        };
+        // Correlates to the fragment that triggered it: the `reassembly_id`
+        // this session most recently sent a `HandshakeInit` fragment under.
+        if receiver_index != self.reassembly_id {
+            return Some(Vec::new());
+        }
+        let msg1 = match &self.state {
+            State::Handshaking(hs)
+            | State::Established {
+                rekey: Some(hs), ..
+            } => hs.msg1.clone(),
+            _ => return Some(Vec::new()), // nothing outstanding to retry
+        };
+        self.reassembly_id = self.reassembly_id.wrapping_add(1);
+        let key = FragMacKey::new(&mac2_key(&cookie));
+        Some(
+            match fragment(MessageType::HandshakeInit, self.reassembly_id, &msg1, &key) {
+                Some(frags) => frags.into_iter().map(Action::Send).collect(),
+                None => Vec::new(),
+            },
+        )
     }
 
     /// Accept an inbound handshake into *this* session, becoming the responder.

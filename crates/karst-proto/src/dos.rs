@@ -22,6 +22,8 @@
 //! AEAD tag. Treating a valid `frag_mac` as evidence about the sender's
 //! identity would be a vulnerability.
 
+use aes_gcm::aead::{Aead as _, KeyInit as _, Payload};
+use aes_gcm::Aes256Gcm;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha512};
 use subtle::ConstantTimeEq;
@@ -234,6 +236,21 @@ impl CookieSecret {
         Self::compute(&self.current, source)
     }
 
+    /// Every cookie this source could legitimately be presenting right now:
+    /// the current secret's, and the previous one's during its one-period
+    /// grace (see [`Self::rotate`]).
+    ///
+    /// For verifying `mac2` against a fragment claiming address validation —
+    /// a sender that received a cookie moments before a rotation must still
+    /// be able to use it, or [`Self::rotate`]'s grace period is fiction.
+    /// [`Self::issue`] alone is right for building a *new* `CookieReply`,
+    /// where only the current secret should ever be handed out; this is for
+    /// checking a cookie that may already be one rotation old.
+    pub fn candidates(&self, source: &SourceKey) -> impl Iterator<Item = [u8; COOKIE_LEN]> + '_ {
+        core::iter::once(Self::compute(&self.current, source))
+            .chain(self.previous.map(|p| Self::compute(&p, source)))
+    }
+
     /// Validate a cookie against the current or previous secret, in constant
     /// time.
     #[must_use]
@@ -259,6 +276,156 @@ impl CookieSecret {
         }
         out
     }
+}
+
+// ─── CookieReply (§6.3) ─────────────────────────────────────────────────────
+//
+// The message body §9.1 tells a fragment-flooded responder to send: 64 bytes,
+// carrying the stateless cookie of §9.3 so the sender can prove, on its next
+// attempt, that it can receive at the address it claims.
+//
+// **Key derivation is this crate's own decision, not the spec's.** §6.3 gives
+// the wire layout but not `enc_cookie`'s key — the gap this fills.
+// `cookie_key` is called with the **issuing responder's own static key**,
+// symmetric with [`mac1_key`]: the party building a reply passes its own key,
+// and the party opening one (an initiator who already knows which peer it
+// dialled) passes that peer's key. Deliberately independent of any suite —
+// like the fragment MAC's hash (§13.9), this runs on the pre-authentication
+// path before a suite is resolved, and AES-256-GCM is reached directly rather
+// than through a suite-selected `Algorithm` for the same reason.
+//
+// **`frag_mac` keying diverges from §13.7's table for this one message type,
+// and deliberately.** §13.7 says a `CookieReply`'s fragment MAC is keyed by
+// "the initiator's static key" — true of `HandshakeResponse`, where the
+// responder has by then resolved `peer_id_hint` and knows who it is answering.
+// A `CookieReply` is issued **before** that resolution: §9.1 exists precisely
+// so a responder under load need not decapsulate anything to answer a flood,
+// which means it cannot know the initiator's identity at the moment it builds
+// one. What it *can* sign with is its own key — the same key the triggering
+// fragment's `mac1` was already checked against — and an initiator verifies an
+// inbound `CookieReply` with the `mac1` key it already holds for that peer
+// (its own `out_mac_key`), never with `in_mac_key`. See
+// `spec/phreatic-v1.md` §13.10.
+
+/// `enc_cookie`'s AEAD nonce is 16 bytes on the wire (§6.3) but AES-256-GCM
+/// takes 12. The low 12 bytes carry the caller's randomness; the top 4 are
+/// reserved zero, following §2's convention for every other reserved field
+/// rather than spending CSPRNG output nobody needs: 96 bits of nonce entropy
+/// already keeps collision probability negligible at the traffic volumes a
+/// cookie challenge is issued at.
+pub const COOKIE_NONCE_LEN: usize = 16;
+const AEAD_NONCE_LEN: usize = 12;
+const AEAD_KEY_LEN: usize = 32;
+const AEAD_TAG_LEN: usize = 16;
+
+/// `CookieReply` message body length — §6.3.
+pub const COOKIE_REPLY_LEN: usize = 64;
+
+/// Derive `enc_cookie`'s AEAD key from the issuing responder's static key.
+///
+/// Called with the same key on both ends: the builder passes its own
+/// `S_pk`, the opener passes the peer's — see the module note.
+#[must_use]
+pub fn cookie_key(responder_static_pk: &[u8]) -> [u8; AEAD_KEY_LEN] {
+    let mut d = Sha512::new();
+    d.update(b"Karst cookie-reply v1");
+    d.update(responder_static_pk);
+    let out = d.finalize();
+    let mut k = [0u8; AEAD_KEY_LEN];
+    if let Some(head) = out.get(..AEAD_KEY_LEN) {
+        k.copy_from_slice(head);
+    }
+    k
+}
+
+/// Build a `CookieReply` message body (§6.3) — 64 bytes, ready to fragment
+/// with [`crate::fragment`] under a `mac1` key keyed by **this node's own**
+/// static key (see the module note; `in_mac_key` is already exactly that).
+///
+/// `receiver_index` is the `reassembly_id` of the fragment that triggered
+/// this reply — the identifier both ends already have without needing to
+/// parse anything past the fragment header, since a responder issuing this
+/// under load has not reassembled the message it is answering.
+///
+/// `nonce` is 12 bytes of caller-supplied randomness (sans-io — this crate
+/// generates none itself). Returns `None` only if the AEAD itself refuses,
+/// which does not happen for a well-formed key and a 24-byte plaintext.
+#[must_use]
+pub fn build_cookie_reply(
+    responder_static_pk: &[u8],
+    receiver_index: u32,
+    cookie: &[u8; COOKIE_LEN],
+    nonce: [u8; AEAD_NONCE_LEN],
+) -> Option<[u8; COOKIE_REPLY_LEN]> {
+    let key = cookie_key(responder_static_pk);
+    let cipher = Aes256Gcm::new((&key).into());
+    let aad = receiver_index.to_le_bytes();
+    let ct = cipher
+        .encrypt(
+            (&nonce).into(),
+            Payload {
+                msg: cookie,
+                aad: &aad,
+            },
+        )
+        .ok()?;
+    if ct.len() != COOKIE_LEN + AEAD_TAG_LEN {
+        return None;
+    }
+
+    let mut out = [0u8; COOKIE_REPLY_LEN];
+    if let Some(b) = out.first_mut() {
+        *b = 0x03; // type — §6.3
+    }
+    // out[1..4] reserved, zero.
+    if let Some(dst) = out.get_mut(4..8) {
+        dst.copy_from_slice(&receiver_index.to_le_bytes());
+    }
+    if let Some(dst) = out.get_mut(8..8 + AEAD_NONCE_LEN) {
+        dst.copy_from_slice(&nonce);
+    }
+    // out[20..24] reserved, zero — the wire nonce field's top 4 bytes.
+    if let Some(dst) = out.get_mut(24..64) {
+        dst.copy_from_slice(&ct);
+    }
+    Some(out)
+}
+
+/// Open a `CookieReply` message body, returning `(receiver_index, cookie)`.
+///
+/// `responder_static_pk` is the peer this session dialled — see the module
+/// note for why the same key that built it opens it.
+///
+/// # Errors
+/// `None` on a malformed body or failed authentication. Coarse by design —
+/// §11 requires silent discard, and a distinguishable error would be an
+/// oracle.
+#[must_use]
+pub fn open_cookie_reply(
+    responder_static_pk: &[u8],
+    body: &[u8],
+) -> Option<(u32, [u8; COOKIE_LEN])> {
+    if body.len() != COOKIE_REPLY_LEN || body.first() != Some(&0x03) {
+        return None;
+    }
+    let receiver_index = u32::from_le_bytes(body.get(4..8)?.try_into().ok()?);
+    let nonce: [u8; AEAD_NONCE_LEN] = body.get(8..8 + AEAD_NONCE_LEN)?.try_into().ok()?;
+    let enc_cookie = body.get(24..64)?;
+
+    let key = cookie_key(responder_static_pk);
+    let cipher = Aes256Gcm::new((&key).into());
+    let aad = receiver_index.to_le_bytes();
+    let pt = cipher
+        .decrypt(
+            (&nonce).into(),
+            Payload {
+                msg: enc_cookie,
+                aad: &aad,
+            },
+        )
+        .ok()?;
+    let cookie: [u8; COOKIE_LEN] = pt.try_into().ok()?;
+    Some((receiver_index, cookie))
 }
 
 #[cfg(test)]
@@ -371,6 +538,23 @@ mod tests {
         assert!(s.needs_rotation(120_000));
     }
 
+    /// The grace period `rotate` provides must actually be reachable through
+    /// `candidates`, not just `validate` — this is what a verifier checking
+    /// `mac2` against a self-derived cookie has to use.
+    #[test]
+    fn candidates_include_the_previous_secret_during_its_grace() {
+        let mut s = CookieSecret::new([9; 32], 0, 120_000);
+        let old = s.issue(&SRC_A);
+        s.rotate([10; 32], 120_000);
+        let now: Vec<_> = s.candidates(&SRC_A).collect();
+        assert!(now.contains(&old), "grace period must appear in candidates");
+        assert!(now.contains(&s.issue(&SRC_A)));
+
+        s.rotate([11; 32], 240_000);
+        let later: Vec<_> = s.candidates(&SRC_A).collect();
+        assert!(!later.contains(&old), "but only for one rotation");
+    }
+
     #[test]
     fn a_forged_cookie_is_rejected() {
         let s = CookieSecret::new([9; 32], 0, 120_000);
@@ -387,5 +571,73 @@ mod tests {
         let s = CookieSecret::new([0xAB; 32], 0, 120_000);
         let out = format!("{s:?}");
         assert!(!out.contains("171") && !out.contains("ab"));
+    }
+
+    // ── CookieReply ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn cookie_reply_round_trips() {
+        let responder_pk = b"a responder's static ML-KEM public key";
+        let cookie = [0x42; COOKIE_LEN];
+        let body = build_cookie_reply(responder_pk, 7, &cookie, [1u8; 12]).expect("build");
+        assert_eq!(body.len(), COOKIE_REPLY_LEN);
+        assert_eq!(body[0], 0x03);
+
+        let (receiver_index, opened) = open_cookie_reply(responder_pk, &body).expect("open");
+        assert_eq!(receiver_index, 7);
+        assert_eq!(opened, cookie);
+    }
+
+    #[test]
+    fn cookie_reply_reserved_bytes_are_zero() {
+        let body = build_cookie_reply(b"pk", 1, &[0; COOKIE_LEN], [0; 12]).expect("build");
+        assert_eq!(&body[1..4], &[0, 0, 0], "type's reserved bytes");
+        assert_eq!(&body[20..24], &[0, 0, 0, 0], "nonce's reserved bytes");
+    }
+
+    #[test]
+    fn cookie_reply_does_not_open_under_the_wrong_key() {
+        let cookie = [0x11; COOKIE_LEN];
+        let body = build_cookie_reply(b"responder A", 1, &cookie, [3u8; 12]).expect("build");
+        assert_eq!(open_cookie_reply(b"responder B", &body), None);
+    }
+
+    /// `receiver_index` is authenticated as AAD — an off-path attacker must not
+    /// be able to redirect a captured reply to a different pending attempt by
+    /// rewriting the cleartext field alone.
+    #[test]
+    fn cookie_reply_receiver_index_is_authenticated() {
+        let cookie = [0x22; COOKIE_LEN];
+        let mut body = build_cookie_reply(b"responder", 1, &cookie, [5u8; 12]).expect("build");
+        body[4..8].copy_from_slice(&2u32.to_le_bytes()); // rewrite receiver_index
+        assert_eq!(open_cookie_reply(b"responder", &body), None);
+    }
+
+    #[test]
+    fn tampered_cookie_reply_ciphertext_is_rejected() {
+        let cookie = [0x33; COOKIE_LEN];
+        let mut body = build_cookie_reply(b"responder", 1, &cookie, [9u8; 12]).expect("build");
+        if let Some(b) = body.last_mut() {
+            *b ^= 0xFF;
+        }
+        assert_eq!(open_cookie_reply(b"responder", &body), None);
+    }
+
+    #[test]
+    fn cookie_reply_rejects_malformed_bodies_without_panicking() {
+        for len in 0..COOKIE_REPLY_LEN + 4 {
+            let buf = vec![0u8; len];
+            assert_eq!(open_cookie_reply(b"responder", &buf), None, "len {len}");
+        }
+        let mut wrong_type = build_cookie_reply(b"r", 1, &[0; COOKIE_LEN], [0; 12]).unwrap();
+        wrong_type[0] = 0x04;
+        assert_eq!(open_cookie_reply(b"r", &wrong_type), None);
+    }
+
+    /// Two different responder keys must derive different `enc_cookie` keys —
+    /// otherwise any node's cookies could be read by any other.
+    #[test]
+    fn different_responder_keys_derive_different_cookie_keys() {
+        assert_ne!(cookie_key(b"responder A"), cookie_key(b"responder B"));
     }
 }

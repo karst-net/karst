@@ -31,9 +31,32 @@ the daemon does, found by tracing a call path, not a failing test.
 
 ---
 
-## High — a spec `MUST` unenforced in the running daemon
+## High — a spec `MUST` unenforced in the running daemon — **closed 2026-09-02**
 
 ### 1. §9.1's cookie mechanism is fully implemented and never called
+
+**Closed.** Wired end to end: `Engine` holds a `CookieSecret` (seeded and
+rotated from `poll`, §9.3's 120 s period), `Engine::inbound`'s mac check now
+tries `mac2` (keyed by a self-computed cookie, checking both the current and
+previous secret for the rotation grace) whenever `mac1` fails, and the
+`Reassembler::push` result's `Reject::CookieRequired` branch builds and sends
+a real `CookieReply` via `Engine::issue_cookie_reply`. The initiator side —
+`Session::handle_cookie_reply`, dispatched from `Engine::inbound` rather than
+the ordinary per-session path because its `frag_mac` is keyed differently
+(§13.10, a spec gap this closure also filled) — decrypts the cookie and
+retries the outstanding `HandshakeInit` once, immediately, under `mac2`.
+
+`docs/THREAT-MODEL.md` R1's "Mitigated" now holds without qualification.
+Covered by `crates/karst-proto`'s unit tests (the AEAD construction),
+`crates/karst-node/tests/cookie_reply.rs` (the initiator's five outcomes),
+and `bins/karstd/tests/cookie.rs` (two real `Engine`s end to end: a flood to
+`load_threshold`, a genuine peer challenged and then let through on its
+mac2-signed retry, and the amplification bound checked against a live
+reply). GitHub issue [#76](https://github.com/karst-net/karst/issues/76)
+closed.
+
+**What §76's original text below still describes accurately: why this was
+missing and what it cost while it was.**
 
 `spec/phreatic-v1.md` §9 opens: "This section is where PHREATIC differs most
 from WireGuard and is the highest-risk part of the protocol
@@ -269,12 +292,12 @@ tree deserves:
 
 ## Suggested order
 
-1. **Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76))**
-   and **Finding 2 (PSK epoch, GitHub issue [#77](https://github.com/karst-net/karst/issues/77))**
-   are both `MUST`-level gaps in the running daemon, not model or spec gaps —
-   filed as issues and belong in this workstream's actual crypto-adjacent
-   implementation work, alongside the anchor tier and netmap-cache items
-   already closed this phase.
+1. **Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76))
+   — closed 2026-09-02.** **Finding 2 (PSK epoch, GitHub issue
+   [#77](https://github.com/karst-net/karst/issues/77)) is next** — both were
+   `MUST`-level gaps in the running daemon, not model or spec gaps, and belong
+   in this workstream's crypto-adjacent implementation work alongside the
+   anchor tier and netmap-cache items already closed this phase.
 2. **Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78))
    — closed 2026-09-02.** Landed first, ahead of further reading-based review
    passes, so the rest of this workstream's reading over the no-DH branches

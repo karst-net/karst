@@ -23,12 +23,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use karst_crypto::hash;
 use karst_crypto::kem::KemPublicKey;
 use karst_crypto::SuitePolicy;
 use karst_node::{Action, Session};
 use karst_noise::handshake::{peer_id_hint, ResponderRandomness};
-use karst_proto::dos::{mac1_key, FragMacKey};
-use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler};
+use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, FragMacKey};
+use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, Reject};
 use karst_proto::{fragment, split_datagram, MessageType};
 use karst_transport::source_key;
 
@@ -73,6 +74,12 @@ pub enum Via {
 /// a few minutes; long enough that a peer genuinely homed elsewhere costs one
 /// probing datagram every five minutes rather than one per packet.
 const HOME_RELAY_RETRY_MS: u64 = 5 * 60 * 1000;
+
+/// `COOKIE_ROTATION` — spec §9.3, §10. `CookieSecret` keeps one predecessor
+/// alongside the current secret, so a cookie issued just before a rotation
+/// stays valid for one further period — up to 240 s total, comfortably inside
+/// `HANDSHAKE_GIVE_UP_MS`'s 90 s attempt window.
+const COOKIE_ROTATION_MS: u64 = 120_000;
 
 /// A full-size PHREATIC datagram must fit one Ponor frame, or the relay path
 /// would need a fragmentation layer that the direct path does not have — and
@@ -134,6 +141,12 @@ pub struct Stats {
     pub source_violations: u64,
     /// Datagrams discarded by the fragment MAC before any state was touched.
     pub mac_failures: u64,
+    /// `CookieReply` datagrams sent — §9.1's load-shedding path actually
+    /// firing, not merely wired up. Any value above zero while the deployment
+    /// is not under attack is worth investigating on its own: it means
+    /// something is holding the reassembler above `LOAD_THRESHOLD` in
+    /// ordinary operation.
+    pub cookie_replies_issued: u64,
     /// Packets encrypted and sent.
     pub tx_packets: u64,
     /// Packets decrypted and delivered to the host.
@@ -201,6 +214,7 @@ struct Counters {
     unroutable: AtomicU64,
     source_violations: AtomicU64,
     mac_failures: AtomicU64,
+    cookie_replies_issued: AtomicU64,
     tx_packets: AtomicU64,
     rx_packets: AtomicU64,
     tx_dropped_no_session: AtomicU64,
@@ -219,6 +233,7 @@ impl Counters {
             unroutable: self.unroutable.load(Ordering::Relaxed),
             source_violations: self.source_violations.load(Ordering::Relaxed),
             mac_failures: self.mac_failures.load(Ordering::Relaxed),
+            cookie_replies_issued: self.cookie_replies_issued.load(Ordering::Relaxed),
             tx_packets: self.tx_packets.load(Ordering::Relaxed),
             rx_packets: self.rx_packets.load(Ordering::Relaxed),
             tx_dropped_no_session: self.tx_dropped_no_session.load(Ordering::Relaxed),
@@ -352,6 +367,16 @@ pub struct Engine {
     /// The one key every inbound fragment is verified with — §13.7. Pre-keyed
     /// so the HMAC schedule is not rebuilt per packet.
     in_mac_key: FragMacKey,
+    /// Stateless cookie issuer for §9.1's under-load path.
+    ///
+    /// `None` until the first [`Self::poll`] seeds it — `Engine::new` has no
+    /// randomness source of its own (see [`Self::poll`]'s `seed` parameter,
+    /// which every other timer in this struct already waits for). Before
+    /// then, [`Self::inbound`] has no cookie to check or issue and falls back
+    /// to mac1-only behavior, which is exactly what ran before this field
+    /// existed — so the gap regresses nothing, it just narrows a window that
+    /// closes at the first tick.
+    cookie: Mutex<Option<CookieSecret>>,
     stats: Counters,
     /// The relay this node itself holds a connection to — §9.1.
     ///
@@ -404,6 +429,7 @@ impl Engine {
             reasm: Mutex::new(Reassembler::new(ReasmConfig::default())),
             policy,
             in_mac_key,
+            cookie: Mutex::new(None),
             stats: Counters::default(),
             home_relay: RwLock::new(None),
         }
@@ -831,6 +857,19 @@ impl Engine {
     /// Advance every session's timers.
     pub fn poll(&self, now_ms: u64, seed: impl Fn() -> [u8; 32]) -> Output {
         let mut out = Output::default();
+        // §9.3 — rotate the cookie secret, seeding it on the first tick. A
+        // fresh `seed()` only when rotation is actually due, so this costs
+        // nothing on the other ~99.9% of ticks.
+        {
+            let mut cookie = Self::lock(&self.cookie);
+            let due = cookie.as_ref().is_none_or(|c| c.needs_rotation(now_ms));
+            if due {
+                match cookie.as_mut() {
+                    Some(c) => c.rotate(seed(), now_ms),
+                    None => *cookie = Some(CookieSecret::new(seed(), now_ms, COOKIE_ROTATION_MS)),
+                }
+            }
+        }
         // One peer's lock at a time, released before the next. A timer sweep
         // must not stall the datapath for every peer while it walks the roster.
         let roster = self.roster();
@@ -1084,6 +1123,73 @@ impl Engine {
         true
     }
 
+    /// Derive `enc_cookie`'s AEAD nonce from a fresh handshake-randomness draw.
+    ///
+    /// `Engine::inbound` has no randomness source of its own beyond `rand`,
+    /// which the caller already draws fresh (real CSPRNG output) for every
+    /// call — see `run.rs`'s `responder_randomness`. Hashing its three fields
+    /// under a distinct label yields a second, independent-looking value from
+    /// that same fresh draw rather than reusing any of them directly, without
+    /// threading a new parameter through every `inbound` call site (several,
+    /// across multiple test files) for a nonce that is issued far more rarely
+    /// than a handshake is answered.
+    fn cookie_reply_nonce(rand: &ResponderRandomness) -> [u8; 12] {
+        let d = hash::Algorithm::Sha512.digest(&[
+            b"Karst cookie-reply nonce v1",
+            &rand.e_dh_seed,
+            &rand.encap_rand_e,
+            &rand.encap_rand_s,
+        ]);
+        let mut n = [0u8; 12];
+        if let Some(head) = d.as_bytes().get(..12) {
+            n.copy_from_slice(head);
+        }
+        n
+    }
+
+    /// Answer a fragment §9.1 refused under load with a `CookieReply` — §6.3,
+    /// §9.1, §9.3.
+    ///
+    /// Built without resolving anything about the sender: the reply's own
+    /// fragment MAC is keyed by **this node's own** static key — `in_mac_key`,
+    /// the same key the triggering fragment's `mac1` was already checked
+    /// against — rather than the initiator's. That is a deliberate divergence
+    /// from §13.7's general table, recorded at `spec/phreatic-v1.md` §13.10
+    /// and in `karst_proto::dos`'s module note: a responder issuing this under
+    /// load has not reassembled, let alone decrypted, anything, so it cannot
+    /// know who it is answering, and signing with a key it does not have is
+    /// not an option.
+    fn issue_cookie_reply(
+        &self,
+        from: SocketAddr,
+        reassembly_id: u32,
+        rand: &ResponderRandomness,
+        out: &mut Output,
+    ) {
+        let Some(secret) = Self::lock(&self.cookie).clone() else {
+            return; // Not seeded yet — see the field's doc comment.
+        };
+        let cookie = secret.issue(&source_key(from));
+        let nonce = Self::cookie_reply_nonce(rand);
+        let own_pk = self.roster().config.keys.kem_pk.to_bytes();
+        let Some(body) = build_cookie_reply(&own_pk, reassembly_id, &cookie, nonce) else {
+            return;
+        };
+        let Some(frags) = fragment(
+            MessageType::CookieReply,
+            reassembly_id,
+            &body,
+            &self.in_mac_key,
+        ) else {
+            return;
+        };
+        self.stats
+            .cookie_replies_issued
+            .fetch_add(1, Ordering::Relaxed);
+        out.datagrams
+            .extend(frags.into_iter().map(|d| (d, Via::Direct(from))));
+    }
+
     /// A datagram arrived on the UDP socket.
     pub fn inbound(
         &self,
@@ -1099,34 +1205,96 @@ impl Engine {
             return out;
         };
 
+        // `CookieReply` (§6.3) cannot pass the check below: its fragment MAC
+        // is keyed by the *issuing responder's own* static key, not this
+        // node's — the divergence from §13.7's general table recorded at
+        // `spec/phreatic-v1.md` §13.10 and in `karst_proto::dos`'s module
+        // note. Resolved and dispatched here instead, to whichever peer's
+        // session holds the outstanding handshake it answers — that session
+        // already has the one key that can verify it (`out_mac_key`, keyed
+        // by this peer's static key, the same key `Session::connect` used to
+        // address the `HandshakeInit` this replies to). Always exactly one
+        // fragment (64 B, §6.3), so no reassembly is needed either.
+        if hdr.count == 1 && payload.first() == Some(&0x03) {
+            // `None` — no peer at this address, or the reply's own MAC did
+            // not verify against the one it resolved to — is an ordinary MAC
+            // failure, same accounting as the general path below.
+            let handled = self.peer_at(from).and_then(|peer| {
+                roster.peers.get(peer).map(|p| {
+                    (
+                        peer,
+                        Self::lock(&p.session).handle_cookie_reply(payload, &hdr),
+                    )
+                })
+            });
+            match handled {
+                Some((peer, Some(actions))) => {
+                    self.apply(&roster, peer, actions, now_ms, &mut out);
+                }
+                _ => {
+                    self.stats.mac_failures.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            return out;
+        }
+
         // §9.2 — one key, checked before anything is allocated. The type byte is
         // only visible on fragment 0, so later fragments are checked against
         // every type they could belong to and the AEAD settles it.
         let claimed = payload.first().copied().unwrap_or(0);
-        let mac_ok = [claimed, 0x01, 0x02, 0x04].iter().any(|t| {
+        let candidates = [claimed, 0x01, 0x02, 0x04];
+        let mac1_ok = candidates.iter().any(|t| {
             self.in_mac_key
                 .verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
         });
+
+        // §9.1/§13.10 — a source is address-validated only if the fragment
+        // instead verifies against `mac2`, keyed by the cookie this address
+        // would hold only by having received a `CookieReply` sent *to* it — a
+        // spoofed source cannot have one. The cookie is self-computed
+        // statelessly (one HMAC, keyed by a secret this node already holds),
+        // so this costs nothing extra on the ordinary mac1-only path, which
+        // is why it can run before deciding whether to allocate anything.
+        let (mac_ok, addr_validated) = if mac1_ok {
+            (true, false)
+        } else {
+            let source = source_key(from);
+            // Both the current secret's cookie and, during its one-period
+            // grace, the previous one's — a sender that received a cookie
+            // moments before a rotation must still be able to use it.
+            let mac2_ok = Self::lock(&self.cookie).as_ref().is_some_and(|c| {
+                c.candidates(&source).any(|cookie| {
+                    let key = FragMacKey::new(&mac2_key(&cookie));
+                    candidates.iter().any(|t| {
+                        key.verify(*t, hdr.reassembly_id, hdr.idx, hdr.count, &hdr.frag_mac)
+                    })
+                })
+            });
+            (mac2_ok, mac2_ok)
+        };
         if !mac_ok {
             self.stats.mac_failures.fetch_add(1, Ordering::Relaxed);
             return out;
         }
 
-        // Address validation is `true` here because Phase 2 has a static roster
-        // reachable only from configured endpoints. §9.1's under-load path,
-        // where an unvalidated source must allocate nothing, arrives with
-        // cookies in Phase 3.
-        //
         // The reassembly lock is taken here and released immediately: the
         // message is copied out before any session work starts, so a handshake
         // — which runs ML-KEM — never blocks the next datagram's reassembly.
         let msg = {
             let mut reasm = Self::lock(&self.reasm);
-            let Accept::Complete(msg) = reasm.push(source_key(from), true, &hdr, payload, now_ms)
-            else {
-                return out;
-            };
-            msg.to_vec()
+            match reasm.push(source_key(from), addr_validated, &hdr, payload, now_ms) {
+                Accept::Complete(msg) => msg.to_vec(),
+                // §9.1 — no state was allocated for this. Answer with a
+                // `CookieReply` so a genuine sender can retry address-validated;
+                // an off-path spoofer gets nothing back it can use, and the
+                // 64-byte reply against a ≥1208-byte trigger keeps the
+                // amplification ratio under 0.06 (§6.4 invariant 3).
+                Accept::Rejected(Reject::CookieRequired) => {
+                    self.issue_cookie_reply(from, hdr.reassembly_id, rand, &mut out);
+                    return out;
+                }
+                _ => return out,
+            }
         };
 
         if msg.first() == Some(&0x01) {
