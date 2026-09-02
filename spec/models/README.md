@@ -6,7 +6,7 @@ runs in seconds. **ProVerif** reasons over unbounded sessions with an explicit
 equational theory and is the release gate (PLAN.md §2.5).
 
 ```sh
-just verify        # Verifpal ×3 + every ProVerif model, including the must-fail ones
+just verify        # Verifpal ×4 + every ProVerif model, including the must-fail ones
 just verify-slow   # long-running broken-primitive variants (nightly)
 ./gen-variants.sh  # regenerate the generated .pv variants
 ```
@@ -22,9 +22,18 @@ on the same socket as PHREATIC.
 
 | Model | Assumption | Status |
 |---|---|---|
-| `phreatic.vp` | All primitives sound | ✅ 6/6, active attacker |
-| `phreatic-kem-broken.vp` | `KEM_ENCAP[weak]` — ML-KEM broken | ✅ 6/6 |
-| `phreatic-dh-broken.vp` | `PUBKEY[weak]` — X25519 keys recovered | ✅ 6/6 |
+| `phreatic.vp` | Suite `KARST_1`, all primitives sound | ✅ 6/6, active attacker |
+| `phreatic-nodh.vp` | Suite `KARST_2` (CNSA 2.0) — no classical DH at all, per spec §7.1/§7.2 | ✅ 6/6, active attacker |
+| `phreatic-kem-broken.vp` | `KARST_1`, `KEM_ENCAP[weak]` — ML-KEM broken | ✅ 6/6 |
+| `phreatic-dh-broken.vp` | `KARST_1`, `PUBKEY[weak]` — X25519 keys recovered | ✅ 6/6 |
+
+`phreatic-nodh.vp` is hand-written, not `gen-variants.sh`-generated: it models a
+different suite's key schedule (spec §7.1's no-DH branch), not a broken
+primitive on top of the same one. It has no broken-primitive companions —
+`KARST_2` deliberately carries no classical hybrid to break (spec §7.2), so
+breaking its one KEM family *is* breaking the suite, which is the trade the
+suite makes rather than a gap in coverage. Closes GitHub issue
+[#78](https://github.com/karst-net/karst/issues/78).
 
 ### ProVerif 2.05 — unbounded sessions
 

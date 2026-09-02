@@ -321,7 +321,7 @@ secrets-scan:
 verify:
     #!/usr/bin/env bash
     set -euo pipefail
-    for m in phreatic phreatic-kem-broken phreatic-dh-broken; do
+    for m in phreatic phreatic-nodh phreatic-kem-broken phreatic-dh-broken; do
         echo "── $m ──"
         verifpal verify "spec/models/$m.vp" | tail -12
     done

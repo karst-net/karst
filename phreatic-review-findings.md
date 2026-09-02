@@ -163,9 +163,22 @@ since that test would also be the first thing to catch a regression.
 
 ---
 
-## Medium — blocks this workstream's own exit criterion
+## Medium — blocks this workstream's own exit criterion — **closed 2026-09-02**
 
 ### 3. The formal models do not cover suite `0x0002` at all
+
+**Closed.** [`spec/models/phreatic-nodh.vp`](spec/models/phreatic-nodh.vp)
+models suite `0x0002`'s key schedule (steps 6, 10 and 11 absent, no `e_dh_pk`)
+and verifies 6/6 under Verifpal 0.80.1, same as `phreatic.vp`. Wired into
+`just verify` and CI's `formal` job alongside the existing three models.
+`spec/models/README.md` and `spec/phreatic-v1.md` §13.3/§14 updated. GitHub
+issue [#78](https://github.com/karst-net/karst/issues/78) closed.
+
+**Not closed by this:** a ProVerif equivalent (`phreatic-nodh.pv`). §14's
+resolution note is explicit that both tools had this gap; only the Verifpal
+half is done. Left open, tracked in `spec/phreatic-v1.md` §14's item 2 note
+rather than a new issue, since it's the same open item ProVerif's `phreatic.pv`
+already carries.
 
 `spec/phreatic-v1.md` §14, under item 7's resolution note:
 
@@ -262,10 +275,10 @@ tree deserves:
    filed as issues and belong in this workstream's actual crypto-adjacent
    implementation work, alongside the anchor tier and netmap-cache items
    already closed this phase.
-2. **Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78))**
-   should land before, or in parallel with, further reading-based review
-   passes — it's the cheapest of the three and de-risks everything else this
-   workstream does with the no-DH branches.
+2. **Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78))
+   — closed 2026-09-02.** Landed first, ahead of further reading-based review
+   passes, so the rest of this workstream's reading over the no-DH branches
+   rests on a model rather than inspection alone.
 3. Continue the review: `karst-crypto` primitive-level reading (constant-time
    behavior, KEM/DH/AEAD call sites), §14 item 10's adversarial reading of
    §13.8, and item 9's transition table are the next passes.

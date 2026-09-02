@@ -846,7 +846,7 @@ jobs:
       - name: Verify all models
         run: |
           fail=0
-          for m in phreatic phreatic-kem-broken phreatic-dh-broken; do
+          for m in phreatic phreatic-nodh phreatic-kem-broken phreatic-dh-broken; do
             echo "::group::$m"
             verifpal verify "spec/models/$m.vp" | tail -15
             verifpal verify "spec/models/$m.vp" | grep -q "queries pass" \

@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: CC-BY-4.0
+//
+// PHREATIC v1 — Verifpal model (suite KARST_2, the CNSA 2.0 profile)
+// Models spec/phreatic-v1.md §7.1's no-DH variant. Run: verifpal verify phreatic-nodh.vp
+//
+// Companion to phreatic.vp, not a variant generated from it (gen-variants.sh
+// produces broken-primitive variants of a suite; this is a different suite's
+// key schedule and is hand-written for the same reason phreatic.vp is).
+//
+// WHY THIS MODEL EXISTS — GitHub issue #78.
+//
+// ADR-0015 item 6 shipped KARST_2, the CNSA 2.0 profile: ML-KEM-1024 with NO
+// classical Diffie–Hellman hybrid (spec §3.1, §7.1's "under a suite with no
+// classical half"). phreatic.vp, phreatic-kem-broken.vp and
+// phreatic-dh-broken.vp all model only KARST_1's three-KEM/three-DH schedule.
+// spec/phreatic-v1.md §14, under item 7's resolution note, already flagged
+// the gap this closes:
+//
+//   "the models in items 1 and 2 now have a second key schedule to cover,
+//   and the no-DH variant is the one where a missing contribution would be
+//   hardest to notice by reading."
+//
+// SCOPE — what this model can and cannot establish. Same as phreatic.vp:
+//
+// CAN: transcript binding, mutual authentication, replay resistance,
+// confidentiality of transport data, and that the PSK is not recoverable —
+// for the schedule KARST_2 actually runs.
+//
+// CANNOT: the ADR-0002 hybrid hedge. KARST_2 deliberately has none (spec
+// §7.2: "Suite 0x0002 gives that hedge up deliberately"), so there is no
+// companion kem-broken/dh-broken pair for this model the way there is for
+// phreatic.vp — breaking the one KEM family this suite has *is* breaking the
+// suite, and that is the trade the suite makes, not a gap in this model.
+// CANNOT: quantitative or computational claims, side channels, or anything
+// about the implementation. Symbolic design check only.
+//
+// Modeling notes:
+//  - No `a_dh`/`b_dh`/`D_a`/`D_b`: suite 0x0002 has no static X25519 key at
+//    all (spec §4: "D is unused under suite 0x0002"), so there is nothing to
+//    distribute or model.
+//  - No `e_dh_sk`/`E_dh`/`E_dh_r`, no `DH_KEX` calls: steps 6, 10 and 11 of
+//    spec §7.1 do not exist under this suite, and nothing is substituted for
+//    them ("a zero or a placeholder mixed in their place would be a value
+//    both ends agree on and neither derives" — spec §7.1). This model omits
+//    them exactly as the implementation does, rather than modeling a zero.
+//  - Netmap-distributed public keys use guarded messages [x]: the
+//    coordination server is authenticated for key distribution (THREAT-MODEL
+//    §4, B2). Only S_a/S_b travel — there is no D_a/D_b under this suite.
+//  - Fragmentation, cookies and the fragment MAC are NOT modeled — see
+//    phreatic.vp's header; unchanged by the suite.
+
+attacker[active]
+
+// ─── Long-term identity (spec §4, suite 0x0002) ──────────────────────────────
+// a_kem/b_kem : ML-KEM-1024 static      psk : per-pair PSK from the netmap (§2.6)
+// No a_dh/b_dh: suite 0x0002 carries no classical static key.
+
+principal Alice[
+	knows public label, suite_id, psk_epoch, empty
+	knows private psk
+	knows private a_kem
+	S_a = PUBKEY(a_kem)
+]
+
+principal Bob[
+	knows public label, suite_id, psk_epoch, empty
+	knows private psk
+	knows private b_kem
+	S_b = PUBKEY(b_kem)
+]
+
+// Netmap distribution — guarded, i.e. authenticated out of band.
+Alice -> Bob: [S_a]
+Bob -> Alice: [S_b]
+
+// ─── HandshakeInit (spec §6.1/§6.5, key schedule §7.1 steps 1–7) ─────────────
+// e_dh_pk is absent, not zero-filled (spec §6.1). Step 4 mixes only E_kem.
+
+principal Alice[
+	generates e_kem_sk, r_s, ts
+	E_kem = PUBKEY(e_kem_sk)
+
+	// peer_id_hint = HASH("Karst peer-id v1" || S_a)  — §4, session-independent,
+	// SHA-512 under every suite including this one (§4's normative note).
+	hint = HASH(label, S_a)
+
+	// h0..h3 : transcript before any secret material.
+	// suite_id AND psk_epoch are both bound here — see spec §13.2.
+	// Step 4 (§7.1) mixes E_kem only — no E_dh under this suite.
+	h0 = HASH(label)
+	h1 = HASH(h0, suite_id, psk_epoch)
+	h2 = HASH(h1, HASH(S_b))
+	h3 = HASH(h2, E_kem)
+
+	ss_s, ct_s = KEM_ENCAP(S_b, r_s)      // PQ auth of responder — the only
+	ck1, k1 = HKDF(h0, ss_s, label)       // authentication this suite has for it
+	h4 = HASH(h3, ct_s)
+
+	// Step 6 (classical auth of responder) does not exist under this suite.
+	// Nothing is substituted for it: k1/ck1 carry straight through.
+
+	enc_ident = AEAD_ENC(k1, CONCAT(hint, ts), h4)
+	h5 = HASH(h4, enc_ident)
+]
+
+Alice -> Bob: E_kem, ct_s, enc_ident
+
+// ─── HandshakeResponse (spec §6.2/§6.5, §7.1 steps 8–13) ─────────────────────
+
+principal Bob[
+	ss_s_b = KEM_DECAP(b_kem, ct_s)
+	ckb1, kb1 = HKDF(HASH(label), ss_s_b, label)
+
+	hb0 = HASH(label)
+	hb1 = HASH(hb0, suite_id, psk_epoch)
+	hb2 = HASH(hb1, HASH(S_b))
+	hb3 = HASH(hb2, E_kem)
+	hb4 = HASH(hb3, ct_s)
+
+	// Fails closed if the transcript differs — this is the binding check.
+	ident_b = AEAD_DEC(kb1, enc_ident, hb4)?
+	hb5 = HASH(hb4, enc_ident)
+
+	generates r_e, r_ss
+
+	ss_e,  ct_e  = KEM_ENCAP(E_kem, r_e)   // forward secrecy
+	ss_ss, ct_ss = KEM_ENCAP(S_a, r_ss)    // PQ auth of initiator — the only
+	ckb2, kb2 = HKDF(ckb1, ss_e,  label)   // authentication this suite has for it
+	ckb3, kb3 = HKDF(ckb2, ss_ss, label)
+
+	// Steps 10–11 (forward secrecy DH, classical auth of initiator) do not
+	// exist under this suite. Nothing is substituted for them.
+
+	// PSK mixed LAST — gates the final key (ADR-0004 §3). Still holds: the
+	// PSK is the one hedge this suite keeps (spec §7.2).
+	ckb4, kb4 = HKDF(ckb3, psk, label)
+
+	hb6 = HASH(hb5, ct_e, ct_ss)
+	enc_empty = AEAD_ENC(kb4, empty, hb6)
+
+	Tb_send, Tb_recv = HKDF(ckb4, empty, label)
+]
+
+Bob -> Alice: ct_e, ct_ss, enc_empty
+
+// ─── Initiator completes, sends transport data (spec §8) ─────────────────────
+
+principal Alice[
+	ss_e_a  = KEM_DECAP(e_kem_sk, ct_e)
+	ss_ss_a = KEM_DECAP(a_kem, ct_ss)
+	cka2, ka2 = HKDF(ck1, ss_e_a,  label)
+	cka3, ka3 = HKDF(cka2, ss_ss_a, label)
+	cka4, ka4 = HKDF(cka3, psk, label)
+
+	ha6 = HASH(h5, ct_e, ct_ss)
+	_ = AEAD_DEC(ka4, enc_empty, ha6)?
+
+	Ta_send, Ta_recv = HKDF(cka4, empty, label)
+
+	generates payload
+	data = AEAD_ENC(Ta_send, payload, empty)
+]
+
+Alice -> Bob: data
+
+principal Bob[
+	recovered = AEAD_DEC(Tb_send, data, empty)?
+]
+
+queries[
+	// Transport confidentiality — the primary claim.
+	confidentiality? payload
+
+	// Mutual authentication, established once transport data flows.
+	authentication? Alice -> Bob: data
+	authentication? Bob -> Alice: enc_empty
+
+	// NOTE — deliberately absent, same as phreatic.vp:
+	// `authentication? Alice -> Bob: enc_ident`. It FAILS, and correctly so —
+	// k1 derives from ss_s alone here (there is no dh_es under this suite to
+	// add a second contribution), computable by anyone holding Bob's *public*
+	// S_b. HandshakeInit is exactly as unauthenticated under KARST_2 as under
+	// KARST_1 (spec §12.5) — if anything the DoS requirement in spec §9 is
+	// less hedged here, since there is no classical family standing behind
+	// the PQ-only responder-authentication step.
+
+	// The PSK must never be recoverable from the wire (§2.6).
+	confidentiality? psk
+
+	// Session keys must not leak.
+	confidentiality? Ta_send
+
+	// Replay resistance: the initiator's timestamp must be fresh.
+	freshness? ts
+]

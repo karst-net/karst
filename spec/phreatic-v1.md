@@ -893,13 +893,19 @@ Models in `spec/models/`. Both tools were pulled into Phase 1 — ProVerif was
 originally Phase 3, moved forward because §13.1 and §13.2 were caught by hand
 when a model should have caught them.
 
-**Verifpal** (0.80.0, active attacker) — all passing:
+**Verifpal** (0.80.1, active attacker) — all passing:
 
 | Model | Assumption | Result |
 |---|---|---|
-| `phreatic.vp` | All primitives sound | 6/6 |
-| `phreatic-kem-broken.vp` | `KEM_ENCAP[weak]` — ML-KEM totally broken | 6/6 |
-| `phreatic-dh-broken.vp` | `PUBKEY[weak]` — X25519 keys recovered | 6/6 |
+| `phreatic.vp` | Suite `KARST_1`, all primitives sound | 6/6 |
+| `phreatic-nodh.vp` | Suite `KARST_2` (CNSA 2.0) — no classical DH, per §7.1/§7.2 | 6/6 |
+| `phreatic-kem-broken.vp` | `KARST_1`, `KEM_ENCAP[weak]` — ML-KEM totally broken | 6/6 |
+| `phreatic-dh-broken.vp` | `KARST_1`, `PUBKEY[weak]` — X25519 keys recovered | 6/6 |
+
+`phreatic-nodh.vp` closes the gap this document itself flagged in §14 item 7's
+resolution note: the no-DH key schedule is now modeled, not just implemented.
+It has no broken-primitive companions of its own — suite `0x0002` deliberately
+carries no classical hybrid to break, so there is nothing analogous to model.
 
 **ProVerif** (2.05, unbounded sessions):
 
@@ -953,9 +959,14 @@ them and rests on the spoofed-source test suite instead.
 Items 1 and 2 are gates, not tasks; item 2's base model now passes (§13.3).
 Item 5 is resolved, which unblocks implementation of the fragmentation layer.
 Item 7 is resolved by ADR-0015 item 1, which made the CNSA suite a running one
-rather than a reserved row — **the models in items 1 and 2 now have a second
-key schedule to cover**, and the no-DH variant is the one where a missing
-contribution would be hardest to notice by reading.
+rather than a reserved row — **the models in items 1 and 2 had a second key
+schedule to cover**, and the no-DH variant is the one where a missing
+contribution would be hardest to notice by reading. **Item 1's half of that is
+now closed**: `phreatic-nodh.vp` (§13.3) models suite `0x0002`'s key schedule
+with steps 6, 10 and 11 absent, found during Phase 6's internal cryptographic
+review (GitHub issue [#78](https://github.com/karst-net/karst/issues/78)).
+**Item 2's half is still open** — `phreatic.pv` and its variants remain
+`KARST_1`-only; a `phreatic-nodh.pv` is unwritten.
 
 **Item 10 is the one to read most sceptically.** Every other change in §13 fixed
 something that was wrong; §13.8 changes a security construction because it was
