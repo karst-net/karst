@@ -328,6 +328,8 @@ verify:
     ./spec/models/gen-variants.sh
     echo "── ProVerif (PHREATIC data plane) ──"
     ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+    echo "── ProVerif (PHREATIC, suite KARST_2 no-DH key schedule) ──"
+    ./spec/models/check-proverif.sh spec/models/phreatic-nodh.pv 300 4
     echo "── ProVerif (KARST-CONTROL control channel, ADR-0011) ──"
     ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
     echo "── ProVerif (Ponor relay, spec/ponor-v1.md §5) ──"

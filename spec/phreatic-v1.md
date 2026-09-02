@@ -916,9 +916,15 @@ carries no classical hybrid to break, so there is nothing analogous to model.
 
 | Model | Assumption | Result |
 |---|---|---|
-| `phreatic.pv` | All primitives sound | **4/4** |
-| `phreatic-dh-broken.pv` | public `dlog` destructor — total X25519 break | **4/4** |
-| `phreatic-kem-broken.pv` | public `break_kem` destructor | **does not terminate** |
+| `phreatic.pv` | Suite `KARST_1`, all primitives sound | **4/4** |
+| `phreatic-nodh.pv` | Suite `KARST_2` (CNSA 2.0) — no classical DH, per §7.1/§7.2 | **4/4**, 0.03 s |
+| `phreatic-dh-broken.pv` | `KARST_1`, public `dlog` destructor — total X25519 break | **4/4** |
+| `phreatic-kem-broken.pv` | `KARST_1`, public `break_kem` destructor | **does not terminate** |
+
+`phreatic-nodh.pv` verifies faster than the base model, not slower: dropping
+the three DH-derived chaining-key mixes shortens the same nesting
+`phreatic-kem-broken.pv`'s divergence (§13.3 below) comes from, rather than
+lengthening it.
 
 ProVerif verifies transport confidentiality, PSK secrecy, **injective**
 agreement on the transport message (so a replayed message cannot be accepted
@@ -1005,12 +1011,12 @@ Item 5 is resolved, which unblocks implementation of the fragmentation layer.
 Item 7 is resolved by ADR-0015 item 1, which made the CNSA suite a running one
 rather than a reserved row — **the models in items 1 and 2 had a second key
 schedule to cover**, and the no-DH variant is the one where a missing
-contribution would be hardest to notice by reading. **Item 1's half of that is
-now closed**: `phreatic-nodh.vp` (§13.3) models suite `0x0002`'s key schedule
-with steps 6, 10 and 11 absent, found during Phase 6's internal cryptographic
-review (GitHub issue [#78](https://github.com/karst-net/karst/issues/78)).
-**Item 2's half is still open** — `phreatic.pv` and its variants remain
-`KARST_1`-only; a `phreatic-nodh.pv` is unwritten.
+contribution would be hardest to notice by reading. **Both halves are now
+closed**: `phreatic-nodh.vp` and `phreatic-nodh.pv` (§13.3) model suite
+`0x0002`'s key schedule with steps 6, 10 and 11 absent, found during Phase 6's
+internal cryptographic review and closed together (GitHub issue
+[#78](https://github.com/karst-net/karst/issues/78)) — Verifpal first, then
+ProVerif, each run against the tool itself rather than merely written.
 
 **Item 10 is the one to read most sceptically.** Every other change in §13 fixed
 something that was wrong; §13.8 changes a security construction because it was

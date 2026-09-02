@@ -1,0 +1,245 @@
+(* SPDX-License-Identifier: CC-BY-4.0
+ *
+ * PHREATIC v1 — ProVerif model (suite KARST_2, the CNSA 2.0 profile)
+ * Models spec/phreatic-v1.md §7.1's no-DH variant. Run: proverif phreatic-nodh.pv
+ *
+ * Companion to phreatic.pv, not a variant generated from it (gen-variants.sh
+ * produces broken-primitive variants of a suite; this is a different suite's
+ * key schedule and is hand-written for the same reason phreatic.pv is).
+ *
+ * WHY THIS MODEL EXISTS — GitHub issue #78, ProVerif half.
+ *
+ * ADR-0015 item 6 shipped KARST_2, the CNSA 2.0 profile: ML-KEM-1024 with NO
+ * classical Diffie–Hellman hybrid (spec §3.1, §7.1's "under a suite with no
+ * classical half"). phreatic.pv and its broken-primitive variants all model
+ * only KARST_1's three-KEM/three-DH schedule. spec/phreatic-v1.md §14, under
+ * item 7's resolution note, already flagged the gap this closes:
+ *
+ *   "the models in items 1 and 2 now have a second key schedule to cover,
+ *   and the no-DH variant is the one where a missing contribution would be
+ *   hardest to notice by reading."
+ *
+ * `phreatic-nodh.vp` (Verifpal) closed the first half of this gap. This
+ * closes the second: unbounded sessions, an explicit equational theory.
+ *
+ * SCOPE — what this model can and cannot establish. Same as phreatic.pv:
+ *
+ * CAN: transport confidentiality, PSK secrecy, injective agreement on the
+ * transport message, session-key agreement — for the schedule KARST_2
+ * actually runs.
+ *
+ * CANNOT: the ADR-0002 hybrid hedge. KARST_2 deliberately has none (spec
+ * §7.2: "Suite 0x0002 gives that hedge up deliberately"), so there is no
+ * kem-broken/dh-broken pair for this model the way there is for phreatic.pv
+ * — breaking the one KEM family this suite has *is* breaking the suite, and
+ * that is the trade the suite makes, not a gap in this model's coverage.
+ * CANNOT: quantitative or computational claims, side channels, or anything
+ * about the implementation. Symbolic design check only.
+ *
+ * NOT modeled: fragmentation, cookies, the fragment MAC — unchanged from
+ * phreatic.pv, and unchanged by the suite.
+ *)
+
+(* ─── Types ────────────────────────────────────────────────────────────── *)
+
+type skem.        (* ML-KEM-1024 decapsulation key *)
+type pkem.        (* ML-KEM-1024 encapsulation key *)
+type rnd.         (* encapsulation randomness *)
+
+free c: channel.
+
+(* Public protocol constants *)
+free LBL:   bitstring.   (* "Karst PHREATIC v1" *)
+free SUITE: bitstring.   (* LE16(suite_id) — 0x0002 here *)
+free EPOCH: bitstring.   (* LE32(psk_epoch) — bound at step 2, spec §13.2 *)
+free EMPTY: bitstring.
+
+(* ─── ML-KEM ───────────────────────────────────────────────────────────── *)
+
+fun pkem_of(skem): pkem.
+fun encap_ct(pkem, rnd): bitstring.
+fun encap_ss(pkem, rnd): bitstring [private].
+
+reduc forall sk: skem, r: rnd;
+    decap(sk, encap_ct(pkem_of(sk), r)) = encap_ss(pkem_of(sk), r).
+
+(* No X25519 section — suite 0x0002 carries no classical static or ephemeral
+   key at all (spec §4: "D is unused under suite 0x0002"; §7.1: "steps 6, 10
+   and 11 do not exist"). There is nothing to declare or mix. *)
+
+(* ─── Hashing, KDF, AEAD ───────────────────────────────────────────────── *)
+
+fun cat(bitstring, bitstring): bitstring [data].
+fun p2b(pkem): bitstring [data, typeConverter].
+
+fun H(bitstring): bitstring.
+
+(* HKDF's two outputs: new chaining key, and a message key. *)
+fun mixck(bitstring, bitstring): bitstring.
+fun mixk (bitstring, bitstring): bitstring.
+
+fun aead(bitstring, bitstring, bitstring): bitstring.
+reduc forall k: bitstring, m: bitstring, ad: bitstring;
+    adec(k, aead(k, m, ad), ad) = m.
+
+(* ─── Secrets and events ───────────────────────────────────────────────── *)
+
+free psk: bitstring [private].          (* per-pair PSK, netmap-delivered *)
+free secretPayload: bitstring [private]. (* transported under the session key *)
+
+event InitiatorComplete(pkem, pkem, bitstring).
+event ResponderComplete(pkem, pkem, bitstring).
+event InitiatorSent(bitstring).
+event ResponderAccepted(bitstring).
+
+(* ─── Queries ──────────────────────────────────────────────────────────── *)
+
+(* 1. Transport confidentiality — the primary claim. *)
+query attacker(secretPayload).
+
+(* 2. The PSK must never be recoverable from the wire (§2.6). Still the one
+      hedge this suite keeps — spec §7.2: "the PSK still gates the final key
+      under every suite." *)
+query attacker(psk).
+
+(* 3. Responder authenticates the initiator: injective agreement, so a
+      replayed transport message cannot be accepted twice. *)
+query m: bitstring;
+    inj-event(ResponderAccepted(m)) ==> inj-event(InitiatorSent(m)).
+
+(* 4. Session-key agreement: if the responder completes believing it shares a
+      key with the initiator, the initiator completed with the same key. *)
+query a: pkem, b: pkem, k: bitstring;
+    event(ResponderComplete(a, b, k)) ==> event(InitiatorComplete(a, b, k)).
+
+(* ─── Initiator (spec §6.1/§6.5, key schedule §7.1 steps 1–7) ──────────── *)
+(* e_dh_pk is absent, not zero-filled (spec §6.1). Step 4 mixes only e_kem_pk. *)
+
+let initiator(skI: skem, pkR: pkem) =
+    new ekI: skem;
+    new rs: rnd;
+    new ts: bitstring;
+
+    let EK  = pkem_of(ekI) in
+    let pkI = pkem_of(skI) in
+
+    (* peer_id_hint = HASH(label ‖ S_i) — §4, session-independent, SHA-512
+       under every suite including this one (§4's normative note). *)
+    let hint = H(cat(LBL, p2b(pkI))) in
+
+    let h0 = H(LBL) in
+    let h1 = H(cat(h0, cat(SUITE, EPOCH))) in       (* §13.2 *)
+    let h2 = H(cat(h1, H(p2b(pkR)))) in
+    let h3 = H(cat(h2, p2b(EK))) in                 (* step 4 — EK only, no ED *)
+
+    let cts = encap_ct(pkR, rs) in
+    let sss = encap_ss(pkR, rs) in                   (* PQ auth of responder —
+                                                          the only authentication
+                                                          this suite has for it *)
+    let ck1 = mixck(h0, sss) in
+    let k1  = mixk (h0, sss) in
+    let h4  = H(cat(h3, cts)) in
+
+    (* Step 6 (classical auth of responder) does not exist under this suite.
+       Nothing is substituted for it: k1/ck1 carry straight through to the
+       identity encryption below, rather than a second mix step. *)
+
+    let encid = aead(k1, cat(hint, ts), h4) in
+    let h5    = H(cat(h4, encid)) in
+
+    out(c, (EK, cts, encid));
+
+    in(c, (cte: bitstring, ctss: bitstring, encempty: bitstring));
+
+    let sse  = decap(ekI, cte)  in                   (* forward secrecy *)
+    let ssss = decap(skI, ctss) in                   (* PQ auth of initiator —
+                                                          the only authentication
+                                                          this suite has for it *)
+    let ck2  = mixck(ck1, sse)  in
+    let ck3  = mixck(ck2, ssss) in
+
+    (* Steps 10–11 (forward-secrecy DH, classical auth of initiator) do not
+       exist under this suite. Nothing is substituted for them. *)
+
+    let ck4 = mixck(ck3, psk) in                     (* PSK mixed LAST — still
+                                                          gates the final key
+                                                          (spec §7.2) *)
+    let k4  = mixk (ck3, psk) in
+
+    let h6 = H(cat(h5, cat(cte, ctss))) in            (* no EDR *)
+    let ok = adec(k4, encempty, h6) in                (* fails closed *)
+
+    let Ts = mixk(ck4, EMPTY) in
+    event InitiatorComplete(pkI, pkR, Ts);
+
+    let data = aead(Ts, secretPayload, EMPTY) in
+    event InitiatorSent(data);
+    out(c, data).
+
+(* ─── Responder (spec §6.2/§6.5) ───────────────────────────────────────── *)
+
+let responder(skR: skem, pkI: pkem) =
+    (* Typed input: the attacker may still supply any term of these types. *)
+    in(c, (EK: pkem, cts: bitstring, encid: bitstring));
+
+    let pkR = pkem_of(skR) in
+
+    let sss = decap(skR, cts) in
+    let ck1 = mixck(H(LBL), sss) in
+    let k1  = mixk (H(LBL), sss) in
+
+    let h0 = H(LBL) in
+    let h1 = H(cat(h0, cat(SUITE, EPOCH))) in
+    let h2 = H(cat(h1, H(p2b(pkR)))) in
+    let h3 = H(cat(h2, p2b(EK))) in
+    let h4 = H(cat(h3, cts)) in
+
+    (* Transcript binding check — fails closed on any tampering. *)
+    let ident = adec(k1, encid, h4) in
+    let h5 = H(cat(h4, encid)) in
+
+    new re: rnd;
+    new rss: rnd;
+
+    let cte  = encap_ct(EK,  re)  in
+    let sse  = encap_ss(EK,  re)  in
+    let ctss = encap_ct(pkI, rss) in
+    let ssss = encap_ss(pkI, rss) in
+    let ck2  = mixck(ck1, sse)  in
+    let ck3  = mixck(ck2, ssss) in
+
+    let ck4 = mixck(ck3, psk) in
+    let k4  = mixk (ck3, psk) in
+
+    let h6 = H(cat(h5, cat(cte, ctss))) in
+    let encempty = aead(k4, EMPTY, h6) in
+
+    out(c, (cte, ctss, encempty));
+
+    let Tr = mixk(ck4, EMPTY) in
+
+    (* ResponderComplete is deliberately NOT emitted here — same reasoning as
+       phreatic.pv: at this point the responder has derived keys but has no
+       assurance the initiator exists or ever completed (§12.5). Assurance
+       arrives with the transport message below (§12.6). *)
+
+    in(c, data: bitstring);
+    let recovered = adec(Tr, data, EMPTY) in
+    event ResponderComplete(pkI, pkR, Tr);
+    event ResponderAccepted(data).
+
+(* ─── Main ─────────────────────────────────────────────────────────────── *)
+
+process
+    new skI: skem;
+    new skR: skem;
+    let pkI = pkem_of(skI) in
+    let pkR = pkem_of(skR) in
+
+    (* Public keys are public. Their *distribution* is authenticated by the
+       coordination server (THREAT-MODEL §4, B2), which is modeled by the
+       processes using the real key terms rather than attacker-supplied ones.
+       No DI/DR to publish alongside them — this suite has no static DH key. *)
+    out(c, (pkI, pkR));
+
+    ( (! initiator(skI, pkR)) | (! responder(skR, pkI)) )

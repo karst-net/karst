@@ -886,6 +886,7 @@ jobs:
         timeout-minutes: 30
         run: |
           ./spec/models/check-proverif.sh spec/models/phreatic.pv 1500 4
+          ./spec/models/check-proverif.sh spec/models/phreatic-nodh.pv 300 4
           ./spec/models/check-proverif.sh spec/models/karst-control.pv 600 4
           ./spec/models/check-proverif.sh spec/models/ponor.pv 600 4
           ./spec/models/check-proverif.sh spec/models/aven.pv 600 4

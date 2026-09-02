@@ -39,12 +39,23 @@ suite makes rather than a gap in coverage. Closes GitHub issue
 
 | Model | Assumption | Status |
 |---|---|---|
-| `phreatic.pv` | All primitives sound | ✅ **4/4**, seconds |
+| `phreatic.pv` | Suite `KARST_1`, all primitives sound | ✅ **4/4**, seconds |
+| `phreatic-nodh.pv` | Suite `KARST_2` (CNSA 2.0) — no classical DH at all | ✅ **4/4**, 0.03 s |
 | `karst-control.pv` | All primitives sound | ✅ **4/4**, seconds |
 | `ponor.pv` | All primitives sound, and a relay the client uses is hostile | ✅ **4/4**, seconds |
 | `aven.pv` | All primitives sound, and a peer of A's is compromised | ✅ **4/4**, seconds |
-| `phreatic-dh-broken.pv` | public `dlog` destructor | ✅ **4/4**, ~15 min |
-| `phreatic-kem-broken.pv` | public `break_kem` destructor | ❌ **does not terminate** — see below |
+| `phreatic-dh-broken.pv` | `KARST_1`, public `dlog` destructor | ✅ **4/4**, ~15 min |
+| `phreatic-kem-broken.pv` | `KARST_1`, public `break_kem` destructor | ❌ **does not terminate** — see below |
+
+`phreatic-nodh.pv` closes the ProVerif half of GitHub issue
+[#78](https://github.com/karst-net/karst/issues/78) — `phreatic-nodh.vp`
+(above) closed the Verifpal half. Hand-written, not generated: it drops the
+X25519 machinery entirely rather than adding a destructor, since suite
+`KARST_2` never has it (spec §7.1). It runs faster than the base model, not
+slower — dropping three of the seven chaining-key mixes shortens the nesting
+`phreatic-kem-broken.pv` chokes on below, it does not lengthen it. No
+broken-primitive companion, for the same reason `phreatic-nodh.vp` has none:
+`KARST_2` has one cryptographic family, not two to trade off.
 
 Queries, per model:
 

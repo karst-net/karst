@@ -235,11 +235,16 @@ and verifies 6/6 under Verifpal 0.80.1, same as `phreatic.vp`. Wired into
 `spec/models/README.md` and `spec/phreatic-v1.md` §13.3/§14 updated. GitHub
 issue [#78](https://github.com/karst-net/karst/issues/78) closed.
 
-**Not closed by this:** a ProVerif equivalent (`phreatic-nodh.pv`). §14's
-resolution note is explicit that both tools had this gap; only the Verifpal
-half is done. Left open, tracked in `spec/phreatic-v1.md` §14's item 2 note
-rather than a new issue, since it's the same open item ProVerif's `phreatic.pv`
-already carries.
+**The ProVerif half is closed too, as of the same day.**
+[`spec/models/phreatic-nodh.pv`](spec/models/phreatic-nodh.pv) mirrors
+`phreatic-nodh.vp`'s no-DH key schedule and verifies **4/4** under ProVerif
+2.05 (installed locally via `opam`, matching CI's toolchain exactly, and
+cross-checked against `phreatic.pv`'s documented 4/4 result on the same
+binary before trusting the new model's) — in 0.03 s, faster than the base
+model, since dropping three of the seven chaining-key mixes shortens rather
+than lengthens the nesting `phreatic-kem-broken.pv` diverges on. Wired into
+`just verify` and CI's `formal` job. `spec/models/README.md` and
+`spec/phreatic-v1.md` §13.3/§14 updated again to record both halves closed.
 
 `spec/phreatic-v1.md` §14, under item 7's resolution note:
 
@@ -394,14 +399,15 @@ tree deserves:
 
 ## Suggested order
 
-**All four findings from this pass are closed as of 2026-09-02:**
+**All four findings from this pass are closed as of 2026-09-02, both tools'
+halves of Finding 3 included:**
 Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76)),
 Finding 2 (PSK epoch grace period, GitHub issue [#77](https://github.com/karst-net/karst/issues/77)),
-Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78)),
+Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78) —
+`phreatic-nodh.vp` then `phreatic-nodh.pv`),
 and Finding 4 (secret material never zeroized, GitHub issue [#79](https://github.com/karst-net/karst/issues/79)).
 
 Next passes for this workstream: constant-time behavior at the primitive
 level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'
-branching and comparisons), §14 item 10's adversarial reading of §13.8,
-item 9's rekey/simultaneous-open transition table, and a `phreatic-nodh.pv`
-to close ProVerif's half of the gap Finding 3 closed for Verifpal.
+branching and comparisons), §14 item 10's adversarial reading of §13.8, and
+item 9's rekey/simultaneous-open transition table.
