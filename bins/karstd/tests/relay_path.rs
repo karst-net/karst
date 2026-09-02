@@ -139,6 +139,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
             endpoint: spec.endpoint,
             allowed_ips: vec![prefix],
             psk_is_fallback: false,
+            psk_previous: None,
             disco_key: spec.disco_key,
             home_relay: spec.home_relay,
         });

@@ -507,6 +507,13 @@ pub struct PeerSection {
     /// Per-pair PSK, hex. Absent selects the lattice-only fallback of §7.3,
     /// which is reported at startup rather than assumed.
     pub psk: Option<String>,
+    /// The same pair's PSK at `psk_epoch - 1`, hex. §7.3 requires a responder
+    /// to accept both the current epoch and its predecessor; a static roster
+    /// has no coordination server rotating this automatically, but an
+    /// operator rolling a manual rotation across a fleet gets the same grace
+    /// window if they set it. Absent is the ordinary case — a roster whose
+    /// epoch has never changed.
+    pub psk_previous: Option<String>,
     /// Where to reach the peer. Absent means wait to be contacted.
     pub endpoint: Option<SocketAddr>,
     /// Address ranges this peer owns.
@@ -521,6 +528,10 @@ impl fmt::Debug for PeerSection {
             .field("endpoint", &self.endpoint)
             .field("allowed_ips", &self.allowed_ips)
             .field("psk", &self.psk.as_ref().map(|_| "<redacted>"))
+            .field(
+                "psk_previous",
+                &self.psk_previous.as_ref().map(|_| "<redacted>"),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -545,6 +556,14 @@ pub struct Peer {
     pub allowed_ips: Vec<Prefix>,
     /// Whether the PSK is the all-zero fallback (§7.3).
     pub psk_is_fallback: bool,
+    /// The pair's PSK at `psk_epoch - 1`, if this node holds one — §7.3's
+    /// grace period. `karst_noise::handshake::PeerPublic` carries only the
+    /// *current* PSK, so a responder answering a `HandshakeInit` at the
+    /// previous epoch builds a fresh `PeerPublic` with this substituted in
+    /// (`Engine`'s `lookup` closures); a session's own outbound handshakes
+    /// only ever use `public.psk` — a session dials at its own current
+    /// epoch, never a previous one.
+    pub psk_previous: Option<[u8; 32]>,
     /// AVEN key for this pair. Static TOML peers have none and stay direct-only.
     pub disco_key: Option<[u8; 32]>,
     /// The relay this peer published as its home — `ponor-v1.md` §9.1.
@@ -1121,6 +1140,10 @@ impl Peer {
             .psk
             .as_ref()
             .map_or([0u8; 32], |k| *crate::netmap::Psk::as_bytes(k));
+        let psk_previous = entry
+            .psk_previous
+            .as_ref()
+            .map(|k| *crate::netmap::Psk::as_bytes(k));
 
         if entry.allowed_ips.is_empty() {
             return Err(ConfigError::Unusable(format!(
@@ -1156,6 +1179,7 @@ impl Peer {
             endpoint,
             allowed_ips,
             psk_is_fallback,
+            psk_previous,
             disco_key: entry.disco_key.as_ref().map(|key| *key.as_bytes()),
             // §9.1. Empty is the ordinary case — a peer that holds no relay —
             // and any other wrong width is a server this node cannot follow.
@@ -1211,6 +1235,19 @@ impl Peer {
                 field: "psk",
             })?);
         }
+        let psk_previous = section
+            .psk_previous
+            .as_ref()
+            .map(|hex| {
+                let bytes = decode_hex(hex, 32, "psk_previous")?;
+                let mut k = [0u8; 32];
+                k.copy_from_slice(bytes.get(..32).ok_or_else(|| ConfigError::InvalidKey {
+                    peer: name.clone(),
+                    field: "psk_previous",
+                })?);
+                Ok::<_, ConfigError>(k)
+            })
+            .transpose()?;
 
         if section.allowed_ips.is_empty() {
             return Err(ConfigError::Unusable(format!(
@@ -1238,6 +1275,7 @@ impl Peer {
             endpoint: section.endpoint,
             allowed_ips,
             psk_is_fallback,
+            psk_previous,
             disco_key: None,
             // A static roster has no coordination server, so no peer publishes
             // anything — the same reason `node_id` and `disco_key` are empty.

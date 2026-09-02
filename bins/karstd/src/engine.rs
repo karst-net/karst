@@ -27,7 +27,7 @@ use karst_crypto::hash;
 use karst_crypto::kem::KemPublicKey;
 use karst_crypto::SuitePolicy;
 use karst_node::{Action, Session};
-use karst_noise::handshake::{peer_id_hint, ResponderRandomness};
+use karst_noise::handshake::{peer_id_hint, PeerPublic, ResponderRandomness};
 use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, FragMacKey};
 use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, Reject};
 use karst_proto::{fragment, split_datagram, MessageType};
@@ -1461,6 +1461,35 @@ impl Engine {
     /// The same work as [`Self::accept_handshake`] minus the endpoint learning,
     /// plus the check that the peer the AEAD resolves is the peer the relay
     /// named.
+    /// Resolve which `PeerPublic` — and so which PSK — a `HandshakeInit`
+    /// claiming `offered_epoch` should be answered with, per §7.3: "Responders
+    /// MUST accept epoch *n* and *n−1* and MUST reject any other."
+    ///
+    /// `PeerPublic` carries one PSK, meant for a session's own *outbound*
+    /// handshakes, which always dial at this node's current epoch — so the
+    /// substitution below is a per-answer clone, not a change to `peer.public`
+    /// itself. `checked_sub` rather than wrapping: epoch 0 has no predecessor
+    /// (the netmap never sends `psk_previous` for it either — GitHub issue
+    /// #77, `server/…/netmap.go`'s `if h.Epoch > 0`), and a wrapped `u32::MAX`
+    /// must not accidentally satisfy an attacker-chosen `offered_epoch`.
+    fn peer_public_at_epoch(
+        peer: &crate::config::Peer,
+        current_epoch: u32,
+        offered_epoch: u32,
+    ) -> Option<PeerPublic> {
+        if offered_epoch == current_epoch {
+            return Some((*peer.public).clone());
+        }
+        if current_epoch.checked_sub(1) == Some(offered_epoch) {
+            let previous = peer.psk_previous?;
+            return Some(PeerPublic {
+                psk: previous,
+                ..(*peer.public).clone()
+            });
+        }
+        None
+    }
+
     fn accept_relayed_handshake(
         &self,
         roster: &Roster,
@@ -1488,17 +1517,19 @@ impl Engine {
         let index = u32::try_from(expected).unwrap_or(u32::MAX).wrapping_add(1);
         let by_hint = &roster.by_hint;
         let peers = &roster.config.peers;
+        let current_epoch = roster.config.psk_epoch;
         let mut matched: Option<PeerIndex> = None;
 
         let result = karst_noise::handshake::respond(
             &roster.config.keys,
             &self.policy,
             msg,
-            |hint, _epoch| {
+            |hint, epoch| {
                 let index = *by_hint.get(hint)?;
                 let peer = peers.get(index)?;
+                let public = Self::peer_public_at_epoch(peer, current_epoch, epoch)?;
                 matched = Some(index);
-                Some((*peer.public).clone())
+                Some(public)
             },
             rand,
             index,
@@ -1568,21 +1599,23 @@ impl Engine {
             .map_or(0, |i| u32::try_from(i).unwrap_or(u32::MAX).wrapping_add(1));
         let by_hint = &roster.by_hint;
         let peers = &roster.config.peers;
+        let current_epoch = roster.config.psk_epoch;
         let mut matched: Option<PeerIndex> = None;
 
         let result = karst_noise::handshake::respond(
             &roster.config.keys,
             &self.policy,
             msg,
-            |hint, _epoch| {
+            |hint, epoch| {
                 let index = *by_hint.get(hint)?;
                 let peer = peers.get(index)?;
+                // §7.3: accept `epoch` n or n-1, reject anything else — the
+                // half of the MUST GitHub issue #77 found missing. A plain
+                // `.clone()` when it's n; a clone with `psk_previous`
+                // substituted in when it's n-1 (`peer_public_at_epoch`).
+                let public = Self::peer_public_at_epoch(peer, current_epoch, epoch)?;
                 matched = Some(index);
-                // A plain clone. This used to rebuild the key through its
-                // serialization, on the belief that `PeerPublic` could not be
-                // `Clone` because the KEM key is opaque — true of an earlier
-                // backend, and it had outlived it.
-                Some((*peer.public).clone())
+                Some(public)
             },
             rand,
             index,

@@ -95,6 +95,7 @@ fn config_for(
             endpoint: Some("203.0.113.1:51820".parse().expect("endpoint")),
             allowed_ips: vec![prefix],
             psk_is_fallback: false,
+            psk_previous: None,
             disco_key: None,
             home_relay: None,
         }],

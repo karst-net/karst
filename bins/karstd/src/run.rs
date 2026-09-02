@@ -2874,6 +2874,7 @@ mod route_tests {
                 endpoint: None,
                 allowed_ips: allowed,
                 psk_is_fallback: true,
+                psk_previous: None,
                 disco_key: None,
                 home_relay: None,
             });

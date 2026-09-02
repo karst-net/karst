@@ -114,9 +114,45 @@ and netmap-cache items that opened this phase, not a one-line fix.
 
 ---
 
-## High — a spec `MUST` silently narrowed to "accept whatever the local epoch is"
+## High — a spec `MUST` silently narrowed to "accept whatever the local epoch is" — **closed 2026-09-02**
 
 ### 2. §7.3's PSK epoch grace period is not implemented; the storage to implement it does not exist
+
+**Closed — and the title's second clause turned out to be wrong.** Re-tracing
+the data from the wire inward (rather than from `engine.rs` outward, which is
+how this was originally found) turned up that the control-plane proto already
+has a `psk_previous` field, the Go server already computes and sends it
+(`server/management/internals/karst/control/netmap.go:356-362`, citing §7.3
+by name), and `bins/karstd/src/netmap.rs`'s `Peer` already parses and carries
+both PSKs end to end. **The storage existed one layer below where this
+finding looked.** What was actually missing was narrower: `config.rs`'s two
+`PeerPublic` constructors dropped `psk_previous` at the netmap→roster
+boundary, and `engine.rs`'s `lookup` closures discarded `_epoch` on top of
+that.
+
+Fixed by threading `psk_previous: Option<[u8; 32]>` through
+`config.rs::Peer` (from both the netmap path and a new optional TOML field,
+for the static-roster case) and giving `engine.rs`'s two `lookup` closures a
+shared `peer_public_at_epoch` helper: exact match uses the peer's current
+`PeerPublic` unchanged, `current_epoch - 1` (checked, not wrapping) builds a
+clone with `psk_previous` substituted in, anything else returns `None` — the
+`MUST reject any other` this finding found absent. `Session::rearm` and
+`Session::respond_to` needed no changes: `rearm` only affects a session's own
+*outbound* handshakes, which always dial at the current epoch, and
+`respond_to` turned out to be exercised only by the test harness, never by
+the real daemon's dispatch path.
+
+New coverage in `bins/karstd/tests/datapath.rs`: the existing
+`a_psk_epoch_rotation_does_not_interrupt_a_live_session` only ever covered an
+*already-established* session surviving a rearm. Added
+`a_fresh_handshake_survives_the_responder_being_one_epoch_ahead` (the actual
+scenario this issue was filed over — two real `Engine`s, genuinely
+disagreeing `psk_epoch`s, a fresh handshake that must still complete) and
+`a_handshake_two_epochs_behind_is_still_rejected` (confirming the `MUST
+reject any other` half, not just the acceptance half).
+
+**What #77's original text below still describes accurately: the symptom, and
+why it mattered.**
 
 §7.3:
 
@@ -292,16 +328,13 @@ tree deserves:
 
 ## Suggested order
 
-1. **Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76))
-   — closed 2026-09-02.** **Finding 2 (PSK epoch, GitHub issue
-   [#77](https://github.com/karst-net/karst/issues/77)) is next** — both were
-   `MUST`-level gaps in the running daemon, not model or spec gaps, and belong
-   in this workstream's crypto-adjacent implementation work alongside the
-   anchor tier and netmap-cache items already closed this phase.
-2. **Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78))
-   — closed 2026-09-02.** Landed first, ahead of further reading-based review
-   passes, so the rest of this workstream's reading over the no-DH branches
-   rests on a model rather than inspection alone.
-3. Continue the review: `karst-crypto` primitive-level reading (constant-time
-   behavior, KEM/DH/AEAD call sites), §14 item 10's adversarial reading of
-   §13.8, and item 9's transition table are the next passes.
+**All three findings from this first pass are closed as of 2026-09-02:**
+Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76)),
+Finding 2 (PSK epoch grace period, GitHub issue [#77](https://github.com/karst-net/karst/issues/77)),
+and Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/karst/issues/78)).
+
+Next passes for this workstream: `karst-crypto` primitive-level reading
+(constant-time behavior, KEM/DH/AEAD call sites), §14 item 10's adversarial
+reading of §13.8, item 9's rekey/simultaneous-open transition table, and a
+`phreatic-nodh.pv` to close ProVerif's half of the gap Finding 3 closed for
+Verifpal.

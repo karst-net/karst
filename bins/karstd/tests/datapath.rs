@@ -940,6 +940,163 @@ allowed_ips = ["10.77.0.2/32"]
     );
 }
 
+/// §7.3's actual grace period: a *fresh* handshake landing during the window
+/// where one node has rotated its epoch and the other has not — GitHub issue
+/// #77. The test above only ever covers an *established* session surviving a
+/// rearm; this is the case #77 was filed over, where nothing is established
+/// yet and the two ends' `psk_epoch` genuinely disagree.
+///
+/// Modelled at the responder: `b`'s current epoch is one ahead of `a`'s, with
+/// `psk_previous` on `b`'s side matching what `a`'s `psk` still is — the
+/// state both ends are actually in for the seconds between the coordination
+/// server rotating and every node's netmap catching up.
+#[derive(Clone, Copy)]
+struct EpochConfig<'a> {
+    name: &'a str,
+    me: u8,
+    peer: u8,
+    listen: &'a str,
+    peer_endpoint: &'a str,
+    epoch: u32,
+    psk: &'a str,
+    psk_previous: Option<&'a str>,
+}
+
+fn config_at_epoch(dir: &Scratch, p: EpochConfig<'_>) -> Arc<Config> {
+    let key = dir.join(&format!("{}.key", p.name));
+    write600(&key, &private_of(p.me));
+    let (kem, dh) = public_of(p.peer);
+    let my_octet = if p.me == 0xA1 { 1 } else { 2 };
+    let peer_octet = 3 - my_octet;
+    let prev_line = p
+        .psk_previous
+        .map_or_else(String::new, |psk| format!("psk_previous = \"{psk}\"\n"));
+    let toml = format!(
+        r#"
+[node]
+listen = "{listen}"
+interface = "karst0"
+addresses = ["10.78.0.{my_octet}/24"]
+private_key_file = "{name}.key"
+psk_epoch = {epoch}
+
+[[peer]]
+name = "other"
+kem_public_key = "{kem}"
+dh_public_key = "{dh}"
+psk = "{psk}"
+{prev_line}endpoint = "{peer_endpoint}"
+allowed_ips = ["10.78.0.{peer_octet}/32"]
+"#,
+        listen = p.listen,
+        name = p.name,
+        epoch = p.epoch,
+        psk = p.psk,
+        peer_endpoint = p.peer_endpoint,
+    );
+    let path = dir.join(&format!("{}.toml", p.name));
+    write600(&path, &toml);
+    Arc::new(Config::load(&path).expect("config must load"))
+}
+
+#[test]
+fn a_fresh_handshake_survives_the_responder_being_one_epoch_ahead() {
+    let dir = Scratch::new("epoch-race-behind");
+    let psk_n_minus_1 = "77".repeat(32);
+    let psk_n = "88".repeat(32);
+
+    // A hasn't rotated: still offering epoch n-1 with the old PSK.
+    let a_cfg = config_at_epoch(
+        &dir,
+        EpochConfig {
+            name: "a",
+            me: 0xA1,
+            peer: 0xB1,
+            listen: A_ADDR,
+            peer_endpoint: B_ADDR,
+            epoch: 6,
+            psk: &psk_n_minus_1,
+            psk_previous: None,
+        },
+    );
+    // B has: current epoch n, but still holds n-1's PSK as `psk_previous`,
+    // matching what a real netmap push carries during the grace window.
+    let b_cfg = config_at_epoch(
+        &dir,
+        EpochConfig {
+            name: "b",
+            me: 0xB1,
+            peer: 0xA1,
+            listen: B_ADDR,
+            peer_endpoint: A_ADDR,
+            epoch: 7,
+            psk: &psk_n,
+            psk_previous: Some(&psk_n_minus_1),
+        },
+    );
+    let a = Engine::new(&a_cfg);
+    let b = Engine::new(&b_cfg);
+
+    establish(&a, &b);
+
+    assert!(
+        a.established(0),
+        "the initiator, one epoch behind, must still complete the handshake"
+    );
+    assert!(
+        b.established(0),
+        "the responder must accept epoch n-1 per §7.3, not just n"
+    );
+}
+
+#[test]
+fn a_handshake_two_epochs_behind_is_still_rejected() {
+    let dir = Scratch::new("epoch-race-too-far");
+    let psk_n_minus_2 = "66".repeat(32);
+    let psk_n = "88".repeat(32);
+    let psk_n_minus_1 = "77".repeat(32);
+
+    // A offers epoch n-2 — neither of the two epochs B will accept.
+    let a_cfg = config_at_epoch(
+        &dir,
+        EpochConfig {
+            name: "a",
+            me: 0xA1,
+            peer: 0xB1,
+            listen: A_ADDR,
+            peer_endpoint: B_ADDR,
+            epoch: 5,
+            psk: &psk_n_minus_2,
+            psk_previous: None,
+        },
+    );
+    let b_cfg = config_at_epoch(
+        &dir,
+        EpochConfig {
+            name: "b",
+            me: 0xB1,
+            peer: 0xA1,
+            listen: B_ADDR,
+            peer_endpoint: A_ADDR,
+            epoch: 7,
+            psk: &psk_n,
+            psk_previous: Some(&psk_n_minus_1),
+        },
+    );
+    let a = Engine::new(&a_cfg);
+    let b = Engine::new(&b_cfg);
+
+    let a_addr: SocketAddr = A_ADDR.parse().unwrap();
+    let msg1 = a.connect_all(0, seed);
+    let msg2 = deliver(&b, a_addr, msg1, 1);
+
+    assert!(
+        msg2.datagrams.is_empty(),
+        "§7.3 requires rejecting anything but n and n-1 — a HandshakeResponse here would be the MUST's silent absence going unenforced"
+    );
+    assert!(!b.established(0));
+}
+
 /// A reconfiguration swaps the filter with the peer set, so a rule cannot end
 /// up applied against the wrong peer.
 #[test]
