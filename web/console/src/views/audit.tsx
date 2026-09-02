@@ -46,6 +46,10 @@ export function Audit() {
   return <section>
     <h2>Audit log</h2>
     <p className="lede">Append-only and hash-chained. Entries cannot be edited here — that is what makes the chain worth verifying. {resource.value?.anchor.last_anchored_sequence == null ? "This audit log has not yet been Bedrock-anchored." : `${resource.value.anchor.entries_since_anchor} entries have accrued since Bedrock anchored sequence ${resource.value.anchor.last_anchored_sequence}.`}</p>
+    {resource.value?.anchor.contradicts_anchor && <p>
+      <Status state="danger" label="audit log contradicts its Bedrock anchor" />
+      {" "}This log no longer matches the head an authority signed into the Bedrock chain (ADR-0016) — the server has truncated or rewritten history since. Preserve the database and investigate before trusting anything in it.
+    </p>}
     <div className="actions">
       <label>Actor<input aria-label="Filter by actor" placeholder="user-sre" value={filters.actor} onChange={(event) => setFilters({ ...filters, actor: event.target.value })} /></label>
       <label>Action<input aria-label="Filter by action" placeholder="policy.write" value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })} /></label>

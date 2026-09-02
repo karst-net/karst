@@ -1287,7 +1287,7 @@ func TestEnforcingServesNodeCoveredByARealBedrockCeremony(t *testing.T) {
 		t.Fatalf("authority: %v", err)
 	}
 	builder := bedrock.NewBuilder()
-	genesis, input := builder.Prepare(1000, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1))
+	genesis, input := builder.Prepare(1000, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1, nil))
 	rootSigs, err := bedrock.SignRoots(input, bedrock.RootSigner{Index: 0, Key: root})
 	if err != nil {
 		t.Fatalf("sign genesis: %v", err)
@@ -1333,7 +1333,7 @@ func TestEnforcingRefusesNodeAbsentFromARealBedrockCeremony(t *testing.T) {
 		t.Fatalf("authority: %v", err)
 	}
 	builder := bedrock.NewBuilder()
-	genesis, input := builder.Prepare(1000, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1))
+	genesis, input := builder.Prepare(1000, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1, nil))
 	rootSigs, err := bedrock.SignRoots(input, bedrock.RootSigner{Index: 0, Key: root})
 	if err != nil {
 		t.Fatalf("sign genesis: %v", err)

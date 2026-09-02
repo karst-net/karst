@@ -168,6 +168,7 @@ fn offline_ceremony_for(
             1,
             &[authority.public_key()],
             1,
+            &[],
         ),
     );
     builder

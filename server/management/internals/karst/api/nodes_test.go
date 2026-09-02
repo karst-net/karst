@@ -595,7 +595,7 @@ func TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing(t *testing.T) {
 	dh := bytes.Repeat([]byte{0x55}, bedrock.DhPublicKeySize)
 
 	builder := bedrock.NewBuilder()
-	genesis, input := builder.Prepare(1, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1))
+	genesis, input := builder.Prepare(1, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1, nil))
 	rootSigs, err := bedrock.SignRoots(input, bedrock.RootSigner{Index: 0, Key: root})
 	require.NoError(t, err)
 	require.NoError(t, builder.Commit(genesis, rootSigs))
@@ -726,14 +726,82 @@ func TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing(t *testing.T) {
 	require.Equal(t, http.StatusOK, auditResponse.Code, auditResponse.Body.String())
 	var auditPage struct {
 		Anchor struct {
-			Sequence *int `json:"last_anchored_sequence"`
-			Since    int  `json:"entries_since_anchor"`
+			Sequence    *int `json:"last_anchored_sequence"`
+			Since       int  `json:"entries_since_anchor"`
+			Contradicts bool `json:"contradicts_anchor"`
 		} `json:"anchor"`
 	}
 	require.NoError(t, json.Unmarshal(auditResponse.Body.Bytes(), &auditPage))
 	require.NotNil(t, auditPage.Anchor.Sequence)
 	require.Equal(t, int(anchorState.Anchor.AuditSeq), *auditPage.Anchor.Sequence)
 	require.GreaterOrEqual(t, auditPage.Anchor.Since, 0)
+	// A real ceremony's anchor is written against the log it actually
+	// commits to, so the endpoint's VerifyAnchored wiring (ADR-0016) must
+	// find it intact rather than reporting a contradiction.
+	require.False(t, auditPage.Anchor.Contradicts)
+}
+
+// The payoff of ADR-0016's audit-status wiring: a log whose anchor entry
+// commits to a head the audit log never produced. VerifyAnchored exists
+// specifically to catch this — a server that truncated or rewrote its audit
+// log after anchoring it — and TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing
+// above already covers the intact case.
+func TestAuditListReportsAnchorContradiction(t *testing.T) {
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open("file:api-audit-anchor-contradiction?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	chain, err := bedrock.NewLog(db)
+	require.NoError(t, err)
+	auditLog, err := audit.New(db)
+	require.NoError(t, err)
+
+	_, err = auditLog.Append(ctx, "admin", "test.action", "test/target", "")
+	require.NoError(t, err)
+	auditSeq, _, err := auditLog.Head(ctx)
+	require.NoError(t, err)
+
+	root, err := bedrock.RootFromSeed(bytes.Repeat([]byte{0x11}, bedrock.RootSeedSize))
+	require.NoError(t, err)
+	authority, err := bedrock.AuthorityFromSeed(bytes.Repeat([]byte{0x22}, bedrock.AuthoritySeedSize))
+	require.NoError(t, err)
+
+	builder := bedrock.NewBuilder()
+	genesis, input := builder.Prepare(1, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1, nil))
+	rootSigs, err := bedrock.SignRoots(input, bedrock.RootSigner{Index: 0, Key: root})
+	require.NoError(t, err)
+	require.NoError(t, builder.Commit(genesis, rootSigs))
+
+	// An anchor entry the real audit log will never match: a fabricated head
+	// hash at the log's real sequence.
+	anchorEntry, input := builder.Prepare(2, bedrock.OpAnchor, bedrock.AnchorBody([]byte("fabricated-audit-head"), auditSeq))
+	authSigs, err := bedrock.SignAuthorities(input, bedrock.AuthoritySigner{Index: 0, Key: authority})
+	require.NoError(t, err)
+	require.NoError(t, builder.Commit(anchorEntry, authSigs))
+
+	// Imported directly rather than through the bootstrap-import endpoint,
+	// which only accepts a single genesis entry — this test needs the anchor
+	// entry in the store too, not just the genesis.
+	require.NoError(t, chain.Import(ctx, "account-a", builder.Entries()))
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, chain, scanPermissions{role: types.UserRoleOwner}, router)
+	user := auth.UserAuth{AccountId: "account-a", UserId: "admin"}
+
+	auditRequest := httptest.NewRequest(http.MethodGet, "/karst/v1/audit?limit=10", nil)
+	auditRequest = nbcontext.SetUserAuthInRequest(auditRequest, user)
+	auditResponse := httptest.NewRecorder()
+	router.ServeHTTP(auditResponse, auditRequest)
+	require.Equal(t, http.StatusOK, auditResponse.Code, auditResponse.Body.String())
+	var auditPage struct {
+		Anchor struct {
+			Sequence    *int `json:"last_anchored_sequence"`
+			Contradicts bool `json:"contradicts_anchor"`
+		} `json:"anchor"`
+	}
+	require.NoError(t, json.Unmarshal(auditResponse.Body.Bytes(), &auditPage))
+	require.NotNil(t, auditPage.Anchor.Sequence)
+	require.Equal(t, int(auditSeq), *auditPage.Anchor.Sequence)
+	require.True(t, auditPage.Anchor.Contradicts, "a fabricated anchor head must be reported as a contradiction")
 }
 
 func TestAllRegisteredResponsesExcludeSecretSentinels(t *testing.T) {

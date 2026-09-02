@@ -779,11 +779,15 @@ func describeEntry(e *bedrock.Entry) map[string]any {
 			out["root_threshold"] = g.K
 			out["authorities"] = fingerprints(g.Authorities)
 			out["quorum"] = g.Q
+			// ADR-0016: nil/empty until an operator opts in, which is itself
+			// meaningful — an authority quorum still anchors either way.
+			out["anchor_keys"] = fingerprints(g.AnchorKeys)
 		}
 	case bedrock.OpAuthorityList:
 		if a, err := bedrock.ParseAuthorityList(e.Body); err == nil {
 			out["authorities"] = fingerprints(a.Authorities)
 			out["quorum"] = a.Q
+			out["anchor_keys"] = fingerprints(a.AnchorKeys)
 		}
 	case bedrock.OpNodeSign:
 		if n, err := bedrock.ParseNodeSign(e.Body); err == nil {
@@ -1779,13 +1783,18 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 				if seq >= state.Anchor.AuditSeq {
 					anchor.EntriesSinceAnchor = int(seq - state.Anchor.AuditSeq)
 				}
-				for _, chainEntry := range chainEntries {
-					if chainEntry.Op == bedrock.OpAnchor {
-						parsed, err := bedrock.ParseAnchor(chainEntry.Body)
-						if err == nil && parsed.AuditSeq == state.Anchor.AuditSeq {
-							at := time.Unix(chainEntry.Time, 0).UTC()
-							anchor.LastAnchoredAt = &at
-						}
+				if at, ok := bedrock.LastAnchoredAt(chainEntries, state); ok {
+					anchor.LastAnchoredAt = &at
+				}
+				// ADR-0016's payoff: report a log that contradicts its own
+				// anchor rather than only counting entries since it.
+				// `entries_since_anchor` above stays accurate for a log the
+				// server has quietly truncated — both `seq` and the anchor
+				// came from the same (possibly rewound) store — so this is
+				// the one check here that is not fooled by that.
+				if auditHead, ok := h.audit.(auditAnchorReader); ok {
+					if _, verifyAnchorErr := bedrock.VerifyAnchored(r.Context(), state, auditHead); verifyAnchorErr != nil {
+						anchor.ContradictsAnchor = true
 					}
 				}
 			}

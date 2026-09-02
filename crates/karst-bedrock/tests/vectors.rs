@@ -223,11 +223,11 @@ fn body_encodings_match_the_go_implementation() {
         let rebuilt = match c.op.as_str() {
             "genesis" => {
                 let b = karst_bedrock::parse_genesis(&raw).expect("genesis");
-                genesis_body(&b.zone, &b.roots, b.k, &b.authorities, b.q)
+                genesis_body(&b.zone, &b.roots, b.k, &b.authorities, b.q, &b.anchor_keys)
             }
             "authority-list" => {
                 let b = karst_bedrock::parse_authority_list(&raw).expect("authority-list");
-                authority_list_body(&b.authorities, b.q)
+                authority_list_body(&b.authorities, b.q, &b.anchor_keys)
             }
             "node-sign" => {
                 let b = karst_bedrock::parse_node_sign(&raw).expect("node-sign");

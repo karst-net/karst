@@ -13,11 +13,11 @@
 
 use std::collections::HashMap;
 
-use karst_crypto::sign::{verify_authority, verify_root};
+use karst_crypto::sign::{verify_anchor_key, verify_authority, verify_root};
 
 use crate::log::{
     chain_hash, parse_anchor, parse_authority_list, parse_disable, parse_genesis,
-    parse_node_revoke, parse_node_sign, Anchor, Entry, Op, Tier,
+    parse_node_revoke, parse_node_sign, Anchor, Entry, Op, Tier, MAX_SIGNERS,
 };
 use crate::Error;
 
@@ -64,6 +64,11 @@ pub struct State {
     pub k: u32,
     pub authorities: Vec<Vec<u8>>,
     pub q: u32,
+    /// ADR-0016's anchor tier: keys permitted to sign `anchor` and nothing
+    /// else. Replaced atomically by whichever of genesis or the latest
+    /// authority-list carried a trailing anchor-key block — empty means no
+    /// anchor key is enabled and only a full authority may anchor.
+    pub anchor_keys: Vec<Vec<u8>>,
 
     /// The latest `node-sign` per handle.
     pub covered: HashMap<String, NodeCoverage>,
@@ -222,6 +227,7 @@ pub fn verify_log(entries: &[Entry]) -> Result<State, Error> {
                     g.authorities.len()
                 )));
             }
+            validate_anchor_keys(&g.anchor_keys, &g.roots, &g.authorities).map_err(broken)?;
             st.roots.clone_from(&g.roots);
             st.k = g.k;
             genesis = Some(g);
@@ -233,14 +239,21 @@ pub fn verify_log(entries: &[Entry]) -> Result<State, Error> {
             Tier::Root => (&st.roots, st.k),
             Tier::Authority => (&st.authorities, st.q),
         };
-        if e.op == Op::Anchor {
+        // anchor_keys is Some only for Op::Anchor, which is what keeps rule 6
+        // unchanged everywhere else: an index at or past keys.len() is out of
+        // range for node-sign, node-revoke, quorum-change. Only anchor uses
+        // ADR-0016's concatenated signer-index space — §3.5.
+        let anchor_keys = if e.op == Op::Anchor {
             // An anchor is a claim about the audit log, not a policy change.
             // One authority is enough to make truncation detectable, and
             // requiring q would mean anchors stop being written exactly when
             // the authorities are hardest to assemble.
             threshold = 1;
-        }
-        verify_signatures(e, &h, tier, keys, threshold).map_err(broken)?;
+            Some(st.anchor_keys.as_slice())
+        } else {
+            None
+        };
+        verify_signatures(e, &h, tier, keys, anchor_keys, threshold).map_err(broken)?;
 
         // §4.9 — only now is the body trusted enough to act on.
         apply(&mut st, e, genesis).map_err(|why| Error::Broken { seq: e.seq, why })?;
@@ -255,11 +268,20 @@ pub fn verify_log(entries: &[Entry]) -> Result<State, Error> {
 }
 
 /// Rules §4.6 through §4.8 for one entry.
+///
+/// `anchor_keys` is `Some` only when `e.op` is `Op::Anchor`, and it carries
+/// ADR-0016's concatenated signer-index space: `signer_index < keys.len()`
+/// selects the authority list under `AUTHORITY_CONTEXT`, and
+/// `signer_index - keys.len()` selects the anchor list under
+/// `ANCHOR_CONTEXT`. For every other op it is `None`, so an index at or past
+/// `keys.len()` falls straight through to the out-of-range error — spec §4
+/// rule 6, unchanged.
 fn verify_signatures(
     e: &Entry,
     entry_hash: &[u8],
     tier: Tier,
     keys: &[Vec<u8>],
+    anchor_keys: Option<&[Vec<u8>]>,
     threshold: u32,
 ) -> Result<(), String> {
     if threshold == 0 {
@@ -282,23 +304,65 @@ fn verify_signatures(
         }
         seen.push(s.signer_index);
 
-        let Some(key) = keys.get(s.signer_index as usize) else {
-            return Err(format!(
-                "signer index {} is out of range for {} keys",
-                s.signer_index,
-                keys.len()
-            ));
-        };
-
-        let ok = match tier {
-            Tier::Root => verify_root(key, entry_hash, &s.sig),
-            Tier::Authority => verify_authority(key, entry_hash, &s.sig),
+        let idx = s.signer_index as usize;
+        let ok = if let Some(key) = keys.get(idx) {
+            match tier {
+                Tier::Root => verify_root(key, entry_hash, &s.sig),
+                Tier::Authority => verify_authority(key, entry_hash, &s.sig),
+            }
+        } else {
+            let anchor_key = anchor_keys.and_then(|anchor_keys| {
+                idx.checked_sub(keys.len()).and_then(|i| anchor_keys.get(i))
+            });
+            let Some(key) = anchor_key else {
+                return Err(format!(
+                    "signer index {} is out of range for {} keys",
+                    s.signer_index,
+                    keys.len()
+                ));
+            };
+            verify_anchor_key(key, entry_hash, &s.sig)
         };
         if !ok {
             return Err(format!(
                 "signature from signer {} does not verify",
                 s.signer_index
             ));
+        }
+    }
+    Ok(())
+}
+
+/// ADR-0016's two new §4 rules for a body's optional anchor-key block:
+///
+/// - the combined authority+anchor list stays within `MAX_SIGNERS`, which is
+///   the concatenated signer-index space §3.5 defines for `anchor`;
+/// - an anchor key MUST NOT also appear in the root or authority list of the
+///   same body. A key in two lists answers under two context strings, and
+///   copying an authority key into the anchor slot is the exact footgun this
+///   tier exists to prevent — rejecting it at verification turns an
+///   operational mistake into a failed ceremony rather than a live one.
+///
+/// `roots` is empty when validating an authority-list body, which carries no
+/// root list of its own.
+fn validate_anchor_keys(
+    anchor_keys: &[Vec<u8>],
+    roots: &[Vec<u8>],
+    authorities: &[Vec<u8>],
+) -> Result<(), String> {
+    if authorities.len() + anchor_keys.len() > MAX_SIGNERS as usize {
+        return Err(format!(
+            "{} authorities plus {} anchor keys exceeds the {MAX_SIGNERS}-signer limit",
+            authorities.len(),
+            anchor_keys.len()
+        ));
+    }
+    for ak in anchor_keys {
+        if roots.contains(ak) {
+            return Err("an anchor key must not also appear in the root list".into());
+        }
+        if authorities.contains(ak) {
+            return Err("an anchor key must not also appear in the authority list".into());
         }
     }
     Ok(())
@@ -312,6 +376,7 @@ fn apply(st: &mut State, e: &Entry, genesis: Option<crate::log::Genesis>) -> Res
             st.zone = g.zone;
             st.authorities = g.authorities;
             st.q = g.q;
+            st.anchor_keys = g.anchor_keys;
         }
         Op::AuthorityList => {
             let a = parse_authority_list(&e.body).map_err(|err| err.to_string())?;
@@ -325,8 +390,15 @@ fn apply(st: &mut State, e: &Entry, genesis: Option<crate::log::Genesis>) -> Res
                     a.authorities.len()
                 ));
             }
+            validate_anchor_keys(&a.anchor_keys, &[], &a.authorities)?;
+            // §7's recovery story depends on this being a replacement, not a
+            // merge: "the roots sign a new authority-list" must replace the
+            // anchor keys atomically along with the authorities, or authority
+            // compromise recovery would take two ceremonies and could
+            // silently skip one — ADR-0016.
             st.authorities = a.authorities;
             st.q = a.q;
+            st.anchor_keys = a.anchor_keys;
         }
         Op::NodeSign => {
             let n = parse_node_sign(&e.body).map_err(|err| err.to_string())?;
@@ -367,7 +439,21 @@ fn apply(st: &mut State, e: &Entry, genesis: Option<crate::log::Genesis>) -> Res
             st.q = q;
         }
         Op::Anchor => {
-            st.anchor = Some(parse_anchor(&e.body).map_err(|err| err.to_string())?);
+            let a = parse_anchor(&e.body).map_err(|err| err.to_string())?;
+            // ADR-0016's new §4 rule: audit_seq must strictly increase.
+            // Harmless while the server holds no anchor key — it does not
+            // today — and load-bearing the moment it does: without this, a
+            // server that truncates its own audit log can anchor the
+            // truncated head and every node accepts the rewind.
+            if let Some(prev) = &st.anchor {
+                if a.audit_seq <= prev.audit_seq {
+                    return Err(format!(
+                        "anchor audit_seq {} does not advance past the previous anchor's {}",
+                        a.audit_seq, prev.audit_seq
+                    ));
+                }
+            }
+            st.anchor = Some(a);
         }
         Op::Disable => {
             st.disabled_reason = parse_disable(&e.body).map_err(|err| err.to_string())?;

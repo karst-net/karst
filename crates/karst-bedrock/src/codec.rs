@@ -111,4 +111,39 @@ impl<'a> Cursor<'a> {
             Err(Error::Malformed)
         }
     }
+
+    /// A non-consuming peek: has this cursor read exactly the input so far?
+    pub(crate) fn is_at_end(&self) -> bool {
+        self.pos == self.buf.len()
+    }
+
+    /// Reads ADR-0016's optional trailing anchor-key block:
+    /// `[ BE32(count) || count × LP(key) ]`.
+    ///
+    /// Absence — the cursor already at the end — means zero keys. A block
+    /// that *is* present but whose count is zero is a decode failure: that is
+    /// a second byte string for the meaning absence already carries, exactly
+    /// the canonicalization hazard the codec elsewhere exists to remove — spec
+    /// §3.4.
+    pub(crate) fn optional_keys(&mut self, size: usize, max: u32) -> Result<Vec<Vec<u8>>, Error> {
+        if self.is_at_end() {
+            return Ok(Vec::new());
+        }
+        let n = self.u32()?;
+        if n == 0 {
+            return Err(Error::Malformed);
+        }
+        if n > max {
+            return Err(Error::Malformed);
+        }
+        let mut out = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let k = self.lp()?;
+            if k.len() != size {
+                return Err(Error::Malformed);
+            }
+            out.push(k.to_vec());
+        }
+        Ok(out)
+    }
 }

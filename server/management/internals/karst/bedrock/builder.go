@@ -116,3 +116,27 @@ func SignAuthorities(input []byte, signers ...AuthoritySigner) ([]Signature, err
 	}
 	return out, nil
 }
+
+// AnchorSigner is an anchor key together with its index in the concatenated
+// authority+anchor signer space an `anchor` entry indexes into — spec §3.5.
+type AnchorSigner struct {
+	Index uint32
+	Key   *AnchorKey
+}
+
+// SignAnchors produces signatures over a signing input from a set of anchor
+// keys.
+func SignAnchors(input []byte, signers ...AnchorSigner) ([]Signature, error) {
+	out := make([]Signature, 0, len(signers))
+	for _, s := range signers {
+		if s.Key == nil {
+			return nil, errors.New("bedrock: nil anchor key")
+		}
+		sig, err := s.Key.Sign(input)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Signature{SignerIndex: s.Index, Sig: sig})
+	}
+	return out, nil
+}

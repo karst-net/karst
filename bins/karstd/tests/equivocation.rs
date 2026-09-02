@@ -196,6 +196,7 @@ fn chain(seed: u8) -> Log {
             1,
             &[authority.public_key()],
             1,
+            &[],
         ),
     );
     b.commit(

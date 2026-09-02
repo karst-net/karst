@@ -385,6 +385,7 @@ fn offline_ceremony_for_node_a() -> Vec<u8> {
             1,
             &[authority.public_key()],
             1,
+            &[],
         ),
     );
     builder

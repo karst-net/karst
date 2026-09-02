@@ -351,7 +351,12 @@ const maxLogEntries = 1 << 20
 // package comment.
 
 // GenesisBody builds a genesis body — spec §3.4.
-func GenesisBody(zone string, rootPKs [][]byte, k uint32, authorityPKs [][]byte, q uint32) []byte {
+//
+// anchorPKs is the optional ADR-0016 trailing block: pass nil or an empty
+// slice for a deployment that does not enable anchor keys, which produces a
+// body byte-identical to before the ADR. len(anchorPKs) == 0 MUST NOT be
+// encoded as an explicit BE32(0) — see appendOptionalAnchorKeys.
+func GenesisBody(zone string, rootPKs [][]byte, k uint32, authorityPKs [][]byte, q uint32, anchorPKs [][]byte) []byte {
 	out := appendLP(nil, []byte(zone))
 	out = appendBE32(out, uint32(len(rootPKs)))
 	for _, pk := range rootPKs {
@@ -362,7 +367,8 @@ func GenesisBody(zone string, rootPKs [][]byte, k uint32, authorityPKs [][]byte,
 	for _, pk := range authorityPKs {
 		out = appendLP(out, pk)
 	}
-	return appendBE32(out, q)
+	out = appendBE32(out, q)
+	return appendOptionalAnchorKeys(out, anchorPKs)
 }
 
 // Genesis is a parsed genesis body.
@@ -372,6 +378,10 @@ type Genesis struct {
 	K           uint32
 	Authorities [][]byte
 	Q           uint32
+	// AnchorKeys is ADR-0016's optional anchor-key block, nil when the
+	// deployment has not enabled it (spec §3.4's "s = 0 MUST be encoded as
+	// absence").
+	AnchorKeys [][]byte
 }
 
 // ParseGenesis reads a genesis body.
@@ -382,6 +392,7 @@ func ParseGenesis(b []byte) (*Genesis, error) {
 	g.K = c.u32()
 	g.Authorities = readKeys(c, AuthorityPublicKeySize)
 	g.Q = c.u32()
+	g.AnchorKeys = readOptionalAnchorKeys(c)
 	if !c.done() {
 		return nil, fmt.Errorf("%w: genesis body", ErrMalformed)
 	}
@@ -389,18 +400,23 @@ func ParseGenesis(b []byte) (*Genesis, error) {
 }
 
 // AuthorityListBody builds an authority-list body — spec §3.4.
-func AuthorityListBody(authorityPKs [][]byte, q uint32) []byte {
+//
+// anchorPKs is ADR-0016's optional trailing block — see GenesisBody.
+func AuthorityListBody(authorityPKs [][]byte, q uint32, anchorPKs [][]byte) []byte {
 	out := appendBE32(nil, uint32(len(authorityPKs)))
 	for _, pk := range authorityPKs {
 		out = appendLP(out, pk)
 	}
-	return appendBE32(out, q)
+	out = appendBE32(out, q)
+	return appendOptionalAnchorKeys(out, anchorPKs)
 }
 
 // AuthorityList is a parsed authority-list body.
 type AuthorityList struct {
 	Authorities [][]byte
 	Q           uint32
+	// AnchorKeys is ADR-0016's optional anchor-key block — see Genesis.
+	AnchorKeys [][]byte
 }
 
 // ParseAuthorityList reads an authority-list body.
@@ -409,6 +425,7 @@ func ParseAuthorityList(b []byte) (*AuthorityList, error) {
 	a := &AuthorityList{}
 	a.Authorities = readKeys(c, AuthorityPublicKeySize)
 	a.Q = c.u32()
+	a.AnchorKeys = readOptionalAnchorKeys(c)
 	if !c.done() {
 		return nil, fmt.Errorf("%w: authority-list body", ErrMalformed)
 	}
@@ -570,6 +587,12 @@ func readKeys(c *cursor, size int) [][]byte {
 	if c.err != nil {
 		return nil
 	}
+	return readKeysCounted(c, n, size)
+}
+
+// readKeysCounted reads n length-prefixed keys of exactly size bytes each,
+// given a count already read from the cursor.
+func readKeysCounted(c *cursor, n uint32, size int) [][]byte {
 	if n > maxSigners {
 		c.fail()
 		return nil
@@ -587,4 +610,45 @@ func readKeys(c *cursor, size int) [][]byte {
 		out = append(out, append([]byte(nil), k...))
 	}
 	return out
+}
+
+// appendOptionalAnchorKeys appends ADR-0016's trailing anchor-key block, or
+// nothing at all when anchorPKs is empty.
+//
+// Spec §3.4: "A body that ends after q means s = 0, and s = 0 MUST be encoded
+// as absence. Emitting BE32(0) is a decode failure." Without that rule there
+// are two byte strings for one meaning — exactly the canonicalization hazard
+// §3.3 exists to remove — and it is what lets a deployment that never enables
+// anchor keys keep producing bodies byte-identical to before this ADR.
+func appendOptionalAnchorKeys(dst []byte, anchorPKs [][]byte) []byte {
+	if len(anchorPKs) == 0 {
+		return dst
+	}
+	dst = appendBE32(dst, uint32(len(anchorPKs)))
+	for _, pk := range anchorPKs {
+		dst = appendLP(dst, pk)
+	}
+	return dst
+}
+
+// readOptionalAnchorKeys reads ADR-0016's trailing anchor-key block.
+//
+// c.done() is a non-consuming peek: if the body ends right after q, s = 0 and
+// there is no block to read. If bytes remain, they must be a well-formed
+// block — and per appendOptionalAnchorKeys's doc, a present block whose count
+// is zero is itself malformed, because that is the second byte string for a
+// meaning absence already encodes.
+func readOptionalAnchorKeys(c *cursor) [][]byte {
+	if c.done() {
+		return nil
+	}
+	n := c.u32()
+	if c.err != nil {
+		return nil
+	}
+	if n == 0 {
+		c.fail()
+		return nil
+	}
+	return readKeysCounted(c, n, AnchorPublicKeySize)
 }

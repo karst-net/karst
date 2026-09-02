@@ -340,7 +340,7 @@ const server = http.createServer((request, response) => {
   if (method === "GET" && karst === "/posture/sessions") return json(response, 200, page(fixture.nodes.map((node) => ({ node_handle: node.handle, peer_handle: fixture.nodes[0].handle, ...node.posture })), url));
   if (method === "GET" && karst === "/audit") {
     const entries = fixture.audit.filter((entry) => (!url.searchParams.get("actor") || entry.actor === url.searchParams.get("actor")) && (!url.searchParams.get("action") || entry.action === url.searchParams.get("action")));
-    return json(response, 200, { ...page(entries, url), anchor: { last_anchored_sequence: null, last_anchored_at: null, entries_since_anchor: 42 } });
+    return json(response, 200, { ...page(entries, url), anchor: { last_anchored_sequence: null, last_anchored_at: null, entries_since_anchor: 42, contradicts_anchor: false } });
   }
   if (method === "GET" && karst === "/audit/export") {
     const format = url.searchParams.get("format");

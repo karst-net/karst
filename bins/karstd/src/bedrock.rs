@@ -374,7 +374,7 @@ mod tests {
         let (e, input) = b.prepare(
             1000,
             Op::Genesis,
-            genesis_body("z.karst.", &[r.public_key()], 1, &[a.public_key()], 1),
+            genesis_body("z.karst.", &[r.public_key()], 1, &[a.public_key()], 1, &[]),
         );
         let sig = r.sign(&input).unwrap();
         b.commit(

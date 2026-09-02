@@ -293,6 +293,10 @@ export type AuditAnchor = {
     last_anchored_sequence: number | null;
     last_anchored_at?: string | null;
     entries_since_anchor: number;
+    /**
+     * true when the audit log no longer matches its recorded anchor (ADR-0016 VerifyAnchored) — the server has truncated or rewritten history since it was last anchored. False both when the log is intact and when there is no anchor to contradict.
+     */
+    contradicts_anchor: boolean;
 };
 
 export type AuditSinkWrite = {

@@ -524,8 +524,8 @@ components:
       properties: {sequence: {type: integer, minimum: 0}, hash: {type: string}}
     AuditAnchor:
       type: object
-      required: [last_anchored_sequence, entries_since_anchor]
-      properties: {last_anchored_sequence: {type: integer, nullable: true, minimum: 1}, last_anchored_at: {type: string, nullable: true, format: date-time}, entries_since_anchor: {type: integer, minimum: 0}}
+      required: [last_anchored_sequence, entries_since_anchor, contradicts_anchor]
+      properties: {last_anchored_sequence: {type: integer, nullable: true, minimum: 1}, last_anchored_at: {type: string, nullable: true, format: date-time}, entries_since_anchor: {type: integer, minimum: 0}, contradicts_anchor: {type: boolean, description: 'true when the audit log no longer matches its recorded anchor (ADR-0016 VerifyAnchored) — the server has truncated or rewritten history since it was last anchored. False both when the log is intact and when there is no anchor to contradict.'}}
     AuditSinkWrite:
       type: object
       required: [kind, endpoint]

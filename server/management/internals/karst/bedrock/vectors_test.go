@@ -142,6 +142,9 @@ type vectorFixture struct {
 	authPKs [][]byte
 	alice   testNode
 	bob     testNode
+	// anchor is ADR-0016's anchor-tier key, fixed and deterministic like every
+	// other fixture key so the vectors it produces are reproducible.
+	anchor *AnchorKey
 }
 
 func newVectorFixture(t *testing.T) *vectorFixture {
@@ -159,7 +162,22 @@ func newVectorFixture(t *testing.T) *vectorFixture {
 	}
 	f.alice = nodeKeys(t, 0x77)
 	f.bob = nodeKeys(t, 0x88)
+	anchor, err := AnchorFromSeed(seedBytes(0xA0))
+	if err != nil {
+		t.Fatalf("fixture anchor: %v", err)
+	}
+	f.anchor = anchor
 	return f
+}
+
+// seedBytes builds a deterministic 32-byte seed the same way testRoot and
+// testAuthority do, for a key kind those helpers do not construct.
+func seedBytes(seed byte) []byte {
+	s := make([]byte, AnchorSeedSize)
+	for i := range s {
+		s[i] = seed + byte(i)
+	}
+	return s
 }
 
 func (f *vectorFixture) rootQuorum(t *testing.T, b *Builder, at int64, op Op, body []byte) {
@@ -190,7 +208,13 @@ func (f *vectorFixture) authQuorum(t *testing.T, b *Builder, at int64, op Op, bo
 }
 
 func (f *vectorFixture) genesisBody() []byte {
-	return GenesisBody("aquifer.karst.", f.rootPKs, 1, f.authPKs, 2)
+	return GenesisBody("aquifer.karst.", f.rootPKs, 1, f.authPKs, 2, nil)
+}
+
+// genesisBodyWithAnchor is genesisBody plus ADR-0016's optional anchor-key
+// block, for the vectors that pin the new wire-format shape.
+func (f *vectorFixture) genesisBodyWithAnchor() []byte {
+	return GenesisBody("aquifer.karst.", f.rootPKs, 1, f.authPKs, 2, [][]byte{f.anchor.Public()})
 }
 
 func TestVectors(t *testing.T) {
@@ -288,7 +312,9 @@ func TestVectors(t *testing.T) {
 		body []byte
 	}{
 		{OpGenesis, "two roots at k=1, three authorities at q=2", f.genesisBody()},
-		{OpAuthorityList, "three authorities at q=2", AuthorityListBody(f.authPKs, 2)},
+		{OpGenesis, "ADR-0016: with one anchor key", f.genesisBodyWithAnchor()},
+		{OpAuthorityList, "three authorities at q=2", AuthorityListBody(f.authPKs, 2, nil)},
+		{OpAuthorityList, "ADR-0016: with one anchor key", AuthorityListBody(f.authPKs, 2, [][]byte{f.anchor.Public()})},
 		{OpNodeSign, "no not-before, no expiry", signBody(f.alice, 0, 0)},
 		{OpNodeSign, "a bounded window", signBody(f.bob, 1500, 2500)},
 		{OpNodeRevoke, "with a reason", NodeRevokeBody(f.alice.Handle, "laptop stolen", 1300)},
@@ -342,6 +368,40 @@ func TestVectors(t *testing.T) {
 		}),
 	})
 
+	// ── ADR-0016: a log anchored by a dedicated anchor key ──────────────────
+
+	withAnchor := NewBuilder()
+	f.rootQuorum(t, withAnchor, 1000, OpGenesis, f.genesisBodyWithAnchor())
+	f.authQuorum(t, withAnchor, 1100, OpNodeSign, signBody(f.alice, 0, 0))
+	{
+		// Concatenated signer-index space, spec §3.5: three authorities occupy
+		// indices 0-2, so the anchor key — the only entry in genesis's
+		// trailing anchor-key block — signs at index 3.
+		e, input := withAnchor.Prepare(1200, OpAnchor, AnchorBody([]byte("audit-head"), 42))
+		sigs, err := SignAnchors(input, AnchorSigner{Index: uint32(len(f.authPKs)), Key: f.anchor})
+		if err != nil {
+			t.Fatalf("sign anchor: %v", err)
+		}
+		if err := withAnchor.Commit(e, sigs); err != nil {
+			t.Fatalf("commit anchor: %v", err)
+		}
+	}
+	anchorSt, err := VerifyLog(withAnchor.Entries())
+	if err != nil {
+		t.Fatalf("verify anchor-tier log: %v", err)
+	}
+	got.Cases.Logs = append(got.Cases.Logs, logCase{
+		Name:    "genesis with an anchor key, one node-sign, anchored by the dedicated key",
+		Encoded: hex.EncodeToString(EncodeLog(withAnchor.Entries())),
+		Head:    hex.EncodeToString(anchorSt.Head),
+		HeadSeq: anchorSt.HeadSeq,
+		Zone:    anchorSt.Zone,
+		Quorum:  anchorSt.Q,
+		Coverage: coverageCases(anchorSt, []coverageCase{
+			keyCase(f.alice.Handle, f.alice.Keys, 1150),
+		}),
+	})
+
 	// ── logs that must be rejected ──────────────────────────────────────────
 
 	base := NewBuilder()
@@ -388,7 +448,65 @@ func TestVectors(t *testing.T) {
 	// A quorum of authorities appointing their own successors.
 	authorityCoup := NewBuilder()
 	f.rootQuorum(t, authorityCoup, 1000, OpGenesis, f.genesisBody())
-	f.authQuorum(t, authorityCoup, 1100, OpAuthorityList, AuthorityListBody(f.authPKs, 1))
+	f.authQuorum(t, authorityCoup, 1100, OpAuthorityList, AuthorityListBody(f.authPKs, 1, nil))
+
+	// ── ADR-0016 rejected cases ─────────────────────────────────────────────
+
+	// BE32(0) written long-form where absence is required — spec §3.4.
+	explicitZeroAnchorCount := NewBuilder()
+	f.rootQuorum(t, explicitZeroAnchorCount, 1000, OpGenesis,
+		append(f.genesisBody(), 0x00, 0x00, 0x00, 0x00))
+
+	// An anchor key that duplicates an authority key in the same body.
+	anchorKeyDuplicatesAuthority := NewBuilder()
+	f.rootQuorum(t, anchorKeyDuplicatesAuthority, 1000, OpGenesis,
+		GenesisBody("aquifer.karst.", f.rootPKs, 1, f.authPKs, 2, [][]byte{f.authPKs[0]}))
+
+	// An anchor that does not advance audit_seq past the previous one.
+	staleAnchor := NewBuilder()
+	f.rootQuorum(t, staleAnchor, 1000, OpGenesis, f.genesisBodyWithAnchor())
+	{
+		e, input := staleAnchor.Prepare(1100, OpAnchor, AnchorBody([]byte("first"), 42))
+		sigs, err := SignAnchors(input, AnchorSigner{Index: uint32(len(f.authPKs)), Key: f.anchor})
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		if err := staleAnchor.Commit(e, sigs); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		e, input = staleAnchor.Prepare(1200, OpAnchor, AnchorBody([]byte("second"), 42))
+		sigs, err = SignAnchors(input, AnchorSigner{Index: uint32(len(f.authPKs)), Key: f.anchor})
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		if err := staleAnchor.Commit(e, sigs); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+
+	// A node-sign carrying a signer index past the authority list — the
+	// concatenated space §3.5 defines is for `anchor` alone, and must not
+	// leak into any other op even when the index names a real anchor key.
+	anchorIndexOnNodeSign := NewBuilder()
+	f.rootQuorum(t, anchorIndexOnNodeSign, 1000, OpGenesis, f.genesisBodyWithAnchor())
+	{
+		e, input := anchorIndexOnNodeSign.Prepare(1100, OpNodeSign, signBody(f.alice, 0, 0))
+		authoritySig, err := f.auths[0].Sign(input)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		anchorSig, err := f.anchor.Sign(input)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		sigs := []Signature{
+			{SignerIndex: 0, Sig: authoritySig},
+			{SignerIndex: uint32(len(f.authPKs)), Sig: anchorSig},
+		}
+		if err := anchorIndexOnNodeSign.Commit(e, sigs); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
 
 	for _, tc := range []struct {
 		name, why string
@@ -401,6 +519,10 @@ func TestVectors(t *testing.T) {
 		{"reordered entries", "sequence and predecessor no longer agree", reordered},
 		{"unknown op", "an unrecognized op is a hard failure, not a skip", unknown},
 		{"authority-signed authority-list", "authorities must not appoint their own successors", authorityCoup.Entries()},
+		{"BE32(0) anchor-key count written long-form", "s = 0 MUST be encoded as absence — ADR-0016", explicitZeroAnchorCount.Entries()},
+		{"anchor key duplicates an authority key", "a key in two lists must not be accepted — ADR-0016", anchorKeyDuplicatesAuthority.Entries()},
+		{"anchor does not advance audit_seq", "truncation-then-reanchor must not verify — ADR-0016", staleAnchor.Entries()},
+		{"anchor-list index used to sign a node-sign", "the concatenated signer space is for anchor alone — ADR-0016", anchorIndexOnNodeSign.Entries()},
 	} {
 		if _, err := VerifyLog(tc.entries); err == nil {
 			t.Fatalf("rejected case %q verified in Go; the vector would be wrong", tc.name)

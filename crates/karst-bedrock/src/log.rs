@@ -21,7 +21,7 @@ use crate::codec::{put_lp, put_u32, put_u64, Cursor};
 use crate::Error;
 
 use karst_crypto::sign::{
-    AUTHORITY_PUBLIC_KEY, NODE_IDENTITY_KEY, ROOT_PUBLIC_KEY, ROOT_SIGNATURE,
+    ANCHOR_PUBLIC_KEY, AUTHORITY_PUBLIC_KEY, NODE_IDENTITY_KEY, ROOT_PUBLIC_KEY, ROOT_SIGNATURE,
 };
 
 /// Domain separator for the Bedrock chain. Written bare; every field after it
@@ -286,6 +286,9 @@ pub struct Genesis {
     pub k: u32,
     pub authorities: Vec<Vec<u8>>,
     pub q: u32,
+    /// ADR-0016's optional anchor-key block. Empty when the deployment has
+    /// not enabled it (spec §3.4's "s = 0 MUST be encoded as absence").
+    pub anchor_keys: Vec<Vec<u8>>,
 }
 
 /// A parsed `node-sign` body.
@@ -336,6 +339,8 @@ pub struct NodeRevoke {
 pub struct AuthorityList {
     pub authorities: Vec<Vec<u8>>,
     pub q: u32,
+    /// ADR-0016's optional anchor-key block — see [`Genesis::anchor_keys`].
+    pub anchor_keys: Vec<Vec<u8>>,
 }
 
 /// A parsed `anchor` body: an audit-log head published into a log the server
@@ -363,6 +368,7 @@ pub fn parse_genesis(body: &[u8]) -> Result<Genesis, Error> {
     let k = c.u32()?;
     let authorities = c.keys(AUTHORITY_PUBLIC_KEY, MAX_SIGNERS)?;
     let q = c.u32()?;
+    let anchor_keys = c.optional_keys(ANCHOR_PUBLIC_KEY, MAX_SIGNERS)?;
     c.finish()?;
     Ok(Genesis {
         zone,
@@ -370,6 +376,7 @@ pub fn parse_genesis(body: &[u8]) -> Result<Genesis, Error> {
         k,
         authorities,
         q,
+        anchor_keys,
     })
 }
 
@@ -382,8 +389,13 @@ pub fn parse_authority_list(body: &[u8]) -> Result<AuthorityList, Error> {
     let mut c = Cursor::new(body);
     let authorities = c.keys(AUTHORITY_PUBLIC_KEY, MAX_SIGNERS)?;
     let q = c.u32()?;
+    let anchor_keys = c.optional_keys(ANCHOR_PUBLIC_KEY, MAX_SIGNERS)?;
     c.finish()?;
-    Ok(AuthorityList { authorities, q })
+    Ok(AuthorityList {
+        authorities,
+        q,
+        anchor_keys,
+    })
 }
 
 /// Parse a `node-sign` body — §3.4.
@@ -482,7 +494,24 @@ pub fn parse_disable(body: &[u8]) -> Result<String, Error> {
 //
 // For the offline signer. Nothing on the verification path calls these.
 
+/// Appends ADR-0016's optional trailing anchor-key block, or nothing at all
+/// when `anchor_keys` is empty — see [`Genesis::anchor_keys`] and spec §3.4's
+/// "s = 0 MUST be encoded as absence".
+fn put_optional_keys(dst: &mut Vec<u8>, anchor_keys: &[Vec<u8>]) {
+    if anchor_keys.is_empty() {
+        return;
+    }
+    put_u32(dst, u32::try_from(anchor_keys.len()).unwrap_or(u32::MAX));
+    for k in anchor_keys {
+        put_lp(dst, k);
+    }
+}
+
 /// Build a `genesis` body — §3.4.
+///
+/// `anchor_keys` is ADR-0016's optional trailing block: pass `&[]` for a
+/// deployment that does not enable anchor keys, which produces a body
+/// byte-identical to before the ADR.
 #[must_use]
 pub fn genesis_body(
     zone: &str,
@@ -490,6 +519,7 @@ pub fn genesis_body(
     k: u32,
     authorities: &[Vec<u8>],
     q: u32,
+    anchor_keys: &[Vec<u8>],
 ) -> Vec<u8> {
     let mut out = Vec::new();
     put_lp(&mut out, zone.as_bytes());
@@ -506,12 +536,15 @@ pub fn genesis_body(
         put_lp(&mut out, a);
     }
     put_u32(&mut out, q);
+    put_optional_keys(&mut out, anchor_keys);
     out
 }
 
 /// Build an `authority-list` body — §3.4.
+///
+/// `anchor_keys` is ADR-0016's optional trailing block — see [`genesis_body`].
 #[must_use]
-pub fn authority_list_body(authorities: &[Vec<u8>], q: u32) -> Vec<u8> {
+pub fn authority_list_body(authorities: &[Vec<u8>], q: u32, anchor_keys: &[Vec<u8>]) -> Vec<u8> {
     let mut out = Vec::new();
     put_u32(
         &mut out,
@@ -521,6 +554,7 @@ pub fn authority_list_body(authorities: &[Vec<u8>], q: u32) -> Vec<u8> {
         put_lp(&mut out, a);
     }
     put_u32(&mut out, q);
+    put_optional_keys(&mut out, anchor_keys);
     out
 }
 

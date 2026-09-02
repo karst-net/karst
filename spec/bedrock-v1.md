@@ -6,7 +6,10 @@ verify the chain themselves and refuse to peer outside it, regardless of what
 the netmap says** (PLAN.md §4.5).
 
 The coordination server distributes this log. It does not author it and cannot
-forge it: every entry is signed by keys the server never holds.
+forge it: every entry that can change policy is signed by keys the server
+never holds. §2's anchor tier (ADR-0016) is the one narrower exception — a
+server *may* hold a key that can sign `anchor` and nothing else, which fixes
+history at a point but cannot rewrite it and cannot admit or remove a node.
 
 ## 1. What this does not do
 
@@ -30,10 +33,18 @@ does is worse than none.
 |---|---|---|---|---|
 | Root | ML-DSA-87 | 2 592 B | 4 627 B | The authority list, and nothing else |
 | Authority | ML-DSA-87 | 2 592 B | 4 627 B | Node countersignatures, revocations, quorum changes, anchors |
+| Anchor | ML-DSA-87 | 2 592 B | 4 627 B | `anchor`, and nothing else |
 | Node | ML-DSA-87 | 2 592 B | — | Nothing. It is the subject, not a signer |
 
 Root keys live on offline media or hardware tokens, `k`-of-`n`. Authority keys
-live on admin devices.
+live on admin devices. An anchor key (ADR-0016) may live on a host that signs
+continuously — a monitoring host, or the coordination server itself — because
+its one power is to commit to audit-log history that already happened, not to
+admit or remove a node. **This is the one narrow exception to "the
+coordination server holds no signing key"**: what the server may hold is a key
+that cannot change policy, not a weaker version of a key that can.
+An anchor key is optional; §3.4 and §3.5 cover the wire format and §4 the
+verification rules it adds.
 
 **The root was SLH-DSA-SHA2-192s and is not any more.** ADR-0001 chose a
 hash-based root so that a break of lattice cryptography — which takes ML-KEM and
@@ -57,12 +68,19 @@ Signatures are made under a per-tier context string:
 ```
 root      "karst-bedrock-v1 root"
 authority "karst-bedrock-v1 authority"
+anchor    "karst-bedrock-v1 anchor"
 ```
 
-A root signature MUST NOT be a valid authority signature or vice versa. The
-algorithms differ today, so this holds trivially; it is specified because
-ADR-0014 makes the authority tier rotatable and the algorithms will not always
-differ.
+A signature under one tier's context string MUST NOT be a valid signature
+under another's. The algorithms are identical across all three today, so this
+holds only because the context strings differ — which is the point: it is
+specified because ADR-0014 makes the authority tier rotatable and the
+algorithms will not always differ, and because ADR-0016 relies on it to keep
+the anchor tier's scope cryptographic rather than procedural. A verifier that
+has never heard of the anchor tier still cannot be tricked into accepting an
+anchor key's `node-sign` — ML-DSA verification under `authority` context fails
+on a signature made under `anchor` context, so an unmodified verifier fails
+closed rather than being fooled.
 
 Signing is **deterministic** in both tiers, departing from the hedged signing
 `identity.go` uses on the control channel. A Bedrock key signs rarely, during a
@@ -81,12 +99,12 @@ server's copy is a cache of it.
 
 | Op | Signed by | Body |
 |---|---|---|
-| `genesis` | `k`-of-`n` roots | Zone, root keys, `n`, `k`, initial authority list, `q` |
-| `authority-list` | `k`-of-`n` roots | Replacement authority set and `q` |
+| `genesis` | `k`-of-`n` roots | Zone, root keys, `n`, `k`, initial authority list, `q`, optional anchor-key list |
+| `authority-list` | `k`-of-`n` roots | Replacement authority set, `q`, optional anchor-key list |
 | `node-sign` | `q` authorities | Handle, ML-DSA-87 identity key, ML-KEM-768 static key, X25519 static key, not-before, expiry |
 | `node-revoke` | `q` authorities | Handle, reason, effective time |
 | `quorum-change` | `q` authorities under the **old** threshold | New `q` |
-| `anchor` | ≥1 authority | Audit-log head hash and sequence |
+| `anchor` | ≥1 authority **or anchor key** | Audit-log head hash and sequence |
 | `disable` | `k`-of-`n` **roots** | Reason |
 
 `disable` is root-signed, not authority-signed, on purpose: an attacker holding
@@ -148,8 +166,10 @@ genesis         LP(zone) || BE32(n) || n × LP(root_pk)
                          || BE32(k)
                          || BE32(a) || a × LP(authority_pk)
                          || BE32(q)
+                         [ || BE32(s) || s × LP(anchor_pk) ]
 
 authority-list  BE32(a) || a × LP(authority_pk) || BE32(q)
+                         [ || BE32(s) || s × LP(anchor_pk) ]
 
 node-sign       LP(handle) || LP(ml_dsa_public_key)
                            || LP(kem_public_key) || LP(dh_public_key)
@@ -166,6 +186,22 @@ disable         LP(reason)
 
 `expiry` of zero means no expiry. `not_before` of zero means immediately
 effective.
+
+**The trailing anchor-key block in `genesis` and `authority-list` is optional
+— ADR-0016.** A body that ends right after `q` means `s = 0`, and `s = 0` MUST
+be encoded as absence: emitting `BE32(0)` for the count is a decode failure.
+Without that rule there are two byte strings for one meaning, which is
+precisely the canonicalization hazard §3.3 exists to remove — and it is what
+lets a deployment that never enables anchor keys keep producing bodies
+byte-identical to before this ADR. `s <= 64` and `a + s <= 64`, matching the
+`maxSigners` bound in §3.5; each anchor key is exactly 2 592 bytes (ML-DSA-87),
+the same size as a root or authority key. An anchor key MUST NOT also appear
+in the root or authority list of the same body — §4 has the rejection rule.
+
+There is no threshold field for the anchor list: §4 rule 8 fixes the `anchor`
+threshold at 1 regardless of which list the signer came from, and a
+configurable `s`-of-`s` would defeat the purpose — automation needs one key
+able to act alone.
 
 ### 3.5 Signatures
 
@@ -184,6 +220,18 @@ a 4-byte index costs 2 588 bytes less than repeating an ML-DSA-87 key. For
 **Duplicate signer indices MUST be rejected.** Without that rule a single
 compromised authority reaches any quorum by repeating its own signature, which
 would reduce `q` to 1 for every operation in the log.
+
+**For `anchor` only, the signer-index space is the authority list and the
+anchor list concatenated — ADR-0016.** `signer_index < a` selects the active
+authority list under the `authority` context; `signer_index >= a` selects the
+active anchor list at `signer_index - a` under the `anchor` context. One
+arithmetic rule, no wire change to this section, and no "try both lists and
+see which verifies" — that pattern is how confused-deputy bugs are written.
+For every other op the active list is the authority list of length `a`, so an
+index of `a` or above is out of range and rejected by §4 rule 6 unchanged. A
+full authority may still anchor at its ordinary index below `a`, which is what
+keeps the offline ceremony working and keeps a deployment with `s = 0` able to
+anchor at all.
 
 ### 3.6 Entry and log encoding
 
@@ -213,7 +261,8 @@ promise. Putting the entry inside a `bytes` field removes the question.
 ## 4. Verification
 
 A verifier walks the log from `genesis` forward, carrying state: the root list
-with `n` and `k`, the current authority list with `q`, the covered-node set, and
+with `n` and `k`, the current authority list with `q`, the current anchor-key
+list (ADR-0016; empty until a body enables it), the covered-node set, and
 whether enforcement has been disabled.
 
 For every entry, in this order:
@@ -226,12 +275,25 @@ For every entry, in this order:
 5. `op` is one of the seven in §3.1. An unknown op is a hard failure, not a
    skip: a verifier that ignores what it does not understand can be fed a log
    whose meaning it does not share with its peers.
-6. Signer indices are in range for the active list of the op's tier, and
-   contain no duplicates.
-7. Every signature verifies over `entry_hash` under the tier's context string.
+6. Signer indices contain no duplicates, and are in range for the active list
+   of the op's tier — **the concatenated authority+anchor space of §3.5 for
+   `anchor`, the authority list alone for every other authority op.**
+7. Every signature verifies under the context string its index selects —
+   `root`, `authority`, or (for `anchor` only, at an index `>= a`) `anchor`.
 8. The signature count meets the threshold for the op: `k` for root ops, `q` for
-   authority ops, 1 for `anchor`. For `quorum-change`, the **old** `q`.
-9. Only then is the body parsed and applied to the state.
+   authority ops, 1 for `anchor` regardless of which list the signer came from.
+   For `quorum-change`, the **old** `q`.
+9. Only then is the body parsed and applied to the state. Two further checks
+   apply here, both from ADR-0016:
+   - **An `anchor` entry's `audit_seq` MUST be strictly greater than the
+     previous anchor's.** Harmless while no deployment holds an anchor key;
+     load-bearing the moment one does — without it a server that truncates its
+     own audit log can anchor the truncated head and every node accepts the
+     rewind.
+   - **An anchor key MUST NOT also appear in the root or authority list of the
+     same `genesis` or `authority-list` body.** A key in two lists answers
+     under two context strings, and copying an authority key into the anchor
+     slot is the exact mistake the separate tier exists to make impossible.
 
 The first entry MUST be `genesis` and `genesis` MUST NOT appear again.
 
@@ -392,7 +454,11 @@ not taken here.
 ## 7. Recovery
 
 - **Quorum of authorities lost.** The roots sign a new `authority-list`.
-  Recoverable, offline, no server involvement.
+  Recoverable, offline, no server involvement. **This atomically replaces the
+  anchor-key list too, not merely the authority list** — ADR-0016 puts the
+  anchor keys in the same body deliberately, so that recovering from authority
+  compromise stays one ceremony rather than two, one of which could be
+  forgotten.
 - **`k` roots lost.** The network lock cannot be disabled and no new node can
   be added. **There is no recovery path and there must not be one, because a
   recovery path is a bypass.** The mitigation is procedural: `n >= 3`, `k = 2`,
@@ -400,6 +466,13 @@ not taken here.
   stored in separate physical locations.
 - **Server lost, log surviving on nodes.** A rebuilt server can be re-seeded
   from any node's replicated copy, and the chain proves it is the same history.
+- **An anchor key is compromised.** Rotating it needs a root ceremony, the same
+  weight as changing the authority list — the list lives in a root-signed body.
+  What a compromised anchor key buys an attacker is bounded: it can fix a
+  history it fabricated after the last anchor, which a human-signed anchor
+  ceremony could already do, since a ceremony signs whatever the server shows
+  it. It cannot rewind the anchor (§4's monotonicity rule) or admit or remove a
+  node.
 
 ## 8. Interoperability
 
@@ -418,11 +491,8 @@ passes even when one side signs the wrong message under the right key.
   does.
 - **Threshold signatures.** `k`-of-`n` is `k` separate signatures, not a
   threshold scheme. Simpler to verify, simpler to audit, and larger.
-- **Automatic anchoring policy.** `anchor` entries exist; when to write one is
-  an operator decision, not a protocol rule.
-- **Capability-scoped authorities.** Every key in the authority list may sign
-  every authority operation. That is why anchoring cannot be automated: an
-  authority key that could sign `anchor` on a timer could also countersign
-  nodes, so nothing a compromised server holds may be one. An authority
-  restricted to `anchor` would fix that and is a change to the `authority-list`
-  body — see FINDINGS 56.
+- **Automatic anchoring policy.** §2's anchor tier (ADR-0016) makes automated
+  anchoring *possible* — a key scoped to `anchor` and nothing else can safely
+  live on a host that signs continuously — but the policy of when to run that
+  job, and the job itself, are not part of this spec. `AnchorDue` exists to
+  make the decision consistent once a caller schedules it.

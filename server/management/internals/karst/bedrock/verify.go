@@ -59,6 +59,11 @@ type State struct {
 	K           uint32
 	Authorities [][]byte
 	Q           uint32
+	// AnchorKeys is ADR-0016's anchor tier: keys permitted to sign `anchor`
+	// and nothing else. Replaced atomically by whichever of genesis or the
+	// latest authority-list carried a trailing anchor-key block — nil means
+	// no anchor key is enabled and only a full authority may anchor.
+	AnchorKeys [][]byte
 
 	// Covered is the latest node-sign per handle.
 	Covered map[string]NodeCoverage
@@ -150,14 +155,20 @@ func VerifyLog(entries []Entry) (*State, error) {
 		if tier == TierAuthority {
 			keys, threshold = st.Authorities, st.Q
 		}
+		// anchorKeys is nil for every op but anchor, which is what keeps rule
+		// 6 unchanged everywhere else: an index at or past len(keys) is out of
+		// range for node-sign, node-revoke, quorum-change. Only for anchor
+		// does ADR-0016's concatenated signer-index space apply — §3.5.
+		var anchorKeys [][]byte
 		if e.Op == OpAnchor {
 			// An anchor is a claim about the audit log, not a policy change.
 			// One authority is enough to make truncation detectable, and
 			// requiring q would mean anchors stop being written exactly when
 			// the authorities are hardest to assemble.
 			threshold = 1
+			anchorKeys = st.AnchorKeys
 		}
-		if err := verifySignatures(e, h, tier, keys, threshold); err != nil {
+		if err := verifySignatures(e, h, tier, keys, anchorKeys, threshold); err != nil {
 			return nil, fmt.Errorf("%w: entry %d: %w", ErrBroken, e.Seq, err)
 		}
 
@@ -176,7 +187,14 @@ func VerifyLog(entries []Entry) (*State, error) {
 }
 
 // verifySignatures checks rules §4.6 through §4.8 for one entry.
-func verifySignatures(e *Entry, entryHash []byte, tier Tier, keys [][]byte, threshold uint32) error {
+//
+// anchorKeys is non-nil only when e.Op is OpAnchor, and it is what carries
+// ADR-0016's concatenated signer-index space: signer_index < len(keys)
+// selects the authority list under AuthorityContext, and
+// signer_index - len(keys) selects the anchor list under AnchorContext. For
+// every other op anchorKeys is nil, so an index at or past len(keys) falls
+// straight through to the out-of-range error — spec §4 rule 6, unchanged.
+func verifySignatures(e *Entry, entryHash []byte, tier Tier, keys, anchorKeys [][]byte, threshold uint32) error {
 	if threshold == 0 {
 		return errors.New("no threshold established for this tier")
 	}
@@ -194,19 +212,25 @@ func verifySignatures(e *Entry, entryHash []byte, tier Tier, keys [][]byte, thre
 		}
 		seen[s.SignerIndex] = struct{}{}
 
-		if int(s.SignerIndex) >= len(keys) {
+		var key []byte
+		var verify func([]byte, []byte, []byte) bool
+		switch {
+		case int(s.SignerIndex) < len(keys):
+			key = keys[s.SignerIndex]
+			switch tier {
+			case TierRoot:
+				verify = VerifyRoot
+			case TierAuthority:
+				verify = VerifyAuthority
+			}
+		case anchorKeys != nil && int(s.SignerIndex)-len(keys) < len(anchorKeys):
+			key = anchorKeys[int(s.SignerIndex)-len(keys)]
+			verify = VerifyAnchorKey
+		default:
 			return fmt.Errorf("signer index %d is out of range for %d keys", s.SignerIndex, len(keys))
 		}
-		key := keys[s.SignerIndex]
 
-		ok := false
-		switch tier {
-		case TierRoot:
-			ok = VerifyRoot(key, entryHash, s.Sig)
-		case TierAuthority:
-			ok = VerifyAuthority(key, entryHash, s.Sig)
-		}
-		if !ok {
+		if !verify(key, entryHash, s.Sig) {
 			return fmt.Errorf("signature from signer %d does not verify", s.SignerIndex)
 		}
 	}
@@ -219,6 +243,7 @@ func (st *State) apply(e *Entry, genesis *Genesis) error {
 	case OpGenesis:
 		st.Zone = genesis.Zone
 		st.Authorities, st.Q = genesis.Authorities, genesis.Q
+		st.AnchorKeys = genesis.AnchorKeys
 
 	case OpAuthorityList:
 		a, err := ParseAuthorityList(e.Body)
@@ -231,7 +256,15 @@ func (st *State) apply(e *Entry, genesis *Genesis) error {
 		if a.Q == 0 || int(a.Q) > len(a.Authorities) {
 			return fmt.Errorf("quorum %d is unreachable with %d authorities", a.Q, len(a.Authorities))
 		}
-		st.Authorities, st.Q = a.Authorities, a.Q
+		if err := validateAnchorKeys(a.AnchorKeys, nil, a.Authorities); err != nil {
+			return err
+		}
+		// §7's recovery story depends on this being a replacement, not a
+		// merge: "the roots sign a new authority-list" must replace the
+		// anchor keys atomically along with the authorities, or authority
+		// compromise recovery would take two ceremonies and could silently
+		// skip one — ADR-0016.
+		st.Authorities, st.Q, st.AnchorKeys = a.Authorities, a.Q, a.AnchorKeys
 
 	case OpNodeSign:
 		n, err := ParseNodeSign(e.Body)
@@ -284,6 +317,15 @@ func (st *State) apply(e *Entry, genesis *Genesis) error {
 		if err != nil {
 			return err
 		}
+		// ADR-0016's new §4 rule: audit_seq must strictly increase. Harmless
+		// while the server holds no anchor key — it does not today — and
+		// load-bearing the moment it does: without this, a server that
+		// truncates its own audit log can anchor the truncated head and
+		// every node accepts the rewind.
+		if st.Anchor != nil && a.AuditSeq <= st.Anchor.AuditSeq {
+			return fmt.Errorf("anchor audit_seq %d does not advance past the previous anchor's %d",
+				a.AuditSeq, st.Anchor.AuditSeq)
+		}
 		st.Anchor = a
 
 	case OpDisable:
@@ -309,6 +351,39 @@ func validateGenesis(g *Genesis) error {
 	}
 	if g.Q == 0 || int(g.Q) > len(g.Authorities) {
 		return fmt.Errorf("quorum %d is unreachable with %d authorities", g.Q, len(g.Authorities))
+	}
+	return validateAnchorKeys(g.AnchorKeys, g.Roots, g.Authorities)
+}
+
+// validateAnchorKeys enforces ADR-0016's two new §4 rules for a body's
+// optional anchor-key block:
+//
+//   - the combined authority+anchor list stays within maxSigners, which is
+//     the concatenated signer-index space spec §3.5 defines for `anchor`;
+//   - an anchor key MUST NOT also appear in the root or authority list of the
+//     same body. A key in two lists answers under two context strings, and
+//     copying an authority key into the anchor slot is the exact footgun this
+//     tier exists to prevent — rejecting it at verification turns an
+//     operational mistake into a failed ceremony rather than a live one.
+//
+// roots is nil when validating an authority-list body, which carries no root
+// list of its own.
+func validateAnchorKeys(anchorKeys, roots, authorities [][]byte) error {
+	if len(authorities)+len(anchorKeys) > maxSigners {
+		return fmt.Errorf("%d authorities plus %d anchor keys exceeds the %d-signer limit",
+			len(authorities), len(anchorKeys), maxSigners)
+	}
+	for _, ak := range anchorKeys {
+		for _, rk := range roots {
+			if bytes.Equal(ak, rk) {
+				return errors.New("an anchor key must not also appear in the root list")
+			}
+		}
+		for _, auk := range authorities {
+			if bytes.Equal(ak, auk) {
+				return errors.New("an anchor key must not also appear in the authority list")
+			}
+		}
 	}
 	return nil
 }

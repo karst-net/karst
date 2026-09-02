@@ -114,7 +114,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.alice = nodeKeys(t, 0x77)
 
-	f.appendRoot(t, 1000, OpGenesis, GenesisBody("aquifer.karst.", f.rootPKs, 2, f.authPKs, 2))
+	f.appendRoot(t, 1000, OpGenesis, GenesisBody("aquifer.karst.", f.rootPKs, 2, f.authPKs, 2, nil))
 	f.appendAuth(t, 1100, OpNodeSign, signBody(f.alice, 0, 0))
 	return f
 }
@@ -314,6 +314,101 @@ func TestAnchorNeedsOnlyOneAuthority(t *testing.T) {
 	}
 }
 
+// ADR-0016's new §4 rule: without it a server that truncates its own audit
+// log could simply anchor the truncated head and every node would accept the
+// rewind.
+func TestAnchorAuditSeqMustAdvance(t *testing.T) {
+	f := newFixture(t)
+	f.appendAuth(t, 1200, OpAnchor, AnchorBody([]byte("first"), 42))
+	base := f.entries() // genesis, node-sign, anchor@42
+
+	// signNext resumes on top of base — rather than f.b, which a candidate
+	// entry must not permanently join — and signs one more anchor.
+	signNext := func(t *testing.T, at int64, body []byte) Entry {
+		t.Helper()
+		b, err := FromEntries(base)
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		e, input := b.Prepare(at, OpAnchor, body)
+		sigs, err := SignAuthorities(input, AuthoritySigner{Index: 2, Key: f.authorities[2]})
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		e.Sigs = sigs
+		return *e
+	}
+	withNext := func(next Entry) []Entry {
+		return append(append([]Entry(nil), base...), next)
+	}
+
+	stalled := signNext(t, 1300, AnchorBody([]byte("second"), 42))
+	mustBreak(t, withNext(stalled), "an anchor that does not advance audit_seq")
+
+	rewound := signNext(t, 1300, AnchorBody([]byte("rewound"), 10))
+	mustBreak(t, withNext(rewound), "an anchor that moves audit_seq backwards")
+
+	advanced := signNext(t, 1300, AnchorBody([]byte("second"), 43))
+	st, err := VerifyLog(withNext(advanced))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if st.Anchor.AuditSeq != 43 {
+		t.Errorf("anchor audit_seq = %d, want 43", st.Anchor.AuditSeq)
+	}
+}
+
+// A dedicated anchor key signs under ADR-0016's concatenated signer-index
+// space: index 3 is past the three-authority list (indices 0-2) and selects
+// anchor-list index 0.
+func TestAnchorKeySignsUnderTheConcatenatedIndexSpace(t *testing.T) {
+	root := testRoot(t, 0x10)
+	authority := testAuthority(t, 0x40)
+	anchorKey, err := GenerateAnchor()
+	if err != nil {
+		t.Fatalf("generate anchor: %v", err)
+	}
+
+	b := NewBuilder()
+	e, input := b.Prepare(1000, OpGenesis, GenesisBody("z.karst.", [][]byte{root.Public()}, 1,
+		[][]byte{authority.Public()}, 1, [][]byte{anchorKey.Public()}))
+	sigs, err := SignRoots(input, RootSigner{Index: 0, Key: root})
+	if err != nil {
+		t.Fatalf("sign genesis: %v", err)
+	}
+	if err := b.Commit(e, sigs); err != nil {
+		t.Fatalf("commit genesis: %v", err)
+	}
+
+	e, input = b.Prepare(1100, OpAnchor, AnchorBody([]byte("audit-head"), 7))
+	sigs, err = SignAnchors(input, AnchorSigner{Index: 1, Key: anchorKey}) // 1 authority + index 0 in the anchor list
+	if err != nil {
+		t.Fatalf("sign anchor: %v", err)
+	}
+	if err := b.Commit(e, sigs); err != nil {
+		t.Fatalf("commit anchor: %v", err)
+	}
+
+	st, err := b.Verify()
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if st.Anchor == nil || st.Anchor.AuditSeq != 7 {
+		t.Fatalf("anchor = %+v", st.Anchor)
+	}
+
+	// The same index is out of range for an authority-only op: rule 6 stays
+	// unchanged for everything but anchor.
+	e2, input2 := b.Prepare(1200, OpNodeRevoke, NodeRevokeBody("some-handle", "test", 1))
+	sig, err := anchorKey.Sign(input2)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	e2.Sigs = []Signature{{SignerIndex: 1, Sig: sig}}
+	entries := append(append([]Entry(nil), b.Entries()...), *e2)
+	mustBreak(t, entries, "an anchor key's signature accepted for a non-anchor op")
+}
+
 func TestDisableRequiresRootsNotAuthorities(t *testing.T) {
 	f := newFixture(t)
 
@@ -419,7 +514,7 @@ func TestAuthoritySignatureOnARootOnlyOpIsRejected(t *testing.T) {
 	f := newFixture(t)
 	// authority-list is a root op. Authorities must not be able to appoint
 	// their own successors.
-	e, input := f.b.Prepare(1200, OpAuthorityList, AuthorityListBody(f.authPKs, 1))
+	e, input := f.b.Prepare(1200, OpAuthorityList, AuthorityListBody(f.authPKs, 1, nil))
 	sigs, err := SignAuthorities(input,
 		AuthoritySigner{Index: 0, Key: f.authorities[0]},
 		AuthoritySigner{Index: 1, Key: f.authorities[1]},
@@ -522,7 +617,7 @@ func TestGenesisMustBeFirstAndUnique(t *testing.T) {
 	mustBreak(t, e[1:], "a log that does not start at genesis")
 
 	f2 := newFixture(t)
-	f2.appendRoot(t, 1200, OpGenesis, GenesisBody("other.karst.", f2.rootPKs, 2, f2.authPKs, 2))
+	f2.appendRoot(t, 1200, OpGenesis, GenesisBody("other.karst.", f2.rootPKs, 2, f2.authPKs, 2, nil))
 	mustBreak(t, f2.entries(), "a second genesis")
 }
 
@@ -618,16 +713,49 @@ func TestTrailingBytesInABodyAreRejected(t *testing.T) {
 		t.Error("trailing bytes in a node-sign body must not parse")
 	}
 	if _, err := ParseGenesis(append(GenesisBody("z", [][]byte{make([]byte, RootPublicKeySize)}, 1,
-		[][]byte{make([]byte, AuthorityPublicKeySize)}, 1), 0x00)); err == nil {
+		[][]byte{make([]byte, AuthorityPublicKeySize)}, 1, nil), 0x00)); err == nil {
 		t.Error("trailing bytes in a genesis body must not parse")
 	}
 }
 
 func TestWrongSizedKeysInABodyAreRejected(t *testing.T) {
-	body := GenesisBody("z", [][]byte{make([]byte, 47)}, 1, [][]byte{make([]byte, AuthorityPublicKeySize)}, 1)
+	body := GenesisBody("z", [][]byte{make([]byte, 47)}, 1, [][]byte{make([]byte, AuthorityPublicKeySize)}, 1, nil)
 	if _, err := ParseGenesis(body); err == nil {
 		t.Error("a 47-byte root key must not parse")
 	}
+}
+
+// A body that ends right after q means s = 0. Writing BE32(0) explicitly is
+// the second byte string for that same meaning and must be rejected —
+// ADR-0016, spec §3.4.
+func TestAnchorBlockZeroCountMustBeEncodedAsAbsence(t *testing.T) {
+	body := append(GenesisBody("z", [][]byte{make([]byte, RootPublicKeySize)}, 1,
+		[][]byte{make([]byte, AuthorityPublicKeySize)}, 1, nil), 0x00, 0x00, 0x00, 0x00)
+	if _, err := ParseGenesis(body); err == nil {
+		t.Error("an explicit BE32(0) anchor-key count must not parse")
+	}
+}
+
+// An anchor key duplicated in the authority list would answer under two
+// context strings and is the exact mistake ADR-0016's separate tier exists to
+// make impossible — rejected at verification rather than relied on
+// procedurally.
+func TestAnchorKeyDuplicatedInAuthorityListIsRejected(t *testing.T) {
+	root := testRoot(t, 0x10)
+	authority := testAuthority(t, 0x40)
+	anchor := testAuthority(t, 0x40) // same seed: same public key as authority
+
+	b := NewBuilder()
+	e, input := b.Prepare(1000, OpGenesis, GenesisBody("z.karst.", [][]byte{root.Public()}, 1,
+		[][]byte{authority.Public()}, 1, [][]byte{anchor.Public()}))
+	sigs, err := SignRoots(input, RootSigner{Index: 0, Key: root})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := b.Commit(e, sigs); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	mustBreak(t, b.Entries(), "an anchor key that duplicates an authority key")
 }
 
 // Length prefixing is what stops two different bodies hashing identically.

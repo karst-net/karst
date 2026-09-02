@@ -81,10 +81,26 @@ pub const AUTHORITY_SEED: usize = 32;
 /// not have to rediscover which call sites meant which.
 pub const NODE_IDENTITY_KEY: usize = 2_592;
 
+/// ML-DSA-87 public key size — ADR-0016's anchor tier.
+pub const ANCHOR_PUBLIC_KEY: usize = 2_592;
+/// ML-DSA-87 signature size.
+pub const ANCHOR_SIGNATURE: usize = 4_627;
+/// ML-DSA-87 seed size.
+pub const ANCHOR_SEED: usize = 32;
+
 /// Context string for signatures made by an offline root key.
 pub const ROOT_CONTEXT: &[u8] = b"karst-bedrock-v1 root";
 /// Context string for signatures made by an authority key.
 pub const AUTHORITY_CONTEXT: &[u8] = b"karst-bedrock-v1 authority";
+/// Context string for signatures made by an anchor key — ADR-0016.
+///
+/// A third tier, permitted to sign `anchor` and nothing else. Scoped by
+/// context string rather than by trust in where the key is kept: an anchor
+/// key's signature is not a valid authority signature over the same entry
+/// hash, so a verifier that has never heard of this tier fails closed instead
+/// of being fooled — the same reasoning [`ROOT_CONTEXT`] and
+/// [`AUTHORITY_CONTEXT`]'s separation already relies on.
+pub const ANCHOR_CONTEXT: &[u8] = b"karst-bedrock-v1 anchor";
 
 // ── root tier ───────────────────────────────────────────────────────────────
 
@@ -240,6 +256,74 @@ pub fn verify_authority(public_key: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     vk.verify_with_context(msg, AUTHORITY_CONTEXT, &sig)
 }
 
+// ── anchor tier ─────────────────────────────────────────────────────────────
+//
+// ADR-0016. Unlike [`RootKey`] and [`AuthorityKey`], an [`AnchorKey`] may
+// reasonably live on a host that signs continuously — a monitoring host, or
+// the coordination server itself — which is exactly why its power is scoped
+// by context string rather than by trust in where it is kept: a compromised
+// holder of this key can commit to audit-log history that already happened,
+// and nothing else.
+
+/// An anchor signing key.
+pub struct AnchorKey {
+    inner: ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa87>,
+}
+
+impl core::fmt::Debug for AnchorKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AnchorKey").finish_non_exhaustive()
+    }
+}
+
+impl AnchorKey {
+    /// Expand an anchor key from its 32-byte seed.
+    ///
+    /// # Errors
+    ///
+    /// [`SignError::KeySize`] if the seed is not exactly 32 bytes.
+    pub fn from_seed(seed: &[u8]) -> Result<Self, SignError> {
+        let seed: [u8; ANCHOR_SEED] = seed.try_into().map_err(|_| SignError::KeySize)?;
+        Ok(Self {
+            inner: ml_dsa::ExpandedSigningKey::<ml_dsa::MlDsa87>::from_seed(&seed.into()),
+        })
+    }
+
+    /// The 2592-byte public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.inner.verifying_key().encode().to_vec()
+    }
+
+    /// Sign under [`ANCHOR_CONTEXT`]. Deterministic — see the module docs.
+    ///
+    /// # Errors
+    ///
+    /// [`SignError::Sign`] if the signature operation fails.
+    pub fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, SignError> {
+        self.inner
+            .sign_deterministic(msg, ANCHOR_CONTEXT)
+            .map(|s| s.encode().to_vec())
+            .map_err(|_| SignError::Sign)
+    }
+}
+
+/// Verify an anchor signature under [`ANCHOR_CONTEXT`].
+#[must_use]
+pub fn verify_anchor_key(public_key: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    let Ok(pk) = <[u8; ANCHOR_PUBLIC_KEY]>::try_from(public_key) else {
+        return false;
+    };
+    let Ok(sg) = <[u8; ANCHOR_SIGNATURE]>::try_from(sig) else {
+        return false;
+    };
+    let vk = ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&pk.into());
+    let Some(sig) = ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&sg.into()) else {
+        return false;
+    };
+    vk.verify_with_context(msg, ANCHOR_CONTEXT, &sig)
+}
+
 // ── errors ──────────────────────────────────────────────────────────────────
 
 /// A signing-side failure. Verification never produces one of these: it returns
@@ -355,5 +439,38 @@ mod tests {
     #[test]
     fn tier_contexts_differ() {
         assert_ne!(ROOT_CONTEXT, AUTHORITY_CONTEXT);
+        assert_ne!(ROOT_CONTEXT, ANCHOR_CONTEXT);
+        assert_ne!(AUTHORITY_CONTEXT, ANCHOR_CONTEXT);
+    }
+
+    #[test]
+    fn anchor_sizes_match_adr_0016() {
+        let k = AnchorKey::from_seed(&[3u8; ANCHOR_SEED]).unwrap();
+        assert_eq!(k.public_key().len(), ANCHOR_PUBLIC_KEY);
+        assert_eq!(k.sign(b"x").unwrap().len(), ANCHOR_SIGNATURE);
+    }
+
+    #[test]
+    fn anchor_round_trip() {
+        let k = AnchorKey::from_seed(&[5u8; ANCHOR_SEED]).unwrap();
+        let msg = b"an audit head";
+        let sig = k.sign(msg).unwrap();
+        assert!(verify_anchor_key(&k.public_key(), msg, &sig));
+        assert!(!verify_anchor_key(
+            &k.public_key(),
+            b"a different head",
+            &sig
+        ));
+    }
+
+    /// An anchor key's signature must not verify as an authority signature
+    /// over the same message — the whole point of the separate context
+    /// string, not merely that verification with the wrong function fails.
+    #[test]
+    fn anchor_signature_does_not_verify_as_authority() {
+        let k = AnchorKey::from_seed(&[6u8; ANCHOR_SEED]).unwrap();
+        let msg = b"countersign a rogue node";
+        let sig = k.sign(msg).unwrap();
+        assert!(!verify_authority(&k.public_key(), msg, &sig));
     }
 }

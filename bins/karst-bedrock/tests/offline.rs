@@ -25,8 +25,10 @@ use std::process::{Command, Stdio};
 use karst_bedrock::bundle::{
     request_to_json, response_from_json, OfflineSignature, Pending, Request, Response,
 };
-use karst_bedrock::{genesis_body, node_sign_body, verify_log, Builder, Entry, Op, Signature};
-use karst_crypto::sign::{AuthorityKey, RootKey, ROOT_SEED};
+use karst_bedrock::{
+    anchor_body, genesis_body, node_sign_body, verify_log, Builder, Entry, Op, Signature,
+};
+use karst_crypto::sign::{AnchorKey, AuthorityKey, RootKey, ANCHOR_SEED, ROOT_SEED};
 
 fn root(seed: u8) -> RootKey {
     RootKey::from_seed(&[seed; ROOT_SEED]).expect("root")
@@ -112,7 +114,14 @@ fn scratch(name: &str, contents: &[u8]) -> std::path::PathBuf {
 /// A genesis-only log, built in-process, so the test has something to extend.
 fn genesis_log(r: &RootKey, a: &AuthorityKey) -> Vec<Entry> {
     let mut b = Builder::new();
-    let body = genesis_body("aquifer.karst.", &[r.public_key()], 1, &[a.public_key()], 1);
+    let body = genesis_body(
+        "aquifer.karst.",
+        &[r.public_key()],
+        1,
+        &[a.public_key()],
+        1,
+        &[],
+    );
     let (entry, input) = b.prepare(1000, Op::Genesis, body);
     let sig = r.sign(&input).expect("sign genesis");
     b.commit(
@@ -267,6 +276,151 @@ fn root_quorum_genesis_request_sign_and_combine() {
     assert_eq!(state.q, 1);
 }
 
+/// ADR-0016 end-to-end: a genesis carrying one anchor key enabled through
+/// `genesis-request`'s optional third group, and that key signing an
+/// `anchor` entry through the same subprocess path as a root or an
+/// authority — recognized by which list it is in, never by its own bytes,
+/// since all three tiers are ML-DSA-87.
+#[test]
+#[allow(clippy::too_many_lines)] // one linear flow: genesis, combine, then the anchor entry
+fn an_anchor_key_enabled_from_genesis_signs_an_anchor_entry() {
+    let roots = vec![root(0x11), root(0x21), root(0x31)];
+    let authority = authority(0x41);
+    let anchor = AnchorKey::from_seed(&[0x51u8; ANCHOR_SEED]).expect("anchor");
+
+    let root_pubs: Vec<_> = roots
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            scratch(
+                &format!("anchor-genesis-root-{index}.pub"),
+                hex(&key.public_key()).as_bytes(),
+            )
+        })
+        .collect();
+    let authority_pub = scratch(
+        "anchor-genesis-authority.pub",
+        hex(&authority.public_key()).as_bytes(),
+    );
+    let anchor_pub = scratch(
+        "anchor-genesis-anchor.pub",
+        hex(&anchor.public_key()).as_bytes(),
+    );
+
+    let request = scratch("anchor-genesis-request.json", b"");
+    std::fs::remove_file(&request).expect("clear request target");
+    let mut command = Command::new(bin());
+    command.args([
+        "genesis-request",
+        request.to_str().expect("path"),
+        "aquifer.karst.",
+        "2",
+    ]);
+    for path in &root_pubs {
+        command.arg(path);
+    }
+    command
+        .arg("--")
+        .arg("1")
+        .arg(&authority_pub)
+        .arg("--")
+        .arg(&anchor_pub);
+    let made = command.output().expect("run genesis-request");
+    assert!(
+        made.status.success(),
+        "genesis request failed: {}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let made_out = String::from_utf8_lossy(&made.stdout);
+    assert!(
+        made_out.contains("anchor key"),
+        "genesis-request did not report the anchor key:\n{made_out}"
+    );
+
+    let mut responses = Vec::new();
+    for (index, seed) in [0x11u8, 0x21].iter().enumerate() {
+        let key = scratch(
+            &format!("anchor-genesis-root-{index}.key"),
+            &[*seed; ROOT_SEED],
+        );
+        let response = scratch(&format!("anchor-genesis-response-{index}.json"), b"");
+        let signed = run_sign(&request, &key, &response, "sign\n");
+        assert!(
+            signed.status.success(),
+            "root signing failed: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        );
+        responses.push(response);
+    }
+    let log_path = scratch("anchor-genesis.bedrock", b"");
+    std::fs::remove_file(&log_path).expect("clear log target");
+    let combined = Command::new(bin())
+        .arg("combine")
+        .arg(&request)
+        .arg(&log_path)
+        .args(&responses)
+        .output()
+        .expect("run combine");
+    assert!(
+        combined.status.success(),
+        "combine failed: {}",
+        String::from_utf8_lossy(&combined.stderr)
+    );
+    let genesis_entries = karst_bedrock::decode_log(&std::fs::read(&log_path).expect("read log"))
+        .expect("decode log");
+    let genesis_state = verify_log(&genesis_entries).expect("verify genesis with anchor key");
+    assert_eq!(genesis_state.anchor_keys, vec![anchor.public_key()]);
+
+    // Extend the chain with an anchor entry, signed by the dedicated anchor
+    // key rather than an authority — the concatenated signer space of §3.5,
+    // exercised through the real binary rather than the library directly.
+    // `genesis-request` stamps the genesis entry with the real wall clock
+    // (unlike this file's in-process `genesis_log` fixture, which uses 1000),
+    // so the next entry's time has to follow it rather than a fixed constant.
+    let genesis_time = genesis_entries.first().expect("genesis entry").time;
+    let anchor_request = Request {
+        log: genesis_entries.clone(),
+        pending: vec![Pending {
+            seq: 2,
+            time: genesis_time + 100,
+            op: Op::Anchor,
+            body: anchor_body(b"audit-head", 42),
+        }],
+    };
+    let req_path = scratch(
+        "anchor-entry-request.json",
+        request_to_json(&anchor_request).as_bytes(),
+    );
+    let anchor_key_path = scratch("anchor.key", &[0x51u8; ANCHOR_SEED]);
+    let out_path = scratch("anchor-entry-response.json", b"");
+
+    let out = run_sign(&req_path, &anchor_key_path, &out_path, "sign\n");
+    assert!(
+        out.status.success(),
+        "signing with the anchor key failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let summary = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        summary.contains("About to sign as anchor"),
+        "the tool did not recognize the anchor key:\n{summary}"
+    );
+
+    let response: Response =
+        response_from_json(&std::fs::read_to_string(&out_path).expect("read response"))
+            .expect("parse response");
+    let extended = anchor_request
+        .verify()
+        .expect("verify request")
+        .apply(&genesis_entries, &response)
+        .expect("apply anchor response");
+
+    let final_state = verify_log(&extended).expect("verify extended log");
+    let anchor_entry = final_state.anchor.expect("anchor entry applied");
+    assert_eq!(anchor_entry.audit_seq, 42);
+    assert_eq!(anchor_entry.audit_head, b"audit-head");
+}
+
 /// Without the typed confirmation, nothing is signed.
 #[test]
 fn refusing_the_confirmation_signs_nothing() {
@@ -334,7 +488,7 @@ fn a_key_outside_the_authority_list_cannot_sign() {
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("neither the root nor the authority list"),
+        err.contains("none of the root, authority, or anchor lists"),
         "unhelpful error: {err}"
     );
 }

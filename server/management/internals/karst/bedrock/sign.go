@@ -83,18 +83,31 @@ const (
 	// future tier split should not have to rediscover which call sites meant
 	// which.
 	NodeIdentityKeySize = mldsa.MLDSA87PublicKeySize
+
+	// AnchorPublicKeySize is 2592 bytes (ML-DSA-87) — ADR-0016.
+	AnchorPublicKeySize = mldsa.MLDSA87PublicKeySize
+	// AnchorSignatureSize is 4627 bytes.
+	AnchorSignatureSize = mldsa.MLDSA87SignatureSize
+	// AnchorSeedSize is 32 bytes.
+	AnchorSeedSize = mldsa.PrivateKeySize
 )
 
 // Context strings. A root signature must never be a valid authority signature
 // and vice versa, **even though the algorithms differ today** — ADR-0014 makes
 // the authority tier rotatable, and the day it rotates this stops being
-// guaranteed by the algorithm split alone.
+// guaranteed by the algorithm split alone. The anchor context (ADR-0016) is
+// the same reasoning applied a third time: an anchor key's signature must not
+// verify as an authority signature over the same entry hash, so a verifier
+// that has never heard of the anchor tier fails closed instead of being
+// fooled into accepting a `node-sign` from a key meant to do nothing but
+// anchor.
 //
 // These follow identity.ControlContext's precedent, and deliberately share its
-// "karst-…-v1" shape so that a reader who has seen one recognizes the other.
+// "karst-…-v1" shape so that a reader who has seen one recognizes the others.
 const (
 	RootContext      = "karst-bedrock-v1 root"
 	AuthorityContext = "karst-bedrock-v1 authority"
+	AnchorContext    = "karst-bedrock-v1 anchor"
 )
 
 var (
@@ -227,4 +240,63 @@ func VerifyAuthority(publicKey, msg, sig []byte) bool {
 		return false
 	}
 	return mldsa.Verify(pk, msg, sig, &mldsa.Options{Context: AuthorityContext}) == nil
+}
+
+// ── anchor tier ─────────────────────────────────────────────────────────────
+//
+// ADR-0016. A third signing tier, permitted to sign `anchor` and nothing else.
+// Unlike RootKey and AuthorityKey, an AnchorKey may reasonably live on a host
+// that signs continuously — a monitoring host, or the coordination server
+// itself — which is exactly why its power is scoped by context string rather
+// than by trust in where the key is kept: a compromised holder of this key can
+// commit to audit-log history that already happened, and nothing else.
+
+// AnchorKey is an anchor signing key.
+type AnchorKey struct {
+	priv *mldsa.PrivateKey
+}
+
+// GenerateAnchor creates a new anchor key.
+func GenerateAnchor() (*AnchorKey, error) {
+	priv, err := mldsa.GenerateKey(mldsa.MLDSA87())
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: generate anchor: %w", err)
+	}
+	return &AnchorKey{priv: priv}, nil
+}
+
+// AnchorFromSeed derives an anchor key from its 32-byte seed.
+func AnchorFromSeed(seed []byte) (*AnchorKey, error) {
+	if len(seed) != AnchorSeedSize {
+		return nil, fmt.Errorf("%w: anchor seed is %d bytes, want %d", ErrKeySize, len(seed), AnchorSeedSize)
+	}
+	priv, err := mldsa.NewPrivateKey(mldsa.MLDSA87(), seed)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: anchor from seed: %w", err)
+	}
+	return &AnchorKey{priv: priv}, nil
+}
+
+// Public returns the 2592-byte public key.
+func (k *AnchorKey) Public() []byte { return k.priv.PublicKey().Bytes() }
+
+// Sign produces a deterministic signature over msg under AnchorContext.
+func (k *AnchorKey) Sign(msg []byte) ([]byte, error) {
+	sig, err := k.priv.SignDeterministic(msg, &mldsa.Options{Context: AnchorContext})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSign, err)
+	}
+	return sig, nil
+}
+
+// VerifyAnchorKey checks an anchor signature under AnchorContext.
+func VerifyAnchorKey(publicKey, msg, sig []byte) bool {
+	if len(publicKey) != AnchorPublicKeySize || len(sig) != AnchorSignatureSize {
+		return false
+	}
+	pk, err := mldsa.NewPublicKey(mldsa.MLDSA87(), publicKey)
+	if err != nil {
+		return false
+	}
+	return mldsa.Verify(pk, msg, sig, &mldsa.Options{Context: AnchorContext}) == nil
 }

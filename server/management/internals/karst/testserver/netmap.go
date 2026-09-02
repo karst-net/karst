@@ -629,7 +629,7 @@ func newBedrockFixture(mode proto.KarstBedrockMode) (*bedrockFixture, error) {
 
 	b := bedrock.NewBuilder()
 	entry, input := b.Prepare(1000, bedrock.OpGenesis, bedrock.GenesisBody(
-		"fixture.karst.", [][]byte{rootPub}, 1, [][]byte{authority.Public()}, 1))
+		"fixture.karst.", [][]byte{rootPub}, 1, [][]byte{authority.Public()}, 1, nil))
 	sigs, err := bedrock.SignRoots(input, bedrock.RootSigner{Index: 0, Key: root})
 	if err != nil {
 		return nil, fmt.Errorf("sign genesis: %w", err)

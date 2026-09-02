@@ -157,6 +157,30 @@ func VerifyAnchored(ctx context.Context, state *State, audit AuditHead) (uint64,
 	return 0, nil
 }
 
+// LastAnchoredAt finds when the log's current anchor was written, by scanning
+// for the `anchor` entry matching state.Anchor.
+//
+// Returns the zero Time and false when state has no anchor at all — the
+// scheduler and the audit-status endpoint both handle that case earlier,
+// through AnchorDue's own nil-anchor branch and the console's
+// last_anchored_at == nil respectively, so neither needed a distinguishable
+// zero value from this function specifically.
+func LastAnchoredAt(entries []Entry, state *State) (time.Time, bool) {
+	if state == nil || state.Anchor == nil {
+		return time.Time{}, false
+	}
+	for _, e := range entries {
+		if e.Op != OpAnchor {
+			continue
+		}
+		a, err := ParseAnchor(e.Body)
+		if err == nil && a.AuditSeq == state.Anchor.AuditSeq {
+			return time.Unix(e.Time, 0).UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
 // AnchorMatches reports whether an anchor commits to exactly this audit head.
 //
 // Used by the console to show whether the anchor is current, which is a

@@ -1,7 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0016: A capability-scoped anchor tier
 
-- **Status:** Proposed
+- **Status:** Accepted and fully implemented — the wire format, §4 verification
+  rules, both languages, the `karst-bedrock` CLI, the anchor scheduler, and
+  `VerifyAnchored`'s console wiring are all in the tree (see "Implementation"
+  below for the item-by-item account). GitHub issue [#61](https://github.com/karst-net/karst/issues/61) tracks this ADR.
 - **Date:** 2026-08-29
 - **Deciders:** TBD
 - **Related:** Extends ADR-0014 (Bedrock trust hierarchy); inherits ADR-0015 (CNSA 2.0); changes `spec/bedrock-v1.md` §2, §3.4, §3.5, §4, §7, §9; closes FINDINGS 56; unblocks PLAN.md Phase 5's deferred "automated anchoring"
@@ -160,35 +163,58 @@ and it is monitorable without trusting the server, because the anchor entries'
 
 ### Implementation
 
-Roughly in this order:
+All eight items below are done. Roughly in this order:
 
-1. **Monotonicity and the disjointness check**, in both verifiers, with rejected
-   vectors. Ship this first; it is correct independently of the rest.
-2. `spec/bedrock-v1.md` — §2 tier table and context strings, §3.1 (`anchor`
+1. ✅ **Monotonicity and the disjointness check**, in both verifiers, with
+   rejected vectors. Shipped first; it is correct independently of the rest.
+2. ✅ `spec/bedrock-v1.md` — §2 tier table and context strings, §3.1 (`anchor`
    signed by "≥1 authority or anchor key"), §3.4 layouts, §3.5 index space, §4
-   rules, §7, §9 (delete the "Capability-scoped authorities" bullet), and the
-   preamble's "every entry is signed by keys the server never holds", which
-   stops being true.
-3. **Go** — `AnchorContext`, `AnchorKey`/`VerifyAnchorKey` in `bedrock/sign.go`;
-   `TierAnchor` and the optional trailing block in `bedrock/log.go`'s four
-   builders and parsers; `State.AnchorKeys` and the split signature path in
-   `bedrock/verify.go`.
-4. **Rust** — the mirror in `crates/karst-bedrock/src/{log,verify}.rs` and
+   rules, §7, §9 (the "Capability-scoped authorities" bullet now describes what
+   exists rather than what is missing), and the preamble's "every entry is
+   signed by keys the server never holds", amended to name this tier as the one
+   narrow exception.
+3. ✅ **Go** — `AnchorContext`, `AnchorKey`/`VerifyAnchorKey` in `bedrock/sign.go`;
+   the optional trailing block in `bedrock/log.go`'s four builders and parsers;
+   `State.AnchorKeys` and the concatenated-signer-space lookup in
+   `bedrock/verify.go`. (No `TierAnchor` — `Tier` stays root/authority only;
+   the concatenated space is threaded through `verifySignatures` as a separate
+   `anchorKeys` argument, non-nil only for `OpAnchor`, which is what keeps §4
+   rule 6 unchanged for every other op without a third `Tier` value to check.)
+4. ✅ **Rust** — the mirror in `crates/karst-bedrock/src/{log,verify}.rs`,
+   `crates/karst-bedrock/src/codec.rs` (`Cursor::optional_keys`), and
    `karst-crypto/src/sign.rs`.
-5. **`karst-bedrock`** — `init anchor`, an anchor-key path through `sign`, anchor
+5. ✅ **`karst-bedrock`** — `init root|authority|anchor`, an anchor-key path
+   through `sign` (recognized by which list it is in, via a CLI-local `KeyTier`
+   — see item 3's note on why `Tier` itself did not grow a third value), anchor
    keys rendered in `inspect`'s genesis and authority-list summaries, and an
-   optional anchor group on `genesis-request`.
-6. **Vectors** — regenerate with
-   `UPDATE_VECTORS=1 go test ./management/internals/karst/bedrock/ -run Vectors`.
-   New body cases for both shapes, a log case whose `anchor` is signed by an
-   anchor key, and rejected cases for: `BE32(0)` written long-form, an anchor key
-   duplicated in the authority list, an `anchor` that does not advance
-   `audit_seq`, and a `node-sign` with `signer_index >= a`.
-7. **The scheduler** — a job that calls `AnchorDue`, then `PrepareAnchor`, signs
-   with the local anchor key, and imports through the existing response path.
-   These are `AnchorDue`'s first production callers.
-8. **`VerifyAnchored` on the audit status endpoint**, so the console reports a
-   log that contradicts its anchor rather than only counting entries since it.
+   optional third `-- ANCHOR.pub...` group on `genesis-request`.
+6. ✅ **Vectors** — regenerated. New body cases for both shapes, a log case
+   whose `anchor` is signed by an anchor key, and rejected cases for: `BE32(0)`
+   written long-form, an anchor key duplicated in the authority list, an
+   `anchor` that does not advance `audit_seq`, and an anchor-list index used to
+   sign a `node-sign`.
+7. ✅ **The scheduler** (`bedrock.Scheduler`, `bedrock/scheduler.go`) — calls
+   `AnchorDue`, then `PrepareAnchor`, signs with the local `AnchorKey`, and
+   imports directly via `Log.Import`. **Not** the pending-request/offline-response
+   round trip that §8's flow and the console's ceremony use: that indirection
+   exists specifically for keys the server does not hold, and threading an
+   in-process key through it would gain nothing but latency. Wired up in
+   `cmd/karst-control/main.go` behind `KARST_BEDROCK_ANCHOR_KEY_FILE` (reads the
+   same raw-seed format `karst-bedrock init anchor` writes), with
+   `KARST_BEDROCK_ANCHOR_MAX_AGE` and `KARST_BEDROCK_ANCHOR_MIN_ENTRIES` for
+   `AnchorDue`'s two thresholds. Unset means exactly what it always meant: no
+   automation, only the offline ceremony.
+8. ✅ **`VerifyAnchored` on the audit status endpoint** — `AuditAnchor` gained
+   `contradicts_anchor` (OpenAPI, Go, and the hand-maintained TS client — see a
+   note on that below), and the console's audit view now renders a danger
+   banner when it is true, rather than only counting entries since the anchor.
+
+One implementation note the list above doesn't carry: `web/packages/api-client/src/generated/types.gen.ts`
+was hand-edited to match what `openapi-ts` would produce, because the
+environment this shipped from had no Node.js toolchain to run
+`npm run generate`. Run it (or `npm run check-drift`) once Node is available
+to confirm the hand edit matches byte-for-byte; if it does not, the generator
+output is authoritative.
 
 ### Migration
 

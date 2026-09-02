@@ -26,17 +26,20 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/netbirdio/netbird/management/cmd"
+	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
+	"github.com/netbirdio/netbird/shared/auth"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -67,6 +70,44 @@ const (
 // A deployment needs both, and having only one is silent — the relay admits
 // nobody who ever arrives, because nobody was told to arrive.
 const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
+
+// The anchor scheduler's configuration — ADR-0016, GitHub issue [#61](https://github.com/karst-net/karst/issues/61).
+//
+// Unset means what it has always meant for this deployment: nobody anchors
+// the audit log but the offline authority ceremony, which is a human running
+// `karst-bedrock sign` when they remember to. Set, the key file must hold the
+// raw 32-byte seed `karst-bedrock init anchor` writes — this reads exactly
+// that file, so the same key generated for the offline ceremony can be
+// pointed at the server instead, or a fresh one made for it.
+//
+// A key here can only ever sign `anchor` (ADR-0016's whole point), so this is
+// deliberately a lighter bar than the roster or bootstrap-key envs above: a
+// bad or unenabled key logs and waits rather than failing startup, because
+// the ordinary rollout order is "start the server with this set, then run
+// the root ceremony that adds the key to the chain" — treating the interim
+// as fatal would make that order impossible.
+const (
+	karstBedrockAnchorKeyEnv        = "KARST_BEDROCK_ANCHOR_KEY_FILE"
+	karstBedrockAnchorMaxAgeEnv     = "KARST_BEDROCK_ANCHOR_MAX_AGE"
+	karstBedrockAnchorMinEntriesEnv = "KARST_BEDROCK_ANCHOR_MIN_ENTRIES"
+)
+
+// karstBedrockAnchorPollInterval is how often the scheduler checks AnchorDue,
+// not how often it anchors — see bedrock.AnchorDue's own doc for why those
+// are different knobs. Not configurable: it is cheap (a handful of local
+// reads against a log that is small by construction) and operationally
+// meaningless on its own, unlike karstBedrockAnchorMaxAgeEnv.
+const karstBedrockAnchorPollInterval = 5 * time.Minute
+
+// karstBedrockAnchorDefaultMaxAge and karstBedrockAnchorDefaultMinEntries are
+// AnchorDue's two thresholds when an operator sets a key but not a pace.
+// A day and a thousand entries are arbitrary in the sense any default is;
+// they are chosen to be quiet on a small self-hosted deployment while still
+// bounding the undetectable-truncation window to a day at most.
+const (
+	karstBedrockAnchorDefaultMaxAge     = 24 * time.Hour
+	karstBedrockAnchorDefaultMinEntries = 1000
+)
 
 // karstBootstrapKeyEnv names a file to mint the first enrollment key into.
 //
@@ -109,6 +150,7 @@ func main() {
 		}
 		startRosterRefresher(ctx, k)
 		writeBootstrapKey(ctx, s.AccountManager())
+		startBedrockAnchorScheduler(ctx, k, s.AccountManager())
 		return s
 	})
 
@@ -197,6 +239,67 @@ func writeBootstrapKey(ctx context.Context, accounts account.Manager) {
 	}
 	log.Warnf("karst: wrote a bootstrap enrollment key to %s. Put it in a node's "+
 		"[control] setup_key, and revoke it once an identity provider is configured.", path)
+}
+
+// startBedrockAnchorScheduler runs ADR-0016's anchor tier automatically: the
+// job that gives bedrock.AnchorDue its first production caller.
+//
+// **Fatal on a bad key, quiet forever after that.** An operator who set the
+// path meant this key to sign; a seed that will not load is a configuration
+// mistake worth stopping on, the same call startRosterRefresher makes. Once
+// loaded, though, the key not yet being in the chain's anchor list is not a
+// mistake — it is the ordinary gap between starting the server and running
+// the root ceremony that enables it — so the scheduler itself only logs
+// that, once, and keeps ticking.
+func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst, accounts account.Manager) {
+	path := os.Getenv(karstBedrockAnchorKeyEnv)
+	if path == "" {
+		return
+	}
+	seed, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("karst: %s=%s: %v", karstBedrockAnchorKeyEnv, path, err)
+	}
+	key, err := bedrock.AnchorFromSeed(seed)
+	if err != nil {
+		log.Fatalf("karst: %s=%s: %v", karstBedrockAnchorKeyEnv, path, err)
+	}
+
+	maxAge := karstBedrockAnchorDefaultMaxAge
+	if raw := os.Getenv(karstBedrockAnchorMaxAgeEnv); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("karst: %s=%q is not a duration: %v", karstBedrockAnchorMaxAgeEnv, raw, err)
+		}
+		maxAge = parsed
+	}
+	minEntries := uint64(karstBedrockAnchorDefaultMinEntries)
+	if raw := os.Getenv(karstBedrockAnchorMinEntriesEnv); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			log.Fatalf("karst: %s=%q is not a non-negative integer: %v", karstBedrockAnchorMinEntriesEnv, raw, err)
+		}
+		minEntries = parsed
+	}
+
+	// Single-account mode's resolution, the same one MintBootstrapKey uses:
+	// an empty domain with any user ID routes to the one account a
+	// self-hosted deployment has. See enroll.go's comment on why that is
+	// also correct for a multi-account deployment, which routes an unknown
+	// user to a fresh account of their own rather than this one.
+	accountID, _, err := accounts.GetAccountIDFromUserAuth(ctx, auth.UserAuth{UserId: bootstrap.BootstrapUserID})
+	if err != nil {
+		log.Fatalf("karst: %s: resolve account: %v", karstBedrockAnchorKeyEnv, err)
+	}
+
+	s := &bedrock.Scheduler{
+		Log: k.Chain, Audit: k.Audit, AccountID: accountID, Key: key,
+		MinEntries: minEntries, MaxAge: maxAge,
+	}
+	log.Infof("karst: bedrock anchor scheduler enabled for %s: checking every %s, "+
+		"anchoring after %d entries or %s, whichever comes first",
+		accountID, karstBedrockAnchorPollInterval, minEntries, maxAge)
+	go s.Run(ctx, karstBedrockAnchorPollInterval)
 }
 
 // loadRelays reads the relay registry a node is told about — §4.2.

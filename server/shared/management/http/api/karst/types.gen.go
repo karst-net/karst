@@ -408,6 +408,8 @@ type AcknowledgmentMismatch struct {
 
 // AuditAnchor defines model for AuditAnchor.
 type AuditAnchor struct {
+	// ContradictsAnchor true when the audit log no longer matches its recorded anchor (ADR-0016 VerifyAnchored) — the server has truncated or rewritten history since it was last anchored. False both when the log is intact and when there is no anchor to contradict.
+	ContradictsAnchor    bool       `json:"contradicts_anchor"`
 	EntriesSinceAnchor   int        `json:"entries_since_anchor"`
 	LastAnchoredAt       *time.Time `json:"last_anchored_at,omitempty"`
 	LastAnchoredSequence *int       `json:"last_anchored_sequence"`

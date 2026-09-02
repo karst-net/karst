@@ -5,12 +5,22 @@
 //! `karst-bedrock` — the offline signer. `spec/bedrock-v1.md` §8, plan item 10.9.
 //!
 //! ```text
-//! karst-bedrock init root|authority FILE   generate a key, print the public key
+//! karst-bedrock init root|authority|anchor FILE   generate a key, print the public key
 //! karst-bedrock pubkey FILE                print a key's public key
 //! karst-bedrock inspect FILE               decode and print a bundle or log
 //! karst-bedrock sign REQUEST KEY OUT       verify, summarize, confirm, sign
 //! karst-bedrock verify FILE                verify a chain offline
 //! ```
+//!
+//! # The anchor tier (ADR-0016)
+//!
+//! An anchor key signs `anchor` and nothing else, so `sign` recognizes one the
+//! same way it recognizes a root or an authority key: by which list in the log
+//! it appears in, never by the key material itself — all three tiers are
+//! ML-DSA-87. `genesis-request` takes an optional third group to enable the
+//! tier from genesis; an existing deployment enables it by countersigning a
+//! new `authority-list` body instead, which this tool signs like any other
+//! root-quorum request.
 //!
 //! # Why this is a separate binary
 //!
@@ -44,7 +54,7 @@ use karst_bedrock::{
     decode_log, encode_log, genesis_body, parse_anchor, parse_authority_list, parse_disable,
     parse_genesis, parse_node_revoke, parse_node_sign, parse_quorum_change, verify_log,
 };
-use karst_crypto::sign::{AuthorityKey, RootKey};
+use karst_crypto::sign::{AnchorKey, AuthorityKey, RootKey};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -78,13 +88,16 @@ fn usage() {
     eprintln!(
         "karst-bedrock — offline Bedrock signer
 
-  init root|authority FILE    generate a key; writes FILE and FILE.pub
+  init root|authority|anchor FILE
+                              generate a key; writes FILE and FILE.pub
   pubkey [--full] FILE        print a key's fingerprint, or the key itself
-  genesis-request OUT ZONE K ROOT.pub... -- Q AUTHORITY.pub...
-                              make a root-quorum genesis request
+  genesis-request OUT ZONE K ROOT.pub... -- Q AUTHORITY.pub... [-- ANCHOR.pub...]
+                              make a root-quorum genesis request, optionally
+                              enabling ADR-0016's anchor tier from genesis
 
-Both tiers are ML-DSA-87, so a key seed is 32 bytes either way and the tier is
-decided by which list in the log contains the key, not by the file.
+All three tiers are ML-DSA-87, so a key seed is 32 bytes either way and which
+tier a key belongs to is decided by which list in the log contains it, not by
+the file.
   inspect FILE                decode and print a bundle or an encoded log
   sign REQUEST KEY OUT        verify a request, summarize it, sign it
   combine REQUEST OUT RESPONSE...
@@ -98,24 +111,46 @@ secret: back it up before you use it."
 
 // ── root quorum bootstrap ──────────────────────────────────────────────────
 
+const GENESIS_REQUEST_USAGE: &str =
+    "genesis-request needs ROOT.pub... -- Q AUTHORITY.pub... [-- ANCHOR.pub...]";
+
 // Makes the one request whose previous log is empty. Private keys never enter
 // this command: each root signs the same request separately and `combine`
 // verifies their responses before emitting the log the server accepts.
+//
+// The optional third group enables ADR-0016's anchor tier from genesis:
+// `... -- Q AUTHORITY.pub... -- ANCHOR.pub...`. It carries no threshold of its
+// own — spec §3.4 fixes the anchor threshold at 1 regardless of which key
+// signs — so it is a bare list, the same shape as the root and authority
+// groups minus their quorum.
 fn genesis_request(out: &str, zone: &str, k: &str, groups: &[&str]) -> Result<(), String> {
     let separator = groups
         .iter()
         .position(|value| *value == "--")
-        .ok_or("genesis-request needs ROOT.pub... -- Q AUTHORITY.pub...")?;
+        .ok_or(GENESIS_REQUEST_USAGE)?;
     // `position` guarantees `separator` is in bounds, so neither of these can
     // fail — but this crate signs the root of trust, and `indexing_slicing` is
     // denied here precisely so that an argument about why a panic cannot
     // happen never has to be trusted.
     let (root_paths, from_separator) = groups
         .split_at_checked(separator)
-        .ok_or("genesis-request needs ROOT.pub... -- Q AUTHORITY.pub...")?;
+        .ok_or(GENESIS_REQUEST_USAGE)?;
     // Past the `--` itself. An empty remainder falls through to the
     // `split_first` below, which already has the right message for it.
-    let authority_group = from_separator.get(1..).unwrap_or_default();
+    let rest = from_separator.get(1..).unwrap_or_default();
+
+    // A second `--`, if present, splits the authority group from the anchor
+    // group. Its absence means no anchor keys, the ordinary case.
+    let (authority_group, anchor_paths): (&[&str], &[&str]) =
+        match rest.iter().position(|value| *value == "--") {
+            Some(second) => {
+                let (a, from_second) =
+                    rest.split_at_checked(second).ok_or(GENESIS_REQUEST_USAGE)?;
+                (a, from_second.get(1..).unwrap_or_default())
+            }
+            None => (rest, &[]),
+        };
+
     let (q, authority_paths) = authority_group
         .split_first()
         .ok_or("genesis-request needs an authority quorum after --")?;
@@ -132,8 +167,28 @@ fn genesis_request(out: &str, zone: &str, k: &str, groups: &[&str]) -> Result<()
     }
     let roots = read_public_keys(root_paths)?;
     let authorities = read_public_keys(authority_paths)?;
+    let anchors = read_public_keys(anchor_paths)?;
     reject_duplicates("root", &roots)?;
     reject_duplicates("authority", &authorities)?;
+    reject_duplicates("anchor", &anchors)?;
+    // §4's new ADR-0016 rules, checked here rather than left to surface only
+    // once `combine` verifies the fully-signed log: a malformed request should
+    // fail before an admin runs a ceremony over it, not after.
+    if authorities.len() + anchors.len() > 64 {
+        return Err(format!(
+            "{} authorities plus {} anchor keys exceeds the 64-signer limit",
+            authorities.len(),
+            anchors.len()
+        ));
+    }
+    for a in &anchors {
+        if roots.contains(a) {
+            return Err("an anchor public key must not also be a root key".into());
+        }
+        if authorities.contains(a) {
+            return Err("an anchor public key must not also be an authority key".into());
+        }
+    }
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "system clock is before the Unix epoch")?
@@ -146,7 +201,7 @@ fn genesis_request(out: &str, zone: &str, k: &str, groups: &[&str]) -> Result<()
             seq: 1,
             time,
             op: Op::Genesis,
-            body: genesis_body(zone, &roots, k, &authorities, q),
+            body: genesis_body(zone, &roots, k, &authorities, q, &anchors),
         }],
     };
     request
@@ -154,6 +209,12 @@ fn genesis_request(out: &str, zone: &str, k: &str, groups: &[&str]) -> Result<()
         .map_err(|e| format!("genesis request: {e}"))?;
     write_new(out, request_to_json(&request).as_bytes())?;
     println!("wrote root-quorum genesis request to {out}");
+    if !anchors.is_empty() {
+        println!(
+            "  enabling ADR-0016's anchor tier from genesis, with {} anchor key(s)",
+            anchors.len()
+        );
+    }
     Ok(())
 }
 
@@ -266,9 +327,15 @@ fn init(kind: &str, path: &str) -> Result<(), String> {
             let k = AuthorityKey::from_seed(&seed).map_err(|e| e.to_string())?;
             (seed.to_vec(), k.public_key())
         }
+        "anchor" => {
+            let mut seed = [0u8; karst_crypto::sign::ANCHOR_SEED];
+            getrandom::fill(&mut seed).map_err(|e| format!("no entropy: {e}"))?;
+            let k = AnchorKey::from_seed(&seed).map_err(|e| e.to_string())?;
+            (seed.to_vec(), k.public_key())
+        }
         other => {
             return Err(format!(
-                "unknown key kind {other:?}; want root or authority"
+                "unknown key kind {other:?}; want root, authority, or anchor"
             ))
         }
     };
@@ -286,6 +353,18 @@ fn init(kind: &str, path: &str) -> Result<(), String> {
             "\nThis is a root key. If k of n roots are lost the network lock can never\n\
              be disabled and no new node can ever be added — there is no recovery path,\n\
              by design. Back this up offline, on separate media, before using it."
+        );
+    }
+    if kind == "anchor" {
+        println!(
+            "\nThis is an anchor key (ADR-0016). Unlike a root or authority key it may\n\
+             reasonably live on a host that signs continuously — a monitoring host, or\n\
+             the coordination server itself — because it can only commit to audit-log\n\
+             history that already happened: it cannot admit or remove a node, and it\n\
+             cannot rewind an anchor once one is written. Enabling it is still a root\n\
+             ceremony: the public key goes into a `genesis` or `authority-list` body\n\
+             the roots sign, and the first entry that carries it permanently excludes\n\
+             any node that has not upgraded to parse it — see spec/bedrock-v1.md §4."
         );
     }
     Ok(())
@@ -417,30 +496,37 @@ fn sign(request_path: &str, key_path: &str, out_path: &str) -> Result<(), String
     }
     let public = public_of(&raw)?;
 
-    // **The log says which tier this key is.** Both tiers are ML-DSA-87 since
-    // ADR-0015 Option A, so the key material cannot distinguish them and the
-    // only honest source is the list it appears in. Searching both also catches
-    // a key that is in neither — which used to present as a confusing index
-    // error and now says plainly that this key cannot sign here.
-    let (tier, signer_index) = locate_tier(&verified, &public)?;
-    let root = (tier == Tier::Root)
+    // **The log says which kind of key this is.** All three kinds are
+    // ML-DSA-87 since ADR-0015 Option A / ADR-0016, so the key material cannot
+    // distinguish them and the only honest source is the list it appears in.
+    // Searching all three also catches a key that is in none of them — which
+    // used to present as a confusing index error and now says plainly that
+    // this key cannot sign here.
+    let (key_tier, signer_index) = locate_key_tier(&verified, &public)?;
+    let root = matches!(key_tier, KeyTier::Root)
         .then(|| RootKey::from_seed(&raw).map_err(|e| e.to_string()))
         .transpose()?;
-    let authority = (tier == Tier::Authority)
+    let authority = matches!(key_tier, KeyTier::Authority)
         .then(|| AuthorityKey::from_seed(&raw).map_err(|e| e.to_string()))
         .transpose()?;
+    let anchor = matches!(key_tier, KeyTier::Anchor)
+        .then(|| AnchorKey::from_seed(&raw).map_err(|e| e.to_string()))
+        .transpose()?;
 
-    println!("About to sign as {} #{signer_index}", tier_name(tier));
+    println!(
+        "About to sign as {} #{signer_index}",
+        key_tier_name(key_tier)
+    );
     println!("key fingerprint: {}\n", fingerprint(&public));
     let mut signing = Vec::new();
     for (p, input) in &verified.to_sign {
-        if p.op.tier() != tier {
+        if !signable_by(key_tier, p.op) {
             println!(
                 "  (skipping seq {} — {} is signed by {}, not {})",
                 p.seq,
                 p.op.as_str(),
-                tier_name(p.op.tier()),
-                tier_name(tier)
+                signed_by_description(p.op),
+                key_tier_name(key_tier)
             );
             continue;
         }
@@ -449,8 +535,8 @@ fn sign(request_path: &str, key_path: &str, out_path: &str) -> Result<(), String
     }
     if signing.is_empty() {
         return Err(format!(
-            "nothing in this request is signed by a {}",
-            tier_name(tier)
+            "nothing in this request is signed by {}",
+            key_tier_name(key_tier)
         ));
     }
 
@@ -468,9 +554,10 @@ fn sign(request_path: &str, key_path: &str, out_path: &str) -> Result<(), String
 
     let mut signatures = Vec::with_capacity(signing.len());
     for (seq, input) in signing {
-        let sig = match (&root, &authority) {
-            (Some(k), _) => k.sign(&input),
-            (_, Some(k)) => k.sign(&input),
+        let sig = match (&root, &authority, &anchor) {
+            (Some(k), _, _) => k.sign(&input),
+            (_, Some(k), _) => k.sign(&input),
+            (_, _, Some(k)) => k.sign(&input),
             _ => return Err("no key loaded".into()),
         }
         .map_err(|e| e.to_string())?;
@@ -491,29 +578,103 @@ fn sign(request_path: &str, key_path: &str, out_path: &str) -> Result<(), String
     Ok(())
 }
 
-/// Find which tier this key belongs to, and its index in that tier's list.
+/// Which of Bedrock's three key kinds a loaded seed turned out to belong to.
 ///
-/// A key in **both** lists is refused rather than resolved. It would mean an
-/// operator had installed one key as a root and an authority, which collapses
-/// the separation ADR-0014's two tiers exist to provide — and guessing which
-/// they meant would be the wrong response to finding it.
-fn locate_tier(
+/// Distinct from [`Tier`], which is `Op::tier`'s answer to "root or
+/// authority ops" and stays two-valued by design — ADR-0016's anchor tier is
+/// not a third value of an op's tier, it is a key that may sign exactly one
+/// op (`anchor`) drawn from the authority tier's op set. `KeyTier` is the
+/// CLI's answer to "what did the operator hand me", which does need the
+/// third value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyTier {
+    Root,
+    Authority,
+    Anchor,
+}
+
+const fn key_tier_name(t: KeyTier) -> &'static str {
+    match t {
+        KeyTier::Root => "root",
+        KeyTier::Authority => "authority",
+        KeyTier::Anchor => "anchor",
+    }
+}
+
+/// Whether a key of this kind may sign this op.
+///
+/// Root and authority follow the op's own tier exactly. Anchor is narrower —
+/// an anchor key signs `anchor` and nothing else (ADR-0016) — which is
+/// exactly why it is not folded into [`Op::tier`]: that function answers a
+/// wire-format question (which list does a signer index count into) and an
+/// anchor key sharing the authority op-tier there is what lets a full
+/// authority still anchor. This function answers the narrower CLI question of
+/// what a specific loaded key may be used for.
+const fn signable_by(key_tier: KeyTier, op: Op) -> bool {
+    match key_tier {
+        KeyTier::Root => matches!(op.tier(), Tier::Root),
+        KeyTier::Authority => matches!(op.tier(), Tier::Authority),
+        KeyTier::Anchor => matches!(op, Op::Anchor),
+    }
+}
+
+/// What actually signs an op, for the "skipping this entry" message.
+///
+/// Every op but `anchor` has one answer, matching [`Op::tier`] exactly.
+/// `anchor` has two, because a full authority may still anchor — spec §3.5 —
+/// so a message that named only "authority" for it would tell an authority
+/// key holder their key is wrong when it is not.
+const fn signed_by_description(op: Op) -> &'static str {
+    match (op.tier(), op) {
+        (Tier::Root, _) => "root",
+        (Tier::Authority, Op::Anchor) => "authority or anchor",
+        (Tier::Authority, _) => "authority",
+    }
+}
+
+/// Find which of the three lists this key belongs to, and its signer index —
+/// the concatenated space of spec §3.5 for an anchor key, the tier's own list
+/// index for root and authority.
+///
+/// A key found in more than one list is refused rather than resolved. It
+/// would mean an operator had installed one key as (say) both a root and an
+/// authority, which collapses the separation ADR-0014's tiers exist to
+/// provide — and guessing which they meant would be the wrong response to
+/// finding it.
+fn locate_key_tier(
     verified: &karst_bedrock::VerifiedRequest,
     public: &[u8],
-) -> Result<(Tier, u32), String> {
-    let root = locate(verified, Tier::Root, public).ok();
-    let authority = locate(verified, Tier::Authority, public).ok();
-    match (root, authority) {
-        (Some(_), Some(_)) => Err("this key is in both the root and the authority list; \
-             refusing to guess which tier it is meant to sign as"
-            .to_owned()),
-        (Some(i), None) => Ok((Tier::Root, i)),
-        (None, Some(i)) => Ok((Tier::Authority, i)),
-        (None, None) => Err(
-            "this key is in neither the root nor the authority list for this log; \
-                 it cannot sign here"
+) -> Result<(KeyTier, u32), String> {
+    let hits: Vec<(KeyTier, u32)> = [
+        locate(verified, Tier::Root, public)
+            .ok()
+            .map(|i| (KeyTier::Root, i)),
+        locate(verified, Tier::Authority, public)
+            .ok()
+            .map(|i| (KeyTier::Authority, i)),
+        locate_anchor(verified, public)
+            .ok()
+            .map(|i| (KeyTier::Anchor, i)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    match hits.as_slice() {
+        [one] => Ok(*one),
+        [] => Err(
+            "this key is in none of the root, authority, or anchor lists for this \
+             log; it cannot sign here"
                 .to_owned(),
         ),
+        _ => Err(format!(
+            "this key is in more than one Bedrock list ({}); refusing to guess which \
+             tier it is meant to sign as",
+            hits.iter()
+                .map(|(t, _)| key_tier_name(*t))
+                .collect::<Vec<_>>()
+                .join(" and "),
+        )),
     }
 }
 
@@ -549,6 +710,30 @@ fn locate(
         })
 }
 
+/// Find this key's signer index in the anchor list — ADR-0016.
+///
+/// The index is already offset into §3.5's concatenated space (authority list
+/// length plus position in the anchor list), so a caller never has to know
+/// the boundary: it is a signer index ready to carry on an [`OfflineSignature`].
+fn locate_anchor(verified: &karst_bedrock::VerifiedRequest, public: &[u8]) -> Result<u32, String> {
+    let (anchor_keys, authority_count) = if let Some(st) = &verified.state {
+        (st.anchor_keys.clone(), st.authorities.len())
+    } else {
+        let (p, _) = verified.to_sign.first().ok_or("empty request".to_owned())?;
+        let g = parse_genesis(&p.body).map_err(|e| e.to_string())?;
+        (g.anchor_keys, g.authorities.len())
+    };
+
+    let offset = anchor_keys
+        .iter()
+        .position(|k| k == public)
+        .ok_or_else(|| {
+            "this key is not in the anchor list for this log; it cannot sign here".to_owned()
+        })?;
+    u32::try_from(authority_count.saturating_add(offset))
+        .map_err(|_| "signer index overflow".to_owned())
+}
+
 const fn tier_name(t: Tier) -> &'static str {
     match t {
         Tier::Root => "root",
@@ -561,18 +746,35 @@ const fn tier_name(t: Tier) -> &'static str {
 /// This is the security-relevant part of the tool. Everything it prints comes
 /// from parsing the body that will actually be hashed — never from a label the
 /// bundle supplied alongside it.
+/// Renders ADR-0016's optional anchor-key block for `describe`'s genesis and
+/// `authority-list` summaries. Empty when the body carries none, which is the
+/// common case and matches every genesis or authority-list body written
+/// before this ADR.
+fn anchor_keys_summary(anchor_keys: &[Vec<u8>]) -> String {
+    if anchor_keys.is_empty() {
+        return String::new();
+    }
+    let fingerprints: Vec<String> = anchor_keys.iter().map(|k| fingerprint(k)).collect();
+    format!(
+        ", {} anchor key(s) [{}]",
+        anchor_keys.len(),
+        fingerprints.join(", ")
+    )
+}
+
 fn describe(seq: u64, op: Op, body: &[u8], time: i64) -> String {
     let detail = match op {
         Op::Genesis => parse_genesis(body).map_or_else(
             |e| format!("UNPARSEABLE genesis ({e})"),
             |g| {
                 format!(
-                    "create zone {:?} with {} roots (k={}) and {} authorities (q={})",
+                    "create zone {:?} with {} roots (k={}) and {} authorities (q={}){}",
                     g.zone,
                     g.roots.len(),
                     g.k,
                     g.authorities.len(),
-                    g.q
+                    g.q,
+                    anchor_keys_summary(&g.anchor_keys)
                 )
             },
         ),
@@ -580,9 +782,10 @@ fn describe(seq: u64, op: Op, body: &[u8], time: i64) -> String {
             |e| format!("UNPARSEABLE authority-list ({e})"),
             |a| {
                 format!(
-                    "REPLACE the authority list with {} keys, q={}",
+                    "REPLACE the authority list with {} keys, q={}{}",
                     a.authorities.len(),
-                    a.q
+                    a.q,
+                    anchor_keys_summary(&a.anchor_keys)
                 )
             },
         ),
