@@ -2474,24 +2474,52 @@ fn refresh_netmap(
         return;
     };
 
+    // A signal the held connection's background reader notifies on an
+    // unprompted push (FINDINGS.md 67/68) — stable across whatever reconnects
+    // `client.sync()` does internally, so it only needs to be fetched once.
+    let pushed = client.push_signal();
     let mut next = Instant::now() + crate::control::REFRESH;
     // What the server was last told, so a change can be published without
     // waiting for the refresh timer.
     let mut published: Option<[u8; 32]> = None;
+    // How soon a failed sync is retried, growing on repeated failure and
+    // reset on success — the same shape `sleep_backoff` gives relay
+    // reconnects, reused here for the same reason.
+    //
+    // This matters more than it used to: with the connection held open across
+    // polls (FINDINGS.md 67/68), a sync failure now means the push mechanism
+    // itself is down, not merely that one poll was late. Waiting out the rest
+    // of a 60-second `REFRESH` before reconnecting — which is what simply
+    // falling through to the next scheduled tick would do — would leave a
+    // node that is, say, mid-restart on the server end back on poll-only
+    // behavior for up to a minute after every blip. A quick retry is what
+    // makes the connection "held open" mean something across a transient
+    // failure rather than only across the quiet periods between them.
+    let mut control_backoff = RELAY_BACKOFF_MIN;
     while !shutdown.requested() {
-        // A short sleep rather than one long one, so a shutdown is noticed
-        // promptly rather than a minute later.
-        std::thread::sleep(TICK);
+        // Races the ordinary tick against a push notification, so a
+        // deprovisioning event does not wait out the rest of `REFRESH` once a
+        // connection is up to receive it. Still a short wait rather than one
+        // long one when neither fires, so a shutdown is noticed promptly.
+        // `pushed` carries no payload to trust — a push only ever means
+        // "re-fetch now" — so this branch's only job is to make `due` true.
+        let due = runtime.block_on(async {
+            tokio::select! {
+                () = tokio::time::sleep(TICK) => false,
+                () = pushed.notified() => true,
+            }
+        });
         let chosen = home
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .chosen();
-        // **A move is published at once rather than on the timer.** Between the
-        // node changing relay and its peers hearing about it, every peer is
-        // dialling a relay this node has left, so the packets are not merely
-        // late — they are delivered nowhere. A whole refresh interval of that
-        // is the one case where waiting for the next tick is not free.
-        if Instant::now() < next && chosen == published {
+        // **A move is published at once rather than on the timer, and so is a
+        // push.** Between the node changing relay and its peers hearing about
+        // it, every peer is dialling a relay this node has left, so the
+        // packets are not merely late — they are delivered nowhere. A whole
+        // refresh interval of that is the one case where waiting for the next
+        // tick is not free, and a deprovisioning notice is the other.
+        if !due && Instant::now() < next && chosen == published {
             continue;
         }
         next = Instant::now() + crate::control::REFRESH;
@@ -2531,10 +2559,21 @@ fn refresh_netmap(
             // Nothing moved. The overwhelmingly common case, and the one the
             // content-hash version exists to make cheap: no peer entry crosses
             // the wire.
-            Ok(crate::netmap::Outcome::Unchanged) => continue,
-            Ok(outcome) => outcome,
+            Ok(crate::netmap::Outcome::Unchanged) => {
+                control_backoff = RELAY_BACKOFF_MIN;
+                continue;
+            }
+            Ok(outcome) => {
+                control_backoff = RELAY_BACKOFF_MIN;
+                outcome
+            }
             Err(e) => {
-                eprintln!("karstd: netmap refresh failed ({e}); retrying");
+                eprintln!("karstd: netmap refresh failed ({e}); retrying in {control_backoff:?}");
+                // Retry soon rather than waiting out the rest of REFRESH — see
+                // control_backoff's own comment for why that distinction now
+                // matters.
+                next = Instant::now() + control_backoff;
+                control_backoff = (control_backoff * 2).min(RELAY_BACKOFF_MAX);
                 continue;
             }
         };

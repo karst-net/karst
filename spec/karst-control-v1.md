@@ -257,6 +257,54 @@ per rekey.
 | `seq` | Monotonic per direction, and the nonce input |
 | `version` | 1 |
 
+### 5.3.1 Server-initiated push
+
+A `KarstEnvelope` from the server is ordinarily the reply to the envelope the
+node just sent — one `Session` stream is one strictly-alternating
+request/response conversation. As of the deprovisioning fix
+(FINDINGS.md 67/68), it need not be: the server may send an envelope
+unprompted, at any point after a node's `ChannelInit` has been accepted, to
+tell it its network map changed and it should re-fetch **now** rather than
+waiting for its next scheduled poll.
+
+A push is a `KarstEnvelope` whose decrypted body is exactly one byte, a
+reserved request-kind value (`KIND_PUSH`, alongside the login/netmap/bedrock
+kinds `bootstrap.go`, `control.rs` and `testserver/netmap.go` already define
+and keep in step) — never a `KarstNetmapResponse` or any other message this
+spec defines elsewhere. This is deliberately **not** a new `KarstEnvelope`
+field: per FINDINGS.md 54, a discriminator that decides how a decrypted
+payload is handled must itself be inside the AEAD-covered body, not a
+plaintext field alongside it, or an attacker who can flip a bit in transit —
+undetected, because nothing outside the body authenticates it — chooses how
+the plaintext is interpreted. Reusing the body's existing kind-byte convention
+costs nothing extra and keeps that rule intact.
+
+A node receiving a push MUST treat it as a request to fetch its network map
+immediately (`KarstNetmapRequest`, §5.4) and MUST NOT treat the push itself as
+carrying any network-map content — there is none to trust. A push consumes the
+next `seq` in the server-to-node direction exactly like any reply does, and is
+otherwise indistinguishable from one at the framing layer; only the decrypted
+kind byte tells the two apart.
+
+**This does not need a flag day.** `KIND_PUSH` is additive: a node built
+before it existed never opens a control connection outside the span of one
+request, so between its polls the server has no live stream to push to at
+all, and the fix's only correctness requirement is what §5.1's poll interval
+already provides — an eventually-consistent node. The one residual case is a
+push landing in the brief window such a node's connection is open awaiting
+its own request's reply: the envelope still decrypts (the AEAD does not know
+or care what kind of node is on the other end), decoding it as the expected
+response type fails, and the node logs and retries on its next poll. This
+requires a deprovisioning event to land inside a single request's round trip
+and is self-healing when it does, so no version negotiation is introduced to
+close it.
+
+Push does not replace the periodic `KarstNetmapRequest` a node already sends
+on its own schedule (an implementation detail of the node, not specified
+here) — that remains the convergence bound for a node whose stream is not
+currently connected, or whose connection drops before a push reaches it. It
+is an accelerator layered on top of that floor, not a substitute for it.
+
 ### 5.4 Network-map delivery
 
 `KarstNetmapRequest` asks for the caller's current map. `known_version = 0`

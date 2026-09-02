@@ -279,6 +279,16 @@ pub struct Client {
     setup_key: Option<String>,
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
+    /// Held across many [`sync`](Client::sync) calls rather than reopened per
+    /// call (FINDINGS.md 67/68) — `None` between connections, briefly while
+    /// one is in flight (see `sync`'s use of `Option::take`), or after a
+    /// request has failed and the connection has been given up as dead.
+    conn: Option<Connection>,
+    /// Notified whenever the held connection's reader task decodes a push
+    /// envelope. Outlives any one `Connection` — created once here and handed
+    /// to every `Connection::open` call — so a caller `select!`ing on it does
+    /// not need to notice a reconnect happened underneath it.
+    pushed: Arc<tokio::sync::Notify>,
     /// The relay this node has chosen to hold — `ponor-v1.md` §9.1.
     ///
     /// Reported on every netmap request. Empty until something has been
@@ -390,6 +400,8 @@ impl Client {
             setup_key: section.setup_key.clone(),
             cache_file,
             seal,
+            conn: None,
+            pushed: Arc::new(tokio::sync::Notify::new()),
             kem_public: keys.kem_pk.to_bytes().clone(),
             dh_public: keys.dh_pk.as_bytes().to_vec(),
             node_id: Vec::new(),
@@ -484,12 +496,22 @@ impl Client {
         write_secret_bytes(path, &sealed)
     }
 
-    /// Register with the server and fetch a netmap.
+    /// Ensure a connection is held open, reconnecting if none is.
+    ///
+    /// Split out of `sync` so a caller that only wants to know whether the
+    /// connection is alive — the refresh loop's reconnect-with-backoff — does
+    /// not have to run a login/fetch round to find out. On a fresh
+    /// registration this also runs [`login`](Self::login): `sync` used to
+    /// gate that on the same `registering` flag this checks, and moving here
+    /// keeps that gate in the one place that opens a connection at all now.
     ///
     /// # Errors
     ///
     /// [`Error::Server`] if the server refuses or cannot be reached.
-    pub async fn sync(&mut self) -> Result<Outcome, Error> {
+    async fn ensure_connected(&mut self) -> Result<(), Error> {
+        if self.conn.is_some() {
+            return Ok(());
+        }
         let registering = self.node_id.is_empty();
         let mut conn = Connection::open(
             self.endpoint.clone(),
@@ -501,23 +523,70 @@ impl Client {
             // identity substitution, not re-registration.
             registering,
             &randomness(),
+            karst_control_client::transport::KIND_PUSH,
+            Arc::clone(&self.pushed),
         )
         .await
         .map_err(|e| Error::Server(e.to_string()))?;
 
         if registering {
+            // `conn` is still a plain local here, not yet `self.conn` — so
+            // `self.login(&mut conn)` borrows `self` and `conn` independently,
+            // with none of the aliasing `Option::take` exists to work around
+            // elsewhere in this file.
             self.login(&mut conn).await?;
         }
-        let outcome = self.fetch(&mut conn).await?;
+        self.conn = Some(conn);
+        Ok(())
+    }
+
+    /// A signal that fires whenever this client's held connection has an
+    /// unprompted push waiting — FINDINGS.md 67/68. Stable across reconnects;
+    /// see the `pushed` field.
+    #[must_use]
+    pub fn push_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.pushed)
+    }
+
+    /// Register with the server and fetch a netmap.
+    ///
+    /// Reuses the held connection ([`ensure_connected`](Self::ensure_connected))
+    /// rather than opening and dropping one per call — the fix FINDINGS.md
+    /// 67/68 asked for: a connection that only exists for the duration of one
+    /// sync gives the server nothing to push a deprovisioning notice to
+    /// between polls.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Server`] if the server refuses or cannot be reached.
+    pub async fn sync(&mut self) -> Result<Outcome, Error> {
+        self.ensure_connected().await?;
+        // Taken out rather than borrowed in place: `fetch`/`fetch_bedrock`
+        // take `&mut self` *and* `&mut Connection`, which `self.conn` cannot
+        // supply simultaneously without this. Put back below once both calls
+        // are done with it — and only if it is still good; a failed `fetch`
+        // means the connection is presumed dead and `sync` is left with
+        // nothing to put back, so the next call reconnects.
+        let mut conn = self.conn.take().ok_or(Error::Server(
+            "connected but the connection vanished before use".to_owned(),
+        ))?;
+
+        let outcome = match self.fetch(&mut conn).await {
+            Ok(outcome) => outcome,
+            Err(e) => return Err(e),
+        };
 
         // After the netmap, because the netmap carries the head this fetch is
         // trying to reach. A failure here is reported but does not fail the
         // sync: the node keeps enforcing on what it last verified (§4), and
         // losing a netmap over an unreachable log would let a server disable
-        // the whole network by withholding one.
+        // the whole network by withholding one. It also does not cost the
+        // connection: unlike `fetch`, a bedrock decode/verify failure here
+        // says nothing about whether the transport is still good.
         if let Err(e) = self.fetch_bedrock(&mut conn).await {
             eprintln!("karstd: bedrock fetch failed, enforcing on the last verified log: {e}");
         }
+        self.conn = Some(conn);
         Ok(outcome)
     }
 
@@ -746,7 +815,13 @@ impl Client {
                 String::from_utf8_lossy(&resp.node_id)
             )));
         }
-        self.node_id = resp.node_id;
+        self.node_id.clone_from(&resp.node_id);
+        // The held connection's own copy — see `Connection::set_node_id`. A
+        // registering connection is now the persistent one (it is never
+        // dropped and reopened just because login finished), so without this
+        // every envelope it ever sends would keep the empty handle it was
+        // opened with.
+        conn.set_node_id(resp.node_id);
         Ok(())
     }
 

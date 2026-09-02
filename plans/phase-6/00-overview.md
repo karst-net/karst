@@ -19,17 +19,22 @@ Phase 5 entry. None of them are Phase 6 scope on paper — they are Phase 5's
 unfinished business, carried forward rather than dropped, and they come
 before anything below.
 
-1. **Deprovisioning timing (FINDINGS.md 67, 68).** Measured 2026-08-28 at
-   48.9 s against a 30 s CI gate and a 60 s hard requirement, and inside the
-   60 s bound only by where the sample landed in the poll interval — not a
-   number that would survive a second measurement. The fix is not the test:
-   `karstd` opens a control connection per refresh and holds none between
-   polls, so there is nothing to push to. Before the server-initiated push
-   there is a persistent-connection lifecycle in `karstd` — reconnect,
-   backoff, keepalive — and a wire change so `Connection::request` does not
-   consume a push as its own reply. [phase-5/08-scim-and-groups.md](../phase-5/08-scim-and-groups.md)
-   §2 has the five-item breakdown; items 1 and 2 are explicitly unestimated —
-   re-estimate before scheduling the rest of this file around it. **W1–W2.**
+1. ~~**Deprovisioning timing (FINDINGS.md 67, 68).**~~ **Closed 2026-09-02, W1,
+   ahead of the W1–W2 budget below** — the persistent-connection lifecycle,
+   push/response discriminator, server-side subscription, and `testserver`
+   wiring all landed together rather than being staffed and re-estimated
+   separately as this item originally called for.
+   `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget` now
+   measures 2.0 s, against the 48.9 s this item opened with and reliably under
+   the 30 s CI gate — [phase-5/08-scim-and-groups.md](../phase-5/08-scim-and-groups.md)
+   §2 and FINDINGS.md 67/68 have the full account, including one bug the fix
+   itself introduced and caught before landing (a held connection's `node_id`
+   going stale) and one pre-existing gap it exposed (any `handler.Handle`
+   error ending the whole session, harmless under the old one-shot-connection
+   model and not under this one). **Not closed by this item:** FINDINGS.md 70,
+   opened deliberately rather than folded in — the push fan-out still computes
+   a `SyncResponse` a Karst node discards, and fixing that means a forked-code
+   decision this item's scope did not call for.
 2. **The outsider-run walkthrough.** Has not happened at all. CI's
    `getting-started-walkthrough.sh` runs the published docs mechanically and
    is a regression guard; it is not the unaided, unaccompanied, no-repo-access

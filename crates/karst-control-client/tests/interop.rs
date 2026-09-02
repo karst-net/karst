@@ -29,7 +29,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
 use karst_control_client::transport::{
-    Connection, EncapRandomness, Error, ServerPins, Signer, Verifier,
+    Connection, EncapRandomness, Error, ServerPins, Signer, Verifier, KIND_PUSH,
 };
 
 // The Go server verifies with real ML-DSA-87, so this side must sign with it.
@@ -181,6 +181,8 @@ async fn rust_node_completes_a_handshake_with_the_go_server() {
         &NodeVerifier,
         true,
         &randomness(),
+        KIND_PUSH,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     )
     .await
     .expect("handshake against the Go server");
@@ -209,6 +211,8 @@ async fn many_requests_on_one_channel() {
         &NodeVerifier,
         true,
         &randomness(),
+        KIND_PUSH,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     )
     .await
     .expect("handshake");
@@ -240,6 +244,8 @@ async fn wrong_pinned_verify_key_is_refused() {
         &NodeVerifier,
         true,
         &randomness(),
+        KIND_PUSH,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     )
     .await
     .expect_err("a bad pin was accepted");
@@ -271,6 +277,8 @@ async fn wrong_pinned_kem_key_fails_closed() {
         &NodeVerifier,
         true,
         &randomness(),
+        KIND_PUSH,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     )
     .await
     {

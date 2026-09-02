@@ -176,7 +176,7 @@ func consoleMutations() []consoleCase {
 // real permissions manager, real Karst stores. The only fake is the clock.
 func consoleRouter(t *testing.T) *mux.Router {
 	t.Helper()
-	am, s := realAccountManager(t)
+	am, s, _ := realAccountManager(t)
 
 	// A private DSN per test: the shared in-memory name is process-wide, and a
 	// policy row left by one test changes the version another test rolls back

@@ -220,6 +220,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// What makes `/me/sessions` a session history rather than a list of audit
 	// rows with a null end time and a null address.
 	svc.RecordSessionsWith(sessionRecorder{nodes: nodes})
+	// FINDINGS.md 67/68: a subscribed node hears about a deprovisioning event
+	// on its already-open stream instead of waiting up to REFRESH's 60 s poll.
+	// PeersUpdateManager is the inherited registry both deprovisioning paths
+	// (device removal, SCIM user removal) already drive; Karst subscribes to
+	// it rather than building a second one.
+	svc.SubscribeToUpdatesWith(peers, s.PeersUpdateManager())
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{
 		Register: func(reg grpc.ServiceRegistrar) {

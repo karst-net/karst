@@ -13,6 +13,18 @@ unmet at 48.9 s, measured against a fixture with no push at all
 PLAN.md's Phase 5 entry for where this is tracked at the plan-of-record
 level.
 
+> **§2's latency half closed 2026-09-02 in Phase 6, W1.** FINDINGS.md 67/68
+> are fixed — `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`
+> now measures 2.0 s, and `karst/testserver` drives a real push (§2 item 5,
+> §7's note below). **What this does not close:** the SCIM 2.0 API surface
+> itself (§4–§6 below) is still unbuilt, so the *named* test in §7 — steps 1–5,
+> beginning with a real `PATCH /scim/v2/Users/{id}` — cannot exist yet. The
+> latency mechanism it depends on is proven against device revocation (the
+> fixture's `/remove`, the same path device deprovisioning uses in production);
+> what remains for this file's own scope is SCIM itself, group sync into the
+> policy compiler, and then wiring the named test to SCIM's `active: false`
+> rather than the fixture's out-of-band control surface.
+
 ## 1. Scope
 
 > **Re-baselined 2026-08-27.** Basic user, group, role, setup-key, and
@@ -130,6 +142,15 @@ than as a nice improvement to netmap freshness.
 Keep the 60-second poll as the floor. Push is an accelerator, not a
 replacement: a node whose stream dropped must still converge, and a node that
 missed a push must not stay stale forever.
+
+> **All five items closed 2026-09-02**, in Phase 6 W1 rather than the W6–W7
+> this section budgeted for — done as one change rather than staffed across
+> the pairing this table assumed, so the re-estimate the table asked for never
+> ended up mattering on its own terms. FINDINGS.md 68's closing note has the
+> file-by-file breakdown. One thing item 3 flagged and left as a "decide how"
+> — avoiding the upstream `SyncResponse` build a subscribed Karst peer
+> discards — was deliberately **not** decided as part of this fix; it is
+> FINDINGS.md 70, open on its own schedule rather than blocking this one.
 
 ## 3. Does a node actually drop a session when a peer disappears?
 
@@ -276,6 +297,19 @@ harness with a revocation in the middle.
 > 60-second refresh the 30-second gate fails on roughly half of all runs and
 > the 60-second one flakes at the top of the spread. The 30-second assertion
 > in step 5 becomes honest once push lands, and not before.
+
+> **Closed 2026-09-02.** `testserver` now wires a real `PeersUpdateManager`
+> into its `/remove` path (FINDINGS.md 68's closing note), and the row above
+> measures 2.0 s against it — reliably under the 30-second gate, not merely
+> inside the 60-second requirement by where the sample landed. Its own
+> assertion is tighter still, `PUSH_BOUND` at 10 s, specifically so a
+> regression back toward poll-only behavior fails the row long before it would
+> quietly slip under the 30-second exit criterion by luck. What is *not* built
+> yet is the named test itself: this row revokes through the fixture's
+> out-of-band control surface, not a SCIM `PATCH`, because SCIM does not exist.
+> Retarget this row (or add a sibling) at `PATCH /scim/v2/Users/{id}` once §4
+> lands — the push mechanism underneath it needs no further change to support
+> that.
 
 ## 8. Schedule
 

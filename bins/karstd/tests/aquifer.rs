@@ -128,13 +128,25 @@ const SERVER_PORT: u16 = 9443;
 /// there is no other way to change the account while nodes are connected,
 /// because the control channel carries node-initiated requests only.
 const CONTROL_PORT: u16 = 9444;
-/// The netmap poll plus room for one probe interval and convergence.
-///
-/// Not a requirement — `control.rs`'s `REFRESH` is 60 seconds and a settled
-/// node notices a revocation on the next tick, so this is what the current
-/// implementation can be held to. The requirement it does *not* meet is
-/// FINDINGS.md 67.
+/// The netmap poll plus room for one probe interval and convergence — the
+/// **fallback** bound for a node whose control connection is not currently
+/// live to receive a push, e.g. because it just reconnected. `control.rs`'s
+/// `REFRESH` is 60 seconds and a settled node with no live push notices a
+/// revocation on the next tick, so this is the floor push is layered on top
+/// of rather than a replacement for (FINDINGS.md 68, spec/karst-control-v1.md
+/// §5.3.1) — kept here as a documented ceiling, not asserted directly by any
+/// row in this file since every row here keeps its connection live.
 const REFRESH_BOUND: Duration = Duration::from_secs(75);
+
+/// The bound the deprovisioning push (FINDINGS.md 67/68) is actually held to,
+/// for a node whose control connection is live when the revocation happens —
+/// every row in this file. One push, one out-of-cycle
+/// `KarstNetmapRequest`/response round trip, and the datapath teardown that
+/// already runs on any netmap change: comfortably inside a few seconds on a
+/// loopback-speed test network, and comfortably inside
+/// `plans/phase-5/09-exit-criteria.md` §6's 30-second CI gate with room to
+/// spare for scheduler jitter under a loaded CI host.
+const PUSH_BOUND: Duration = Duration::from_secs(10);
 
 /// Seeds for the two nodes' control identities. Fixed, so the relay roster can
 /// be written before either daemon has ever run.
@@ -3176,9 +3188,10 @@ fn two_nodes_on_two_relays_reach_each_other() {
 /// removing a user in the identity provider "must expire their node keys and
 /// drop their sessions **within 60 seconds**", and
 /// `plans/phase-5/09-exit-criteria.md` §6 wants it measured under 30 seconds in
-/// CI. `plans/phase-5/08-scim-and-groups.md` §2 says the requirement cannot be
-/// met by a 60-second poll and §3 says to find out, before building a push,
-/// whether removal from the netmap even tears an established session down.
+/// CI. `plans/phase-5/08-scim-and-groups.md` §2 found the 60-second poll alone
+/// could not meet it (FINDINGS.md 67) and costed a server-initiated push
+/// instead (FINDINGS.md 68); that push is what this row now exercises,
+/// through `testserver`'s own wiring of it rather than the poll.
 ///
 /// This is that measurement. Two nodes converge on a direct path and prove it
 /// carries traffic; the fixture then removes one of them from the account, the
@@ -3191,9 +3204,11 @@ fn two_nodes_on_two_relays_reach_each_other() {
 ///   - **The session dies at all.** If a peer removed from the netmap keeps its
 ///     established PHREATIC session, no amount of push latency work would meet
 ///     the requirement and the fix would be in the datapath instead.
-///   - **It dies inside the budget.** The elapsed time is printed either way,
-///     because the number is the deliverable — a pass that took 58 seconds and
-///     a pass that took 2 are different engineering situations.
+///   - **It dies inside `PUSH_BOUND`, not merely inside the 60-second poll.**
+///     The elapsed time is printed either way, because the number is the
+///     deliverable — a pass that took 48.9s (FINDINGS.md 67's original
+///     measurement) and a pass that took 2 are different engineering
+///     situations, and only the second is what the push was built for.
 #[test]
 #[ignore = "privileged: needs root and network namespaces"]
 fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
@@ -3289,21 +3304,14 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
         fixture_peers()
     );
 
-    // The measurement. One probe a second, up to twice the poll interval, so a
-    // failure reports how far past it got rather than just "no".
-    //
-    // The bound asserted below is the *poll*, not the requirement. On a settled
-    // node the only thing that notices a revocation is the 60-second netmap
-    // refresh, so the observed time is spread across that interval — 48.9s on
-    // the run that produced FINDINGS.md 67. Asserting PLAN.md §4.4's 60 seconds
-    // would be asserting the top of that spread and would flake; asserting
-    // §6's 30-second CI gate would fail every other run. What this row can
-    // honestly protect is the property underneath: a peer removed from the
-    // netmap loses its session, and the only cost is the poll.
-    let budget = REFRESH_BOUND;
+    // The measurement. One probe a second, up to twice `REFRESH_BOUND`'s poll
+    // floor, so a failure reports how far past even the *fallback* bound it
+    // got rather than just "no" — a push regression that fell all the way
+    // back to poll-only behavior should still show up as a number, not a
+    // bare timeout.
     let started = Instant::now();
     let mut elapsed = None;
-    while started.elapsed() < budget * 2 {
+    while started.elapsed() < REFRESH_BOUND * 2 {
         if !overlay_reachable(&peer_ip) {
             elapsed = Some(started.elapsed());
             break;
@@ -3317,24 +3325,27 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
              Removal from the netmap did not tear the session down, which is \
              plans/phase-5/08-scim-and-groups.md §3's datapath case rather \
              than its latency one.\nnode A:\n{}\nserver log:\n{}",
-            budget * 2,
+            REFRESH_BOUND * 2,
             status(&net, "a", NS_A),
             net.log("server.log")
         );
     };
 
     println!(
-        "revocation took effect in {:.1}s (poll bound {}s; PLAN.md §4.4 wants \
-         60s end to end, exit-criteria §6 wants 30s measured in CI)",
+        "revocation took effect in {:.1}s (push bound {}s)",
         elapsed.as_secs_f64(),
-        budget.as_secs()
+        PUSH_BOUND.as_secs()
     );
     assert!(
-        elapsed <= budget,
-        "revocation took {:.1}s, past even the {}s poll bound — the netmap \
-         refresh is not what noticed, and something slower is involved",
+        elapsed <= PUSH_BOUND,
+        "revocation took {:.1}s, past the {}s push bound (FINDINGS.md 67/68) — \
+         node A was subscribed the whole time it was settled, so a pass this \
+         slow means the fallback poll fired instead of the push.\nnode A:\n{}\n\
+         server log:\n{}",
         elapsed.as_secs_f64(),
-        budget.as_secs()
+        PUSH_BOUND.as_secs(),
+        status(&net, "a", NS_A),
+        net.log("server.log")
     );
 }
 

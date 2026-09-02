@@ -33,6 +33,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
@@ -91,6 +92,17 @@ func main() {
 
 	svc := control.New(static, identity.ControlSigner{Key: srvKey},
 		lookup, identity.ControlVerifier{}, handler)
+
+	// The push mechanism (FINDINGS.md 67/68) only matters to the end-to-end
+	// deprovisioning check, which is also the one test that runs with
+	// --control. Every other row is unaffected: with nothing subscribing,
+	// control.Service behaves exactly as it did before SubscribeToUpdatesWith
+	// existed.
+	if controlAddr() != "" && netmapRouter != nil {
+		updates := update_channel.NewPeersUpdateManager(nil)
+		netmapRouter.account.updates = updates
+		svc.SubscribeToUpdatesWith(netmapRouter.account, updates)
+	}
 
 	lis, err := net.Listen("tcp", listenAddr())
 	if err != nil {

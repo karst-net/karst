@@ -187,10 +187,38 @@ carries both the new wording and the original, struck through.
 | 64 | Medium | The portal's Playwright suite has never run in CI — only the console's | Fixed 2026-08-28 |
 | 65 | Medium | The download manifest generator named a Windows MSI and a `.deb` the pipeline does not build, so it could not succeed, and the fixture served the same invented names | Fixed 2026-08-28 |
 | 66 | Medium | Exporting an audit anchor before the Bedrock genesis answered 500, where every sibling precondition on the same surface answers 412 | Fixed 2026-08-28 |
-| 67 | High | Deprovisioning takes as long as the netmap poll — measured at 48.9 s on a settled node, over the 30 s CI gate | Open |
-| 68 | High | The push that would fix 67 was costed against a persistent control stream the node does not hold: it opens one per sync and closes it | Open |
+| 67 | High | Deprovisioning takes as long as the netmap poll — measured at 48.9 s on a settled node, over the 30 s CI gate | Fixed 2026-09-02 — re-measured at 2.0 s |
+| 68 | High | The push that would fix 67 was costed against a persistent control stream the node does not hold: it opens one per sync and closes it | Fixed 2026-09-02 |
+| 70 | Medium | The netmap push (68) computes a full upstream `SyncResponse` for every subscribed Karst node before discarding it, because the fix reused the fan-out `sendUpdateAccountPeers` without giving it a Karst-aware skip | Open |
 
 ## Closed
+
+### 70. Open: the netmap push computes a full sync it then discards, for every subscribed Karst node
+
+**Found 2026-08-29** while scoping finding 68's fix, and left open deliberately
+when that fix landed 2026-09-02. Open.
+
+The push mechanism (finding 68) subscribes each Karst node's control session
+to the inherited `PeersUpdateManager`, the same registry the fork's own
+`SyncResponse` push already uses. That registry was built for one purpose:
+`sendUpdateAccountPeers` computes a full upstream `SyncResponse` — peer list,
+posture checks, DNS zones, proxy maps — for every peer holding a channel, and
+sends it. A Karst node has no use for any of that; it wants
+`KarstEnvelope{KIND_PUSH}`, one byte, and re-fetches its own
+`KarstNetmapResponse` on a completely different request path. Subscribing to
+the registry gets a Karst node notified, but every notification still pays for
+the `SyncResponse` build the fan-out computes *before* deciding who to send it
+to — work no Karst node's session reads.
+
+The cost is bounded (it happens once per deprovisioning-class event per
+account, not per poll) and the fix as shipped is correct, just not free. Two
+ways to close it, both already weighed in finding 68 and neither taken yet: a
+Karst-aware skip inside the forked `sendUpdateAccountPeers` — a change to code
+upstream security fixes land in, and therefore a future cherry-pick conflict —
+or a second, lighter fan-out beside it, which duplicates the registry's
+iteration but touches nothing forked. Recorded rather than decided, because
+it is a forked-code-surgery call this fix should not have made unilaterally
+just to close out the deprovisioning-timing measurement it was scoped around.
 
 ### 69. High: userspace mode's SOCKS5 attachment never worked on macOS
 
@@ -241,7 +269,60 @@ change makes macOS match it rather than introducing it.
 
 ### 68. High: the netmap push was costed against a stream that does not exist
 
-**Found 2026-08-28** while scoping the push that finding 67 needs. Open.
+**Found 2026-08-28** while scoping the push that finding 67 needs. **Fixed
+2026-09-02.**
+
+> **Closed 2026-09-02, all four items.** `bins/karstd/src/control.rs`'s
+> `Client` now holds one `Connection` across syncs (`ensure_connected`) instead
+> of opening and dropping one per call; `crates/karst-control-client`'s
+> `Connection::open` spawns a background reader task so the held connection
+> keeps reading between requests, which is what item 4's select needed and did
+> not have anywhere to run. The push/response discriminator (item 2) is a
+> reserved kind byte, `KIND_PUSH`, inside the already-encrypted request-kind
+> byte space `KIND_LOGIN`/`KIND_NETMAP`/`KIND_BEDROCK` occupy — not a new
+> `KarstEnvelope` field, per finding 54's rule that a discriminator must live
+> inside the AEAD-covered body. `spec/karst-control-v1.md` §5.3.1 documents it
+> and the compatibility argument for why it needs no flag day. Item 3's
+> subscription (`control.Service.SubscribeToUpdatesWith`,
+> `bootstrap.go`) is exactly the shape this entry sketched: the inherited
+> `PeersUpdateManager` and `Peers.GetPeerByPeerPubKey` lookup, subscribing
+> lazily off whichever envelope first carries a resolvable handle, since a
+> registering node's `ChannelInit` truly has none yet. `testserver` needed the
+> same wiring — it had no push at all, exactly as this entry's last paragraph
+> found — and gained it (`testserver/main.go`, `netmap.go`).
+>
+> **The `sendUpdateAccountPeers` cost this entry raised is deliberately still
+> open — see finding 70.** It is real, but it is a decision (a Karst-aware skip
+> in forked code vs. a second, lighter fan-out) rather than a blocker to
+> correctness, and bundling it into this fix would have meant reviewing a
+> larger forked-code change to close a latency bug.
+>
+> **One bug this entry did not anticipate:** a `Connection`'s `node_id` was set
+> once at construction and never revisited. That was invisible when a
+> connection lived for one `sync()` call — the *next* call opened a fresh one
+> with the now-known handle — but a connection now held open across a node's
+> entire lifetime would have tagged every envelope after registration with an
+> empty handle forever, and the server would never resolve a peer id to
+> subscribe. `Connection::set_node_id`, called from `Client::login` the moment
+> a handle is assigned, is the fix. Found by running the fixed code rather than
+> by inspection: the deprovisioning measurement (finding 67) stuck at 49.1s,
+> unchanged from before this entry's fix, until this was found and corrected.
+>
+> **A second bug, found the same way:** `control.Service.Session` ends the
+> whole gRPC stream on *any* `handler.Handle` error, including
+> `testserver`'s "bedrock is not configured on this fixture" — a business
+> answer, not tampering, and one every row without `--bedrock` produces on
+> every single sync. Harmless under the old one-shot-connection model, this
+> now killed the very session a subscription depended on, within the same
+> instant it was created, and `karstd` would not notice for up to a minute —
+> until the next scheduled poll tried to reuse the now-dead connection and
+> failed. Fixed by giving `testserver` a real (possibly empty)
+> `control.BedrockHandler` unconditionally, matching how `bootstrap.go`
+> already behaves in production (a handler always exists; only whether an
+> account has ever turned Bedrock on varies) — plus a backoff-based prompt
+> reconnect in `run.rs` for the general case of a sync failing outright, so a
+> connection loss for any reason recovers in seconds rather than waiting out
+> the rest of `REFRESH`.
 
 `plans/phase-5/08-scim-and-groups.md` §2 chooses server-initiated push over a
 shorter poll, and justifies the cost this way:
@@ -323,7 +404,20 @@ plan that says the stream is already there.
 ### 67. High: deprovisioning takes as long as the poll, and the poll is the budget
 
 **Found 2026-08-28** by building the measurement
-`plans/phase-5/08-scim-and-groups.md` §3 asks for. Open.
+`plans/phase-5/08-scim-and-groups.md` §3 asks for. **Fixed 2026-09-02** — see
+finding 68 for what the fix actually was.
+
+> **Re-measured 2026-09-02: 2.0 seconds**, against the same
+> `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`, once it
+> was pointed at a `testserver` that actually drives the push (see finding
+> 68's closing note). Well inside `plans/phase-5/09-exit-criteria.md` §6's
+> 30-second CI gate and nowhere near PLAN.md §4.4's 60-second requirement,
+> with room to spare for CI jitter — the test's own bound is 10 seconds
+> (`PUSH_BOUND` in `bins/karstd/tests/aquifer.rs`), not the 30-second gate,
+> specifically so a regression back toward poll-only behavior fails loudly
+> long before it would silently pass the exit criterion by luck. The old
+> 48.9 s number is kept in the test's own comments as the regression this row
+> now guards against, the same way this section keeps it below.
 
 PLAN.md §4.4 requires that removing a user "must expire their node keys and
 drop their sessions **within 60 seconds**", and

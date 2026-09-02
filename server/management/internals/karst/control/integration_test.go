@@ -39,6 +39,7 @@ import (
 	ephemeral_manager "github.com/netbirdio/netbird/management/internals/modules/peers/ephemeral/manager"
 	"github.com/netbirdio/netbird/management/internals/server/config"
 	nbserver "github.com/netbirdio/netbird/management/server"
+	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/activity"
 	nbcache "github.com/netbirdio/netbird/management/server/cache"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -78,7 +79,7 @@ func fixturePath(t *testing.T, name string) string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "server", "testdata", name)
 }
 
-func realAccountManager(t *testing.T, idpManager ...idp.Manager) (*nbserver.DefaultAccountManager, store.Store) {
+func realAccountManager(t *testing.T, idpManager ...idp.Manager) (*nbserver.DefaultAccountManager, store.Store, *update_channel.PeersUpdateManager) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the SQLite store is not properly supported on Windows")
@@ -128,14 +129,14 @@ func realAccountManager(t *testing.T, idpManager ...idp.Manager) (*nbserver.Defa
 	if err != nil {
 		t.Fatalf("BuildManager: %v", err)
 	}
-	return am, s
+	return am, s, updateManager
 }
 
 // TestRegistrationAgainstTheRealAccountManager is the end-to-end proof: a Karst
 // node with an ML-DSA-65 identity registers over the post-quantum channel and
 // a peer row lands in the database keyed by its handle.
 func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
-	am, s := realAccountManager(t)
+	am, s, _ := realAccountManager(t)
 	ctx := context.Background()
 
 	const (
@@ -287,6 +288,227 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 	t.Logf("registered: handle=%s ip=%s dns=%s", handle, peer.IP, peer.DNSLabel)
 }
 
+// testPeers mirrors bootstrap.go's unexported storePeers: the same
+// store-plus-account-manager adapter production wires into control.Service,
+// duplicated here because storePeers itself is unexported and this package
+// tests control.Service as an external caller would construct it.
+type testPeers struct {
+	store    store.Store
+	accounts account.Manager
+}
+
+func (p *testPeers) GetAccountIDForPeerKey(ctx context.Context, key string) (string, error) {
+	return p.accounts.GetAccountIDForPeerKey(ctx, key)
+}
+
+func (p *testPeers) GetPeerByPeerPubKey(ctx context.Context, key string) (*nbpeer.Peer, error) {
+	return p.store.GetPeerByPeerPubKey(ctx, store.LockingStrengthShare, key)
+}
+
+func (p *testPeers) GetPeersFromAccount(ctx context.Context, accountID, _, _ string) ([]*nbpeer.Peer, error) {
+	return p.store.GetAccountPeers(ctx, store.LockingStrengthShare, accountID, "", "")
+}
+
+func (p *testPeers) AccountPrefixes(ctx context.Context, accountID string) (uint8, uint8, error) {
+	network, err := p.store.GetAccountNetwork(ctx, store.LockingStrengthShare, accountID)
+	if err != nil {
+		return 0, 0, err
+	}
+	v4, _ := network.Net.Mask.Size()
+	v6, _ := network.NetV6.Mask.Size()
+	return uint8(v4), uint8(v6), nil
+}
+
+// dialBufconn opens a gRPC connection to a service already Serve()-ing on
+// lis. Factored out because TestServerPushesOnPeerDeletion needs two
+// independent connections to the same in-process server.
+func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
+	t.Helper()
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return conn
+}
+
+// TestServerPushesOnPeerDeletion is FINDINGS.md 67/68's "own integration
+// test": proof that deleting a peer through the real account manager's
+// deprovisioning path reaches a *live, subscribed* Karst session as an
+// unprompted envelope, rather than only being observable on that node's next
+// poll.
+//
+// It registers over one connection (a fresh node presents its identity, so
+// the server cannot yet resolve its handle to a peer row — spec §5.3), then
+// reconnects as that now-known node on a second connection, which is what
+// makes control.Service subscribe it to updates immediately after the
+// handshake rather than after a first request. It does not decrypt the
+// pushed envelope — the AEAD's own correctness is covered by channel_test.go
+// and service_test.go — only that one arrives, unprompted, after deletion.
+func TestServerPushesOnPeerDeletion(t *testing.T) {
+	am, s, updateManager := realAccountManager(t)
+	ctx := context.Background()
+
+	const (
+		accountID = "bf1c8084-ba50-4ce7-9439-34653001fc3b"
+		userID    = "edafee4e-63fb-11ec-90d6-0242ac120003"
+	)
+	db, err := gorm.Open(sqlite.Open("file:karstpush?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("karst db: %v", err)
+	}
+	nodes, err := node.NewStore(db)
+	if err != nil {
+		t.Fatalf("node store: %v", err)
+	}
+	router := mux.NewRouter()
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, permissions.NewManager(s), router)
+	portalRequest := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	response := portalRequest(http.MethodPost, "/karst/v1/me/devices/enroll")
+	if response.Code != http.StatusOK {
+		t.Fatalf("create portal enrollment key: status=%d body=%s", response.Code, response.Body.String())
+	}
+	var enrollment struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &enrollment); err != nil || enrollment.Key == "" {
+		t.Fatalf("portal enrollment response: key=%q err=%v", enrollment.Key, err)
+	}
+
+	static, err := channel.GenerateStatic()
+	if err != nil {
+		t.Fatalf("static: %v", err)
+	}
+	srvKey, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("server identity: %v", err)
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	svc := control.New(static, identity.ControlSigner{Key: srvKey}, nodes.LookupFunc(), identity.ControlVerifier{},
+		&control.LoginHandler{Nodes: nodes, Accounts: am})
+	svc.SubscribeToUpdatesWith(&testPeers{store: s, accounts: am}, updateManager)
+
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	proto.RegisterKarstControlServiceServer(srv, svc)
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.Stop()
+
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// First connection: registration only, then hang up. A fresh node has no
+	// peer row to subscribe until LoginPeer runs, so control.Service does not
+	// subscribe this connection — nothing here proves the push mechanism yet.
+	regConn := dialBufconn(t, lis)
+	defer regConn.Close()
+	regStream, err := proto.NewKarstControlServiceClient(regConn).Session(dialCtx)
+	if err != nil {
+		t.Fatalf("connect (registration): %v", err)
+	}
+	regClient, err := control.Dial(regStream, svc.Pins(), identity.ControlVerifier{}, nil,
+		identity.ControlSigner{Key: key}, true)
+	if err != nil {
+		t.Fatalf("handshake (registration): %v", err)
+	}
+	payload, err := pb.Marshal(&proto.KarstLoginRequest{
+		SetupKey:     enrollment.Key,
+		Meta:         &proto.PeerSystemMeta{Hostname: "karst-node", GoOS: "linux", NetbirdVersion: "0.0.0"},
+		KemPublicKey: validKemKey(0xAB),
+		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw, err := regClient.Request(payload)
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp := &proto.KarstLoginResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	handle := resp.GetNodeId()
+	if err := regClient.CloseSend(); err != nil {
+		t.Fatalf("close registration stream: %v", err)
+	}
+
+	peer, err := s.GetPeerByPeerPubKey(ctx, store.LockingStrengthShare, string(handle))
+	if err != nil {
+		t.Fatalf("no peer row for the registered handle: %v", err)
+	}
+
+	// Second connection: the same identity, reconnecting as a known node
+	// (present_identity=false, node_id set). control.Service resolves this
+	// straight from the handshake and subscribes it before either side sends
+	// a single application request — matching how karstd's persistent
+	// connection stays subscribed between polls.
+	liveConn := dialBufconn(t, lis)
+	defer liveConn.Close()
+	liveStream, err := proto.NewKarstControlServiceClient(liveConn).Session(dialCtx)
+	if err != nil {
+		t.Fatalf("connect (live): %v", err)
+	}
+	if _, err := control.Dial(liveStream, svc.Pins(), identity.ControlVerifier{}, handle,
+		identity.ControlSigner{Key: key}, false); err != nil {
+		t.Fatalf("handshake (live): %v", err)
+	}
+
+	// Give the subscription a moment to land before triggering deletion — the
+	// server only subscribes after processing the ChannelInit, and this
+	// avoids a flaky race against that goroutine scheduling.
+	deadline := time.Now().Add(2 * time.Second)
+	for !updateManager.HasChannel(peer.ID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("peer %s was never subscribed to updates", peer.ID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// DeleteOwnPeer, not DeletePeer: it is what the portal's self-service
+	// revoke path actually calls (nodes.go's meRevokeDevice, via the
+	// ownDeviceWriter interface) and, more to the point here, it is what
+	// drives networkMapController.OnPeersDeleted — the same call FINDINGS.md
+	// 68 traced device removal through to reach the update channel.
+	if err := am.DeleteOwnPeer(ctx, accountID, peer.ID, userID); err != nil {
+		t.Fatalf("delete peer: %v", err)
+	}
+
+	pushed := make(chan error, 1)
+	go func() {
+		msg, err := liveStream.Recv()
+		if err != nil {
+			pushed <- err
+			return
+		}
+		if msg.GetEnvelope() == nil {
+			pushed <- fmt.Errorf("expected an envelope, got %#v", msg)
+			return
+		}
+		pushed <- nil
+	}()
+	select {
+	case err := <-pushed:
+		if err != nil {
+			t.Fatalf("waiting for the push: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no push arrived within 5s of deleting the peer")
+	}
+}
+
 func TestConsoleUserLifecycleAgainstTheRealAccountManager(t *testing.T) {
 	const (
 		accountID = "bf1c8084-ba50-4ce7-9439-34653001fc3b"
@@ -329,7 +551,7 @@ func TestConsoleUserLifecycleAgainstTheRealAccountManager(t *testing.T) {
 	}
 	mock.DeleteUserFunc = func(_ context.Context, userID string) error { delete(users, userID); return nil }
 
-	am, s := realAccountManager(t, mock)
+	am, s, _ := realAccountManager(t, mock)
 	ctx := context.Background()
 	created, err := am.CreateUser(ctx, accountID, adminID, &types.UserInfo{Email: "member@example.test", Name: "Portal member", Role: string(types.UserRoleUser), Issued: types.UserIssuedAPI})
 	if err != nil {

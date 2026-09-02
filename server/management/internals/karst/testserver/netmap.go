@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
@@ -54,6 +55,10 @@ type memoryAccount struct {
 	peers map[string]*nbpeer.Peer
 	order []string
 	next  int
+	// updates drives the deprovisioning push (FINDINGS.md 67/68). Nil in every
+	// mode but the end-to-end deprovisioning check — set from main.go, once
+	// buildNetmapServer has returned an account to attach it to.
+	updates network_map.PeersUpdateManager
 }
 
 func newMemoryAccount() *memoryAccount {
@@ -90,11 +95,18 @@ func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
 // is visible to every *other* node the moment their next netmap is assembled —
 // which is precisely the latency plans/phase-5/08-scim-and-groups.md §2 is
 // about, and what `a_revoked_peer_loses_its_session` measures.
+//
+// It also drives updates, when set: production's two deprovisioning paths
+// both end at PeersUpdateManager.SendUpdate fanning out to every *surviving*
+// peer's channel (FINDINGS.md 68 — sendUpdateAccountPeers), and this fixture
+// had none at all until now. The removed peer is not itself notified — it is
+// gone, and production's own removal notice to it is a distinct call this
+// fixture has no equivalent of and does not need for the deprovisioning
+// measurement, which watches a survivor.
 func (m *memoryAccount) remove(handle string) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if _, ok := m.peers[handle]; !ok {
+		m.mu.Unlock()
 		return false
 	}
 	delete(m.peers, handle)
@@ -102,6 +114,21 @@ func (m *memoryAccount) remove(handle string) bool {
 		if h == handle {
 			m.order = append(m.order[:i], m.order[i+1:]...)
 			break
+		}
+	}
+	// SendUpdate is keyed by peer.ID (matching CreateChannel in
+	// control.Service.subscribeOnce), not by handle — m.order holds handles,
+	// so it is peers[handle].ID that goes out, not the handle itself.
+	survivorIDs := make([]string, 0, len(m.order))
+	for _, h := range m.order {
+		survivorIDs = append(survivorIDs, m.peers[h].ID)
+	}
+	updates := m.updates
+	m.mu.Unlock()
+
+	if updates != nil {
+		for _, peerID := range survivorIDs {
+			updates.SendUpdate(context.Background(), peerID, &network_map.UpdateMessage{})
 		}
 	}
 	return true
@@ -354,6 +381,27 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		r.bedrock = &control.BedrockHandler{Log: fixture.log, Peers: account}
 		r.bedrockFixture = fixture
 		r.coverPreloaded = cover
+	} else {
+		// Neither flag was given, which is most rows in this file — but
+		// `r.bedrock` still needs to be *something*: `router.Handle` refuses
+		// KindBedrock outright when it is nil (`errors.New("bedrock is not
+		// configured on this fixture")`), and every node sends a
+		// KarstBedrockRequest on every sync. Production never hits that path
+		// because bootstrap.go always constructs a BedrockHandler regardless
+		// of whether an account has ever turned Bedrock on — only the log
+		// content varies, and BedrockHandler.Handle already treats
+		// bedrock.ErrNoLog from Head() as the normal "nothing to enforce"
+		// case rather than a failure. A zero-value memoryBedrockLog gives
+		// this fixture the same shape: Head returns ErrNoLog (headSeq is 0),
+		// so the handler answers normally instead of refusing the request.
+		//
+		// This stopped being merely "a rejected request the node shrugs off"
+		// once connections started being held open across polls
+		// (FINDINGS.md 67/68): control.Service.Session ends the whole stream
+		// on any handler error, which used to cost nothing because the
+		// connection was about to be dropped anyway and now silently kills
+		// the very session a push depends on.
+		r.bedrock = &control.BedrockHandler{Log: &memoryBedrockLog{}, Peers: account}
 	}
 
 	// Preloaded peers, so the netmap has content on the first fetch.
