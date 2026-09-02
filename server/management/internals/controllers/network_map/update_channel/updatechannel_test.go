@@ -11,6 +11,27 @@ import (
 
 // var peersUpdater *PeersUpdateManager
 
+func TestNotificationChannelIsNotASyncChannel(t *testing.T) {
+	ctx := context.Background()
+	manager := NewPeersUpdateManager(nil)
+	notifications := manager.CreateNotificationChannel(ctx, "peer")
+
+	if manager.HasChannel("peer") {
+		t.Fatal("notification subscriber must not pass the full-sync channel gate")
+	}
+	manager.SendNotification(ctx, "peer")
+	select {
+	case <-notifications:
+	default:
+		t.Fatal("notification was not delivered")
+	}
+
+	manager.CloseChannel(ctx, "peer")
+	if _, ok := <-notifications; ok {
+		t.Fatal("notification channel was not closed")
+	}
+}
+
 func TestCreateChannel(t *testing.T) {
 	peer := "test-create"
 	peersUpdater := NewPeersUpdateManager(nil)

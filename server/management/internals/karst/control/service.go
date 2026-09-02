@@ -203,9 +203,9 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	// the top from the handshake-time nodeID alone — which would never fire
 	// for a brand new node in this session at all.
 	var subscribedPeerID string
-	var updates chan *network_map.UpdateMessage
+	var updates chan struct{}
 	// owns tracks whether this session's channel is still the live one for
-	// subscribedPeerID. CreateChannel closes and replaces any existing
+	// subscribedPeerID. CreateNotificationChannel closes and replaces any existing
 	// channel for a peer id, so a second connection from the same node clears
 	// this — and the deferred cleanup below must not then CloseChannel a peer
 	// id whose current channel belongs to that other session; CloseChannel
@@ -225,7 +225,7 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			return
 		}
 		subscribedPeerID = p.ID
-		updates = s.updates.CreateChannel(ctx, subscribedPeerID)
+		updates = s.updates.CreateNotificationChannel(ctx, subscribedPeerID)
 		owns = true
 	}
 	subscribeOnce(nodeID)
@@ -312,9 +312,9 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 				return err
 			}
 
-		case update, ok := <-updates:
+		case _, ok := <-updates:
 			if !ok {
-				// CreateChannel closes and replaces any existing channel for
+				// CreateNotificationChannel closes and replaces any existing channel for
 				// the same peer id, which fires this when a second
 				// connection from the same node supersedes this one's
 				// registration. Stop selecting on a closed channel and
@@ -323,7 +323,6 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 				updates, owns = nil, false
 				continue
 			}
-			_ = update // content is discarded — the node re-fetches (§5.3)
 			out, err := ch.Seal(nodeID, []byte{KindPush})
 			if err != nil {
 				return status.Error(codes.Internal, "push sealing failed")

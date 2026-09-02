@@ -16,6 +16,11 @@ const channelBufferSize = 100
 type PeersUpdateManager struct {
 	// peerChannels is an update channel indexed by Peer.ID
 	peerChannels map[string]chan *network_map.UpdateMessage
+	// notificationChannels carry edge-triggered invalidations for clients
+	// that fetch their network map on a separate request path. Keeping them
+	// out of peerChannels means they do not make the network-map controller
+	// build a SyncResponse they will never consume.
+	notificationChannels map[string]chan struct{}
 	// channelsMux keeps the mutex to access peerChannels
 	channelsMux *sync.RWMutex
 	// metrics provides method to collect application metrics
@@ -27,9 +32,10 @@ var _ network_map.PeersUpdateManager = (*PeersUpdateManager)(nil)
 // NewPeersUpdateManager returns a new instance of PeersUpdateManager
 func NewPeersUpdateManager(metrics telemetry.AppMetrics) *PeersUpdateManager {
 	return &PeersUpdateManager{
-		peerChannels: make(map[string]chan *network_map.UpdateMessage),
-		channelsMux:  &sync.RWMutex{},
-		metrics:      metrics,
+		peerChannels:         make(map[string]chan *network_map.UpdateMessage),
+		notificationChannels: make(map[string]chan struct{}),
+		channelsMux:          &sync.RWMutex{},
+		metrics:              metrics,
 	}
 }
 
@@ -61,6 +67,23 @@ func (p *PeersUpdateManager) SendUpdate(ctx context.Context, peerID string, upda
 	}
 }
 
+// SendNotification tells a lightweight subscriber that its state changed.
+// Notifications are deliberately coalesced: one pending invalidation is
+// enough to make the subscriber re-fetch its authoritative state.
+func (p *PeersUpdateManager) SendNotification(ctx context.Context, peerID string) {
+	p.channelsMux.RLock()
+	defer p.channelsMux.RUnlock()
+
+	if ch, ok := p.notificationChannels[peerID]; ok {
+		select {
+		case ch <- struct{}{}:
+			log.WithContext(ctx).Tracef("notification was sent to channel for peer %s", peerID)
+		default:
+			log.WithContext(ctx).Tracef("notification already pending for peer %s", peerID)
+		}
+	}
+}
+
 // CreateChannel creates a go channel for a given peer used to deliver updates relevant to the peer.
 func (p *PeersUpdateManager) CreateChannel(ctx context.Context, peerID string) chan *network_map.UpdateMessage {
 	start := time.Now()
@@ -89,16 +112,38 @@ func (p *PeersUpdateManager) CreateChannel(ctx context.Context, peerID string) c
 	return channel
 }
 
+// CreateNotificationChannel registers a lightweight invalidation subscriber.
+func (p *PeersUpdateManager) CreateNotificationChannel(ctx context.Context, peerID string) chan struct{} {
+	p.channelsMux.Lock()
+	defer p.channelsMux.Unlock()
+
+	if ch, ok := p.notificationChannels[peerID]; ok {
+		delete(p.notificationChannels, peerID)
+		close(ch)
+	}
+	ch := make(chan struct{}, 1)
+	p.notificationChannels[peerID] = ch
+	log.WithContext(ctx).Debugf("opened notification channel for peer %s", peerID)
+	return ch
+}
+
 func (p *PeersUpdateManager) closeChannel(ctx context.Context, peerID string) {
+	closed := false
 	if channel, ok := p.peerChannels[peerID]; ok {
 		delete(p.peerChannels, peerID)
 		close(channel)
-
+		closed = true
 		log.WithContext(ctx).Debugf("closed updates channel of a peer %s", peerID)
-		return
 	}
-
-	log.WithContext(ctx).Debugf("closing updates channel: peer %s has no channel", peerID)
+	if channel, ok := p.notificationChannels[peerID]; ok {
+		delete(p.notificationChannels, peerID)
+		close(channel)
+		closed = true
+		log.WithContext(ctx).Debugf("closed notification channel for peer %s", peerID)
+	}
+	if !closed {
+		log.WithContext(ctx).Debugf("closing updates channel: peer %s has no channel", peerID)
+	}
 }
 
 // CloseChannels closes updates channel for each given peer
@@ -173,8 +218,16 @@ func (p *PeersUpdateManager) HasChannel(peerID string) bool {
 	return ok
 }
 
+// HasNotificationChannel reports whether peerID has a lightweight subscriber.
+func (p *PeersUpdateManager) HasNotificationChannel(peerID string) bool {
+	p.channelsMux.RLock()
+	defer p.channelsMux.RUnlock()
+	_, ok := p.notificationChannels[peerID]
+	return ok
+}
+
 func (p *PeersUpdateManager) CountStreams() int {
 	p.channelsMux.RLock()
 	defer p.channelsMux.RUnlock()
-	return len(p.peerChannels)
+	return len(p.peerChannels) + len(p.notificationChannels)
 }

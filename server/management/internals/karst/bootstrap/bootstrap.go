@@ -222,9 +222,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	svc.RecordSessionsWith(sessionRecorder{nodes: nodes})
 	// GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73): a subscribed node hears about a deprovisioning event
 	// on its already-open stream instead of waiting up to REFRESH's 60 s poll.
-	// PeersUpdateManager is the inherited registry both deprovisioning paths
-	// (device removal, SCIM user removal) already drive; Karst subscribes to
-	// it rather than building a second one.
+	// The manager's lightweight notification registry is driven beside its
+	// inherited SyncResponse channels, so Karst does not cause construction of
+	// a full upstream network map that it would discard.
 	svc.SubscribeToUpdatesWith(peers, s.PeersUpdateManager())
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{

@@ -151,6 +151,9 @@ func (c *Controller) sendUpdateAccountPeers(ctx context.Context, accountID strin
 	if err != nil {
 		return fmt.Errorf("failed to get account: %v", err)
 	}
+	for peerID := range account.Peers {
+		c.peersUpdateManager.SendNotification(ctx, peerID)
+	}
 
 	globalStart := time.Now()
 
@@ -320,6 +323,9 @@ func (c *Controller) UpdateAffectedPeers(ctx context.Context, accountID string, 
 
 func (c *Controller) sendUpdateForAffectedPeers(ctx context.Context, accountID string, peerIDs []string) error {
 	log.WithContext(ctx).Tracef("sendUpdateForAffectedPeers: account %s, %d affected peers: %v (caller: %s)", accountID, len(peerIDs), peerIDs, util.GetCallerName())
+	for _, peerID := range peerIDs {
+		c.peersUpdateManager.SendNotification(ctx, peerID)
+	}
 
 	if !c.hasConnectedPeers(peerIDs) {
 		log.WithContext(ctx).Tracef("sendUpdateForAffectedPeers: no connected peers among %v, skipping", peerIDs)
@@ -1013,6 +1019,7 @@ func (c *Controller) OnPeersDeleted(ctx context.Context, accountID string, peerI
 
 	dnsFwdPort := computeForwarderPort(peers, network_map.DnsForwarderPortMinVersion)
 	for _, peerID := range peerIDs {
+		c.peersUpdateManager.SendNotification(ctx, peerID)
 		c.peersUpdateManager.SendUpdate(ctx, peerID, &network_map.UpdateMessage{
 			Update: &proto.SyncResponse{
 				RemotePeers:        []*proto.RemotePeerConfig{},

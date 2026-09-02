@@ -4,7 +4,9 @@ import "context"
 
 type PeersUpdateManager interface {
 	SendUpdate(ctx context.Context, peerID string, update *UpdateMessage)
+	SendNotification(ctx context.Context, peerID string)
 	CreateChannel(ctx context.Context, peerID string) chan *UpdateMessage
+	CreateNotificationChannel(ctx context.Context, peerID string) chan struct{}
 	CloseChannel(ctx context.Context, peerID string)
 	CountStreams() int
 	HasChannel(peerID string) bool

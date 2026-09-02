@@ -470,7 +470,7 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 	// server only subscribes after processing the ChannelInit, and this
 	// avoids a flaky race against that goroutine scheduling.
 	deadline := time.Now().Add(2 * time.Second)
-	for !updateManager.HasChannel(peer.ID) {
+	for !updateManager.HasNotificationChannel(peer.ID) {
 		if time.Now().After(deadline) {
 			t.Fatalf("peer %s was never subscribed to updates", peer.ID)
 		}
