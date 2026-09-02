@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use karst_crypto::hash;
 use karst_crypto::{SuiteId, SuitePolicy};
 use karst_noise::handshake::{
     initiate, respond, HandshakeError, Initiator, InitiatorRandomness, PeerPublic,
@@ -331,8 +332,15 @@ impl Session {
     /// The session emits **datagrams**, never whole messages: a 2378-byte
     /// `HandshakeInit` cannot cross a link with a 1280-byte MTU, and a caller
     /// handed an over-sized buffer has no way to know it must fragment.
-    fn emit(&mut self, ty: MessageType, msg: &[u8]) -> Vec<Action> {
-        self.reassembly_id = self.reassembly_id.wrapping_add(1);
+    ///
+    /// `seed` must be fresh per call — it is what makes `reassembly_id` the
+    /// CSPRNG draw §5 requires rather than the predictable counter it was
+    /// (GitHub issue #80). Reusing a `seed` already spent on something else
+    /// in the same call (e.g. `new_handshake`'s ephemeral randomness) is
+    /// fine: [`derive_reassembly_id`]'s domain-separation label keeps the
+    /// two outputs independent.
+    fn emit(&mut self, ty: MessageType, msg: &[u8], seed: [u8; 32]) -> Vec<Action> {
+        self.reassembly_id = derive_reassembly_id(&seed);
         match fragment(ty, self.reassembly_id, msg, &self.out_mac_key) {
             Some(frags) => frags.into_iter().map(Action::Send).collect(),
             // Only possible past the 4-fragment cap, which no defined suite
@@ -475,7 +483,7 @@ impl Session {
         };
         let msg1 = hs.msg1.clone();
         self.state = State::Handshaking(Box::new(hs));
-        self.emit(MessageType::HandshakeInit, &msg1)
+        self.emit(MessageType::HandshakeInit, &msg1, seed)
     }
 
     /// Advance timers. Call regularly; it is cheap and idempotent.
@@ -490,7 +498,7 @@ impl Session {
                 }
                 if hs.retry_due(now_ms) {
                     let msg = hs.msg1.clone();
-                    return self.emit(MessageType::HandshakeInit, &msg);
+                    return self.emit(MessageType::HandshakeInit, &msg, seed);
                 }
                 Vec::new()
             }
@@ -535,7 +543,7 @@ impl Session {
                         }
                         if hs.retry_due(now_ms) {
                             let msg = hs.msg1.clone();
-                            return self.emit(MessageType::HandshakeInit, &msg);
+                            return self.emit(MessageType::HandshakeInit, &msg, seed);
                         }
                         Vec::new()
                     }
@@ -553,7 +561,7 @@ impl Session {
                         if let State::Established { rekey, .. } = &mut self.state {
                             *rekey = Some(Box::new(hs));
                         }
-                        self.emit(MessageType::HandshakeInit, &msg1)
+                        self.emit(MessageType::HandshakeInit, &msg1, seed)
                     }
                     None => Vec::new(),
                 }
@@ -697,6 +705,18 @@ impl Session {
             State::Established { session, .. } => session.seal(payload, now_ms)?,
             _ => return Err(TransportError::Expired),
         };
+        // Deliberately still a counter, not `derive_reassembly_id` — unlike
+        // `emit`'s handshake fragments (GitHub issue #80), `TransportData`
+        // always fragments to exactly one datagram (§13.6; `fragment` below
+        // returns `None` rather than splitting one that doesn't fit), so
+        // `reassembly_id` never reaches `Reassembler::push`'s multi-fragment,
+        // `(source, reassembly_id)`-keyed matching at all — `push` returns
+        // `complete_unfragmented` on `count == 1` before reading it
+        // (`reassembly.rs:211-213`). §5's CSPRNG requirement exists to avoid
+        // *that* collision; there is nothing here for a predictable value to
+        // collide with, and this is the hot data-path send call, so paying a
+        // hash per packet for it would be exactly the cost §13.8 already
+        // argued against paying without a property behind it.
         self.reassembly_id = self.reassembly_id.wrapping_add(1);
         fragment(
             MessageType::TransportData,
@@ -772,9 +792,10 @@ impl Session {
         msg2: &[u8],
         now_ms: u64,
         suite: SuiteId,
+        seed: [u8; 32],
     ) -> Vec<Action> {
         self.answered = Some((init.to_vec(), msg2.to_vec()));
-        let mut actions = self.emit(MessageType::HandshakeResponse, msg2);
+        let mut actions = self.emit(MessageType::HandshakeResponse, msg2, seed);
         // The suite the *initiator* chose, not this session's configured one:
         // a responder adopts what it was offered and its policy accepted.
         let derived = Arc::new(TransportSession::for_suite(
@@ -895,13 +916,13 @@ impl Session {
     /// Callers MUST try this before deriving anything: see [`Self::answered`]
     /// for what answering a retransmission afresh costs. `None` means the
     /// `HandshakeInit` is new and must be handled normally.
-    pub fn repeat_response(&mut self, init: &[u8]) -> Option<Vec<Action>> {
+    pub fn repeat_response(&mut self, init: &[u8], seed: [u8; 32]) -> Option<Vec<Action>> {
         let (answered, response) = self.answered.as_ref()?;
         if answered != init {
             return None;
         }
         let response = response.clone();
-        Some(self.emit(MessageType::HandshakeResponse, &response))
+        Some(self.emit(MessageType::HandshakeResponse, &response, seed))
     }
 
     /// A `CookieReply` arrived answering a `HandshakeInit` this session sent —
@@ -935,6 +956,7 @@ impl Session {
         &mut self,
         payload: &[u8],
         hdr: &FragmentHeader,
+        seed: [u8; 32],
     ) -> Option<Vec<Action>> {
         if !self
             .out_mac_key
@@ -959,7 +981,7 @@ impl Session {
             } => hs.msg1.clone(),
             _ => return Some(Vec::new()), // nothing outstanding to retry
         };
-        self.reassembly_id = self.reassembly_id.wrapping_add(1);
+        self.reassembly_id = derive_reassembly_id(&seed);
         let key = FragMacKey::new(&mac2_key(&cookie));
         Some(
             match fragment(MessageType::HandshakeInit, self.reassembly_id, &msg1, &key) {
@@ -992,10 +1014,11 @@ impl Session {
         rand: &ResponderRandomness,
         now_ms: u64,
     ) -> Vec<Action> {
+        let seed = seed_from_responder_randomness(rand);
         // The retransmission of a `HandshakeInit` already answered gets the
         // answer already given, rather than a second set of keys — see
         // [`Self::answered`].
-        if let Some(actions) = self.repeat_response(datagram) {
+        if let Some(actions) = self.repeat_response(datagram, seed) {
             return actions;
         }
         // An established session is not torn down by an inbound handshake:
@@ -1027,7 +1050,7 @@ impl Session {
         // §12.6: no assurance until a transport message authenticates. The
         // session is usable for sending, but `Established` here means "keys
         // agreed", not "peer verified".
-        self.adopt_responder(datagram, &pending.confirm(), &msg2, now_ms, suite)
+        self.adopt_responder(datagram, &pending.confirm(), &msg2, now_ms, suite, seed)
     }
 
     /// Dispatch an already-reassembled message.
@@ -1082,6 +1105,50 @@ fn derive_initiator_randomness(seed: &[u8; 32], attempt: u32) -> InitiatorRandom
         encap_rand,
         timestamp: [0; 12],
     }
+}
+
+/// Draw a `reassembly_id` from a caller-supplied seed — §5: "sender-chosen,
+/// MUST be drawn from a CSPRNG." GitHub issue #80: this used to be
+/// `wrapping_add(1)` from a fixed start, so every peer pair's first
+/// fragmented handshake message carried the same value fleet-wide, and
+/// every retry after that was a five-term arithmetic sequence from a known
+/// start — predictable enough that, combined with `mac1`'s already-documented
+/// forgeability (§9.2), an attacker needed no observation of any traffic at
+/// all to inject forged fragments into a targeted handshake's exact
+/// `(source, reassembly_id)` slot.
+///
+/// `seed` must be fresh per call, the same requirement every other
+/// caller-supplied seed in this module already carries. Hashing with a
+/// domain-separation label — rather than returning `seed`'s own leading
+/// bytes — is what lets a caller safely reuse one fresh seed for both this
+/// and, e.g., [`derive_initiator_randomness`] in the same call.
+fn derive_reassembly_id(seed: &[u8; 32]) -> u32 {
+    let d = hash::Algorithm::Sha512.digest(&[b"Karst reassembly-id v1", seed]);
+    let mut b = [0u8; 4];
+    if let Some(head) = d.as_bytes().get(..4) {
+        b.copy_from_slice(head);
+    }
+    u32::from_le_bytes(b)
+}
+
+/// [`Self::respond_to`] only has [`ResponderRandomness`] to work with — it
+/// predates `emit`'s `seed` parameter and is the test harness's entry point,
+/// not the daemon's (`bins/karstd/engine.rs`'s `accept_handshake` and
+/// `accept_relayed_handshake` are the real ones, and derive their own seed
+/// the same way). `rand` is fresh per inbound datagram wherever a caller
+/// constructs it, same requirement as any other seed here.
+fn seed_from_responder_randomness(rand: &ResponderRandomness) -> [u8; 32] {
+    let d = hash::Algorithm::Sha512.digest(&[
+        b"Karst per-datagram seed v1",
+        &rand.e_dh_seed,
+        &rand.encap_rand_e,
+        &rand.encap_rand_s,
+    ]);
+    let mut s = [0u8; 32];
+    if let Some(head) = d.as_bytes().get(..32) {
+        s.copy_from_slice(head);
+    }
+    s
 }
 
 /// Re-exported so callers need not depend on `karst-noise` directly.

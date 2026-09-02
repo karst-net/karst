@@ -20,6 +20,7 @@ use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, FragMacKey, COOKI
 use karst_proto::{split_datagram, MessageType};
 
 const PSK: [u8; 32] = [0x42; 32];
+const TEST_SEED: [u8; 32] = [0x99; 32];
 
 fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
     Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
@@ -83,7 +84,7 @@ fn a_valid_cookie_reply_triggers_a_retry_under_mac2() {
     let (hdr, payload) = split_datagram(&datagram).expect("split");
 
     let actions = a
-        .handle_cookie_reply(payload, &hdr)
+        .handle_cookie_reply(payload, &hdr, TEST_SEED)
         .expect("the reply's own MAC verifies");
     assert!(!actions.is_empty(), "a valid reply must trigger a retry");
 
@@ -127,7 +128,7 @@ fn a_reply_signed_with_the_wrong_key_is_ignored() {
     let (hdr, payload) = split_datagram(&datagram).expect("split");
 
     assert_eq!(
-        a.handle_cookie_reply(payload, &hdr),
+        a.handle_cookie_reply(payload, &hdr, TEST_SEED),
         None,
         "a forged frag_mac must not even reach the AEAD"
     );
@@ -146,7 +147,10 @@ fn a_reply_for_a_different_attempt_is_ignored() {
     let datagram = reply_fragment(&b_keys, reassembly_id.wrapping_add(1), &cookie);
     let (hdr, payload) = split_datagram(&datagram).expect("split");
 
-    assert_eq!(a.handle_cookie_reply(payload, &hdr), Some(Vec::new()));
+    assert_eq!(
+        a.handle_cookie_reply(payload, &hdr, TEST_SEED),
+        Some(Vec::new())
+    );
 }
 
 #[test]
@@ -159,7 +163,10 @@ fn a_reply_with_no_outstanding_handshake_is_ignored() {
     let datagram = reply_fragment(&b_keys, 0, &cookie);
     let (hdr, payload) = split_datagram(&datagram).expect("split");
 
-    assert_eq!(a.handle_cookie_reply(payload, &hdr), Some(Vec::new()));
+    assert_eq!(
+        a.handle_cookie_reply(payload, &hdr, TEST_SEED),
+        Some(Vec::new())
+    );
 }
 
 #[test]
@@ -176,5 +183,8 @@ fn a_tampered_cookie_reply_body_is_ignored() {
 
     // The frag_mac does not cover the payload (§13.8), so this still passes
     // that check — and must be rejected by `open_cookie_reply`'s AEAD tag.
-    assert_eq!(a.handle_cookie_reply(payload, &hdr), Some(Vec::new()));
+    assert_eq!(
+        a.handle_cookie_reply(payload, &hdr, TEST_SEED),
+        Some(Vec::new())
+    );
 }

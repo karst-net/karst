@@ -1147,6 +1147,26 @@ impl Engine {
         n
     }
 
+    /// Same fresh `rand` draw, hashed under its own label, for
+    /// [`Session::adopt_responder`]/`repeat_response`/`handle_cookie_reply`'s
+    /// `seed` parameter — GitHub issue #80: those derive `reassembly_id` from
+    /// it rather than the predictable counter §5 forbids. A distinct label
+    /// from [`Self::cookie_reply_nonce`]'s keeps the two outputs independent
+    /// even on the one call where both are drawn from the same `rand`.
+    fn seed_from(rand: &ResponderRandomness) -> [u8; 32] {
+        let d = hash::Algorithm::Sha512.digest(&[
+            b"Karst per-datagram seed v1",
+            &rand.e_dh_seed,
+            &rand.encap_rand_e,
+            &rand.encap_rand_s,
+        ]);
+        let mut s = [0u8; 32];
+        if let Some(head) = d.as_bytes().get(..32) {
+            s.copy_from_slice(head);
+        }
+        s
+    }
+
     /// Answer a fragment §9.1 refused under load with a `CookieReply` — §6.3,
     /// §9.1, §9.3.
     ///
@@ -1223,7 +1243,11 @@ impl Engine {
                 roster.peers.get(peer).map(|p| {
                     (
                         peer,
-                        Self::lock(&p.session).handle_cookie_reply(payload, &hdr),
+                        Self::lock(&p.session).handle_cookie_reply(
+                            payload,
+                            &hdr,
+                            Self::seed_from(rand),
+                        ),
                     )
                 })
             });
@@ -1508,7 +1532,7 @@ impl Engine {
         let repeated = roster
             .peers
             .get(expected)
-            .and_then(|p| Self::lock(&p.session).repeat_response(msg));
+            .and_then(|p| Self::lock(&p.session).repeat_response(msg, Self::seed_from(rand)));
         if let Some(actions) = repeated {
             self.apply(roster, expected, actions, now_ms, out);
             return;
@@ -1554,6 +1578,7 @@ impl Engine {
                     &msg2,
                     now_ms,
                     suite,
+                    Self::seed_from(rand),
                 )
             })
             .unwrap_or_default();
@@ -1586,7 +1611,7 @@ impl Engine {
             roster
                 .peers
                 .get(peer)
-                .and_then(|p| Self::lock(&p.session).repeat_response(msg))
+                .and_then(|p| Self::lock(&p.session).repeat_response(msg, Self::seed_from(rand)))
                 .map(|actions| (peer, actions))
         });
         if let Some((peer, actions)) = repeated {
@@ -1647,6 +1672,7 @@ impl Engine {
                     &msg2,
                     now_ms,
                     suite,
+                    Self::seed_from(rand),
                 )
             })
             .unwrap_or_default();

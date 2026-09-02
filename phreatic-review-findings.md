@@ -339,9 +339,51 @@ GitHub issue [#79](https://github.com/karst-net/karst/issues/79) closed.
 
 ---
 
-## High — `reassembly_id` is a predictable counter, not the CSPRNG draw §5 requires
+## High — `reassembly_id` is a predictable counter, not the CSPRNG draw §5 requires — **closed 2026-09-02**
 
 ### 5. `Session` seeds `reassembly_id` at 0 and increments by 1 — every peer pair's first fragmented message carries the same value
+
+**Closed.** `Session::emit` (`crates/karst-node/src/session.rs`) now takes a
+caller-supplied `seed: [u8; 32]` and derives `reassembly_id` from it via
+`derive_reassembly_id` — `HASH("Karst reassembly-id v1" ‖ seed)`, truncated
+to 4 bytes — instead of `wrapping_add(1)`. Every call site that used to leave
+`emit` to invent its own increment now threads a fresh seed through: the
+initiator paths (`start_handshake`, both retry branches in `poll`, the rekey
+path) already had one; `adopt_responder`, `repeat_response` and
+`handle_cookie_reply` gained a `seed` parameter, sourced at the two daemon
+call sites (`bins/karstd/engine.rs`'s `accept_handshake` and
+`accept_relayed_handshake`) from a new `Engine::seed_from(rand)` helper that
+hashes the already-fresh-per-datagram `ResponderRandomness` under its own
+domain-separation label — the same pattern `cookie_reply_nonce` already used
+for the same `rand`, just a different label so the two derivations stay
+independent. `Session::respond_to` (the test harness's entry point) does the
+same locally via `seed_from_responder_randomness`.
+
+**`TransportData`'s `reassembly_id` in `Session::send` was deliberately left
+as a counter, not converted.** Traced and confirmed: `fragment()`
+(`crates/karst-proto/src/lib.rs:308-323`) only ever emits `TransportData` as
+a single, unfragmented datagram (`count == 1`) — it returns `None` rather
+than splitting one that would need more than that — so it never reaches
+`Reassembler::push`'s multi-fragment, `(source, reassembly_id)`-keyed
+matching at all; `push` returns via `complete_unfragmented` before reading
+`reassembly_id` (`reassembly.rs:211-213`). §5's CSPRNG requirement exists to
+prevent exactly the collision this finding describes, and there is nothing
+for a predictable value to collide with on that path — converting it would
+have cost a hash per packet on the hot data-path send call for no property,
+the same reasoning §13.8 already applied to the fragment MAC's payload
+coverage on the same path. Documented in place
+(`session.rs`'s `send`) so a future reader does not mistake the omission for
+one this pass missed.
+
+New coverage: `crates/karst-node/tests/reassembly_id.rs` — two freshly
+dialled sessions given different seeds do not pick the same first id (and
+neither picks the old fixed value, `1`), and a handshake retry's id is not
+the previous one plus one. `cookie_reply.rs`'s five tests updated for
+`handle_cookie_reply`'s new parameter. GitHub issue
+[#80](https://github.com/karst-net/karst/issues/80) closed.
+
+**What #80's original text below still describes accurately: why this was
+missing and what it cost while it was.**
 
 Found while tracing exactly how exploitable Finding 6's mac2 regression is in
 practice — the answer turned out to depend on this, and this bug is worse on
@@ -400,18 +442,15 @@ mac2 header needs the attacker to have seen one first. Finding 6 remains
 worth its own writeup because it is a distinct, `§13.8`-specific capability
 shift; this finding is the more directly actionable bug.
 
-**Fix sketch, not yet implemented.** Draw `reassembly_id` from the same
-`seed: impl Fn() -> [u8; 32]` closure already available at every existing
-call site of `emit()` except `handle_cookie_reply`, which needs a seed
-threaded into it from `Engine::inbound`'s dispatch
-(`bins/karstd/engine.rs:1226`) the same way `Engine::poll` already threads
-one into `Session::poll`. A property test asserting that repeated `emit()`
-calls against a real RNG do not produce a short deterministic sequence would
-have caught this; none of the existing reassembly or session tests check
-`reassembly_id`'s distribution, only its role in demultiplexing.
+**Fixed as described above** — `reassembly_id` is now drawn via
+`derive_reassembly_id` from a fresh per-call seed everywhere `emit()` is
+reached, including `handle_cookie_reply`, threaded from `Engine::inbound`'s
+dispatch (`bins/karstd/engine.rs:1247`) the same way `Engine::poll` already
+threads one into `Session::poll`. The property test this called for —
+asserting that repeated `emit()`-triggering calls do not produce a short
+deterministic sequence — is `reassembly_id.rs`'s two new tests.
 
-GitHub issue [#80](https://github.com/karst-net/karst/issues/80) filed, not
-yet closed.
+GitHub issue [#80](https://github.com/karst-net/karst/issues/80) closed.
 
 ---
 
@@ -573,17 +612,13 @@ Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/
 `phreatic-nodh.vp` then `phreatic-nodh.pv`),
 and Finding 4 (secret material never zeroized, GitHub issue [#79](https://github.com/karst-net/karst/issues/79)).
 
+**Finding 5 (`reassembly_id` is a predictable counter, not a CSPRNG draw) is
+closed** — GitHub issue [#80](https://github.com/karst-net/karst/issues/80).
+
 **Finding 6 (§14 item 10's adversarial reading of §13.8) is closed as a
 review** — GitHub issue [#81](https://github.com/karst-net/karst/issues/81)
-tracks the open decision it surfaced (document vs. reintroduce payload
-coverage for handshake fragments only), not a pending code change.
-
-**Finding 5 (`reassembly_id` is a predictable counter, not a CSPRNG draw) is
-open** — GitHub issue [#80](https://github.com/karst-net/karst/issues/80),
-recommended next: it's a clear `§5` MUST violation with a bounded fix (thread
-the existing `seed` closure into `reassembly_id` generation), found while
-grounding Finding 6 rather than by that finding's own scope, and is the more
-directly exploitable of the two.
+tracks the decision it surfaced (document vs. reintroduce payload coverage
+for handshake fragments only).
 
 Next passes for this workstream: constant-time behavior at the primitive
 level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'
