@@ -661,7 +661,7 @@ That gap was never explained.
 
 It is recorded because it is a **reason for caution rather than a reason for
 confidence**: an implementer who reads the measurements above and concludes the
-technique is ready has the same surprise waiting. FINDINGS.md 28 carries it.
+technique is ready has the same surprise waiting. GitHub issue [#33](https://github.com/karst-net/karst/issues/33) carries it.
 
 
 ## 8. Path selection
@@ -853,7 +853,7 @@ must not be carried across to AVEN, where the MAC's job is different.
    since relaxing it hands the malicious peer of §1.1 an *N*-fold amplifier
    pointed wherever it likes. **Explicit port mapping — PCP, NAT-PMP,
    UPnP-IGD — is deterministic where this is probabilistic, and is the better
-   use of the same effort.** FINDINGS.md 24 carries the measurement.
+   use of the same effort.** GitHub issue [#29](https://github.com/karst-net/karst/issues/29) carries the measurement.
 
    **Partly resolved by §7.7**, which specifies the random-port search for the
    hard/easy pairing and holds it inside §7.5's existing budget rather than

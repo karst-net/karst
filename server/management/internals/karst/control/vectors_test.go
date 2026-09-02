@@ -101,7 +101,7 @@ type versionDNSRoute struct {
 //
 // The `karst-relays` term has existed on both sides since 2026-08-18 and until
 // now no vector carried a single relay, so the one field of the netmap that a
-// production server had never populated (FINDINGS.md 43) was also the one the
+// production server had never populated (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)) was also the one the
 // two implementations had never been checked to agree on. A disagreement here
 // is not a degraded relay: the node recomputes the version over the netmap it
 // assembled and refuses one that does not match, so no netmap would ever apply.
@@ -246,7 +246,7 @@ func TestVectors(t *testing.T) {
 			"2026-08-21: netmap_version cases carry relay registries. The term " +
 			"had been hashed by both ends since 2026-08-18 with no vector " +
 			"exercising it, because no production server ever populated the " +
-			"field (FINDINGS.md 43). " +
+			"field (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)). " +
 			"2026-08-25: netmap_version gained the domain-separated karst-bedrock " +
 			"term (bedrock-v1.md §5), and then the enforcement mode within it. " +
 			"Pre-change version values are intentionally " +

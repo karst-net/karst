@@ -21,7 +21,7 @@
 //! engine goes on comparing plain IPv4 addresses — which matters more than it
 //! sounds, because a node that let a synthesised address escape into
 //! `Pong.observed` would be advertising an address meaningful only inside its
-//! own network (FINDINGS.md 45 is the same mistake in its other spelling).
+//! own network (GitHub issue [#50](https://github.com/karst-net/karst/issues/50) is the same mistake in its other spelling).
 //!
 //! # What is not here
 //!

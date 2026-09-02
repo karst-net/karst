@@ -10,7 +10,7 @@
 //! permits `A → B:22` and denies `B:22 → A:54321`, because the reply's
 //! destination port matches nothing — so **no TCP connection can complete**,
 //! which is the primary use of the feature and the example the plan itself
-//! gives. That was FINDINGS.md finding 17, and it was found by two daemons
+//! gives. That was GitHub issue [#22](https://github.com/karst-net/karst/issues/22), and it was found by two daemons
 //! carrying real traffic rather than by any of the tests below this line.
 //!
 //! # The rule

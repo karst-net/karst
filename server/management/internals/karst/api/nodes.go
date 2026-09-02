@@ -389,7 +389,7 @@ func (h *handler) bedrockAuditAnchorExport(w http.ResponseWriter, r *http.Reques
 	// first thing an administrator who clicks this hits — and without this
 	// branch it arrived as a bare 500, while the sibling export three
 	// handlers up answered the same missing genesis with a 412 and a sentence
-	// saying what to do (FINDINGS.md 66).
+	// saying what to do (GitHub issue [#71](https://github.com/karst-net/karst/issues/71)).
 	if errors.Is(err, bedrock.ErrNoLog) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed,
 			"Bedrock genesis must be imported before an audit anchor can be exported"), w)

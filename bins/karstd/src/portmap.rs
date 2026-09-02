@@ -33,7 +33,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(1024);
 
 /// How long to wait before asking a gateway that just refused.
 ///
-/// **The classification was never wrong; the schedule was** (FINDINGS.md 38).
+/// **The classification was never wrong; the schedule was** (GitHub issue [#43](https://github.com/karst-net/karst/issues/43)).
 /// RFC 6887 §7.4 makes `NO_RESOURCES` transient and `ResultCode::is_transient`
 /// agrees deliberately: a node that gave up on it would never recover when a
 /// gateway's table drained. But a flat five seconds turns "transient" into

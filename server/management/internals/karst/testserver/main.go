@@ -93,7 +93,7 @@ func main() {
 	svc := control.New(static, identity.ControlSigner{Key: srvKey},
 		lookup, identity.ControlVerifier{}, handler)
 
-	// The push mechanism (FINDINGS.md 67/68) only matters to the end-to-end
+	// The push mechanism (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) only matters to the end-to-end
 	// deprovisioning check, which is also the one test that runs with
 	// --control. Every other row is unaffected: with nothing subscribing,
 	// control.Service behaves exactly as it did before SubscribeToUpdatesWith

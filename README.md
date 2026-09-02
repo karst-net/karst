@@ -14,7 +14,7 @@ user management.**
 > GA), the wire formats are still changing without compatibility guarantees,
 > and two things Phase 5's own exit gate asked for are not yet true:
 > deprovisioning a user is measured at 48.9s against a 30s bound
-> ([FINDINGS.md](FINDINGS.md) 67, 68), and the gate's outsider-run
+> (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)), and the gate's outsider-run
 > walkthrough has not happened yet. "Usable" and "reviewed" are different
 > claims, and Phase 5 only earns the first one.
 
@@ -137,7 +137,7 @@ A security project that advertises only its wins is not trustworthy.
   (`ponor-v1.md` §13.10), and there will be others before 1.0.
 
 Everything found by review and not yet fixed is in
-[FINDINGS.md](FINDINGS.md) — open findings included, with severities.
+[GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) — open findings included, with severities.
 
 ## Design
 

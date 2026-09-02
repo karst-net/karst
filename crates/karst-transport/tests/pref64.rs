@@ -56,7 +56,7 @@ fn effective_uid() -> u32 {
 }
 
 /// Whether to run, **and a refusal to be quietly green** — the rule
-/// `nat_matrix.rs` acquired as FINDINGS.md 48.
+/// `nat_matrix.rs` acquired as GitHub issue [#53](https://github.com/karst-net/karst/issues/53).
 fn have_prerequisites() -> bool {
     let mut missing = Vec::new();
     if effective_uid() != 0 {

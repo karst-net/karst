@@ -88,7 +88,7 @@ type Karst struct {
 	VerifyKey []byte
 	Epoch     uint32
 	// Nodes is the enrolled-identity store, exposed so a co-located relay's
-	// roster can be rendered from it (PLAN.md §5, FINDINGS.md 42). Read-only
+	// roster can be rendered from it (PLAN.md §5, GitHub issue [#47](https://github.com/karst-net/karst/issues/47)). Read-only
 	// as far as that caller is concerned; the handlers above own the writes.
 	Nodes *node.Store
 }
@@ -220,7 +220,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// What makes `/me/sessions` a session history rather than a list of audit
 	// rows with a null end time and a null address.
 	svc.RecordSessionsWith(sessionRecorder{nodes: nodes})
-	// FINDINGS.md 67/68: a subscribed node hears about a deprovisioning event
+	// GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73): a subscribed node hears about a deprovisioning event
 	// on its already-open stream instead of waiting up to REFRESH's 60 s poll.
 	// PeersUpdateManager is the inherited registry both deprovisioning paths
 	// (device removal, SCIM user removal) already drive; Karst subscribes to
@@ -249,8 +249,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 
 	// Said out loud because its absence is invisible from every other vantage
 	// point: a relay with a valid config and a current roster still sees no
-	// connections, since a node dials only relays its netmap named (FINDINGS.md
-	// 43). A warning here is the one place that reads as a cause.
+	// connections, since a node dials only relays its netmap named (GitHub issue
+	// [#48](https://github.com/karst-net/karst/issues/48)). A warning here is the one place that reads as a cause.
 	if len(relays) == 0 {
 		log.Warnf("karst: no relay registry; nodes will be told of no relays and " +
 			"cannot relay, so a pair that fails to connect directly cannot connect at all")

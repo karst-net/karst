@@ -6,7 +6,7 @@
 //! Outbound ([`crate::socks5`]) and inbound ([`crate::publish`]) differ only in
 //! who dials whom. Once there is a host socket at one end and an overlay socket
 //! at the other, the work is identical — and it is not trivial work: the
-//! half-close rule below is FINDINGS.md 39, and the poll schedule is the
+//! half-close rule below is GitHub issue [#44](https://github.com/karst-net/karst/issues/44), and the poll schedule is the
 //! difference between 1.1 Mbps and 516 Mbps measured in
 //! `docs/measurements/userspace-cost-2026-08-21.md`.
 //!
@@ -67,7 +67,7 @@ pub(crate) fn pump(
     // **The only place a proxied socket is reclaimed.** `copy` returns early on
     // any host-socket error, and an earlier version of this code — which lived
     // inline in `socks5` — simply returned, leaving a socket and its 128 KiB of
-    // buffers in the stack for the life of the daemon (FINDINGS.md 44).
+    // buffers in the stack for the life of the daemon (GitHub issue [#49](https://github.com/karst-net/karst/issues/49)).
     stack.tcp_release(tunnel);
     result
 }
@@ -102,7 +102,7 @@ fn copy(
         // hard ceiling on it: one `READ_CHUNK` per tick, and a round trip
         // costing at least two ticks. Measured at 2 ms that was 1.1 Mbps and a
         // 4.1 ms RTT whose distribution was flat across every percentile —
-        // FINDINGS.md 40, and the shape of a number that is a timer rather than
+        // GitHub issue [#45](https://github.com/karst-net/karst/issues/45), and the shape of a number that is a timer rather than
         // a cost. What remains is `ACTIVE_POLL`, and only on a pass that found
         // nothing to do.
         let mut moved = false;
@@ -159,7 +159,7 @@ fn copy(
         // nothing can arrive *yet*. The two are indistinguishable from here, so
         // this waits until the connection has been ready at least once before
         // it will believe the socket is finished. `publish` no longer hands
-        // over a socket in `SYN-RECEIVED` (FINDINGS.md 49) and this is the
+        // over a socket in `SYN-RECEIVED` (GitHub issue [#54](https://github.com/karst-net/karst/issues/54)) and this is the
         // second line of defense, because the cost of confusing the two is a
         // half-close sent to a backend that has not yet seen a single byte of
         // the request it is being asked to answer.

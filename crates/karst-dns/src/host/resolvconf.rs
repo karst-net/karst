@@ -21,12 +21,12 @@ pub const RESOLV_CONF: &str = "/etc/resolv.conf";
 ///
 /// Under `/run` it did not: the unit's `RuntimeDirectory=karst` deletes the
 /// directory on every stop — including the stop where `ExecStopPost=` failed,
-/// which is the only stop the record exists for. FINDINGS.md 62.
+/// which is the only stop the record exists for. GitHub issue [#67](https://github.com/karst-net/karst/issues/67).
 ///
 /// [`NetworkManager::recover`]: super::NetworkManager::recover
 pub const REVERT_STATE: &str = "/var/lib/karst/dns-revert";
 
-/// Where the record lived before FINDINGS.md 62 moved it. Read, never written.
+/// Where the record lived before GitHub issue [#67](https://github.com/karst-net/karst/issues/67) moved it. Read, never written.
 ///
 /// A node upgraded in place while MagicDNS was applied has its only copy here,
 /// and dropping it would be worse than never having written one: the next
@@ -201,7 +201,7 @@ impl ResolvConf {
         // The packages ship `/var/lib/karst` at 0700 and `StateDirectory=karst`
         // recreates it at that mode, but a `karstd` run by hand has neither. The
         // mode is not tidiness: the netmap cache shares this directory and holds
-        // one pre-shared key per peer — THREAT-MODEL R5, FINDINGS.md 61 — so
+        // one pre-shared key per peer — THREAT-MODEL R5, GitHub issue [#66](https://github.com/karst-net/karst/issues/66) — so
         // creating it at the process umask would publish them to every local
         // user. An existing directory is left exactly as the operator has it.
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -380,7 +380,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    /// FINDINGS.md 62. A node upgraded in place while MagicDNS was applied has
+    /// GitHub issue [#67](https://github.com/karst-net/karst/issues/67). A node upgraded in place while MagicDNS was applied has
     /// its only revert record at the old `/run` location. If the new build
     /// cannot see it, the host keeps pointing at a stub that stopped listening
     /// and nothing on the machine can say what it pointed at before.

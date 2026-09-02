@@ -306,7 +306,7 @@ and detectable only if someone is watching the mode field).
 > anticipate; what was built is the disclosure gate (spec §6.2), which is the
 > half with security value. **10.14**'s "on a schedule" cannot mean automatic:
 > an anchor needs an authority signature, and anything holding an authority key
-> can also countersign nodes (FINDINGS 56).
+> can also countersign nodes (GitHub issue [#61](https://github.com/karst-net/karst/issues/61)).
 
 | # | Item | Weeks | Depends on |
 |---|---|---|---|

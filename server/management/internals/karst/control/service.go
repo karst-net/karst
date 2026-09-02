@@ -30,7 +30,7 @@ import (
 
 // KindPush marks a server-sent envelope that is not a reply to any client
 // request — an unprompted "your netmap changed, re-fetch now" signal
-// (FINDINGS.md 67/68, spec/karst-control-v1.md §5.3). It carries no payload:
+// (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73), spec/karst-control-v1.md §5.3). It carries no payload:
 // the byte itself is the whole sealed body, and a node MUST NOT treat it as
 // carrying any content beyond that.
 //
@@ -100,7 +100,7 @@ type Service struct {
 func (s *Service) RecordSessionsWith(recorder SessionRecorder) { s.sessions = recorder }
 
 // SubscribeToUpdatesWith attaches the deprovisioning-push mechanism
-// (FINDINGS.md 67/68): peers resolves a node's handle to the peer row the
+// (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)): peers resolves a node's handle to the peer row the
 // inherited update channel is keyed by, and updates is that channel registry.
 // Separate from New for the same reason RecordSessionsWith is — callers that
 // do not want push, such as a one-exchange fixture, are unaffected.

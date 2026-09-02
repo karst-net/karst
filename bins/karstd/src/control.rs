@@ -280,7 +280,7 @@ pub struct Client {
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
     /// Held across many [`sync`](Client::sync) calls rather than reopened per
-    /// call (FINDINGS.md 67/68) — `None` between connections, briefly while
+    /// call (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) — `None` between connections, briefly while
     /// one is in flight (see `sync`'s use of `Option::take`), or after a
     /// request has failed and the connection has been given up as dead.
     conn: Option<Connection>,
@@ -541,7 +541,7 @@ impl Client {
     }
 
     /// A signal that fires whenever this client's held connection has an
-    /// unprompted push waiting — FINDINGS.md 67/68. Stable across reconnects;
+    /// unprompted push waiting — GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73). Stable across reconnects;
     /// see the `pushed` field.
     #[must_use]
     pub fn push_signal(&self) -> Arc<tokio::sync::Notify> {
@@ -551,8 +551,8 @@ impl Client {
     /// Register with the server and fetch a netmap.
     ///
     /// Reuses the held connection ([`ensure_connected`](Self::ensure_connected))
-    /// rather than opening and dropping one per call — the fix FINDINGS.md
-    /// 67/68 asked for: a connection that only exists for the duration of one
+    /// rather than opening and dropping one per call — the fix described by GitHub issues
+    /// [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73): a connection that only exists for the duration of one
     /// sync gives the server nothing to push a deprovisioning notice to
     /// between polls.
     ///

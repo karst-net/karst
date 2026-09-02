@@ -44,7 +44,7 @@ const prefix = "/api/karst/v1";
 // pipeline actually names things — `karst-client_<version>_<arch>.deb`, not the
 // `karst-linux-amd64.deb` this fixture used to invent. A fixture that describes
 // artifacts nothing builds lets the download test pass for a page that would be
-// empty in production, which is the fixture-only failure FINDINGS.md 42 and 43
+// empty in production, which is the fixture-only failure GitHub issue [#47](https://github.com/karst-net/karst/issues/47) and 43
 // are about.
 //
 // No Windows row: the client is Phase 8, so a manifest offering one would be

@@ -17,7 +17,7 @@
 > as a member of the same account, who must always be. The table is checked
 > against the router itself, so a route added later without coverage fails
 > `TestEveryMutatingConsoleRouteHasRealServerCoverage` rather than shipping
-> unexercised. Writing it found FINDINGS.md 66: an export that answered a
+> unexercised. Writing it found GitHub issue [#71](https://github.com/karst-net/karst/issues/71): an export that answered a
 > missing precondition with a 500 where its sibling answered 412, invisible to
 > the handler tests because their double cannot produce the error.
 

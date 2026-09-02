@@ -108,7 +108,7 @@ pub type SourceKey = [u8; 18];
 /// rather than at each of those means there is one representation of an
 /// address in the daemon, and it is the one every other node can reach: a
 /// v4-mapped address advertised as a candidate is one that no IPv4-only peer
-/// can send to (FINDINGS.md 45).
+/// can send to (GitHub issue [#50](https://github.com/karst-net/karst/issues/50)).
 ///
 /// [`source_key`] maps the other way, and deliberately: a *reassembly* key
 /// wants both families in one width, and it is not an address anything sends
@@ -628,7 +628,7 @@ mod tests {
     /// candidate at all. Every send path in the daemon drops errors on purpose,
     /// because a full buffer or an unreachable host must not take it down, so
     /// a peer reachable only over IPv6 produced no log line, no counter and no
-    /// symptom other than never connecting (FINDINGS.md 51).
+    /// symptom other than never connecting (GitHub issue [#56](https://github.com/karst-net/karst/issues/56)).
     #[test]
     fn an_ipv4_socket_says_why_it_cannot_send_to_an_ipv6_peer() {
         let v4 = UdpTransport::bind(loopback()).unwrap();

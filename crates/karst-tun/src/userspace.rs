@@ -54,7 +54,7 @@ const MAX_BATCH: usize = 64;
 /// path underneath could carry. The transmit side is the mirror: one segment of
 /// application data at a time, so every write costs a round trip.
 ///
-/// ADR-0012's gate-1 measurement is what surfaced it (FINDINGS.md 41): the mode
+/// ADR-0012's gate-1 measurement is what surfaced it (GitHub issue [#46](https://github.com/karst-net/karst/issues/46)): the mode
 /// sat at ~7 Mbps with the datapath and the relay loop both idle, which is the
 /// signature of a window and not of a cost.
 ///
@@ -723,7 +723,7 @@ impl Userspace {
     /// How many TCP sockets this stack is holding.
     ///
     /// Exists to be asserted on: "the sidecar reclaims what it opens" is a
-    /// property no test of bytes can see, and FINDINGS.md 44 is what happens
+    /// property no test of bytes can see, and GitHub issue [#49](https://github.com/karst-net/karst/issues/49) is what happens
     /// when nothing checks it.
     #[must_use]
     pub fn socket_count(&self) -> usize {
@@ -948,7 +948,7 @@ mod tests {
             socket.recv_capacity() >= floor,
             "receive buffer is {} B, under the {floor} B floor — at this size \
              the advertised window allows about one segment in flight, which is \
-             FINDINGS.md 41 and is invisible to every assertion about bytes",
+             GitHub issue [#46](https://github.com/karst-net/karst/issues/46) and is invisible to every assertion about bytes",
             socket.recv_capacity()
         );
         assert!(
@@ -959,7 +959,7 @@ mod tests {
     }
 
     /// **A socket mid-handshake is active and cannot yet receive**, and those
-    /// two answers together are what FINDINGS.md 49 was made of.
+    /// two answers together are what GitHub issue [#54](https://github.com/karst-net/karst/issues/54) was made of.
     ///
     /// `is_active()` is true from `SYN-RECEIVED` onward, so a listener that has
     /// seen only a `SYN` already looks like a connection. `may_recv()` in that
@@ -1039,7 +1039,7 @@ mod tests {
 
     /// Open, use and close a connection, and require the memory back.
     ///
-    /// **FINDINGS.md 44.** Every connection the sidecar handled added a socket
+    /// **GitHub issue [#49](https://github.com/karst-net/karst/issues/49).** Every connection the sidecar handled added a socket
     /// with 128 KiB of buffers and nothing ever removed one, so a long-running
     /// daemon grew without bound and polled every corpse on every packet. No
     /// test of bytes could see it: the conversations were all correct.

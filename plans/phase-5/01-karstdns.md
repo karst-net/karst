@@ -293,7 +293,7 @@ indistinguishable, to the person it happens to, from "the internet is broken".
 This is the single worst bug this workstream can ship.
 
 - Persist the `Revert` to `/var/lib/karst/dns-revert` at apply time, before the
-  change is made. **Settled 2026-08-29, by FINDINGS.md 62.** This originally
+  change is made. **Settled 2026-08-29, by GitHub issue [#67](https://github.com/karst-net/karst/issues/67).** This originally
   said `/run/karst/dns-revert.json`, and both halves of that were wrong: the
   record is length-prefixed binary rather than JSON, and `/run` is reclaimed by
   the unit's own `RuntimeDirectory=` on every stop — including the stop where

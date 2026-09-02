@@ -38,7 +38,7 @@ Twelve checkable claims hide in that sentence:
 | 7 | An ACL is written, validated, and saved in the console | [04](04-admin-console.md) §5.1 |
 | 8 | The ACL takes effect — a permitted flow works, a denied one does not | aquifer suite |
 | 9 | Network lock is enabled from the console | [02](02-bedrock.md) |
-| 10 | A user is deprovisioned and their sessions die in under 60 s | **🔴 Open, carried to Phase 6.** Measured 2026-08-28 at 48.9 s and not met as a bound — FINDINGS.md 67, 68 |
+| 10 | A user is deprovisioned and their sessions die in under 60 s | **🔴 Open, carried to Phase 6.** Measured 2026-08-28 at 48.9 s and not met as a bound — GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73) |
 | 11 | The docs are sufficient — no source reading, no maintainer questions | §4 |
 | 12 | The person doing it is not one of us | **🔴 Open, carried to Phase 6.** §3 — not yet run; CI's automated doc walkthrough is a regression guard, not this |
 
@@ -64,7 +64,7 @@ All three checks are runnable without a push — `just packages`,
 `just packages-verify`, `just packages-verify-systemd`.
 
 **Writing it found four defects, three of them release-blocking**, which is the
-argument for the section: FINDINGS.md 59 (every package shipped a binary that
+argument for the section: GitHub issue [#64](https://github.com/karst-net/karst/issues/64) (every package shipped a binary that
 could not start on Debian 12 or RHEL 9, and installed cleanly on both), 60 (the
 daemon survived its own removal, leaving a dangling enablement symlink), 61
 (nothing created `/var/lib/karst`, so the documented netmap-cache path did not
@@ -139,8 +139,8 @@ Rules:
 3. Everything is recorded: screen capture, and a running log of every moment
    they hesitate, re-read a page, or guess.
 4. **Every deviation is a finding.** Not "they got confused, we should improve
-   the docs" — a numbered entry with the same discipline as the rest of
-   FINDINGS.md, which currently stands at 52 closed and none open. Expect ten
+   the docs" — a numbered GitHub issue with the same discipline as the rest of
+   the [issue tracker](https://github.com/karst-net/karst/issues?q=is%3Aissue), which then stood at 52 closed and none open. Expect ten
    to twenty from a first walkthrough. That is a healthy result, not a failed
    one.
 5. Timebox: if they cannot get a first node connected inside 30 minutes, stop,
@@ -206,11 +206,11 @@ Phase 5 entry for the same accounting in the plan of record.
 | Gate | Source | Status |
 |---|---|---|
 | Walkthrough completed by an outsider, unaided | §3 | 🔴 **Not run — moved to Phase 6 W1** |
-| Every walkthrough finding either fixed or recorded as open | FINDINGS.md | Depends on the row above |
+| Every walkthrough finding either fixed or recorded as open | [GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) | Depends on the row above |
 | The twelve claims in §1 all demonstrated | §1 | 🟡 Ten of twelve — claims 10 and 12 moved to Phase 6 |
 | No secret material in any REST response, under any role | [03](03-control-api.md) §7 | ✅ |
 | Bedrock chain verifies identically in Go and Rust against shared vectors | [02](02-bedrock.md) §12 | ✅ |
-| Deprovisioning measured under 30 s in CI — **measured 2026-08-28 at 48.9 s, and blocked on [08](08-scim-and-groups.md) §2's push, not on the test** (FINDINGS.md 67, 68) | [08](08-scim-and-groups.md) §7 | 🔴 **Not met — moved to Phase 6, first item** |
+| Deprovisioning measured under 30 s in CI — **measured 2026-08-28 at 48.9 s, and blocked on [08](08-scim-and-groups.md) §2's push, not on the test** (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) | [08](08-scim-and-groups.md) §7 | 🔴 **Not met — moved to Phase 6, first item** |
 | DNS reverts after `SIGKILL` on Linux and the completed non-Linux platform | [01](01-karstdns.md) §10 | ✅ |
 | The NAT matrix still passes with the completed non-Linux client row added | Phase 4's matrix | ✅ — `two-host-test.sh` takes a Mac as either host (2026-08-30) |
 | Rust and Go test suites green; `just verify` and `just test-privileged` pass | `justfile` | ✅ |

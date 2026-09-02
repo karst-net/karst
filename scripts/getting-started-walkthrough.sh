@@ -632,12 +632,12 @@ b_reject_pin() {
 
 # b_roster_lease — the relay treats a roster nobody maintains as untrustworthy.
 #
-# FINDINGS.md 42, and §5 asks the reader to watch it happen once. The lease is
+# GitHub issue [#47](https://github.com/karst-net/karst/issues/47), and §5 asks the reader to watch it happen once. The lease is
 # ninety seconds and the server rewrites the file three times per lease, so the
 # mtime must advance while the bytes stay identical — the property that makes
 # "nothing has changed" and "nothing is running" distinguishable.
 b_roster_lease() {
-	say "the roster lease (§5, FINDINGS.md 42)"
+	say "the roster lease (§5, GitHub issue [#47](https://github.com/karst-net/karst/issues/47))"
 	local roster="$COMPOSE_DIR/state/roster.toml"
 
 	# The roster must actually hold the node that just enrolled. Without this

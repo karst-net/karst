@@ -69,7 +69,7 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 	// Validate before authorization, but do not persist yet. Invalid keys must
 	// not create a business-layer peer record; conversely, an authorization
 	// failure must not leave an orphan identity or rotate an existing node's
-	// data-plane keys (FINDINGS.md #2).
+	// data-plane keys (GitHub issue [#7](https://github.com/karst-net/karst/issues/7)).
 	//
 	// The node's PHREATIC keys are recorded only after enrollment because peers
 	// cannot handshake without them, and the netmap is how they are distributed

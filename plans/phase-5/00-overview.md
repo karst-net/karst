@@ -11,7 +11,7 @@ as elapsed calendar time.
 
 **Two items were red at close and moved to Phase 6 in writing**, per §9's own
 rule — see [09-exit-criteria.md](09-exit-criteria.md) §6 and PLAN.md's Phase 5
-entry: the deprovisioning timing gate (FINDINGS.md 67, 68) and the
+entry: the deprovisioning timing gate (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) and the
 outsider-run walkthrough (§9 §3), which has not happened — CI's automated doc
 walkthrough is a regression guard, not the unaided run the gate requires.
 Phase 6 opens the week of **2026-09-07**.

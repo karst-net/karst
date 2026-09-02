@@ -48,7 +48,7 @@ import (
 // not work, rather than one that works too well.
 const karstPolicyEnv = "KARST_POLICY_FILE"
 
-// The co-located relay's roster — PLAN.md §5, FINDINGS.md 42.
+// The co-located relay's roster — PLAN.md §5, GitHub issue [#47](https://github.com/karst-net/karst/issues/47).
 //
 // Unset means no roster is written, which is right for a server with no relay
 // beside it. Set, the file is rewritten on an interval whether or not

@@ -69,8 +69,8 @@ files, a `utun` carrying the packets — is what the macOS job and the walkthrou
 are for.
 
 **W4 paid for itself on its first CI run**, which is the argument for running
-the product on the platform rather than only its parts. It found FINDINGS.md
-69: userspace mode's SOCKS5 attachment had never worked on macOS, because BSD
+the product on the platform rather than only its parts. It found GitHub issue
+[#74](https://github.com/karst-net/karst/issues/74): userspace mode's SOCKS5 attachment had never worked on macOS, because BSD
 accepts inherit the listener's `O_NONBLOCK` and Linux accepts do not, so a
 `read_exact` in the SOCKS negotiation returned `WouldBlock` as an error on every
 connection. `tests/userspace.rs` covers that surface and is Linux-only by

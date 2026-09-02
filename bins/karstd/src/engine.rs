@@ -678,7 +678,7 @@ impl Engine {
     /// **That includes the endpoint the netmap supplied.** Discovery adopts it
     /// at reconcile and can withdraw it, which is what stops a published
     /// address that has gone stale from pre-empting the relay forever — it did,
-    /// and it was FINDINGS.md finding 15. A peer with no disco key is untouched
+    /// and it was GitHub issue [#20](https://github.com/karst-net/karst/issues/20). A peer with no disco key is untouched
     /// by any of this and keeps its configured endpoint, which is correct: no
     /// key means no discovery, ever (`aven-v1.md` §5.1), so there is nothing to
     /// learn from and nothing that could responsibly take it away.

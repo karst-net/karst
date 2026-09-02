@@ -31,7 +31,7 @@ services:
       # Rewrites roster.toml every 25s. **Not optional in this deployment.**
       # The relay's admission lease is refreshed by the file's modification
       # time and expires after 90 seconds, so without this the relay stops
-      # admitting nodes a minute and a half after it starts (FINDINGS.md 42).
+      # admitting nodes a minute and a half after it starts (GitHub issue [#47](https://github.com/karst-net/karst/issues/47)).
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
       # §5.4 scopes relay forwarding by aquifer. One value here, because this
       # deployment is single-tenant; it is what stops a relay becoming a
@@ -39,7 +39,7 @@ services:
       KARST_AQUIFER: ${KARST_AQUIFER:-default}
       # Which relays every node is told about (§4.2). Without it the netmap
       # carries no relays and nodes that cannot connect directly cannot
-      # connect at all — silently (FINDINGS.md 43).
+      # connect at all — silently (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)).
       KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
       # Absent would mean an empty filter, which is DEFAULT DENY. The file
       # bootstrap.sh writes is allow-all and says so in its first line; narrow

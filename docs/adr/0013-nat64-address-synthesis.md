@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-21
 - **Deciders:** project maintainer, on review 2026-08-21
-- **Related:** PLAN.md §6 (test matrix), FINDINGS.md 45, 46, 47, 51, 52, `aven-v1.md` §7.2
+- **Related:** PLAN.md §6 (test matrix), GitHub issues [#50](https://github.com/karst-net/karst/issues/50), [#51](https://github.com/karst-net/karst/issues/51), [#52](https://github.com/karst-net/karst/issues/52), [#56](https://github.com/karst-net/karst/issues/56), and [#57](https://github.com/karst-net/karst/issues/57), `aven-v1.md` §7.2
 
 ---
 
@@ -57,7 +57,7 @@ The decisive argument is what a leak costs. `aven-v1.md` §7.2 has a node hand
 back the source it saw as `Pong.observed`, and the peer publishes that as its
 own reflexive candidate. A synthesised address escaping there means an IPv4 peer
 advertising, to the entire mesh, an address that exists only inside one other
-node's network. FINDINGS.md 45 is precisely this failure in its other spelling —
+node's network. GitHub issue [#50](https://github.com/karst-net/karst/issues/50) is precisely this failure in its other spelling —
 a v4-mapped address rather than a prefixed one — and the fix for it put
 [`karst_transport::canonical`] at this same boundary for this same reason. A
 NAT64 prefix is the same category of fact: a purely local spelling of an IPv4
@@ -162,14 +162,14 @@ itself proves nothing.
   it tells *other* nodes. Observing that needs a third node.
   `bins/karstd/tests/nat64.rs` observes it directly instead, with a real socket
   and a real `Disco`, and asserts on the `Pong` that comes out. Writing that
-  test found FINDINGS.md 47.
+  test found GitHub issue [#52](https://github.com/karst-net/karst/issues/52).
 - The prefix is fixed for the process's life. A host that moves between
   networks needs a restart, which is already true of `node.listen`.
 - An `AF_INET` node's sends to an IPv6 candidate no longer fail silently
-  (FINDINGS.md 51). The send is refused before the syscall with a message naming
+  (GitHub issue [#56](https://github.com/karst-net/karst/issues/56)). The send is refused before the syscall with a message naming
   `node.listen`, counted, and reported once per process; `karst status` prints
   `ipv6 = "unreachable (node.listen is IPv4)"` on every such node.
-- **Building PREF64 end to end found FINDINGS.md 52**, which no unit test could
+- **Building PREF64 end to end found GitHub issue [#57](https://github.com/karst-net/karst/issues/57)**, which no unit test could
   have: `ICMP6_FILTER` uses a set bit to *block* (RFC 3542 §3.2), this code
   assumed it meant *pass*, and the socket therefore admitted every `ICMPv6` type
   except Router Advertisements. The parser was correct and the solicitation was

@@ -91,8 +91,8 @@ pub(crate) fn serve(stack: &Userspace, port: u16, to: SocketAddr, shutdown: &Shu
             // same answer it gives when the peer will never send again. Handing
             // such a socket to `pump` made it half-close the backend before the
             // request had arrived; the backend read `EOF`, closed, and the
-            // daemon's write of the real request came back `EPIPE`. FINDINGS.md
-            // 49, and it only ever showed on a machine slow enough to run this
+            // daemon's write of the real request came back `EPIPE`. GitHub issue
+            // [#54](https://github.com/karst-net/karst/issues/54), and it only ever showed on a machine slow enough to run this
             // loop inside the handshake.
             //
             // `may_recv` is the precise question — "can this connection deliver

@@ -10,7 +10,7 @@ portal, and the offline Bedrock signer.
 > cryptographic or security review and the wire formats are still changing.
 > This document exists so that Karst can be *run and reviewed*, not so that it
 > can be relied on. Read the caveats in [README.md](../README.md) and
-> [FINDINGS.md](../FINDINGS.md) first.
+> [GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) first.
 
 **Where this walkthrough stops.** Paths A, B and C below get you a running
 relay, a running coordination server, and a node that enrolls and carries
@@ -956,7 +956,7 @@ The failure modes below are the ones that do not announce themselves.
 | `karst: no daemon is listening on …` | `karstd` is not running, or a different `--socket` | `systemctl status karstd` |
 
 Everything found by review and not yet fixed is in
-[FINDINGS.md](../FINDINGS.md), open findings included, with severities.
+[GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue), open findings included, with severities.
 
 ---
 

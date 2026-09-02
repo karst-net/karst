@@ -100,7 +100,7 @@ impl Endpoint {
                 // kernel refuses with `EAFNOSUPPORT` and the datagram is
                 // dropped, so a peer advertising the mapped form would be
                 // unreachable by exactly the nodes that could have reached it
-                // (FINDINGS.md 45). Family `0x04` is how an IPv4 candidate is
+                // (GitHub issue [#50](https://github.com/karst-net/karst/issues/50)). Family `0x04` is how an IPv4 candidate is
                 // named.
                 if v6.to_ipv4_mapped().is_some() {
                     return Err(Error::Malformed);

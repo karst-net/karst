@@ -21,7 +21,7 @@
 //! candidate and advertises it to everybody. So a NAT64 node that skipped the
 //! translation would hand an IPv4 peer an address inside its own translator's
 //! prefix, that peer would publish it, and every IPv4-only node in the mesh
-//! would receive a candidate it cannot send to at all. This is FINDINGS.md 45's
+//! would receive a candidate it cannot send to at all. This is GitHub issue [#50](https://github.com/karst-net/karst/issues/50)'s
 //! failure in its other spelling, and worse: a v4-mapped address is at least
 //! *about* somewhere real, while `64:ff9b::…` names a place that exists only
 //! inside one network.
@@ -192,7 +192,7 @@ fn a_native_ipv6_peer_is_reported_at_its_own_address() {
 
 /// **What an operator actually reads on a node that cannot use IPv6.**
 ///
-/// FINDINGS.md 51: every send path drops errors on purpose, so an `AF_INET`
+/// GitHub issue [#56](https://github.com/karst-net/karst/issues/56): every send path drops errors on purpose, so an `AF_INET`
 /// node's sends to an IPv6 candidate were an unbroken silence — no log line, no
 /// counter, no symptom but never connecting. The counter is asserted in
 /// `karst-transport`; what is asserted here is that it reaches the one surface

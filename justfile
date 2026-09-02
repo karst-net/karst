@@ -127,7 +127,7 @@ macos-test-pair:
 #
 # Everything the pair drives above the interface is the same code on every
 # platform, so a Linux box with root can run it in half a second. That is how
-# FINDINGS.md 69 was localised: the row passed here and failed on the macOS
+# GitHub issue [#74](https://github.com/karst-net/karst/issues/74) was localised: the row passed here and failed on the macOS
 # runner, which said the fault was the platform rather than the arrangement.
 # Not the gate — `macos-test-pair` is.
 macos-test-pair-here:

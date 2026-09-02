@@ -20,7 +20,7 @@ RuntimeDirectoryMode=0700
 # The netmap cache and the DNS revert record. systemd never removes a state
 # directory, which is the whole point — the revert record describes how to undo
 # a change to /etc/resolv.conf, so it has to outlive the stop that failed to
-# apply it. FINDINGS.md 62.
+# apply it. GitHub issue [#67](https://github.com/karst-net/karst/issues/67).
 StateDirectory=karst
 StateDirectoryMode=0700
 

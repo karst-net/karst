@@ -90,7 +90,7 @@ fn proxy(mut client: TcpStream, stack: &Userspace, shutdown: &Shutdown) -> io::R
     // **Every exit from here on releases the socket.** `pump` does it for the
     // conversation itself; the three paths that never reach a conversation do
     // it here, because a socket the stack still holds is one nothing will ever
-    // free (FINDINGS.md 44).
+    // free (GitHub issue [#49](https://github.com/karst-net/karst/issues/49)).
     let deadline = std::time::Instant::now() + CONNECT_TIMEOUT;
     while !stack.tcp_can_send(tunnel) {
         if shutdown.requested() {

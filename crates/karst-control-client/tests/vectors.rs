@@ -101,7 +101,7 @@ struct VersionDNSRoute {
 /// The `karst-relays` term has been hashed by both ends since 2026-08-18 and no
 /// vector carried a relay until 2026-08-21, because until then no production
 /// server ever populated the field — the only code that did was the Go test
-/// server (FINDINGS.md 43). A drift here is not a degraded relay: this node
+/// server (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)). A drift here is not a degraded relay: this node
 /// recomputes the version over what it assembled and refuses a netmap that
 /// disagrees, so **no netmap would ever apply**.
 #[derive(Deserialize, Debug, Clone)]

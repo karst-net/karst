@@ -55,7 +55,7 @@ type memoryAccount struct {
 	peers map[string]*nbpeer.Peer
 	order []string
 	next  int
-	// updates drives the deprovisioning push (FINDINGS.md 67/68). Nil in every
+	// updates drives the deprovisioning push (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)). Nil in every
 	// mode but the end-to-end deprovisioning check — set from main.go, once
 	// buildNetmapServer has returned an account to attach it to.
 	updates network_map.PeersUpdateManager
@@ -98,7 +98,7 @@ func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
 //
 // It also drives updates, when set: production's two deprovisioning paths
 // both end at PeersUpdateManager.SendUpdate fanning out to every *surviving*
-// peer's channel (FINDINGS.md 68 — sendUpdateAccountPeers), and this fixture
+// peer's channel (GitHub issue [#73](https://github.com/karst-net/karst/issues/73) — sendUpdateAccountPeers), and this fixture
 // had none at all until now. The removed peer is not itself notified — it is
 // gone, and production's own removal notice to it is a distinct call this
 // fixture has no equivalent of and does not need for the deprovisioning
@@ -397,7 +397,7 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		//
 		// This stopped being merely "a rejected request the node shrugs off"
 		// once connections started being held open across polls
-		// (FINDINGS.md 67/68): control.Service.Session ends the whole stream
+		// (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)): control.Service.Session ends the whole stream
 		// on any handler error, which used to cost nothing because the
 		// connection was about to be dropped anyway and now silently kills
 		// the very session a push depends on.

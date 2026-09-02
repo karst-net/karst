@@ -974,7 +974,7 @@ then initiator and responder at once, and this draft says nothing about it —
 §12.6 covers what a responder must not do to a **working** session and is
 silent on a handshake in flight. An implementation that resolves it by
 discarding its own outstanding handshake produces two ends that both report
-success and cannot decrypt each other (FINDINGS.md 34).
+success and cannot decrypt each other (GitHub issue [#39](https://github.com/karst-net/karst/issues/39)).
 
 Keeping both handshakes is correct and is what the implementation now does, but
 it leaves the pair with two coexisting sessions: each end seals with its own

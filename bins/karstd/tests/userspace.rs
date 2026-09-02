@@ -797,7 +797,7 @@ fn a_tcp_conversation_crosses_userspace_mode_without_cap_net_admin() {
 /// uses that: send the request, close the write half, read the answer until
 /// EOF. `curl` does it, `nc -N` does it, and any protocol that delimits a
 /// message by closing does it. Found by ADR-0012's gate-1 measurement, which
-/// could not complete a run for this reason — FINDINGS.md 39.
+/// could not complete a run for this reason — GitHub issue [#44](https://github.com/karst-net/karst/issues/44).
 ///
 /// The service here reads **to EOF** rather than a known length, so the row
 /// fails in a different place for each half of the bug: if the FIN never
@@ -1137,7 +1137,7 @@ fn a_published_service_inside_userspace_mode_is_reachable_from_the_mesh() {
         .unwrap_or_else(|e| panic!("the published service reported: {e}"));
     assert_carried_the_payload(&userspace);
 
-    // **FINDINGS.md 44, end to end.** The conversation is over; the socket it
+    // **GitHub issue [#49](https://github.com/karst-net/karst/issues/49), end to end.** The conversation is over; the socket it
     // used must not still be on the stack. A daemon that leaked it would pass
     // every assertion above and grow by 128 KiB per connection forever.
     drop(mesh);

@@ -9,11 +9,11 @@ item — not background hardening.** §2's re-estimate never happened (it was
 due W5) and the fixture work behind §7's deprovisioning test never landed
 (due W7); the 30 s CI gate and the 60 s hard requirement are both still
 unmet at 48.9 s, measured against a fixture with no push at all
-(FINDINGS.md 67, 68). See [09-exit-criteria.md](09-exit-criteria.md) §6 and
+(GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)). See [09-exit-criteria.md](09-exit-criteria.md) §6 and
 PLAN.md's Phase 5 entry for where this is tracked at the plan-of-record
 level.
 
-> **§2's latency half closed 2026-09-02 in Phase 6, W1.** FINDINGS.md 67/68
+> **§2's latency half closed 2026-09-02 in Phase 6, W1.** GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)
 > are fixed — `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`
 > now measures 2.0 s, and `karst/testserver` drives a real push (§2 item 5,
 > §7's note below). **What this does not close:** the SCIM 2.0 API surface
@@ -65,7 +65,7 @@ change, and it is worth reading before the schedule.
 > there is a persistent-connection lifecycle in `karstd` — reconnect, backoff,
 > keepalive — and a wire change to tell a push from a response, because
 > `Connection::request` would otherwise consume a push as its own answer. See
-> FINDINGS.md 67 and 68; re-estimate before starting.
+> GitHub issue [#72](https://github.com/karst-net/karst/issues/72) and 68; re-estimate before starting.
 >
 > **Where the server work actually is, checked 2026-08-29.** Not in tracking
 > attached nodes: `update_channel/updatechannel.go` already keeps a per-peer
@@ -116,7 +116,7 @@ Two ways out:
 | Option | Cost | Verdict |
 |---|---|---|
 | Shorten `REFRESH` | One constant, and N× the request rate against the control server for every node in every account, forever | **No.** It trades a real scaling property for a worst case that is still not a bound |
-| Server-initiated push on the existing stream | ~~The stream is already bidirectional and already exists for exactly this reason. The server loop becomes a select over "a request arrived" and "this node's map changed"; the node's reader must accept an unsolicited envelope~~ — **struck 2026-08-29, this is the sentence FINDINGS.md 68 is about.** The server's stream exists; the node's does not. The cost is a persistent-connection lifecycle in `karstd`, a push/response discriminator on the wire, a subscription to the inherited update channel, and only then the select | **Yes**, but not at this price |
+| Server-initiated push on the existing stream | ~~The stream is already bidirectional and already exists for exactly this reason. The server loop becomes a select over "a request arrived" and "this node's map changed"; the node's reader must accept an unsolicited envelope~~ — **struck 2026-08-29, this is the sentence GitHub issue [#73](https://github.com/karst-net/karst/issues/73) is about.** The server's stream exists; the node's does not. The cost is a persistent-connection lifecycle in `karstd`, a push/response discriminator on the wire, a subscription to the inherited update channel, and only then the select | **Yes**, but not at this price |
 
 ADR-0009's revised estimate already contemplates "new delta-push work". This is
 that work, and Phase 5 is where it becomes load-bearing rather than an
@@ -129,7 +129,7 @@ where it actually sits:
 | | Work | Side | Estimate |
 |---|---|---|---|
 | 1 | A control connection held across syncs: reconnect, backoff, keepalive, and the async restructuring `refresh_netmap` needs to have a reactor running between syncs at all | Rust | **Not yet estimated.** The largest item |
-| 2 | A push/response discriminator *inside* the sealed payload — never in `KarstEnvelope`, which is FINDINGS.md 54's bug — plus spec and vectors on both sides | Rust + Go | **Not yet estimated** |
+| 2 | A push/response discriminator *inside* the sealed payload — never in `KarstEnvelope`, which is GitHub issue [#59](https://github.com/karst-net/karst/issues/59)'s bug — plus spec and vectors on both sides | Rust + Go | **Not yet estimated** |
 | 3 | Subscribe the Karst session to the inherited update channel; resolve handle → `peer.ID`; create the channel from login; decide how a subscribed Karst peer avoids an upstream `SyncResponse` build it discards | Go | ~half a week, including a forked-code decision |
 | 4 | A writer goroutine and the select. Not a bare `select` in the `Recv` loop: `stream.Send` is not safe from concurrent goroutines | Go | The week originally budgeted |
 | 5 | Push support in `karst/testserver`, which today has none — see §7 | Go | Not previously counted |
@@ -146,11 +146,11 @@ missed a push must not stay stale forever.
 > **All five items closed 2026-09-02**, in Phase 6 W1 rather than the W6–W7
 > this section budgeted for — done as one change rather than staffed across
 > the pairing this table assumed, so the re-estimate the table asked for never
-> ended up mattering on its own terms. FINDINGS.md 68's closing note has the
+> ended up mattering on its own terms. GitHub issue [#73](https://github.com/karst-net/karst/issues/73)'s closing note has the
 > file-by-file breakdown. One thing item 3 flagged and left as a "decide how"
 > — avoiding the upstream `SyncResponse` build a subscribed Karst peer
 > discards — was deliberately **not** decided as part of this fix; it is
-> FINDINGS.md 70, open on its own schedule rather than blocking this one.
+> GitHub issue [#75](https://github.com/karst-net/karst/issues/75), open on its own schedule rather than blocking this one.
 
 ## 3. Does a node actually drop a session when a peer disappears?
 
@@ -285,7 +285,7 @@ harness with a revocation in the middle.
 > of this test exists —
 > `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget` in
 > `bins/karstd/tests/aquifer.rs` — and it reported 48.9 s on 2026-08-28
-> (FINDINGS.md 67). It
+> (GitHub issue [#72](https://github.com/karst-net/karst/issues/72)). It
 > runs against `karst/testserver`, whose `/remove` deletes from an in-memory
 > map and which never reaches `modules/peers`, `OnPeersDeleted` or the update
 > channel. **So the fixture has no push at all**, and §2's item 5 has to land
@@ -299,7 +299,7 @@ harness with a revocation in the middle.
 > in step 5 becomes honest once push lands, and not before.
 
 > **Closed 2026-09-02.** `testserver` now wires a real `PeersUpdateManager`
-> into its `/remove` path (FINDINGS.md 68's closing note), and the row above
+> into its `/remove` path (GitHub issue [#73](https://github.com/karst-net/karst/issues/73)'s closing note), and the row above
 > measures 2.0 s against it — reliably under the 30-second gate, not merely
 > inside the 60-second requirement by where the sample landed. Its own
 > assertion is tighter still, `PUSH_BOUND` at 10 s, specifically so a

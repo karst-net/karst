@@ -133,12 +133,12 @@ const CONTROL_PORT: u16 = 9444;
 /// live to receive a push, e.g. because it just reconnected. `control.rs`'s
 /// `REFRESH` is 60 seconds and a settled node with no live push notices a
 /// revocation on the next tick, so this is the floor push is layered on top
-/// of rather than a replacement for (FINDINGS.md 68, spec/karst-control-v1.md
+/// of rather than a replacement for (GitHub issue [#73](https://github.com/karst-net/karst/issues/73), spec/karst-control-v1.md
 /// §5.3.1) — kept here as a documented ceiling, not asserted directly by any
 /// row in this file since every row here keeps its connection live.
 const REFRESH_BOUND: Duration = Duration::from_secs(75);
 
-/// The bound the deprovisioning push (FINDINGS.md 67/68) is actually held to,
+/// The bound the deprovisioning push (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) is actually held to,
 /// for a node whose control connection is live when the revocation happens —
 /// every row in this file. One push, one out-of-cycle
 /// `KarstNetmapRequest`/response round trip, and the datapath teardown that
@@ -615,8 +615,8 @@ enum Shape {
     /// A NAT64 network answers it with the prefix: `prefix::v4` is the IPv6
     /// address the translator turns back into the IPv4 one, so a node that
     /// knows the prefix can reach the whole IPv4 internet and a node that does
-    /// not is confined to its own segment. FINDINGS.md 45 recorded that nothing
-    /// in Karst learned a prefix; FINDINGS.md 46 is what running this row for
+    /// not is confined to its own segment. GitHub issue [#50](https://github.com/karst-net/karst/issues/50) recorded that nothing
+    /// in Karst learned a prefix; GitHub issue [#51](https://github.com/karst-net/karst/issues/51) is what running this row for
     /// the first time found.
     ///
     /// Expected direct, and for the same reason as [`Shape::NatA`]: the
@@ -1062,7 +1062,7 @@ fn build_double_nat(net: &mut Aquifer) -> (&'static str, &'static str) {
 /// **ordinary masquerade** behind it does the port sharing, so the NAT
 /// semantics this row runs a daemon on are the ones that file has already
 /// characterized rather than a second implementation's taken on trust.
-/// FINDINGS.md 27 records why, and why an out-of-tree kernel module was not
+/// GitHub issue [#32](https://github.com/karst-net/karst/issues/32) records why, and why an out-of-tree kernel module was not
 /// needed to get here.
 ///
 /// Node A's namespace gets **no IPv4 address**. That is the entire fixture in
@@ -2841,7 +2841,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
 ///    daemon must say it read the prefix out of `ipv4only.arpa`.
 /// 2. **Node A holds a plain IPv4 address for node B.** A is reaching B through
 ///    `prefix::51.75.10.20`, and if that address reached the engine then A
-///    would advertise it as an observed address — the FINDINGS.md 45 failure in
+///    would advertise it as an observed address — the GitHub issue [#50](https://github.com/karst-net/karst/issues/50) failure in
 ///    its other spelling, and worse here, because a synthesised address is
 ///    meaningless outside A's own network rather than merely unreachable from
 ///    half of it.
@@ -2940,7 +2940,7 @@ fn assert_double_nat(net: &Aquifer) {
          gateway that cannot help:\n{s}"
     );
 
-    // **And the refusal is backing off** — FINDINGS.md 38, whose fix this row
+    // **And the refusal is backing off** — GitHub issue [#43](https://github.com/karst-net/karst/issues/43), whose fix this row
     // is the only end-to-end witness for. A gateway that will refuse for as
     // long as the subscriber is behind this carrier used to be asked every five
     // seconds forever. The status carries the current wait, so a schedule that
@@ -3189,8 +3189,8 @@ fn two_nodes_on_two_relays_reach_each_other() {
 /// drop their sessions **within 60 seconds**", and
 /// `plans/phase-5/09-exit-criteria.md` §6 wants it measured under 30 seconds in
 /// CI. `plans/phase-5/08-scim-and-groups.md` §2 found the 60-second poll alone
-/// could not meet it (FINDINGS.md 67) and costed a server-initiated push
-/// instead (FINDINGS.md 68); that push is what this row now exercises,
+/// could not meet it (GitHub issue [#72](https://github.com/karst-net/karst/issues/72)) and costed a server-initiated push
+/// instead (GitHub issue [#73](https://github.com/karst-net/karst/issues/73)); that push is what this row now exercises,
 /// through `testserver`'s own wiring of it rather than the poll.
 ///
 /// This is that measurement. Two nodes converge on a direct path and prove it
@@ -3206,7 +3206,7 @@ fn two_nodes_on_two_relays_reach_each_other() {
 ///     the requirement and the fix would be in the datapath instead.
 ///   - **It dies inside `PUSH_BOUND`, not merely inside the 60-second poll.**
 ///     The elapsed time is printed either way, because the number is the
-///     deliverable — a pass that took 48.9s (FINDINGS.md 67's original
+///     deliverable — a pass that took 48.9s (GitHub issue [#72](https://github.com/karst-net/karst/issues/72)'s original
 ///     measurement) and a pass that took 2 are different engineering
 ///     situations, and only the second is what the push was built for.
 #[test]
@@ -3338,7 +3338,7 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
     );
     assert!(
         elapsed <= PUSH_BOUND,
-        "revocation took {:.1}s, past the {}s push bound (FINDINGS.md 67/68) — \
+        "revocation took {:.1}s, past the {}s push bound (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) — \
          node A was subscribed the whole time it was settled, so a pass this \
          slow means the fallback poll fired instead of the push.\nnode A:\n{}\n\
          server log:\n{}",

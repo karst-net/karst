@@ -186,7 +186,7 @@ fn have_net_admin() -> bool {
 /// Skipping is for a developer without the tooling. In CI it must fail instead:
 /// a privileged suite that skips itself is a suite that passes while testing
 /// nothing. `bins/karstd/tests/aquifer.rs` has enforced this since 2026-08-20
-/// and this file did not, which is FINDINGS.md 48 — the NAT64 row skipped on
+/// and this file did not, which is GitHub issue [#53](https://github.com/karst-net/karst/issues/53) — the NAT64 row skipped on
 /// every CI run from the day it was written, because the job that runs it never
 /// installed `tayga`, and it reported success each time.
 fn have_tool(name: &str) -> bool {
@@ -597,7 +597,7 @@ fn enable_hairpin(external_port: u16) {
 /// row in this file is built on**, so the NAT semantics being measured are ones
 /// this matrix has already pinned rather than ones taken on trust from a second
 /// implementation. It also keeps an out-of-tree kernel module out of CI.
-/// FINDINGS.md 27 records the alternatives.
+/// GitHub issue [#32](https://github.com/karst-net/karst/issues/32) records the alternatives.
 ///
 /// A stateless translator *alone* would be the wrong instrument: one IPv4
 /// address per client with ports preserved is barely distinguishable from

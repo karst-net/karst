@@ -12,7 +12,7 @@
 // relay identity, so a relay a node was told about out of band would be a relay
 // it could not authenticate.
 //
-// The consequence, unwritten until FINDINGS.md 43, is that
+// The consequence, unwritten until GitHub issue [#48](https://github.com/karst-net/karst/issues/48), is that
 // `control.NetmapHandler.Relays` is the *only* supply of relays in the entire
 // system — and until this package the only code that ever populated it was
 // `karst/testserver`, which exists to serve the Rust test suite. A production

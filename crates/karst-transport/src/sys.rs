@@ -470,7 +470,7 @@ impl RouterSocket {
         // way round this passed every ICMPv6 type except the one type it
         // wanted, and no unit test could see it: the option parser was correct,
         // the solicitation went out correctly, and the answer was dropped by
-        // the socket before anything in this crate looked at it. FINDINGS.md 52.
+        // the socket before anything in this crate looked at it. GitHub issue [#57](https://github.com/karst-net/karst/issues/57).
         let mut filter = [u32::MAX; 8];
         let bit = u32::from(ND_ROUTER_ADVERT);
         if let Some(word) = filter.get_mut((bit >> 5) as usize) {

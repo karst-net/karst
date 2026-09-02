@@ -2063,7 +2063,7 @@ pub struct Attachment<'a> {
     /// the kernel owns them.
     ///
     /// Reported because in userspace mode the daemon *is* the TCP stack, so a
-    /// number that only ever rises is the visible form of FINDINGS.md 44 — and
+    /// number that only ever rises is the visible form of GitHub issue [#49](https://github.com/karst-net/karst/issues/49) — and
     /// nothing else in the status output would show it.
     pub sockets: Option<usize>,
     /// Datagrams refused because their destination is in an address family
@@ -2072,7 +2072,7 @@ pub struct Attachment<'a> {
     /// `None` on a dual-stack socket, where the question does not arise.
     /// `Some(n)` on an `AF_INET` one, where every IPv6 candidate is
     /// unreachable and *nothing else in the daemon says so* — the send paths
-    /// drop errors on purpose, so the symptom is silence. FINDINGS.md 51.
+    /// drop errors on purpose, so the symptom is silence. GitHub issue [#56](https://github.com/karst-net/karst/issues/56).
     pub unreachable_family: Option<u64>,
 }
 
@@ -2475,7 +2475,7 @@ fn refresh_netmap(
     };
 
     // A signal the held connection's background reader notifies on an
-    // unprompted push (FINDINGS.md 67/68) — stable across whatever reconnects
+    // unprompted push (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) — stable across whatever reconnects
     // `client.sync()` does internally, so it only needs to be fetched once.
     let pushed = client.push_signal();
     let mut next = Instant::now() + crate::control::REFRESH;
@@ -2487,7 +2487,7 @@ fn refresh_netmap(
     // reconnects, reused here for the same reason.
     //
     // This matters more than it used to: with the connection held open across
-    // polls (FINDINGS.md 67/68), a sync failure now means the push mechanism
+    // polls (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)), a sync failure now means the push mechanism
     // itself is down, not merely that one poll was late. Waiting out the rest
     // of a 60-second `REFRESH` before reconnecting — which is what simply
     // falling through to the next scheduled tick would do — would leave a

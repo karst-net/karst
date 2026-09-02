@@ -146,7 +146,7 @@ pub trait Verifier {
 }
 
 /// The decrypted payload that marks an unprompted server push rather than a
-/// reply — `spec/karst-control-v1.md` §5.3.1, FINDINGS.md 67/68.
+/// reply — `spec/karst-control-v1.md` §5.3.1, GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73).
 ///
 /// Lives here, not alongside `karstd`'s `KIND_LOGIN`/`KIND_NETMAP`/
 /// `KIND_BEDROCK` request kinds, because [`Connection::open`] is the one place
@@ -160,7 +160,7 @@ pub const KIND_PUSH: u8 = 4;
 /// An established control channel.
 ///
 /// Held open across many [`request`](Connection::request) calls rather than
-/// being opened and dropped per request (FINDINGS.md 67/68): a connection
+/// being opened and dropped per request (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)): a connection
 /// that closes the instant its caller is done with it gives the server
 /// nothing to push a deprovisioning notice *to* between polls. A background
 /// task owns the read half for exactly this reason — it has to keep reading
@@ -388,7 +388,7 @@ impl Connection {
 /// decrypted envelope to whichever of `responses`/`pushed` it belongs to.
 ///
 /// Split out of `request` because it must keep running between requests, not
-/// only during one — that is the entire fix FINDINGS.md 68 asked for: a
+/// only during one — that is the entire fix GitHub issue [#73](https://github.com/karst-net/karst/issues/73) asked for: a
 /// connection that only reads while a request is outstanding has nothing
 /// listening in the gap a push needs to land in.
 async fn read_loop(

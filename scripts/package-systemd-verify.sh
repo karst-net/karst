@@ -34,7 +34,7 @@
 #   - The documented manual recovery, `karst dns revert --config …`, works
 #     against the installed layout.
 #   - The revert record outlives a stop whose hook failed, which is the only
-#     stop it exists for. FINDINGS.md 62: under `RuntimeDirectory=karst` it did
+#     stop it exists for. GitHub issue [#67](https://github.com/karst-net/karst/issues/67): under `RuntimeDirectory=karst` it did
 #     not, and every assertion about it here was one that could not fail.
 
 set -euo pipefail
@@ -260,7 +260,7 @@ section "manual recovery"
 want "karst dns revert succeeds with no daemon running" \
   /usr/bin/karst dns revert --config /etc/karst/karstd.toml
 
-# ── Recovery after the hook itself fails — FINDINGS.md 62 ───────────────────
+# ── Recovery after the hook itself fails — GitHub issue [#67](https://github.com/karst-net/karst/issues/67) ───────────────────
 #
 # Every check above assumes ExecStopPost= worked. This one assumes it did not,
 # which is the only situation the revert record exists for: a wrong binary path,

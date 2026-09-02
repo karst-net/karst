@@ -15,7 +15,7 @@
 // changed within that window, admission is replaced with an empty roster and
 // the relay stops admitting anyone. That is the correct behavior for a
 // membership list — a stale one is one nobody is curating — and it has a
-// consequence that was unwritten until FINDINGS.md 42: **something must rewrite
+// consequence that was unwritten until GitHub issue [#47](https://github.com/karst-net/karst/issues/47): **something must rewrite
 // that file, forever, or every deployment stops working ninety seconds after it
 // starts.** Until this package, the only thing that did was a thread inside
 // bins/karstd/tests/aquifer.rs.

@@ -2098,7 +2098,7 @@ onwards, anchored on the week of 2026-08-10.
 > row 8 without a port mapping — the symmetric-to-port-restricted pairing, whose
 > only technique is §7.7's birthday-paradox port search. That was specified,
 > implemented and measured at 64% after eight minutes before being declined
-> (FINDINGS.md 28), and row 8b shows the same pairing going direct in 37 seconds
+> (GitHub issue [#33](https://github.com/karst-net/karst/issues/33)), and row 8b shows the same pairing going direct in 37 seconds
 > as soon as B's router offers a mapping. The other two criteria hold. Thirteen
 > whole-aquifer topologies, ten direct: 77%, or 83% of the twelve where a direct
 > path exists at all.
@@ -2260,7 +2260,7 @@ onwards, anchored on the week of 2026-08-10.
   publishes, and uses what its peers publish — and
   `two_nodes_on_two_relays_reach_each_other` is the end-to-end row that closes
   it, which was the last piece outstanding and which found four defects on the
-  way (FINDINGS.md 29–32).
+  way (GitHub issues [#34](https://github.com/karst-net/karst/issues/34), [#35](https://github.com/karst-net/karst/issues/35), [#36](https://github.com/karst-net/karst/issues/36), and [#37](https://github.com/karst-net/karst/issues/37)).
 
   **The hysteresis is AVEN's, and reusing it caught a bug.** §9.2 recommends
   "20 ms or 20%, whichever is larger", which `aven-v1.md` §8.2 already states
@@ -2419,7 +2419,7 @@ onwards, anchored on the week of 2026-08-10.
   process and never reach the ones it *was* admitted to.
 
   **That row found four defects, three of them in code that had already been
-  committed with passing tests** — FINDINGS.md 29–32. The on-demand relay
+  committed with passing tests** — GitHub issues [#34](https://github.com/karst-net/karst/issues/34), [#35](https://github.com/karst-net/karst/issues/35), [#36](https://github.com/karst-net/karst/issues/36), and [#37](https://github.com/karst-net/karst/issues/37). The on-demand relay
   thread died at startup on every run (`tokio::time::timeout` arms its timer as
   it is constructed, so building one outside a runtime panics), which means
   §9.1's second rule had never once run in a daemon while its pool, its queue
@@ -2438,7 +2438,7 @@ onwards, anchored on the week of 2026-08-10.
   by having a session remember the `HandshakeInit` it answered and replay the
   same `HandshakeResponse` for a byte-identical repeat.
 
-  ✅ **§12.6 closed, 2026-08-20** — FINDINGS.md 33. A responder no longer tears
+  ✅ **§12.6 closed, 2026-08-20** — GitHub issue [#38](https://github.com/karst-net/karst/issues/38). A responder no longer tears
   down a working session on emitting a `HandshakeResponse`, which §12.5 made a
   one-datagram off-path teardown of anyone's live tunnel.
 
@@ -2463,7 +2463,7 @@ onwards, anchored on the week of 2026-08-10.
   drops keys that *were* proved and leaves the node sealing for a peer that has
   gone. Both are tested.
 
-  ✅ **Simultaneous open, 2026-08-20** — FINDINGS.md 34, found by ADR-0012's
+  ✅ **Simultaneous open, 2026-08-20** — GitHub issue [#39](https://github.com/karst-net/karst/issues/39), found by ADR-0012's
   userspace gate. Every handshake test in the tree was asymmetric: one side
   dialled, the other answered. But `connect_all` runs on **both** nodes, so any
   pair that knows both endpoints opens simultaneously, and answering the peer's
@@ -2503,7 +2503,7 @@ onwards, anchored on the week of 2026-08-10.
     §5's "multiple relays per region, latency-probed by clients, published by
     the control server" is therefore complete, and what had actually been
     missing from it was the third clause — nothing published relays at all
-    (FINDINGS.md 43), which is why no deployment had ever handed a node two
+    (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)), which is why no deployment had ever handed a node two
     regions to be wrong about.
 
     The omission is now a test rather than an absence:
@@ -2534,13 +2534,13 @@ onwards, anchored on the week of 2026-08-10.
     and both are the same shape: a component that lived only in the test
     harness while production read the field the harness filled.
 
-    - FINDINGS.md 42 — a relay's admission list is a file with a **ninety-second
+    - GitHub issue [#47](https://github.com/karst-net/karst/issues/47) — a relay's admission list is a file with a **ninety-second
       lease** (§5.3 makes admission structural; `roster::MAX_AGE` empties it
       when nobody refreshes), and nothing outside `aquifer.rs`'s fixture
       refreshed it. Any deployed relay stopped admitting nodes ninety seconds
       after it started. `karst/roster` rewrites it every 25 s, unconditionally,
       because the lease is refreshed by mtime rather than by contents.
-    - FINDINGS.md 43 — the netmap's relay registry was populated **only by
+    - GitHub issue [#48](https://github.com/karst-net/karst/issues/48) — the netmap's relay registry was populated **only by
       `karst/testserver`**. A production server published no relays, so nodes
       that could not connect directly could not connect at all, silently.
       `karst/relayreg` loads an operator-written registry; `relay_id` is derived
@@ -2942,7 +2942,7 @@ onwards, anchored on the week of 2026-08-10.
   happened here, not because it is Phase 4 work — it closes a dependency the
   control plane took on in Phase 3 and always intended to give back.
 - `karst-disco`: **port mapping (PCP, NAT-PMP, UPnP-IGD). Port prediction is
-  recommended for removal** — see FINDINGS.md 24.
+  recommended for removal** — see GitHub issue [#29](https://github.com/karst-net/karst/issues/29).
 
   Both were listed here as complementary. Measurement says they are not: Linux's
   symmetric modes scatter external ports across the whole ephemeral range with
@@ -3047,7 +3047,7 @@ onwards, anchored on the week of 2026-08-10.
   healthy case.
 
   **A relay with a self-signed certificate had no working configuration**, which
-  is FINDINGS.md finding 16 and was found by trying to write an integration test
+  is GitHub issue [#21](https://github.com/karst-net/karst/issues/21) and was found by trying to write an integration test
   against a real one. `ponor-v1.md` §4.2 names that deployment as the realiztic
   self-hosted case and `relay_tls` loaded the system trust store alone.
   `[control] relay_ca_file` now supplements it. It cannot weaken relay
@@ -3055,8 +3055,8 @@ onwards, anchored on the week of 2026-08-10.
   certificate insufficient on its own, and the netmap-pinned ML-DSA-65 identity
   is what names the relay.
 
-- ✅ **The published endpoint is discovery's to withdraw** — FINDINGS.md finding
-  15, found while building the relay path and closed the same day. `via`
+- ✅ **The published endpoint is discovery's to withdraw** — GitHub issue
+  [#20](https://github.com/karst-net/karst/issues/20), found while building the relay path and closed the same day. `via`
   preferred any endpoint and a netmap-configured one exists from startup, so a
   peer whose published address had gone stale was unreachable even with a relay
   available and the peer connected to it.
@@ -3170,7 +3170,7 @@ onwards, anchored on the week of 2026-08-10.
   configured to, the source is rewritten to the external address as RFC 4787
   REQ-9 requires. NAT64 was going to need an out-of-tree kernel module —
   `jool-dkms` — and did not: `tayga` plus an ordinary masquerade answers the
-  same question in userspace, which is finding 27 and a dependency avoided
+  same question in userspace, which is GitHub issue [#32](https://github.com/karst-net/karst/issues/32) and a dependency avoided
   rather than accepted.
 
   What remains unbuilt is these two shapes **as whole-aquifer rows** — the
@@ -3240,7 +3240,7 @@ onwards, anchored on the week of 2026-08-10.
   **And it immediately found a High defect that every unit test passed.** The
   packet filter was stateless, so a policy scoped to a destination port permitted
   the request and denied the reply, and **no TCP connection could complete** —
-  FINDINGS.md finding 17. Both ends reported `established` and `direct`
+  GitHub issue [#22](https://github.com/karst-net/karst/issues/22). Both ends reported `established` and `direct`
   throughout; the tunnel was working perfectly and carrying nothing. §4.3's own
   example policy was the one that failed.
 
@@ -3249,7 +3249,7 @@ onwards, anchored on the week of 2026-08-10.
   hundred and seventy unit tests did not find it, because none of them had a
   *reply* — a reply only exists when something upstream holds a connection open.
 - ✅ **Connection tracking, so §4.3's ACLs work at all** — `crate::flow`, and
-  the fix for finding 17. A flow is recorded **only when a rule permits a
+  the fix for GitHub issue [#22](https://github.com/karst-net/karst/issues/22). A flow is recorded **only when a rule permits a
   packet**, so an attacker cannot open one, and it then permits exactly the
   reverse five-tuple.
 
@@ -3269,8 +3269,8 @@ onwards, anchored on the week of 2026-08-10.
 
   Verified back on the daemons that found it: `RECEIVED: hello over the tunnel`,
   with `acl_denied_out = 0` at both ends where it had been 12.
-- ✅ **A node repeats its candidates while it has no path** — FINDINGS.md
-  finding 19, found from an asymmetry in the live run above: one daemon reached
+- ✅ **A node repeats its candidates while it has no path** — GitHub issue
+  [#24](https://github.com/karst-net/karst/issues/24), found from an asymmetry in the live run above: one daemon reached
   `direct` and the other sat on `relay`. Advertisement was edge-triggered on the
   candidate list *changing*, which on a stable host happens once, ever —
   measured as one advertisement and then zero over a simulated hour. A peer that
@@ -3292,7 +3292,7 @@ onwards, anchored on the week of 2026-08-10.
   It found a third defect before it first passed. **Nothing learned a candidate
   from an incoming probe**, so only the node that probed first ever got a path:
   the other answered, was confirmed, and then watched its peer stop advertising
-  with no candidate of its own and no prospect of one (FINDINGS.md finding 20).
+  with no candidate of its own and no prospect of one (GitHub issue [#25](https://github.com/karst-net/karst/issues/25)).
   The address an authenticated `Ping` arrived from is now a candidate — better
   evidence than a `CallMeMaybe`, which is a claim, because that datagram
   actually made the journey.
@@ -3305,7 +3305,7 @@ onwards, anchored on the week of 2026-08-10.
   version restarted "the last child spawned", which was the wrong daemon, and
   the second copy collided with the first one's TUN device.
 
-  What it does **not** catch is finding 19, and the reason is worth stating: the
+  What it does **not** catch is GitHub issue [#24](https://github.com/karst-net/karst/issues/24), and the reason is worth stating: the
   fixture drops nothing, and 19 is about an advertisement that was sent and
   lost. That property lives in `karst-disco`'s unit tests, where loss can be
   expressed. An end-to-end test is not a superset of the ones beneath it.
@@ -3324,7 +3324,7 @@ onwards, anchored on the week of 2026-08-10.
   The test was not a NAT test; it was a router test that said NAT on the label,
   and only the mapped-address check told the difference.
 
-  **What the two rows pin, checked rather than assumed.** Removing finding 20's
+  **What the two rows pin, checked rather than assumed.** Removing GitHub issue [#25](https://github.com/karst-net/karst/issues/25)'s
   probe-source rule fails the flat row and leaves the NAT row passing, because
   behind a NAT the reflexive path reaches the same place. Removing §7.2's
   reflexive addresses altogether fails **neither** — so the probe-source rule
@@ -3332,7 +3332,7 @@ onwards, anchored on the week of 2026-08-10.
   unit tests alone. That is worth knowing before anyone treats a green NAT row
   as coverage of §7.2.
 - ✅ **Both nodes behind NATs, and it works** — `aven-v1.md` §7.6 and
-  `ponor-v1.md` §7.7, built to close FINDINGS.md finding 21. `aquifer.rs`'s third
+  `ponor-v1.md` §7.7, built to close GitHub issue [#26](https://github.com/karst-net/karst/issues/26). `aquifer.rs`'s third
   topology is two nodes each behind their own port-restricted cone, which is two
   laptops on two home networks: the ordinary deployment rather than an exotic
   one, and the one that did not work.
@@ -3367,7 +3367,7 @@ onwards, anchored on the week of 2026-08-10.
   by reasoning, and both more transferable than the feature.
 
   **A keepalive interval equal to the timeout it defends against is not a
-  keepalive** (finding 22). `Reflect` first refreshed every 30 seconds, matching
+  keepalive** (GitHub issue [#27](https://github.com/karst-net/karst/issues/27)). `Reflect` first refreshed every 30 seconds, matching
   §7.5's other intervals; Linux's `nf_conntrack_udp_timeout` is also 30 seconds.
   Each refresh raced the expiry, so the mapped port alternated between the
   preserved one and a random one, the node advertised an address it was no
@@ -3376,7 +3376,7 @@ onwards, anchored on the week of 2026-08-10.
   while the binding that produced it is alive, and nothing tells the node how
   long that is.*
 
-  **A masquerade rule alone is not a NAT** (finding 23). The fixture's NAT
+  **A masquerade rule alone is not a NAT** (GitHub issue [#28](https://github.com/karst-net/karst/issues/28)). The fixture's NAT
   namespace had no filter chain, so a peer's probe to its outer address reached
   the namespace itself, drew an ICMP unreachable, and *confirmed a conntrack
   entry* that occupied the reply tuple the inside host needed — after which
@@ -3405,7 +3405,7 @@ onwards, anchored on the week of 2026-08-10.
 - ✅ **Full NAT test matrix in CI (§6) — thirteen `karstd` topologies run end to
   end, ten reach a direct path, and the instrument beneath them is twelve
   rows.** The instrument was complete on 2026-08-19, built from `tayga` plus an
-  ordinary masquerade rather than an out-of-tree kernel module (finding 27);
+  ordinary masquerade rather than an out-of-tree kernel module (GitHub issue [#32](https://github.com/karst-net/karst/issues/32));
   the **whole-aquifer** NAT64 row followed on 2026-08-21 and is the thirteenth
   topology. Every shape §6 names now has a row with a daemon on it.
 
@@ -3437,7 +3437,7 @@ onwards, anchored on the week of 2026-08-10.
   four.** `nat_matrix` was the one it did not reach — the suite the exit
   criterion below is *measured through* — and its NAT64 row had been skipping on
   every CI run since the day it was written, because the `tun` job never
-  installed `tayga`. FINDINGS.md 48 has it. Corrected on both sides: the job
+  installed `tayga`. GitHub issue [#53](https://github.com/karst-net/karst/issues/53) has it. Corrected on both sides: the job
   installs the translator and sets the variable, and every skip in the file now
   goes through a helper that refuses. Thirteen instrument rows, all executed,
   21.58 s.
@@ -3576,7 +3576,7 @@ onwards, anchored on the week of 2026-08-10.
   reporting success over a black hole.
 
   All three new rows are checked against their own defect, which is the
-  discipline finding 23 bought:
+  discipline GitHub issue [#28](https://github.com/karst-net/karst/issues/28) bought:
 
   | Row | Mutation | Result |
   |---|---|---|
@@ -3584,7 +3584,7 @@ onwards, anchored on the week of 2026-08-10.
   | 6 | `fully-random` removed from both NATs | fails — direct in 5 s |
   | 7 | the UDP drop removed | fails — direct in 31 s |
 
-  Finding 23 remains the caution for every row added from here. The instrument
+  GitHub issue [#28](https://github.com/karst-net/karst/issues/28) remains the caution for every row added from here. The instrument
   is only as honest as its weakest topology, and a NAT missing a filter chain
   reports a *product* failure — the fixture said "port-restricted cone" and
   behaved like a symmetric one for two days' worth of debugging.
@@ -3642,7 +3642,7 @@ onwards, anchored on the week of 2026-08-10.
   A second test points the same launcher at TUN mode and requires it to fail
   with `TUNSETIFF (needs CAP_NET_ADMIN)`. Without it the whole gate would rest
   on `setpriv` having been asked correctly — a misspelled argument would leave
-  it testing the privileged path twice and passing. Finding 23's lesson applied
+  it testing the privileged path twice and passing. GitHub issue [#28](https://github.com/karst-net/karst/issues/28)'s lesson applied
   to a privilege boundary instead of a NAT.
 
   Seven injected defects, including the two the ADR names — dropping what
@@ -3654,14 +3654,14 @@ onwards, anchored on the week of 2026-08-10.
   **simultaneous open** — and that was broken: each node discarded its own
   in-flight handshake when it answered the peer's, and the pair settled on key
   sets that could not read each other while both reported `established`
-  (FINDINGS.md 34). The same door let the rekey race back in. Both are fixed,
+  (GitHub issue [#39](https://github.com/karst-net/karst/issues/39)). The same door let the rekey race back in. Both are fixed,
   with `crates/karst-node/tests/simultaneous.rs` enumerating all six
   interleavings rather than sampling one. `phreatic-v1.md` §14 item 9 now names
   the gap: the spec says nothing about simultaneous open, and the tie-break that
   would converge the pair onto a single session is a normative rule, not an
   implementation choice. The third defect was smaller and the gate found it on
   its first run: userspace mode reported the interface name from the *config
-  file*, an `ip link` entry that does not exist (FINDINGS.md 35).
+  file*, an `ip link` entry that does not exist (GitHub issue [#40](https://github.com/karst-net/karst/issues/40)).
 
   **ADR-0012's gate 1 is met as of 2026-08-21**, and the number is the point of
   this entry. `scripts/userspace-cost.sh` runs three scenarios over one
@@ -3686,9 +3686,9 @@ onwards, anchored on the week of 2026-08-10.
   | | Throughput | RTT p50 |
   |---|---|---|
   | As first measured | 1.1 Mbps | 4.135 ms |
-  | 1. Poll only when a pass moved nothing (finding 40) | 5.6–7.3 Mbps | **0.547 ms** |
+  | 1. Poll only when a pass moved nothing (GitHub issue [#45](https://github.com/karst-net/karst/issues/45)) | 5.6–7.3 Mbps | **0.547 ms** |
   | 2. `recv_segments` returns a batch, not one packet | 7.3 Mbps — **no change** | — |
-  | 3. Socket buffers above one MTU (finding 41) | **514.8–518.5 Mbps** | 0.546 ms |
+  | 3. Socket buffers above one MTU (GitHub issue [#46](https://github.com/karst-net/karst/issues/46)) | **514.8–518.5 Mbps** | 0.546 ms |
 
   Step 1 was **a timer, not a cost**: 4.135/4.156/4.211 across p50/p90/p99 is a
   poll interval wearing a measurement's clothes, and it was two unconditional
@@ -3756,14 +3756,14 @@ onwards, anchored on the week of 2026-08-10.
   tunnel by construction. Injection-verified three ways: never publishing,
   ignoring the mapping, and never reclaiming the socket each fail it.
 
-  **And building it found FINDINGS.md 44, which was the outbound path's bug.**
+  **And building it found GitHub issue [#49](https://github.com/karst-net/karst/issues/49), which was the outbound path's bug.**
   Nothing ever removed a TCP socket from the userspace stack — `connect_tcp`
   added one per SOCKS connection and `SocketSet::remove` appeared in exactly one
   place in the tree, an error path. So a sidecar retained 128 KiB per finished
   connection *and* polled every dead socket on every packet, which is a datapath
   that gets slower in proportion to the number of connections the process has
   ever handled. Two things kept it invisible: every conversation was correct, so
-  no correctness test could see it, and finding 41 had multiplied its size by 51
+  no correctness test could see it, and GitHub issue [#46](https://github.com/karst-net/karst/issues/46) had multiplied its size by 51
   three days earlier as a side effect of being right about windows.
 
   The fix is a graceful release with a five-second grace period, and a
@@ -3786,7 +3786,7 @@ onwards, anchored on the week of 2026-08-10.
   > CGNAT~~
 
   It was restated because it was measured to be unachievable, not because it was
-  inconvenient. FINDINGS.md 24 carries the measurement and the arithmetic;
+  inconvenient. GitHub issue [#29](https://github.com/karst-net/karst/issues/29) carries the measurement and the arithmetic;
   the short version is that two randomising NATs square the search space, so the
   birthday paradox's √N saving still leaves ~170,000 probes per side for a
   99.9% success rate, and 0.01% after twenty seconds of trying. Tailscale
@@ -3816,7 +3816,7 @@ onwards, anchored on the week of 2026-08-10.
   birthday-paradox port search reaches it, and it was specified, implemented and
   measured before being declined — **64% after eight minutes** at §7.5's probe
   allowance, and it requires a datapath change against §4's single shared socket
-  (finding 28). So this is not "we could not"; it is "we measured what it costs
+  (GitHub issue [#33](https://github.com/karst-net/karst/issues/33)). So this is not "we could not"; it is "we measured what it costs
   and did not buy it", which is the same answer §12.4 reaches for row 6 and the
   same answer Tailscale reaches for both.
 
@@ -3842,7 +3842,7 @@ onwards, anchored on the week of 2026-08-10.
   and not for want of engineering. Three of the thirteen topologies are relay by
   construction: symmetric-to-symmetric has no technique that reaches it
   (§12.4's 0.01%), a path with all UDP dropped has no direct path to find, and
-  row 8 without a mapping has none this project is willing to buy (finding 28).
+  row 8 without a mapping has none this project is willing to buy (GitHub issue [#33](https://github.com/karst-net/karst/issues/33)).
   That caps any row count at 77%. The only routes to 90% would be to add easier
   rows — which games the denominator, and is the dishonesty this matrix exists
   to prevent — or to weight by real-world NAT prevalence, which needs field data
@@ -3873,7 +3873,7 @@ onwards, anchored on the week of 2026-08-10.
   reachable, so A's probe crosses first and B adopts the address it arrived
   from. What is new is everything upstream of that.
 
-  **Working out what the row would have to assert found FINDINGS.md 45**, before
+  **Working out what the row would have to assert found GitHub issue [#50](https://github.com/karst-net/karst/issues/50)**, before
   the fixture existed. `node.listen` decides the datapath's address family,
   because §4 gives it one shared socket: an `AF_INET` socket cannot send to an
   IPv6 address at all, so `[::]` is the only configuration that can use an IPv6
@@ -3884,7 +3884,7 @@ onwards, anchored on the week of 2026-08-10.
   boundary, plus the matching wire rule — §6.2 already refuses a second spelling
   of an address and the mapped form is one.
 
-  **Then building the row found FINDINGS.md 46, which is the larger half.** The
+  **Then building the row found GitHub issue [#51](https://github.com/karst-net/karst/issues/51), which is the larger half.** The
   first run failed in thirty seconds, before the node had finished starting:
   every address Karst hands a node is an IPv4 literal — the control server from
   its configuration, the relay from the netmap, the peer from a call-me-maybe —
@@ -3916,7 +3916,7 @@ onwards, anchored on the week of 2026-08-10.
   performs the translation rather than from whichever resolver answered, and
   because it works on a NAT64 network with no DNS64 at all.
 
-  **Building it found FINDINGS.md 52.** RFC 3542's `ICMP6_FILTER` uses a set bit
+  **Building it found GitHub issue [#57](https://github.com/karst-net/karst/issues/57).** RFC 3542's `ICMP6_FILTER` uses a set bit
   to *block*; this code assumed it meant *pass*, so the socket admitted every
   `ICMPv6` type except the one it existed to receive. Every unit test passed —
   the option parser was right, the solicitation was right, and the answer was
@@ -3933,10 +3933,10 @@ onwards, anchored on the week of 2026-08-10.
   IPv4-only node is handed an endpoint it cannot send to. Observing that needs a
   third node, so `bins/karstd/tests/nat64.rs` observes it directly instead —
   real socket, real `Disco`, and the `Pong` that comes out. Writing that test
-  found FINDINGS.md 47, which is a test that could not fail.
+  found GitHub issue [#52](https://github.com/karst-net/karst/issues/52), which is a test that could not fail.
 
   **An `AF_INET` node's sends to an IPv6 candidate no longer fail silently** —
-  FINDINGS.md 51, closed 2026-08-21. Dropping the error was correct and the
+  GitHub issue [#56](https://github.com/karst-net/karst/issues/56), closed 2026-08-21. Dropping the error was correct and the
   silence was not: every send path discards failures on purpose, so a peer
   reachable only over IPv6 produced no log line, no counter and no symptom but
   never connecting. The transport is what knows its own family, so it refuses
@@ -3969,7 +3969,7 @@ onwards, anchored on the week of 2026-08-10.
   carrier's and neither of the two closer ones.
 
   It also put the port-mapping client in front of the case it cannot help, and
-  **that found finding 37**: a router behind a carrier can only grant a mapping
+  **that found GitHub issue [#42](https://github.com/karst-net/karst/issues/42)**: a router behind a carrier can only grant a mapping
   on a 100.64.0.0/10 address, and `is_unusable_external` — written for exactly
   this case, and citing RFC 6886 §3.2's double-NAT paragraph — checked RFC 1918
   and not RFC 6598. `miniupnpd` refuses rather than granting, which is why the
@@ -3977,7 +3977,7 @@ onwards, anchored on the week of 2026-08-10.
   its refusal names the 100.64 address in the response body, so a gateway that
   answered `SUCCESS` with the same body would have been believed.
 
-  The same row opened **finding 38**, deliberately held back from that commit
+  The same row opened **GitHub issue [#43](https://github.com/karst-net/karst/issues/43)**, deliberately held back from that commit
   because it predates the row — a node on a NAT with no port-mapping service at
   all had always retried on the same five-second cadence, and that is most
   nodes. **Closed 2026-08-21.** The classification was right and stayed:
@@ -4013,7 +4013,7 @@ onwards, anchored on the week of 2026-08-10.
   *The original: a peer behind symmetric CGNAT reaches a peer behind a different
   symmetric CGNAT, with no mapping on either side* — **no.** Row 6 is
   that case and it stays on the relay. The mechanism this plan named for it is
-  port prediction, and FINDINGS.md 24 measures why that does not work: the
+  port prediction, and GitHub issue [#29](https://github.com/karst-net/karst/issues/29) measures why that does not work: the
   symmetric NATs that matter scatter their external ports with no locality at
   all, so there is nothing to predict. Rows 4 and 5 establish that the failure
   is *narrow* — a symmetric NAT is not by itself disqualifying — and row 6
@@ -4108,7 +4108,7 @@ during Phase 4, and the phase closed about **three and a half weeks** after
 its 2026-08-10 anchor rather than twenty. Restating the ten-week schedule here
 would describe a plan rather than what happened, so — like Phases 0–3 — this
 entry carries no dates of its own; the record is
-[`plans/phase-5/`](plans/phase-5/) and `FINDINGS.md`.
+[`plans/phase-5/`](plans/phase-5/) and the [GitHub issue tracker](https://github.com/karst-net/karst/issues?q=is%3Aissue).
 
 - **Re-baselined 2026-08-27 from the use-case implementation review.** The
   Linux DNS resolver and host integration, offline `karst-bedrock` signer,
@@ -4186,9 +4186,9 @@ entry carries no dates of its own; the record is
   per [09-exit-criteria.md](plans/phase-5/09-exit-criteria.md) §6's own rule —
   fixed or moved, never quietly dropped:
   - **Deprovisioning is measured at 48.9 s against a 30 s CI gate and a 60 s
-    hard requirement** (FINDINGS.md 67), and the fix is not the test but the
+    hard requirement** (GitHub issue [#72](https://github.com/karst-net/karst/issues/72)), and the fix is not the test but the
     netmap push the node side never held a connection to run
-    (FINDINGS.md 68, re-scoped 2026-08-30 into
+    (GitHub issue [#73](https://github.com/karst-net/karst/issues/73), re-scoped 2026-08-30 into
     [08-scim-and-groups.md](plans/phase-5/08-scim-and-groups.md) §2's
     five-item breakdown). It is inside the 60 s requirement only by where the
     sample landed in the poll interval — carried as Phase 6's first item, not
@@ -4237,11 +4237,11 @@ Phase 5's.
   settling and this phase's beta opening is the cheapest it will ever be. After
   GA it is not affordable at all.
 
-  **Sequence it with FINDINGS 53 if that work lands in the same window.**
+  **Sequence it with GitHub issue [#58](https://github.com/karst-net/karst/issues/58) if that work lands in the same window.**
   Checked against the tree at Phase 5's close: the data plane and the control
   channel are no longer part of this — the data plane is AES-256-GCM only
   since ADR-0015 item 7, and the control channel has a negotiated suite
-  mechanism since item 4. What's left of finding 53 is the **netmap cache**,
+  mechanism since item 4. What's left of GitHub issue [#58](https://github.com/karst-net/karst/issues/58) is the **netmap cache**,
   which still hardcodes ChaCha20-Poly1305 and ML-KEM-768 with no suite
   mechanism at all. One coordinated fleet upgrade, not several; two flag days
   cost more than one, and nothing about it conflicts with the anchor tier.
@@ -4429,7 +4429,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
    answer: Category 3 by default, ChaCha20-Poly1305 by default, and the CNSA
    profile parked in Phase 7 as a demonstration. **ML-KEM-1024, ML-DSA-87 and
    AES-256-GCM are now deliverables**, AES-256-GCM is implemented nowhere
-   (FINDINGS 53), and the control channel and netmap cache have no agility
+   (GitHub issue [#58](https://github.com/karst-net/karst/issues/58)), and the control channel and netmap cache have no agility
    mechanism at all. Karst is a VPN, which sits in CNSA 2.0's
    networking-equipment category — the one with the *earliest* deadlines.
 

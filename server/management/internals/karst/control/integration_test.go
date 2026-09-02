@@ -335,7 +335,7 @@ func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
 	return conn
 }
 
-// TestServerPushesOnPeerDeletion is FINDINGS.md 67/68's "own integration
+// TestServerPushesOnPeerDeletion is GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)'s "own integration
 // test": proof that deleting a peer through the real account manager's
 // deprovisioning path reaches a *live, subscribed* Karst session as an
 // unprompted envelope, rather than only being observable on that node's next
@@ -480,8 +480,8 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 	// DeleteOwnPeer, not DeletePeer: it is what the portal's self-service
 	// revoke path actually calls (nodes.go's meRevokeDevice, via the
 	// ownDeviceWriter interface) and, more to the point here, it is what
-	// drives networkMapController.OnPeersDeleted — the same call FINDINGS.md
-	// 68 traced device removal through to reach the update channel.
+	// drives networkMapController.OnPeersDeleted — the same call GitHub issue
+	// [#73](https://github.com/karst-net/karst/issues/73) traced device removal through to reach the update channel.
 	if err := am.DeleteOwnPeer(ctx, accountID, peer.ID, userID); err != nil {
 		t.Fatalf("delete peer: %v", err)
 	}

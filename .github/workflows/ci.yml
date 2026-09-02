@@ -126,7 +126,7 @@ jobs:
       # The NAT64 instrument row needs a translator, and it had never had one:
       # the row skipped on every CI run from the day it was written and reported
       # success each time, because this job installed nothing and the suite
-      # skipped quietly (FINDINGS.md 48). Masked for the same reason the aquifer
+      # skipped quietly (GitHub issue [#53](https://github.com/karst-net/karst/issues/53)). Masked for the same reason the aquifer
       # job masks its daemons — the post-install starts a service with nothing
       # sensible to bind to.
       - name: Translator for the NAT64 instrument row
@@ -196,7 +196,7 @@ jobs:
       # RFC 8781 against a router that is not ours: a Python script builds the
       # advertisement from the standard's field layout, so a misreading shows up
       # as a disagreement rather than as two copies of one mistake agreeing.
-      # It is what caught the inverted ICMP6_FILTER (FINDINGS.md 52), which no
+      # It is what caught the inverted ICMP6_FILTER (GitHub issue [#57](https://github.com/karst-net/karst/issues/57)), which no
       # unit test could see.
       - name: PREF64 discovery against an independent router
         timeout-minutes: 5

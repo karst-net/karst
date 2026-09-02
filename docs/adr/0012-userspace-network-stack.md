@@ -56,7 +56,7 @@ dropping what `Userspace::send` is handed, and returning nothing from
 `recv_segments`. Each makes the gate fail.
 
 Writing it found three defects, two of them outside userspace mode —
-FINDINGS.md 34 and 35. The gate is the first thing in the tree that ran two
+GitHub issue [#39](https://github.com/karst-net/karst/issues/39) and 35. The gate is the first thing in the tree that ran two
 daemons which **both** knew the other's endpoint, so it was the first thing to
 perform a simultaneous open; that had been silently broken. The lesson is the
 ADR's own: a mode that is built and unproven is not a mode that works.
@@ -83,14 +83,14 @@ had a number. Taking it found **three** defects, none of them visible from gate
 2 — which does one request and one reply, never half-closes, and passes at any
 speed:
 
-- **FINDINGS.md 39** — the SOCKS5 relay treated a client half-close as a full
+- **GitHub issue [#44](https://github.com/karst-net/karst/issues/44)** — the SOCKS5 relay treated a client half-close as a full
   teardown, truncating the reply for every client that ends a request by
   closing its write half. The harness could not complete a run until this was
   fixed.
-- **FINDINGS.md 40** — a flat 2 ms poll in the same loop, which was the whole of
+- **GitHub issue [#45](https://github.com/karst-net/karst/issues/45)** — a flat 2 ms poll in the same loop, which was the whole of
   the original 4.135 ms round trip: 4.135/4.156/4.211 across p50/p90/p99 is a
   timer, not a cost.
-- **FINDINGS.md 41** — every TCP socket was built with receive and transmit
+- **GitHub issue [#46](https://github.com/karst-net/karst/issues/46)** — every TCP socket was built with receive and transmit
   buffers of exactly one MTU. A receive buffer *is* the advertised window, so
   1280 bytes meant one segment in flight and an acknowledgment between each.
   Sizing them at 64 KiB moved the mode from 7.3 Mbps to 516 — **71×**, and the
@@ -249,7 +249,7 @@ SOCKS listener specifically. An inbound-only sidecar is a real deployment, and
 requiring it to open an outbound surface it does not want in order to start
 would be requiring it to widen itself.
 
-**Writing it found FINDINGS.md 44, which was outbound mode's bug.** Nothing ever
+**Writing it found GitHub issue [#49](https://github.com/karst-net/karst/issues/49), which was outbound mode's bug.** Nothing ever
 removed a TCP socket from the stack: `connect_tcp` added one per SOCKS
 connection and no path freed it, so a long-running sidecar accumulated sockets
 and their 128 KiB of buffers without bound, and polled every dead one on every

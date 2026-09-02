@@ -208,7 +208,7 @@ web:
 
 Playwright against the **mock** in the ordinary job, and against a real
 `deploy/compose` stack in a nightly. The second is slower and flakier and is
-also the only one that would have caught Phase 4's findings 42 and 43 —
+also the only one that would have caught Phase 4's GitHub issue [#47](https://github.com/karst-net/karst/issues/47) and 43 —
 components that existed only in the test harness while production read the
 field the harness filled. A console tested exclusively against its own mock
 is precisely that failure shape, one layer up.

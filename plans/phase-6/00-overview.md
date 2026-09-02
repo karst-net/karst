@@ -19,7 +19,7 @@ Phase 5 entry. None of them are Phase 6 scope on paper — they are Phase 5's
 unfinished business, carried forward rather than dropped, and they come
 before anything below.
 
-1. ~~**Deprovisioning timing (FINDINGS.md 67, 68).**~~ **Closed 2026-09-02, W1,
+1. ~~**Deprovisioning timing (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)).**~~ **Closed 2026-09-02, W1,
    ahead of the W1–W2 budget below** — the persistent-connection lifecycle,
    push/response discriminator, server-side subscription, and `testserver`
    wiring all landed together rather than being staffed and re-estimated
@@ -27,11 +27,11 @@ before anything below.
    `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget` now
    measures 2.0 s, against the 48.9 s this item opened with and reliably under
    the 30 s CI gate — [phase-5/08-scim-and-groups.md](../phase-5/08-scim-and-groups.md)
-   §2 and FINDINGS.md 67/68 have the full account, including one bug the fix
+   §2 and GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73) have the full account, including one bug the fix
    itself introduced and caught before landing (a held connection's `node_id`
    going stale) and one pre-existing gap it exposed (any `handler.Handle`
    error ending the whole session, harmless under the old one-shot-connection
-   model and not under this one). **Not closed by this item:** FINDINGS.md 70,
+   model and not under this one). **Not closed by this item:** GitHub issue [#75](https://github.com/karst-net/karst/issues/75),
    opened deliberately rather than folded in — the push fan-out still computes
    a `SyncResponse` a Karst node discards, and fixing that means a forked-code
    decision this item's scope did not call for.
@@ -41,7 +41,7 @@ before anything below.
    run [phase-5/09-exit-criteria.md](../phase-5/09-exit-criteria.md) §3
    specifies. Run it against the tree as it stands, timeboxed at 30 minutes to
    first node connected per §3's rules. **W1.** Every deviation is a numbered
-   FINDINGS.md entry, same discipline as the rest of the record. Do not let
+   GitHub issue, following the same discipline as the rest of the record. Do not let
    this slip behind item 1 — it needs a person, not an engineer, and can run
    in parallel.
 3. **`scripts/release-manifest.sh` is wired to nothing.** The portal's
@@ -63,7 +63,7 @@ tree at Phase 5's close:
 
 | Workstream | PLAN.md says | What's actually there |
 |---|---|---|
-| Capability-scoped anchor tier | New wire-format work, ADR-0016 | **Design-complete, zero implementation.** ADR-0016 is Proposed, not built in either language. Two verifier gaps FINDINGS.md 56 flagged as "should not wait" — `anchor` entry `audit_seq` monotonicity and wiring `VerifyAnchored` into the audit status endpoint — were recommended *for Phase 5* and did not happen: `verify.go:287` still assigns `st.Anchor = a` unconditionally, and `VerifyAnchored` (`bedrock/anchor.go:149`) has no caller outside its own file. Both are now first-week Phase 6 work, not carryover — they were never scheduled elsewhere. |
+| Capability-scoped anchor tier | New wire-format work, ADR-0016 | **Design-complete, zero implementation.** ADR-0016 is Proposed, not built in either language. Two verifier gaps GitHub issue [#61](https://github.com/karst-net/karst/issues/61) flagged as "should not wait" — `anchor` entry `audit_seq` monotonicity and wiring `VerifyAnchored` into the audit status endpoint — were recommended *for Phase 5* and did not happen: `verify.go:287` still assigns `st.Anchor = a` unconditionally, and `VerifyAnchored` (`bedrock/anchor.go:149`) has no caller outside its own file. Both are now first-week Phase 6 work, not carryover — they were never scheduled elsewhere. |
 | Internal cryptographic review | Self-review against spec/models/vectors | **Nothing formal started.** The material to review against is real (Verifpal + 9 ProVerif models in CI, `spec/vectors/`, `kani` on the reassembler), but no review pass, checklist, or writeup exists yet. |
 | Internal penetration test | Against a deployment from published artifacts | **Nothing started.** Deliberately deferred until packaging (closed 2026-08-28) and the console (closed in Phase 5) both existed — they now do, so there is a real target to test against for the first time. |
 | TURN fallback | Client alloc/permissions/channel binding, server credential minting, coturn in the matrix | **Zero code.** `grep -rl TURN\|coturn` across `crates/`, `bins/`, `server/` returns nothing but planning docs. Fully greenfield, exactly as ADR-0008 reserved it. |
@@ -85,8 +85,8 @@ explicitly best-effort line rather than leaving it to be noticed in W8.
 |---|---|---|---|---|
 | 0 | Phase 5 close-out | §0 above: netmap push, outsider walkthrough, release-manifest | Go 2, SRE, an outside runner | W1–W2 |
 | 1 | Capability-scoped anchor tier | ADR-0016's wire format in both languages: `karst-bedrock-v1 anchor` context string and key kind, the optional trailing block in `genesis`/`authority-list`, the concatenated signer-index space, regenerated `spec/vectors/bedrock-v1.json` including rejected cases, `karst-bedrock` support for the new key kind, the scheduler giving `AnchorDue` a caller. Plus the two verifier gaps from §1's table: `audit_seq` monotonicity and `VerifyAnchored` wired into the audit status endpoint | Crypto + Go 1 | W1–W2 |
-| 2 | Netmap-cache suite mechanism | FINDINGS.md 53's one remaining gap: the encrypted netmap cache hardcodes ChaCha20-Poly1305 and ML-KEM-768 with **no suite mechanism at all** — unlike the data plane (done) and the control channel (dispatch mechanism landed via ADR-0015 item 4). Sequence with #1: both are flag days for existing deployments, and two flag days cost more than one | Rust 1 | W2 |
-| 3 | Internal cryptographic review | Structured self-review of PHREATIC against `spec/phreatic-v1.md`, the Verifpal/ProVerif models, and the vector suite, written up with FINDINGS.md's own discipline. Must start *after* #1 and #2 land — reviewing before the newest signing tier and the newest suite dispatch exist means reviewing a system that will have changed under the review | Crypto + a second reader (Rust 1, per §4) | W3–W4 |
+| 2 | Netmap-cache suite mechanism | GitHub issue [#58](https://github.com/karst-net/karst/issues/58)'s one remaining gap: the encrypted netmap cache hardcodes ChaCha20-Poly1305 and ML-KEM-768 with **no suite mechanism at all** — unlike the data plane (done) and the control channel (dispatch mechanism landed via ADR-0015 item 4). Sequence with #1: both are flag days for existing deployments, and two flag days cost more than one | Rust 1 | W2 |
+| 3 | Internal cryptographic review | Structured self-review of PHREATIC against `spec/phreatic-v1.md`, the Verifpal/ProVerif models, and the vector suite, written up with the [GitHub issue tracker](https://github.com/karst-net/karst/issues?q=is%3Aissue)'s existing discipline. Must start *after* #1 and #2 land — reviewing before the newest signing tier and the newest suite dispatch exist means reviewing a system that will have changed under the review | Crypto + a second reader (Rust 1, per §4) | W3–W4 |
 | 4 | Internal penetration test | Control plane and console, against a deployment stood up from published `.deb`/`.rpm`/container artifacts — not a lab rig. First real chance to run this: packaging and the console both closed during Phase 5 | SRE + all | W3–W5 |
 | 5 | TURN fallback | Client-side allocation, permissions, channel binding, credential refresh; control-server ephemeral credential minting; `coturn` added to the NAT matrix as a 14th topology. Arrives with the co-located relay path already automatic and lossless (thirteen `karstd` topologies), so this buys ADR-0008 interoperability, not connectivity | Rust 2 + Go 2 | W3–W6 |
 | 6 | Subnet routers and exit nodes | Gateway selection, default-route consent, forwarding controls, ACL/node-attribute permissions — the product layer NetBird's inherited route/firewall plumbing (§1) does not provide. Console surface for route advertisement and gateway choice | Rust 1 + Go 1 + Frontend 1 | W4–W7 |

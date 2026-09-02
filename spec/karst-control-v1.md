@@ -262,7 +262,7 @@ per rekey.
 A `KarstEnvelope` from the server is ordinarily the reply to the envelope the
 node just sent — one `Session` stream is one strictly-alternating
 request/response conversation. As of the deprovisioning fix
-(FINDINGS.md 67/68), it need not be: the server may send an envelope
+(GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)), it need not be: the server may send an envelope
 unprompted, at any point after a node's `ChannelInit` has been accepted, to
 tell it its network map changed and it should re-fetch **now** rather than
 waiting for its next scheduled poll.
@@ -272,7 +272,7 @@ reserved request-kind value (`KIND_PUSH`, alongside the login/netmap/bedrock
 kinds `bootstrap.go`, `control.rs` and `testserver/netmap.go` already define
 and keep in step) — never a `KarstNetmapResponse` or any other message this
 spec defines elsewhere. This is deliberately **not** a new `KarstEnvelope`
-field: per FINDINGS.md 54, a discriminator that decides how a decrypted
+field: per GitHub issue [#59](https://github.com/karst-net/karst/issues/59), a discriminator that decides how a decrypted
 payload is handled must itself be inside the AEAD-covered body, not a
 plaintext field alongside it, or an attacker who can flip a bit in transit —
 undetected, because nothing outside the body authenticates it — chooses how

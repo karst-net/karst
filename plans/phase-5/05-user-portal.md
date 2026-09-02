@@ -14,13 +14,13 @@ off the read-only views.**
 > control-channel connections — `node.DeviceSession`, written around the
 > authenticated part of the stream — with a genuine end time, a genuine
 > address, and a null end meaning "still connected" rather than "unknown"
-> (FINDINGS.md 63). The download manifest is generated from the artifacts a
+> (GitHub issue [#68](https://github.com/karst-net/karst/issues/68)). The download manifest is generated from the artifacts a
 > release actually contains and lists every build for the platform, since the
-> client now ships four Linux packages (FINDINGS.md 65). The enrollment
+> client now ships four Linux packages (GitHub issue [#70](https://github.com/karst-net/karst/issues/70)). The enrollment
 > instruction already matched the daemon's configuration flow.
 >
 > Two things surfaced while closing them and are worth carrying forward: the
-> portal's Playwright suite had never run in CI (FINDINGS.md 64, now wired in),
+> portal's Playwright suite had never run in CI (GitHub issue [#69](https://github.com/karst-net/karst/issues/69), now wired in),
 > and the session address is the proxy's address behind a reverse proxy, which
 > the schema states rather than implying a device location the server cannot
 > know.
