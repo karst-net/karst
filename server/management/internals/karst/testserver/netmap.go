@@ -97,12 +97,25 @@ func (m *memoryAccount) register(handle, hostname string) *nbpeer.Peer {
 // about, and what `a_revoked_peer_loses_its_session` measures.
 //
 // It also drives updates, when set: production's two deprovisioning paths
-// both end at PeersUpdateManager.SendUpdate fanning out to every *surviving*
-// peer's channel (GitHub issue [#73](https://github.com/karst-net/karst/issues/73) — sendUpdateAccountPeers), and this fixture
-// had none at all until now. The removed peer is not itself notified — it is
-// gone, and production's own removal notice to it is a distinct call this
-// fixture has no equivalent of and does not need for the deprovisioning
-// measurement, which watches a survivor.
+// both end at PeersUpdateManager.SendNotification and SendUpdate fanning out
+// to every *surviving* peer's channel (GitHub issue [#73](https://github.com/karst-net/karst/issues/73) —
+// sendUpdateAccountPeers), and this fixture had none at all until now. The
+// removed peer is not itself notified — it is gone, and production's own
+// removal notice to it is a distinct call this fixture has no equivalent of
+// and does not need for the deprovisioning measurement, which watches a
+// survivor.
+//
+// **Both calls, not just SendUpdate.** `PeersUpdateManager` keeps two
+// separate maps behind two separate methods: `SendUpdate` writes to
+// `peerChannels`, `SendNotification` writes to `notificationChannels`
+// (`update_channel/updatechannel.go`). Karst's `control.Service.subscribeOnce`
+// subscribes via `CreateNotificationChannel`, which only `SendNotification`
+// signals — `SendUpdate` alone reaches a channel nothing in the Karst control
+// path ever reads from. Production's `Controller.OnPeersDeleted` calls both
+// together for exactly this reason; this fixture calling only one was the gap
+// that made `a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget`
+// fall back to the 60 s poll on every run, deterministically, rather than
+// receiving the push it exists to measure.
 func (m *memoryAccount) remove(handle string) bool {
 	m.mu.Lock()
 	if _, ok := m.peers[handle]; !ok {
@@ -116,9 +129,10 @@ func (m *memoryAccount) remove(handle string) bool {
 			break
 		}
 	}
-	// SendUpdate is keyed by peer.ID (matching CreateChannel in
-	// control.Service.subscribeOnce), not by handle — m.order holds handles,
-	// so it is peers[handle].ID that goes out, not the handle itself.
+	// SendUpdate/SendNotification are keyed by peer.ID (matching
+	// CreateNotificationChannel in control.Service.subscribeOnce), not by
+	// handle — m.order holds handles, so it is peers[handle].ID that goes
+	// out, not the handle itself.
 	survivorIDs := make([]string, 0, len(m.order))
 	for _, h := range m.order {
 		survivorIDs = append(survivorIDs, m.peers[h].ID)
@@ -128,6 +142,7 @@ func (m *memoryAccount) remove(handle string) bool {
 
 	if updates != nil {
 		for _, peerID := range survivorIDs {
+			updates.SendNotification(context.Background(), peerID)
 			updates.SendUpdate(context.Background(), peerID, &network_map.UpdateMessage{})
 		}
 	}
