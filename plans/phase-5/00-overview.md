@@ -1,7 +1,20 @@
 # Phase 5 — KarstDNS, Bedrock, admin console
 
-**10 weeks · W1 = week of 2026-10-19 · W10 = week of 2026-12-21.**
-Anchored on PLAN.md §10's 2026-08-10 start, Phase 4 running ten weeks from it.
+**✅ Closed 2026-09-02.** Scheduled as 10 weeks, W1 = week of 2026-10-19
+through W10 = week of 2026-12-21, anchored on PLAN.md §10's 2026-08-10 start
+plus Phase 4's planned ten weeks. It did not run on that schedule: §0 below
+found most of the product work already in the tree before Phase 5's notional
+W1, and the phase closed about three and a half weeks after the 2026-08-10
+anchor rather than twenty. The week numbers throughout this file are the
+*scheduled* ones and are retained for planning provenance; do not read them
+as elapsed calendar time.
+
+**Two items were red at close and moved to Phase 6 in writing**, per §9's own
+rule — see [09-exit-criteria.md](09-exit-criteria.md) §6 and PLAN.md's Phase 5
+entry: the deprovisioning timing gate (FINDINGS.md 67, 68) and the
+outsider-run walkthrough (§9 §3), which has not happened — CI's automated doc
+walkthrough is a regression guard, not the unaided run the gate requires.
+Phase 6 opens the week of **2026-09-07**.
 
 These notes are local planning material. They expand PLAN.md's seven-line
 Phase 5 block into something a team can start on Monday of W1. Where they
@@ -37,20 +50,26 @@ is:
    gap, but PLAN.md now schedules its delivery in Phase 8; retain
    [07-windows-client.md](07-windows-client.md) as the Phase 8 handoff plan.
 
-   **Reviewed 2026-08-30 and all but done.** W2–W7 shipped: `utun`, addressing
-   and routes, a two-daemon pair suite, `/etc/resolver` with revert and crash
+   **✅ Done, closed 2026-09-01.** W2–W7 shipped: `utun`, addressing and
+   routes, a two-daemon pair suite, `/etc/resolver` with revert and crash
    recovery, resume detection, and a `.pkg` with install and uninstall verified
-   on a real runner. Two things remain and only one of them is engineering.
-   The resolver **search list** is Phase 6 — it needs a held-open
+   on a real runner. One thing remains and it is a stated design deferral, not
+   an open risk: the resolver **search list** is Phase 6 — it needs a held-open
    `SCDynamicStore`, and the cheap alternatives either evaporate when the child
    process exits or delete the search domains DHCP supplied; the daemon and
-   `karst dns status` now state the limitation rather than leaving it to be
-   discovered. **Signing and notarization are blocked on Apple Developer
-   Program enrollment and nothing else** — `scripts/build-macos-pkg.sh` signs,
-   notarizes and staples the moment credentials exist, and `--require-signing`
-   makes their absence fatal on a tag. That is the one item on this list whose
-   critical path runs through paperwork rather than through the team, and it is
-   the phase's highest-likelihood risk in §5.
+   `karst dns status` state the limitation rather than leaving it to be
+   discovered. **Signing and notarization landed 2026-09-01.** Apple
+   Developer Program enrollment completed, and the tagged run
+   `release-test-1` produced a real signed, notarized, stapled `.pkg` on the
+   first try: `productsign` against "Developer ID Installer: ADRIAN L
+   ANDERSON", then `The staple and validate action worked!` /
+   `source=Notarized Developer ID`. The one item on this list whose critical
+   path ran through paperwork rather than through the team — and had been the
+   phase's highest-likelihood risk in §5 since W1 — is closed. A prior
+   `find-identity -p codesigning` lookup for the Installer certificate (which
+   lists only code-signing identities and never returns an installer one) was
+   caught and fixed the same week, before it could fail silently on the first
+   real tag.
 4. Deliver SCIM/group-sync deprovisioning and Linux packages.
 
 Managed subnet routing and exit nodes are explicitly excluded: there is no
@@ -217,7 +236,7 @@ first option**; the exit criterion names the console explicitly.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| macOS signing/notarization not in hand by W7 | **High** — nothing started | **High** — no completed non-Linux installer, exit criterion unreachable | Start Apple enrollment W1 day 1; treat as SRE's first task ahead of any CI work. Windows signing is Phase 8 work. |
+| ~~macOS signing/notarization not in hand by W7~~ | — | — | **Closed 2026-09-01.** Apple Developer Program enrollment landed; `release-test-1` produced a signed, notarized, stapled `.pkg`. Windows signing remains Phase 8 work. |
 | API contract churn after W2 | Medium | High — frontend rework | Freeze as OpenAPI + mock server; changes after W2 go through an explicit amendment with both frontend engineers in the room |
 | Platform DNS integration exceeds estimate | **High** — it always does | Medium | The Linux mechanisms are implemented; budget macOS resolver work with its client. Windows NRPT is Phase 8 work. |
 | Bedrock single-reader risk | Medium | **High** — a flaw in a fail-closed crypto path | Pair Rust 1 from W5; Phase 6's internal review takes Bedrock as its second subject after PHREATIC |

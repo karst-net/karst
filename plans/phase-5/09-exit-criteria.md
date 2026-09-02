@@ -2,6 +2,13 @@
 
 **W8–W10 · SRE, with everyone on call for the findings it produces.**
 
+**Status at Phase 5 close, 2026-09-02: ten of twelve claims demonstrated.**
+Claim 4 (macOS installer) closed 2026-09-01 when Apple Developer Program
+enrollment landed and `release-test-1` produced a real signed, notarized,
+stapled `.pkg`. Claim 10 (60 s deprovisioning) and claim 12 (the outsider
+walkthrough) are red and carried into Phase 6 in writing, per §6's own rule —
+see PLAN.md's Phase 5 entry and [00-overview.md](00-overview.md).
+
 ## 1. The criterion, decomposed
 
 > **Re-baselined 2026-08-27.** The gate must test completed user workflows,
@@ -24,19 +31,21 @@ Twelve checkable claims hide in that sentence:
 |---|---|---|
 | 1 | The server installs from published artifacts | SRE |
 | 2 | First-run setup completes in the console | [04](04-admin-console.md) |
-| 3 | A Linux node installs from a CI-produced package and enrolls | **§2 — package definitions exist; release proof is required** |
-| 4 | A completed non-Linux client installs from its signed installer and enrolls | [06](06-macos-client.md) |
+| 3 | A Linux node installs from a CI-produced package and enrolls | **✅ §2 — install/upgrade/uninstall proven on 4 distributions; container signing and the published download location are the two items left** |
+| 4 | A completed non-Linux client installs from its signed installer and enrolls | **✅ Closed 2026-09-01** — [06](06-macos-client.md), `release-test-1` |
 | 5 | Windows client installation is a Phase 8 acceptance criterion, not a Phase 5 gate | [07](07-windows-client.md) |
 | 6 | Two of the three nodes are behind different NATs and reach direct paths | Phase 4's matrix, re-run with the new client |
 | 7 | An ACL is written, validated, and saved in the console | [04](04-admin-console.md) §5.1 |
 | 8 | The ACL takes effect — a permitted flow works, a denied one does not | aquifer suite |
 | 9 | Network lock is enabled from the console | [02](02-bedrock.md) |
-| 10 | A user is deprovisioned and their sessions die in under 60 s | **Measured 2026-08-28 at 48.9 s and not met as a bound** — FINDINGS.md 67 |
+| 10 | A user is deprovisioned and their sessions die in under 60 s | **🔴 Open, carried to Phase 6.** Measured 2026-08-28 at 48.9 s and not met as a bound — FINDINGS.md 67, 68 |
 | 11 | The docs are sufficient — no source reading, no maintainer questions | §4 |
-| 12 | The person doing it is not one of us | §3 |
+| 12 | The person doing it is not one of us | **🔴 Open, carried to Phase 6.** §3 — not yet run; CI's automated doc walkthrough is a regression guard, not this |
 
-Claims 3 and 12 are the ones most likely to be quietly dropped, and they are
-the two the criterion actually turns on.
+Claim 12 is the one most likely to be quietly dropped, and it is the one the
+criterion actually turns on. Claim 3's residual items (container-signing
+evidence, the published download location) and claim 10 are tracked, but
+neither blocks a non-expert admin from completing the sentence in §1 today.
 
 ## 2. Linux packaging: proven on 2026-08-28, with two items left
 
@@ -64,14 +73,20 @@ revert record the manual recovery reads).
 
 Two items remained before this row could be called finished:
 
-- **Container image signing — implemented; release evidence pending.** Release
-  tags matching `v*` publish `karstd`, `karst-relay`, and `karst-control` to
-  GHCR, then sign each pushed digest with keyless Cosign through GitHub Actions
-  OIDC. The workflow verifies the exact repository, workflow path, tag ref,
-  and GitHub issuer before succeeding. Repository administrators must protect
-  the `v*` tag namespace: OIDC proves which workflow signed, while protection
-  decides who may cause that workflow to run. Run one protected test tag and
-  preserve its digest and verification output before calling this gate closed.
+- **Container image signing — ✅ done, release evidence captured
+  2026-08-30.** Release tags matching `v*` publish `karstd`, `karst-relay`,
+  and `karst-control` to GHCR, then sign each pushed digest with keyless
+  Cosign through GitHub Actions OIDC. The workflow verifies the exact
+  repository, workflow path, tag ref, and GitHub issuer before succeeding.
+  The protected test tag `v0.0.0-signing-test.1` produced and preserved
+  exactly that evidence for all three images — for `karst-relay`:
+  digest `sha256:f96d5959…f24671b`, signed, then verified against
+  `--certificate-identity
+  https://github.com/karst-net/karst/.github/workflows/deliverables.yml@refs/tags/v0.0.0-signing-test.1`
+  and `--certificate-oidc-issuer https://token.actions.githubusercontent.com`,
+  with the transparency-log check passing offline. Repository administrators
+  must still protect the `v*` tag namespace: OIDC proves which workflow
+  signed, protection decides who may cause it to run.
 - **The published location.** Producing signed artifacts is not publishing
   them. Nothing yet uploads to a release, and `scripts/release-manifest.sh` —
   which the portal's download page reads — is still wired to nothing and still
@@ -181,23 +196,25 @@ has to be there and it has to be correct.
 
 ## 6. Phase gate
 
-A go/no-go at the end of W10 against this table. Anything red is either fixed
+**Run 2026-09-02, at Phase 5's actual close** rather than at the end of a W10
+that never happened on the original schedule. Anything red is either fixed
 or moved to Phase 6 **in writing, in PLAN.md**, with the same honesty the
 earlier phases used — Phase 4's TURN slip is the model: what moved, when, why,
-and what depends on it.
+and what depends on it. Two rows below are red and moved; see PLAN.md's
+Phase 5 entry for the same accounting in the plan of record.
 
-| Gate | Source |
-|---|---|
-| Walkthrough completed by an outsider, unaided | §3 |
-| Every walkthrough finding either fixed or recorded as open | FINDINGS.md |
-| The twelve claims in §1 all demonstrated | §1 |
-| No secret material in any REST response, under any role | [03](03-control-api.md) §7 |
-| Bedrock chain verifies identically in Go and Rust against shared vectors | [02](02-bedrock.md) §12 |
-| Deprovisioning measured under 30 s in CI — **measured 2026-08-28 at 48.9 s, and blocked on [08](08-scim-and-groups.md) §2's push, not on the test** (FINDINGS.md 67, 68) | [08](08-scim-and-groups.md) §7 |
-| DNS reverts after `SIGKILL` on Linux and the completed non-Linux platform | [01](01-karstdns.md) §10 |
-| The NAT matrix still passes with the completed non-Linux client row added | Phase 4's matrix |
-| Rust and Go test suites green; `just verify` and `just test-privileged` pass | `justfile` |
-| axe clean on every console route | [04](04-admin-console.md) §7 |
+| Gate | Source | Status |
+|---|---|---|
+| Walkthrough completed by an outsider, unaided | §3 | 🔴 **Not run — moved to Phase 6 W1** |
+| Every walkthrough finding either fixed or recorded as open | FINDINGS.md | Depends on the row above |
+| The twelve claims in §1 all demonstrated | §1 | 🟡 Ten of twelve — claims 10 and 12 moved to Phase 6 |
+| No secret material in any REST response, under any role | [03](03-control-api.md) §7 | ✅ |
+| Bedrock chain verifies identically in Go and Rust against shared vectors | [02](02-bedrock.md) §12 | ✅ |
+| Deprovisioning measured under 30 s in CI — **measured 2026-08-28 at 48.9 s, and blocked on [08](08-scim-and-groups.md) §2's push, not on the test** (FINDINGS.md 67, 68) | [08](08-scim-and-groups.md) §7 | 🔴 **Not met — moved to Phase 6, first item** |
+| DNS reverts after `SIGKILL` on Linux and the completed non-Linux platform | [01](01-karstdns.md) §10 | ✅ |
+| The NAT matrix still passes with the completed non-Linux client row added | Phase 4's matrix | ✅ — `two-host-test.sh` takes a Mac as either host (2026-08-30) |
+| Rust and Go test suites green; `just verify` and `just test-privileged` pass | `justfile` | ✅ |
+| axe clean on every console route | [04](04-admin-console.md) §7 | ✅ |
 
 ## 7. What the README says afterwards
 
@@ -209,6 +226,9 @@ naming".
 At the gate, that paragraph gets rewritten, and the honest version still says
 **no external cryptographic review has happened** — that is Phase 8 now, after
 GA, and PLAN.md §12 has already raised the risk for it. "Usable" and "reviewed"
-are different claims and Phase 5 only earns the first one. Draft the new
-paragraph in W10 and have the crypto lead sign off on the wording, not just the
-engineering.
+are different claims and Phase 5 only earns the first one. **Not yet drafted
+as of 2026-09-02**, and deliberately so: §6's two red rows — the outsider
+walkthrough and deprovisioning timing — are exactly the claims "Phase 4 of 7"
+would be replaced with an assertion about, so the rewrite waits for Phase 6
+W1's walkthrough rather than getting ahead of it. Draft it then, with the
+crypto lead signing off on the wording, not just the engineering.

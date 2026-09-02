@@ -2,13 +2,18 @@
 
 **PLAN.md §9 · W2–W8 · Rust 2.**
 
-## 0. Status — started 2026-08-28, continued 2026-08-28, reviewed 2026-08-30
+## 0. Status — ✅ done, closed 2026-09-01
 
-**W2–W7 are done; W8 is not, and one piece of W5 is deliberately not built.**
-What exists is a client that builds, opens a real `utun`, carries TCP between
-two daemons on one Mac, resolves mesh names system-wide, recovers promptly from
-sleep, and ships as an installable package. What it does not have is an Apple
-signature, and a resolver *search* list — the second for a stated reason, below.
+**All of W2–W8 are done; one piece of W5 is deliberately not built and stays
+that way into Phase 6.** What exists is a client that builds, opens a real
+`utun`, carries TCP between two daemons on one Mac, resolves mesh names
+system-wide, recovers promptly from sleep, ships as an installable package,
+and is now signed and notarized: the tagged run `release-test-1`
+(2026-09-01) produced a real Gatekeeper-acceptable `.pkg` —
+`productsign` against "Developer ID Installer: ADRIAN L ANDERSON
+(WJ3MJC4KV7)", then `The staple and validate action worked!` /
+`source=Notarized Developer ID`. What it does not have is a resolver
+*search* list — a stated Phase 6 deferral, below, not an open risk.
 
 **The 2026-08-30 review closed the two items that were closable and confirmed
 the third is not.** In order:
@@ -26,16 +31,19 @@ the third is not.** In order:
   on the first netmap that carries a search domain. The mechanism refused to
   ship a step that appeared to succeed and changed nothing; the status output
   should not have been doing the same thing to the operator.
-- **W8 is unchanged and unchangeable from here.** The pipeline is written, the
-  CI job is conditional, install-and-uninstall is verified on a real runner,
-  and none of it can produce a signed artifact until somebody enrolls the
-  organization in the Apple Developer Program. §7 is still the critical path.
+- **W8 closed 2026-09-01.** The pipeline was written and conditional; the
+  Apple Developer Program enrollment that was the sole remaining blocker
+  landed that day, and `release-test-1` proved the pipeline correct on the
+  first tag that carried real credentials. One bug surfaced and was fixed
+  the same day before it could fail confusingly on a real release: the
+  Developer ID Installer identity was looked up under `-p codesigning`,
+  which lists only code-signing identities and never returns an installer
+  one — `9e92ee7` moved that lookup to `-p basic`.
 
-**So the workstream cannot be closed, and the reason is a single external
-dependency.** Every engineering item is either done or scheduled into Phase 6
-with its cost written down. Exit criteria 2–5 are reachable today with a Mac,
-a second host and an afternoon; criterion 1 is reachable the week the
-certificates arrive.
+**So the workstream is closed, including the external dependency.** Every
+engineering item is done; the search-list deferral is scheduled into Phase 6
+with its cost written down. All five exit criteria in §10 are reachable
+today with a Mac, a second host and an afternoon.
 
 ### Done
 
@@ -97,7 +105,7 @@ and both are worth knowing about:
 | Week | Work | Consequence today |
 |---|---|---|
 | W5 | The resolver **search list** — the SystemConfiguration half | A fully-qualified mesh name resolves; a bare `laptop` does not become `laptop.aquifer.karst`. Everything else in W5 is done. Since 2026-08-30 the daemon and `karst dns status` both say so, so this is a stated limitation rather than a surprise |
-| W8 | Signing, notarization, stapling, clean-machine verification | The `.pkg` is unsigned; Gatekeeper refuses it anywhere but the build machine |
+| W8 | ~~Signing, notarization, stapling, clean-machine verification~~ | **Done 2026-09-01.** `release-test-1` shipped a signed, notarized, stapled `.pkg` |
 
 **The search list is not a shortcut taken, it is a mechanism that does not
 exist at this layer.** §5 below proposed `scutil` for the global case. That does
@@ -131,11 +139,12 @@ that lives, and it is a property of the mechanism — `resolved`, NetworkManager
 and the `resolv.conf` controller all report `applied`, because all three do
 install a search list.
 
-W8 is **blocked on paperwork, not on code.** The pipeline is written and
-conditional: `scripts/build-macos-pkg.sh` signs, notarizes and staples the
-moment the credentials exist, and `--require-signing` makes their absence fatal
-so a tag cannot quietly ship unsigned. §7 below is still the critical path —
-somebody has to start the Apple Developer Program enrollment.
+**W8 closed 2026-09-01.** The pipeline was written and conditional:
+`scripts/build-macos-pkg.sh` signs, notarizes and staples the moment the
+credentials exist, and `--require-signing` makes their absence fatal so a
+tag cannot quietly ship unsigned. The Apple Developer Program enrollment §7
+below named as the critical path landed that day, and the pipeline produced
+a real artifact without further changes.
 
 ### Still manual, and stated as such
 
@@ -147,7 +156,9 @@ the code that serves them is written so a person can check it in one sitting:
   behaviors in `bins/karstd/src/wake.rs`, and what a real suspend adds is
   whether five seconds is the right threshold on a machine that has genuinely
   slept. Close the lid, open it, and read the log.
-- **Gatekeeper on a clean machine (§10.1).** Unchanged, and blocked on W8.
+- **Gatekeeper on a clean machine (§10.1).** ✅ Reachable since 2026-09-01;
+  `pkgutil --check-signature` and `spctl --assess --type install` against
+  `release-test-1`'s artifact are the check to run.
 
 ### On the App Store
 
@@ -345,7 +356,7 @@ always-on boxes, and that is exactly this project's audience.
 `Distribution.xml` with a minimum OS version. Pick **macOS 13** and state it;
 supporting older costs testing time for a shrinking population.
 
-## 7. Signing and notarization — start in W1
+## 7. Signing and notarization — ✅ closed 2026-09-01
 
 | Artifact | Certificate |
 |---|---|
@@ -354,9 +365,11 @@ supporting older costs testing time for a shrinking population.
 
 Both come from an Apple Developer Program organization membership: $99/yr, a
 D-U-N-S number, and an enrollment that takes **one to four weeks** and can stall
-on a legal-entity mismatch. ADR-0007 and ADR-0010 have the project's naming and
-entity situation; whoever owns that needs to start the enrollment on the first
-day of W1. PLAN.md §12 said to do this in Phase 3 and it did not happen.
+on a legal-entity mismatch. PLAN.md §12 said to do this in Phase 3, it did not
+happen then, and it landed 2026-09-01 instead — late against that mitigation,
+but ahead of the phase's own W8. `release-test-1` is the proof: both
+identities resolved from the CI keychain and produced a working signed,
+notarized, stapled artifact.
 
 The pipeline:
 

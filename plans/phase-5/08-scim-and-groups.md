@@ -4,6 +4,15 @@
 see §2.** *Amended 2026-08-29: the Rust change is not a change, it is the
 larger half of §2, and it is unestimated. Do not schedule W6 from this line.*
 
+**Carried into Phase 6 at Phase 5's 2026-09-02 close, as the phase's first
+item — not background hardening.** §2's re-estimate never happened (it was
+due W5) and the fixture work behind §7's deprovisioning test never landed
+(due W7); the 30 s CI gate and the 60 s hard requirement are both still
+unmet at 48.9 s, measured against a fixture with no push at all
+(FINDINGS.md 67, 68). See [09-exit-criteria.md](09-exit-criteria.md) §6 and
+PLAN.md's Phase 5 entry for where this is tracked at the plan-of-record
+level.
+
 ## 1. Scope
 
 > **Re-baselined 2026-08-27.** Basic user, group, role, setup-key, and

@@ -5,12 +5,18 @@
 **A post-quantum mesh VPN with self-hosted coordination, an admin console, and
 user management.**
 
-> **Status: pre-alpha. Do not deploy this.** Phase 4 of 7. There is a working
-> end-to-end tunnel — two nodes enroll with a coordination server, meet over a
-> relay, punch through NATs and carry TCP under a policy — but **nothing here
-> has had external cryptographic or security review**, the wire formats are
-> still changing without compatibility guarantees, and several protocol gaps are
-> recorded and unfixed. It is ready to be *reviewed*, not to be relied on.
+> **Status: pre-alpha. Usable, not reviewed.** Phase 5 of 7 complete
+> (2026-09-02); Phase 6 (hardening and beta) is underway. A non-expert admin
+> can install the server, connect nodes across Linux and macOS behind real
+> NATs, write an ACL, and lock the network down to a signed authority list —
+> entirely from the console and the published installers. But **nothing here
+> has had external cryptographic or security review** (that is Phase 8, after
+> GA), the wire formats are still changing without compatibility guarantees,
+> and two things Phase 5's own exit gate asked for are not yet true:
+> deprovisioning a user is measured at 48.9s against a 30s bound
+> ([FINDINGS.md](FINDINGS.md) 67, 68), and the gate's outsider-run
+> walkthrough has not happened yet. "Usable" and "reviewed" are different
+> claims, and Phase 5 only earns the first one.
 
 Karst is a Tailscale-equivalent overlay network in which every long-term
 cryptographic dependency is post-quantum. The driving threat is
@@ -42,10 +48,10 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | `karstd` — node agent | TUN, datapath, stateful packet filter, discovery, relay client |
 | `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
 | `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
-| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry |
-| Console / portal (TypeScript) | **not started** |
-| **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Phase 5. Resolver, split DNS, `systemd-resolved`/NetworkManager/`resolv.conf` host integration, `karst dns` CLI |
-| **Bedrock** network lock | **not started** — Phase 5 |
+| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SCIM 2.0 (deprovisioning timing tracked as an open gap, see status above) |
+| Console / portal (TypeScript) | Admin console and self-service portal; client-user lifecycle verified against a real server — create/invite a user, enroll a Linux device, revoke, deprovision |
+| **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS, host integration. **Linux and macOS both shipping** (`systemd-resolved`/NetworkManager/`resolv.conf` on Linux, `/etc/resolver` on macOS); macOS's resolver *search list* is a stated Phase 6 gap, not silent. Windows is Phase 8 |
+| **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, and client enforcement — all exercised end to end against a real server and node. Automated audit anchoring is deferred to Phase 6 pending [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier |
 
 **874 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a

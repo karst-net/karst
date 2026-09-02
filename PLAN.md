@@ -4100,7 +4100,15 @@ onwards, anchored on the week of 2026-08-10.
   reads the measurements and concludes the technique is ready has the same
   surprise waiting.
 
-### Phase 5 — KarstDNS, Bedrock, admin console (10 weeks · Oct–Dec 2026)
+### Phase 5 — KarstDNS, Bedrock, admin console — ✅ complete 2026-09-02
+
+Scheduled as 10 weeks, Oct–Dec 2026, anchored on Phase 4's planned end. It did
+not run on that schedule: most of the product work below had already landed
+during Phase 4, and the phase closed about **three and a half weeks** after
+its 2026-08-10 anchor rather than twenty. Restating the ten-week schedule here
+would describe a plan rather than what happened, so — like Phases 0–3 — this
+entry carries no dates of its own; the record is
+[`plans/phase-5/`](plans/phase-5/) and `FINDINGS.md`.
 
 - **Re-baselined 2026-08-27 from the use-case implementation review.** The
   Linux DNS resolver and host integration, offline `karst-bedrock` signer,
@@ -4114,9 +4122,14 @@ onwards, anchored on the week of 2026-08-10.
   peer. The privileged aquifer test runs a Go control server and a real
   `karstd` against Rust-produced ceremony bytes; retain it as an exit-criterion
   regression, not a fixture-only claim.
-- Finish **KarstDNS platform coverage**: Linux is implemented; macOS and
-  Windows integration, secure storage, service lifecycle, installers, signing,
-  upgrade/uninstall, and DNS recovery remain unimplemented.
+- **KarstDNS platform coverage: Linux and macOS both done.** macOS closed on
+  2026-09-01 when Apple Developer Program enrollment landed — the last item
+  on its critical path since W1. `build-macos-pkg.sh --require-signing`
+  produced a real signed, notarized, stapled `.pkg` on the first tagged run
+  (`release-test-1`); the resolver **search list** stays a stated Phase 6 gap
+  (`karst dns status` prints `search_list = "not applied"` rather than
+  silently doing nothing). Windows integration, secure storage, service
+  lifecycle, installer, and signing remain Phase 8 per PLAN.md's schedule.
 - The console/portal **client-user lifecycle vertical slice is verified against
   the real manager**: an administrator creates and invites a user, that user
   enrolls a Linux device, sees it in the portal, can revoke it, and
@@ -4169,8 +4182,39 @@ onwards, anchored on the week of 2026-08-10.
   and deprovision a user — entirely from the console and installers, following
   only the published docs. This remains a pre-alpha usability milestone, not a
   production or externally security-reviewed release.
+- **Two exit-gate items are red at close and move to Phase 6 in writing**,
+  per [09-exit-criteria.md](plans/phase-5/09-exit-criteria.md) §6's own rule —
+  fixed or moved, never quietly dropped:
+  - **Deprovisioning is measured at 48.9 s against a 30 s CI gate and a 60 s
+    hard requirement** (FINDINGS.md 67), and the fix is not the test but the
+    netmap push the node side never held a connection to run
+    (FINDINGS.md 68, re-scoped 2026-08-30 into
+    [08-scim-and-groups.md](plans/phase-5/08-scim-and-groups.md) §2's
+    five-item breakdown). It is inside the 60 s requirement only by where the
+    sample landed in the poll interval — carried as Phase 6's first item, not
+    background hardening.
+  - **The outsider-run walkthrough** (§3) has not happened — CI's
+    `getting-started-walkthrough.sh` exercises the published docs
+    mechanically and is a regression guard, not the unaided, unaccompanied
+    run the gate requires. Run it in Phase 6 W1 against the tree as it stands
+    at close, timeboxed per §3's rules, before either item above is
+    considered part of a normal beta backlog rather than an open gate.
+  - Also open and smaller: `scripts/release-manifest.sh` is still wired to
+    nothing, so the portal's download page has no artifacts to link.
+    (Container-image signing itself is closed — the protected test tag
+    `v0.0.0-signing-test.1` captured a real digest, signature, and
+    `cosign verify` pass for all three images on 2026-08-30.)
 
-### Phase 6 — Hardening and beta (8 weeks · Dec 2026–Feb 2027)
+### Phase 6 — Hardening and beta (8 weeks · Sep–Nov 2026)
+
+Anchored on the week of **2026-09-07**, the Monday after Phase 5's
+2026-09-02 close — kicking off next week rather than on the original Dec
+2026 schedule. Adjust the anchor if the start slips; keep the durations, per
+§10's rule above. Detailed planning material —
+a re-baseline against the tree, workstream-by-workstream scope, a dependency
+graph, staffing, and risks — is [`plans/phase-6/`](plans/phase-6/), same
+relationship to this block as [`plans/phase-5/`](plans/phase-5/) had to
+Phase 5's.
 
 - **Capability-scoped anchor tier**
   ([ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)), carried
@@ -4193,11 +4237,14 @@ onwards, anchored on the week of 2026-08-10.
   settling and this phase's beta opening is the cheapest it will ever be. After
   GA it is not affordable at all.
 
-  **Sequence it with FINDINGS 53 if that work lands in the same window.** The
-  control channel and netmap cache still hardcode ChaCha20-Poly1305 and
-  ML-KEM-768, and ADR-0015 made CNSA 2.0 a mandate as of 2026-08-25. Both are
-  coordinated fleet upgrades; two flag days cost more than one, and nothing
-  about them conflicts.
+  **Sequence it with FINDINGS 53 if that work lands in the same window.**
+  Checked against the tree at Phase 5's close: the data plane and the control
+  channel are no longer part of this — the data plane is AES-256-GCM only
+  since ADR-0015 item 7, and the control channel has a negotiated suite
+  mechanism since item 4. What's left of finding 53 is the **netmap cache**,
+  which still hardcodes ChaCha20-Poly1305 and ML-KEM-768 with no suite
+  mechanism at all. One coordinated fleet upgrade, not several; two flag days
+  cost more than one, and nothing about it conflicts with the anchor tier.
 - **Internal cryptographic review** of PHREATIC and its implementation: a
   structured self-review against the spec, the ProVerif and Verifpal models,
   and the vector suite, written up with the same findings discipline as the
@@ -4235,7 +4282,7 @@ onwards, anchored on the week of 2026-08-10.
   stability bar met. **This exit no longer carries an external opinion**, which
   is what it meant before 2026-08-21; the external work is Phase 8.
 
-### Phase 7 — GA and mobile (12 weeks · Feb–May 2027)
+### Phase 7 — GA and mobile (12 weeks · Nov 2026–Jan 2027)
 
 - iOS and Android clients via UniFFI over the Rust core.
 - Performance tuning: io_uring, path MTU discovery, QUIC relay transport.
@@ -4254,7 +4301,7 @@ onwards, anchored on the week of 2026-08-10.
   Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
 - v1.0 GA.
 
-### Phase 8 — External review and Windows client (post-GA · from May 2027)
+### Phase 8 — External review and Windows client (post-GA · from Jan 2027)
 
 Moved out of Phase 6 on 2026-08-21: the external engagements are not going to
 happen on that timeline, and a plan that keeps them there is a plan that
@@ -4284,10 +4331,16 @@ after GA is one found in deployments rather than in a branch. The hybrid
 construction is what makes this survivable rather than reckless: a break in
 either primitive costs no confidentiality on its own.
 
-**Total from here: ~40 weeks (~9 months) to GA**, 2026-08-10 → May 2027, being
-Phases 4–7. Phase 8 follows GA and is not on that path. Self-hosted Linux-to-Linux mesh with a working console is usable at
-end of Phase 5 (**~20 weeks**, Dec 2026), and that is the milestone worth
-optimizing for.
+**Total from here: ~24 weeks (~5.5 months) to GA**, 2026-08-10 → Jan 2027,
+being Phases 4–7. Phase 8 follows GA and is not on that path. This is down
+from the original ~40-week estimate for one reason, not a general
+acceleration: **Phase 5 closed in about 3.5 weeks against a 10-week
+schedule**, because most of its product work had already landed during
+Phase 4 and the re-baseline found a "build all of these from nothing" phase
+that was not one. Phases 4, 6 and 7 keep their originally estimated
+durations — nothing about their scope compressed, only Phase 5's did.
+Self-hosted Linux-to-Linux mesh with a working console is usable as of
+**2026-09-02**, and that is the milestone worth optimizing for.
 
 The original figure was ~65 weeks across the eight phases that existed then
 (0–7). Phases 0–3 are done and the remainder is what is left to schedule; the
@@ -4328,7 +4381,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
 | ML-KEM or ML-DSA cryptanalytic advance | Critical | Low | Hybrid construction means a break costs no confidentiality; agility layer allows swapping suites |
 | Greenfield scope exceeds estimate | High | **High** | Phase-5 usable milestone; mobile and SaaS explicitly deferred; ruthless non-goals |
 | Platform DNS integration breakage | Medium | High | Per-platform tests, conservative fallbacks, `karst doctor` diagnostics |
-| Windows driver signing / macOS notarization delays | Medium | Medium | Start certificate acquisition in Phase 3, well before Phase 8 |
+| Windows driver signing delays | Medium | Medium | Start certificate acquisition well before Phase 8. macOS notarization is resolved — Apple Developer Program enrollment landed 2026-09-01 and produced a signed, notarized `.pkg` on the first tagged run; this risk now covers Windows only |
 | Crypto review finds a protocol flaw late | High | **High** | Verifpal in Phase 1 and ProVerif in Phase 3 pull discovery earlier, and Phase 6 adds an internal review. Raised from Medium on 2026-08-21: external review moved to Phase 8, so the first independent look now lands **after** GA and any flaw it finds is found in deployments. Book the reviewers well ahead of the phase — the item has already slipped twice on lead time alone |
 | No WireGuard interop limits adoption | Medium | Certain | Accepted consequence of the greenfield decision; mitigate with a migration guide and side-by-side operation support |
 | Trademark collision forces a rename | Low–Medium | **High** | ADR-0007 makes trademark the only defensive lever; a collision already appears likely. Search concluded and name settled as a Phase 0 exit criterion, before repo/crate/SPDX names harden |
