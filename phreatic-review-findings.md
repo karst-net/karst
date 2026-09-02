@@ -339,6 +339,175 @@ GitHub issue [#79](https://github.com/karst-net/karst/issues/79) closed.
 
 ---
 
+## High — `reassembly_id` is a predictable counter, not the CSPRNG draw §5 requires
+
+### 5. `Session` seeds `reassembly_id` at 0 and increments by 1 — every peer pair's first fragmented message carries the same value
+
+Found while tracing exactly how exploitable Finding 6's mac2 regression is in
+practice — the answer turned out to depend on this, and this bug is worse on
+its own than the thing it was found while checking.
+
+§5 is explicit:
+
+> `reassembly_id` — sender-chosen, **MUST be drawn from a CSPRNG**.
+
+`Session::new` sets `reassembly_id: 0` (`crates/karst-node/src/session.rs:324`).
+Every path that fragments an outbound message — `emit()` (`:334-336`),
+the retry path in `poll()` (`:700`), and the mac2 retry
+`handle_cookie_reply` sends after a `CookieReply` (`:962`) — advances it with
+`self.reassembly_id.wrapping_add(1)` and nothing else. No call site draws from
+`seed`, the CSPRNG closure that is in fact already threaded through
+`Engine::connect_all`/`Engine::poll` for exactly this kind of need
+(`bins/karstd/engine.rs:837`, `:858`, already used to seed `CookieSecret`
+rotation). `reassembly_id` never uses it.
+
+**Consequence: this is not merely guessable, it is often identical across the
+whole fleet.** Every `Session` is a fresh counter starting at 0, so the first
+fragmented message any node ever sends to any peer — the first
+`HandshakeInit` of a first connection attempt — carries `reassembly_id = 1`.
+Every retry after that is 2, 3, 4… — still a five-term arithmetic sequence
+from a known start, not a 32-bit random draw.
+
+**Why that defeats a documented design property rather than a theoretical
+one.** §9.1 gives the reason entries are keyed by `(source, reassembly_id)`
+rather than `reassembly_id` alone: "two peers may independently choose the
+same identifier, and merging their fragments would corrupt both messages."
+That sentence assumes accidental collision between two unrelated peers is the
+risk CSPRNG draws make negligible. With a sequential counter starting at a
+fixed value, collision is not a tail risk to hedge against — it is the modal
+outcome, and it's now attacker-controllable rather than accidental: §9.2
+already documents, of `mac1`, "Anyone who knows the responder's static key
+can compute valid `mac1` values. It is … not an authenticator, and it
+provides **no reassembly integrity**." Combine the two facts and an attacker
+needs **no observation of any traffic at all** to inject forged fragments
+into the exact `(source, reassembly_id)` slot a targeted pair's next
+handshake attempt will use: the responder's public static key is public by
+design, and the `reassembly_id` that attempt will carry is predictable from
+knowing only that it's someone's Nth attempt at that pair. Spoofing the
+initiator's source address (off-path UDP spoofing, or an on-path position)
+is the only capability this adds to what `mac1`'s own documentation already
+concedes an attacker has. The attack costs the responder one wasted
+reassembly slot and, if the forged fragment lands before the genuine one,
+poisons that specific attempt's completion (discarded at the AEAD stage,
+§11) — a reliable, spoofing-only denial of a specific pair's handshake, not
+a compromise, but exactly the kind of gap a CSPRNG draw exists to close and
+presently does not.
+
+This also means Finding 6's mac2-stage regression is not the cheapest way to
+land a forged fragment in the common case — the mac1 path via this bug is
+free of any observation requirement at all, whereas replaying a captured
+mac2 header needs the attacker to have seen one first. Finding 6 remains
+worth its own writeup because it is a distinct, `§13.8`-specific capability
+shift; this finding is the more directly actionable bug.
+
+**Fix sketch, not yet implemented.** Draw `reassembly_id` from the same
+`seed: impl Fn() -> [u8; 32]` closure already available at every existing
+call site of `emit()` except `handle_cookie_reply`, which needs a seed
+threaded into it from `Engine::inbound`'s dispatch
+(`bins/karstd/engine.rs:1226`) the same way `Engine::poll` already threads
+one into `Session::poll`. A property test asserting that repeated `emit()`
+calls against a real RNG do not produce a short deterministic sequence would
+have caught this; none of the existing reassembly or session tests check
+`reassembly_id`'s distribution, only its role in demultiplexing.
+
+GitHub issue [#80](https://github.com/karst-net/karst/issues/80) filed, not
+yet closed.
+
+---
+
+## Medium — the review §14 item 10 asked for
+
+### 6. §13.8's argument mostly holds, but its own "narrow regression" paragraph undersells what an eavesdropper gains against `mac2`
+
+**§14 item 10, closed as a review** (the finding above is what it surfaced;
+no change to §13.8's conclusion is being made here). This is the adversarial
+reading `spec/phreatic-v1.md` §14 flags as "the one to read most
+sceptically" — a security construction changed on performance grounds, never
+externally checked.
+
+**What holds.** §13.8's core argument is correct and this pass could not
+break it: `mac1`'s key, `HASH("Karst mac1 v1" ‖ S_r_pk)`
+(`crates/karst-proto/src/dos.rs:53`), derives from the recipient's *public*
+static key, so an adversary who holds that key could already forge a valid
+`mac1` over **any** payload before this change — hashing the payload never
+protected anything against that adversary, and the removal is a straight
+cost win against them (confirmed at `dos.rs:107-127`: the MAC input really is
+just `type ‖ reassembly_id ‖ idx ‖ cnt`, 7 bytes, nothing else). The
+"amortized against a cost that is not there" argument for the transport data
+path is also sound on its own terms: transport fragments run through no
+`accept_handshake`-style expensive step, so a forged transport fragment that
+reaches the AEAD costs the responder one AEAD failure — genuinely the narrow
+cost §13.8 describes.
+
+**What the "narrow regression" paragraph undersells.** §13.8 writes:
+
+> An adversary who can *observe* traffic … can now capture a valid `(header,
+> mac)` pair and replay it with a substituted payload, forcing an AEAD open.
+
+That is accurate for `mac1` (no regression — the same adversary could forge
+a fresh header from nothing) and for transport data (genuinely just an AEAD
+open). It is **not the sharpest statement of what changes for `mac2`
+specifically**, the one case where the pre-`§13.8` MAC *did* protect
+something: `mac2`'s key is the secret, per-source cookie
+(`mac2_key`, `dos.rs:59`), known only to the responder and to whichever
+address received the matching `CookieReply` — that's what makes `mac2`
+"authenticate … that the sender can receive at the claimed address" (§9.2).
+Under the old, payload-covered MAC, an eavesdropper without the cookie could
+only **replay** a captured `mac2`'d fragment verbatim — the reassembler
+already rejects an exact repeat as `Reject::Duplicate`
+(`reassembly.rs:274-276`), so a plain replay against the same entry does
+nothing, and the header's own `reassembly_id` binding stops it from being
+redirected anywhere else useful. Under the new MAC, the same capture lets
+that eavesdropper keep the header and `mac2` bytes verbatim and substitute
+**any payload it likes**, producing a fragment that still verifies as
+address-validated but was never actually sent by, or derivable by, the
+address it claims to come from.
+
+Traced through to `bins/karstd/src/engine.rs:1218-1298` and
+`crates/karst-noise/src/handshake.rs:628-689`, that substituted payload is
+not bounded to "forces an AEAD open" if the captured fragment is index 0 (or
+if the eavesdropper has captured a full set) of a `HandshakeInit`: a
+`Complete` reassembly is handed to `accept_handshake`, which calls
+`karst_noise::handshake::respond`, which unconditionally performs
+`keys.kem_sk.decapsulate(ct_s)` (`handshake.rs:669-672`) **before** it
+resolves `peer_id_hint` or checks whether the message means anything at all.
+That is exactly the 20–50 µs ML-KEM decapsulation §9.2 says the whole
+`mac1`/`mac2`/cookie apparatus exists to gate above `LOAD_THRESHOLD`. So the
+regression, precisely stated: **above the load threshold, an eavesdropper
+who has observed one legitimate `mac2`'d fragment (or set) gains the ability
+to force the exact expensive operation the cookie mechanism exists to gate,
+without ever learning the cookie itself** — a materially larger claim than
+"forces an AEAD open," though still bounded (it costs one observation per
+forgeable `reassembly_id`, requires source-address spoofing to match the
+entry key, and is not a free-standing amplification primitive).
+
+**Assessment.** Not a reason to reverse §13.8 — the transport-path win it
+was written for is real and this doesn't touch it. But §13.8's own
+regression paragraph should say what actually changes for `mac2` rather
+than the milder, suite-independent statement it currently makes for both
+keys at once. Two independent, non-exclusive responses, neither implemented
+here — a call for whoever owns this workstream next, not a self-review
+verdict:
+
+1. **Document only.** Sharpen §13.8's regression paragraph to name the
+   `mac2`/decapsulation path specifically, and accept the residual risk as
+   already-bounded (it needs eavesdropping, which the mesh's threat model
+   already treats as available to an adversary — `docs/THREAT-MODEL.md`).
+2. **Reintroduce payload coverage, but only for handshake-type fragments.**
+   `§13.8`'s 23.4%-of-CPU measurement was against the transport data path,
+   not the handshake path, which is bounded to 2–3 fragments per attempt
+   (§6.4/§6.5) — covering only `type ∈ {HandshakeInit, HandshakeResponse}`
+   payloads in the MAC would close this gap for the one case where `mac2`'s
+   authentication is load-bearing, while keeping §13.8's actual justified
+   win on the high-volume transport path untouched. This is a wire-format
+   change and needs its own spec revision and model re-verification before
+   landing.
+
+GitHub issue [#81](https://github.com/karst-net/karst/issues/81) filed to
+track the decision; not a code change by itself.
+
+---
+
 ## Low / already tracked — re-confirmed, not re-opened
 
 - **§14 item 3, test vectors for the full key schedule, is still absent.**
@@ -346,9 +515,6 @@ GitHub issue [#79](https://github.com/karst-net/karst/issues/79) closed.
   holds Bedrock, control-API and relay-roster vectors only. Blocks
   interoperability testing, not security, per the spec's own table. Left open
   here rather than re-filed.
-- **§14 item 10 — §13.8's payload-MAC removal — still needs the adversarial
-  reading the spec itself asks for**, and this pass did not do that reading;
-  it's next.
 - **§14 item 9 — the rekey/simultaneous-open transition table, including the
   tie-break §14 asks for — is still prose in the spec, not a table**, and
   `crates/karst-node/src/session.rs` still runs two coexisting sessions per
@@ -399,7 +565,7 @@ tree deserves:
 
 ## Suggested order
 
-**All four findings from this pass are closed as of 2026-09-02, both tools'
+**Findings 1-4 from this pass are closed as of 2026-09-02, both tools'
 halves of Finding 3 included:**
 Finding 1 (cookies, GitHub issue [#76](https://github.com/karst-net/karst/issues/76)),
 Finding 2 (PSK epoch grace period, GitHub issue [#77](https://github.com/karst-net/karst/issues/77)),
@@ -407,7 +573,19 @@ Finding 3 (CNSA model coverage, GitHub issue [#78](https://github.com/karst-net/
 `phreatic-nodh.vp` then `phreatic-nodh.pv`),
 and Finding 4 (secret material never zeroized, GitHub issue [#79](https://github.com/karst-net/karst/issues/79)).
 
+**Finding 6 (§14 item 10's adversarial reading of §13.8) is closed as a
+review** — GitHub issue [#81](https://github.com/karst-net/karst/issues/81)
+tracks the open decision it surfaced (document vs. reintroduce payload
+coverage for handshake fragments only), not a pending code change.
+
+**Finding 5 (`reassembly_id` is a predictable counter, not a CSPRNG draw) is
+open** — GitHub issue [#80](https://github.com/karst-net/karst/issues/80),
+recommended next: it's a clear `§5` MUST violation with a bounded fix (thread
+the existing `seed` closure into `reassembly_id` generation), found while
+grounding Finding 6 rather than by that finding's own scope, and is the more
+directly exploitable of the two.
+
 Next passes for this workstream: constant-time behavior at the primitive
 level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'
-branching and comparisons), §14 item 10's adversarial reading of §13.8, and
-item 9's rekey/simultaneous-open transition table.
+branching and comparisons), and item 9's rekey/simultaneous-open transition
+table.
