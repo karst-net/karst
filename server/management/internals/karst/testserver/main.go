@@ -151,11 +151,18 @@ func controlAddr() string {
 	return ""
 }
 
-// serveControl exposes the one operation the fixture needs driven from
-// outside: remove a peer from the account.
+// serveControl exposes the operations the fixture needs driven from outside:
+// remove a peer from the account, and create/update/delete a route offer.
 //
-//	GET  /peers                    -> [{handle, label, ip}, ...]
-//	POST /remove?handle=<handle>   -> 200 removed / 404 no such peer
+//	GET    /peers                    -> [{handle, label, ip}, ...]
+//	POST   /remove?handle=<handle>   -> 200 removed / 404 no such peer
+//	POST   /routes                   -> {route_id, prefix, gateway_handle,
+//	                                      metric, masquerade, keep_route,
+//	                                      enabled} as JSON; 200 on create
+//	                                      or update (upsert by route_id),
+//	                                      400 on a malformed or unresolvable
+//	                                      request
+//	DELETE /routes?id=<route_id>     -> 200 deleted / 404 no such route
 func serveControl(addr string, r *router) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
@@ -173,6 +180,34 @@ func serveControl(addr string, r *router) {
 			return
 		}
 		fmt.Fprintln(w, "removed")
+	})
+	mux.HandleFunc("/routes", func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodPost:
+			var body routeOfferRequest
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				http.Error(w, fmt.Sprintf("decode: %v", err), http.StatusBadRequest)
+				return
+			}
+			if err := r.routes.upsert(req.Context(), body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			fmt.Fprintln(w, "ok")
+		case http.MethodDelete:
+			id := req.URL.Query().Get("id")
+			if id == "" {
+				http.Error(w, "id is required", http.StatusBadRequest)
+				return
+			}
+			if !r.routes.delete(id) {
+				http.Error(w, "no such route", http.StatusNotFound)
+				return
+			}
+			fmt.Fprintln(w, "deleted")
+		default:
+			http.Error(w, "POST or DELETE only", http.StatusMethodNotAllowed)
+		}
 	})
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := server.ListenAndServe(); err != nil {
