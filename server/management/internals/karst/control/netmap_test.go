@@ -1486,3 +1486,49 @@ func TestNetmapCarriesMintedTurnCredentials(t *testing.T) {
 		t.Fatalf("minted credential does not independently verify: %v", err)
 	}
 }
+
+// The DB-backed half of the TURN fallback: when a TurnStore is configured it
+// supplies the server list instead of the static TurnServers field, mirroring
+// how RelayStore overrides Relays above. TurnMinter is untouched either way —
+// only the server list moves to the account-scoped store.
+func TestNetmapCarriesTurnServersFromTheStore(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+
+	db, err := gorm.Open(sqlite.Open("file:netmap-turnstore?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_turn_servers").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	store, err := turncred.NewStore(db)
+	if err != nil {
+		t.Fatalf("turn store: %v", err)
+	}
+	if _, err := store.Create(turncred.WithAccount(context.Background(), "acct"), turncred.Entry{URI: "turn:store.example.com:3478", Region: "eu"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	minter, err := turncred.NewMinter("s3cret", time.Hour)
+	if err != nil {
+		t.Fatalf("new minter: %v", err)
+	}
+	// TurnServers is deliberately left populated with something else, so the
+	// test also proves the store takes priority rather than merely working
+	// when the static field is empty.
+	f.handler.TurnServers = []turncred.Entry{{URI: "turn:static.example.com:3478", Region: "us"}}
+	f.handler.TurnStore = store
+	f.handler.TurnMinter = minter
+
+	resp := requestNetmap(t, f, 0)
+	servers := resp.GetTurnServers()
+	if len(servers) != 1 {
+		t.Fatalf("got %d turn servers, want 1", len(servers))
+	}
+	if servers[0].GetUri() != "turn:store.example.com:3478" {
+		t.Fatalf("uri = %q, want the store-backed entry, not the static field", servers[0].GetUri())
+	}
+	if servers[0].GetRegion() != "eu" {
+		t.Fatalf("region = %q, want eu", servers[0].GetRegion())
+	}
+}

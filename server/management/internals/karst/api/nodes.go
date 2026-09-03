@@ -30,6 +30,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/permissions"
@@ -86,6 +87,7 @@ type handler struct {
 	audit      auditReader
 	policy     policyReader
 	relays     relayReader
+	turns      turnReader
 	bedrock    bedrockReader
 	chain      bedrockLogReader
 	peerWriter peerWriter
@@ -141,6 +143,12 @@ type relayReader interface {
 	Delete(context.Context, string) error
 }
 
+type turnReader interface {
+	List(context.Context) ([]turncred.StoredTurnServer, error)
+	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
+	Delete(context.Context, string) error
+}
+
 // bedrockLogReader is the verified chain. Separate from bedrockReader because
 // the two answer different questions: the store holds operator configuration,
 // the log holds what the authorities signed. Coverage comes from the log and
@@ -176,8 +184,8 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, permissionsManager permissions.Manager, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, bedrock: bedrockStore, chain: bedrockLog}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, permissionsManager permissions.Manager, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -216,6 +224,9 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock", h.bedrockStatus).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log", h.bedrockLog).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log/verify", h.bedrockLogVerify).Methods(http.MethodGet, http.MethodOptions)
@@ -314,7 +325,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// must not be checked against KarstControl: that module intentionally
 			// denies Members every administrative operation.
 			if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/api"), "/karst/v1/me/") {
-				scoped := audit.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId)
+				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return
 			}
@@ -328,7 +339,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Karst control permission denied"), w)
 				return
 			}
-			scoped := audit.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId)
+			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 			next.ServeHTTP(w, r.WithContext(scoped))
 		})
 	}
@@ -1282,6 +1293,70 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.relays.Delete(r.Context(), mux.Vars(r)["relayId"]); errors.Is(err, relayreg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) turnsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.turns == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
+		return
+	}
+	turns, err := h.turns.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, turns)
+}
+func (h *handler) turnsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.turns == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
+		return
+	}
+	var entry turncred.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	turn, err := h.turns.Create(r.Context(), entry)
+	if errors.Is(err, turncred.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn server already exists"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.turns == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
+		return
+	}
+	if err := h.turns.Delete(r.Context(), mux.Vars(r)["turnId"]); errors.Is(err, turncred.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
 		return
 	} else if err != nil {
 		util.WriteError(r.Context(), err, w)

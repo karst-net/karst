@@ -152,7 +152,7 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 		t.Fatalf("node store: %v", err)
 	}
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, permissions.NewManager(s), router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})
@@ -365,7 +365,7 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 		t.Fatalf("node store: %v", err)
 	}
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, permissions.NewManager(s), router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: userID})

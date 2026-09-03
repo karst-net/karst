@@ -19,14 +19,15 @@ import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
 import { Relays } from "./views/relays";
+import { Turns } from "./views/turns";
 import { Settings } from "./views/settings";
 
-type Route = "setup" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "settings";
+type Route = "setup" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "settings";
 
 const nav: Array<[Route, string]> = [
   ["setup", "First-run setup"], ["machines", "Machines"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["settings", "Settings"],
 ];
 
 const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "setup");
@@ -56,6 +57,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "routes" && <Routes />}
       {route === "audit" && <Audit />}
       {route === "relays" && <Relays />}
+      {route === "turns" && <Turns />}
       {route === "settings" && <Settings />}
     </main>
   </div>;

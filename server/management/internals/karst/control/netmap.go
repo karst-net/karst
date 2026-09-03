@@ -102,6 +102,14 @@ type NetmapHandler struct {
 	// the same way Relays above is.
 	TurnServers []turncred.Entry
 	TurnMinter  *turncred.Minter
+	// TurnStore is the account-scoped, DB-backed TURN registry, mirroring
+	// RelayStore above. Entries are static at this boundary until an account
+	// has written its own registry, exactly as Relays/RelayStore fall back.
+	// TurnMinter is unaffected: the shared secret stays file/env-configured
+	// regardless of where the server list comes from.
+	TurnStore interface {
+		Entries(context.Context) ([]turncred.Entry, error)
+	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
 	//
@@ -299,7 +307,14 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, fmt.Errorf("load relays: %w", err)
 		}
 	}
-	turnServers, err := turncred.NetmapEntries(h.TurnServers, h.TurnMinter)
+	turnEntries := h.TurnServers
+	if h.TurnStore != nil {
+		turnEntries, err = h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load turn servers: %w", err)
+		}
+	}
+	turnServers, err := turncred.NetmapEntries(turnEntries, h.TurnMinter)
 	if err != nil {
 		return nil, fmt.Errorf("mint turn credentials: %w", err)
 	}

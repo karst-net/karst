@@ -766,6 +766,24 @@ type SigningRequest struct {
 	PayloadHash string    `json:"payload_hash"`
 }
 
+// TurnServer defines model for TurnServer.
+type TurnServer struct {
+	// Id Derived from uri; never accepted from callers.
+	Id     *string `json:"id,omitempty"`
+	Region *string `json:"region,omitempty"`
+
+	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
+	Uri string `json:"uri"`
+}
+
+// TurnServerCreate defines model for TurnServerCreate.
+type TurnServerCreate struct {
+	Region *string `json:"region,omitempty"`
+
+	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
+	Uri string `json:"uri"`
+}
+
 // Action defines model for action.
 type Action = string
 
@@ -801,6 +819,9 @@ type RelayId = string
 
 // Tag defines model for tag.
 type Tag = string
+
+// TurnId defines model for turnId.
+type TurnId = string
 
 // User defines model for user.
 type User = string
@@ -931,6 +952,9 @@ type ValidatePolicyJSONRequestBody = PolicyWrite
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
+
+// CreateTurnServerJSONRequestBody defines body for CreateTurnServer for application/json ContentType.
+type CreateTurnServerJSONRequestBody = TurnServerCreate
 
 // AsExportAudit200JSONResponseBody0 returns the union data inside the ExportAudit200JSONResponseBody as a ExportAudit200JSONResponseBody0
 func (t ExportAudit200JSONResponseBody) AsExportAudit200JSONResponseBody0() (ExportAudit200JSONResponseBody0, error) {

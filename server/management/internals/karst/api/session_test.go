@@ -64,7 +64,7 @@ func TestMemberSessionHistoryCarriesRealEndTimesAndAddresses(t *testing.T) {
 	}
 	owned := fakeOwnDevices{peers: devices}
 	router := mux.NewRouter()
-	RegisterEndpoints(nodes, owned, owned, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
+	RegisterEndpoints(nodes, owned, owned, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/me/sessions", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -96,7 +96,7 @@ func TestRevokingADeviceClosesItsSessionsThroughTheAPI(t *testing.T) {
 	devices := fakePeers{{ID: "mine", Key: "handle-a", Name: "my laptop", UserID: "user-a"}}
 	owned := fakeOwnDevices{peers: devices}
 	router := mux.NewRouter()
-	RegisterEndpoints(nodes, owned, owned, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
+	RegisterEndpoints(nodes, owned, owned, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, router)
 
 	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/me/devices/handle-a", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})

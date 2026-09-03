@@ -176,6 +176,21 @@ export type RelayHealth = {
     admission_state: 'confirmed' | 'stale' | 'unknown';
 };
 
+export type TurnServerCreate = {
+    /**
+     * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
+     */
+    uri: string;
+    region?: string;
+};
+
+export type TurnServer = TurnServerCreate & {
+    /**
+     * Derived from uri; never accepted from callers.
+     */
+    readonly id: string;
+};
+
 export type BedrockStatus = {
     mode: 'off' | 'advisory' | 'enforcing';
     quorum: number;
@@ -332,11 +347,15 @@ export type RelayWritable = RelayCreate & {
     health: RelayHealth;
 };
 
+export type TurnServerWritable = TurnServerCreate;
+
 export type AuditSinkWritable = AuditSinkWrite;
 
 export type Handle = string;
 
 export type RelayId = string;
+
+export type TurnId = string;
 
 export type Version = number;
 
@@ -1020,6 +1039,87 @@ export type GetRelayHealthResponses = {
 };
 
 export type GetRelayHealthResponse = GetRelayHealthResponses[keyof GetRelayHealthResponses];
+
+export type ListTurnServersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/turns';
+};
+
+export type ListTurnServersErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListTurnServersError = ListTurnServersErrors[keyof ListTurnServersErrors];
+
+export type ListTurnServersResponses = {
+    /**
+     * TURN server registry
+     */
+    200: Array<TurnServer>;
+};
+
+export type ListTurnServersResponse = ListTurnServersResponses[keyof ListTurnServersResponses];
+
+export type CreateTurnServerData = {
+    body: TurnServerCreate;
+    path?: never;
+    query?: never;
+    url: '/turns';
+};
+
+export type CreateTurnServerErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateTurnServerError = CreateTurnServerErrors[keyof CreateTurnServerErrors];
+
+export type CreateTurnServerResponses = {
+    /**
+     * Onboarded TURN server
+     */
+    201: TurnServer;
+};
+
+export type CreateTurnServerResponse = CreateTurnServerResponses[keyof CreateTurnServerResponses];
+
+export type DeleteTurnServerData = {
+    body?: never;
+    path: {
+        readonly turnId: string;
+    };
+    query?: never;
+    url: '/turns/{turnId}';
+};
+
+export type DeleteTurnServerErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteTurnServerError = DeleteTurnServerErrors[keyof DeleteTurnServerErrors];
+
+export type DeleteTurnServerResponses = {
+    /**
+     * TURN server removed
+     */
+    204: void;
+};
+
+export type DeleteTurnServerResponse = DeleteTurnServerResponses[keyof DeleteTurnServerResponses];
 
 export type GetBedrockData = {
     body?: never;

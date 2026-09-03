@@ -179,6 +179,10 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
+	turnStore, err := turncred.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: turn store: %w", err)
+	}
 	bedrockStore, err := bedrock.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: bedrock store: %w", err)
@@ -197,7 +201,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// metrics middleware and its built-in routes. Karst therefore has no second
 	// authentication path, while the route ordering stays mechanically clear.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, bedrockStore, bedrockLog, s.PermissionsManager(), router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.PermissionsManager(), router)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}
@@ -225,6 +229,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			RelayStore:  relayStore,
 			TurnServers: turnServers,
 			TurnMinter:  turnMinter,
+			TurnStore:   turnStore,
 			Bedrock:     bedrockLog,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
