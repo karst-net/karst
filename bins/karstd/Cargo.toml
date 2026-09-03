@@ -51,7 +51,14 @@ zeroize = { version = "1", default-features = false }
 # current-thread runtime on its own thread, so no future touches the datapath.
 ml-dsa = "0.1"
 sha2 = { version = "0.10", default-features = false }
-tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "io-util"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "io-util", "sync"] }
+# This node's own TURN (RFC 8656) allocation — `spec/aven-v1.md` §7.8. The
+# webrtc-rs project's crates; `util` is `webrtc-util` under the name its own
+# `turn` dependency uses, so `turn::client`'s `Conn` trait and this module's
+# are the same type. `conn` is the only feature needed — `vnet` is a virtual
+# network for the crate's own tests, not something this daemon uses.
+turn = "0.17.2"
+util = { package = "webrtc-util", version = "0.17.1", default-features = false, features = ["conn"] }
 # Ponor uses a conventional, validated TLS 1.3 hop. The ML-DSA key in the
 # relay registry authenticates the relay itself; the system trust store keeps
 # the connection compatible with ordinary HTTPS and self-hosted internal CAs.

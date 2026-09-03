@@ -350,16 +350,22 @@ jobs:
       # network; without a resolver it is on one with no DNS64, and the row
       # would report the daemon failing to discover a prefix nothing was
       # offering. Both are masked for the same reason as `miniupnpd`.
-      - name: Port-mapping daemon, translator and resolver for the privileged rows
+      #
+      # `coturn` (package name; the binary is `turnserver`) is `Shape::TurnOnly`'s
+      # half of the same argument again — `spec/aven-v1.md` §7.8. Masked for the
+      # identical reason: the package's post-install starts a `coturn` service
+      # against its own config, which the row does not use (it writes and starts
+      # its own `turnserver.conf` directly).
+      - name: Port-mapping daemon, translator, resolver and TURN server for the privileged rows
         run: |
-          sudo systemctl mask miniupnpd tayga dnsmasq || true
+          sudo systemctl mask miniupnpd tayga dnsmasq coturn || true
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
           # curl is for the revocation row, which drives the fixture's control
           # surface from inside a namespace. It is on the runner image already;
           # naming it here keeps the install list and the suite's declared
           # prerequisites the same set.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            miniupnpd nftables tayga dnsmasq curl || true
+            miniupnpd nftables tayga dnsmasq curl coturn || true
           # These install into /usr/sbin, and every run below is
           # `sudo env PATH=$PATH`, which carries *this* PATH rather than root's
           # `secure_path`. Without the sbin directories on it the suites would
@@ -368,7 +374,7 @@ jobs:
           printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
       - name: What the runner actually has
         run: |
-          for t in ip nft go miniupnpd tayga dnsmasq; do
+          for t in ip nft go miniupnpd tayga dnsmasq turnserver; do
             printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
       - name: Build the privileged test binaries

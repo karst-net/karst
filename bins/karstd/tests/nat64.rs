@@ -258,6 +258,7 @@ fn config() -> karstd::config::Config {
         psk_epoch: 1,
         node_id: Vec::new(),
         relays: Vec::new(),
+        turn_servers: Vec::new(),
         relay_ca_file: None,
         peers: Vec::new(),
         routes: karstd::routing::AllowedIps::build(Vec::new()).expect("routes"),

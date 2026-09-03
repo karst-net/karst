@@ -215,6 +215,20 @@ pub struct Disco {
     /// fresh key per connection (`ponor-v1.md` §7.7), and keeping the old one
     /// alongside would mean probing a reflector that has already forgotten us.
     reflectors: HashMap<[u8; 32], Reflector>,
+    /// This node's own live TURN allocation's relayed address, when it holds
+    /// one — `spec/aven-v1.md` §7.8.
+    turn_candidate: Option<SocketAddr>,
+    /// Addresses named by a peer's `CallMeMaybe`, not yet handed to a live
+    /// TURN allocation for permission priming — §7.8's one new protocol rule.
+    ///
+    /// A queue rather than a return value from [`Self::inbound`] and friends,
+    /// for the same reason [`Self::path_changes`] is a separate drain rather
+    /// than folded into `Verdict`: three different entrypoints accept a
+    /// `CallMeMaybe` (the datapath socket, and two relay-delivered paths), and
+    /// giving each a second return channel would triple the plumbing for one
+    /// list the caller only needs once per tick anyway. Drained by
+    /// [`Self::take_turn_primes`].
+    turn_primes: Vec<SocketAddr>,
 }
 
 impl std::fmt::Debug for Disco {
@@ -237,6 +251,8 @@ impl Disco {
             relay_peers: HashMap::new(),
             epoch,
             interfaces: Vec::new(),
+            turn_candidate: None,
+            turn_primes: Vec::new(),
             explicit_mapping: None,
             reflectors: HashMap::new(),
         }
@@ -254,6 +270,21 @@ impl Disco {
             return;
         }
         self.explicit_mapping = mapping;
+        self.republish();
+    }
+
+    /// Record this node's own TURN allocation's relayed address, or that it no
+    /// longer holds one — `spec/aven-v1.md` §7.8.
+    ///
+    /// `crate::turn`'s worker calls this on every allocate and every loss,
+    /// mirroring [`Self::set_explicit_mapping`]. Unlike every other candidate
+    /// tier, [`Self::candidates`] never ranks this among them — it is
+    /// appended last, unconditionally, after every §7.2 tier.
+    pub fn set_turn_candidate(&mut self, candidate: Option<SocketAddr>) {
+        if self.turn_candidate == candidate {
+            return;
+        }
+        self.turn_candidate = candidate;
         self.republish();
     }
 
@@ -459,6 +490,18 @@ impl Disco {
         for addr in from_peers.into_iter().take(REFLEXIVE_MAX) {
             push(addr);
         }
+        // §7.8: pushed last, unconditionally, after every §7.2 tier above —
+        // never competing for the ranked/capped slots those four tiers share.
+        // It is still subject to the overall `MAX_CANDIDATES` truncation
+        // below, on purpose: a TURN allocation is deterministic rather than
+        // evidence (see this field's own doc comment), so it never *displaces*
+        // a tier candidate for space, but a `CallMeMaybe` that is already full
+        // of real evidence does not make room for it either. In practice the
+        // four tiers above rarely approach sixteen entries, so this is the
+        // common case rather than the exception.
+        if let Some(turn) = self.turn_candidate {
+            push(turn);
+        }
 
         ordered
             .into_iter()
@@ -661,6 +704,7 @@ impl Disco {
 
         let mut out = Vec::new();
         let mut republish = false;
+        let mut prime = Vec::new();
         match message {
             Message::Ping { tx } => {
                 // **Where it came from is a candidate.** An authenticated probe
@@ -717,6 +761,10 @@ impl Disco {
                 // endpoint list.
                 if peer.engine.paths().chosen() == Some(from) {
                     let _ = peer.engine.on_call_me_maybe(&candidates, now_ms);
+                    // §7.8's one new protocol rule: prime a permission for
+                    // every named address, on receipt, regardless of which
+                    // one (if any) `on_call_me_maybe` above goes on to use.
+                    prime.extend(candidates.iter().map(|c| c.0));
                 }
             }
             // Unreachable: `header.is_reflect()` returned above for exactly
@@ -729,6 +777,7 @@ impl Disco {
         if republish {
             self.republish();
         }
+        self.turn_primes.append(&mut prime);
         Verdict::Handled(out)
     }
 
@@ -784,8 +833,13 @@ impl Disco {
         candidates: &[Endpoint],
         now_ms: u64,
     ) -> bool {
-        self.engine_mut(peer)
-            .is_some_and(|engine| engine.on_call_me_maybe(candidates, now_ms))
+        let accepted = self
+            .engine_mut(peer)
+            .is_some_and(|engine| engine.on_call_me_maybe(candidates, now_ms));
+        // §7.8: primed on receipt, regardless of `accepted` — see
+        // `Self::inbound`'s `Message::CallMeMaybe` arm for the same rule.
+        self.turn_primes.extend(candidates.iter().map(|c| c.0));
+        accepted
     }
 
     /// Accept an AVEN `CallMeMaybe` forwarded by the authenticated relay.
@@ -833,7 +887,11 @@ impl Disco {
             peer.route_index,
             candidates.iter().map(|c| c.0).collect::<Vec<_>>()
         );
-        peer.engine.on_call_me_maybe(&candidates, now_ms)
+        let accepted = peer.engine.on_call_me_maybe(&candidates, now_ms);
+        // §7.8: primed on receipt, regardless of `accepted` — see
+        // `Self::inbound`'s `Message::CallMeMaybe` arm for the same rule.
+        self.turn_primes.extend(candidates.iter().map(|c| c.0));
+        accepted
     }
 
     /// Whether any peer is still without a confirmed direct path.
@@ -974,6 +1032,21 @@ impl Disco {
             }
         }
         out
+    }
+
+    /// Addresses named by a peer's `CallMeMaybe` since this was last asked,
+    /// for the caller to prime a permission on every live TURN allocation —
+    /// `spec/aven-v1.md` §7.8.
+    ///
+    /// A drain, like [`Self::path_changes`]: the caller polls this once per
+    /// tick rather than being handed the list at the moment each `CallMeMaybe`
+    /// arrived, because priming is the same tick-scheduled operation
+    /// `disco_poll` and `apply_disco_paths` already are — nothing about §7.8's
+    /// rule needs it to happen inside the receive path itself, only before
+    /// the first probe, and the first probe is itself scheduled on the same
+    /// tick.
+    pub fn take_turn_primes(&mut self) -> Vec<SocketAddr> {
+        std::mem::take(&mut self.turn_primes)
     }
 }
 
@@ -1672,6 +1745,117 @@ mod tests {
             panic!("the advertisement is not a decodable CallMeMaybe");
         };
         assert_eq!(candidates, vec![Endpoint(SocketAddr::new(ip(4), 51820))]);
+    }
+
+    // ── TURN — `spec/aven-v1.md` §7.8 ───────────────────────────────────────
+
+    #[test]
+    fn a_turn_candidate_is_appended_last() {
+        let (mut d, _) = with_peer();
+        d.set_interfaces(&[ip(4), ip(5)], 51820);
+        d.set_turn_candidate(Some(addr(200)));
+
+        let candidates = d.candidates();
+        assert_eq!(
+            candidates.last(),
+            Some(&Endpoint(addr(200))),
+            "the turn candidate must be last, not ranked among the interface tier"
+        );
+        assert_eq!(
+            candidates.len(),
+            3,
+            "two interfaces plus the turn candidate"
+        );
+    }
+
+    /// §7.8: "never competing for the ranked/capped slots the four tiers
+    /// share" — a `CallMeMaybe` already full of real evidence does not make
+    /// room for it.
+    #[test]
+    fn a_turn_candidate_does_not_displace_a_full_candidate_list() {
+        let (mut d, _) = with_peer();
+        let interfaces: Vec<std::net::IpAddr> = (0..16).map(ip).collect();
+        d.set_interfaces(&interfaces, 51820);
+        d.set_turn_candidate(Some(addr(200)));
+
+        let candidates = d.candidates();
+        assert_eq!(candidates.len(), karst_disco::consts::MAX_CANDIDATES);
+        assert!(
+            !candidates.contains(&Endpoint(addr(200))),
+            "a full list of real evidence must not be truncated to make room \
+             for the deterministic turn candidate"
+        );
+    }
+
+    #[test]
+    fn clearing_the_turn_candidate_removes_it_and_republishes() {
+        let (mut d, key) = with_peer();
+        // An interface candidate too, so the list is non-empty once the turn
+        // candidate is cleared — an empty `CallMeMaybe` is deliberately never
+        // sent (`Self::poll`'s own `if candidates.is_empty() { continue; }`),
+        // so clearing the *only* candidate would not exercise this at all.
+        d.set_interfaces(&[ip(4)], 51820);
+        d.set_turn_candidate(Some(addr(200)));
+        assert!(d.candidates().contains(&Endpoint(addr(200))));
+
+        d.set_turn_candidate(None);
+        assert!(!d.candidates().contains(&Endpoint(addr(200))));
+
+        // And the removal is news: a peer that already learned the turn
+        // candidate must be told it is gone, or it goes on probing an
+        // address nothing answers on any more.
+        let out = d.poll(0, || TxId([1; 12]));
+        let Some((_, payload)) = out.relayed.first() else {
+            panic!("clearing a candidate did not schedule a fresh advertisement");
+        };
+        let Ok(Message::CallMeMaybe { candidates }) = msg::open(payload, &key) else {
+            panic!("not a decodable CallMeMaybe");
+        };
+        assert!(!candidates.contains(&Endpoint(addr(200))));
+    }
+
+    /// Setting the same candidate twice must not repeatedly schedule an
+    /// advertisement — `set_explicit_mapping`'s own no-op-on-no-change rule,
+    /// mirrored here.
+    #[test]
+    fn setting_the_same_turn_candidate_twice_is_not_news() {
+        let (mut d, _) = with_peer();
+        d.set_turn_candidate(Some(addr(200)));
+        assert_eq!(d.poll(0, || TxId([1; 12])).relayed.len(), 1);
+
+        d.set_turn_candidate(Some(addr(200)));
+        assert!(
+            d.poll(1_000, || TxId([2; 12])).relayed.is_empty(),
+            "re-setting the identical turn candidate produced a second advertisement"
+        );
+    }
+
+    /// §7.8's one new protocol rule: every address in an accepted
+    /// `CallMeMaybe` is queued for permission priming, on receipt — via every
+    /// entrypoint that accepts one.
+    #[test]
+    fn a_call_me_maybe_over_the_relay_queues_every_candidate_for_priming() {
+        let (mut d, key) = with_peer();
+        let candidates = vec![Endpoint(addr(1)), Endpoint(addr(2))];
+        let msg = Message::CallMeMaybe {
+            candidates: candidates.clone(),
+        };
+        let datagram = from_peer(&key, &msg, 7);
+
+        assert!(d.inbound_from_relay(THEIR_ID.try_into().expect("32 bytes"), &datagram, 0));
+        let primed = d.take_turn_primes();
+        assert_eq!(primed.len(), 2);
+        assert!(primed.contains(&addr(1)));
+        assert!(primed.contains(&addr(2)));
+
+        // Drained, not merely read.
+        assert!(d.take_turn_primes().is_empty());
+    }
+
+    #[test]
+    fn take_turn_primes_starts_empty() {
+        let (mut d, _) = with_peer();
+        assert!(d.take_turn_primes().is_empty());
     }
 
     #[test]
