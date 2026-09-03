@@ -637,6 +637,12 @@ pub struct Config {
     /// could redirect the hop. The relay's *identity* comes from the netmap and
     /// is post-quantum; this is only the TLS layer beneath it.
     pub relay_ca_file: Option<PathBuf>,
+    /// Authenticated route offers retained for local consent and diagnostics.
+    pub route_offers: Vec<crate::route_offer::Offer>,
+    /// Root-owned local state selecting one exit route. None for static
+    /// rosters, which have no server route offers.
+    pub exit_node_state_file: Option<PathBuf>,
+
     /// The roster.
     pub peers: Vec<Peer>,
     /// Cryptokey routing table over the roster.
@@ -777,6 +783,8 @@ impl Config {
             relays: Vec::new(),
             turn_servers: Vec::new(),
             relay_ca_file: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
             peers,
             routes,
             skipped: Vec::new(),
@@ -820,6 +828,7 @@ impl Config {
     /// # Errors
     ///
     /// The same as [`Config::from_netmap`].
+    #[allow(clippy::too_many_lines)]
     pub fn from_netmap_enforced(
         local: LocalSettings,
         netmap: &Netmap,
@@ -892,6 +901,32 @@ impl Config {
                 }),
             }
         }
+        // Every recipient offer grants the selected gateway ownership of the
+        // advertised prefix in cryptokey routing. For an exit offer this only
+        // makes the gateway a valid encrypted next hop; the kernel default route
+        // remains dormant until the independent local consent store selects it.
+        for offer in &netmap.routes {
+            if offer.role != crate::route_offer::Role::Recipient {
+                continue;
+            }
+            let Some(index) = handles
+                .iter()
+                .position(|handle| handle.as_slice() == offer.gateway_id.as_slice())
+            else {
+                return Err(ConfigError::Unusable(format!(
+                    "route {:?} names a gateway absent from the usable peer roster",
+                    offer.route_id
+                )));
+            };
+            let Some(peer) = peers.get_mut(index) else {
+                return Err(ConfigError::Unusable(format!(
+                    "route {:?} resolved outside the usable peer roster",
+                    offer.route_id
+                )));
+            };
+            peer.allowed_ips.push(offer.prefix);
+            pairs.push((offer.prefix, index));
+        }
 
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
         // Compiled against the same peer order the datapath indexes by, since a
@@ -939,6 +974,8 @@ impl Config {
             turn_servers: netmap.turn_servers.clone(),
             relay_ca_file: local.relay_ca_file,
             peers,
+            route_offers: netmap.routes.clone(),
+            exit_node_state_file: local.exit_node_state_file,
             routes,
             skipped,
             filter,
@@ -997,6 +1034,8 @@ pub struct LocalSettings {
     pub nat64: Option<karst_transport::Nat64Prefix>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
+    /// Root-owned durable exit-route selection.
+    pub exit_node_state_file: Option<PathBuf>,
 }
 
 impl fmt::Debug for LocalSettings {
@@ -2008,6 +2047,7 @@ mod netmap_tests {
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
             relay_ca_file: None,
+            exit_node_state_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
@@ -2391,5 +2431,89 @@ mod skip_tests {
             "the node holds the entry even though it cannot use it; \
              claiming otherwise would make the server resend it for ever"
         );
+    }
+    fn route_offer(
+        route_id: &str,
+        prefix: &str,
+        gateway: &str,
+        kind: pb::KarstRouteKind,
+    ) -> crate::route_offer::Offer {
+        crate::route_offer::Offer::from_wire(
+            pb::KarstRouteOffer {
+                route_id: route_id.to_owned(),
+                prefix: prefix.to_owned(),
+                gateway_id: gateway.as_bytes().to_vec(),
+                metric: 100,
+                kind: kind as i32,
+                masquerade: true,
+                keep_route: false,
+                role: pb::KarstRouteRole::Recipient as i32,
+            },
+            b"self",
+        )
+        .expect("valid route offer")
+    }
+
+    #[test]
+    fn an_advertised_subnet_routes_to_and_is_owned_by_its_gateway() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "corp",
+            "10.20.0.0/16",
+            "aaa",
+            pb::KarstRouteKind::Subnet,
+        ));
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+
+        let destination = "10.20.4.5".parse().unwrap();
+        assert_eq!(cfg.routes.route(destination), Some(0));
+        assert!(cfg.routes.permits(0, destination));
+        assert!(cfg.peers[0]
+            .allowed_ips
+            .iter()
+            .any(|prefix| prefix.contains(destination)));
+    }
+
+    #[test]
+    fn an_exit_offer_has_a_cryptokey_next_hop_before_kernel_consent() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "exit",
+            "0.0.0.0/0",
+            "aaa",
+            pb::KarstRouteKind::Exit,
+        ));
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+
+        assert_eq!(cfg.routes.route("203.0.113.9".parse().unwrap()), Some(0));
+        assert_eq!(cfg.route_offers[0].route_id, "exit");
+    }
+
+    #[test]
+    fn a_subnet_offer_with_no_usable_gateway_fails_closed() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "corp",
+            "10.20.0.0/16",
+            "missing",
+            pb::KarstRouteKind::Subnet,
+        ));
+
+        assert!(matches!(
+            Config::from_netmap(local(), &map),
+            Err(ConfigError::Unusable(message)) if message.contains("absent from the usable peer roster")
+        ));
     }
 }

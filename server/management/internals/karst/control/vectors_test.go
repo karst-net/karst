@@ -66,6 +66,7 @@ type versionCase struct {
 	PacketFilter []versionRule  `json:"packet_filter"`
 	EgressFilter []versionRule  `json:"egress_filter"`
 	Relays       []versionRelay `json:"relays"`
+	Routes       []versionRoute `json:"routes"`
 	DNS          versionDNS     `json:"dns"`
 	Bedrock      versionBedrock `json:"bedrock"`
 	Version      uint64         `json:"version"`
@@ -111,6 +112,17 @@ type versionRelay struct {
 	RelayID       string `json:"relay_id"`
 	IdentityKey   string `json:"identity_key"`
 	Region        string `json:"region"`
+}
+
+type versionRoute struct {
+	RouteID    string `json:"route_id"`
+	Prefix     string `json:"prefix"`
+	GatewayID  string `json:"gateway_id"`
+	Metric     uint32 `json:"metric"`
+	Kind       uint32 `json:"kind"`
+	Masquerade bool   `json:"masquerade"`
+	KeepRoute  bool   `json:"keep_route"`
+	Role       uint32 `json:"role"`
 }
 
 type versionPeer struct {
@@ -525,6 +537,25 @@ func TestVectors(t *testing.T) {
 			},
 		},
 		{
+			// One route with every non-default field. This pins the authenticated
+			// offer contract independently of protobuf encoding and catches either
+			// implementation omitting or reordering a field in the content hash.
+			name: "a netmap with a route offer",
+			resp: &proto.KarstNetmapResponse{
+				PskEpoch:  9,
+				NodeId:    []byte("node-one"),
+				DnsName:   "alpha",
+				Addresses: []string{"100.64.0.1"},
+				Routes: []*proto.KarstRouteOffer{{
+					RouteId: "route-one", Prefix: "10.20.0.0/16",
+					GatewayId: []byte("node-two"), Metric: 42,
+					Kind:       proto.KarstRouteKind_KARST_ROUTE_KIND_SUBNET,
+					Masquerade: true, KeepRoute: true,
+					Role: proto.KarstRouteRole_KARST_ROUTE_ROLE_RECIPIENT,
+				}},
+			},
+		},
+		{
 			// A relay registry, which no vector carried until now. Its version
 			// MUST differ from "one peer": if the registry were not hashed,
 			// publishing a relay would leave every node told "unchanged" and
@@ -676,6 +707,14 @@ func TestVectors(t *testing.T) {
 				RelayID:       hex.EncodeToString(r.GetRelayId()),
 				IdentityKey:   hex.EncodeToString(r.GetIdentityKey()),
 				Region:        r.GetRegion(),
+			})
+		}
+		for _, route := range tc.resp.GetRoutes() {
+			vc.Routes = append(vc.Routes, versionRoute{
+				RouteID: route.GetRouteId(), Prefix: route.GetPrefix(),
+				GatewayID: hex.EncodeToString(route.GetGatewayId()), Metric: route.GetMetric(),
+				Kind: uint32(route.GetKind()), Masquerade: route.GetMasquerade(),
+				KeepRoute: route.GetKeepRoute(), Role: uint32(route.GetRole()),
 			})
 		}
 		for _, route := range tc.resp.GetDnsConfig().GetRoutes() {

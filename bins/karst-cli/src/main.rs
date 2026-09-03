@@ -20,6 +20,9 @@ USAGE:
     karst dns status KarstDNS listener, host integration, and routes
     karst dns query NAME  explain the resolver path for NAME
     karst dns revert restore the host's DNS configuration and exit
+    karst exit-node list          list exit routes and local selection
+    karst exit-node use ROUTE_ID  persistently select an exit route
+    karst exit-node disable       withdraw and forget exit consent
     karst bugreport  a support bundle, safe to attach to an issue
     karst down       ask the daemon to stop
     karst version    daemon version
@@ -67,6 +70,9 @@ fn main() -> ExitCode {
         ("status", _) => Command::Status,
         ("dns", ["status", ..]) => Command::DnsStatus,
         ("dns", ["query", name, ..]) => Command::DnsQuery((*name).to_owned()),
+        ("exit-node", ["list", ..]) => Command::ExitList,
+        ("exit-node", ["use", id, ..]) => Command::ExitUse((*id).to_owned()),
+        ("exit-node", ["disable", ..]) => Command::ExitDisable,
         ("bugreport", _) => Command::BugReport,
         ("down", _) => Command::Down,
         ("version", _) => Command::Version,
@@ -77,8 +83,9 @@ fn main() -> ExitCode {
     };
 
     let command_args = match (*first, rest) {
-        ("dns", ["status", tail @ ..] | ["query", _, tail @ ..]) => tail,
-        ("dns", []) => &[],
+        ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
+        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..]) => tail,
+        ("dns" | "exit-node", []) => &[],
         _ => rest,
     };
     let socket = match socket_arg(command_args) {

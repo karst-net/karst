@@ -69,6 +69,8 @@ fn config_for(
     let peer_keys = keys(peer_byte);
     let prefix: Prefix = peer_range.parse().expect("peer prefix");
     let config = Config {
+        route_offers: Vec::new(),
+        exit_node_state_file: None,
         keys: keys(own),
         listen: "0.0.0.0:0".parse().expect("listen"),
         port_mapping: true,

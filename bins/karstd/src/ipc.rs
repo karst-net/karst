@@ -55,6 +55,12 @@ pub enum Command {
     DnsStatus,
     /// Explain which resolver path the current policy selects for one name.
     DnsQuery(String),
+    /// List exit-route offers and the locally selected one.
+    ExitList,
+    /// Persistently select one exit-route offer by stable id.
+    ExitUse(String),
+    /// Withdraw and forget local exit-route consent.
+    ExitDisable,
 }
 
 impl Command {
@@ -68,10 +74,17 @@ impl Command {
             "version" => Some(Self::Version),
             "bugreport" => Some(Self::BugReport),
             "dns-status" => Some(Self::DnsStatus),
+            "exit-list" => Some(Self::ExitList),
+            "exit-disable" => Some(Self::ExitDisable),
             _ => line
                 .strip_prefix("dns-query ")
                 .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
-                .map(|name| Self::DnsQuery(name.to_owned())),
+                .map(|name| Self::DnsQuery(name.to_owned()))
+                .or_else(|| {
+                    line.strip_prefix("exit-use ")
+                        .filter(|id| !id.is_empty() && !id.contains(char::is_whitespace))
+                        .map(|id| Self::ExitUse(id.to_owned()))
+                }),
         }
     }
 
@@ -85,6 +98,9 @@ impl Command {
             Self::BugReport => "bugreport".to_owned(),
             Self::DnsStatus => "dns-status".to_owned(),
             Self::DnsQuery(name) => format!("dns-query {name}"),
+            Self::ExitList => "exit-list".to_owned(),
+            Self::ExitUse(id) => format!("exit-use {id}"),
+            Self::ExitDisable => "exit-disable".to_owned(),
         }
     }
 }
@@ -181,6 +197,9 @@ mod tests {
             Command::BugReport,
             Command::DnsStatus,
             Command::DnsQuery("atlas.aquifer.karst".to_owned()),
+            Command::ExitList,
+            Command::ExitUse("exit-eu".to_owned()),
+            Command::ExitDisable,
         ] {
             assert_eq!(Command::parse(&c.as_str()), Some(c));
         }
@@ -188,6 +207,7 @@ mod tests {
         assert_eq!(Command::parse("statu"), None);
         assert_eq!(Command::parse(""), None);
         assert_eq!(Command::parse("dns-query two names"), None);
+        assert_eq!(Command::parse("exit-use two routes"), None);
         assert_eq!(Command::parse("status; rm -rf /"), None);
     }
 

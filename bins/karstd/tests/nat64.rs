@@ -242,6 +242,8 @@ fn an_ipv4_node_says_in_its_status_that_ipv6_is_out_of_reach() {
 /// The minimum a `Config` needs to be reported on.
 fn config() -> karstd::config::Config {
     karstd::config::Config {
+        route_offers: Vec::new(),
+        exit_node_state_file: None,
         keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
             &[7u8; 64], &[7u8; 32],
         )),

@@ -269,6 +269,7 @@ fn keys(seed: u8) -> Arc<karst_noise::handshake::StaticKeys> {
 fn local(seed: u8) -> LocalSettings {
     LocalSettings {
         relay_ca_file: None,
+        exit_node_state_file: None,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),
         port_mapping: true,

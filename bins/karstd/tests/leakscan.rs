@@ -196,6 +196,7 @@ fn local() -> LocalSettings {
         userspace_socks5_listen: None,
         userspace_publish: Vec::new(),
         nat64: None,
+        exit_node_state_file: None,
     }
 }
 

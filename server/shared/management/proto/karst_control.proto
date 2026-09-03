@@ -324,6 +324,33 @@ message KarstBedrockResponse {
   KarstBedrockHead head = 2;
 }
 
+// KarstRouteOffer is an authenticated route projected specifically for the
+// receiving node. It is separate from a peer's allowed_ips because a default
+// route is only an offer until the client consents, and because gateway-only
+// state must not install the gateway's own prefix into its tunnel.
+message KarstRouteOffer {
+  string route_id = 1;
+  string prefix = 2;
+  bytes gateway_id = 3;
+  uint32 metric = 4;
+  KarstRouteKind kind = 5;
+  bool masquerade = 6;
+  bool keep_route = 7;
+  KarstRouteRole role = 8;
+}
+
+enum KarstRouteKind {
+  KARST_ROUTE_KIND_UNSPECIFIED = 0;
+  KARST_ROUTE_KIND_SUBNET = 1;
+  KARST_ROUTE_KIND_EXIT = 2;
+}
+
+enum KarstRouteRole {
+  KARST_ROUTE_ROLE_UNSPECIFIED = 0;
+  KARST_ROUTE_ROLE_RECIPIENT = 1;
+  KARST_ROUTE_ROLE_GATEWAY = 2;
+}
+
 message KarstNetmapResponse {
   uint64 version = 1;
   // Selects which PSK generation these keys belong to; carried in PHREATIC
@@ -358,6 +385,11 @@ message KarstNetmapResponse {
   // deployment that has not configured TURN, which produces a response
   // byte-identical to before this field existed.
   repeated KarstTurnServer turn_servers = 16;
+
+  // CIDR offers for a recipient, or forwarding grants for a gateway. Replaced
+  // wholesale on every non-unchanged response. A recipient MUST require local
+  // consent before activating an EXIT offer.
+  repeated KarstRouteOffer routes = 17;
 
   // Authenticated DNS resolver configuration. Included in the netmap content
   // hash so changing MagicDNS or an upstream forces a refresh.

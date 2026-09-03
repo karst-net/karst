@@ -345,6 +345,8 @@ pub enum Error {
     Relay(String),
     /// A `KarstTurnServer` entry could not be used — `spec/aven-v1.md` §7.8.
     Turn(String),
+    /// A route offer was malformed or contradicted this node's role.
+    Route(String),
     /// The assembled state does not hash to the version the server reported.
     ///
     /// See [`Netmap::apply`] for why this is worth detecting rather than
@@ -372,6 +374,7 @@ impl fmt::Display for Error {
             }
             Self::Relay(message) => write!(f, "invalid relay: {message}"),
             Self::Turn(message) => write!(f, "invalid turn server: {message}"),
+            Self::Route(message) => write!(f, "invalid route offer: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
                 "assembled netmap hashes to {local:016x} but the server called it \
@@ -639,6 +642,8 @@ pub struct Netmap {
     /// `unchanged` even means. [`Netmap::apply`] applies it before the
     /// `unchanged` early return for exactly this reason.
     pub turn_servers: Vec<TurnServer>,
+    /// Authenticated subnet and exit-route offers for this node.
+    pub routes: Vec<crate::route_offer::Offer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
     ///
     /// Held so the node can compare it against what it has verified, and
@@ -687,6 +692,7 @@ impl Netmap {
             egress_filter: Vec::new(),
             relays: Vec::new(),
             turn_servers: Vec::new(),
+            routes: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -788,6 +794,8 @@ impl Netmap {
             .iter()
             .map(Relay::from_wire)
             .collect::<Result<_, _>>()?;
+        self.routes =
+            crate::route_offer::parse_all(resp.routes, &self.node_id).map_err(Error::Route)?;
 
         let outcome = if resp.delta {
             let changed = resp.peers.len();
@@ -902,6 +910,11 @@ impl Netmap {
                 region: &r.region,
             })
             .collect();
+        let routes: Vec<_> = self
+            .routes
+            .iter()
+            .map(crate::route_offer::Offer::view)
+            .collect();
         let dns_routes: Vec<DNSRouteView<'_>> = self
             .dns_config
             .routes
@@ -921,6 +934,7 @@ impl Netmap {
             packet_filter: &rules,
             egress_filter: &egress,
             relays: &relays,
+            routes: &routes,
             dns: DNSConfigView {
                 nameservers: &self.dns_config.nameservers,
                 search_domains: &self.dns_config.search_domains,
@@ -979,6 +993,11 @@ impl Netmap {
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
             relays: self.relays.iter().map(Relay::to_wire).collect(),
+            routes: self
+                .routes
+                .iter()
+                .map(crate::route_offer::Offer::to_wire)
+                .collect(),
             // **Deliberately absent.** This is what goes into the on-disk
             // cache, and a minted TURN credential belongs there even less than
             // it belongs in `content_version()` — writing it to disk would
@@ -1042,6 +1061,8 @@ mod tests {
             .map(Relay::from_wire)
             .collect::<Result<_, _>>()
             .expect("test relay must be valid");
+        projected.routes = crate::route_offer::parse_all(resp.routes.clone(), &projected.node_id)
+            .expect("test routes must be valid");
         if resp.delta {
             for p in held.peers.values() {
                 projected
@@ -1121,6 +1142,35 @@ mod tests {
             "the absent peer must be dropped"
         );
         assert!(map.peer(b"bbb").is_some());
+    }
+
+    #[test]
+    fn a_delta_and_full_snapshot_converge_on_the_same_route_offers() {
+        let route = pb::KarstRouteOffer {
+            route_id: "subnet-a".to_owned(),
+            prefix: "10.20.0.0/16".to_owned(),
+            gateway_id: b"aaa".to_vec(),
+            metric: 100,
+            kind: pb::KarstRouteKind::Subnet as i32,
+            masquerade: true,
+            keep_route: false,
+            role: pb::KarstRouteRole::Recipient as i32,
+        };
+        let mut from_full = Netmap::new();
+        let mut full_response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        full_response.routes = vec![route.clone()];
+        from_full
+            .apply(sealed(full_response, &from_full))
+            .expect("full");
+
+        let mut from_delta = loaded();
+        let mut delta = full(vec![]);
+        delta.delta = true;
+        delta.routes = vec![route];
+        from_delta.apply(sealed(delta, &from_delta)).expect("delta");
+
+        assert_eq!(from_delta.routes, from_full.routes);
+        assert_eq!(from_delta.content_version(), from_full.content_version());
     }
 
     /// **A node alone in its network.** An empty *full* netmap is a real state

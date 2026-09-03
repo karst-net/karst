@@ -236,6 +236,11 @@ type router struct {
 	// stands in for the account manager the LoginHandler would call.
 	account *memoryAccount
 	nodes   *node.Store
+	// routes is the fixture's route-offer registry, present whenever
+	// `NetmapHandler.Routes` is wired up — see `routeRegistry`'s own doc
+	// comment. Held here too so `serveControl`'s `/routes` admin surface can
+	// reach it without threading it through `router.Handle`.
+	routes *routeRegistry
 }
 
 func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte) ([]byte, error) {
@@ -388,6 +393,13 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		account: account,
 		nodes:   nodes,
 	}
+	r.routes = newRouteRegistry(account)
+	// Unconditional, unlike `--relay`/`--turn`: an empty registry produces an
+	// empty `Routes` repeated field either way protobuf encodes it (nil and
+	// `[]T{}` are indistinguishable on the wire), so every row that predates
+	// this gets a byte-identical netmap, and a routing row needs no extra
+	// flag to reach the admin surface below.
+	r.netmap.Routes = r.routes
 	r.netmap.Relays = relayEntries()
 
 	if turnServers := turnEntries(); len(turnServers) > 0 {

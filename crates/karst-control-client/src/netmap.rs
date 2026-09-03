@@ -191,6 +191,19 @@ pub struct RelayView<'a> {
     pub region: &'a str,
 }
 
+/// One authenticated subnet or exit-route offer as the version hash sees it.
+#[derive(Debug, Default)]
+pub struct RouteView<'a> {
+    pub route_id: &'a str,
+    pub prefix: &'a str,
+    pub gateway_id: &'a [u8],
+    pub metric: u32,
+    pub kind: u32,
+    pub masquerade: bool,
+    pub keep_route: bool,
+    pub role: u32,
+}
+
 /// One split-DNS suffix and the mesh-reachable resolvers for it.
 #[derive(Debug, Default)]
 pub struct DNSRouteView<'a> {
@@ -229,6 +242,7 @@ pub struct NetmapContent<'a> {
     /// Whom this node may reach.
     pub egress_filter: &'a [FilterRuleView<'a>],
     pub relays: &'a [RelayView<'a>],
+    pub routes: &'a [RouteView<'a>],
     /// Authenticated resolver policy. Changes must move the netmap version so
     /// a node cannot keep forwarding with an obsolete upstream list.
     pub dns: DNSConfigView<'a>,
@@ -309,6 +323,17 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
         push(&mut h, relay.relay_id);
         push(&mut h, relay.identity_key);
         push(&mut h, relay.region.as_bytes());
+    }
+    push(&mut h, b"karst-routes");
+    for route in content.routes {
+        push(&mut h, route.route_id.as_bytes());
+        push(&mut h, route.prefix.as_bytes());
+        push(&mut h, route.gateway_id);
+        h.update(route.metric.to_be_bytes());
+        h.update(route.kind.to_be_bytes());
+        h.update(u32::from(route.masquerade).to_be_bytes());
+        h.update(u32::from(route.keep_route).to_be_bytes());
+        h.update(route.role.to_be_bytes());
     }
     push(&mut h, b"karst-dns");
     push(&mut h, content.dns.zone.as_bytes());

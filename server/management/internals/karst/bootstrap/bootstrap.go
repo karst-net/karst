@@ -223,6 +223,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			PSK:         deriver,
 			Epoch:       epoch,
 			DNS:         accounts,
+			Routes:      accounts,
 			Policy:      pol,
 			PolicyStore: policyStore,
 			Relays:      relays,

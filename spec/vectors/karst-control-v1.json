@@ -199,9 +199,10 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 10191519191560314636
+        "version": 3268087240962878054
       },
       {
         "psk_epoch": 9,
@@ -227,9 +228,10 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 17670994519640140563
+        "version": 7376315177122964128
       },
       {
         "psk_epoch": 9,
@@ -255,9 +257,10 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 17670994519640140563
+        "version": 7376315177122964128
       },
       {
         "psk_epoch": 9,
@@ -295,9 +298,10 @@
         ],
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 9102752400825177194
+        "version": 7836354501022447682
       },
       {
         "psk_epoch": 9,
@@ -335,9 +339,10 @@
           }
         ],
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 8993906777711599039
+        "version": 3223948510447058505
       },
       {
         "psk_epoch": 9,
@@ -350,6 +355,7 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {
           "nameservers": [
             "1.1.1.1:53"
@@ -369,7 +375,34 @@
           "magic_dns": true
         },
         "bedrock": {},
-        "version": 9821555174116979983
+        "version": 8607870100751358823
+      },
+      {
+        "psk_epoch": 9,
+        "node_id": "6e6f64652d6f6e65",
+        "dns_name": "alpha",
+        "addresses": [
+          "100.64.0.1"
+        ],
+        "peers": null,
+        "packet_filter": null,
+        "egress_filter": null,
+        "relays": null,
+        "routes": [
+          {
+            "route_id": "route-one",
+            "prefix": "10.20.0.0/16",
+            "gateway_id": "6e6f64652d74776f",
+            "metric": 42,
+            "kind": 1,
+            "masquerade": true,
+            "keep_route": true,
+            "role": 1
+          }
+        ],
+        "dns": {},
+        "bedrock": {},
+        "version": 11419865391898776184
       },
       {
         "psk_epoch": 9,
@@ -403,9 +436,10 @@
             "region": "default"
           }
         ],
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 16411682903519197420
+        "version": 10121485486114881284
       },
       {
         "psk_epoch": 9,
@@ -439,9 +473,10 @@
             "region": "eu-west"
           }
         ],
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 13805575446168152140
+        "version": 13673423107475793108
       },
       {
         "psk_epoch": 9,
@@ -455,12 +490,13 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {
           "hash": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "seq": 7
         },
-        "version": 7300888360246113665
+        "version": 9652968293008288424
       },
       {
         "psk_epoch": 9,
@@ -474,13 +510,14 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {
           "hash": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "seq": 7,
           "mode": 2
         },
-        "version": 14361817116433713281
+        "version": 14077415980434262598
       },
       {
         "psk_epoch": 9,
@@ -494,12 +531,13 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
         "dns": {},
         "bedrock": {
           "hash": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "seq": 8
         },
-        "version": 13835938069162667390
+        "version": 9376366259510967289
       },
       {
         "psk_epoch": 9,
@@ -527,9 +565,10 @@
             "region": "eu-west"
           }
         ],
+        "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 5312102402798739434
+        "version": 11953267342767849743
       }
     ]
   }

@@ -68,6 +68,13 @@ type NetmapHandler struct {
 	DNS interface {
 		GetAccount(context.Context, string) (*types.Account, error)
 	}
+	// Routes supplies the inherited per-peer effective network map. That layer
+	// already applies distribution groups, route ACLs, and HA gateway choice;
+	// rebuilding those rules here would create two authorization systems.
+	Routes interface {
+		GetNetworkMap(context.Context, string) (*types.NetworkMap, error)
+	}
+
 	// Bedrock is the account's network-lock log, or nil where Bedrock is not
 	// configured.
 	//
@@ -329,6 +336,16 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("project dns config: %w", err)
+	}
+	if h.Routes != nil {
+		networkMap, routeErr := h.Routes.GetNetworkMap(ctx, selfPeer.ID)
+		if routeErr != nil {
+			return nil, fmt.Errorf("project routes: %w", routeErr)
+		}
+		resp.Routes, routeErr = projectRouteOffers(networkMap, self)
+		if routeErr != nil {
+			return nil, routeErr
+		}
 	}
 
 	for _, p := range peers {
@@ -731,6 +748,33 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writeField(h, relay.GetRelayId())
 		writeField(h, relay.GetIdentityKey())
 		writeField(h, []byte(relay.GetRegion()))
+	}
+
+	// Route offers are first-class authenticated content. In particular, an
+	// EXIT offer must move the version even before a client consents to it.
+	writeField(h, []byte("karst-routes"))
+	for _, route := range resp.GetRoutes() {
+		writeField(h, []byte(route.GetRouteId()))
+		writeField(h, []byte(route.GetPrefix()))
+		writeField(h, route.GetGatewayId())
+		binary.BigEndian.PutUint32(buf[:4], route.GetMetric())
+		h.Write(buf[:4])
+		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetKind()))
+		h.Write(buf[:4])
+		if route.GetMasquerade() {
+			binary.BigEndian.PutUint32(buf[:4], 1)
+		} else {
+			binary.BigEndian.PutUint32(buf[:4], 0)
+		}
+		h.Write(buf[:4])
+		if route.GetKeepRoute() {
+			binary.BigEndian.PutUint32(buf[:4], 1)
+		} else {
+			binary.BigEndian.PutUint32(buf[:4], 0)
+		}
+		h.Write(buf[:4])
+		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetRole()))
+		h.Write(buf[:4])
 	}
 	writeField(h, []byte("karst-dns"))
 	dns := resp.GetDnsConfig()

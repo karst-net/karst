@@ -274,12 +274,13 @@ test("a relay can be added and removed", async ({ page }) => {
 
 test("a network route can be added, disabled and deleted", async ({ page }) => {
   await page.goto("/#/routes");
-  await page.getByRole("button", { name: "Add route" }).click();
+  await page.getByRole("button", { name: "Add subnet route" }).click();
   await page.getByLabel("Route identifier").fill("branch-office");
   await page.getByLabel("Route network (CIDR)").fill("192.168.40.0/24");
-  await page.getByLabel("Routing group IDs").fill("group-gateways");
-  await page.getByLabel("Distribution group IDs").fill("group-engineering");
-  await page.getByRole("button", { name: "Add route" }).nth(1).click();
+  await page.getByLabel("Routing groups").selectOption(["group-gateways"]);
+  await page.getByLabel("Distribution groups").selectOption(["group-engineering"]);
+  await page.getByLabel("Access-control groups").selectOption(["group-engineering"]);
+  await page.getByRole("button", { name: "Add route" }).click();
   await expect(page.getByRole("status")).toContainText("was created");
   const row = page.locator("tbody tr").filter({ hasText: "branch-office" });
   await row.getByRole("button", { name: "Disable" }).click();
@@ -291,11 +292,11 @@ test("a network route can be added, disabled and deleted", async ({ page }) => {
 
 test("a route without a routing group is refused with the reason", async ({ page }) => {
   await page.goto("/#/routes");
-  await page.getByRole("button", { name: "Add route" }).click();
+  await page.getByRole("button", { name: "Add subnet route" }).click();
   await page.getByLabel("Route identifier").fill("nowhere");
   await page.getByLabel("Route network (CIDR)").fill("10.9.0.0/16");
-  await page.getByLabel("Distribution group IDs").fill("group-engineering");
-  await page.getByRole("button", { name: "Add route" }).nth(1).click();
+  await page.getByLabel("Distribution groups").selectOption(["group-engineering"]);
+  await page.getByRole("button", { name: "Add route" }).click();
   await expect(page.getByRole("status")).toContainText("at least one routing group");
 });
 
