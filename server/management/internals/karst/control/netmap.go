@@ -68,6 +68,13 @@ type NetmapHandler struct {
 	DNS interface {
 		GetAccount(context.Context, string) (*types.Account, error)
 	}
+	// Routes supplies the inherited per-peer effective network map. That layer
+	// already applies distribution groups, route ACLs, and HA gateway choice;
+	// rebuilding those rules here would create two authorization systems.
+	Routes interface {
+		GetNetworkMap(context.Context, string) (*types.NetworkMap, error)
+	}
+
 	// Bedrock is the account's network-lock log, or nil where Bedrock is not
 	// configured.
 	//
@@ -329,6 +336,16 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("project dns config: %w", err)
+	}
+	if h.Routes != nil {
+		networkMap, routeErr := h.Routes.GetNetworkMap(ctx, selfPeer.ID)
+		if routeErr != nil {
+			return nil, fmt.Errorf("project routes: %w", routeErr)
+		}
+		resp.Routes, routeErr = projectRouteOffers(networkMap, self)
+		if routeErr != nil {
+			return nil, routeErr
+		}
 	}
 
 	for _, p := range peers {
