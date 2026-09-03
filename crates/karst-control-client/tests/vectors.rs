@@ -570,6 +570,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         packet_filter: &rules,
         egress_filter: &egress,
         relays: &relays,
+        routes: &[],
         dns: DNSConfigView {
             nameservers: &c.dns.nameservers,
             search_domains: &c.dns.search_domains,

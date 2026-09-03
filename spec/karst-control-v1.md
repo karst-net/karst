@@ -346,6 +346,16 @@ validation; the node MUST pin `identity_key` and check `relay_id` during the
 Ponor handshake (`ponor-v1.md` §4.2). A non-unchanged response replaces the
 registry wholesale, including with an empty registry.
 
+`KarstNetmapResponse.routes` (wire field 17) is the ordered set of CIDR route
+offers projected for this node. Each offer names its stable route ID,
+normalized prefix, selected gateway handle, metric, kind (`SUBNET` or `EXIT`),
+masquerade and keep-route behavior, and whether this node is a recipient or the
+gateway. A recipient MUST NOT activate an `EXIT` offer until its local operator
+has consented to that route ID. A gateway offer configures forwarding and MUST
+NOT make the gateway install its own advertised prefix into the tunnel. Every
+non-`unchanged` response replaces this list wholesale, including with an empty
+list.
+
 ### 5.5 Network-map version
 
 `version` is the leading eight bytes, interpreted big-endian, of SHA-256 over
@@ -363,6 +373,10 @@ LP("karst-egress-filter") ||
 each egress filter rule's LP(destinations..., BE32(first) || BE32(last), ...) ||
 LP("karst-relays") ||
 each relay's LP(address, tls_server_name, relay_id, identity_key, region) ||
+LP("karst-routes") ||
+each route's LP(route_id, prefix, gateway_id) || BE32(metric) ||
+             BE32(kind) || BE32(masquerade ? 1 : 0) ||
+             BE32(keep_route ? 1 : 0) || BE32(role) ||
 LP("karst-dns") ||
 LP(dns_config.zone) || BE32(dns_config.magic_dns ? 1 : 0) ||
 LP(dns_config.nameservers[0]) || ... ||
@@ -398,6 +412,12 @@ all-zero default (empty hash, `BE64(0)`), which is unambiguous because Bedrock
 sequence numbering starts at one. Pre-change version values are intentionally
 incompatible.
 
+
+**Compatibility note (2026-09-03).** The `"karst-routes"` separator and route
+offers were added after the Bedrock construction. The separator is present
+even when there are no offers, so route boundaries cannot be confused with
+relay or DNS fields. Pre-change version values are intentionally incompatible;
+both implementations and the shared vectors moved together.
 Both the head hash **and** its sequence are hashed. Hashing only the hash would
 let a server rewind its log and re-serve an earlier tip without the version
 moving, which would leave a node enforcing against coverage it believes is

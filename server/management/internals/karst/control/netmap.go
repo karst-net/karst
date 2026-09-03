@@ -732,6 +732,33 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		writeField(h, relay.GetIdentityKey())
 		writeField(h, []byte(relay.GetRegion()))
 	}
+
+	// Route offers are first-class authenticated content. In particular, an
+	// EXIT offer must move the version even before a client consents to it.
+	writeField(h, []byte("karst-routes"))
+	for _, route := range resp.GetRoutes() {
+		writeField(h, []byte(route.GetRouteId()))
+		writeField(h, []byte(route.GetPrefix()))
+		writeField(h, route.GetGatewayId())
+		binary.BigEndian.PutUint32(buf[:4], route.GetMetric())
+		h.Write(buf[:4])
+		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetKind()))
+		h.Write(buf[:4])
+		if route.GetMasquerade() {
+			binary.BigEndian.PutUint32(buf[:4], 1)
+		} else {
+			binary.BigEndian.PutUint32(buf[:4], 0)
+		}
+		h.Write(buf[:4])
+		if route.GetKeepRoute() {
+			binary.BigEndian.PutUint32(buf[:4], 1)
+		} else {
+			binary.BigEndian.PutUint32(buf[:4], 0)
+		}
+		h.Write(buf[:4])
+		binary.BigEndian.PutUint32(buf[:4], uint32(route.GetRole()))
+		h.Write(buf[:4])
+	}
 	writeField(h, []byte("karst-dns"))
 	dns := resp.GetDnsConfig()
 	writeField(h, []byte(dns.GetZone()))

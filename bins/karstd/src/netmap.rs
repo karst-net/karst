@@ -32,7 +32,7 @@ use std::fmt;
 
 use karst_control_client::netmap::{
     netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, FilterRuleView,
-    NetmapContent, PeerEntry, RelayView,
+    NetmapContent, PeerEntry, RelayView, RouteView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -639,6 +639,8 @@ pub struct Netmap {
     /// `unchanged` even means. [`Netmap::apply`] applies it before the
     /// `unchanged` early return for exactly this reason.
     pub turn_servers: Vec<TurnServer>,
+    /// Authenticated subnet and exit-route offers for this node.
+    pub routes: Vec<pb::KarstRouteOffer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
     ///
     /// Held so the node can compare it against what it has verified, and
@@ -687,6 +689,7 @@ impl Netmap {
             egress_filter: Vec::new(),
             relays: Vec::new(),
             turn_servers: Vec::new(),
+            routes: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -788,6 +791,7 @@ impl Netmap {
             .iter()
             .map(Relay::from_wire)
             .collect::<Result<_, _>>()?;
+        self.routes = resp.routes;
 
         let outcome = if resp.delta {
             let changed = resp.peers.len();
@@ -902,6 +906,20 @@ impl Netmap {
                 region: &r.region,
             })
             .collect();
+        let routes: Vec<RouteView<'_>> = self
+            .routes
+            .iter()
+            .map(|r| RouteView {
+                route_id: &r.route_id,
+                prefix: &r.prefix,
+                gateway_id: &r.gateway_id,
+                metric: r.metric,
+                kind: r.kind as u32,
+                masquerade: r.masquerade,
+                keep_route: r.keep_route,
+                role: r.role as u32,
+            })
+            .collect();
         let dns_routes: Vec<DNSRouteView<'_>> = self
             .dns_config
             .routes
@@ -921,6 +939,7 @@ impl Netmap {
             packet_filter: &rules,
             egress_filter: &egress,
             relays: &relays,
+            routes: &routes,
             dns: DNSConfigView {
                 nameservers: &self.dns_config.nameservers,
                 search_domains: &self.dns_config.search_domains,
@@ -979,6 +998,7 @@ impl Netmap {
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
             relays: self.relays.iter().map(Relay::to_wire).collect(),
+            routes: self.routes.clone(),
             // **Deliberately absent.** This is what goes into the on-disk
             // cache, and a minted TURN credential belongs there even less than
             // it belongs in `content_version()` — writing it to disk would
