@@ -35,6 +35,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -108,7 +109,13 @@ type Karst struct {
 // identity key is a pin: §4.2 has a node trust the key this server vouches for
 // and nothing else, which is only meaningful if a human decided what it is.
 // Nil means no relays, and therefore no relaying — see karst/relayreg.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay) (*Karst, error) {
+//
+// turnServers and turnMinter are ADR-0008 §4's TURN fallback, in the same
+// spirit as relays: operator-configured input rather than something this
+// package discovers. Either nil means no TURN configured — see
+// karst/turncred — and produces netmaps with no turn_servers field at all,
+// exactly as before this parameter existed.
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -216,6 +223,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			PolicyStore: policyStore,
 			Relays:      relays,
 			RelayStore:  relayStore,
+			TurnServers: turnServers,
+			TurnMinter:  turnMinter,
 			Bedrock:     bedrockLog,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},

@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/mlkem"
+	"crypto/sha1"
 	"errors"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,8 +27,10 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
+	hmac "github.com/netbirdio/netbird/shared/relay/auth/hmac"
 )
 
 // fakePeers is the account manager's peer-listing surface. As with
@@ -1431,5 +1435,54 @@ func TestNoBedrockConfiguredIsUnaffected(t *testing.T) {
 	f := newNetmapFixture(t, 2)
 	if err := netmapErr(t, f); err != nil {
 		t.Fatalf("a server without Bedrock refused a netmap: %v", err)
+	}
+}
+
+// A deployment that has not configured TURN (ADR-0008 §4) must produce a
+// netmap identical to one from before turn_servers existed — the feature is
+// opt-in the same way the anchor tier and the netmap-cache suite mechanism
+// are.
+func TestNoTurnConfiguredMeansNoTurnServersInTheNetmap(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	resp := requestNetmap(t, f, 0)
+	if len(resp.GetTurnServers()) != 0 {
+		t.Fatalf("got %d turn servers with none configured", len(resp.GetTurnServers()))
+	}
+}
+
+// The decisive property for the TURN fallback's server-side half: a
+// configured registry and minter produce a netmap carrying every server with
+// one shared, independently-verifiable credential.
+func TestNetmapCarriesMintedTurnCredentials(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+	minter, err := turncred.NewMinter("s3cret", time.Hour)
+	if err != nil {
+		t.Fatalf("new minter: %v", err)
+	}
+	f.handler.TurnServers = []turncred.Entry{
+		{URI: "turn:a.example.com:3478", Region: "us"},
+		{URI: "turns:b.example.com:5349", Region: "eu"},
+	}
+	f.handler.TurnMinter = minter
+
+	resp := requestNetmap(t, f, 0)
+	servers := resp.GetTurnServers()
+	if len(servers) != 2 {
+		t.Fatalf("got %d turn servers, want 2", len(servers))
+	}
+	if servers[0].GetUri() != "turn:a.example.com:3478" || servers[1].GetUri() != "turns:b.example.com:5349" {
+		t.Fatalf("uris not carried through: %+v", servers)
+	}
+	if servers[0].GetRegion() != "us" || servers[1].GetRegion() != "eu" {
+		t.Fatalf("regions not carried through: %+v", servers)
+	}
+	if servers[0].GetUsername() != servers[1].GetUsername() || servers[0].GetPassword() != servers[1].GetPassword() {
+		t.Fatal("every server must share the one minted credential")
+	}
+
+	verifier := hmac.NewTimedHMAC("s3cret", time.Hour)
+	tok := hmac.Token{Payload: servers[0].GetUsername(), Signature: servers[0].GetPassword()}
+	if err := verifier.Validate(sha1.New, tok); err != nil {
+		t.Fatalf("minted credential does not independently verify: %v", err)
 	}
 }
