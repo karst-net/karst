@@ -333,6 +333,13 @@ impl Drop for Manager {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
+
     use super::*;
 
     #[derive(Default, Debug)]

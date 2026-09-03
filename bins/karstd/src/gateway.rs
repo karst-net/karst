@@ -336,6 +336,13 @@ impl Drop for Manager {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
+
     use super::*;
     use karst_control_client::transport::pb;
 
@@ -394,6 +401,7 @@ mod tests {
             psk_epoch: 1,
             node_id: vec![7],
             relays: Vec::new(),
+            turn_servers: Vec::new(),
             peers: Vec::new(),
             routes: crate::routing::AllowedIps::build(Vec::<(Prefix, usize)>::new())
                 .expect("empty routes"),
@@ -457,14 +465,12 @@ mod tests {
 
     impl Backend for Mock {
         fn read(&mut self, path: &str) -> std::io::Result<String> {
-            Ok(if path == IPV4_FORWARD {
+            let enabled = if path == IPV4_FORWARD {
                 self.v4
             } else {
                 self.v6
-            }
-            .then_some("1\n")
-            .unwrap_or("0\n")
-            .to_owned())
+            };
+            Ok(if enabled { "1\n" } else { "0\n" }.to_owned())
         }
 
         fn write(&mut self, path: &str, value: &str) -> std::io::Result<()> {

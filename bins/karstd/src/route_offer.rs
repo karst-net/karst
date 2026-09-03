@@ -160,6 +160,13 @@ pub fn parse_all(wire: Vec<pb::KarstRouteOffer>, self_id: &[u8]) -> Result<Vec<O
 }
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
+
     use super::*;
 
     fn wire(

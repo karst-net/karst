@@ -83,11 +83,9 @@ fn main() -> ExitCode {
     };
 
     let command_args = match (*first, rest) {
-        ("dns", ["status", tail @ ..] | ["query", _, tail @ ..]) => tail,
-        ("dns", []) => &[],
-        ("exit-node", ["list", tail @ ..] | ["disable", tail @ ..]) => tail,
-        ("exit-node", ["use", _, tail @ ..]) => tail,
-        ("exit-node", []) => &[],
+        ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
+        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..]) => tail,
+        ("dns" | "exit-node", []) => &[],
         _ => rest,
     };
     let socket = match socket_arg(command_args) {

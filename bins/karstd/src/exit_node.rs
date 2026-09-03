@@ -104,6 +104,13 @@ fn temporary_path(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
+
     use super::*;
     use crate::scratch::Scratch;
 

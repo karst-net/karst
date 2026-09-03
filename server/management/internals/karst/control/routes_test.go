@@ -6,6 +6,8 @@ package control
 import (
 	"testing"
 
+	pb "google.golang.org/protobuf/proto"
+
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -53,11 +55,10 @@ func TestNetmapVersionCoversEveryRouteOfferField(t *testing.T) {
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
-			changed := *base
-			changed.GatewayId = append([]byte(nil), base.GatewayId...)
-			change(&changed)
+			changed := pb.Clone(base).(*proto.KarstRouteOffer)
+			change(changed)
 			got := NetmapVersion(&proto.KarstNetmapResponse{
-				Routes: []*proto.KarstRouteOffer{&changed},
+				Routes: []*proto.KarstRouteOffer{changed},
 			})
 			if got == version {
 				t.Fatalf("changing %s did not move the netmap version", name)
