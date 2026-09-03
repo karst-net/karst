@@ -18,6 +18,10 @@ const seedGroups = () => [
   { id: "group-all", name: "All", peers_count: 50, resources_count: 0, issued: "api" },
   { id: "group-sre", name: "sre", peers_count: 18, resources_count: 0, issued: "api" },
   { id: "group-engineering", name: "engineering", peers_count: 32, resources_count: 0, issued: "jwt" },
+  // The fixture route (karst-api.mjs) names this as its gateway group; without
+  // it here the routes view's selector could not offer, let alone redisplay,
+  // the group that route already carries.
+  { id: "group-gateways", name: "gateways", peers_count: 4, resources_count: 0, issued: "api" },
 ];
 const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deploy", expiration_date: "2026-11-20T12:00:00Z", created_at: "2026-08-01T12:00:00Z", last_used: "2026-08-22T06:00:00Z" }] });
 
