@@ -21,6 +21,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -134,6 +135,17 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/relays/{relayId}",
 		},
 		{
+			name: "register a turn server", method: http.MethodPost,
+			path: "/karst/v1/turns",
+			body: `{"uri":"turn:turn.example.test:3478","region":"eu"}`,
+			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/turns",
+		},
+		{
+			name: "remove a turn server", method: http.MethodDelete,
+			path: "/karst/v1/turns/unknown-turn", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turns/{turnId}",
+		},
+		{
 			name: "configure an audit sink", method: http.MethodPost,
 			path: "/karst/v1/audit/sinks",
 			body: `{"kind":"webhook","endpoint":"https://siem.example.test/karst"}`,
@@ -188,7 +200,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	}
 	for _, table := range []string{
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
-		"karst_relays", "karst_audit_entries", "karst_audit_sinks",
+		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
 	} {
 		_ = db.Exec("DROP TABLE IF EXISTS " + table).Error
 	}
@@ -209,6 +221,10 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("relay store: %v", err)
 	}
+	turnStore, err := turncred.NewStore(db)
+	if err != nil {
+		t.Fatalf("turn store: %v", err)
+	}
 	bedrockStore, err := bedrock.NewStore(db)
 	if err != nil {
 		t.Fatalf("bedrock store: %v", err)
@@ -219,7 +235,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	}
 
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore,
+	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, permissions.NewManager(s), router)
 	return router
 }

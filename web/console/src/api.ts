@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, SessionPage } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -157,6 +157,11 @@ export const api = {
   relays: () => request<Relay[]>("/relays"),
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
   removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── turn servers ───────────────────────────────────────────────────────────
+  turns: () => request<TurnServer[]>("/turns"),
+  addTurn: (entry: { uri: string; region: string }) => request<TurnServer>("/turns", { method: "POST", body: body(entry) }),
+  removeTurn: (id: string) => request<void>(`/turns/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── auth keys ──────────────────────────────────────────────────────────────
   setupKeys: () => management<SetupKey[]>("/setup-keys"),

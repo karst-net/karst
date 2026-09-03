@@ -24,6 +24,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/proto"
@@ -92,6 +93,22 @@ type NetmapHandler struct {
 	Relays     []*proto.KarstRelay
 	RelayStore interface {
 		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
+	}
+
+	// TurnServers and TurnMinter are ADR-0008 §4's TURN fallback: an
+	// operator-configured server list and a shared-secret minter, both nil
+	// for a deployment that has not configured TURN — turncred.NetmapEntries
+	// then produces no turn_servers field at all, so this feature is opt-in
+	// the same way Relays above is.
+	TurnServers []turncred.Entry
+	TurnMinter  *turncred.Minter
+	// TurnStore is the account-scoped, DB-backed TURN registry, mirroring
+	// RelayStore above. Entries are static at this boundary until an account
+	// has written its own registry, exactly as Relays/RelayStore fall back.
+	// TurnMinter is unaffected: the shared secret stays file/env-configured
+	// regardless of where the server list comes from.
+	TurnStore interface {
+		Entries(context.Context) ([]turncred.Entry, error)
 	}
 
 	// Policy is the ACL document to compile a per-node filter from (§4.3).
@@ -290,12 +307,24 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, fmt.Errorf("load relays: %w", err)
 		}
 	}
+	turnEntries := h.TurnServers
+	if h.TurnStore != nil {
+		turnEntries, err = h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
+		if err != nil {
+			return nil, fmt.Errorf("load turn servers: %w", err)
+		}
+	}
+	turnServers, err := turncred.NetmapEntries(turnEntries, h.TurnMinter)
+	if err != nil {
+		return nil, fmt.Errorf("mint turn credentials: %w", err)
+	}
 	resp := &proto.KarstNetmapResponse{
-		PskEpoch:  h.Epoch,
-		NodeId:    []byte(self),
-		Addresses: addressesOf(selfPeer, v4Bits, v6Bits),
-		DnsName:   selfPeer.DNSLabel,
-		Relays:    relays,
+		PskEpoch:    h.Epoch,
+		NodeId:      []byte(self),
+		Addresses:   addressesOf(selfPeer, v4Bits, v6Bits),
+		DnsName:     selfPeer.DNSLabel,
+		Relays:      relays,
+		TurnServers: turnServers,
 	}
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"time"
 
 	pb "google.golang.org/protobuf/proto"
 	"gorm.io/driver/sqlite"
@@ -26,6 +27,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
@@ -295,6 +297,45 @@ func relayEntries() []*proto.KarstRelay {
 	return relays
 }
 
+// turnEntries builds the ADR-0008 §4 TURN registry this server advertises,
+// from `--turn <uri> <region>` — `relayEntries`'s pattern exactly, and the
+// flag may be repeated the same way. Unlike the relay registry there is no
+// synthetic default: TURN stays unconfigured (`buildNetmapServer` leaves
+// `r.netmap.TurnServers`/`TurnMinter` nil) unless a row asks for it, matching
+// production's own opt-in split between `Relays` and `TurnServers`/`TurnMinter`
+// on `control.NetmapHandler`.
+func turnEntries() []turncred.Entry {
+	var servers []turncred.Entry
+	args := os.Args[1:]
+	for i, a := range args {
+		if a != "--turn" || i+2 >= len(args) {
+			continue
+		}
+		servers = append(servers, turncred.Entry{URI: args[i+1], Region: args[i+2]})
+	}
+	return servers
+}
+
+// turnMinter reads `--turn-secret <secret>`, the same shared secret
+// `turnserver.conf`'s `static-auth-secret` is generated with, so both ends
+// mint and validate the identical TURN-REST credential — `bootstrap.sh
+// --turn`'s step 6 comment makes the same point for the compose deployment.
+//
+// The TTL is generous rather than realistic: this fixture's whole run is
+// seconds long, so twelve hours (production's own default,
+// `karstTurnDefaultCredentialTTL` in `server/cmd/karst-control/main.go`)
+// would never be exercised either way, and a short TTL would only risk a
+// slow CI runner racing an expiry the real deployment never has to.
+func turnMinter() (*turncred.Minter, error) {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--turn-secret" && i+1 < len(args) {
+			return turncred.NewMinter(args[i+1], time.Hour)
+		}
+	}
+	return nil, nil
+}
+
 func relayRow(address string, key []byte) *proto.KarstRelay {
 	h := sha256.New()
 	_, _ = h.Write([]byte("karst-relay-id-v1"))
@@ -348,6 +389,18 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		nodes:   nodes,
 	}
 	r.netmap.Relays = relayEntries()
+
+	if turnServers := turnEntries(); len(turnServers) > 0 {
+		minter, err := turnMinter()
+		if err != nil {
+			return nil, fmt.Errorf("turn minter: %w", err)
+		}
+		if minter == nil {
+			return nil, errors.New("--turn needs --turn-secret too")
+		}
+		r.netmap.TurnServers = turnServers
+		r.netmap.TurnMinter = minter
+	}
 
 	// A prebuilt Bedrock log is the cross-implementation path: Rust produces
 	// the bytes an offline ceremony would import and this Go server only

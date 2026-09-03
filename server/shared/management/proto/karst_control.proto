@@ -210,6 +210,19 @@ message KarstRelay {
   string tls_server_name = 5;
 }
 
+// KarstTurnServer is a TURN (RFC 8656) fallback server this node may use,
+// with a credential minted fresh for this netmap response — ADR-0008 §4.
+// Never carries a static/long-lived credential: username and password are
+// both time-limited, generated per response by the standard TURN-REST HMAC
+// scheme, and expire independently of the netmap's own refresh cadence.
+message KarstTurnServer {
+  string uri = 1;        // turn: or turns: URI — RFC 8656 / RFC 7065
+  string region = 2;
+  string username = 3;   // unix expiry timestamp, per the TURN-REST scheme
+  string password = 4;   // base64(HMAC-SHA1(shared_secret, username))
+  uint64 expires_at = 5; // unix seconds, redundant with username but explicit
+}
+
 // KarstDNSConfig is the authenticated resolver configuration projected from
 // the account's DNS settings. The mesh zone remains authoritative locally;
 // nameservers and routes are only used for questions outside that zone.
@@ -338,6 +351,13 @@ message KarstNetmapResponse {
   // Authenticated relay choices for this node. Replaced wholesale on every
   // non-unchanged response, just like packet_filter.
   repeated KarstRelay relays = 13;
+
+  // TURN fallback servers this node may use, each with a credential minted
+  // for this response — ADR-0008 §4. Never `unchanged`-cached: a stale
+  // minted credential is an expired one, not a reusable one. Empty for a
+  // deployment that has not configured TURN, which produces a response
+  // byte-identical to before this field existed.
+  repeated KarstTurnServer turn_servers = 16;
 
   // Authenticated DNS resolver configuration. Included in the netmap content
   // hash so changing MagicDNS or an upstream forces a refresh.

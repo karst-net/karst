@@ -663,6 +663,131 @@ It is recorded because it is a **reason for caution rather than a reason for
 confidence**: an implementer who reads the measurements above and concludes the
 technique is ready has the same surprise waiting. GitHub issue [#33](https://github.com/karst-net/karst/issues/33) carries it.
 
+### 7.8 TURN candidates — ADR-0008 §4
+
+A node with a configured TURN server (`karst_control.proto`'s `turn_servers`,
+minted per-response, never static — ADR-0008 §4) MAY hold a **TURN
+allocation**: a relayed transport address on that server, obtained by the
+standard RFC 8656 Allocate exchange. Where it has one, that address is
+advertised as one more candidate, exactly as an interface or reflexive address
+is (§7.3) — the same `CallMeMaybe`, no wire change, because
+`karst_disco::msg::Endpoint` is a bare address with no metadata about how it is
+reached and none is needed for a peer receiving it.
+
+**Why no fifth grade of evidence.** §7.2's four tiers rank *evidence that a
+direct path might work* — an explicit mapping, an interface, a reflector's
+report, a peer's claim. A TURN allocation is not evidence of anything; given a
+live credential and a reachable server it works deterministically, the same
+property the co-located relay's address has. It is therefore not folded into
+that ranking. It is appended **after** every §7.2 tier — pushed last,
+unconditionally, never competing for the sixteen ranked slots the four tiers
+share — so it can never displace a candidate that might yield a private,
+unmediated path. This is the same "last resort" standing ADR-0008 itself gives
+TURN ("the designated slip candidate") and PLAN.md's Phase 6 table repeats
+("buys interoperability, not connectivity" — the co-located relay already
+supplies connectivity).
+
+**Confirmation is unchanged: a TURN candidate is probed like any other.**
+§7.1's `Ping`/`Pong` exchange is what installs an endpoint via
+`Engine::set_endpoint`, and a TURN-relayed address answers it exactly like a
+direct one once reachable — RFC 8656 relaying is transparent to whatever rides
+inside it, including AVEN's own datagrams. No new confirmation machinery is
+needed, which is also why this section adds nothing to §11's model: the
+authentication property being verified there does not change when the
+underlying transport does.
+
+**The one genuinely new requirement, and why it exists.** A `Pong` for a TURN
+candidate can only be sent if the allocating side has already created an RFC
+8656 *permission* for the prober's address — an unprivileged, unpermitted
+inbound datagram is dropped by the TURN server before it reaches this node at
+all. Waiting for a probe to arrive before permitting it is therefore
+self-defeating: the probe that would trigger the permission never arrives to
+trigger it. §7.2 already has the shape of this problem and its answer —
+*"[a] probe leaves the local NAT addressed to the candidate's host, which is
+what installs that host in the local NAT's filter... so a node behind a
+symmetric NAT... is nonetheless reached directly by a peer whose NAT restricts
+by address rather than by port"* — applied here to a different kind of
+stateful filter. **A node holding a live TURN allocation MUST create (or
+refresh) a permission for every address in a peer's `CallMeMaybe`, for every
+peer with a disco key, on receipt** — before any of those addresses has been
+probed, not after, and regardless of which one (if any) the peer goes on to
+use. This is unconditional and symmetric with §7.3's existing rule that both
+ends learn each other's candidates and begin probing together: priming every
+permission at that same moment is what makes the TURN tier's first probe able
+to land rather than needing a second round trip.
+
+**Reaching a peer's own TURN candidate is not `Via::Direct`, and an earlier
+draft of this section was wrong to say it was.** The argument seemed sound —
+`Endpoint` carries no kind tag, so the sending node cannot distinguish a
+peer's TURN candidate from a genuine one, and confirmation is ordinary
+`Ping`/`Pong` either way. What that argument missed is *what the packet looks
+like once it arrives*. Sending a peer's TURN-relayed address over the shared
+socket puts this node's own raw NAT-mapped address on the wire as the
+packet's source — the address the peer's own `coturn` reports for the Data
+Indication it relays onward. That is not the address the peer recorded as
+*this* node's confirmed endpoint when that is also a TURN address: the
+peer's own `peer_at(from)`-style lookup, keyed by exact address match,
+finds no peer at all, and the datagram is silently dropped. Run against a
+real `coturn` (`bins/karstd/tests/aquifer.rs`'s `Shape::TurnOnly`), this is
+exactly what happened — the session established fine over the relay before
+either candidate confirmed, and no application data ever crossed the
+TURN-confirmed path afterward, with no error logged anywhere to say why.
+
+So `Engine::via` treats a confirmed endpoint that shares a host with this
+node's *own* TURN allocation as a signal to route through that allocation
+too:
+
+- **`Via::Turn(SocketAddr)`** is used whenever a confirmed endpoint's address
+  is on the same host as this node's own live TURN allocation
+  (`turn.ip() == addr.ip()`) — which in practice means the peer's own TURN
+  candidate, since the co-located relay, the reflector, and `coturn` are the
+  only things on that host and none of the other two is ever a peer's
+  confirmed *direct* endpoint. `run.rs` dispatches it by sending through this
+  node's own TURN allocation (`turn::client`'s `RelayConn`, RFC 8656 §7.1)
+  rather than the shared socket, so the packet the peer receives is sourced
+  from *this* node's own TURN address — the one address that does match what
+  the peer recorded.
+- The same arm also covers the original last-resort case: *this* node has no
+  other way to reach a peer at all (no confirmed direct endpoint, and no
+  relay configured or willing — `Engine::via`'s existing two-step relay
+  fallback, own relay then the peer's published home relay) but does hold a
+  live allocation of its own.
+- `Transport::Turn` mirrors `Via::Turn` for `karst status`, for the same
+  reason `Transport::Relay` exists apart from `Via::Relay` — and unlike the
+  draft this replaces, reporting it here is not a wire-tag leak: it is this
+  node's own routing decision, not an inference about the peer, so nothing
+  about `Endpoint`'s lack of a kind tag is being worked around.
+
+**The same-host check is a heuristic, not a certainty, and the residual gap
+is worth naming.** A deployment where a node's own TURN server and a peer's
+TURN server are different hosts (`karst_control.proto`'s `region` field
+allows exactly this) will not recognize the peer's TURN candidate as one —
+`Via::Direct` is used instead, reproducing the silent-drop failure above for
+that specific pairing. A false positive — an ordinary address that happens to
+share a host with a TURN server it has nothing to do with — costs an
+unneeded TURN hop rather than a dropped datagram, and is vanishingly
+unlikely in practice: nothing else in a real deployment hands out addresses
+on a `coturn` host. Closing the gap for good needs the wire tag `Endpoint`
+was deliberately built without; recorded as an open item in §12.
+
+**Ranked after the relay, not before it.** `Engine::via`'s existing two-line
+rule is deliberately minimal (§8's own framing: "Direct beats relay, always,
+even when the relay is faster"); this extends it by exactly one more
+fallback rather than restructuring it. The co-located relay is preferred over
+a TURN allocation when both are available — the relay connection is already
+up (`ponor-v1.md` §9.1), where a TURN allocation is not attempted until it is
+needed. `Via::Turn` therefore fires only where the existing relay branch would
+otherwise return nothing: no relay configured, or this peer's destination is
+unknown to the relay path entirely. This is the same "last resort" standing
+given to the candidate tier above, kept consistent rather than treating TURN as
+preferred fallback in one place and least-preferred in another.
+
+Not formally verified. §11's model proves authentication properties that do
+not change when a confirmed candidate happens to be TURN-relayed rather than
+direct, so no new query is added — but the permission-priming requirement
+above is exactly the kind of liveness property Verifpal/ProVerif do not model
+well and this draft does not attempt to. Recorded in §12.
+
 
 ## 8. Path selection
 
@@ -674,11 +799,22 @@ strongest key first:
 2. **Direct beats relay**, always, even when the relay is faster. A relay
    discloses the traffic graph to its operator (`ponor-v1.md` §9); latency is
    not the only axis and the operator's exposure does not appear in a
-   round-trip time.
+   round-trip time. §7.8's TURN allocation carries the identical exposure and
+   is beaten by direct for the identical reason — the rule reads "direct beats
+   relay *or TURN*," not "direct beats relay" narrowly.
 3. **IPv6 beats IPv4** when both are direct and their latencies are within the
    hysteresis margin. IPv6 paths are less likely to be behind a translating
    middlebox that will rewrite them later.
 4. **Lower latency** otherwise.
+
+Rule 2 ranks TURN against direct paths, not against the co-located relay: a
+confirmed TURN candidate beats the relay exactly as a confirmed ordinary one
+does — `Engine::via` checks a peer's confirmed endpoint before it ever looks
+at the relay branch, whichever of `Via::Direct` or `Via::Turn` that endpoint
+ends up dispatched as (§7.8's own "reporting" subsection has the full rule for
+which). The relay-versus-TURN choice is not this ordering's job either way —
+it is decided once, structurally, in `Engine::via`, rather than measured per
+pair.
 
 ### 8.1 Rule 3 is a credit, not a comparison
 
@@ -899,3 +1035,22 @@ must not be carried across to AVEN, where the MAC's job is different.
    learns an `observed` value only from the reflector that minted its key — is
    stated and implemented rather than proved. It should be modeled before this
    draft stops being a draft.
+10. **Resolved in part.** §7.8's TURN tier is now measured against a real
+    `coturn` — `bins/karstd/tests/aquifer.rs`'s `Shape::TurnOnly`, Phase 6
+    workstream 5, GitHub issue #92 — and the measurement is what found the
+    dispatch bug §7.8's "reporting" subsection now documents: reaching a
+    peer's own TURN candidate over the shared socket gets the datagram
+    silently dropped at the receiving node's address-keyed peer lookup, fixed
+    by routing through this node's own allocation instead whenever a
+    confirmed endpoint shares a host with it.
+
+    **What is still open**: that fix is a same-host heuristic, not a wire
+    guarantee, and it only helps because this project's own deployments run
+    one TURN server per account. A deployment with per-peer TURN servers on
+    different hosts (`karst_control.proto`'s `region` field already allows
+    this) would reproduce the original silent-drop failure for a pairing
+    whose two TURN servers differ — closing that needs the wire tag
+    `Endpoint` was deliberately built without, which is the same permission
+    priming granted a pass on: no measured need yet, since every existing and
+    planned deployment uses a single shared TURN server. The aquifer row does
+    not exercise multiple TURN servers and would not catch a regression here.

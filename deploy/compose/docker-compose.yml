@@ -52,6 +52,13 @@ services:
       # It is a standing credential for the whole deployment: revoke it from
       # the console once authentication works.
       KARST_BOOTSTRAP_SETUP_KEY_FILE: /var/lib/karst/bootstrap.key
+      # ADR-0008 §4's TURN fallback (GitHub issue #92). Empty by default —
+      # "all three unset" is karst-control's own common case — and left empty
+      # here unless `./bootstrap.sh --turn` has written them into .env, which
+      # docker compose reads automatically for this substitution. Setting only
+      # one is fatal at startup by design; see loadTurn in cmd/karst-control.
+      KARST_TURN_REGISTRY_FILE: ${KARST_TURN_REGISTRY_FILE:-}
+      KARST_TURN_SHARED_SECRET_FILE: ${KARST_TURN_SHARED_SECRET_FILE:-}
     volumes:
       - ./state:/var/lib/karst
       - ./state/netbird:/var/lib/netbird
@@ -81,3 +88,20 @@ services:
       # the real one within 25 seconds. Nothing is lost because no node can be
       # enrolled before the server is up either.
       - control
+
+  # ADR-0008 §4's TURN fallback, for a network the co-located relay above
+  # cannot reach — not a replacement for it (GitHub issue #92). Off unless you
+  # ran `./bootstrap.sh --turn`, which writes turnserver.conf, turn-secret,
+  # and turns.json, and enabled with `docker compose --profile turn up -d`.
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    profiles: ["turn"]
+    volumes:
+      - ./state/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    # RFC 8656 allocates one relay port per active session from the range
+    # turnserver.conf opens (49160-49200). Mapping that individually through
+    # Docker's bridge network is the standard reason coturn deployments use
+    # host networking instead — see the README's TURN section.
+    network_mode: host

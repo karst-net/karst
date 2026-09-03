@@ -240,6 +240,89 @@ impl Relay {
     }
 }
 
+/// A TURN (RFC 8656) fallback server, with the ephemeral credential minted for
+/// this netmap response — `spec/aven-v1.md` §7.8, ADR-0008 §4.
+///
+/// **Not pinned, unlike [`Relay`].** A TURN server authenticates the *client*
+/// by a shared credential; there is no server identity for this node to check,
+/// so validation here is limited to the wire shape being usable at all.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TurnServer {
+    /// A `turn:` or `turns:` URI (RFC 8656 / RFC 7065), e.g.
+    /// `turn:turn.example.com:3478`.
+    pub uri: String,
+    pub region: String,
+    /// A unix expiry timestamp, per the TURN-REST scheme.
+    pub username: String,
+    /// `base64(HMAC-SHA1(shared_secret, username))`. A real secret, like a PSK,
+    /// even though it is short-lived — see [`Credential`].
+    pub password: TurnCredential,
+    /// Unix seconds. Redundant with `username` but explicit.
+    pub expires_at: u64,
+}
+
+impl fmt::Debug for TurnServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TurnServer")
+            .field("uri", &self.uri)
+            .field("region", &self.region)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TurnServer {
+    fn from_wire(server: &pb::KarstTurnServer) -> Result<Self, Error> {
+        if server.uri.is_empty()
+            || !(server.uri.starts_with("turn:") || server.uri.starts_with("turns:"))
+        {
+            return Err(Error::Turn("uri is not a turn: or turns: URI".to_owned()));
+        }
+        if server.username.is_empty() || server.password.is_empty() {
+            return Err(Error::Turn(
+                "a minted TURN credential is missing its username or password".to_owned(),
+            ));
+        }
+        Ok(Self {
+            uri: server.uri.clone(),
+            region: server.region.clone(),
+            username: server.username.clone(),
+            password: TurnCredential(server.password.clone()),
+            expires_at: server.expires_at,
+        })
+    }
+}
+
+/// A minted TURN password. Like [`Psk`], a real secret that does not print —
+/// `turncred.Credential`'s doc comment on the Go side explains why: Phase 3's
+/// exit criterion is an automated scan for secret bytes in logs, traces and
+/// bugreports, and that only reliably holds if the type refuses to render
+/// rather than every call site remembering to redact it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TurnCredential(String);
+
+impl TurnCredential {
+    /// The password, for building a `turn::client::ClientConfig`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Build one directly, for a test that needs a [`TurnServer`] but is not
+    /// itself testing decode from the wire (`crate::turn`'s unit tests, and
+    /// this module's own).
+    #[cfg(test)]
+    pub(crate) fn for_tests(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl fmt::Debug for TurnCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("turn_password(redacted)")
+    }
+}
+
 /// Why a netmap could not be applied or decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -260,6 +343,8 @@ pub enum Error {
         len: usize,
     },
     Relay(String),
+    /// A `KarstTurnServer` entry could not be used — `spec/aven-v1.md` §7.8.
+    Turn(String),
     /// The assembled state does not hash to the version the server reported.
     ///
     /// See [`Netmap::apply`] for why this is worth detecting rather than
@@ -286,6 +371,7 @@ impl fmt::Display for Error {
                 )
             }
             Self::Relay(message) => write!(f, "invalid relay: {message}"),
+            Self::Turn(message) => write!(f, "invalid turn server: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
                 "assembled netmap hashes to {local:016x} but the server called it \
@@ -541,6 +627,18 @@ pub struct Netmap {
     pub egress_filter: Vec<pb::KarstEgressRule>,
     /// Pinned relay choices, replaced wholesale with every netmap.
     pub relays: Vec<Relay>,
+    /// TURN fallback servers, each with a credential minted fresh for the
+    /// response that carried it — `spec/aven-v1.md` §7.8, ADR-0008 §4.
+    ///
+    /// **Updated on every response, including an `unchanged` one.** Unlike
+    /// every other field here, the server mints a fresh credential regardless
+    /// of whether anything else moved (`karst_control.proto`'s doc comment on
+    /// `turn_servers`: "Never `unchanged`-cached: a stale minted credential is
+    /// an expired one, not a reusable one") — and confirmed on the Go side,
+    /// `NetmapVersion` never reads this field, so it is not part of what
+    /// `unchanged` even means. [`Netmap::apply`] applies it before the
+    /// `unchanged` early return for exactly this reason.
+    pub turn_servers: Vec<TurnServer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
     ///
     /// Held so the node can compare it against what it has verified, and
@@ -568,6 +666,7 @@ impl fmt::Debug for Netmap {
             .field("peers", &self.peers.len())
             .field("filter_rules", &self.packet_filter.len())
             .field("egress_rules", &self.egress_filter.len())
+            .field("turn_servers", &self.turn_servers.len())
             .finish_non_exhaustive()
     }
 }
@@ -587,6 +686,7 @@ impl Netmap {
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
             relays: Vec::new(),
+            turn_servers: Vec::new(),
             peers: BTreeMap::new(),
         }
     }
@@ -647,7 +747,20 @@ impl Netmap {
     /// [`Error::PskLength`] for a malformed PSK, and [`Error::VersionMismatch`]
     /// if the assembled state does not reproduce the server's version.
     pub fn apply(&mut self, resp: pb::KarstNetmapResponse) -> Result<Outcome, Error> {
-        // Read the flags before anything is mutated. `unchanged` wins over
+        // **Before the `unchanged` check, deliberately.** A minted TURN
+        // credential is fresh on every response the server sends — including
+        // one that reports `unchanged` for everything else — so applying it
+        // only on the non-`unchanged` path would leave this node holding a
+        // credential that ages toward its own expiry on every poll that
+        // changed nothing, which on a quiet netmap is most of them. See the
+        // field's own doc comment.
+        self.turn_servers = resp
+            .turn_servers
+            .iter()
+            .map(TurnServer::from_wire)
+            .collect::<Result<_, _>>()?;
+
+        // Read the flags before anything else is mutated. `unchanged` wins over
         // `delta`: the server sets only one, and treating an unchanged response
         // as an empty delta would be harmless while treating it as a full
         // netmap would drop every peer.
@@ -866,6 +979,15 @@ impl Netmap {
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
             relays: self.relays.iter().map(Relay::to_wire).collect(),
+            // **Deliberately absent.** This is what goes into the on-disk
+            // cache, and a minted TURN credential belongs there even less than
+            // it belongs in `content_version()` — writing it to disk would
+            // have this node try a credential that may already be expired the
+            // next time it starts, for no benefit: `crate::run` never treats a
+            // cached netmap as a substitute for the first live one, and a
+            // credential is worthless until the control client reaches the
+            // server anyway.
+            turn_servers: Vec::new(),
             delta: false,
             removed_peers: Vec::new(),
             unchanged: false,
@@ -977,6 +1099,16 @@ mod tests {
         }
     }
 
+    fn wire_turn_server(uri: &str) -> pb::KarstTurnServer {
+        pb::KarstTurnServer {
+            uri: uri.to_owned(),
+            region: "test".to_owned(),
+            username: "1700000000".to_owned(),
+            password: "test-fixture-turn-password".to_owned(),
+            expires_at: 1_700_000_000,
+        }
+    }
+
     // ── the three shapes ────────────────────────────────────────────────────
 
     #[test]
@@ -1030,6 +1162,72 @@ mod tests {
         assert_eq!(map.addresses, vec!["100.64.0.1".to_owned()]);
         assert_eq!(map.node_id, b"self");
         assert_eq!(map.psk_epoch, 7);
+    }
+
+    // ── TURN — `spec/aven-v1.md` §7.8 ───────────────────────────────────────
+
+    /// **The one field `unchanged` does not mean "keep".** A minted TURN
+    /// credential is fresh on every response, including one that reports
+    /// `unchanged` for everything else, so it must be applied before the
+    /// early return — see `Netmap::apply`'s own doc comment on why.
+    #[test]
+    fn turn_servers_are_replaced_even_when_the_response_is_unchanged() {
+        let mut map = loaded();
+        map.apply(sealed(
+            pb::KarstNetmapResponse {
+                turn_servers: vec![wire_turn_server("turn:turn.example.com:3478")],
+                ..full(vec![])
+            },
+            &map,
+        ))
+        .expect("first apply");
+        assert_eq!(map.turn_servers.len(), 1);
+
+        let resp = pb::KarstNetmapResponse {
+            unchanged: true,
+            turn_servers: vec![wire_turn_server("turn:turn2.example.com:3478")],
+            ..pb::KarstNetmapResponse::default()
+        };
+        assert_eq!(map.apply(resp), Ok(Outcome::Unchanged));
+        assert_eq!(
+            map.turn_servers.len(),
+            1,
+            "the field is replaced, not appended"
+        );
+        assert_eq!(
+            map.turn_servers.first().map(|s| s.uri.as_str()),
+            Some("turn:turn2.example.com:3478")
+        );
+        // Nothing else moved — the whole point of `unchanged`.
+        assert_eq!(map.peers().len(), 0);
+    }
+
+    #[test]
+    fn turn_server_from_wire_rejects_a_non_turn_uri() {
+        let mut map = loaded();
+        let resp = pb::KarstNetmapResponse {
+            turn_servers: vec![wire_turn_server("https://turn.example.com")],
+            ..full(vec![])
+        };
+        assert!(matches!(map.apply(resp), Err(Error::Turn(_))));
+    }
+
+    #[test]
+    fn turn_server_from_wire_rejects_an_empty_credential() {
+        let mut map = loaded();
+        let mut server = wire_turn_server("turn:turn.example.com:3478");
+        server.password.clear();
+        let resp = pb::KarstNetmapResponse {
+            turn_servers: vec![server],
+            ..full(vec![])
+        };
+        assert!(matches!(map.apply(resp), Err(Error::Turn(_))));
+    }
+
+    #[test]
+    fn turn_credential_does_not_print() {
+        let cred = TurnCredential::for_tests("super-secret-password");
+        assert_eq!(format!("{cred:?}"), "turn_password(redacted)");
     }
 
     #[test]

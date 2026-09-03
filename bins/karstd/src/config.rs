@@ -624,6 +624,11 @@ pub struct Config {
     pub node_id: Vec<u8>,
     /// Authenticated relay choices from the netmap.
     pub relays: Vec<crate::netmap::Relay>,
+    /// TURN fallback servers from the netmap, each carrying a credential
+    /// minted for the response that supplied it — `spec/aven-v1.md` §7.8.
+    /// Empty for a deployment that has not configured TURN, and for a static
+    /// TOML roster, which has no netmap to carry one.
+    pub turn_servers: Vec<crate::netmap::TurnServer>,
     /// Extra trust anchors for relay TLS, from `[control] relay_ca_file`.
     ///
     /// Local configuration rather than netmap content, deliberately: which
@@ -770,6 +775,7 @@ impl Config {
             psk_epoch: file.node.psk_epoch,
             node_id: Vec::new(),
             relays: Vec::new(),
+            turn_servers: Vec::new(),
             relay_ca_file: None,
             peers,
             routes,
@@ -923,6 +929,14 @@ impl Config {
                     relay
                 })
                 .collect(),
+            // **Not NAT64-rewritten, unlike `relays` above.** A `turn:` or
+            // `turns:` URI is not the bare `address:port` `rewrite_authority`
+            // expects, and no row in this tree yet pairs a NAT64 node with a
+            // configured TURN server. A NAT64 node that is handed one will
+            // fail to reach it the same way it would fail to reach any other
+            // unrewritten IPv4 literal — a known gap, not a silent one, since
+            // `crate::turn`'s connect failure is logged like any other.
+            turn_servers: netmap.turn_servers.clone(),
             relay_ca_file: local.relay_ca_file,
             peers,
             routes,

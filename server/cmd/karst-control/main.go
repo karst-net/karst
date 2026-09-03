@@ -27,6 +27,7 @@ import (
 	"io/fs"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -37,6 +38,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
+	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/shared/auth"
@@ -70,6 +72,27 @@ const (
 // A deployment needs both, and having only one is silent — the relay admits
 // nobody who ever arrives, because nobody was told to arrive.
 const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
+
+// TURN fallback configuration — ADR-0008 §4.
+//
+// All three unset is the common case and means exactly what it always has:
+// no TURN, nodes fall back to the co-located relay alone. Configuring TURN
+// needs both the registry (which servers) and the shared secret (how to mint
+// credentials for them) — one without the other is as silent a
+// misconfiguration as the roster/registry split above, so both are read
+// together in loadTurn.
+const (
+	karstTurnRegistryEnv      = "KARST_TURN_REGISTRY_FILE"
+	karstTurnSharedSecretEnv  = "KARST_TURN_SHARED_SECRET_FILE"
+	karstTurnCredentialTTLEnv = "KARST_TURN_CREDENTIAL_TTL"
+)
+
+// karstTurnDefaultCredentialTTL is the credential lifetime when an operator
+// sets a shared secret but not a TTL. Long enough that a node polling the
+// netmap at its ordinary cadence always has a live credential in hand, short
+// enough that a leaked one is not useful for long — the same "quiet, bounded
+// default" reasoning karstBedrockAnchorDefaultMaxAge uses.
+const karstTurnDefaultCredentialTTL = 12 * time.Hour
 
 // The anchor scheduler's configuration — ADR-0016, GitHub issue [#61](https://github.com/karst-net/karst/issues/61).
 //
@@ -133,6 +156,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
+	turnServers, turnMinter, err := loadTurn()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
@@ -140,8 +168,9 @@ func main() {
 	defer stop()
 
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
+		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -324,6 +353,105 @@ func loadRelays() ([]*proto.KarstRelay, error) {
 	}
 	log.Infof("karst: loaded %d relays from %s", len(relays), path)
 	return relays, nil
+}
+
+// loadTurn reads ADR-0008 §4's TURN fallback configuration: the server
+// registry and the shared secret credentials are minted from.
+//
+// Either set without the other is fatal rather than silently partial — a
+// registry with no secret can mint nothing, and a secret with no registry
+// has nothing to attach a credential to, and both look like "TURN is
+// configured" to an operator reading their own environment.
+func loadTurn() ([]turncred.Entry, *turncred.Minter, error) {
+	registryPath := os.Getenv(karstTurnRegistryEnv)
+	secretPath := os.Getenv(karstTurnSharedSecretEnv)
+	if registryPath == "" && secretPath == "" {
+		return nil, nil, nil
+	}
+	if registryPath == "" || secretPath == "" {
+		return nil, nil, fmt.Errorf("karst: %s and %s must be set together",
+			karstTurnRegistryEnv, karstTurnSharedSecretEnv)
+	}
+
+	servers, err := turncred.Load(registryPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	secretRaw, err := os.ReadFile(secretPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("karst: %s=%s: %w", karstTurnSharedSecretEnv, secretPath, err)
+	}
+	secret := strings.TrimSpace(string(secretRaw))
+
+	ttl := karstTurnDefaultCredentialTTL
+	if raw := os.Getenv(karstTurnCredentialTTLEnv); raw != "" {
+		ttl, err = time.ParseDuration(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("karst: %s=%q is not a duration: %w", karstTurnCredentialTTLEnv, raw, err)
+		}
+	}
+
+	minter, err := turncred.NewMinter(secret, ttl)
+	if err != nil {
+		return nil, nil, fmt.Errorf("karst: %s: %w", karstTurnSharedSecretEnv, err)
+	}
+	log.Infof("karst: loaded %d turn servers from %s, credential ttl %s", len(servers), registryPath, ttl)
+	return servers, minter, nil
+}
+
+// rejectLegacyTurnConfig refuses to start against the fork's own
+// `turn:`/`credentials` block in management.json — GitHub issue #92's "two
+// parallel TURN-credential channels" question, resolved as: disabled, fatal
+// rather than silent.
+//
+// The fork's TimeBasedAuthSecretsManager (server.go, wired in controllers.go)
+// delivers TURN credentials over SyncResponse.NetbirdConfig.Turns, a channel
+// with no relationship to karst_control.proto's turn_servers field and no
+// awareness of KARST_TURN_REGISTRY_FILE/KARST_TURN_SHARED_SECRET_FILE above.
+// Karst does not modify the forked files that implement it — the same reason
+// bootstrap.go gives for attaching through seams instead — so the config
+// surface stays reachable if an operator points --config at a management.json
+// carrying a turn block, most plausibly by reusing one written for a plain
+// NetBird deployment. Left alone, that produces exactly the failure mode this
+// package's other loaders are fatal about: two credential-delivery paths an
+// operator believes are one, silently disagreeing about which servers and
+// secrets are live.
+//
+// A present-but-empty block is not that failure and must stay allowed:
+// deploy/compose/bootstrap.sh writes exactly one, `TimeBasedCredentials:
+// false` with no `Turns`, to every deployment today, as an inert placeholder
+// the fork's config loader is happy to see absent or present. server.go's
+// sendInitialSync only ever calls GenerateTurnToken behind
+// `TURNConfig.TimeBasedCredentials`, and conversion.go's `turns` projection
+// only ever has entries to iterate when `TURNConfig.Turns` is non-empty — so
+// neither flag set is the bar for "actually a second channel", not mere
+// presence of the struct.
+//
+// Fatal rather than a warning because a warning is exactly what would get
+// missed in the startup log of the one deployment where it matters. Use
+// KARST_TURN_REGISTRY_FILE and KARST_TURN_SHARED_SECRET_FILE instead, and
+// drop the turn block from management.json.
+func rejectLegacyTurnConfig(cfg *nbserver.Config) {
+	if err := checkLegacyTurnConfig(cfg); err != nil {
+		log.Fatalf("karst: %v", err)
+	}
+}
+
+// checkLegacyTurnConfig is rejectLegacyTurnConfig's testable half.
+func checkLegacyTurnConfig(cfg *nbserver.Config) error {
+	if cfg == nil || cfg.NbConfig == nil || cfg.NbConfig.TURNConfig == nil {
+		return nil
+	}
+	turn := cfg.NbConfig.TURNConfig
+	if !turn.TimeBasedCredentials && len(turn.Turns) == 0 {
+		return nil
+	}
+	return fmt.Errorf("management.json's turn config block is active (TimeBasedCredentials=%t, "+
+		"%d server(s)), which karst-control does not support — it is a second, uncoordinated "+
+		"TURN-credential path alongside karst_control.proto's turn_servers field. Configure TURN "+
+		"with %s and %s instead, and remove the turn block from the config file.",
+		turn.TimeBasedCredentials, len(turn.Turns), karstTurnRegistryEnv, karstTurnSharedSecretEnv)
 }
 
 func loadPolicy() (*policy.Document, error) {
