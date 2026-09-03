@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import "@karst-net/tokens/theme.css";
 import "./styles.css";
 import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
+import { bootstrap, loadConfig, login, logout, type AuthConfig, type AuthState } from "./auth";
 import { Setup } from "./views/setup";
 import { Machines } from "./views/machines";
 import { Access } from "./views/access";
@@ -30,7 +31,7 @@ const nav: Array<[Route, string]> = [
 
 const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "setup");
 
-function App() {
+function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   const [route, setRoute] = useState<Route>(routeFromHash());
   useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
   const navigate = (next: string) => { location.hash = `/${next}`; };
@@ -42,7 +43,7 @@ function App() {
       <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key}`}>{label}</a>)}</nav>
     </aside>
     <main id="main">
-      <header><p>Account: <strong>Karst</strong></p><ThemeChooser /></header>
+      <header><p>Account: <strong>Karst</strong></p>{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "setup" && <Setup go={navigate} />}
       {route === "machines" && <Machines />}
       {route === "access" && <Access />}
@@ -72,4 +73,22 @@ function ThemeChooser() {
   </select></label>;
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+/** Shown when `bootstrap` finds no active session. `disabled` (no OIDC
+ *  configured — the `just api-mock` dev flow) skips this and renders the app
+ *  directly, matching the console's pre-auth behavior. Signing in is a full
+ *  redirect to the IdP, so there is nothing to wire up for success here —
+ *  `bootstrap` completes the flow on the next load, at `/auth/callback`. */
+function LoginGate({ config }: { config: AuthConfig }) {
+  return <div className="shell"><main><h1>Karst</h1><p>Sign in to administer this deployment.</p>
+    <button onClick={() => login(config)}>Log in</button>
+  </main></div>;
+}
+
+async function boot() {
+  const config = await loadConfig();
+  const auth = await bootstrap(config);
+  const root = createRoot(document.getElementById("root")!);
+  root.render(<StrictMode>{auth === "anonymous" ? <LoginGate config={config} /> : <App auth={auth} config={config} />}</StrictMode>);
+}
+
+void boot();

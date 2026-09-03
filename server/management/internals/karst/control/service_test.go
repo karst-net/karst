@@ -310,6 +310,58 @@ func TestSecondHandshakeRejected(t *testing.T) {
 	}
 }
 
+// A second session for the same node identity must evict the first, not run
+// alongside it — GitHub issue #87: an attacker who cloned a node's identity
+// key used to get a fully functional, silently-accepted second session while
+// the real device's own connection carried on undisturbed. Newest wins now,
+// and the older connection is torn down rather than left running.
+func TestSecondSessionForSameIdentityEvictsFirst(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	defer f.cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	dial := func() (*control.Client, proto.KarstControlService_SessionClient) {
+		t.Helper()
+		stream, err := f.client.Session(ctx)
+		if err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		cl, err := control.Dial(stream, f.svc.Pins(), identity.ControlVerifier{}, nil,
+			identity.ControlSigner{Key: f.nodeKey}, true)
+		if err != nil {
+			t.Fatalf("handshake: %v", err)
+		}
+		return cl, stream
+	}
+
+	firstClient, firstStream := dial()
+	if _, err := firstClient.Request([]byte("still alive")); err != nil {
+		t.Fatalf("first session's initial request: %v", err)
+	}
+
+	// Same identity (f.nodeKey) again — the clone.
+	secondClient, _ := dial()
+	if _, err := secondClient.Request([]byte("the clone")); err != nil {
+		t.Fatalf("second session's request: %v", err)
+	}
+
+	// The first session's stream must now be torn down, not merely quiet:
+	// its next Recv should fail rather than hang or keep serving.
+	if _, err := firstStream.Recv(); err == nil {
+		t.Fatal("evicted session's stream is still open")
+	}
+	if _, err := firstClient.Request([]byte("should not land")); err == nil {
+		t.Fatal("evicted session accepted a request after being superseded")
+	}
+
+	// The second session is unaffected by the first's teardown.
+	if _, err := secondClient.Request([]byte("still the live one")); err != nil {
+		t.Fatalf("second session after eviction: %v", err)
+	}
+}
+
 // Two nodes on the same server must get independent channels.
 func TestConcurrentNodesGetIndependentChannels(t *testing.T) {
 	f := newFixture(t, nil, nil)

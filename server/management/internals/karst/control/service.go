@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -92,6 +93,24 @@ type Service struct {
 	// opt in via SubscribeToUpdatesWith.
 	peers   PeerLister
 	updates network_map.PeersUpdateManager
+	// active holds the live session's *sessionHandle for every identity
+	// currently connected, keyed by string(identity) — the authenticated
+	// ML-DSA public key, not the caller-supplied nodeID, so this can never be
+	// bypassed by presenting a different node ID over the same stolen key.
+	// GitHub issue [#87](https://github.com/karst-net/karst/issues/87): a
+	// second session for an identity that already has one used to run
+	// forever alongside the first, with no eviction and no signal anywhere —
+	// indistinguishable from an ordinary reconnect whether the cause was a
+	// legitimate roam or a cloned identity.
+	active sync.Map
+}
+
+// sessionHandle is the pointer identity Session's deferred cleanup compares
+// against via CompareAndDelete: a plain map value can't safely be compared
+// this way (func values panic on `==`), so eviction and cleanup both operate
+// on the pointer, never the func it holds.
+type sessionHandle struct {
+	cancel context.CancelFunc
 }
 
 // RecordSessionsWith attaches a session recorder. Separate from New so that
@@ -167,6 +186,31 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 		return status.Error(codes.Unauthenticated, "handshake failed")
 	}
 	nodeID := init.GetNodeId()
+
+	// Exactly one live session per identity. A second one arriving is either
+	// an ordinary reconnect (the old TCP path went stale without a clean
+	// close) or a cloned identity racing the real device — either way,
+	// newest wins and the older connection is torn down rather than left
+	// running forever unnoticed (GitHub issue #87).
+	//
+	// Rooted in Background(), deliberately not derived from ctx: ctx is the
+	// stream's own context and already ends the session when the client
+	// disconnects, surfacing through recv's io.EOF. Deriving sessionCtx from
+	// it would make an ordinary disconnect race the eviction case in the
+	// select below — both become ready together — and risk logging a real
+	// client hangup as a supersession. Rooting it independently means
+	// sessionCtx.Done() fires for exactly one reason: eviction.
+	sessionCtx, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
+	mine := &sessionHandle{cancel: cancelSession}
+	if previous, evicted := s.active.Swap(string(identity), mine); evicted {
+		log.WithContext(ctx).Warnf("karst: a new session for node %x superseded an existing session for the same identity; closing the old connection", nodeID)
+		previous.(*sessionHandle).cancel()
+	}
+	// CompareAndDelete, not Delete: if a newer session has already swapped
+	// this identity's entry for its own *sessionHandle, this session's exit
+	// must not clear that newer one's live registration out from under it.
+	defer s.active.CompareAndDelete(string(identity), mine)
 
 	// From here the node is authenticated, so the connection is a session.
 	//
@@ -259,6 +303,12 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 
 	for {
 		select {
+		case <-sessionCtx.Done():
+			// Only reachable via eviction above — ctx's own cancellation
+			// (the client hanging up) surfaces through recv's io.EOF instead,
+			// since the reader goroutine is what is actually blocked on the
+			// stream.
+			return status.Error(codes.Aborted, "a newer session for this node identity superseded this connection")
 		case r := <-recv:
 			if r.err != nil {
 				return r.err // includes io.EOF for a clean client hangup
