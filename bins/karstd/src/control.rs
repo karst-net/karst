@@ -332,6 +332,13 @@ impl Client {
         Arc::clone(&self.identity)
     }
 
+    /// Configured control URL, used only to keep its resolved underlay
+    /// addresses outside a locally selected exit route.
+    #[must_use]
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
     /// Build a client from the `[control]` section.
     ///
     /// # Errors

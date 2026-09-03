@@ -15,7 +15,9 @@
 //! without touching anything below this file — which is the point of the
 //! separation, and why this file is small enough to replace.
 
+use std::collections::BTreeSet;
 use std::io;
+use std::net::{IpAddr, ToSocketAddrs as _};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -212,6 +214,9 @@ pub fn run_with_control(
     socket_path: &std::path::Path,
     control_client: Option<crate::control::Client>,
 ) -> io::Result<()> {
+    let control_endpoint = control_client
+        .as_ref()
+        .map(|client| client.endpoint().to_owned());
     let tun = bring_up_interface(config)?;
     let gateway = Mutex::new(crate::gateway::Manager::default());
     let gateway_error = Mutex::new(None);
@@ -290,6 +295,7 @@ pub fn run_with_control(
     // default gateway rather than to the tunnel, which is worse than dropping
     // it.
     let routes = Mutex::new(Routes::default());
+    let exit_policy = Mutex::new(crate::exit_policy::Manager::default());
     let exit_node = config
         .exit_node_state_file
         .as_ref()
@@ -303,7 +309,17 @@ pub fn run_with_control(
             .active()
             .map(str::to_owned)
     });
-    apply_routes(&routes, &tun, config, selected_exit.as_deref());
+    if let Err(error) = reconcile_exit(
+        &routes,
+        &exit_policy,
+        &tun,
+        config,
+        None,
+        control_endpoint.as_deref(),
+        selected_exit.as_deref(),
+    ) {
+        eprintln!("karstd: persisted exit selection is dormant: {error}");
+    }
 
     announce(config, &tun, &socket)?;
 
@@ -598,6 +614,8 @@ pub fn run_with_control(
         let dns_host_ctl = &dns_host;
         let routes_ctl = &routes;
         let exit_node_ctl = exit_node.as_ref();
+        let exit_policy_ctl = &exit_policy;
+        let control_endpoint_ctl = control_endpoint.as_deref();
         let gateway_ctl = &gateway;
         let gateway_error_ctl = &gateway_error;
         scope.spawn(move || {
@@ -622,7 +640,10 @@ pub fn run_with_control(
                                     exit_node_ctl,
                                     &current,
                                     routes_ctl,
+                                    exit_policy_ctl,
                                     tun_ctl,
+                                    engine_ctl,
+                                    control_endpoint_ctl,
                                 );
                             }
                             if let ipc::Command::DnsQuery(name) = &command {
@@ -677,6 +698,10 @@ pub fn run_with_control(
                                         .active()
                                         .map(str::to_owned)
                                 });
+                                let exit_route_active = exit_policy_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
                                 let gateway_active = gateway_ctl
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -688,6 +713,7 @@ pub fn run_with_control(
                                 output.push_str(&routing_report(
                                     &current,
                                     selected.as_deref(),
+                                    exit_route_active,
                                     gateway_active,
                                     gateway_error.as_deref(),
                                 ));
@@ -725,6 +751,8 @@ pub fn run_with_control(
             let exit_node_refresh = exit_node.as_ref();
             let gateway_refresh = &gateway;
             let gateway_error_refresh = &gateway_error;
+            let exit_policy_refresh = &exit_policy;
+            let control_endpoint_refresh = control_endpoint.as_deref();
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -737,6 +765,8 @@ pub fn run_with_control(
                     routes_refresh,
                     disco_refresh,
                     home_refresh,
+                    exit_policy_refresh,
+                    control_endpoint_refresh,
                     dns_refresh,
                     exit_node_refresh,
                     dns_host_refresh,
@@ -830,12 +860,34 @@ pub fn run_with_control(
                 relay_out,
                 turn_out,
             );
-            apply_disco_paths(&disco, &engine);
-            // §7.8's priming rule — every tick, alongside the AVEN-confirmed
-            // path changes above. Not driven from `Disco::inbound` itself:
-            // that runs on the receive thread, and priming an allocation is
-            // `crate::turn`'s I/O, not something a demultiplexer should block
-            // on.
+            if apply_disco_paths(&disco, &engine) {
+                let current = engine.config();
+                let selected = exit_node.as_ref().and_then(|selection| {
+                    selection
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .active()
+                        .map(str::to_owned)
+                });
+                if let Err(error) = reconcile_exit(
+                    &routes,
+                    &exit_policy,
+                    &tun,
+                    &current,
+                    Some(&engine),
+                    control_endpoint.as_deref(),
+                    selected.as_deref(),
+                ) {
+                    eprintln!(
+                        "karstd: exit selection is dormant after an endpoint change: {error}"
+                    );
+                }
+            }
+            // §7.8's priming rule — every tick, regardless of whether the
+            // path changes above fired. Not driven from `Disco::inbound`
+            // itself: that runs on the receive thread, and priming an
+            // allocation is `crate::turn`'s I/O, not something a
+            // demultiplexer should block on.
             prime_turn_permissions(&disco, turn_out);
         }
     });
@@ -2361,12 +2413,14 @@ mod turn_tests {
 
 /// Apply only AVEN-confirmed paths to the PHREATIC roster. Candidates never
 /// reach this boundary, so an unauthenticated endpoint cannot redirect data.
-fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) {
+fn apply_disco_paths(disco: &Mutex<disco::Disco>, engine: &Engine) -> bool {
     let changes = disco
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .path_changes();
+    let changed = !changes.is_empty();
     apply_path_changes(&changes, engine);
+    changed
 }
 
 /// Perform the endpoint changes discovery asked for.
@@ -2429,15 +2483,157 @@ fn apply_gateway(
         .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
 }
 
+fn underlay_addresses(
+    config: &Config,
+    engine: Option<&Engine>,
+    control_endpoint: Option<&str>,
+) -> io::Result<BTreeSet<IpAddr>> {
+    let mut out = BTreeSet::new();
+    for peer in &config.peers {
+        if let Some(endpoint) = peer.endpoint {
+            out.insert(endpoint.ip());
+        }
+    }
+    if let Some(engine) = engine {
+        for peer in engine.status() {
+            if let Some(endpoint) = peer.endpoint {
+                out.insert(endpoint.ip());
+            }
+        }
+    }
+    for relay in &config.relays {
+        resolve_socket_name(&relay.address, &mut out)?;
+    }
+    if let Some(endpoint) = control_endpoint {
+        let (host, port) = url_authority(endpoint)?;
+        resolve_host_port(host, port, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn resolve_socket_name(value: &str, out: &mut BTreeSet<IpAddr>) -> io::Result<()> {
+    if let Ok(endpoint) = value.parse::<std::net::SocketAddr>() {
+        out.insert(endpoint.ip());
+        return Ok(());
+    }
+    let resolved: Vec<_> = value.to_socket_addrs()?.collect();
+    if resolved.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("underlay endpoint {value:?} resolved to no addresses"),
+        ));
+    }
+    out.extend(resolved.into_iter().map(|endpoint| endpoint.ip()));
+    Ok(())
+}
+
+fn resolve_host_port(host: &str, port: u16, out: &mut BTreeSet<IpAddr>) -> io::Result<()> {
+    if let Ok(address) = host.parse::<IpAddr>() {
+        out.insert(address);
+        return Ok(());
+    }
+    let resolved: Vec<_> = (host, port).to_socket_addrs()?.collect();
+    if resolved.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("underlay host {host:?} resolved to no addresses"),
+        ));
+    }
+    out.extend(resolved.into_iter().map(|endpoint| endpoint.ip()));
+    Ok(())
+}
+
+fn url_authority(endpoint: &str) -> io::Result<(&str, u16)> {
+    let (_, rest) = endpoint.split_once("://").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "control endpoint has no URL scheme",
+        )
+    })?;
+    let authority = rest.split('/').next().unwrap_or_default();
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let (host, tail) = bracketed.split_once(']').ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "control endpoint has invalid IPv6 authority",
+            )
+        })?;
+        let port = tail.strip_prefix(':').map_or(Ok(443), |value| {
+            value
+                .parse::<u16>()
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+        })?;
+        return Ok((host, port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (
+            host,
+            port.parse::<u16>()
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+        ),
+        _ => (authority, 443),
+    };
+    if host.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "control endpoint has no host",
+        ));
+    }
+    Ok((host, port))
+}
+
+fn reconcile_exit(
+    routes: &Mutex<Routes>,
+    policy: &Mutex<crate::exit_policy::Manager>,
+    tun: &NetworkDevice,
+    config: &Config,
+    engine: Option<&Engine>,
+    control_endpoint: Option<&str>,
+    selected: Option<&str>,
+) -> io::Result<()> {
+    if tun.userspace().is_some() {
+        policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .disable();
+        apply_routes(routes, tun, config, selected);
+        return Ok(());
+    }
+
+    // Main-table routes never include /0 on a kernel TUN. Subnets are applied
+    // normally; the selected default is owned by the dedicated policy manager.
+    apply_routes(routes, tun, config, None);
+    let offer = selected.and_then(|route_id| {
+        config.route_offers.iter().find(|offer| {
+            offer.route_id == route_id
+                && offer.kind == crate::route_offer::Kind::Exit
+                && offer.role == crate::route_offer::Role::Recipient
+        })
+    });
+    let mut policy = policy
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(offer) = offer else {
+        policy.disable();
+        return Ok(());
+    };
+    let escapes = underlay_addresses(config, engine, control_endpoint)?;
+    policy.activate(tun.name(), offer.prefix.base(), escapes)
+}
+
 /// Handle the three local-consent commands against the current authenticated
 /// netmap. The server can offer an exit, but only this state transition can
 /// install its kernel route.
+#[allow(clippy::too_many_arguments)]
 fn exit_node_command(
     command: &ipc::Command,
     selection: Option<&Mutex<crate::exit_node::Selection>>,
     config: &Config,
     routes: &Mutex<Routes>,
+    policy: &Mutex<crate::exit_policy::Manager>,
     tun: &NetworkDevice,
+    engine: &Engine,
+    control_endpoint: Option<&str>,
 ) -> String {
     use std::fmt::Write as _;
 
@@ -2454,10 +2650,15 @@ fn exit_node_command(
                     .active()
                     .map(str::to_owned)
             });
+            let installed = tun.userspace().is_some()
+                || policy
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .active();
             let mut out = String::new();
             let _ = writeln!(out, "selected = {selected:?}");
             for offer in config.route_offers.iter().filter(eligible) {
-                let active = selected.as_deref() == Some(offer.route_id.as_str());
+                let active = installed && selected.as_deref() == Some(offer.route_id.as_str());
                 let _ = writeln!(out, "[[offers]]");
                 let _ = writeln!(out, "route_id = {:?}", offer.route_id);
                 let _ = writeln!(out, "prefix = {:?}", offer.prefix.to_string());
@@ -2484,7 +2685,17 @@ fn exit_node_command(
             if let Err(error) = state.select(route_id) {
                 return format!("error = {:?}\n", error.to_string());
             }
-            apply_routes(routes, tun, config, Some(route_id));
+            if let Err(error) = reconcile_exit(
+                routes,
+                policy,
+                tun,
+                config,
+                Some(engine),
+                control_endpoint,
+                Some(route_id),
+            ) {
+                return format!("error = {:?}\n", error.to_string());
+            }
             format!("selected = {route_id:?}\n")
         }
         ipc::Command::ExitDisable => {
@@ -2497,7 +2708,17 @@ fn exit_node_command(
             if let Err(error) = state.disable() {
                 return format!("error = {:?}\n", error.to_string());
             }
-            apply_routes(routes, tun, config, None);
+            if let Err(error) = reconcile_exit(
+                routes,
+                policy,
+                tun,
+                config,
+                Some(engine),
+                control_endpoint,
+                None,
+            ) {
+                return format!("error = {:?}\n", error.to_string());
+            }
             "selected = None\n".to_owned()
         }
         _ => unreachable!("only exit-node commands reach this handler"),
@@ -2754,19 +2975,22 @@ pub struct Attachment<'a> {
 fn routing_report(
     config: &Config,
     selected_exit: Option<&str>,
+    exit_route_installed: bool,
     gateway_active: bool,
     gateway_error: Option<&str>,
 ) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
-    let active_exit = selected_exit.filter(|selected| {
-        config.route_offers.iter().any(|offer| {
-            offer.route_id == **selected
-                && offer.kind == crate::route_offer::Kind::Exit
-                && offer.role == crate::route_offer::Role::Recipient
+    let active_exit = selected_exit
+        .filter(|selected| {
+            config.route_offers.iter().any(|offer| {
+                offer.route_id == **selected
+                    && offer.kind == crate::route_offer::Kind::Exit
+                    && offer.role == crate::route_offer::Role::Recipient
+            })
         })
-    });
+        .filter(|_| exit_route_installed);
     let _ = writeln!(out, "\n[routing]");
     let _ = writeln!(out, "offers = {}", config.route_offers.len());
     let _ = writeln!(out, "selected_exit = {selected_exit:?}");
@@ -3201,6 +3425,8 @@ fn refresh_netmap(
     routes: &Mutex<Routes>,
     disco: &Mutex<disco::Disco>,
     home: &Mutex<crate::home::Selector>,
+    exit_policy: &Mutex<crate::exit_policy::Manager>,
+    control_endpoint: Option<&str>,
     dns_runtime: &Mutex<Option<crate::dns::Runtime>>,
     exit_node: Option<&Mutex<crate::exit_node::Selection>>,
     dns_host: &Mutex<crate::dns::HostRuntime>,
@@ -3362,7 +3588,17 @@ fn refresh_netmap(
                 .active()
                 .map(str::to_owned)
         });
-        apply_routes(routes, tun, &updated, selected_exit.as_deref());
+        if let Err(error) = reconcile_exit(
+            routes,
+            exit_policy,
+            tun,
+            &updated,
+            Some(engine),
+            control_endpoint,
+            selected_exit.as_deref(),
+        ) {
+            eprintln!("karstd: exit selection is dormant after netmap refresh: {error}");
+        }
 
         // Gateway grants are derived from the same verified snapshot. A failed
         // update removes stale Karst-owned grants and records failed readiness.
@@ -3597,7 +3833,9 @@ fn bug_report(
 mod route_tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
-    use super::{dns_query_report, dns_report, routing_report, Routes};
+    use super::{
+        dns_query_report, dns_report, routing_report, underlay_addresses, url_authority, Routes,
+    };
     use crate::config::Config;
     use std::net::IpAddr;
 
@@ -3835,17 +4073,57 @@ mod route_tests {
         let mut cfg = config(&["100.64.0.1/16"], &[&["0.0.0.0/0"]]);
         cfg.route_offers.push(exit_offer("exit-eu"));
 
-        let dormant = routing_report(&cfg, Some("withdrawn-id"), false, Some("nft unavailable"));
+        let dormant = routing_report(
+            &cfg,
+            Some("withdrawn-id"),
+            false,
+            false,
+            Some("nft unavailable"),
+        );
         assert!(dormant.contains("selected_exit = Some(\"withdrawn-id\")"));
         assert!(dormant.contains("exit_route_active = false"));
         assert!(dormant.contains("gateway_error = Some(\"nft unavailable\")"));
 
-        let active = routing_report(&cfg, Some("exit-eu"), false, None);
+        let active = routing_report(&cfg, Some("exit-eu"), true, false, None);
         assert!(active.contains("exit_route_active = true"));
         assert!(active.contains("route_id = \"exit-eu\""));
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    #[test]
+    fn control_url_authorities_cover_names_literals_and_ipv6() {
+        assert_eq!(
+            url_authority("https://control.example/v1").unwrap(),
+            ("control.example", 443)
+        );
+        assert_eq!(
+            url_authority("http://192.0.2.8:8080").unwrap(),
+            ("192.0.2.8", 8080)
+        );
+        assert_eq!(
+            url_authority("https://[2001:db8::8]:8443").unwrap(),
+            ("2001:db8::8", 8443)
+        );
+        assert!(url_authority("control.example:443").is_err());
+    }
+
+    #[test]
+    fn configured_peer_and_control_addresses_become_underlay_escapes() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["100.64.0.2/32"]]);
+        cfg.peers.first_mut().unwrap().endpoint = Some("192.0.2.20:51820".parse().unwrap());
+
+        let escapes = underlay_addresses(&cfg, None, Some("https://198.51.100.9:443")).unwrap();
+        assert_eq!(
+            escapes,
+            [
+                "192.0.2.20".parse().unwrap(),
+                "198.51.100.9".parse().unwrap()
+            ]
+            .into_iter()
+            .collect()
+        );
     }
 
     // ── endpoints discovery installs and withdraws ────────────────────────
