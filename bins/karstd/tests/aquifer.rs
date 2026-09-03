@@ -56,6 +56,10 @@ const NS_NAT_B: &str = "karst-tn-natb";
 /// The carrier's NAT, for [`Shape::DoubleNat`] only — a second translation
 /// stage in front of node A's own router.
 const NS_CG: &str = "karst-tn-cg";
+/// A private segment behind node A, for the subnet-router row only — a
+/// destination host reachable *only* through node A's own gateway
+/// forwarding, never directly.
+const NS_DEST: &str = "karst-tn-dest";
 
 /// Everything on the public segment hangs off a bridge in [`NS_PUB`], so the
 /// same wiring carries two, three or four participants.
@@ -73,6 +77,13 @@ const IP_B_PRIVATE: &str = "10.98.2.2";
 /// Node B's address when it shares node A's private segment — [`Shape::SameLan`].
 const IP_B_SAME_LAN: &str = "10.98.1.3";
 const NAT_B_INNER: &str = "10.98.2.1";
+
+/// [`attach_destination_lan`]'s segment — the subnet-router row only.
+/// `DEST_GATEWAY` is node A's own address on it; `DEST_PREFIX` is what the
+/// route offer advertises.
+const DEST_GATEWAY: &str = "10.99.0.1";
+const DEST_HOST: &str = "10.99.0.2";
+const DEST_PREFIX: &str = "10.99.0.0/24";
 
 /// The carrier's public address, and its side of the shared-space segment.
 ///
@@ -311,7 +322,7 @@ impl Drop for Aquifer {
         // NS_NAT too, even in the topologies that never create it: deleting a
         // namespace that is not there is free, and an earlier version listed
         // only the two it knew about and left the third behind.
-        for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG] {
+        for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST] {
             let _ = sh(&["ip", "netns", "del", ns]);
             // The NAT64 row writes a per-namespace `resolv.conf` under `/etc`,
             // which is the one thing this fixture leaves outside its own
@@ -811,7 +822,7 @@ struct End<'a> {
 
 /// Build the namespaces, and return the addresses the two nodes listen on.
 fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static str) {
-    for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG] {
+    for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
     for ns in [NS_A, NS_B, NS_PUB] {
@@ -999,6 +1010,47 @@ fn flavor_for_b(shape: Shape) -> Flavor {
         // [`flavor_for_a`]'s doc comment explains why.
         _ => Flavor::PortRestrictedCone,
     }
+}
+
+/// The subnet-router row's destination LAN: a private segment behind node A,
+/// reachable only through node A's own gateway forwarding.
+///
+/// **No bridge, unlike [`build_same_lan`].** That row puts two Karst nodes on
+/// one inside segment on purpose — the point is that neither is privileged
+/// over the other. Here there is exactly one thing behind node A and nothing
+/// else needs to share the segment, so a bare veth is the whole topology.
+///
+/// **No manual `ip_forward` or masquerade rule, on purpose.** Enabling
+/// forwarding here would test the fixture's own plumbing instead of node A's
+/// `gateway::Manager` — the row exists to prove that reconciling a route
+/// offer with `role = Gateway` is what turns a plain node into a router, not
+/// to assume it and check the traffic crosses.
+///
+/// **The destination host's own default route, not a route to any specific
+/// overlay prefix.** The test route offer that names this segment sets
+/// `masquerade = true`, so every packet the destination host ever sees from
+/// the recipient arrives already rewritten to node A's own address on this
+/// segment (`DEST_GATEWAY`) — an ordinary host on an ordinary LAN, with one
+/// neighbor, needs nothing more specific than a default route to answer it.
+fn attach_destination_lan() {
+    must(&["ip", "netns", "add", NS_DEST]);
+    must(&nsr(NS_DEST, &["ip", "link", "set", "lo", "up"]));
+    veth(
+        End {
+            dev: "ktn-a-dest",
+            ns: NS_A,
+            ip: Some(DEST_GATEWAY),
+        },
+        End {
+            dev: "ktn-dest-a",
+            ns: NS_DEST,
+            ip: Some(DEST_HOST),
+        },
+    );
+    must(&nsr(
+        NS_DEST,
+        &["ip", "route", "add", "default", "via", DEST_GATEWAY],
+    ));
 }
 
 /// Both nodes on one private segment behind a single NAT.
@@ -3634,6 +3686,352 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
         PUSH_BOUND.as_secs(),
         status(&net, "a", NS_A),
         net.log("server.log")
+    );
+}
+
+/// Shared bring-up for the W7 routing rows: a flat A/B pairing plus node A's
+/// isolated destination LAN ([`attach_destination_lan`]) and the
+/// coordination server's `/routes` admin surface, with both sessions
+/// established by the time this returns. `suffix` only distinguishes each
+/// row's own temp directory — the same reason [`Aquifer`]'s other bespoke
+/// tests each pick their own.
+fn start_routing_topology(suffix: &str) -> Aquifer {
+    let mut net = Aquifer {
+        dir: std::env::temp_dir().join(format!("karst-aquifer-{suffix}-{}", std::process::id())),
+        services: Vec::new(),
+        nodes: Vec::new(),
+    };
+    let _ = std::fs::remove_dir_all(&net.dir);
+    std::fs::create_dir_all(&net.dir).expect("temp dir");
+    let ips = build_topology(&mut net, Shape::Flat);
+    attach_destination_lan();
+    let (ca, relay_pk) = start_relay(&mut net);
+    let pins = start_server_with_options(
+        &mut net,
+        &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk)],
+        "",
+        0,
+        &["--control".to_owned(), format!("{IP_PUB}:{CONTROL_PORT}")],
+    );
+    write_node_configs(&net, &pins, &ca, ips);
+
+    start_node(&mut net, "a", NS_A);
+    wait_for(&net, "node A to come up", Duration::from_secs(30), || {
+        net.log("a.log").contains("up, mtu")
+    });
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to see its peer",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "name").is_some(),
+    );
+    net.stop_node("a", NS_A);
+    start_node(&mut net, "a", NS_A);
+    wait_for(
+        &net,
+        "both sessions to establish",
+        Duration::from_secs(60),
+        || {
+            field(&status(&net, "a", NS_A), "state").as_deref() == Some("established")
+                && field(&status(&net, "b", NS_B), "state").as_deref() == Some("established")
+        },
+    );
+    net
+}
+
+/// **W7's first row**: a recipient reaches a subnet it has no direct route to
+/// at all, entirely through its peer's own gateway forwarding —
+/// `plans/phase-6/06-subnet-routers-and-exit-nodes.md` §7's exit demonstration,
+/// step 1 through 3, minus the console (there is no console to drive from a
+/// namespace test; `karst-testserver`'s new `/routes` admin surface stands in
+/// for it, the same way it already stands in for revoking a device).
+///
+/// **Node A is the gateway and the recipient is node B**, on an ordinary
+/// [`Shape::Flat`] pairing — this row is about the route projection, kernel
+/// forwarding, and consent machinery, not NAT traversal, which every other
+/// row already covers on its own terms. [`attach_destination_lan`] gives node
+/// A a private segment nothing else on the fixture can reach directly: the
+/// destination host has no route to [`NS_PUB`] or [`NS_B`] at all, so the
+/// only way traffic crosses is through node A's tunnel and its own
+/// `gateway::Manager`.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() {
+    if !have_prerequisites() {
+        return;
+    }
+    let mut net = start_routing_topology("route");
+
+    // Node A's own overlay address, read the same way the revocation row
+    // reads node B's — the fixture assigns addresses in registration order,
+    // and this row restarts node A, so hardcoding one would be a guess.
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    // Nothing before this point could have reached the destination host: it
+    // has no route to anything on the fixture but node A. This is the
+    // assertion that the row's topology actually isolates what it claims to.
+    assert!(
+        !dest_reachable(),
+        "the destination host was reachable before any route offer existed — \
+         the topology does not isolate it the way this row assumes"
+    );
+
+    let created = fixture_create_route(&RouteOfferBody {
+        route_id: "dest-lan",
+        prefix: DEST_PREFIX,
+        gateway_handle: &gateway_handle,
+        metric: 100,
+        masquerade: true,
+        keep_route: false,
+    });
+    assert!(
+        created,
+        "the fixture rejected the route offer (gateway handle {gateway_handle:?})"
+    );
+
+    // The same restart-to-pick-up-a-server-side-change pattern the offline-
+    // ceremony and revocation rows already use: this fixture's `/routes`
+    // admin surface does not push, unlike a real deployment's route/group/
+    // policy change — see `routeRegistry`'s own doc comment for why that gap
+    // is acceptable here.
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish with the route offer in its first netmap",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    // Port 22, not some arbitrary port: the fixture's compiled ACL
+    // (`buildNetmapServer` in `karst-testserver`) accepts only `*:22` — see
+    // every other row's own listener/probe pair in this file.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{DEST_HOST}',22)); s.listen(1)\n\
+         c,_=s.accept(); c.sendall(b'behind the gateway'); c.close()\n"
+    );
+    net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let probe = format!(
+        "import socket,sys\n\
+         s=socket.create_connection(('{DEST_HOST}',22),timeout=15)\n\
+         sys.stdout.write(s.recv(64).decode())\n"
+    );
+    let out = Command::new("ip")
+        .args(["netns", "exec", NS_B, "python3", "-c", &probe])
+        .output()
+        .expect("run the recipient's probe");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("behind the gateway"),
+        "the recipient could not reach the destination through the gateway: \
+         {} {}\n── node A ──\n{}\n── node B ──\n{}\n── a.log ──\n{}\n\
+         ── b.log ──\n{}\n── server log ──\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+        status(&net, "a", NS_A),
+        status(&net, "b", NS_B),
+        net.log("a.log"),
+        net.log("b.log"),
+        net.log("server.log"),
+    );
+}
+
+/// Whether the destination host answers on its private segment at all — the
+/// isolation check [`a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding`]
+/// makes before any route exists. A bare TCP connect to a port nothing is
+/// listening on still completes or refuses at the IP layer either way
+/// reachability actually is, so this checks routability with a UDP probe
+/// instead: a delivered-but-refused datagram proves the network path exists,
+/// which a `python3 -c socket.create_connection(...)` failing either way
+/// (`ConnectionRefusedError` vs `OSError: Network is unreachable`) does not
+/// distinguish from the shell alone.
+fn dest_reachable() -> bool {
+    let probe = format!(
+        "import socket,sys\n\
+         s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n\
+         s.settimeout(2)\n\
+         try:\n\
+         \x20   s.connect(('{DEST_HOST}', 1))\n\
+         \x20   s.send(b'x')\n\
+         \x20   s.recv(1)\n\
+         \x20   sys.exit(0)\n\
+         except ConnectionRefusedError:\n\
+         \x20   sys.exit(0)\n\
+         except Exception:\n\
+         \x20   sys.exit(1)\n"
+    );
+    Command::new("ip")
+        .args(["netns", "exec", NS_B, "python3", "-c", &probe])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// The `POST /routes` body — see `karst-testserver`'s `routeOfferRequest`.
+struct RouteOfferBody<'a> {
+    route_id: &'a str,
+    prefix: &'a str,
+    gateway_handle: &'a str,
+    metric: u32,
+    masquerade: bool,
+    keep_route: bool,
+}
+
+fn fixture_create_route(body: &RouteOfferBody<'_>) -> bool {
+    let payload = format!(
+        "{{\"route_id\":{:?},\"prefix\":{:?},\"gateway_handle\":{:?},\
+         \"metric\":{},\"masquerade\":{},\"keep_route\":{}}}",
+        body.route_id,
+        body.prefix,
+        body.gateway_handle,
+        body.metric,
+        body.masquerade,
+        body.keep_route,
+    );
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_PUB,
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "POST",
+            "-H",
+            "content-type: application/json",
+            "-d",
+            &payload,
+            &format!("http://{IP_PUB}:{CONTROL_PORT}/routes"),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+        .unwrap_or(false)
+}
+
+/// **W7's second row**: the same masquerade-based reachability as the
+/// subnet-router row, but through the client-consent gate a default-route
+/// ("exit") offer requires instead of installing itself. Plan §3.2's
+/// "default-route consent belongs to the client": the server offering
+/// `0.0.0.0/0` changes nothing on the wire until the recipient calls `karst
+/// exit-node use`, which this row drives the same way an operator's terminal
+/// would — the daemon's own control socket, live, with no restart needed
+/// (`ipc::Command::ExitUse`'s handler in `run.rs` reconciles immediately,
+/// unlike the route *projection* itself, which this fixture can only refresh
+/// by restarting the node — see the subnet row's own comment on that gap).
+///
+/// The row proves both halves of the gate: the offer is inert on its own
+/// (`dest_reachable` stays false immediately after node B re-establishes
+/// with the exit offer in its netmap, before any consent is given), and it
+/// activates the instant — and only the instant — consent is given.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_offer() {
+    if !have_prerequisites() {
+        return;
+    }
+    let mut net = start_routing_topology("exit");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    assert!(
+        !dest_reachable(),
+        "the destination host was reachable before any route offer existed — \
+         the topology does not isolate it the way this row assumes"
+    );
+
+    let created = fixture_create_route(&RouteOfferBody {
+        route_id: "internet",
+        prefix: "0.0.0.0/0",
+        gateway_handle: &gateway_handle,
+        metric: 100,
+        masquerade: true,
+        keep_route: false,
+    });
+    assert!(
+        created,
+        "the fixture rejected the exit offer (gateway handle {gateway_handle:?})"
+    );
+
+    // Same restart-to-pick-up-a-server-side-change pattern the subnet row
+    // uses — `/routes` does not push.
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish with the exit offer in its first netmap",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{DEST_HOST}',22)); s.listen(1)\n\
+         c,_=s.accept(); c.sendall(b'via the exit'); c.close()\n"
+    );
+    net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Offered, not yet consented to: must still be unreachable.
+    assert!(
+        !dest_reachable(),
+        "the destination was reachable before local consent — an offered exit \
+         route must not become an active default route on its own"
+    );
+
+    let sock = net.dir.join("b.sock");
+    let use_out = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_B,
+            &bin("karst"),
+            "exit-node",
+            "use",
+            "internet",
+            "--socket",
+            &sock.to_string_lossy(),
+        ])
+        .output()
+        .expect("run `karst exit-node use`");
+    assert!(
+        String::from_utf8_lossy(&use_out.stdout).contains("selected"),
+        "`karst exit-node use` did not report success: {} {}",
+        String::from_utf8_lossy(&use_out.stdout),
+        String::from_utf8_lossy(&use_out.stderr),
+    );
+
+    let probe = format!(
+        "import socket,sys\n\
+         s=socket.create_connection(('{DEST_HOST}',22),timeout=15)\n\
+         sys.stdout.write(s.recv(64).decode())\n"
+    );
+    let out = Command::new("ip")
+        .args(["netns", "exec", NS_B, "python3", "-c", &probe])
+        .output()
+        .expect("run the post-consent probe");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("via the exit"),
+        "the recipient could not reach the destination after consenting to the \
+         exit route: {} {}\n── node A ──\n{}\n── node B ──\n{}\n── a.log ──\n{}\n\
+         ── b.log ──\n{}\n── server log ──\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+        status(&net, "a", NS_A),
+        status(&net, "b", NS_B),
+        net.log("a.log"),
+        net.log("b.log"),
+        net.log("server.log"),
     );
 }
 
