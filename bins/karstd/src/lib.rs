@@ -20,6 +20,7 @@ pub mod control;
 pub mod disco;
 pub mod dns;
 pub mod engine;
+pub mod exit_node;
 pub mod filter;
 pub mod flow;
 pub mod home;

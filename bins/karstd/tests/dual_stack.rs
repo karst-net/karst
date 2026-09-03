@@ -137,6 +137,8 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         nat64: None,
         addresses: vec![own_range.parse().expect("interface address")],
         psk_epoch: 1,
+        route_offers: Vec::new(),
+        exit_node_state_file: None,
         node_id: handle(&[own; 2592]).into_bytes(),
         relays: Vec::new(),
         turn_servers: Vec::new(),

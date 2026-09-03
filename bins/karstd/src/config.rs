@@ -637,6 +637,12 @@ pub struct Config {
     /// could redirect the hop. The relay's *identity* comes from the netmap and
     /// is post-quantum; this is only the TLS layer beneath it.
     pub relay_ca_file: Option<PathBuf>,
+    /// Authenticated route offers retained for local consent and diagnostics.
+    pub route_offers: Vec<crate::route_offer::Offer>,
+    /// Root-owned local state selecting one exit route. None for static
+    /// rosters, which have no server route offers.
+    pub exit_node_state_file: Option<PathBuf>,
+
     /// The roster.
     pub peers: Vec<Peer>,
     /// Cryptokey routing table over the roster.
@@ -777,6 +783,8 @@ impl Config {
             relays: Vec::new(),
             turn_servers: Vec::new(),
             relay_ca_file: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
             peers,
             routes,
             skipped: Vec::new(),
@@ -960,6 +968,8 @@ impl Config {
             turn_servers: netmap.turn_servers.clone(),
             relay_ca_file: local.relay_ca_file,
             peers,
+            route_offers: netmap.routes.clone(),
+            exit_node_state_file: local.exit_node_state_file,
             routes,
             skipped,
             filter,
@@ -1018,6 +1028,8 @@ pub struct LocalSettings {
     pub nat64: Option<karst_transport::Nat64Prefix>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
+    /// Root-owned durable exit-route selection.
+    pub exit_node_state_file: Option<PathBuf>,
 }
 
 impl fmt::Debug for LocalSettings {
@@ -2029,6 +2041,7 @@ mod netmap_tests {
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
             relay_ca_file: None,
+            exit_node_state_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,

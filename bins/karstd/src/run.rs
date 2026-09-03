@@ -415,6 +415,7 @@ pub fn run_with_control(
         userspace_publish: config.userspace_publish.clone(),
         nat64: config.nat64,
         relay_ca_file: config.relay_ca_file.clone(),
+        exit_node_state_file: config.exit_node_state_file.clone(),
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
     // refresh worker takes ownership of the client, so the relay reader can
@@ -3383,6 +3384,8 @@ mod route_tests {
         }
         Config {
             relay_ca_file: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
                 &[0x11; 64],
                 &[0x12; 32],
@@ -3729,6 +3732,8 @@ mod probe_tests {
     fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
         let config = Arc::new(crate::config::Config {
             relay_ca_file: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
                 &[0x11; 64],
                 &[0x12; 32],
@@ -4240,6 +4245,8 @@ mod probe_tests {
         let relays = engine.relays();
         crate::config::Config {
             relay_ca_file: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
                 &[0x11; 64],
                 &[0x12; 32],
