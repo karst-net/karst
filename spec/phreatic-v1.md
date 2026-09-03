@@ -443,6 +443,104 @@ bit 128.
   attacker who can forge counter values burn window slots and lock out the
   legitimate peer — a denial-of-service with no cryptographic break required.
 
+### 8.1 Rekeying and simultaneous open — normative state machine
+
+§14 item 9. Constants (`REKEY_AFTER_TIME`, `REKEY_AFTER_MESSAGES`,
+`REJECT_AFTER_TIME`, `HANDSHAKE_GIVE_UP`) are in §10; this gives the
+transitions between them.
+
+**States.** A peer relationship is in exactly one of:
+
+- **Idle** — no session, nothing in flight.
+- **Handshaking** — a `HandshakeInit` sent, awaiting `HandshakeResponse`.
+- **Established** — a live session exists. Established carries two
+  independent flags:
+  - **Role**: *initiator*, if this end's own dial produced the live session,
+    or *responder*, if it was produced by answering the peer's.
+  - **Rekey**: *quiescent*, or *rekeying* — a second handshake is in flight
+    alongside the live session, which stays fully usable throughout (§2.4
+    rekeys this way specifically so traffic never stalls for a round trip).
+
+**Rule: only the initiator rekeys.** A responder MUST NOT dial a fresh
+handshake on `REKEY_AFTER_TIME`/`REKEY_AFTER_MESSAGES` — it waits for the
+peer's. Both ends independently rekeying the same live session is the
+*simultaneous rekey* case below, not a required behavior; asymmetric rekeying
+is what keeps ordinary operation to one handshake per interval instead of two.
+
+**Rule: a responder session is not trusted until confirmed.** Deriving
+`HandshakeResponse` keys does not, by itself, replace a live session or get
+reported as established (§12.6) — a `HandshakeInit` is forgeable by anyone
+holding the recipient's public keys (§12.5). The derived keys wait, unused for
+sending, until the first message that authenticates under them arrives, which
+is the peer's own proof of completion; only then do they become the session.
+
+**Rule: simultaneous open converges by a tie-break, not by discarding.** A
+pair that each knows the other's endpoint performs a *simultaneous open* on
+every connection, not as an edge case: each dials, each then receives and
+answers the other's `HandshakeInit` before its own completes, and each ends
+up with two independent, cryptographically unrelated handshake completions
+for the same pair — the one it dialed, and the one it answered. Discarding
+the outstanding dial when the inbound one is answered was tried and is wrong:
+it stalls the initiator's completion, which the peer is still waiting to
+receive, and produces two ends that both report established while unable to
+decrypt each other (GitHub issue [#39](https://github.com/karst-net/karst/issues/39)).
+
+Keeping both is necessary, but leaves the pair with two coexisting,
+independently-derived key sets unless something converges them onto one —
+otherwise each end seals with its own initiator-role keys and reads the
+peer's only through the responder-role ones, a second AEAD attempt on every
+inbound datagram for the life of the session. Implementations MUST converge
+using this tie-break, which needs no additional round trip because both ends
+already hold both values:
+
+> Compare the two ends' static KEM public keys (`S_pk`, §4) as byte strings.
+> The higher one's *initiator* role is the handshake the pair keeps. The
+> other end's own outstanding or newly-completed handshake in that role MUST
+> be discarded rather than installed.
+
+KEM public keys are compared, not the classical DH ones, because every suite
+has one — `KARST_2` has no DH half at all (§7.1) — and not `peer_id_hint`,
+because the hint is a one-way hash: comparing the raw values both ends
+already parsed out of the netmap and their own key file needs one fewer
+derivation and is exactly as valid for breaking a tie.
+
+**The losing side does not always learn it lost immediately, and MUST NOT be
+made to.** Whichever side's own handshake happens to complete *first*,
+before it has any way to know a collision exists, legitimately becomes the
+live session at that moment — there is nothing to compare against yet. If
+that side turns out to be the tie-break's loser once the peer's competing
+completion is also known, applying the rule immediately, on the strength of
+the bare, unauthenticated second `HandshakeInit` that reveals the collision,
+would violate the previous rule: an implementation MUST NOT let an
+unconfirmed handshake message override a session already in use. The loser
+corrects itself the same way any responder session is trusted — on the first
+authenticated transport message from the peer, which is also the message
+that proves the peer converged on the winning pairing. Until then the pair
+is fully usable in both directions (via the responder-confirmation slot each
+side already holds for exactly this purpose); what is delayed is only the
+bookkeeping, for at most one message in the losing direction.
+
+**Transitions:**
+
+| State | Event | Action | Next state |
+|---|---|---|---|
+| Idle | Local dial | Send `HandshakeInit` | Handshaking |
+| Handshaking | Retry timer | Resend `HandshakeInit` | Handshaking |
+| Handshaking | `HANDSHAKE_GIVE_UP` elapsed | None | Idle |
+| Handshaking | Valid `HandshakeResponse` | Derive session keys | Established, initiator, quiescent |
+| Handshaking | Inbound `HandshakeInit` from this peer (simultaneous open) | Answer it; derive responder-role keys and install as the live session; carry the outstanding dial into the rekey slot | Established, responder, rekeying |
+| Established, initiator, quiescent | `REKEY_AFTER_TIME`/`REKEY_AFTER_MESSAGES` | Dial a fresh handshake alongside the live session | Established, initiator, rekeying |
+| Established, responder, quiescent | `REKEY_AFTER_TIME`/`REKEY_AFTER_MESSAGES` | None — only the initiator rekeys | unchanged |
+| Established, *, rekeying | Rekey retry timer | Resend the rekey's `HandshakeInit` | unchanged |
+| Established, *, rekeying | Rekey's `HANDSHAKE_GIVE_UP` elapsed | Abandon the rekey attempt; live session unaffected | Established, *, quiescent |
+| Established, initiator, rekeying | Valid `HandshakeResponse` for the rekey | New session replaces the live one; the old one is kept, decryption-only, until it expires | Established, initiator, quiescent |
+| Established, responder, rekeying | Valid `HandshakeResponse` for the carried-over dial, **and this end wins the tie-break** | Same as the row above | Established, initiator, quiescent |
+| Established, responder, rekeying | Valid `HandshakeResponse` for the carried-over dial, **and this end loses the tie-break** | Discard the newly-derived keys; the live (responder-role) session is unaffected | Established, responder, quiescent |
+| Established, any | Inbound `HandshakeInit` from this peer, live session already in use | Answer it; hold the derived keys unused, pending confirmation (§12.6) | unchanged, with a pending set |
+| Established, any, pending set | First transport message that authenticates under the pending keys | Promote them to the live session; the old live session is kept, decryption-only, until it expires; any rekey of this end's own in flight is abandoned — the peer's own handshake settled the pair instead | Established, responder, quiescent |
+| Established, any | `REJECT_AFTER_TIME` elapsed | Session closed, regardless of any rekey in flight | Idle |
+| Established, any | Inbound transport message under the live, previous, or pending keys | Deliver | unchanged (except the pending-set row above) |
+
 ---
 
 ## 9. Denial-of-service mitigation
@@ -1080,6 +1178,40 @@ note are updated to match. §13.8 is otherwise left as written — it remains
 the correct argument for the two message types it was actually measured
 against.
 
+### 13.12 The rekey state machine and simultaneous open — §14 item 9 resolved
+
+This draft said nothing about two peers dialing each other at the same
+moment, which is not an edge case but the standing behavior of any pair with
+reachable addresses on both sides — `connect_all` runs on both nodes at
+startup. §12.6 covers what a responder must not do to a *working* session
+and was silent on a handshake still in flight. An implementation that
+resolved the gap by discarding its own outstanding handshake when it
+answered the peer's produced two ends that both reported established and
+could not decrypt each other (GitHub issue
+[#39](https://github.com/karst-net/karst/issues/39)), measured before the
+fix at **9 stalls in 7.8 hours, 253–765 s each, 13% of samples**.
+
+Keeping both handshakes, added at the time, fixed that but traded it for a
+standing cost: a pair that keeps two independently-derived key sets
+indefinitely, sealing with one and reading the other, pays a second AEAD
+attempt on every inbound datagram for the life of the session — noted in
+this draft as an open item (§14 item 9) rather than resolved, since
+converging on one session needs a tie-break the two ends can compute
+identically without another round trip, and that is a normative rule rather
+than an implementation choice.
+
+§8.1, added by this entry, gives that tie-break — the higher static KEM
+public key's initiator role is the handshake the pair keeps — and the full
+state machine around it, closing the item. Found and closed in the same
+pass, Phase 6's internal cryptographic review: the eventual-convergence
+property (a side whose own handshake completed before it could know a
+collision existed corrects itself only on the peer's first authenticated
+transport message, never on the strength of the unconfirmed second
+`HandshakeInit` that reveals the collision) is not a compromise on the tie-
+break's guarantee — it is §12.6's existing rule against trusting an
+unauthenticated handshake message applied consistently, and the pair is
+fully usable in both directions throughout regardless.
+
 ---
 
 ## 14. Open items — this draft is incomplete
@@ -1094,7 +1226,7 @@ against.
 | 6 | Padding bucket sizes for the transport phase | Metadata posture |
 | ~~7~~ | ~~The CNSA suite's key schedule with no DH contribution~~ — **resolved:** steps 6, 10 and 11 are absent, nothing substituted (§7.1); implemented and tested | — |
 | 8 | Out-of-band-KEM variant (ADR-0004 §4) framing | Optional profile |
-| 9 | Rekey state machine — precise transition table, **including simultaneous open** | Implementation |
+| ~~9~~ | ~~Rekey state machine — precise transition table, including simultaneous open~~ — **resolved:** §8.1 gives the state machine and the tie-break that converges a simultaneous open onto one session; §13.12 | — |
 | ~~10~~ | ~~§13.8 — fragment MAC no longer covers the payload.~~ — **resolved:** the adversarial reading found the argument doesn't hold for `mac2` on the two handshake types; §13.11 restores payload coverage there and leaves §13.8 as written for `CookieReply`/`TransportData` | — |
 
 Items 1 and 2 are gates, not tasks; item 2's base model now passes (§13.3).
@@ -1123,21 +1255,8 @@ Item 4 (`LOAD_THRESHOLD`) cannot be settled on paper — it needs measurement
 against a real responder under a spoofed-source flood, so it belongs with the
 Phase 1 DoS suite rather than here.
 
-**Item 9 grew a concrete gap on 2026-08-20.** Two nodes that each know the
-other's endpoint dial *simultaneously*, which is not an edge case but the
-standing behavior of any pair with reachable addresses on both sides. Each is
-then initiator and responder at once, and this draft says nothing about it —
-§12.6 covers what a responder must not do to a **working** session and is
-silent on a handshake in flight. An implementation that resolves it by
-discarding its own outstanding handshake produces two ends that both report
-success and cannot decrypt each other (GitHub issue [#39](https://github.com/karst-net/karst/issues/39)).
-
-Keeping both handshakes is correct and is what the implementation now does, but
-it leaves the pair with two coexisting sessions: each end seals with its own
-initiator keys and reads the peer's through the slot a rekey vacates. That
-works indefinitely and costs a second AEAD attempt per inbound datagram.
-Converging on one session needs a **tie-break both ends can evaluate without
-another round trip** — the two static public keys are the obvious candidate,
-since each end holds both — and that is a normative rule, so it belongs in this
-document rather than in an implementation. The transition table item 9 asks for
-should state it.
+**Item 9 grew a concrete gap on 2026-08-20 and is now resolved.** Two nodes
+that each know the other's endpoint dial *simultaneously*, which is not an
+edge case but the standing behavior of any pair with reachable addresses on
+both sides — and this draft said nothing about it. §13.12 tells the story;
+§8.1 is the resulting state machine and tie-break.

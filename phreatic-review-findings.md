@@ -21,10 +21,10 @@ phase (§8), the denial-of-service machinery (§9) — read against their
 implementations and against the open items the spec itself already tracks in
 §14 — and, in later reading passes, `karst-crypto`'s primitive-level wrapping
 of `ml-kem`, `ml-dsa`, `x25519-dalek` and `aes-gcm` (Finding 4), a line-by-line
-reread of §13.8's adversarial-reading request (§14 item 10, Finding 6), and
+reread of §13.8's adversarial-reading request (§14 item 10, Finding 6),
 constant-time behavior and branching at the KEM/DH/AEAD call sites (Finding
-7). Not yet covered: the rekey/simultaneous-open transition table (§14 item
-9). That's next.
+7), and the rekey/simultaneous-open transition table §14 item 9 asked for
+(Finding 8). This pass is complete.
 
 **Method:** reading, not running an attack. `cargo test -p karst-noise -p
 karst-proto` passes and the existing unit-test discipline in both crates is
@@ -625,6 +625,64 @@ non-redundant case). GitHub issue
 
 ---
 
+## Medium — the last open item in this workstream — **fixed 2026-09-03**
+
+### 8. §14 item 9: the simultaneous-open pair never converged on one session
+
+`crates/karst-node/src/session.rs` already kept both handshakes a
+simultaneous open produces — the fix for GitHub issue #39, landed before
+this review started — but never converged them: each end sealed with its
+own initiator-role keys and read the peer's only through the responder-role
+slot, a second AEAD attempt on every inbound datagram for the life of the
+session, confirmed still true at the point this pass re-checked it
+(`session.rs:635`, `:801`, per the "Low / already tracked" section this
+finding replaces below). §14 itself named the missing piece: "converging on
+one session needs a tie-break both ends can evaluate without another round
+trip... and that is a normative rule, so it belongs in this document."
+
+**Fixed.** Spec §8.1 (new) gives the state machine and the tie-break — the
+higher static KEM public key's initiator role is the handshake the pair
+keeps; §13.12 narrates why. `Session::handle_response`
+(`crates/karst-node/src/session.rs`) now recognizes the collision precisely
+(`rekey: Some(_)` alongside `initiated: false` has exactly one cause — an
+outstanding dial carried into the rekey slot when the peer's own dial
+answered first) and applies `wins_simultaneous_open_tiebreak`, a pure
+comparison of the two already-known static keys: the winner proceeds as
+before; the loser discards its own just-completed handshake and keeps the
+live responder-derived session unchanged.
+
+**One property found while writing the test, not assumed going in:
+convergence is not always immediate, and MUST NOT be made to be.** Whichever
+side's own handshake happens to complete first — before it has any way to
+know a collision exists — legitimately becomes the live session at that
+moment. If that side turns out to be the tie-break's loser once the
+collision becomes visible (the peer's competing `HandshakeInit` arriving
+after this end's own handshake already completed, which several of the six
+message interleavings produce), correcting it immediately, on the strength
+of that bare, unauthenticated second `HandshakeInit`, would violate §12.6's
+existing rule against trusting an unconfirmed handshake message to override
+a session already in use. The loser corrects itself on the peer's first
+authenticated transport message instead — `Session::promote`, the same
+mechanism §12.6 already uses for ordinary responder-session confirmation —
+which the spec states as an explicit, deliberate part of the rule (§8.1,
+§13.12) rather than a residual gap. The pair is fully usable in both
+directions throughout; only the bookkeeping lags, for at most one message in
+the losing direction.
+
+New coverage in `crates/karst-node/tests/simultaneous.rs`:
+`a_simultaneous_open_converges_on_the_higher_static_key` asserts, across all
+six message interleavings, that exactly one side ends up `initiated()` and
+that it is the side the tie-break names — checked after one round of
+traffic each way, matching the eventual-convergence property above.
+`only_the_simultaneous_opens_winner_rekeys` replaces
+`a_simultaneous_rekey_carries_traffic`, whose premise ("after a simultaneous
+open both ends are initiators, so both rekey") this fix makes false by
+design — only the converged initiator ever rekeys now, the ordinary rule,
+restored rather than worked around. GitHub issue
+[#83](https://github.com/karst-net/karst/issues/83) closed.
+
+---
+
 ## Low / already tracked — re-confirmed, not re-opened
 
 - **§14 item 3, test vectors for the full key schedule, is still absent.**
@@ -632,12 +690,6 @@ non-redundant case). GitHub issue
   holds Bedrock, control-API and relay-roster vectors only. Blocks
   interoperability testing, not security, per the spec's own table. Left open
   here rather than re-filed.
-- **§14 item 9 — the rekey/simultaneous-open transition table, including the
-  tie-break §14 asks for — is still prose in the spec, not a table**, and
-  `crates/karst-node/src/session.rs` still runs two coexisting sessions per
-  the "costs a second AEAD attempt per inbound datagram" note rather than
-  converging. Confirmed still true (`session.rs:635`, `:801`); not re-examined
-  in depth this pass.
 - GitHub issue [#59](https://github.com/karst-net/karst/issues/59) (transport
   type byte outside the AEAD) is an accepted, recorded constraint, re-checked
   and unchanged — Bedrock's head exchange correctly multiplexed inside the
@@ -704,8 +756,18 @@ issue [#82](https://github.com/karst-net/karst/issues/82). Every
 closed; honestly scoped as defense in depth for five of the six legs and a
 real fix for the sixth (a netmap-sourced peer static key).
 
-**All seven findings from this workstream's first pass, and §14 item 10, are
-now closed.**
+**Finding 8 (§14 item 9, the rekey/simultaneous-open transition table) is
+closed** — GitHub issue [#83](https://github.com/karst-net/karst/issues/83).
+Spec §8.1 gives the state machine and the static-key tie-break that
+converges a simultaneous open onto one session; §13.12 narrates it.
 
-Next pass for this workstream: item 9's rekey/simultaneous-open transition
-table.
+**All eight findings from this workstream's first pass are closed, and so
+are every one of §14's items that this pass could resolve on paper — 5, 7
+and 10 by earlier passes, 9 by this one.** What remains open in §14 is
+exactly what the spec itself says needs something this workstream cannot
+provide: item 1/2's ProVerif lattice-break gap (needs Tamarin or a
+restructured model), item 3 (test vectors — an interoperability task, not a
+security one), item 4 (`LOAD_THRESHOLD` — needs a real flood, not a
+reading), item 6 (padding buckets — a metadata-posture design choice), and
+item 8 (the out-of-band-KEM profile — not yet built). This workstream's
+first pass is complete.

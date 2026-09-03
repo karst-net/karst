@@ -18,9 +18,19 @@
 //! each — in the one place that rule does not reach, because `initiated` stops
 //! two *rekeys* racing and says nothing about the first handshake.
 //!
-//! The rekey race then reappears through the same door: after a simultaneous
-//! open both ends are initiators, so both rekey, and completing one handshake
-//! must not discard the keys owed to the other.
+//! The rekey race then reappears through the same door: keeping both
+//! handshakes indefinitely works, but leaves the pair on two different key
+//! sets — each end sealing with its own initiator keys and reading the
+//! peer's only through the slot a rekey vacates, a second AEAD attempt on
+//! every inbound datagram forever. §13.12 (GitHub issue [#39]) closes that
+//! with a tie-break both ends compute identically, with no extra round
+//! trip: the higher static KEM public key's initiator handshake is the one
+//! both ends keep, and completing the losing side's own handshake discards
+//! it rather than installing it. Only the winner is `initiated` afterward,
+//! so only the winner ever rekeys — the ordinary rule, restored rather than
+//! worked around.
+//!
+//! [#39]: https://github.com/karst-net/karst/issues/39
 //!
 //! Every valid interleaving is enumerated rather than sampled. There are only
 //! six, the ordering is exactly what a real network chooses at random, and a
@@ -48,6 +58,15 @@ const SRC_B: SourceKey = [0x22; 18];
 
 fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
     Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
+}
+
+/// Which side's static KEM key wins §13.12's simultaneous-open tie-break,
+/// computed the same way `Session::wins_simultaneous_open_tiebreak` does —
+/// independently, from the same seeds `Both::new` uses, so a test can assert
+/// convergence lands on the side the rule actually names rather than merely
+/// "some one side."
+fn a_wins_tiebreak() -> bool {
+    keys(0xA1, 0xA2).kem_pk.to_bytes() > keys(0xB1, 0xB2).kem_pk.to_bytes()
 }
 
 fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
@@ -285,6 +304,38 @@ fn a_simultaneous_open_carries_traffic_in_every_order() {
     }
 }
 
+/// **§13.12's tie-break, exercised.** Whichever order the four messages land
+/// in, the pair converges on exactly one of the two handshakes: exactly one
+/// side reports `initiated() == true`, and it is the side the higher static
+/// KEM public key names — not merely "some one side," and not both, which
+/// is what every interleaving produced before the tie-break existed.
+///
+/// Checked after a round of traffic each way, not immediately after the four
+/// handshake messages: a side that completed its own handshake before
+/// learning of the collision (the losing side can race ahead of the winner's
+/// completion in some interleavings) only corrects itself on the first
+/// authenticated transport message from its peer — `Session::promote`,
+/// §12.6's existing discipline — rather than trusting a bare, unconfirmed
+/// re-dial to override a session already in use. Spec §13.12 states this.
+#[test]
+fn a_simultaneous_open_converges_on_the_higher_static_key() {
+    let a_should_win = a_wins_tiebreak();
+    for order in interleavings() {
+        let mut both = open_in_order(order, 1_000);
+        both.assert_traffic_both_ways(2_000, &format!("{order:?}"));
+        assert_ne!(
+            both.a.initiated(),
+            both.b.initiated(),
+            "{order:?}: exactly one side must converge as initiator, not both or neither"
+        );
+        assert_eq!(
+            both.a.initiated(),
+            a_should_win,
+            "{order:?}: the higher static key's side must be the one that converged"
+        );
+    }
+}
+
 /// The same pair, still working a long way past the open.
 ///
 /// Separate from the test above because "it decrypted once" and "it is a
@@ -301,36 +352,43 @@ fn a_simultaneously_opened_pair_keeps_working() {
     }
 }
 
-/// **Both ends rekey at once**, which is not an unlucky case but the expected
-/// one after a simultaneous open: both sessions were created in the same
-/// millisecond, so both reach `REKEY_AFTER_TIME` in the same millisecond, and
-/// after a simultaneous open both ends are initiators.
+/// **Only the tie-break's winner rekeys** — the ordinary single-initiator
+/// rule (see `a_one_sided_dial_leaves_the_responder_passive` below), now
+/// holding for a pair that opened simultaneously too.
 ///
-/// Completing one's own handshake must not discard the keys owed to the other.
+/// Before §13.12 existed, both ends stayed `initiated` after a simultaneous
+/// open, so both dialed a rekey at once, and completing one's own handshake
+/// had to be careful not to discard the keys owed to the other — that race
+/// is what this test used to exercise. It can no longer arise: only one side
+/// is `initiated` once the open converges, so only that side ever rekeys.
 #[test]
-fn a_simultaneous_rekey_carries_traffic() {
+fn only_the_simultaneous_opens_winner_rekeys() {
     let mut both = open_in_order(interleavings()[1], 0);
     both.assert_traffic_both_ways(1_000, "before the rekey");
 
-    // Both poll past the rekey point, and both dial.
+    let (winner, loser) = if both.a.initiated() {
+        (Side::A, Side::B)
+    } else {
+        (Side::B, Side::A)
+    };
+
     let at = REKEY_AFTER_MS + 10;
-    let a_init = Both::sends(both.a.poll(at, [0x11; 32]));
-    let b_init = Both::sends(both.b.poll(at, [0x22; 32]));
+    let winner_init = Both::sends(both.session(winner).poll(at, [0x11; 32]));
+    let loser_out = Both::sends(both.session(loser).poll(at, [0x22; 32]));
     assert!(
-        !a_init.is_empty() && !b_init.is_empty(),
-        "after a simultaneous open both ends are initiators, so both rekey"
+        !winner_init.is_empty(),
+        "the converged initiator must still rekey"
+    );
+    assert!(
+        loser_out.is_empty(),
+        "the converged responder must not rekey — that is the race §13.12 closes"
     );
 
-    // Each answers the other's init before either answer comes back — the
-    // window in which a completing handshake could throw away the keys the
-    // peer is about to seal with.
-    let (a_resp, _) = both.feed(Side::B, a_init, at);
-    let (b_resp, _) = both.feed(Side::A, b_init, at);
-    both.feed(Side::A, a_resp, at + 10);
-    both.feed(Side::B, b_resp, at + 10);
+    let (winner_resp, _) = both.feed(loser, winner_init, at);
+    both.feed(winner, winner_resp, at + 10);
 
-    both.assert_traffic_both_ways(at + 100, "after the simultaneous rekey");
-    both.assert_traffic_both_ways(at + 30_000, "well after the simultaneous rekey");
+    both.assert_traffic_both_ways(at + 100, "after the rekey");
+    both.assert_traffic_both_ways(at + 30_000, "well after the rekey");
 }
 
 /// The asymmetric case must be untouched: when only one end dials, the other

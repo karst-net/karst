@@ -385,6 +385,24 @@ impl Session {
         matches!(self.state, State::Established { .. })
     }
 
+    /// Whether **this node** initiated the handshake the live session came
+    /// from — `false` for any state that is not yet established.
+    ///
+    /// Exposed for tests: it is the observable signature of which side of a
+    /// simultaneous-open tie-break (§14 item 9, spec §13.12) won. Only the
+    /// initiator rekeys (`State::Established::initiated`'s own doc), so this
+    /// is also a preview of which side will dial first at the next rekey.
+    #[must_use]
+    pub fn initiated(&self) -> bool {
+        matches!(
+            self.state,
+            State::Established {
+                initiated: true,
+                ..
+            }
+        )
+    }
+
     /// The live transport session, if there is one.
     ///
     /// Handing out an `Arc` is what lets a caller encrypt and decrypt **without
@@ -632,6 +650,29 @@ impl Session {
             return Vec::new(); // not ours, or forged — keep retrying
         };
 
+        // §13.12's simultaneous-open tie-break. `rekey: Some(_)` alongside
+        // `initiated: false` is that collision's exact signature: the only
+        // way to reach it is `adopt_responder` carrying an outstanding
+        // `Handshaking` attempt into the `rekey` slot when the peer's own
+        // dial answers first (`poll` only ever populates `rekey` when
+        // `initiated` is already `true`). Losing means the handshake that
+        // just completed is the redundant half of the pair — the existing,
+        // already-working responder-derived session stays exactly as it is.
+        if matches!(
+            &self.state,
+            State::Established {
+                rekey: Some(_),
+                initiated: false,
+                ..
+            }
+        ) && !self.wins_simultaneous_open_tiebreak()
+        {
+            if let State::Established { rekey, .. } = &mut self.state {
+                *rekey = None;
+            }
+            return Vec::new();
+        }
+
         // `now_ms`, not zero: `established_ms` is what `REKEY_AFTER_TIME` and
         // `REJECT_AFTER_TIME` are measured from. Anchoring it at zero would make
         // every session appear to expire 180 s after the *daemon* started,
@@ -675,6 +716,24 @@ impl Session {
             previous: replaced,
         };
         vec![Action::Established]
+    }
+
+    /// §13.12's simultaneous-open tie-break: the higher static KEM public key
+    /// wins, and its holder's initiator handshake is the one both ends keep.
+    ///
+    /// A pure, local function of two values both ends already hold — no
+    /// message carries it and no round trip resolves it. KEM public keys are
+    /// used rather than the classical DH ones because every suite has one
+    /// (`KARST_2` has no DH half at all — §7.1), and rather than
+    /// `peer_id_hint` because the hint is a hash: correct either way for
+    /// breaking the tie, but comparing the values both ends already parsed
+    /// out of the netmap and their own key file is one fewer derivation.
+    /// Byte-string comparison needs no assumption about the encoding beyond
+    /// it being the same length on both ends, which it is: both parties'
+    /// static keys are the same parameter set, or the handshake that got
+    /// this far would not have.
+    fn wins_simultaneous_open_tiebreak(&self) -> bool {
+        self.keys.kem_pk.to_bytes() > self.peer.kem_pk.to_bytes()
     }
 
     fn handle_transport(&mut self, datagram: &[u8], now_ms: u64) -> Vec<Action> {
