@@ -32,7 +32,7 @@ use std::fmt;
 
 use karst_control_client::netmap::{
     netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, FilterRuleView,
-    NetmapContent, PeerEntry, RelayView, RouteView,
+    NetmapContent, PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -345,6 +345,8 @@ pub enum Error {
     Relay(String),
     /// A `KarstTurnServer` entry could not be used — `spec/aven-v1.md` §7.8.
     Turn(String),
+    /// A route offer was malformed or contradicted this node's role.
+    Route(String),
     /// The assembled state does not hash to the version the server reported.
     ///
     /// See [`Netmap::apply`] for why this is worth detecting rather than
@@ -372,6 +374,7 @@ impl fmt::Display for Error {
             }
             Self::Relay(message) => write!(f, "invalid relay: {message}"),
             Self::Turn(message) => write!(f, "invalid turn server: {message}"),
+            Self::Route(message) => write!(f, "invalid route offer: {message}"),
             Self::VersionMismatch { server, local } => write!(
                 f,
                 "assembled netmap hashes to {local:016x} but the server called it \
@@ -640,7 +643,7 @@ pub struct Netmap {
     /// `unchanged` early return for exactly this reason.
     pub turn_servers: Vec<TurnServer>,
     /// Authenticated subnet and exit-route offers for this node.
-    pub routes: Vec<pb::KarstRouteOffer>,
+    pub routes: Vec<crate::route_offer::Offer>,
     /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
     ///
     /// Held so the node can compare it against what it has verified, and
@@ -791,7 +794,8 @@ impl Netmap {
             .iter()
             .map(Relay::from_wire)
             .collect::<Result<_, _>>()?;
-        self.routes = resp.routes;
+        self.routes =
+            crate::route_offer::parse_all(resp.routes, &self.node_id).map_err(Error::Route)?;
 
         let outcome = if resp.delta {
             let changed = resp.peers.len();
@@ -906,19 +910,10 @@ impl Netmap {
                 region: &r.region,
             })
             .collect();
-        let routes: Vec<RouteView<'_>> = self
+        let routes: Vec<_> = self
             .routes
             .iter()
-            .map(|r| RouteView {
-                route_id: &r.route_id,
-                prefix: &r.prefix,
-                gateway_id: &r.gateway_id,
-                metric: r.metric,
-                kind: r.kind as u32,
-                masquerade: r.masquerade,
-                keep_route: r.keep_route,
-                role: r.role as u32,
-            })
+            .map(crate::route_offer::Offer::view)
             .collect();
         let dns_routes: Vec<DNSRouteView<'_>> = self
             .dns_config
@@ -998,7 +993,11 @@ impl Netmap {
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
             relays: self.relays.iter().map(Relay::to_wire).collect(),
-            routes: self.routes.clone(),
+            routes: self
+                .routes
+                .iter()
+                .map(crate::route_offer::Offer::to_wire)
+                .collect(),
             // **Deliberately absent.** This is what goes into the on-disk
             // cache, and a minted TURN credential belongs there even less than
             // it belongs in `content_version()` — writing it to disk would

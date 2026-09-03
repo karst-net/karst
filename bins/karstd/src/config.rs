@@ -892,6 +892,27 @@ impl Config {
                 }),
             }
         }
+        // A subnet offer grants the selected gateway ownership of the advertised
+        // prefix in this recipient's cryptokey-routing table. EXIT offers remain
+        // dormant here until the local consent store selects one.
+        for offer in &netmap.routes {
+            if offer.role != crate::route_offer::Role::Recipient
+                || offer.kind != crate::route_offer::Kind::Subnet
+            {
+                continue;
+            }
+            let Some(index) = handles
+                .iter()
+                .position(|handle| handle.as_slice() == offer.gateway_id.as_slice())
+            else {
+                return Err(ConfigError::Unusable(format!(
+                    "route {:?} names a gateway absent from the usable peer roster",
+                    offer.route_id
+                )));
+            };
+            peers[index].allowed_ips.push(offer.prefix);
+            pairs.push((offer.prefix, index));
+        }
 
         let routes = AllowedIps::build(pairs).map_err(ConfigError::Conflict)?;
         // Compiled against the same peer order the datapath indexes by, since a
@@ -2391,5 +2412,88 @@ mod skip_tests {
             "the node holds the entry even though it cannot use it; \
              claiming otherwise would make the server resend it for ever"
         );
+    }
+    fn route_offer(
+        route_id: &str,
+        prefix: &str,
+        gateway: &str,
+        kind: pb::KarstRouteKind,
+    ) -> crate::route_offer::Offer {
+        crate::route_offer::Offer::from_wire(
+            pb::KarstRouteOffer {
+                route_id: route_id.to_owned(),
+                prefix: prefix.to_owned(),
+                gateway_id: gateway.as_bytes().to_vec(),
+                metric: 100,
+                kind: kind as i32,
+                masquerade: true,
+                keep_route: false,
+                role: pb::KarstRouteRole::Recipient as i32,
+            },
+            b"self",
+        )
+        .expect("valid route offer")
+    }
+
+    #[test]
+    fn an_advertised_subnet_routes_to_and_is_owned_by_its_gateway() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "corp",
+            "10.20.0.0/16",
+            "aaa",
+            pb::KarstRouteKind::Subnet,
+        ));
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+
+        let destination = "10.20.4.5".parse().unwrap();
+        assert_eq!(cfg.routes.route(destination), Some(0));
+        assert!(cfg.routes.permits(0, destination));
+        assert!(cfg.peers[0]
+            .allowed_ips
+            .iter()
+            .any(|prefix| prefix.contains(destination)));
+    }
+
+    #[test]
+    fn an_exit_offer_is_dormant_without_local_consent() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "exit",
+            "0.0.0.0/0",
+            "aaa",
+            pb::KarstRouteKind::Exit,
+        ));
+        let cfg = Config::from_netmap(local(), &map).expect("load");
+
+        assert_eq!(cfg.routes.route("203.0.113.9".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn a_subnet_offer_with_no_usable_gateway_fails_closed() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![wire_peer("aaa", "alpha", "100.64.0.2")],
+            vec![],
+        );
+        map.routes.push(route_offer(
+            "corp",
+            "10.20.0.0/16",
+            "missing",
+            pb::KarstRouteKind::Subnet,
+        ));
+
+        assert!(matches!(
+            Config::from_netmap(local(), &map),
+            Err(ConfigError::Unusable(message)) if message.contains("absent from the usable peer roster")
+        ));
     }
 }

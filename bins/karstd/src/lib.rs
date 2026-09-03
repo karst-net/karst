@@ -32,6 +32,7 @@ mod publish;
 mod pump;
 pub mod relay;
 pub mod relay_tls;
+pub mod route_offer;
 pub mod routing;
 pub mod run;
 #[cfg(test)]
