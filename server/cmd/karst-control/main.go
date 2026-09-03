@@ -168,6 +168,7 @@ func main() {
 	defer stop()
 
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
+		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
 		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter)
 		if err != nil {
@@ -397,6 +398,60 @@ func loadTurn() ([]turncred.Entry, *turncred.Minter, error) {
 	}
 	log.Infof("karst: loaded %d turn servers from %s, credential ttl %s", len(servers), registryPath, ttl)
 	return servers, minter, nil
+}
+
+// rejectLegacyTurnConfig refuses to start against the fork's own
+// `turn:`/`credentials` block in management.json — GitHub issue #92's "two
+// parallel TURN-credential channels" question, resolved as: disabled, fatal
+// rather than silent.
+//
+// The fork's TimeBasedAuthSecretsManager (server.go, wired in controllers.go)
+// delivers TURN credentials over SyncResponse.NetbirdConfig.Turns, a channel
+// with no relationship to karst_control.proto's turn_servers field and no
+// awareness of KARST_TURN_REGISTRY_FILE/KARST_TURN_SHARED_SECRET_FILE above.
+// Karst does not modify the forked files that implement it — the same reason
+// bootstrap.go gives for attaching through seams instead — so the config
+// surface stays reachable if an operator points --config at a management.json
+// carrying a turn block, most plausibly by reusing one written for a plain
+// NetBird deployment. Left alone, that produces exactly the failure mode this
+// package's other loaders are fatal about: two credential-delivery paths an
+// operator believes are one, silently disagreeing about which servers and
+// secrets are live.
+//
+// A present-but-empty block is not that failure and must stay allowed:
+// deploy/compose/bootstrap.sh writes exactly one, `TimeBasedCredentials:
+// false` with no `Turns`, to every deployment today, as an inert placeholder
+// the fork's config loader is happy to see absent or present. server.go's
+// sendInitialSync only ever calls GenerateTurnToken behind
+// `TURNConfig.TimeBasedCredentials`, and conversion.go's `turns` projection
+// only ever has entries to iterate when `TURNConfig.Turns` is non-empty — so
+// neither flag set is the bar for "actually a second channel", not mere
+// presence of the struct.
+//
+// Fatal rather than a warning because a warning is exactly what would get
+// missed in the startup log of the one deployment where it matters. Use
+// KARST_TURN_REGISTRY_FILE and KARST_TURN_SHARED_SECRET_FILE instead, and
+// drop the turn block from management.json.
+func rejectLegacyTurnConfig(cfg *nbserver.Config) {
+	if err := checkLegacyTurnConfig(cfg); err != nil {
+		log.Fatalf("karst: %v", err)
+	}
+}
+
+// checkLegacyTurnConfig is rejectLegacyTurnConfig's testable half.
+func checkLegacyTurnConfig(cfg *nbserver.Config) error {
+	if cfg == nil || cfg.NbConfig == nil || cfg.NbConfig.TURNConfig == nil {
+		return nil
+	}
+	turn := cfg.NbConfig.TURNConfig
+	if !turn.TimeBasedCredentials && len(turn.Turns) == 0 {
+		return nil
+	}
+	return fmt.Errorf("management.json's turn config block is active (TimeBasedCredentials=%t, "+
+		"%d server(s)), which karst-control does not support — it is a second, uncoordinated "+
+		"TURN-credential path alongside karst_control.proto's turn_servers field. Configure TURN "+
+		"with %s and %s instead, and remove the turn block from the config file.",
+		turn.TimeBasedCredentials, len(turn.Turns), karstTurnRegistryEnv, karstTurnSharedSecretEnv)
 }
 
 func loadPolicy() (*policy.Document, error) {
