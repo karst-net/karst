@@ -12,7 +12,7 @@ import (
 
 func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 	account := newMemoryAccount()
-	gateway := account.register("gateway-handle", "gateway-host")
+	account.register("gateway-handle", "gateway-host")
 	registry := newRouteRegistry(account)
 	ctx := context.Background()
 
@@ -45,8 +45,8 @@ func TestRouteRegistryUpsertAndDelete(t *testing.T) {
 	if got.NetworkType != nbroute.IPv4Network {
 		t.Errorf("network type = %v, want IPv4Network", got.NetworkType)
 	}
-	if got.Peer != gateway.ID {
-		t.Errorf("peer = %q, want gateway's ID %q", got.Peer, gateway.ID)
+	if got.Peer != "gateway-handle" {
+		t.Errorf("peer = %q, want the gateway's handle %q", got.Peer, "gateway-handle")
 	}
 	if got.Metric != 50 || !got.Masquerade || !got.KeepRoute || !got.Enabled {
 		t.Errorf("fields did not round-trip: %+v", got)

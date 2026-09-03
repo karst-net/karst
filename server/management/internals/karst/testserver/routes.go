@@ -77,8 +77,7 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 	if err != nil {
 		return fmt.Errorf("prefix: %w", err)
 	}
-	gateway, err := r.account.GetPeerByPeerPubKey(ctx, req.GatewayHandle)
-	if err != nil {
+	if _, err := r.account.GetPeerByPeerPubKey(ctx, req.GatewayHandle); err != nil {
 		return fmt.Errorf("gateway_handle %q: %w", req.GatewayHandle, err)
 	}
 	networkType := nbroute.IPv4Network
@@ -102,11 +101,19 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 		ID:          nbroute.ID(req.RouteID),
 		Network:     prefix.Masked(),
 		NetworkType: networkType,
-		Peer:        gateway.ID,
-		Metric:      metric,
-		Masquerade:  req.Masquerade,
-		KeepRoute:   req.KeepRoute,
-		Enabled:     enabled,
+		// The handle, not `gateway.ID` — `projectRouteOffers` compares `Peer`
+		// against `self`, and `self` is `node.Handle(identity)`
+		// (`control/netmap.go`), which is the same string as `p.Key` for every
+		// peer entry on the wire. Karst repurposes the inherited route model's
+		// `Peer` field to hold that handle rather than netbird's internal peer
+		// ID, and `routeRegistry` has to follow the same convention or a
+		// recipient's `handles.position(...)` lookup in `bins/karstd/src/
+		// config.rs` never finds the gateway it was just told about.
+		Peer:       req.GatewayHandle,
+		Metric:     metric,
+		Masquerade: req.Masquerade,
+		KeepRoute:  req.KeepRoute,
+		Enabled:    enabled,
 	}
 	return nil
 }
