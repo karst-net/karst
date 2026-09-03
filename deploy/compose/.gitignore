@@ -6,3 +6,8 @@
 # — committing it would publish the deployment's secrets and, worse, would let
 # two deployments share a relay identity.
 state/
+
+# Written by bootstrap.sh --turn so docker compose picks up
+# KARST_TURN_REGISTRY_FILE/KARST_TURN_SHARED_SECRET_FILE automatically.
+# Deployment-specific, like state/.
+.env

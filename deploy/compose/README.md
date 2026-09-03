@@ -124,6 +124,40 @@ PLAN.md §4.3.
 | `KARST_CONTROL_PORT` | `33073` | Host port for the coordination server |
 | `KARST_AQUIFER` | `default` | Forwarding scope (§5.4) |
 | `KARST_REGION` | `default` | Relay region (§8, §9) |
+| `KARST_TURN_PORT` | `3478` | coturn's listening port, only relevant with `--turn` |
+
+## TURN fallback (optional)
+
+The relay above is the always-on path and works for the great majority of
+networks — ADR-0008 §4 reserves TURN for the networks it does not reach. It
+is off by default and does not affect the deployment above at all until you
+opt in:
+
+```sh
+KARST_RELAY_IP=203.0.113.7 ./bootstrap.sh --turn   # once, in addition to the plain run
+docker compose --profile turn up -d
+```
+
+`--turn` generates three more files under `state/` — `turn-secret` (a
+shared secret, `chmod 600`), `turns.json` (the registry every node's netmap
+carries, at `turn:$KARST_RELAY_IP:$KARST_TURN_PORT`), and `turnserver.conf`
+— and writes `KARST_TURN_REGISTRY_FILE`/`KARST_TURN_SHARED_SECRET_FILE`
+into `.env`, which `docker compose` substitutes into the `control` service
+automatically. `karst-control` mints a fresh HMAC-SHA1 TURN-REST credential
+per netmap response from the same secret `coturn` validates against —
+never a static one; see `server/management/internals/karst/turncred`'s
+package doc for why.
+
+The `coturn` service runs with `network_mode: host`, not the bridge network
+the other two services use. RFC 8656 allocates one relay port per active
+session out of the range `turnserver.conf` opens (`49160`-`49200` by
+default); mapping that range through Docker's bridge network one port at a
+time is why real-world coturn deployments use host networking instead of
+per-port `ports:` entries.
+
+Re-running `./bootstrap.sh --turn` is safe — like every other step, it skips
+regenerating a file that already exists, so it will not rotate a secret every
+node and every `coturn` instance has already agreed on.
 
 `bootstrap.sh` is idempotent: every step skips if its output exists, so
 re-running it after a partial failure finishes the job rather than replacing a
