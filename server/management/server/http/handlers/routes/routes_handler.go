@@ -21,6 +21,8 @@ const failedToConvertRoute = "failed to convert route to response: %v"
 
 const exitNodeCIDR = "0.0.0.0/0"
 
+const exitNodeCIDRv6 = "::/0"
+
 // handler is the routes handler of the account
 type handler struct {
 	accountManager account.Manager
@@ -126,13 +128,7 @@ func (h *handler) createRoute(w http.ResponseWriter, r *http.Request) {
 		accessControlGroupIds = *req.AccessControlGroups
 	}
 
-	// Set default skipAutoApply value for exit nodes (0.0.0.0/0 routes)
-	skipAutoApply := false
-	if req.SkipAutoApply != nil {
-		skipAutoApply = *req.SkipAutoApply
-	} else if newPrefix.String() == exitNodeCIDR {
-		skipAutoApply = false
-	}
+	skipAutoApply := defaultSkipAutoApply(req.Network, req.SkipAutoApply)
 
 	newRoute, err := h.accountManager.CreateRoute(r.Context(), accountID, newPrefix, networkType, domains, peerId, peerGroupIds,
 		req.Description, route.NetID(req.NetworkId), req.Masquerade, req.Metric, req.Groups, accessControlGroupIds, req.Enabled, userID, req.KeepRoute, skipAutoApply)
@@ -223,13 +219,7 @@ func (h *handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		peerID = *req.Peer
 	}
 
-	// Set default skipAutoApply value for exit nodes (0.0.0.0/0 routes)
-	skipAutoApply := false
-	if req.SkipAutoApply != nil {
-		skipAutoApply = *req.SkipAutoApply
-	} else if req.Network != nil && *req.Network == exitNodeCIDR {
-		skipAutoApply = false
-	}
+	skipAutoApply := defaultSkipAutoApply(req.Network, req.SkipAutoApply)
 
 	newRoute := &route.Route{
 		ID:            route.ID(routeID),
@@ -287,6 +277,19 @@ func (h *handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteRoute handles route deletion request
+// defaultSkipAutoApply preserves explicit legacy API choices while making a
+// default route an offer by default. Karst nodes enforce their own stronger
+// local-consent boundary regardless of this inherited field.
+func defaultSkipAutoApply(network *string, explicit *bool) bool {
+	if explicit != nil {
+		return *explicit
+	}
+	if network == nil {
+		return false
+	}
+	return *network == exitNodeCIDR || *network == exitNodeCIDRv6
+}
+
 func (h *handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	userAuth, err := nbcontext.GetUserAuthFromContext(r.Context())
 	if err != nil {

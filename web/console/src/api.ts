@@ -94,7 +94,7 @@ export type Nameserver = { ip: string; ns_type: "udp"; port: number };
 export type NameserverGroup = { id: string; name: string; description: string; nameservers: Nameserver[]; enabled: boolean; groups: string[]; primary: boolean; domains: string[]; search_domains_enabled: boolean };
 export type NameserverGroupDraft = Omit<NameserverGroup, "id">;
 
-export type NetworkRoute = { id: string; network_id: string; description: string; enabled: boolean; network: string; peer_groups: string[]; groups: string[]; metric: number; masquerade: boolean; keep_route: boolean };
+export type NetworkRoute = { id: string; network_id: string; description: string; enabled: boolean; network: string; peer_groups: string[]; groups: string[]; access_control_groups: string[]; metric: number; masquerade: boolean; keep_route: boolean; skip_auto_apply: boolean };
 export type NetworkRouteDraft = Omit<NetworkRoute, "id">;
 
 export type Token = { id: string; name: string; expiration_date: string; created_at: string; last_used?: string | null; plain_token?: string };
