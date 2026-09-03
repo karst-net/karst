@@ -1061,6 +1061,8 @@ mod tests {
             .map(Relay::from_wire)
             .collect::<Result<_, _>>()
             .expect("test relay must be valid");
+        projected.routes = crate::route_offer::parse_all(resp.routes.clone(), &projected.node_id)
+            .expect("test routes must be valid");
         if resp.delta {
             for p in held.peers.values() {
                 projected
@@ -1140,6 +1142,35 @@ mod tests {
             "the absent peer must be dropped"
         );
         assert!(map.peer(b"bbb").is_some());
+    }
+
+    #[test]
+    fn a_delta_and_full_snapshot_converge_on_the_same_route_offers() {
+        let route = pb::KarstRouteOffer {
+            route_id: "subnet-a".to_owned(),
+            prefix: "10.20.0.0/16".to_owned(),
+            gateway_id: b"aaa".to_vec(),
+            metric: 100,
+            kind: pb::KarstRouteKind::Subnet as i32,
+            masquerade: true,
+            keep_route: false,
+            role: pb::KarstRouteRole::Recipient as i32,
+        };
+        let mut from_full = Netmap::new();
+        let mut full_response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        full_response.routes = vec![route.clone()];
+        from_full
+            .apply(sealed(full_response, &from_full))
+            .expect("full");
+
+        let mut from_delta = loaded();
+        let mut delta = full(vec![]);
+        delta.delta = true;
+        delta.routes = vec![route];
+        from_delta.apply(sealed(delta, &from_delta)).expect("delta");
+
+        assert_eq!(from_delta.routes, from_full.routes);
+        assert_eq!(from_delta.content_version(), from_full.content_version());
     }
 
     /// **A node alone in its network.** An empty *full* netmap is a real state

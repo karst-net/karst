@@ -23,7 +23,7 @@ use karst_control_client::{
     handle::handle,
     netmap::{
         netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, FilterRuleView,
-        NetmapContent, PeerEntry, RelayView,
+        NetmapContent, PeerEntry, RelayView, RouteView,
     },
     psk::{pair, PSK_LEN},
 };
@@ -58,6 +58,8 @@ struct VersionCase {
     egress_filter: Option<Vec<VersionRule>>,
     #[serde(default)]
     relays: Option<Vec<VersionRelay>>,
+    #[serde(default)]
+    routes: Option<Vec<VersionRoute>>,
     #[serde(default)]
     dns: VersionDNS,
     #[serde(default)]
@@ -111,6 +113,18 @@ struct VersionRelay {
     relay_id: String,
     identity_key: String,
     region: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct VersionRoute {
+    route_id: String,
+    prefix: String,
+    gateway_id: String,
+    metric: u32,
+    kind: u32,
+    masquerade: bool,
+    keep_route: bool,
+    role: u32,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -509,6 +523,10 @@ fn relays_of(c: &VersionCase) -> &[VersionRelay] {
     c.relays.as_deref().unwrap_or_default()
 }
 
+fn routes_of(c: &VersionCase) -> &[VersionRoute] {
+    c.routes.as_deref().unwrap_or_default()
+}
+
 fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let wire = c.peers.as_deref().unwrap_or_default();
     let entries: Vec<PeerEntry<'_>> = wire
@@ -549,6 +567,25 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         })
         .collect();
 
+    let gateway_ids: Vec<Vec<u8>> = routes_of(c)
+        .iter()
+        .map(|route| unhex(&route.gateway_id))
+        .collect();
+    let routes: Vec<RouteView<'_>> = routes_of(c)
+        .iter()
+        .zip(gateway_ids.iter())
+        .map(|(route, gateway_id)| RouteView {
+            route_id: &route.route_id,
+            prefix: &route.prefix,
+            gateway_id,
+            metric: route.metric,
+            kind: route.kind,
+            masquerade: route.masquerade,
+            keep_route: route.keep_route,
+            role: route.role,
+        })
+        .collect();
+
     let dns_routes: Vec<DNSRouteView<'_>> = c
         .dns
         .routes
@@ -570,7 +607,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         packet_filter: &rules,
         egress_filter: &egress,
         relays: &relays,
-        routes: &[],
+        routes: &routes,
         dns: DNSConfigView {
             nameservers: &c.dns.nameservers,
             search_domains: &c.dns.search_domains,
