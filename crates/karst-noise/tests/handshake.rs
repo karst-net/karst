@@ -16,6 +16,7 @@ use karst_noise::handshake::{
     initiate, respond, HandshakeError, InitiatorRandomness, PeerPublic, ResponderRandomness,
     SessionParams, StaticKeys, TIMESTAMP_LEN,
 };
+use x25519_dalek::PublicKey as DhPublic;
 
 const PSK: [u8; 32] = [0x42; 32];
 const EPOCH: u32 = 7;
@@ -247,6 +248,38 @@ fn an_unknown_peer_hint_is_rejected() {
     )
     .unwrap_err();
     assert_eq!(err, HandshakeError::UnknownPeer);
+}
+
+/// **A low-order (non-contributory) peer static DH key fails the handshake
+/// closed, rather than silently producing a predictable classical
+/// contribution.**
+///
+/// `peer.dh_pk` comes from the netmap, not the wire — a network attacker
+/// cannot substitute it in transit the way it could an ephemeral key sent in
+/// the message itself (that case is a network attacker's, and is already
+/// caught by the ordinary transcript-authentication property
+/// `every_byte_of_handshake_init_is_authenticated` below pins, including at
+/// this exact field). This test is the one case where the check added for
+/// GitHub issue [#82] is not redundant with that binding: a corrupted or
+/// compromised netmap entry carrying the identity point as a peer's static
+/// DH key now fails `initiate` cleanly, instead of silently completing a
+/// handshake whose classical (X25519) contribution is the fixed, publicly
+/// computable identity-point shared secret.
+///
+/// [#82]: https://github.com/karst-net/karst/issues/82
+#[test]
+fn initiate_fails_closed_against_a_low_order_peer_static_key() {
+    let a = alice();
+    let mut b_pub = peer_of(&bob(), PSK);
+    b_pub.dh_pk = DhPublic::from([0u8; 32]); // the Curve25519 identity point
+    let err = initiate(
+        Arc::clone(&a),
+        arc_peer(&b_pub),
+        params(SuiteId::KARST_1, EPOCH),
+        &irand(),
+    )
+    .unwrap_err();
+    assert_eq!(err, HandshakeError::Malformed);
 }
 
 /// Every single-byte mutation of `HandshakeInit` must be rejected. This is the

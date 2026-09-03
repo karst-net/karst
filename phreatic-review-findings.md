@@ -19,12 +19,12 @@ Verifpal/ProVerif models in `spec/models/`.
 **Scope of this pass:** the handshake and key schedule (§6–7), the transport
 phase (§8), the denial-of-service machinery (§9) — read against their
 implementations and against the open items the spec itself already tracks in
-§14 — and, in a second reading pass, `karst-crypto`'s primitive-level wrapping
-of `ml-kem`, `ml-dsa`, `x25519-dalek` and `aes-gcm` (Finding 4). Not yet
-covered: constant-time behavior at the primitive level beyond what that pass
-already turned up, the rekey/simultaneous-open transition table (§14 item 9),
-and a line-by-line reread of §13.8's adversarial-reading request (§14 item
-10). Those are next.
+§14 — and, in later reading passes, `karst-crypto`'s primitive-level wrapping
+of `ml-kem`, `ml-dsa`, `x25519-dalek` and `aes-gcm` (Finding 4), a line-by-line
+reread of §13.8's adversarial-reading request (§14 item 10, Finding 6), and
+constant-time behavior and branching at the KEM/DH/AEAD call sites (Finding
+7). Not yet covered: the rekey/simultaneous-open transition table (§14 item
+9). That's next.
 
 **Method:** reading, not running an attack. `cargo test -p karst-noise -p
 karst-proto` passes and the existing unit-test discipline in both crates is
@@ -553,6 +553,78 @@ Implementation above; spec correction at §13.11.
 
 ---
 
+## Medium — a missing standard check, honestly scoped — **fixed 2026-09-03**
+
+### 7. Every X25519 DH output should be checked for contributory behavior, and none was
+
+The constant-time-behavior pass this document's scope note deferred:
+`karst-crypto`'s KEM/DH/AEAD call sites, read for branching and comparisons
+on secret data beyond what Finding 4's zeroization pass already turned up.
+
+**What the reading found isn't a timing side channel** — `karst-crypto`'s
+`aead.rs` and `kem.rs` are thin wrappers that delegate every comparison
+(AEAD tag verification, HMAC-adjacent equality) straight to `aes-gcm` and
+`ml-kem`, both of which already do this in constant time, and neither module
+adds a branch or comparison of its own on secret material. `dos.rs`'s
+`frag_mac`/cookie comparisons (outside `karst-crypto`, but the same class of
+check) already use `ct_eq`. What it found instead, in `karst-noise`'s DH call
+sites specifically: `x25519_dalek::SharedSecret::was_contributory()` — the
+crate's own constant-time check for RFC 7748's recommended defense against a
+small-subgroup public key forcing a DH output to a fixed, publicly computable
+value (the identity point, canonically, itself a valid-looking 32-byte
+encoding) — existed in the dependency already in use and was never called at
+any of the six `diffie_hellman()` sites in `crates/karst-noise/src/handshake.rs`.
+
+**Why this is a Medium, not a High, once traced through — and why it's
+being written up carefully rather than as a headline break.** The first pass
+at this treated it as a live break of ADR-0002's "secure if either family
+holds" claim, reasoning that an active MITM could substitute a wire-carried
+ephemeral key for the identity point and force the classical contribution to
+a known value, undetected — the classic attack this check exists for. Tracing
+it through this spec's actual construction found that doesn't hold: every
+DH leg here mixes a public key that was *already* bound into the transcript
+hash via `mix_hash` before that same hash becomes the associated data for
+the handshake's own confirmatory AEAD tag (`enc_ident` or `enc_empty`,
+`crates/karst-noise/src/symmetric.rs`'s `encrypt_and_hash`/`decrypt_and_hash`).
+Substituting a wire-carried ephemeral key therefore already fails that tag,
+for a reason unrelated to the DH check —
+`crates/karst-node/tests/handshake.rs`'s existing
+`every_byte_of_handshake_init_is_authenticated` already pinned this,
+including a probe at the ephemeral key's own byte offset, before this fix
+existed. A MITM cannot run a "double substitution" to make both ends agree
+on a forced value either: completing that requires the confirmatory tags on
+*both* messages, which requires the initiator's and responder's real KEM
+secrets — the attacker does not have them, and forging a self-consistent
+handshake from scratch (§12.5 already establishes this is always possible,
+low-order key or not) gains nothing beyond what an attacker already has by
+constructing the whole exchange itself.
+
+**What the check does close.** `initiate`'s "es" DH step uses
+`peer.dh_pk` — sourced from the local netmap, not the wire — and nothing
+binds *that* value into a transcript a network attacker could fail to
+reproduce; a corrupted or malicious netmap entry carrying a low-order static
+key would otherwise complete a handshake with a predictable, publicly
+computable classical contribution, silently. That is the one leg where this
+was a real, if narrow, gap — a supply-chain/netmap-compromise concern, not a
+network-MITM one. The other five legs are hardening: cheap, standard, and a
+backstop against a future change to the transcript-binding design
+reintroducing the gap the binding currently closes as a side effect.
+
+**Fixed.** A `mix_dh` helper (`handshake.rs`) computes each DH, checks
+`was_contributory()`, and fails the handshake closed
+(`HandshakeError::Malformed`, matching the existing style for other
+early structural failures) before mixing a non-contributory result in —
+applied uniformly to all six call sites rather than only the wire-sourced
+ones, so the rule stays simple rather than depending on which binding
+property covers which field today. `spec/phreatic-v1.md` §12 gained item 7
+recording the requirement and its honestly-scoped rationale. New coverage:
+`crates/karst-noise/tests/handshake.rs`'s
+`initiate_fails_closed_against_a_low_order_peer_static_key` (the genuinely
+non-redundant case). GitHub issue
+[#82](https://github.com/karst-net/karst/issues/82) closed.
+
+---
+
 ## Low / already tracked — re-confirmed, not re-opened
 
 - **§14 item 3, test vectors for the full key schedule, is still absent.**
@@ -626,10 +698,14 @@ issue [#81](https://github.com/karst-net/karst/issues/81). Handshake-type
 fragments now cover the payload in the MAC (spec §13.11); `CookieReply`/
 `TransportData` keep §13.8's original construction.
 
-**All six findings from this workstream's first pass, and §14 item 10, are
+**Finding 7 (the constant-time/DH-call-site reading) is closed** — GitHub
+issue [#82](https://github.com/karst-net/karst/issues/82). Every
+`diffie_hellman()` call site now checks `was_contributory()` and fails
+closed; honestly scoped as defense in depth for five of the six legs and a
+real fix for the sixth (a netmap-sourced peer static key).
+
+**All seven findings from this workstream's first pass, and §14 item 10, are
 now closed.**
 
-Next passes for this workstream: constant-time behavior at the primitive
-level beyond what Finding 4's reading turned up (KEM/DH/AEAD call sites'
-branching and comparisons), and item 9's rekey/simultaneous-open transition
+Next pass for this workstream: item 9's rekey/simultaneous-open transition
 table.

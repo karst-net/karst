@@ -629,6 +629,34 @@ an error.
 
    All of these MUST wait for the first authenticated transport message.
 
+7. **Every X25519 Diffie-Hellman output MUST be checked for contributory
+   behavior and the handshake refused if it is not** — RFC 7748's recommended
+   check, missing from the reference implementation until found during Phase
+   6's internal cryptographic review's constant-time reading (GitHub issue
+   [#82](https://github.com/karst-net/karst/issues/82)). A public key on
+   Curve25519's small subgroup — the identity point, canonically, itself a
+   valid-looking 32-byte encoding — forces `diffie_hellman`'s output to a
+   fixed value computable by anyone, without either party's secret key.
+
+   **This is defense in depth, not a fix for a network-exploitable gap in
+   this draft specifically.** §13.4's full-header transcript binding already
+   defeats the classic version of this attack — a MITM substituting one
+   party's wire-carried ephemeral key — against a genuine exchange between
+   two honest parties: the substituted key is mixed into the transcript hash
+   before the handshake's own confirmatory AEAD tags, so tampering it there
+   already fails those tags for an unrelated reason, with or without this
+   check (`crates/karst-node/tests/handshake.rs`'s
+   `every_byte_of_handshake_init_is_authenticated` already pinned this,
+   including at the ephemeral-key field, before the check existed). What the
+   check actually closes: a peer's **static** DH key, sourced from the
+   netmap rather than the wire, is bound by no such transcript property — a
+   corrupted or malicious netmap entry carrying a low-order static key would
+   otherwise complete a handshake with a predictable classical contribution
+   silently. The check is applied uniformly to every DH leg regardless of
+   whether the key is wire- or netmap-sourced, since a single rule is easier
+   to keep correct under future change than one that depends on which
+   binding property happens to cover which field today.
+
 ---
 
 ## 13. Changes arising from this draft

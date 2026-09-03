@@ -332,6 +332,53 @@ pub struct Initiator {
     peer: Arc<PeerPublic>,
 }
 
+/// Compute a DH shared secret and mix it into the transcript, refusing a
+/// **non-contributory** result — RFC 7748's and the Noise specification's
+/// recommended check, found missing from every DH leg here during Phase 6's
+/// internal cryptographic review's constant-time reading. `x25519-dalek`
+/// ships the check as `SharedSecret::was_contributory`, itself constant-time
+/// (a `ct_eq` against the identity point), so this adds no timing signal of
+/// its own; what was missing was calling it at all.
+///
+/// **Why this matters.** A public key on Curve25519's small subgroup — the
+/// identity point, canonically, itself a valid-looking 32-byte encoding —
+/// forces `diffie_hellman`'s output to a fixed value computable by anyone,
+/// without either party's secret key (Thái Dương's write-up, linked from
+/// `was_contributory`'s own doc comment, is the standard reference). An
+/// active attacker substituting one of the wire-supplied ephemeral keys this
+/// module DH's against — `e_dh_pk` in [`respond`], `e_dh_r` in
+/// [`Initiator::try_finish`] — could do this undetectably: both ends still
+/// derive matching keys and see nothing wrong, exactly as the write-up
+/// describes.
+///
+/// **Why it did not compromise anything already recorded.** `mix_key` folds
+/// a forced DH output in alongside this handshake's other, unaffected
+/// contributions — ML-KEM's shares in particular, which have no equivalent
+/// low-order attack — so a session's actual keys stayed unpredictable as
+/// long as ML-KEM held. What the gap defeated was narrower but still real:
+/// ADR-0002's "secure if either family holds" claim, for the classical half
+/// specifically. An attacker active at capture time who forced a DH leg to a
+/// value it already knows needs no future break of *that* leg's
+/// contribution when ML-KEM eventually falls — only of the KEM shares —
+/// which is a smaller bar than "the hybrid combination," and defeats the
+/// harvest-now-decrypt-later resistance this project exists to provide for
+/// exactly the sessions an active adversary chose to target while it still
+/// could.
+///
+/// Checked uniformly for every DH leg, not only the wire-supplied ones: the
+/// two that use a netmap-sourced peer static key (§7.1 steps 6 and 11) are
+/// not reachable by a network attacker today, but the rule stays simple —
+/// "every DH output is checked" — rather than a special case a future
+/// change could reintroduce a gap around.
+fn mix_dh(state: &mut SymmetricState, sk: &DhSecret, pk: &DhPublic) -> Result<(), HandshakeError> {
+    let shared = sk.diffie_hellman(pk);
+    if !shared.was_contributory() {
+        return Err(HandshakeError::Malformed);
+    }
+    state.mix_key(shared.as_bytes());
+    Ok(())
+}
+
 /// Build `HandshakeInit` and the state needed to finish — §7.1 steps 1–7.
 ///
 /// Under a suite with `dh: None` — `KARST_2` — steps 6, 10 and 11 do not exist
@@ -400,7 +447,7 @@ pub fn initiate(
     // Step 6 — classical authentication of the responder. Absent under a suite
     // with no classical half.
     if let Some(sk) = &e_dh_sk {
-        state.mix_key(sk.diffie_hellman(&peer.dh_pk).as_bytes());
+        mix_dh(&mut state, sk, &peer.dh_pk)?;
     }
 
     // Step 7.
@@ -505,9 +552,9 @@ impl Initiator {
             let mut dh_bytes = [0u8; 32];
             dh_bytes.copy_from_slice(e_dh_r);
             let e_dh_r_pk = DhPublic::from(dh_bytes);
-            state.mix_key(e_dh_sk.diffie_hellman(&e_dh_r_pk).as_bytes());
+            mix_dh(&mut state, e_dh_sk, &e_dh_r_pk)?;
             state.mix_hash(e_dh_r);
-            state.mix_key(self.keys.dh_sk.diffie_hellman(&e_dh_r_pk).as_bytes());
+            mix_dh(&mut state, &self.keys.dh_sk, &e_dh_r_pk)?;
         }
 
         // Step 12 — PSK last, gating the final key.
@@ -675,7 +722,7 @@ where
 
     // Step 6 mirrored.
     if let Some(pk) = &e_dh_pk {
-        state.mix_key(keys.dh_sk.diffie_hellman(pk).as_bytes());
+        mix_dh(&mut state, &keys.dh_sk, pk)?;
     }
 
     // Step 7 mirrored — fails closed if the transcript differs at all.
@@ -706,9 +753,9 @@ where
     state.mix_hash(&ct_ss);
 
     if let (Some(sk), Some(pk), Some(e_dh_pk)) = (&r_dh_sk, &r_dh_pk, &e_dh_pk) {
-        state.mix_key(sk.diffie_hellman(e_dh_pk).as_bytes());
+        mix_dh(&mut state, sk, e_dh_pk)?;
         state.mix_hash(pk.as_bytes());
-        state.mix_key(sk.diffie_hellman(&peer.dh_pk).as_bytes());
+        mix_dh(&mut state, sk, &peer.dh_pk)?;
     }
 
     state.mix_key_and_hash(&peer.psk);
