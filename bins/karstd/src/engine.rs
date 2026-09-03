@@ -624,6 +624,13 @@ impl Engine {
         )
     }
 
+    /// The current authenticated configuration, including live route offers.
+    /// The `Arc` keeps this snapshot coherent if a refresh swaps the roster.
+    #[must_use]
+    pub(crate) fn config(&self) -> Arc<Config> {
+        Arc::clone(&self.roster().config)
+    }
+
     /// Replace the peer set without disturbing the sessions that survive it.
     ///
     /// # What is preserved, and why it matters

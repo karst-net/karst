@@ -900,13 +900,12 @@ impl Config {
                 }),
             }
         }
-        // A subnet offer grants the selected gateway ownership of the advertised
-        // prefix in this recipient's cryptokey-routing table. EXIT offers remain
-        // dormant here until the local consent store selects one.
+        // Every recipient offer grants the selected gateway ownership of the
+        // advertised prefix in cryptokey routing. For an exit offer this only
+        // makes the gateway a valid encrypted next hop; the kernel default route
+        // remains dormant until the independent local consent store selects it.
         for offer in &netmap.routes {
-            if offer.role != crate::route_offer::Role::Recipient
-                || offer.kind != crate::route_offer::Kind::Subnet
-            {
+            if offer.role != crate::route_offer::Role::Recipient {
                 continue;
             }
             let Some(index) = handles
@@ -2473,7 +2472,7 @@ mod skip_tests {
     }
 
     #[test]
-    fn an_exit_offer_is_dormant_without_local_consent() {
+    fn an_exit_offer_has_a_cryptokey_next_hop_before_kernel_consent() {
         let mut map = netmap(
             vec!["100.64.0.1/16".to_owned()],
             vec![wire_peer("aaa", "alpha", "100.64.0.2")],
@@ -2487,7 +2486,8 @@ mod skip_tests {
         ));
         let cfg = Config::from_netmap(local(), &map).expect("load");
 
-        assert_eq!(cfg.routes.route("203.0.113.9".parse().unwrap()), None);
+        assert_eq!(cfg.routes.route("203.0.113.9".parse().unwrap()), Some(0));
+        assert_eq!(cfg.route_offers[0].route_id, "exit");
     }
 
     #[test]

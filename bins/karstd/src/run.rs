@@ -287,7 +287,20 @@ pub fn run_with_control(
     // default gateway rather than to the tunnel, which is worse than dropping
     // it.
     let routes = Mutex::new(Routes::default());
-    apply_routes(&routes, &tun, config);
+    let exit_node = config
+        .exit_node_state_file
+        .as_ref()
+        .map(crate::exit_node::Selection::load)
+        .transpose()?
+        .map(Mutex::new);
+    let selected_exit = exit_node.as_ref().and_then(|selection| {
+        selection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active()
+            .map(str::to_owned)
+    });
+    apply_routes(&routes, &tun, config, selected_exit.as_deref());
 
     announce(config, &tun, &socket)?;
 
@@ -580,6 +593,8 @@ pub fn run_with_control(
         let portmap_state = &portmap;
         let dns_runtime_ctl = &dns_runtime;
         let dns_host_ctl = &dns_host;
+        let routes_ctl = &routes;
+        let exit_node_ctl = exit_node.as_ref();
         scope.spawn(move || {
             while !shutdown.requested() {
                 match control.accept() {
@@ -590,6 +605,21 @@ pub fn run_with_control(
                         // rather than waited on.
                         let _ = stream.set_nonblocking(false);
                         let handled = ipc::serve(&mut stream, |command| {
+                            if matches!(
+                                command,
+                                ipc::Command::ExitList
+                                    | ipc::Command::ExitUse(_)
+                                    | ipc::Command::ExitDisable
+                            ) {
+                                let current = engine_ctl.config();
+                                return exit_node_command(
+                                    &command,
+                                    exit_node_ctl,
+                                    &current,
+                                    routes_ctl,
+                                    tun_ctl,
+                                );
+                            }
                             if let ipc::Command::DnsQuery(name) = &command {
                                 return dns_query_report(config, name);
                             }
@@ -662,6 +692,7 @@ pub fn run_with_control(
             let home_refresh = &home_selector;
             let dns_refresh = &dns_runtime;
             let dns_host_refresh = &dns_host;
+            let exit_node_refresh = exit_node.as_ref();
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -675,6 +706,7 @@ pub fn run_with_control(
                     disco_refresh,
                     home_refresh,
                     dns_refresh,
+                    exit_node_refresh,
                     dns_host_refresh,
                     relay_out,
                     turn_out,
@@ -2328,11 +2360,91 @@ fn apply_path_changes(changes: &[disco::PathChange], engine: &Engine) {
 /// A poisoned lock means a thread panicked while holding it; the tracked set is
 /// plain data rather than a half-written buffer, so continuing with it beats
 /// taking the tunnel down for every peer.
-fn apply_routes(routes: &Mutex<Routes>, tun: &NetworkDevice, config: &Config) {
+fn apply_routes(
+    routes: &Mutex<Routes>,
+    tun: &NetworkDevice,
+    config: &Config,
+    selected_exit: Option<&str>,
+) {
     routes
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .apply(tun, config);
+        .apply(tun, config, selected_exit);
+}
+
+/// Handle the three local-consent commands against the current authenticated
+/// netmap. The server can offer an exit, but only this state transition can
+/// install its kernel route.
+fn exit_node_command(
+    command: &ipc::Command,
+    selection: Option<&Mutex<crate::exit_node::Selection>>,
+    config: &Config,
+    routes: &Mutex<Routes>,
+    tun: &NetworkDevice,
+) -> String {
+    use std::fmt::Write as _;
+
+    let eligible = |offer: &&crate::route_offer::Offer| {
+        offer.kind == crate::route_offer::Kind::Exit
+            && offer.role == crate::route_offer::Role::Recipient
+    };
+    match command {
+        ipc::Command::ExitList => {
+            let selected = selection.and_then(|state| {
+                state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .active()
+                    .map(str::to_owned)
+            });
+            let mut out = String::new();
+            let _ = writeln!(out, "selected = {selected:?}");
+            for offer in config.route_offers.iter().filter(eligible) {
+                let active = selected.as_deref() == Some(offer.route_id.as_str());
+                let _ = writeln!(out, "[[offers]]");
+                let _ = writeln!(out, "route_id = {:?}", offer.route_id);
+                let _ = writeln!(out, "prefix = {:?}", offer.prefix.to_string());
+                let _ = writeln!(out, "metric = {}", offer.metric);
+                let _ = writeln!(out, "active = {active}");
+            }
+            out
+        }
+        ipc::Command::ExitUse(route_id) => {
+            if !config
+                .route_offers
+                .iter()
+                .filter(eligible)
+                .any(|offer| offer.route_id == *route_id)
+            {
+                return format!("error = {:?}\n", "unknown or ineligible exit route");
+            }
+            let Some(selection) = selection else {
+                return format!("error = {:?}\n", "exit-node consent is unavailable");
+            };
+            let mut state = selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(error) = state.select(route_id) {
+                return format!("error = {:?}\n", error.to_string());
+            }
+            apply_routes(routes, tun, config, Some(route_id));
+            format!("selected = {route_id:?}\n")
+        }
+        ipc::Command::ExitDisable => {
+            let Some(selection) = selection else {
+                return format!("error = {:?}\n", "exit-node consent is unavailable");
+            };
+            let mut state = selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(error) = state.disable() {
+                return format!("error = {:?}\n", error.to_string());
+            }
+            apply_routes(routes, tun, config, None);
+            "selected = None\n".to_owned()
+        }
+        _ => unreachable!("only exit-node commands reach this handler"),
+    }
 }
 
 /// The routes this node has installed, so a reconfiguration can diff them.
@@ -2351,10 +2463,18 @@ impl Routes {
     /// skipped: the kernel routes it for free from the address alone, and
     /// installing a second, identical route would be noise in `ip route` for no
     /// effect.
-    fn wanted(config: &Config) -> std::collections::BTreeSet<(std::net::IpAddr, u8)> {
+    fn wanted(
+        config: &Config,
+        selected_exit: Option<&str>,
+    ) -> std::collections::BTreeSet<(std::net::IpAddr, u8)> {
         let mut out = std::collections::BTreeSet::new();
         for peer in &config.peers {
             for range in &peer.allowed_ips {
+                // A default cryptokey route identifies an exit gateway. Kernel
+                // routing is a separate, locally consented decision below.
+                if range.len() == 0 {
+                    continue;
+                }
                 let on_link = config
                     .addresses
                     .iter()
@@ -2362,6 +2482,15 @@ impl Routes {
                 if !on_link {
                     out.insert((range.base(), range.len()));
                 }
+            }
+        }
+        if let Some(selected) = selected_exit {
+            if let Some(offer) = config.route_offers.iter().find(|offer| {
+                offer.route_id == selected
+                    && offer.kind == crate::route_offer::Kind::Exit
+                    && offer.role == crate::route_offer::Role::Recipient
+            }) {
+                out.insert((offer.prefix.base(), offer.prefix.len()));
             }
         }
         out
@@ -2373,8 +2502,8 @@ impl Routes {
     /// be installed costs reachability to one peer; giving up would cost the
     /// whole tunnel, and the node is already carrying traffic for everybody
     /// else by the time this runs.
-    fn apply(&mut self, tun: &NetworkDevice, config: &Config) {
-        let wanted = Self::wanted(config);
+    fn apply(&mut self, tun: &NetworkDevice, config: &Config, selected_exit: Option<&str>) {
+        let wanted = Self::wanted(config, selected_exit);
 
         for (dst, len) in self.0.difference(&wanted) {
             match tun.remove_route(*dst, *len) {
@@ -2581,7 +2710,11 @@ fn report(
         ipc::Command::Version => format!("version = \"{}\"\n", env!("CARGO_PKG_VERSION")),
         ipc::Command::Down => "stopping = true\n".to_owned(),
         ipc::Command::BugReport => bug_report(config, engine, device, started, relay_dropped),
-        ipc::Command::DnsStatus | ipc::Command::DnsQuery(_) => {
+        ipc::Command::DnsStatus
+        | ipc::Command::DnsQuery(_)
+        | ipc::Command::ExitList
+        | ipc::Command::ExitUse(_)
+        | ipc::Command::ExitDisable => {
             unreachable!("handled before general report")
         }
         ipc::Command::Status => {
@@ -2963,6 +3096,7 @@ fn refresh_netmap(
     disco: &Mutex<disco::Disco>,
     home: &Mutex<crate::home::Selector>,
     dns_runtime: &Mutex<Option<crate::dns::Runtime>>,
+    exit_node: Option<&Mutex<crate::exit_node::Selection>>,
     dns_host: &Mutex<crate::dns::HostRuntime>,
     relayed: Option<&RelaySender>,
     turned: Option<&TurnSender>,
@@ -3113,7 +3247,14 @@ fn refresh_netmap(
         // Routes before the roster: a peer that becomes reachable should have
         // somewhere for its packets to go by the time the datapath will accept
         // them.
-        apply_routes(routes, tun, &updated);
+        let selected_exit = exit_node.and_then(|selection| {
+            selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .active()
+                .map(str::to_owned)
+        });
+        apply_routes(routes, tun, &updated, selected_exit.as_deref());
 
         // **The whole roster swap happens under the discovery lock**, and the
         // ordering inside it is load-bearing. A roster index names a different
@@ -3490,7 +3631,7 @@ mod route_tests {
             &[&["100.64.0.2/32"], &["100.64.9.9/32"]],
         );
         assert!(
-            Routes::wanted(&cfg).is_empty(),
+            Routes::wanted(&cfg, None).is_empty(),
             "both peers are inside the interface's /16"
         );
     }
@@ -3504,7 +3645,7 @@ mod route_tests {
             &["100.64.0.1/16"],
             &[&["100.64.0.2/32"], &["192.168.1.0/24"]],
         );
-        let wanted = Routes::wanted(&cfg);
+        let wanted = Routes::wanted(&cfg, None);
         assert_eq!(wanted.len(), 1, "only the off-link range needs a route");
         assert!(wanted.contains(&("192.168.1.0".parse::<IpAddr>().unwrap(), 24)));
     }
@@ -3517,7 +3658,7 @@ mod route_tests {
             &["100.64.0.1/16"],
             &[&["fd7a:5ea5::2/128"], &["100.64.0.2/32"]],
         );
-        let wanted = Routes::wanted(&cfg);
+        let wanted = Routes::wanted(&cfg, None);
         assert_eq!(wanted.len(), 1);
         assert!(wanted.contains(&("fd7a:5ea5::2".parse::<IpAddr>().unwrap(), 128)));
     }
@@ -3530,14 +3671,51 @@ mod route_tests {
             &["100.64.0.1/16"],
             &[&["100.64.0.2/32", "10.1.0.0/16", "172.16.0.0/12"]],
         );
-        assert_eq!(Routes::wanted(&cfg).len(), 2);
+        assert_eq!(Routes::wanted(&cfg, None).len(), 2);
     }
 
     /// A node with no peers routes nothing — and in particular does not install
     /// a default route, which is what a `/0` would silently become.
     #[test]
     fn an_empty_roster_routes_nothing() {
-        assert!(Routes::wanted(&config(&["100.64.0.1/16"], &[])).is_empty());
+        assert!(Routes::wanted(&config(&["100.64.0.1/16"], &[]), None).is_empty());
+    }
+
+    fn exit_offer(route_id: &str) -> crate::route_offer::Offer {
+        use karst_control_client::transport::pb;
+        crate::route_offer::Offer::from_wire(
+            pb::KarstRouteOffer {
+                route_id: route_id.to_owned(),
+                prefix: "0.0.0.0/0".to_owned(),
+                gateway_id: vec![1],
+                metric: 100,
+                kind: pb::KarstRouteKind::Exit as i32,
+                masquerade: true,
+                keep_route: false,
+                role: pb::KarstRouteRole::Recipient as i32,
+            },
+            &[],
+        )
+        .expect("exit offer")
+    }
+
+    #[test]
+    fn an_exit_cryptokey_route_is_not_a_kernel_route_without_consent() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["0.0.0.0/0"]]);
+        cfg.route_offers.push(exit_offer("exit-eu"));
+
+        assert!(Routes::wanted(&cfg, None).is_empty());
+        assert!(Routes::wanted(&cfg, Some("not-offered")).is_empty());
+    }
+
+    #[test]
+    fn consent_installs_only_the_matching_authenticated_exit_offer() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["0.0.0.0/0"]]);
+        cfg.route_offers.push(exit_offer("exit-eu"));
+
+        let wanted = Routes::wanted(&cfg, Some("exit-eu"));
+        assert_eq!(wanted.len(), 1);
+        assert!(wanted.contains(&("0.0.0.0".parse().unwrap(), 0)));
     }
 
     // ── endpoints discovery installs and withdraws ────────────────────────
