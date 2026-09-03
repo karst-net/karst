@@ -213,6 +213,9 @@ pub fn run_with_control(
     control_client: Option<crate::control::Client>,
 ) -> io::Result<()> {
     let tun = bring_up_interface(config)?;
+    let gateway = Mutex::new(crate::gateway::Manager::default());
+    let gateway_error = Mutex::new(None);
+    apply_gateway(&gateway, &gateway_error, config);
 
     // DNS is an authenticated netmap service, not an ambient host service: a
     // static roster or MagicDNS-off map starts no listener. A failed bind is
@@ -595,6 +598,8 @@ pub fn run_with_control(
         let dns_host_ctl = &dns_host;
         let routes_ctl = &routes;
         let exit_node_ctl = exit_node.as_ref();
+        let gateway_ctl = &gateway;
+        let gateway_error_ctl = &gateway_error;
         scope.spawn(move || {
             while !shutdown.requested() {
                 match control.accept() {
@@ -647,7 +652,7 @@ pub fn run_with_control(
                                     &failures,
                                 );
                             }
-                            report(
+                            let mut output = report(
                                 &command,
                                 config,
                                 engine_ctl,
@@ -662,7 +667,32 @@ pub fn run_with_control(
                                 started,
                                 &relay_dropped,
                                 Some(portmap_state.snapshot()),
-                            )
+                            );
+                            if matches!(command, ipc::Command::Status | ipc::Command::BugReport) {
+                                let current = engine_ctl.config();
+                                let selected = exit_node_ctl.and_then(|state| {
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                        .active()
+                                        .map(str::to_owned)
+                                });
+                                let gateway_active = gateway_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
+                                let gateway_error = gateway_error_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .clone();
+                                output.push_str(&routing_report(
+                                    &current,
+                                    selected.as_deref(),
+                                    gateway_active,
+                                    gateway_error.as_deref(),
+                                ));
+                            }
+                            output
                         });
                         if matches!(handled, Ok(Some(ipc::Command::Down))) {
                             shutdown.request();
@@ -693,6 +723,8 @@ pub fn run_with_control(
             let dns_refresh = &dns_runtime;
             let dns_host_refresh = &dns_host;
             let exit_node_refresh = exit_node.as_ref();
+            let gateway_refresh = &gateway;
+            let gateway_error_refresh = &gateway_error;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -708,6 +740,8 @@ pub fn run_with_control(
                     dns_refresh,
                     exit_node_refresh,
                     dns_host_refresh,
+                    gateway_refresh,
+                    gateway_error_refresh,
                     relay_out,
                     turn_out,
                 );
@@ -2372,6 +2406,29 @@ fn apply_routes(
         .apply(tun, config, selected_exit);
 }
 
+/// Apply gateway state fail-closed and retain the last readiness error for
+/// status and diagnostics.
+fn apply_gateway(
+    gateway: &Mutex<crate::gateway::Manager>,
+    status: &Mutex<Option<String>>,
+    config: &Config,
+) {
+    let result = gateway
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .reconcile(config);
+    let error = match result {
+        Ok(_) => None,
+        Err(error) => {
+            eprintln!("karstd: gateway forwarding is not ready: {error}");
+            Some(error.to_string())
+        }
+    };
+    *status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
+}
+
 /// Handle the three local-consent commands against the current authenticated
 /// netmap. The server can offer an exit, but only this state transition can
 /// install its kernel route.
@@ -2692,6 +2749,55 @@ pub struct Attachment<'a> {
     /// unreachable and *nothing else in the daemon says so* — the send paths
     /// drop errors on purpose, so the symptom is silence. GitHub issue [#56](https://github.com/karst-net/karst/issues/56).
     pub unreachable_family: Option<u64>,
+}
+
+fn routing_report(
+    config: &Config,
+    selected_exit: Option<&str>,
+    gateway_active: bool,
+    gateway_error: Option<&str>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let active_exit = selected_exit.filter(|selected| {
+        config.route_offers.iter().any(|offer| {
+            offer.route_id == **selected
+                && offer.kind == crate::route_offer::Kind::Exit
+                && offer.role == crate::route_offer::Role::Recipient
+        })
+    });
+    let _ = writeln!(out, "\n[routing]");
+    let _ = writeln!(out, "offers = {}", config.route_offers.len());
+    let _ = writeln!(out, "selected_exit = {selected_exit:?}");
+    let _ = writeln!(out, "exit_route_active = {}", active_exit.is_some());
+    let _ = writeln!(out, "gateway_active = {gateway_active}");
+    let _ = writeln!(out, "gateway_error = {gateway_error:?}");
+
+    for offer in &config.route_offers {
+        let kind = match offer.kind {
+            crate::route_offer::Kind::Subnet => "subnet",
+            crate::route_offer::Kind::Exit => "exit",
+        };
+        let role = match offer.role {
+            crate::route_offer::Role::Recipient => "recipient",
+            crate::route_offer::Role::Gateway => "gateway",
+        };
+        let active = role == "gateway" && gateway_active
+            || kind == "exit"
+                && role == "recipient"
+                && active_exit == Some(offer.route_id.as_str());
+        let _ = writeln!(out, "\n[[route]]");
+        let _ = writeln!(out, "route_id = {:?}", offer.route_id);
+        let _ = writeln!(out, "prefix = {:?}", offer.prefix.to_string());
+        let _ = writeln!(out, "kind = {kind:?}");
+        let _ = writeln!(out, "role = {role:?}");
+        let _ = writeln!(out, "metric = {}", offer.metric);
+        let _ = writeln!(out, "masquerade = {}", offer.masquerade);
+        let _ = writeln!(out, "keep_route = {}", offer.keep_route);
+        let _ = writeln!(out, "active = {active}");
+    }
+    out
 }
 
 #[allow(clippy::too_many_lines)]
@@ -3098,6 +3204,8 @@ fn refresh_netmap(
     dns_runtime: &Mutex<Option<crate::dns::Runtime>>,
     exit_node: Option<&Mutex<crate::exit_node::Selection>>,
     dns_host: &Mutex<crate::dns::HostRuntime>,
+    gateway: &Mutex<crate::gateway::Manager>,
+    gateway_error: &Mutex<Option<String>>,
     relayed: Option<&RelaySender>,
     turned: Option<&TurnSender>,
 ) {
@@ -3255,6 +3363,10 @@ fn refresh_netmap(
                 .map(str::to_owned)
         });
         apply_routes(routes, tun, &updated, selected_exit.as_deref());
+
+        // Gateway grants are derived from the same verified snapshot. A failed
+        // update removes stale Karst-owned grants and records failed readiness.
+        apply_gateway(gateway, gateway_error, &updated);
 
         // **The whole roster swap happens under the discovery lock**, and the
         // ordering inside it is load-bearing. A roster index names a different
@@ -3485,7 +3597,7 @@ fn bug_report(
 mod route_tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
-    use super::{dns_query_report, dns_report, Routes};
+    use super::{dns_query_report, dns_report, routing_report, Routes};
     use crate::config::Config;
     use std::net::IpAddr;
 
@@ -3716,6 +3828,24 @@ mod route_tests {
         let wanted = Routes::wanted(&cfg, Some("exit-eu"));
         assert_eq!(wanted.len(), 1);
         assert!(wanted.contains(&("0.0.0.0".parse().unwrap(), 0)));
+    }
+
+    #[test]
+    fn routing_status_distinguishes_offered_selected_and_ready() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["0.0.0.0/0"]]);
+        cfg.route_offers.push(exit_offer("exit-eu"));
+
+        let dormant = routing_report(&cfg, Some("withdrawn-id"), false, Some("nft unavailable"));
+        assert!(dormant.contains("selected_exit = Some(\"withdrawn-id\")"));
+        assert!(dormant.contains("exit_route_active = false"));
+        assert!(dormant.contains("gateway_error = Some(\"nft unavailable\")"));
+
+        let active = routing_report(&cfg, Some("exit-eu"), false, None);
+        assert!(active.contains("exit_route_active = true"));
+        assert!(active.contains("route_id = \"exit-eu\""));
+        assert!(active.contains("kind = \"exit\""));
+        assert!(active.contains("role = \"recipient\""));
+        assert!(active.contains("active = true"));
     }
 
     // ── endpoints discovery installs and withdraws ────────────────────────

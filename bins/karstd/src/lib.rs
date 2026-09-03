@@ -23,6 +23,7 @@ pub mod engine;
 pub mod exit_node;
 pub mod filter;
 pub mod flow;
+pub mod gateway;
 pub mod home;
 pub mod ipc;
 pub mod nat64;

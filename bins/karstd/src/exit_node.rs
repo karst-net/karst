@@ -17,6 +17,10 @@ pub struct Selection {
 }
 
 impl Selection {
+    /// Load a persisted selection, or an empty selection when no file exists.
+    ///
+    /// # Errors
+    /// If the file cannot be read or contains an invalid route identifier.
     pub fn load(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         let active = match fs::read_to_string(&path) {
@@ -32,6 +36,10 @@ impl Selection {
         self.active.as_deref()
     }
 
+    /// Atomically persist a selected stable route identifier.
+    ///
+    /// # Errors
+    /// If the identifier is invalid or the private state cannot be written.
     pub fn select(&mut self, route_id: &str) -> io::Result<()> {
         let route_id = validate(route_id)?;
         let parent = self.path.parent().ok_or_else(|| {
@@ -63,6 +71,10 @@ impl Selection {
         Ok(())
     }
 
+    /// Withdraw consent and remove its state file.
+    ///
+    /// # Errors
+    /// If an existing state file cannot be removed.
     pub fn disable(&mut self) -> io::Result<()> {
         match fs::remove_file(&self.path) {
             Ok(()) => {}

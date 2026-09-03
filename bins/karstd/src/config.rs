@@ -828,6 +828,7 @@ impl Config {
     /// # Errors
     ///
     /// The same as [`Config::from_netmap`].
+    #[allow(clippy::too_many_lines)]
     pub fn from_netmap_enforced(
         local: LocalSettings,
         netmap: &Netmap,
@@ -917,7 +918,13 @@ impl Config {
                     offer.route_id
                 )));
             };
-            peers[index].allowed_ips.push(offer.prefix);
+            let Some(peer) = peers.get_mut(index) else {
+                return Err(ConfigError::Unusable(format!(
+                    "route {:?} resolved outside the usable peer roster",
+                    offer.route_id
+                )));
+            };
+            peer.allowed_ips.push(offer.prefix);
             pairs.push((offer.prefix, index));
         }
 

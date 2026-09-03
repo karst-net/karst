@@ -38,6 +38,10 @@ pub struct Offer {
 }
 
 impl Offer {
+    /// Validate one authenticated wire offer for this node.
+    ///
+    /// # Errors
+    /// A description when any identity, prefix, metric, kind, or role is invalid.
     pub fn from_wire(wire: pb::KarstRouteOffer, self_id: &[u8]) -> Result<Self, String> {
         if wire.route_id.is_empty() {
             return Err("route_id is empty".to_owned());
@@ -96,6 +100,7 @@ impl Offer {
         })
     }
 
+    #[must_use]
     pub fn to_wire(&self) -> pb::KarstRouteOffer {
         pb::KarstRouteOffer {
             route_id: self.route_id.clone(),
@@ -115,6 +120,7 @@ impl Offer {
         }
     }
 
+    #[must_use]
     pub fn view(&self) -> RouteView<'_> {
         RouteView {
             route_id: &self.route_id,
@@ -135,6 +141,10 @@ impl Offer {
     }
 }
 
+/// Validate a complete offer set and reject duplicate route identities.
+///
+/// # Errors
+/// A description of the first malformed offer or duplicate route identifier.
 pub fn parse_all(wire: Vec<pb::KarstRouteOffer>, self_id: &[u8]) -> Result<Vec<Offer>, String> {
     let mut prefixes = BTreeSet::new();
     let mut offers = Vec::with_capacity(wire.len());
