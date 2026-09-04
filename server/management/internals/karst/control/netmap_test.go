@@ -160,8 +160,10 @@ func newNetmapFixture(t *testing.T, peerCount int) *netFixture {
 		t.Fatalf("deriver: %v", err)
 	}
 
+	handler := &control.NetmapHandler{Nodes: nodes, Peers: fp, PSK: deriver}
+	handler.Epoch.Store(3)
 	return &netFixture{
-		handler: &control.NetmapHandler{Nodes: nodes, Peers: fp, PSK: deriver, Epoch: 3},
+		handler: handler,
 		deriver: deriver,
 		self:    self,
 		selfH:   selfH,
@@ -284,7 +286,7 @@ func TestEpochChangesEveryPSK(t *testing.T) {
 	f := newNetmapFixture(t, 2)
 	before := requestNetmap(t, f, 0)
 
-	f.handler.Epoch = 4
+	f.handler.Epoch.Store(4)
 	after := requestNetmap(t, f, 0)
 
 	if after.GetPskEpoch() != 4 {
@@ -387,8 +389,8 @@ func TestVersionChangesWithContent(t *testing.T) {
 	base := requestNetmap(t, f, 0).GetVersion()
 
 	t.Run("epoch rotation", func(t *testing.T) {
-		f.handler.Epoch = 99
-		defer func() { f.handler.Epoch = 3 }()
+		f.handler.Epoch.Store(99)
+		defer f.handler.Epoch.Store(3)
 		if requestNetmap(t, f, 0).GetVersion() == base {
 			t.Fatal("rotating the PSK epoch did not change the version")
 		}
@@ -562,7 +564,7 @@ func TestRotationIsSeamless(t *testing.T) {
 	f := newNetmapFixture(t, 2)
 
 	before := requestNetmap(t, f, 0)
-	f.handler.Epoch++
+	f.handler.Epoch.Add(1)
 	after := requestNetmap(t, f, 0)
 
 	if after.GetPskEpoch() != before.GetPskEpoch()+1 {
@@ -604,7 +606,7 @@ func TestPreviousEpochPSKAlsoAgrees(t *testing.T) {
 // from the all-zero fallback, which is a real and different security state.
 func TestEpochZeroHasNoPrevious(t *testing.T) {
 	f := newNetmapFixture(t, 1)
-	f.handler.Epoch = 0
+	f.handler.Epoch.Store(0)
 	resp := requestNetmap(t, f, 0)
 
 	for _, p := range resp.GetPeers() {
@@ -980,7 +982,7 @@ func TestEpochRotationInvalidatesEveryDigest(t *testing.T) {
 	full := requestNetmap(t, f, 0)
 	holds := digestsOf(full)
 
-	f.handler.Epoch++
+	f.handler.Epoch.Add(1)
 	d := requestDelta(t, f, holds)
 	if len(d.GetPeers()) != 3 {
 		t.Fatalf("after a rotation %d of 3 peers were resent; the rest would "+

@@ -43,24 +43,17 @@ import (
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
-// EpochSeconds is the PSK rotation period (PLAN.md §2.6: "epochs rotate every
-// 86400 s").
-const EpochSeconds = 86400
-
-// CurrentEpoch is a pure function of the clock.
+// EpochSeconds and CurrentEpoch used to live here; both moved to
+// control.EpochSeconds/control.CurrentEpoch so control.EpochScheduler (which
+// keeps the epoch live for the life of the process — see its doc comment for
+// why deriving the value once at startup was not enough on its own) can call
+// CurrentEpoch without a circular import back into this package.
 //
-// Deriving it rather than storing it means every server instance computes the
-// same value, rotation happens on schedule with nothing to run, and a restart
-// cannot lose track of where it was. Two servers behind a load balancer agree
-// without coordinating.
-//
-// The cost is that the epoch is only as good as the clock. A server whose time
-// is badly wrong hands out PSKs from a different generation than its peers,
-// and because §7.3 accepts n and n-1, a skew beyond one epoch is what breaks
-// it — 24 hours of slack, which NTP failure would have to be severe to exceed.
-func CurrentEpoch(now time.Time) uint32 {
-	return uint32(now.UTC().Unix() / EpochSeconds)
-}
+// The cost this package's comment used to note here still applies unchanged:
+// the epoch is only as good as the clock. A server whose time is badly wrong
+// hands out PSKs from a different generation than its peers, and because
+// §7.3 accepts n and n-1, a skew beyond one epoch is what breaks it — 24
+// hours of slack, which NTP failure would have to be severe to exceed.
 
 // ServerKeys is the singleton row holding the server's long-lived secrets.
 //
@@ -214,14 +207,13 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		Claimer:  s.SessionStore(),
 	}
 
-	epoch := CurrentEpoch(time.Now())
+	epoch := control.CurrentEpoch(time.Now())
 	router := &handler{
 		login: &control.LoginHandler{Nodes: nodes, Accounts: accounts, OIDC: oidc},
 		netmap: &control.NetmapHandler{
 			Nodes:       nodes,
 			Peers:       peers,
 			PSK:         deriver,
-			Epoch:       epoch,
 			DNS:         accounts,
 			Routes:      accounts,
 			Policy:      pol,
@@ -235,6 +227,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
 	}
+	// Set directly, synchronously, before anything can possibly serve a
+	// request off router.netmap — the EpochScheduler goroutine started below
+	// would eventually converge on the same value via its own first tick, but
+	// only this guarantees no request in the window between here and that
+	// goroutine actually running ever reads the zero value.
+	router.netmap.Epoch.Store(epoch)
 
 	svc := control.New(static, identity.ControlSigner{Key: srvIdentity},
 		nodes.LookupFunc(), identity.ControlVerifier{}, router)
@@ -247,6 +245,18 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// inherited SyncResponse channels, so Karst does not cause construction of
 	// a full upstream network map that it would discard.
 	svc.SubscribeToUpdatesWith(peers, s.PeersUpdateManager())
+	// Keeps router.netmap.Epoch live for the rest of the process's life —
+	// without this, the value set above is correct at startup and silently
+	// wrong the moment real time crosses an epoch boundary (control/epoch.go's
+	// doc comment has the full account of why this was a real bug, found
+	// while building the PSK-epoch-age metric for the observability
+	// workstream). Unconditional, the same way auditLog's delivery worker
+	// above is: this is not an optional feature an operator turns on, so it
+	// is not gated behind anything bedrock.Scheduler's own wiring is (that one
+	// needs an operator-supplied AnchorKey; this one does not need any
+	// configuration to be correct).
+	go (&control.EpochScheduler{Handler: router.netmap, Updates: s.PeersUpdateManager()}).
+		Run(context.Background(), time.Minute)
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{
 		Register: func(reg grpc.ServiceRegistrar) {
@@ -268,7 +278,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// The pins are public and must reach operators; the seeds never appear.
 	log.Infof("karst: server KEM pin  %s", base64.StdEncoding.EncodeToString(k.StaticKEM))
 	log.Infof("karst: server sign pin %s", base64.StdEncoding.EncodeToString(k.VerifyKey))
-	log.Infof("karst: psk epoch %d (rotates every %ds)", k.Epoch, EpochSeconds)
+	log.Infof("karst: psk epoch %d (rotates every %ds)", k.Epoch, control.EpochSeconds)
 
 	// Said out loud because its absence is invisible from every other vantage
 	// point: a relay with a valid config and a current roster still sees no

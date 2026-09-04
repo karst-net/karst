@@ -12,6 +12,7 @@ import (
 	"hash"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -57,10 +58,17 @@ type PeerLister interface {
 // netmap in plaintext would hand every PSK in the network to anything
 // terminating TLS in front of the server.
 type NetmapHandler struct {
-	Nodes   *node.Store
-	Peers   PeerLister
-	PSK     *psk.Deriver
-	Epoch   uint32
+	Nodes *node.Store
+	Peers PeerLister
+	PSK   *psk.Deriver
+	// Epoch is the current PSK rotation epoch (CurrentEpoch's pure function of
+	// the clock). Atomic because an EpochScheduler goroutine keeps it live for
+	// the life of the process (epoch.go) while every netmap build reads it
+	// concurrently — a plain field here was the bug epoch.go's own doc comment
+	// explains. Zero-value is usable (epoch 0, "before Karst's own epoch": the
+	// scheduler's first tick, run synchronously by bootstrap.Install before
+	// this handler serves any request, corrects it immediately).
+	Epoch   atomic.Uint32
 	DNSZone string
 	// DNS projects the account DNS settings into the smaller resolver contract
 	// Karst nodes consume. Keeping this narrow prevents the control handler from
@@ -325,8 +333,13 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, fmt.Errorf("mint turn credentials: %w", err)
 	}
+	// Loaded once and reused for every peer below, rather than re-read per
+	// peer: a rotation landing mid-response must not hand out a mix of old-
+	// and new-epoch PSKs within what is supposed to be one consistent
+	// netmap.
+	epoch := h.Epoch.Load()
 	resp := &proto.KarstNetmapResponse{
-		PskEpoch:    h.Epoch,
+		PskEpoch:    epoch,
 		NodeId:      []byte(self),
 		Addresses:   addressesOf(selfPeer, v4Bits, v6Bits),
 		DnsName:     selfPeer.DNSLabel,
@@ -374,7 +387,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 
 		// The PSK is derived per (self, peer) pair and is the same value both
 		// ends compute, because Pair sorts its arguments.
-		k, err := h.PSK.Pair(self, p.Key, h.Epoch)
+		k, err := h.PSK.Pair(self, p.Key, epoch)
 		if err != nil {
 			// A derivation failure must not silently downgrade the pair to the
 			// all-zero fallback: that is a real security state (§2.6) reserved
@@ -388,7 +401,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		// AVEN path discovery has its own pair key. Reusing the PHREATIC PSK
 		// here would couple two independent authenticators and make a protocol
 		// change in either one a cross-protocol key-reuse bug.
-		disco, err := h.PSK.Disco(self, p.Key, h.Epoch)
+		disco, err := h.PSK.Disco(self, p.Key, epoch)
 		if err != nil {
 			return nil, fmt.Errorf("derive disco key: %w", err)
 		}
@@ -399,8 +412,8 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		// node unable to answer a peer that has not refetched yet — which §7.3
 		// resolves by falling back to an all-zero PSK, so the visible symptom
 		// is not an outage but a fleet-wide silent downgrade to lattice-only.
-		if h.Epoch > 0 {
-			prev, err := h.PSK.Pair(self, p.Key, h.Epoch-1)
+		if epoch > 0 {
+			prev, err := h.PSK.Pair(self, p.Key, epoch-1)
 			if err != nil {
 				return nil, fmt.Errorf("derive previous psk: %w", err)
 			}

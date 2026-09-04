@@ -200,6 +200,26 @@ func (p *PeersUpdateManager) GetAllConnectedPeers() map[string]struct{} {
 	return m
 }
 
+// GetAllNotifiedPeers returns a copy of the set of peer IDs currently holding
+// a lightweight notification channel (CreateNotificationChannel) — the set
+// SendNotification can actually reach. Deliberately distinct from
+// GetAllConnectedPeers, which only reflects peerChannels: every Karst node
+// subscribes via CreateNotificationChannel exclusively (control/service.go's
+// subscribeOnce), so a caller that wants to broadcast to every connected
+// Karst node — control.EpochScheduler, for the PSK-epoch-rotation push —
+// needs this method, not that one. Calling GetAllConnectedPeers for that
+// purpose would silently notify nobody.
+func (p *PeersUpdateManager) GetAllNotifiedPeers() map[string]struct{} {
+	p.channelsMux.RLock()
+	defer p.channelsMux.RUnlock()
+
+	m := make(map[string]struct{}, len(p.notificationChannels))
+	for ID := range p.notificationChannels {
+		m[ID] = struct{}{}
+	}
+	return m
+}
+
 // HasChannel returns true if peers has channel in update manager, otherwise false
 func (p *PeersUpdateManager) HasChannel(peerID string) bool {
 	start := time.Now()

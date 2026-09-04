@@ -167,9 +167,10 @@ func TestNoPSKBytesReachTheLogs(t *testing.T) {
 		t.Fatalf("server identity: %v", err)
 	}
 
+	netmap := &control.NetmapHandler{Nodes: nodes, Peers: peers, PSK: deriver}
+	netmap.Epoch.Store(7)
 	svc := control.New(static, identity.ControlSigner{Key: srvKey}, nodes.LookupFunc(),
-		identity.ControlVerifier{},
-		&control.NetmapHandler{Nodes: nodes, Peers: peers, PSK: deriver, Epoch: 7})
+		identity.ControlVerifier{}, netmap)
 
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()

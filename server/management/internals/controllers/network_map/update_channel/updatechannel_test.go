@@ -93,6 +93,36 @@ func TestSendUpdate(t *testing.T) {
 
 }
 
+// GetAllConnectedPeers and GetAllNotifiedPeers track two different maps
+// (peerChannels vs. notificationChannels) — a caller reaching for "every
+// connected peer" while meaning "every Karst node" must get the second one.
+// control.EpochScheduler is the first caller that matters here.
+func TestGetAllNotifiedPeersIsDistinctFromGetAllConnectedPeers(t *testing.T) {
+	ctx := context.Background()
+	manager := NewPeersUpdateManager(nil)
+	defer manager.CloseChannel(ctx, "sync-peer")
+	defer manager.CloseChannel(ctx, "karst-peer")
+
+	_ = manager.CreateChannel(ctx, "sync-peer")
+	_ = manager.CreateNotificationChannel(ctx, "karst-peer")
+
+	connected := manager.GetAllConnectedPeers()
+	if _, ok := connected["sync-peer"]; !ok {
+		t.Error("sync-peer should appear in GetAllConnectedPeers")
+	}
+	if _, ok := connected["karst-peer"]; ok {
+		t.Error("karst-peer uses a notification channel only and must not appear in GetAllConnectedPeers")
+	}
+
+	notified := manager.GetAllNotifiedPeers()
+	if _, ok := notified["karst-peer"]; !ok {
+		t.Error("karst-peer should appear in GetAllNotifiedPeers")
+	}
+	if _, ok := notified["sync-peer"]; ok {
+		t.Error("sync-peer uses a full-sync channel only and must not appear in GetAllNotifiedPeers")
+	}
+}
+
 func TestCloseChannel(t *testing.T) {
 	peer := "test-close"
 	peersUpdater := NewPeersUpdateManager(nil)

@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -138,36 +137,10 @@ func TestConcurrentFirstStartConverges(t *testing.T) {
 	}
 }
 
-// The epoch is a pure function of the clock, so every instance agrees without
-// coordinating and a restart cannot lose its place.
-func TestCurrentEpochIsDerivedFromTheClock(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0).UTC()
-
-	first, second := CurrentEpoch(base), CurrentEpoch(base)
-	if first != second {
-		t.Fatal("the epoch is not a function of its input")
-	}
-	if CurrentEpoch(base) != CurrentEpoch(base.Add(time.Hour)) {
-		t.Fatal("the epoch changed within a single period")
-	}
-	if CurrentEpoch(base) == CurrentEpoch(base.Add(EpochSeconds*time.Second)) {
-		t.Fatal("the epoch did not advance after a full period")
-	}
-	if CurrentEpoch(base.Add(EpochSeconds*time.Second)) != CurrentEpoch(base)+1 {
-		t.Fatal("the epoch advanced by more than one across one period")
-	}
-}
-
-// §7.3 accepts epochs n and n-1, so the tolerance to clock skew is one full
-// period. Recorded as a test because it is the number an operator needs when
-// deciding how much NTP failure is survivable.
-func TestClockSkewToleranceIsOnePeriod(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0).UTC()
-	within := CurrentEpoch(base.Add(-EpochSeconds * time.Second))
-	if CurrentEpoch(base)-within != 1 {
-		t.Fatal("a full period of skew is not exactly one epoch")
-	}
-}
+// CurrentEpoch and EpochSeconds moved to control.CurrentEpoch/EpochSeconds
+// (control/epoch.go) along with the tests of their pure-function-of-the-clock
+// property and the clock-skew tolerance those tests establish — see
+// control/epoch_test.go.
 
 // The router dispatches on the first byte, and an unknown kind must not reach
 // a handler.

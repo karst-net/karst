@@ -12,4 +12,5 @@ type PeersUpdateManager interface {
 	HasChannel(peerID string) bool
 	CloseChannels(ctx context.Context, peerIDs []string)
 	GetAllConnectedPeers() map[string]struct{}
+	GetAllNotifiedPeers() map[string]struct{}
 }

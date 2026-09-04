@@ -413,12 +413,13 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 
 	r := &router{
 		netmap: &control.NetmapHandler{
-			Nodes: nodes, Peers: account, PSK: deriver, Epoch: 7, Policy: doc,
+			Nodes: nodes, Peers: account, PSK: deriver, Policy: doc,
 			DNSZone: dnsZone,
 		},
 		account: account,
 		nodes:   nodes,
 	}
+	r.netmap.Epoch.Store(7)
 	r.routes = newRouteRegistry(account)
 	// Unconditional, unlike `--relay`/`--turn`: an empty registry produces an
 	// empty `Routes` repeated field either way protobuf encodes it (nil and
