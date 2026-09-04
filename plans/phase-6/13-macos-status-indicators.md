@@ -43,6 +43,17 @@ staffed and estimated that way rather than folded into "polish."
   Prometheus counters already work — so a menu-bar app samples twice and
   differences client-side to show a rate or sparkline; the daemon does not
   guess a sampling interval.
+
+  **Confirmed on real macOS, not just Linux.** PR #105 (branch
+  `macos-status-swift-check`) ran `ci.yml`'s existing `macos` job — build
+  both Apple targets, unit/integration tests, the privileged real-`utun`
+  suite, two daemons over a real `utun` — on a `macos-14` GitHub Actions
+  runner, and it passed with these changes in the tree
+  (`github.com/karst-net/karst/actions/runs/33928379870`, job "macOS
+  client"). That job never touches `packaging/macos/KarstStatus` — it is
+  `karstd`/`karst` only — but it is the strongest evidence to date that the
+  `--status-socket` plumbing itself is sound on the actual target platform,
+  not merely on the Linux box it was written on.
 - **The admin control socket cannot be what a menu-bar app talks to — this
   was wrong in an earlier draft of this section.** It is local-only, but not
   merely "unauthenticated-by-proximity": `ipc::bind`'s directory is `0700`
