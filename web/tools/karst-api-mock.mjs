@@ -81,11 +81,27 @@ const noContent = (response) => response.writeHead(204).end();
 const id = (prefixText) => `${prefixText}-${Math.random().toString(36).slice(2, 8)}`;
 const inDays = (days) => new Date(Date.now() + days * 86_400_000).toISOString();
 
+// `JSON.parse`'s thrown `SyntaxError` carries no `.position` property on any
+// V8 this was checked against — that field does not exist, so reading it
+// always produced `undefined` and every diagnostic silently reported line 1
+// regardless of where the real error was. Two message shapes to parse
+// instead: newer V8 already states "(line N column M)" directly; anything
+// else falls back to "at position N" and counts newlines in `document` up
+// to that offset, the same computation the removed code intended. A message
+// with neither ("Unexpected token 'x', ... is not valid JSON", V8's shape
+// for some early-tokenizing failures) reports line 1 honestly rather than
+// guessing.
 function policyValidation(document) {
   try { JSON.parse(document); return { valid: true, diagnostics: [] }; }
   catch (error) {
-    const before = document.slice(0, error.position ?? 0);
-    return { valid: false, diagnostics: [{ severity: "error", message: error.message, line: before.split("\n").length, column: before.length - before.lastIndexOf("\n") }] };
+    const message = error.message;
+    const lineColumn = /\(line (\d+) column (\d+)\)/.exec(message);
+    if (lineColumn) {
+      return { valid: false, diagnostics: [{ severity: "error", message, line: Number(lineColumn[1]), column: Number(lineColumn[2]) }] };
+    }
+    const positioned = /at position (\d+)/.exec(message);
+    const before = document.slice(0, positioned ? Number(positioned[1]) : 0);
+    return { valid: false, diagnostics: [{ severity: "error", message, line: before.split("\n").length, column: before.length - before.lastIndexOf("\n") }] };
   }
 }
 
