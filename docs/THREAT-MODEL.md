@@ -233,10 +233,11 @@ These are **gates, not intentions**:
 
 - **ProVerif model verifies** — secrecy, mutual authentication, no-downgrade,
   and the PSK-absent fallback — or the protocol does not ship (§2.5).
-- **External cryptographic review** of PHREATIC and its implementation, booked
-  in Phase 3 for Phase 6 delivery. All high and critical findings remediated
-  and re-tested before GA.
-- **External penetration test** of the control plane and console.
+- **External cryptographic review** of PHREATIC and its implementation in
+  Phase 8. All high and critical findings must be remediated and re-tested
+  before GA. No external cryptographic review has happened yet.
+- **External penetration test** of the control plane and console in Phase 8.
+  No external penetration test has happened yet.
 - Continuous fuzzing of every parser via OSS-Fuzz.
 - Spoofed-source DoS suite and amplification assertions in CI.
 - Netmap secret-leakage scan in CI on every commit.
@@ -247,5 +248,7 @@ These are **gates, not intentions**:
 
 This document is reviewed and signed off as a **Phase 0 exit criterion**, and
 re-reviewed at each phase boundary and on any change to the trust boundaries in
-§4. The version reviewed by the external cryptographer in Phase 6 becomes the
-baseline for the published security whitepaper.
+§4. The Phase 8 external cryptographic review will establish the reviewed
+baseline. Until then, the published security whitepaper must identify itself
+as derived from the internally reviewed threat model and must not imply
+external review.
