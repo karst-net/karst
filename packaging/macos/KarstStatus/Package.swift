@@ -5,13 +5,16 @@
 // KarstStatus — the macOS menu-bar status indicator.
 // plans/phase-6/13-macos-status-indicators.md.
 //
-// UNBUILT AND UNVERIFIED. Written on a Linux machine with no Xcode and no
-// macOS to run `swift build` against — there is no CI job and no local run
-// that has ever compiled this target. Treat every file under `Sources/` as a
-// first draft to review line by line, not as working code, until someone
-// with a Mac has actually built and run it. `.github/workflows/ci.yml`'s
-// `macos` job does not build this package; that is real remaining work, not
-// an oversight — see the plan doc §2 item 1.
+// Written on a Linux machine with no Xcode and no macOS to develop against
+// directly — reviewed line by line against real Darwin API signatures from
+// memory, not typed against a compiler. It does compile: both
+// `.github/workflows/macos-status-swift-build.yml` (a plain `swift build`)
+// and `scripts/build-macos-pkg.sh`'s universal-binary build of this package,
+// wired into the real installer, have succeeded on a real macos-14 runner —
+// see the plan doc §2 item 1 for the run. Runtime behavior is still
+// unverified: nothing has shown an `NSStatusItem`, polled a live `karstd`,
+// or exercised the parser against real output. Treat that gap, not
+// "does it build," as what remains before trusting this.
 //
 // macOS 13 (Ventura), matching `packaging/macos/Distribution.xml`'s
 // `<allowed-os-versions>` floor for the daemon this talks to.

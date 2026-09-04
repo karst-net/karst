@@ -1,0 +1,32 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# Stop any already-running Karst Status before its binary is replaced —
+# the same ordering dev.karst.karstd's own preinstall uses, for the same
+# reason.
+#
+# Not `set -e`. Every command here legitimately fails on a first install —
+# there is no LaunchAgent loaded yet, and there may be no console user at
+# all (a headless provisioning run, or a CI install-and-verify step like
+# deliverables.yml's). The failure that matters is leaving the *old* app
+# running against a binary about to be overwritten underneath it, and that
+# is what this prevents when there is a console user to unload it for.
+
+PLIST="/Library/LaunchAgents/dev.karst.karststatus.plist"
+
+console_user="$(stat -f%Su /dev/console 2>/dev/null)"
+if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ -f "$PLIST" ]; then
+    console_uid="$(id -u "$console_user" 2>/dev/null)"
+    if [ -n "$console_uid" ]; then
+        # `bootout` is the modern spelling; care about neither its exit
+        # status nor `unload`'s older one — the goal is "not still running,"
+        # and both are try-and-move-on.
+        /bin/launchctl asuser "$console_uid" /bin/launchctl bootout \
+            "gui/$console_uid" "$PLIST" 2>/dev/null
+        /bin/launchctl asuser "$console_uid" /bin/launchctl unload \
+            "$PLIST" 2>/dev/null
+    fi
+fi
+
+exit 0

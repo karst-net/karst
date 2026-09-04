@@ -5,16 +5,13 @@
 
   KarstStatus, the menu-bar status indicator, as a per-user LaunchAgent.
 
-  TEMPLATE, NOT YET WIRED IN. Nothing in scripts/build-macos-pkg.sh,
-  Distribution.xml or the postinstall/preinstall scripts references this
-  file yet. It exists so the shape of the eventual packaging is on record —
-  a LaunchAgent (runs in the user's GUI session as that user) beside
-  dev.karst.karstd.plist's LaunchDaemon (runs as root, no GUI session) — but
-  wiring it into the installer needs a real, signed, notarized
-  KarstStatus.app bundle first (packaging/macos/KarstStatus/ is Swift
-  Package Manager sources, not that bundle), and turning this on before
-  such a bundle exists would ship a LaunchAgent pointing at nothing.
-  See plans/phase-6/13-macos-status-indicators.md §2 item 1.
+  Installed by karst-status-component.pkg — the second pkg-ref in
+  Distribution.xml, built alongside dev.karst.karstd's component in one
+  .pkg by scripts/build-macos-pkg.sh, so a user downloads and runs one
+  installer for both. status-scripts/postinstall loads this for whoever is
+  at the console at install time, best-effort; RunAtLoad below covers every
+  login after that regardless. See
+  plans/phase-6/13-macos-status-indicators.md §2 item 1.
 
   A LaunchAgent, not a LaunchDaemon: this runs in the logged-in user's GUI
   session, which is the only place an NSStatusItem can exist at all —

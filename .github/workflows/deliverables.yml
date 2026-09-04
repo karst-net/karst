@@ -495,6 +495,23 @@ jobs:
           test -d /var/log/karst
           lipo -archs /usr/local/bin/karstd | tee /dev/stderr | grep -q x86_64
           lipo -archs /usr/local/bin/karstd | grep -q arm64
+          # The second component — plans/phase-6/13-macos-status-indicators.md
+          # §2 item 1 — installed by the same .pkg, same install.
+          test -x "/Applications/Karst Status.app/Contents/MacOS/KarstStatus"
+          test -f "/Applications/Karst Status.app/Contents/Info.plist"
+          test -f /Library/LaunchAgents/dev.karst.karststatus.plist
+          lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
+            | tee /dev/stderr | grep -q x86_64
+          lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
+            | grep -q arm64
+          plutil -extract CFBundleIdentifier raw \
+            "/Applications/Karst Status.app/Contents/Info.plist" \
+            | tee /dev/stderr | grep -q '^dev\.karst\.karststatus$'
+          # This runner has no console user, so status-scripts/postinstall's
+          # best-effort `launchctl bootstrap` is expected to have found none
+          # and done nothing — this only proves the app installed cleanly,
+          # not that it runs. See the plan doc for what a real on-host run
+          # would still need to confirm.
           # Both binaries run at all. `--help` rather than `--version`, which
           # `karstd` does not accept — an option it does not know is an option
           # it refuses, and the run subcommand is not something to invoke here.
@@ -526,6 +543,8 @@ jobs:
           sudo /usr/local/bin/karst-uninstall
           test ! -e /usr/local/bin/karstd
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
+          test ! -e "/Applications/Karst Status.app"
+          test ! -e /Library/LaunchAgents/dev.karst.karststatus.plist
 
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
