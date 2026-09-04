@@ -641,6 +641,52 @@ fn the_senders_acl_drops_a_packet_before_it_is_encrypted() {
     let _ = b; // established above so the send path is realiztic
 }
 
+/// `PeerStatus::tx_bytes`/`rx_bytes` — plans/phase-6/13-macos-status-indicators.md
+/// §1's throughput plumbing. Counts must track plaintext length (what a
+/// menu-bar app would want to show a user, not AEAD-padded wire size) and
+/// must not move for a packet the ACL refused before encryption.
+#[test]
+fn peer_status_reports_bytes_sent_and_received() {
+    let mut a_cfg = config_for("bytes-a", 0xA1, 0xB1, A_ADDR, Some(B_ADDR));
+    let b_cfg = config_for("bytes-b", 0xB1, 0xA1, B_ADDR, Some(A_ADDR));
+    with_filter(&mut a_cfg, &[], &[out_rule(&["other"], 443, 443)]);
+
+    let a = Engine::new(&Arc::new(a_cfg));
+    let b = Engine::new(&Arc::new(b_cfg));
+    establish(&a, &b);
+
+    assert_eq!(a.status()[0].tx_bytes, 0, "nothing sent yet");
+    assert_eq!(b.status()[0].rx_bytes, 0, "nothing received yet");
+
+    let refused = a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 22), 10);
+    assert!(
+        refused.datagrams.is_empty(),
+        "the sender's own ACL refuses this port"
+    );
+    assert_eq!(
+        a.status()[0].tx_bytes,
+        0,
+        "a packet the ACL refused before encryption must not count as sent"
+    );
+
+    let packet = tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 443);
+    let sent = a.outbound(&packet, 11);
+    assert!(!sent.datagrams.is_empty());
+    assert_eq!(
+        a.status()[0].tx_bytes,
+        packet.len() as u64,
+        "tx_bytes must track the plaintext length, not the sealed wire size"
+    );
+
+    let delivered = deliver(&b, A_ADDR.parse().unwrap(), sent, 12);
+    assert_eq!(delivered.packets.len(), 1);
+    assert_eq!(
+        b.status()[0].rx_bytes,
+        delivered.packets[0].len() as u64,
+        "rx_bytes must track what was actually delivered to the host"
+    );
+}
+
 /// **Fragmenting must not be a way around the filter.** A non-first fragment
 /// carries no transport header, so its ports cannot be read; it is denied and
 /// counted apart from a policy decision, because no rule was evaluated.

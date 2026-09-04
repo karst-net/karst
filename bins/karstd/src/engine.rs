@@ -309,6 +309,15 @@ struct PeerSlot {
     /// comes back. An atomic rather than a lock because the outbound path reads
     /// it for every packet to a peer with no direct path.
     off_home: AtomicU64,
+    /// Plaintext bytes sealed and sent to this peer — plans/phase-6/13-macos-status-indicators.md
+    /// §1's "throughput does not exist anywhere" gap. Counts the same payload
+    /// `tx_packets` counts, so the two stay comparable; a status client
+    /// differences successive reads itself, per `08-observability.md`'s
+    /// existing counter-not-rate convention, rather than the daemon guessing
+    /// what sampling interval a caller wants.
+    tx_bytes: AtomicU64,
+    /// Plaintext bytes decrypted and delivered to the host from this peer.
+    rx_bytes: AtomicU64,
 }
 
 /// Everything a packet's handling depends on, swapped as a unit.
@@ -1123,6 +1132,12 @@ impl Engine {
         match sealed {
             Some(frags) => {
                 self.stats.tx_packets.fetch_add(1, Ordering::Relaxed);
+                // Plaintext length, matching what `tx_packets` counted — not the
+                // sealed/fragmented wire size, which carries AEAD overhead and
+                // padding that would make this number depend on suite choice
+                // rather than on the traffic actually asked for.
+                slot.tx_bytes
+                    .fetch_add(packet.len() as u64, Ordering::Relaxed);
                 for f in frags {
                     out.datagrams.push((f, via));
                 }
@@ -1921,6 +1936,10 @@ impl Engine {
         match packet.get(..len) {
             Some(trimmed) => {
                 self.stats.rx_packets.fetch_add(1, Ordering::Relaxed);
+                if let Some(slot) = roster.peers.get(peer) {
+                    slot.rx_bytes
+                        .fetch_add(trimmed.len() as u64, Ordering::Relaxed);
+                }
                 out.packets.push(trimmed.to_vec());
             }
             None => {
@@ -2063,6 +2082,14 @@ impl Engine {
                     Some(Via::Turn(_)) => Transport::Turn,
                     None => Transport::Unreachable,
                 },
+                tx_bytes: roster
+                    .peers
+                    .get(index)
+                    .map_or(0, |p| p.tx_bytes.load(Ordering::Relaxed)),
+                rx_bytes: roster
+                    .peers
+                    .get(index)
+                    .map_or(0, |p| p.rx_bytes.load(Ordering::Relaxed)),
             })
             .collect()
     }
@@ -2182,6 +2209,8 @@ fn build_roster(
                 claimed_head: Mutex::new(Vec::new()),
                 flows: Mutex::new(crate::flow::Flows::new()),
                 off_home: AtomicU64::new(0),
+                tx_bytes: AtomicU64::new(0),
+                rx_bytes: AtomicU64::new(0),
             })
         };
         peers.push(slot);
@@ -2232,6 +2261,15 @@ pub struct PeerStatus {
     /// different fix, and which a `relayed: false` would have quietly merged
     /// with the healthy case.
     pub transport: Transport,
+    /// Plaintext bytes sealed and sent to this peer since the session slot was
+    /// created (survives `Engine::reconfigure` for a carried-over peer, like
+    /// the engine-wide packet counters — see [`Stats`]). A running total, not
+    /// a rate: plans/phase-6/13-macos-status-indicators.md leaves differencing
+    /// to the caller, matching how `08-observability.md`'s Prometheus counters
+    /// already work.
+    pub tx_bytes: u64,
+    /// Plaintext bytes decrypted and delivered to the host from this peer.
+    pub rx_bytes: u64,
 }
 
 /// Eight bytes of `peer_id_hint`, hex.

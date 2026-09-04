@@ -27,6 +27,22 @@
 //! process (THREAT-MODEL R5). That holds for [`Command::BugReport`] too, which
 //! is the command most likely to be pasted somewhere public — see
 //! `run::bug_report`.
+//!
+//! # The unprivileged status listener
+//!
+//! [`bind_unprivileged_status`] opens a **second**, deliberately narrower
+//! socket — plans/phase-6/13-macos-status-indicators.md. The admin socket
+//! above is locked to whoever owns `karstd`'s directory (root, under the
+//! `LaunchDaemon`/`systemd` units this ships), which is correct for a socket
+//! that can issue [`Command::Down`] — but it also means a per-user menu-bar
+//! app cannot reach it at all: `docs/GETTING-STARTED.md` already documents
+//! `sudo karst status`, and a GUI asking for `sudo` on every poll is not a
+//! menu-bar app. The fix is not to loosen the admin socket — that would hand
+//! any local user the ability to stop the tunnel — but to open a second
+//! listener that serves `Command::Status` and refuses everything else,
+//! including `Down`, no matter what it is asked. It exists only when
+//! `karstd` is started with `--status-socket PATH`; nothing binds it by
+//! default, on any platform.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -36,6 +52,17 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 /// Where the socket lives unless told otherwise.
 pub const DEFAULT_SOCKET: &str = "/run/karst/karstd.sock";
+
+/// Where a `--status-socket`-equipped packaging (the macOS `.pkg`, currently
+/// the only one) points both `karstd` and its status client at. Not a
+/// fallback the way [`DEFAULT_SOCKET`] is: the unprivileged listener binds
+/// only when `--status-socket` names a path explicitly, and this constant is
+/// that path's single source of truth so `karstd`'s flag default and the
+/// menu-bar app's connect target cannot drift apart. Deliberately a sibling
+/// directory of `DEFAULT_SOCKET`'s, not inside it — that directory is `0700`
+/// (see the module note), and a socket inside it would inherit an
+/// unreachable parent regardless of its own mode.
+pub const DEFAULT_STATUS_SOCKET: &str = "/run/karst-status/karstd.sock";
 
 /// Commands the CLI may send. Deliberately tiny and text-based: this is a
 /// local administrative interface, not a protocol to grow features into.
@@ -129,15 +156,39 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    // A stale socket is a leftover file, not a running daemon: a failing
-    // `connect` is what distinguishes them. Unlinking one that *is* live would
-    // silently steal the control interface from a running node.
+    bind_at(path, 0o600)
+}
+
+/// As [`bind`], but reachable by any local user — see the module note on the
+/// unprivileged status listener.
+///
+/// The directory is `0755` rather than `0700` and the socket `0666` rather
+/// than `0600`; both are the deliberate point of this function, not a laxer
+/// copy of `bind`'s. Callers choose this over `bind` explicitly — nothing
+/// calls it unless `karstd` was started with `--status-socket`.
+///
+/// # Errors
+/// Any failure creating the directory or binding.
+pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<UnixListener> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+    }
+    bind_at(path, 0o666)
+}
+
+/// Remove a stale socket left by a previous run, then bind fresh at `mode`.
+///
+/// A stale socket is a leftover file, not a running daemon: a failing
+/// `connect` is what distinguishes them. Unlinking one that *is* live would
+/// silently steal the control interface from a running node.
+fn bind_at(path: &Path, mode: u32) -> std::io::Result<UnixListener> {
     if path.exists() && UnixStream::connect(path).is_err() {
         std::fs::remove_file(path)?;
     }
 
     let listener = UnixListener::bind(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
     Ok(listener)
 }
 
@@ -249,6 +300,33 @@ mod tests {
             mode & 0o077,
             0,
             "socket mode {mode:04o} exposes the control interface"
+        );
+    }
+
+    /// The unprivileged listener exists so a per-user client can reach it
+    /// without `sudo` — so it must actually grant that, on both the
+    /// directory and the socket, or a menu-bar app is back to `sudo karst
+    /// status` with extra steps.
+    #[test]
+    fn the_unprivileged_status_socket_is_reachable_by_any_local_user() {
+        let dir = Scratch::new("status-perm");
+        let path = dir.join("status").join("karstd.sock");
+        let _listener = bind_unprivileged_status(&path).expect("bind");
+
+        let dir_mode = std::fs::metadata(path.parent().expect("has a parent"))
+            .expect("stat dir")
+            .permissions()
+            .mode();
+        assert_eq!(
+            dir_mode & 0o777,
+            0o755,
+            "status directory mode {dir_mode:04o} must let any local user traverse it"
+        );
+        let socket_mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(
+            socket_mode & 0o777,
+            0o666,
+            "status socket mode {socket_mode:04o} must be reachable by any local user"
         );
     }
 

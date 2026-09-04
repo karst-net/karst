@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  KarstStatus, the menu-bar status indicator, as a per-user LaunchAgent.
+
+  TEMPLATE, NOT YET WIRED IN. Nothing in scripts/build-macos-pkg.sh,
+  Distribution.xml or the postinstall/preinstall scripts references this
+  file yet. It exists so the shape of the eventual packaging is on record —
+  a LaunchAgent (runs in the user's GUI session as that user) beside
+  dev.karst.karstd.plist's LaunchDaemon (runs as root, no GUI session) — but
+  wiring it into the installer needs a real, signed, notarized
+  KarstStatus.app bundle first (packaging/macos/KarstStatus/ is Swift
+  Package Manager sources, not that bundle), and turning this on before
+  such a bundle exists would ship a LaunchAgent pointing at nothing.
+  See plans/phase-6/13-macos-status-indicators.md §2 item 1.
+
+  A LaunchAgent, not a LaunchDaemon: this runs in the logged-in user's GUI
+  session, which is the only place an NSStatusItem can exist at all —
+  karstd's own LaunchDaemon has no GUI session to run one in, which is the
+  entire reason this is a second process rather than a flag on the first.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.karst.karststatus</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Karst Status.app/Contents/MacOS/KarstStatus</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      Restart on a crash, but not on a clean exit — the same rule
+      dev.karst.karstd.plist uses, for the same reason: relaunching after a
+      deliberate quit would make the menu-bar item impossible to dismiss.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!--
+      No StandardOutPath/StandardErrorPath: unlike karstd, this process
+      never runs as root and has no /var/log/karst write access to lose by
+      going to the default (per-user) launchd log instead.
+    -->
+</dict>
+</plist>
