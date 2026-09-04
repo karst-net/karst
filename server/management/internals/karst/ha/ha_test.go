@@ -54,4 +54,18 @@ func TestClaimNotifiesOtherReplica(t *testing.T) {
 	var after ControlSession
 	require.NoError(t, db.Where("identity_pub_key = ?", "identity").First(&after).Error)
 	require.True(t, after.LastSeenAt.After(before.LastSeenAt), "heartbeat must advance durable liveness")
+
+	// Registering after Claim models a replica that was offline while the
+	// notification fired. Reconciliation must still expose the current owner.
+	reconciled := make(chan event, 1)
+	b.OnSession(func(identity, replica, token string) {
+		reconciled <- event{Identity: identity, ReplicaID: replica, Token: token}
+	})
+	require.NoError(t, b.Reconcile(context.Background()))
+	select {
+	case got := <-reconciled:
+		require.Equal(t, event{Identity: "identity", ReplicaID: "a", Token: "token"}, got)
+	case <-time.After(time.Second):
+		t.Fatal("reconciliation did not deliver durable session ownership")
+	}
 }
