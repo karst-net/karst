@@ -5,10 +5,15 @@ dir=deploy/compose/ha
 while [ $# -gt 0 ]; do case "$1" in --compose-dir) dir=$2; shift 2;; *) echo "usage: $0 [--compose-dir DIR]" >&2; exit 2;; esac; done
 cd "$dir"
 # The operator must fence the former primary before this script is run.
-docker compose exec -T postgres psql -U "${POSTGRES_USER:-karst}" -d "${POSTGRES_DB:-karst}" -Atqc 'SELECT pg_is_in_recovery()' | grep -qx t || { echo "pg-promote: local postgres is not a standby" >&2; exit 1; }
+#
+# -u postgres on every exec below: the postgres:17 image's default exec user
+# is root, and pg_ctl refuses to run as root — found by actually running this
+# script against a live standby (plans/phase-6/09-ha.md §7 drill), not by
+# reading it.
+docker compose exec -T -u postgres postgres psql -U "${POSTGRES_USER:-karst}" -d "${POSTGRES_DB:-karst}" -Atqc 'SELECT pg_is_in_recovery()' | grep -qx t || { echo "pg-promote: local postgres is not a standby" >&2; exit 1; }
 start=$(date +%s)
-docker compose exec -T postgres pg_ctl promote -D /var/lib/postgresql/data -w
-docker compose exec -T postgres psql -U "${POSTGRES_USER:-karst}" -d "${POSTGRES_DB:-karst}" -Atqc 'SELECT NOT pg_is_in_recovery()' | grep -qx t
+docker compose exec -T -u postgres postgres pg_ctl promote -D /var/lib/postgresql/data -w
+docker compose exec -T -u postgres postgres psql -U "${POSTGRES_USER:-karst}" -d "${POSTGRES_DB:-karst}" -Atqc 'SELECT NOT pg_is_in_recovery()' | grep -qx t
 # Update NB_STORE_ENGINE_POSTGRES_DSN on both hosts before recreating controls.
 docker compose up -d --force-recreate control
 echo "pg-promote: completed in $(( $(date +%s) - start ))s"

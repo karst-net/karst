@@ -4,23 +4,115 @@ This record is completed only by a real `shannon`/`turing` drill; a compose
 run is not evidence of HA. Schema upgrades require all control replicas stopped
 or explicit acceptance of the existing migration race.
 
-## Failover drill — pending
+## Failover drill — run 2026-09-04
 
-- Date/operator/log bundle: **not yet run**
-- Control read/write RTO: **not yet measured**
-- Node survival or reconnect time: **not yet measured**
+- Date/operator: 2026-09-04, Adrian Anderson (assisted). Two real hosts:
+  `shannon` (primary, this dev box) and `turing` (streaming replica,
+  promoted). `lovelace` ran the enrolled node.
+- Control read/write RTO: **~45s** wall-clock from killing `shannon`'s
+  Postgres primary (`docker kill`) to both `karst-control` replicas serving
+  reads/writes against `turing`'s promoted primary again. This run includes
+  discovery time for a real `pg-promote.sh` bug (below); a clean run of the
+  fixed script is expected to be well under a minute, dominated by
+  `pg_ctl promote`'s own wait plus two `docker compose up -d --force-recreate
+  control` cycles.
+- Node survival: `lovelace`'s tunnel interface stayed up throughout —
+  `karstd`'s "session held open, retrying" design meant the data plane never
+  dropped. The control channel (netmap refresh, PSK epoch delivery) recovered
+  once both `karst-control` replicas were repointed at the new primary.
+- **Bug found and fixed**: `scripts/pg-promote.sh` ran `docker compose exec`
+  without `-u postgres`. The `postgres:17` image's default exec user is
+  root, and `pg_ctl` refuses to run as root — the script failed at the first
+  real drill. Fixed by adding `-u postgres` to all three `exec` calls.
+- **Deployment-specific gotcha, not a script bug**: `pg_hba.conf` must list
+  every docker-compose bridge subnet in play (each host's compose project
+  gets its own `/16`), not just the LAN subnet nodes and replicas dial over.
+  `deploy/compose/ha/postgres/pg_hba.conf`'s checked-in placeholder
+  (`203.0.113.0/24`) needs both the real LAN CIDR and each host's own bridge
+  subnet added per deployment; this is inherent to running Postgres in
+  compose on two independent hosts, not something the checked-in file can
+  fix once for everyone.
+- Topology recovery: `shannon` was rebuilt as a fresh streaming replica of
+  `turing` (`pg_basebackup -R` against the new primary) and confirmed
+  streaming (`pg_stat_replication` on `turing` showed `shannon`,
+  `state=streaming`, `sync_state=async`) — the drill did not leave the
+  deployment in a degraded state.
 
-Fence `shannon`, change every control DSN to `turing`, run `pg-promote.sh` on
-`turing`, measure service and node recovery, then rebuild `shannon` as standby.
+## Backup/restore drill — run 2026-09-04
 
-## Backup/restore drill — pending
+- Date/operator: 2026-09-04, Adrian Anderson (assisted), against `turing`
+  (the promoted primary at that point in the drill).
+- Took a real `pg-backup.sh` base backup to an off-host destination (a
+  third host, over the network — not the primary's own disk), then
+  deliberately corrupted data (`DROP TABLE control_sessions` against the
+  live primary), then restored with `pg-restore.sh --yes` to a
+  point-in-time target before the corruption.
+- **Measured RPO: ~38.5 seconds** — corruption at `15:18:38.749Z`, restore
+  reached `15:18:00.211Z` (the last committed transaction actually
+  recoverable from archived WAL) before running out of archive. A target
+  time closer to the corruption (`15:18:35Z`) was tried first and failed
+  with "recovery ended before configured recovery target was reached": the
+  archived WAL simply didn't extend that far.
+- **Real finding, not an assumed number**: this deployment's
+  `postgresql.conf` sets `archive_mode = on` with no `archive_timeout`, so
+  WAL segments archive only on completion (16 MB) or an explicit switch.
+  Under low write volume — the common case between drills, and plausibly in
+  early production too — the actual RPO is bounded by *time since the last
+  full segment*, not by replication lag. An operator who wants a tighter,
+  bounded RPO should set `archive_timeout` (e.g. `60s`) in
+  `deploy/compose/ha/postgres/postgresql.conf`, trading a small steady
+  stream of mostly-empty archived segments for a predictable worst-case
+  data-loss window. This workstream ships the async-replication trade-off
+  documented in §3.4 of the plan; this is the same kind of trade-off one
+  layer down, at the archiving layer, and it was not visible from the design
+  alone — only from timing a real restore against real WAL archive gaps.
+- Restore verified correct: `control_sessions` was back with its
+  pre-corruption row; a marker table inserted after the restore point was
+  correctly absent.
+- Topology recovery: after restore, `turing` promoted onto a new timeline;
+  `shannon` was rebuilt as its replica the same way as the failover drill,
+  confirmed streaming.
 
-- Date/transcripts: **not yet run**
-- Measured RPO (last archived WAL to corruption): **not yet measured**
+## Duplicate-identity eviction and enrollment — run 2026-09-04
 
-Take an off-host `pg_basebackup`, corrupt a known record, restore to before it
-with `pg-restore.sh --yes`, and preserve the original data directory until
-verification succeeds.
+- `lovelace` enrolled against `shannon`'s `karst-control` replica, then was
+  reconfigured to dial `turing`'s replica directly and reconnected
+  successfully against the same Postgres-backed account — confirming a node
+  can land on either replica (§7 step 1).
+- Cloned `lovelace`'s ML-DSA control identity (same technique
+  [04-pentest.md](../../plans/phase-6/04-pentest.md) §9.7 used to find #87)
+  and connected the clone to the replica the legitimate session was *not*
+  on. The legitimate session's stream closed (`the stream closed
+  unexpectedly`) within the same second the clone's `Claim` landed in
+  `control_sessions`, and `replica_id` flipped to the clone's replica —
+  cross-replica eviction fired for real, against two live `karst-control`
+  processes on two real hosts sharing one Postgres primary. This is the
+  regression test for #87 that matters most under HA, and it passed.
+- `TestClaimNotifiesOtherReplica`, `TestSecondSessionOnOtherReplicaEvictsFirst`,
+  and `TestNotificationReachesPeerOnOtherReplica` were also run against a
+  real local Postgres container (not just trusted from CI config) and pass.
+
+## Known gap: automatic failover through a shared entry point — not closed
+
+§7 step 6 (kill one `karst-control` process while a node is connected,
+confirm it reconnects through the *other* replica without operator
+intervention) was attempted but not conclusively demonstrated in this run.
+`karstd.toml` pins a single fixed `server` address (§3.1: this is by
+design — the overlay assumes an operator-provided shared entry point, which
+this repo does not ship). An ad-hoc HAProxy TCP round-robin was stood up for
+the drill; after extended chaos testing (repeated primary kills, a PITR
+restore across timelines, many client restarts) the node's netmap sync
+became unreliable through it in a way that did not look like the HA
+session/eviction logic — no session ever failed to *evict* correctly, only
+a normal-looking connect-then-disconnect loop that also reproduced briefly
+against a direct, un-proxied connection to a single replica later in the
+same run. This looks like accumulated drill-environment state (the ad-hoc
+proxy, or the node's netmap cache/PSK-epoch state after jumping Postgres
+timelines twice) rather than a defect in the shipped design, but it was not
+run to ground. **Before relying on this in production**: stand up the real
+load-balanced entry point the design assumes, and re-run this specific
+step in isolation (fresh node, fresh cache, no other chaos in flight) to get
+a clean pass/fail and, if it fails again, a reproducible bug report.
 
 ## #75 re-estimate
 
