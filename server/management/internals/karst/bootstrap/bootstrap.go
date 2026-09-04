@@ -118,6 +118,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	}
 	db := sql.GetDB()
 
+	// BaseServer.Metrics() is lazily memoized and fatal-on-error at
+	// construction, so it is always non-nil here — no nil check needed before
+	// handing karstMetrics to the constructors below.
+	karstMetrics := s.Metrics().KarstMetrics()
+
 	keys, err := loadOrCreateKeys(db)
 	if err != nil {
 		return nil, err
@@ -172,6 +177,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
+	relayStore.Metrics = karstMetrics
 	turnStore, err := turncred.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: turn store: %w", err)
@@ -184,6 +190,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: bedrock log: %w", err)
 	}
+	bedrockLog.Metrics = karstMetrics
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -255,7 +262,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// is not gated behind anything bedrock.Scheduler's own wiring is (that one
 	// needs an operator-supplied AnchorKey; this one does not need any
 	// configuration to be correct).
-	go (&control.EpochScheduler{Handler: router.netmap, Updates: s.PeersUpdateManager()}).
+	go (&control.EpochScheduler{Handler: router.netmap, Updates: s.PeersUpdateManager(), Metrics: karstMetrics}).
 		Run(context.Background(), time.Minute)
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{

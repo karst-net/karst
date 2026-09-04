@@ -30,6 +30,7 @@ type MockAppMetrics struct {
 	UpdateChannelMetricsFunc     func() *UpdateChannelMetrics
 	AddAccountManagerMetricsFunc func() *AccountManagerMetrics
 	EphemeralPeersMetricsFunc    func() *EphemeralPeersMetrics
+	KarstMetricsFunc             func() *KarstMetrics
 }
 
 // GetMeter mocks the GetMeter function of the AppMetrics interface
@@ -112,6 +113,14 @@ func (mock *MockAppMetrics) EphemeralPeersMetrics() *EphemeralPeersMetrics {
 	return nil
 }
 
+// KarstMetrics mocks the MockAppMetrics function of the KarstMetrics interface
+func (mock *MockAppMetrics) KarstMetrics() *KarstMetrics {
+	if mock.KarstMetricsFunc != nil {
+		return mock.KarstMetricsFunc()
+	}
+	return nil
+}
+
 // AppMetrics is metrics interface
 type AppMetrics interface {
 	GetMeter() metric2.Meter
@@ -124,6 +133,7 @@ type AppMetrics interface {
 	UpdateChannelMetrics() *UpdateChannelMetrics
 	AccountManagerMetrics() *AccountManagerMetrics
 	EphemeralPeersMetrics() *EphemeralPeersMetrics
+	KarstMetrics() *KarstMetrics
 }
 
 // defaultAppMetrics are core application metrics based on OpenTelemetry https://opentelemetry.io/
@@ -140,6 +150,7 @@ type defaultAppMetrics struct {
 	updateChannelMetrics  *UpdateChannelMetrics
 	accountManagerMetrics *AccountManagerMetrics
 	ephemeralMetrics      *EphemeralPeersMetrics
+	karstMetrics          *KarstMetrics
 }
 
 // IDPMetrics returns metrics for the idp package
@@ -175,6 +186,12 @@ func (appMetrics *defaultAppMetrics) AccountManagerMetrics() *AccountManagerMetr
 // EphemeralPeersMetrics returns metrics for the ephemeral peer cleanup loop
 func (appMetrics *defaultAppMetrics) EphemeralPeersMetrics() *EphemeralPeersMetrics {
 	return appMetrics.ephemeralMetrics
+}
+
+// KarstMetrics returns metrics for Karst's own subsystems (Bedrock, the
+// relay registry, PSK epoch rotation)
+func (appMetrics *defaultAppMetrics) KarstMetrics() *KarstMetrics {
+	return appMetrics.karstMetrics
 }
 
 // Close stop application metrics HTTP handler and closes listener.
@@ -266,6 +283,11 @@ func NewDefaultAppMetrics(ctx context.Context) (AppMetrics, error) {
 		return nil, fmt.Errorf("failed to initialize ephemeral peers metrics: %w", err)
 	}
 
+	karstMetrics, err := NewKarstMetrics(ctx, meter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize karst metrics: %w", err)
+	}
+
 	return &defaultAppMetrics{
 		Meter:                 meter,
 		ctx:                   ctx,
@@ -276,6 +298,7 @@ func NewDefaultAppMetrics(ctx context.Context) (AppMetrics, error) {
 		updateChannelMetrics:  updateChannelMetrics,
 		accountManagerMetrics: accountManagerMetrics,
 		ephemeralMetrics:      ephemeralMetrics,
+		karstMetrics:          karstMetrics,
 	}, nil
 }
 
@@ -317,6 +340,11 @@ func NewAppMetricsWithMeter(ctx context.Context, meter metric2.Meter) (AppMetric
 		return nil, fmt.Errorf("failed to initialize ephemeral peers metrics: %w", err)
 	}
 
+	karstMetrics, err := NewKarstMetrics(ctx, meter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize karst metrics: %w", err)
+	}
+
 	return &defaultAppMetrics{
 		Meter:                 meter,
 		ctx:                   ctx,
@@ -328,5 +356,6 @@ func NewAppMetricsWithMeter(ctx context.Context, meter metric2.Meter) (AppMetric
 		updateChannelMetrics:  updateChannelMetrics,
 		accountManagerMetrics: accountManagerMetrics,
 		ephemeralMetrics:      ephemeralMetrics,
+		karstMetrics:          karstMetrics,
 	}, nil
 }

@@ -30,6 +30,8 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/netbirdio/netbird/management/server/telemetry"
 )
 
 // Scheduler periodically anchors one account's audit log with a locally held
@@ -49,6 +51,12 @@ type Scheduler struct {
 	// comment for why anchoring needs both rather than either alone.
 	MinEntries uint64
 	MaxAge     time.Duration
+
+	// Metrics is optional (nil is a valid, no-op value) and drives
+	// management.karst.bedrock.anchor.age.seconds. Set from the same
+	// *telemetry.KarstMetrics instance as Log.Metrics — see main.go's
+	// startBedrockAnchorScheduler.
+	Metrics *telemetry.KarstMetrics
 
 	// loggedNotEnabled suppresses repeating the same informational line every
 	// tick while an operator's key waits for the root ceremony that adds it
@@ -121,7 +129,10 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 		log.WithContext(ctx).Debugf("karst: bedrock anchor scheduler: audit head: %v", err)
 		return nil
 	}
-	lastAnchoredAt, _ := LastAnchoredAt(entries, state)
+	lastAnchoredAt, hasAnchored := LastAnchoredAt(entries, state)
+	if hasAnchored {
+		s.Metrics.SetBedrockLastAnchoredAt(s.AccountID, lastAnchoredAt)
+	}
 	if !AnchorDue(state, auditSeq, lastAnchoredAt, now, s.MinEntries, s.MaxAge) {
 		return nil
 	}

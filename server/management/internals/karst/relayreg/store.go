@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -53,6 +54,9 @@ type Store struct {
 	db             *gorm.DB
 	compiledMu     sync.RWMutex
 	compiledNetmap map[string]*proto.KarstRelay
+	// Metrics is optional (nil is a valid, no-op value) and drives
+	// management.karst.relay.registry.size.
+	Metrics *telemetry.KarstMetrics
 }
 
 func NewStore(db *gorm.DB) (*Store, error) {
@@ -92,6 +96,7 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredRelay, error) {
 		return nil, ErrExists
 	}
 	s.invalidateCompiled(accountID, record.ID)
+	s.recordSize(accountID)
 	return record, nil
 }
 
@@ -120,7 +125,26 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	s.invalidateCompiled(accountID, id)
+	s.recordSize(accountID)
 	return nil
+}
+
+// recordSize refreshes the cached registry-size gauge for accountID after a
+// mutation. One extra indexed count query per Create/Delete, not a
+// background poll — Store.Create already does a comparable round trip for
+// its own preflight existence check, so this does not introduce a new class
+// of cost to the write path, and it stays correct across restarts and
+// multiple server processes in a way a purely in-memory increment/decrement
+// would not.
+func (s *Store) recordSize(accountID string) {
+	if s.Metrics == nil {
+		return
+	}
+	var n int64
+	if err := s.db.Model(&StoredRelay{}).Where("account_id = ?", accountID).Count(&n).Error; err != nil {
+		return
+	}
+	s.Metrics.SetRelayRegistrySize(accountID, int(n))
 }
 
 func (s *Store) NetmapRelays(ctx context.Context) ([]*proto.KarstRelay, error) {

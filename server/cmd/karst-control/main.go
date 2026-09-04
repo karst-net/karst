@@ -323,7 +323,7 @@ func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst, accoun
 
 	s := &bedrock.Scheduler{
 		Log: k.Chain, Audit: k.Audit, AccountID: accountID, Key: key,
-		MinEntries: minEntries, MaxAge: maxAge,
+		MinEntries: minEntries, MaxAge: maxAge, Metrics: k.Chain.Metrics,
 	}
 	log.Infof("karst: bedrock anchor scheduler enabled for %s: checking every %s, "+
 		"anchoring after %d entries or %s, whichever comes first",

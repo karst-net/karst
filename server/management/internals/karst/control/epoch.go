@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map"
+	"github.com/netbirdio/netbird/management/server/telemetry"
 )
 
 // EpochSeconds is the PSK rotation period (PLAN.md §2.6: "epochs rotate
@@ -52,6 +53,10 @@ type EpochScheduler struct {
 	// within its own 60s poll floor, the same fallback GitHub issues #72 and
 	// #73 already rely on for every other server-initiated change.
 	Updates network_map.PeersUpdateManager
+
+	// Metrics is optional (nil is a valid, no-op value) and drives
+	// management.karst.psk.epoch.age.seconds.
+	Metrics *telemetry.KarstMetrics
 }
 
 // Run recomputes the epoch on every tick and, when it changed, swaps it into
@@ -95,6 +100,7 @@ func (s *EpochScheduler) Tick(ctx context.Context, now time.Time) {
 		return
 	}
 	log.WithContext(ctx).Infof("karst: psk epoch rotated %d -> %d", prev, next)
+	s.Metrics.SetPSKEpochLastBumpAt(now)
 	if s.Updates == nil {
 		return
 	}

@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/netbirdio/netbird/management/server/telemetry"
 )
 
 // MaxEntriesPerResponse bounds one KarstBedrockResponse.
@@ -184,7 +186,12 @@ func (l *Log) CommitPending(ctx context.Context, accountID string, signatures ma
 }
 
 // Log is the server's copy of one account's Bedrock chain.
-type Log struct{ db *gorm.DB }
+type Log struct {
+	db *gorm.DB
+	// Metrics is optional (nil is a valid, no-op value — see KarstMetrics'
+	// own doc comment) and drives management.karst.bedrock.chain.depth.
+	Metrics *telemetry.KarstMetrics
+}
 
 // NewLog returns a log over db, migrating the table.
 func NewLog(db *gorm.DB) (*Log, error) {
@@ -260,7 +267,11 @@ func (l *Log) Import(ctx context.Context, accountID string, entries []Entry) err
 	if len(entries) == 0 {
 		return errors.New("bedrock: nothing to import")
 	}
-	return l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	// depth is set inside the transaction closure below and read only after
+	// it returns nil, so a rolled-back import never reports a depth it did
+	// not actually reach.
+	var depth int
+	err := l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var stored []LogEntry
 		if err := tx.Where("account_id = ?", accountID).Order("seq ASC").Find(&stored).Error; err != nil {
 			return fmt.Errorf("read stored log: %w", err)
@@ -311,8 +322,14 @@ func (l *Log) Import(ctx context.Context, accountID string, entries []Entry) err
 				return fmt.Errorf("store entry %d: %w", e.Seq, err)
 			}
 		}
+		depth = len(combined)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	l.Metrics.SetBedrockChainDepth(accountID, uint64(depth))
+	return nil
 }
 
 func decodeRows(rows []LogEntry) ([]Entry, error) {
