@@ -3841,6 +3841,7 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
         metric: 100,
         masquerade: true,
         keep_route: false,
+        enabled: None,
     });
     assert!(
         created,
@@ -3848,10 +3849,13 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     );
 
     // The same restart-to-pick-up-a-server-side-change pattern the offline-
-    // ceremony and revocation rows already use: this fixture's `/routes`
-    // admin surface does not push, unlike a real deployment's route/group/
-    // policy change — see `routeRegistry`'s own doc comment for why that gap
-    // is acceptable here.
+    // ceremony and revocation rows already use — a deliberate choice here,
+    // not a limitation: `/routes` does push now (`routeRegistry.upsert`
+    // calls `memoryAccount.notify`, and `route_changes_converge_through_
+    // push_not_restart` measures it), but this row's own subject is the
+    // route projection and kernel forwarding, and a restart is the simpler
+    // way to get a *fresh* node's first netmap to already contain the
+    // offer, same as node A's own restart above did to learn about node B.
     net.stop_node("b", NS_B);
     start_node(&mut net, "b", NS_B);
     wait_for(
@@ -3897,6 +3901,107 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     );
 }
 
+/// **W7 item 3, "daemon crash"**: a gateway's forwarding state survives an
+/// abrupt kill and restart with no netmap change involved. `net.stop_node`
+/// sends `SIGKILL` (`Child::kill()`), not a graceful shutdown, so every
+/// restart every other row in this file uses is already a crash simulation
+/// — this row is the one that isolates "gateway forwarding after a bare
+/// crash" as its own subject rather than a side effect of also picking up a
+/// route change. `State::reconcile`'s own `"File exists"` tolerance on
+/// `nft add table` (`gateway.rs`) exists for exactly this: the crashed
+/// process's table outlives it — `Drop` does not run under `SIGKILL` — and
+/// the fresh process must reconcile against its own orphaned state rather
+/// than fail to come up at all.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn gateway_forwarding_survives_a_daemon_crash_and_restart() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("crash");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }),
+        "the fixture rejected the route offer"
+    );
+    assert_push_converges(&net, "route creation", || {
+        field(&status(&net, "b", NS_B), "route_id").is_some()
+    });
+
+    // A looping listener: this row proves reachability twice, before and
+    // after the crash, and a one-shot listener would only ever answer once.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{DEST_HOST}',22)); s.listen(5)\n\
+         while True:\n\
+         \x20   c,_=s.accept(); c.sendall(b'behind the gateway'); c.close()\n"
+    );
+    net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(500));
+    let probe = || -> bool {
+        let script = format!(
+            "import socket\n\
+             socket.create_connection(('{DEST_HOST}',22),timeout=5).close()\n"
+        );
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    assert!(
+        probe(),
+        "the gateway did not forward before any crash — nothing to recover \
+         from\n── node A ──\n{}",
+        status(&net, "a", NS_A)
+    );
+
+    // The crash: an abrupt kill, no netmap change involved. `start_node`
+    // reconnects with the *same* config node A had before, so any recovery
+    // this row observes is the daemon's own idempotent reconciliation, not
+    // a fresh netmap doing the work for it.
+    net.stop_node("a", NS_A);
+    start_node(&mut net, "a", NS_A);
+    wait_for(
+        &net,
+        "node A to re-establish with node B after the crash",
+        Duration::from_secs(30),
+        || field(&status(&net, "a", NS_A), "state").as_deref() == Some("established"),
+    );
+
+    // **Not `PUSH_BOUND`, and not a small number.** A route or peer change
+    // reaches an already-live session over the control channel in seconds
+    // (every other row's own bound). This row's recovery instead rides on
+    // PHREATIC's own session liveness: node B's session with node A looks
+    // perfectly established right up until the crash, and spec §7's "only
+    // the initiator rekeys" means the *surviving* side has no reason to
+    // dial a fresh handshake on its own until its existing session reaches
+    // `REKEY_AFTER_TIME` (`spec/phreatic-v1.md`, 120s) — node A's own fresh
+    // process finding nothing to resume is a routing-layer concern; how
+    // long node B takes to notice is not. Measured in practice at a little
+    // over two minutes; the margin above 120s is for the handshake itself
+    // and this row's own polling granularity, not a second unexplained gap.
+    wait_for(
+        &net,
+        "the gateway to resume forwarding after a crash and restart with no \
+         netmap change involved",
+        Duration::from_secs(150),
+        probe,
+    );
+}
+
 /// Whether the destination host answers on its private segment at all — the
 /// isolation check [`a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding`]
 /// makes before any route exists. A bare TCP connect to a port nothing is
@@ -3936,12 +4041,20 @@ struct RouteOfferBody<'a> {
     metric: u32,
     masquerade: bool,
     keep_route: bool,
+    /// `None` omits the field, matching `routeOfferRequest.Enabled`'s own
+    /// `*bool` — absent means "enabled", the common case every row but the
+    /// push-CRUD row's own disable step wants.
+    enabled: Option<bool>,
 }
 
 fn fixture_create_route(body: &RouteOfferBody<'_>) -> bool {
+    let enabled_field = match body.enabled {
+        Some(value) => format!(",\"enabled\":{value}"),
+        None => String::new(),
+    };
     let payload = format!(
         "{{\"route_id\":{:?},\"prefix\":{:?},\"gateway_handle\":{:?},\
-         \"metric\":{},\"masquerade\":{},\"keep_route\":{}}}",
+         \"metric\":{},\"masquerade\":{},\"keep_route\":{}{enabled_field}}}",
         body.route_id,
         body.prefix,
         body.gateway_handle,
@@ -3967,6 +4080,29 @@ fn fixture_create_route(body: &RouteOfferBody<'_>) -> bool {
             "-d",
             &payload,
             &format!("http://{IP_PUB}:{CONTROL_PORT}/routes"),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+        .unwrap_or(false)
+}
+
+/// `DELETE /routes?id=<route_id>` — [`fixture_remove`]'s pattern, for a route
+/// rather than a peer.
+fn fixture_delete_route(route_id: &str) -> bool {
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_PUB,
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "DELETE",
+            &format!("http://{IP_PUB}:{CONTROL_PORT}/routes?id={route_id}"),
         ])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
@@ -4012,6 +4148,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
         metric: 100,
         masquerade: true,
         keep_route: false,
+        enabled: None,
     });
     assert!(
         created,
@@ -4019,7 +4156,8 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     );
 
     // Same restart-to-pick-up-a-server-side-change pattern the subnet row
-    // uses — `/routes` does not push.
+    // uses, and the same reason — see its own comment on why this is a
+    // choice and not a limitation.
     net.stop_node("b", NS_B);
     start_node(&mut net, "b", NS_B);
     wait_for(
@@ -4091,6 +4229,139 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     );
 }
 
+/// **W7 item 3, "daemon crash"** and §6's "Restart restores consent and
+/// effective rules" — the exit-route half. `exit_node::Selection::load`
+/// exists specifically so a durable, root-owned choice survives exactly
+/// this: an abrupt kill (`net.stop_node` sends `SIGKILL`, not a graceful
+/// shutdown) followed by a restart, with no `karst exit-node use` run a
+/// second time. `gateway_forwarding_survives_a_daemon_crash_and_restart` is
+/// this same requirement's gateway-side half; this row is its
+/// recipient-side counterpart.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+#[allow(clippy::too_many_lines)]
+fn exit_node_consent_survives_a_daemon_crash_and_restart() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("consent");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "internet",
+            prefix: "0.0.0.0/0",
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }),
+        "the fixture rejected the exit offer"
+    );
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish with the exit offer in its first netmap",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    // A looping listener: this row proves reachability twice, before and
+    // after the crash.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{DEST_HOST}',22)); s.listen(5)\n\
+         while True:\n\
+         \x20   c,_=s.accept(); c.sendall(b'via the exit'); c.close()\n"
+    );
+    net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(500));
+    let probe = || -> bool {
+        let script = format!(
+            "import socket\n\
+             socket.create_connection(('{DEST_HOST}',22),timeout=5).close()\n"
+        );
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    let sock = net.dir.join("b.sock");
+    let use_out = Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_B,
+            &bin("karst"),
+            "exit-node",
+            "use",
+            "internet",
+            "--socket",
+            &sock.to_string_lossy(),
+        ])
+        .output()
+        .expect("run `karst exit-node use`");
+    assert!(
+        String::from_utf8_lossy(&use_out.stdout).contains("selected"),
+        "`karst exit-node use` did not report success: {} {}",
+        String::from_utf8_lossy(&use_out.stdout),
+        String::from_utf8_lossy(&use_out.stderr),
+    );
+    assert!(
+        probe(),
+        "the exit route did not activate before any crash — nothing to \
+         recover from\n── node B ──\n{}",
+        status(&net, "b", NS_B)
+    );
+
+    // The crash: an abrupt kill, with no `karst exit-node use` run again
+    // afterward. `exit_node_state_file` is under `net.dir`, the same path
+    // across the restart (see `write_node_config`) — that durability is the
+    // entire point being tested.
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish after the crash",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    // Immediate, not polled: `Selection::load` reads the durable consent
+    // record synchronously at startup, before the daemon serves any control
+    // request at all, so this is correct the instant the socket answers.
+    assert_eq!(
+        field(&status(&net, "b", NS_B), "selected_exit").as_deref(),
+        Some("Some(\"internet\")"),
+        "the exit route selection did not survive a crash and restart \
+         without re-running `karst exit-node use`\n── node B ──\n{}",
+        status(&net, "b", NS_B)
+    );
+    // Polled, unlike the selection above: re-activating the selection is
+    // kernel-level reconciliation, driven separately from session
+    // establishment, so it settling a moment later is expected, not a bug.
+    wait_for(
+        &net,
+        "the exit route to re-activate after the crash",
+        Duration::from_secs(15),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("true"),
+    );
+    wait_for(
+        &net,
+        "the recipient to reach the destination through the exit route \
+         after the crash",
+        Duration::from_secs(15),
+        probe,
+    );
+}
+
 /// **W7's third row**: plan §6's own assertion — "Activating IPv4 exit
 /// routing does not implicitly activate IPv6, or vice versa." The daemon
 /// holds exactly one [`crate::exit_policy::Manager`]-equivalent (`run.rs`'s
@@ -4121,6 +4392,7 @@ fn selecting_one_ip_familys_exit_route_does_not_activate_the_other() {
             metric: 100,
             masquerade: true,
             keep_route: false,
+            enabled: None,
         });
         assert!(created, "the fixture rejected the {route_id} offer");
     }
@@ -4233,6 +4505,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
             metric: 100,
             masquerade: true,
             keep_route: false,
+            enabled: None,
         }),
         "the fixture rejected the initial route offer to node A"
     );
@@ -4324,6 +4597,7 @@ fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
             metric: 100,
             masquerade: true,
             keep_route: false,
+            enabled: None,
         }),
         "the fixture rejected re-pointing the route at node C"
     );
@@ -4427,6 +4701,200 @@ fn overlay_peer_address_self(net: &Aquifer, tag: &str, ns: &str) -> String {
     first_allowed_address(&addresses)
         .unwrap_or_else(|| panic!("could not read node {tag}'s own address from {addresses:?}"))
         .to_owned()
+}
+
+/// **W7 item 2**: create, update, disable, re-enable and delete a route
+/// through the real HTTP admin surface, converging through the push path
+/// every time — never a restart. Every other routing row in this file
+/// restarts the recipient to pick up a `/routes` change deterministically,
+/// documented at each call site as working around exactly this gap:
+/// `karst-testserver`'s admin surface had no push of its own until
+/// `routeRegistry.upsert`/`delete` started calling `memoryAccount.notify`,
+/// the same production path (`PeersUpdateManager.SendNotification` and
+/// `SendUpdate`) the revocation row already measures for peer removal. This
+/// row is that same measurement, applied to a route.
+///
+/// [`assert_push_converges`] is the revocation row's own "inside
+/// `PUSH_BOUND`, not merely inside the fallback poll" discipline, factored
+/// out so this row does not have to duplicate its five-line shape four
+/// times over.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+#[allow(clippy::too_many_lines)]
+fn route_changes_converge_through_push_not_restart() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("push");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    assert!(
+        !dest_reachable(),
+        "the destination host was reachable before any route offer existed — \
+         the topology does not isolate it the way this row assumes"
+    );
+
+    // A looping listener, unlike every other row's one-shot accept: this row
+    // proves reachability more than once (after create, after re-enable),
+    // and a one-shot listener would only ever answer the first of those.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{DEST_HOST}',22)); s.listen(5)\n\
+         while True:\n\
+         \x20   c,_=s.accept(); c.sendall(b'reachable'); c.close()\n"
+    );
+    net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(500));
+    let probe = || -> bool {
+        let script = format!(
+            "import socket\n\
+             socket.create_connection(('{DEST_HOST}',22),timeout=5).close()\n"
+        );
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    // Create.
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }),
+        "the fixture rejected the route offer"
+    );
+    assert_push_converges(&net, "route creation", || {
+        field(&status(&net, "b", NS_B), "metric").as_deref() == Some("100")
+    });
+    assert!(
+        probe(),
+        "the route converged in status but the recipient still could not \
+         reach the destination\n── node B ──\n{}",
+        status(&net, "b", NS_B)
+    );
+
+    // Update: change the metric.
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_handle,
+            metric: 250,
+            masquerade: true,
+            keep_route: false,
+            enabled: None,
+        }),
+        "the fixture rejected the route update"
+    );
+    assert_push_converges(&net, "route update", || {
+        field(&status(&net, "b", NS_B), "metric").as_deref() == Some("250")
+    });
+
+    // Disable.
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_handle,
+            metric: 250,
+            masquerade: true,
+            keep_route: false,
+            enabled: Some(false),
+        }),
+        "the fixture rejected disabling the route"
+    );
+    assert_push_converges(&net, "route disable", || {
+        field(&status(&net, "b", NS_B), "route_id").is_none()
+    });
+    assert!(
+        !probe(),
+        "a disabled route was still reachable after the disable converged\n\
+         ── node B ──\n{}",
+        status(&net, "b", NS_B)
+    );
+
+    // Re-enable, so the row also proves delete removes a route that is
+    // actually active rather than one already dormant.
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_handle,
+            metric: 250,
+            masquerade: true,
+            keep_route: false,
+            enabled: Some(true),
+        }),
+        "the fixture rejected re-enabling the route"
+    );
+    assert_push_converges(&net, "route re-enable", probe);
+
+    // Delete.
+    assert!(
+        fixture_delete_route("dest-lan"),
+        "the fixture rejected deleting the route"
+    );
+    assert_push_converges(&net, "route delete", || {
+        field(&status(&net, "b", NS_B), "route_id").is_none()
+    });
+    assert!(
+        !probe(),
+        "a deleted route was still reachable after the delete converged\n\
+         ── node B ──\n{}",
+        status(&net, "b", NS_B)
+    );
+}
+
+/// Poll `predicate` until it holds, failing unless it does so within
+/// [`PUSH_BOUND`] — the revocation row's own "the session dies inside
+/// `PUSH_BOUND`, not merely inside the fallback poll" discipline, shared so
+/// a row that checks this more than once does not restate it each time.
+/// Polling continues to `REFRESH_BOUND * 2` past the bound before giving up
+/// outright, so a genuine push regression that fell back to poll-only
+/// behavior is reported as a number rather than a bare timeout.
+fn assert_push_converges(net: &Aquifer, what: &str, mut predicate: impl FnMut() -> bool) {
+    let started = Instant::now();
+    let mut elapsed = None;
+    while started.elapsed() < REFRESH_BOUND * 2 {
+        if predicate() {
+            elapsed = Some(started.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let Some(elapsed) = elapsed else {
+        panic!(
+            "{what} did not converge within {:?}\n── node B ──\n{}\n── b.log ──\n{}",
+            REFRESH_BOUND * 2,
+            status(net, "b", NS_B),
+            net.log("b.log"),
+        );
+    };
+    println!(
+        "{what} converged in {:.1}s (push bound {}s)",
+        elapsed.as_secs_f64(),
+        PUSH_BOUND.as_secs()
+    );
+    assert!(
+        elapsed <= PUSH_BOUND,
+        "{what} took {:.1}s, past the {}s push bound — node B was subscribed \
+         the whole time, so a pass this slow means the fallback poll fired \
+         instead of the push.\n── node B ──\n{}\n── b.log ──\n{}",
+        elapsed.as_secs_f64(),
+        PUSH_BOUND.as_secs(),
+        status(net, "b", NS_B),
+        net.log("b.log"),
+    );
 }
 
 /// One TCP connect over the overlay from node A's namespace.

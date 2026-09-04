@@ -94,7 +94,6 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.routes[req.RouteID] = &nbroute.Route{
 		// GetResourceID() splits on the first colon; a route_id a test
 		// supplies has none, so it round-trips unchanged.
@@ -115,6 +114,15 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 		KeepRoute:  req.KeepRoute,
 		Enabled:    enabled,
 	}
+	r.mu.Unlock()
+
+	// Every registered peer, not just the gateway or a known recipient: this
+	// fixture does not model distribution groups (its own doc comment above
+	// explains why), so it cannot narrow who a route change actually affects
+	// any more precisely than production's own group-scoped fan-out would —
+	// see `memoryAccount.remove`'s identical reasoning for the same
+	// broadcast-to-everyone simplification.
+	r.account.notify(r.account.allPeerIDs())
 	return nil
 }
 
@@ -123,10 +131,13 @@ func (r *routeRegistry) upsert(ctx context.Context, req routeOfferRequest) error
 // convention.
 func (r *routeRegistry) delete(routeID string) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if _, ok := r.routes[routeID]; !ok {
+		r.mu.Unlock()
 		return false
 	}
 	delete(r.routes, routeID)
+	r.mu.Unlock()
+
+	r.account.notify(r.account.allPeerIDs())
 	return true
 }

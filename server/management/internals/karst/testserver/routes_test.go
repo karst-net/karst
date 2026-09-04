@@ -6,7 +6,9 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
 	nbroute "github.com/netbirdio/netbird/route"
 )
 
@@ -137,4 +139,48 @@ func TestRouteRegistryEnabledFieldDefaultsTrue(t *testing.T) {
 	if nm.Routes[0].Enabled {
 		t.Error("an explicit \"enabled\": false did not take effect")
 	}
+}
+
+// TestRouteRegistryChangesPushToEveryRegisteredPeer covers W7 item 2's "wait
+// for push rather than forcing a refresh": upsert and delete must both reach
+// production's real notification path
+// (`network_map.PeersUpdateManager.SendNotification`, the one
+// `control.Service.subscribeOnce` actually subscribes to — see
+// `memoryAccount.remove`'s own doc comment on why `SendUpdate` alone is not
+// enough), not just mutate the in-memory map and leave a connected node to
+// find out on its next unrelated poll.
+func TestRouteRegistryChangesPushToEveryRegisteredPeer(t *testing.T) {
+	account := newMemoryAccount()
+	gateway := account.register("gateway-handle", "gateway-host")
+	recipient := account.register("recipient-handle", "recipient-host")
+	updates := update_channel.NewPeersUpdateManager(nil)
+	account.updates = updates
+	registry := newRouteRegistry(account)
+	ctx := context.Background()
+
+	await := func(t *testing.T, ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s did not push a notification", what)
+		}
+	}
+
+	gatewayCh := updates.CreateNotificationChannel(ctx, gateway.ID)
+	recipientCh := updates.CreateNotificationChannel(ctx, recipient.ID)
+
+	if err := registry.upsert(ctx, routeOfferRequest{
+		RouteID: "subnet-a", Prefix: "10.20.0.0/16", GatewayHandle: "gateway-handle",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	await(t, gatewayCh, "upsert (gateway)")
+	await(t, recipientCh, "upsert (recipient)")
+
+	if !registry.delete("subnet-a") {
+		t.Fatal("delete of an existing route reported false")
+	}
+	await(t, gatewayCh, "delete (gateway)")
+	await(t, recipientCh, "delete (recipient)")
 }

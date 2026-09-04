@@ -93,9 +93,11 @@ func main() {
 	svc := control.New(static, identity.ControlSigner{Key: srvKey},
 		lookup, identity.ControlVerifier{}, handler)
 
-	// The push mechanism (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) only matters to the end-to-end
-	// deprovisioning check, which is also the one test that runs with
-	// --control. Every other row is unaffected: with nothing subscribing,
+	// The push mechanism (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) matters to every row
+	// that runs with --control: the deprovisioning check (peer removal, via
+	// /remove) and the routing rows that measure /routes converging without
+	// a restart (routeRegistry.upsert/delete call the same account.notify).
+	// Every other row is unaffected: with nothing subscribing,
 	// control.Service behaves exactly as it did before SubscribeToUpdatesWith
 	// existed.
 	if controlAddr() != "" && netmapRouter != nil {
