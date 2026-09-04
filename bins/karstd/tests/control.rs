@@ -279,6 +279,7 @@ fn local(seed: u8) -> LocalSettings {
         userspace_socks5_listen: None,
         userspace_publish: Vec::new(),
         nat64: None,
+        metrics_listen: None,
     }
 }
 

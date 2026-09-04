@@ -24,6 +24,7 @@ USAGE:
     karst exit-node use ROUTE_ID  persistently select an exit route
     karst exit-node disable       withdraw and forget exit consent
     karst bugreport  a support bundle, safe to attach to an issue
+    karst metrics    Engine::Stats and route/gateway state as Prometheus text
     karst down       ask the daemon to stop
     karst version    daemon version
 
@@ -74,6 +75,7 @@ fn main() -> ExitCode {
         ("exit-node", ["use", id, ..]) => Command::ExitUse((*id).to_owned()),
         ("exit-node", ["disable", ..]) => Command::ExitDisable,
         ("bugreport", _) => Command::BugReport,
+        ("metrics", _) => Command::Metrics,
         ("down", _) => Command::Down,
         ("version", _) => Command::Version,
         (other, _) => {

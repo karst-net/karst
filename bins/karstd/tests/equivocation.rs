@@ -91,6 +91,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
 
     let config = Arc::new(Config {
         relay_ca_file: None,
+        metrics_listen: None,
         keys: keys(own),
         listen: "[::]:0".parse().expect("listen"),
         port_mapping: false,

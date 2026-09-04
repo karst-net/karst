@@ -51,6 +51,13 @@ pub enum Command {
     /// problem, and nothing that would compromise the node if pasted into an
     /// issue tracker.
     BugReport,
+    /// Render `Engine::Stats` and route/gateway state as Prometheus text —
+    /// plans/phase-6/08-observability.md §3.1/§5 W6. The IPC verb, not a
+    /// listener: see the `[metrics] listen`-gated HTTP surface in
+    /// `run::metrics_http`, which serves the identical text over loopback
+    /// only, opt-in, for operators who want a normal scrape target instead
+    /// of a `karst metrics` textfile collector.
+    Metrics,
     /// Report the live `KarstDNS` policy and host integration selection.
     DnsStatus,
     /// Explain which resolver path the current policy selects for one name.
@@ -73,6 +80,7 @@ impl Command {
             "down" => Some(Self::Down),
             "version" => Some(Self::Version),
             "bugreport" => Some(Self::BugReport),
+            "metrics" => Some(Self::Metrics),
             "dns-status" => Some(Self::DnsStatus),
             "exit-list" => Some(Self::ExitList),
             "exit-disable" => Some(Self::ExitDisable),
@@ -96,6 +104,7 @@ impl Command {
             Self::Down => "down".to_owned(),
             Self::Version => "version".to_owned(),
             Self::BugReport => "bugreport".to_owned(),
+            Self::Metrics => "metrics".to_owned(),
             Self::DnsStatus => "dns-status".to_owned(),
             Self::DnsQuery(name) => format!("dns-query {name}"),
             Self::ExitList => "exit-list".to_owned(),
@@ -195,6 +204,7 @@ mod tests {
             Command::Down,
             Command::Version,
             Command::BugReport,
+            Command::Metrics,
             Command::DnsStatus,
             Command::DnsQuery("atlas.aquifer.karst".to_owned()),
             Command::ExitList,

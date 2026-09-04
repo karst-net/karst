@@ -28,7 +28,7 @@
 //! which is worth more than encrypting a file whose contents an attacker can
 //! obtain by enrolling a node.
 
-use karst_bedrock::{decode_log, encode_log, verify_log, Entry, PeerKeys, State};
+use karst_bedrock::{decode_log, encode_log, parse_anchor, verify_log, Entry, Op, PeerKeys, State};
 
 /// How strictly a node acts on the log — `spec/bedrock-v1.md` §6.
 ///
@@ -206,6 +206,27 @@ impl Log {
     #[must_use]
     pub fn is_present(&self) -> bool {
         self.state.is_some()
+    }
+
+    /// When the log's current anchor was written — Unix seconds — found by
+    /// scanning for the `anchor` entry matching `state.anchor`.
+    ///
+    /// Mirrors the Go server's `bedrock.LastAnchoredAt` exactly (same scan,
+    /// same match on `audit_seq`), so a node-side `bugreport` and the
+    /// server's own `management.karst.bedrock.anchor.age.seconds` describe
+    /// the same event from two vantage points
+    /// (plans/phase-6/08-observability.md §5 W6 item 3). `None` when nothing
+    /// is anchored yet — reported as absent, not a fabricated age.
+    #[must_use]
+    pub fn last_anchored_at(&self) -> Option<i64> {
+        let anchor = self.state.as_ref()?.anchor.as_ref()?;
+        self.entries.iter().find_map(|e| {
+            if e.op != Op::Anchor {
+                return None;
+            }
+            let parsed = parse_anchor(&e.body).ok()?;
+            (parsed.audit_seq == anchor.audit_seq).then_some(e.time)
+        })
     }
 
     /// Append fetched entries and re-verify from genesis.

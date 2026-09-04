@@ -184,6 +184,7 @@ fn netmap_with_psks() -> Netmap {
 fn local() -> LocalSettings {
     LocalSettings {
         relay_ca_file: None,
+        metrics_listen: None,
         keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
             &[0x11; 64],
             &[0x12; 32],

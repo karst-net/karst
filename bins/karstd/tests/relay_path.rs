@@ -147,6 +147,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
 
     let config = Config {
         relay_ca_file: None,
+        metrics_listen: None,
         route_offers: Vec::new(),
         exit_node_state_file: None,
         keys: keys(own),

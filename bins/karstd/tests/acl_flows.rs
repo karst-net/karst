@@ -87,6 +87,7 @@ fn config_for(
         relays: Vec::new(),
         turn_servers: Vec::new(),
         relay_ca_file: None,
+        metrics_listen: None,
         peers: vec![Peer {
             name: "peer".to_owned(),
             node_id: Vec::new(),

@@ -168,6 +168,31 @@ pub struct File {
     /// routes still come from the authenticated netmap unless overridden.
     #[serde(default)]
     pub dns: DnsSection,
+    /// The opt-in Prometheus scrape listener —
+    /// plans/phase-6/08-observability.md §3.1/§5 W6 item 2.
+    #[serde(default)]
+    pub metrics: MetricsSection,
+}
+
+/// The `[metrics]` TOML table.
+///
+/// Unset (the default) means what §3.1 requires: no new network-facing
+/// listener at all. `Command::Metrics` over the local control socket already
+/// gives an operator the same text for a `karst metrics` textfile collector
+/// or a cron job; this section exists only for one who wants a normal
+/// Prometheus scrape target instead.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MetricsSection {
+    /// A loopback-only HTTP listener serving `/metrics` as the identical
+    /// text `Command::Metrics` returns. Enforced in code, not just
+    /// documented — [`Config::load`] and [`Config::from_netmap_enforced`]
+    /// both refuse a configured non-loopback address rather than silently
+    /// binding it, the same posture §3.2 of
+    /// `06-subnet-routers-and-exit-nodes.md` requires for default routes: a
+    /// capability that changes what the node exposes needs an explicit,
+    /// narrow opt-in.
+    pub listen: Option<SocketAddr>,
 }
 
 /// How `KarstDNS` changes host resolver configuration.
@@ -498,6 +523,20 @@ fn validate_userspace(
     }
     Ok(())
 }
+
+/// Refuse a configured `[metrics] listen` address that is not loopback —
+/// §3.1 of plans/phase-6/08-observability.md requires this be enforced in
+/// code, not just documented. `None` (unset) always passes: the daemon opens
+/// no new listener by default.
+fn validate_metrics_listen(listen: Option<SocketAddr>) -> Result<(), ConfigError> {
+    match listen {
+        Some(addr) if !addr.ip().is_loopback() => Err(ConfigError::Unusable(format!(
+            "metrics.listen = {addr} is not a loopback address; the Prometheus listener may only \
+             bind 127.0.0.0/8 or ::1, never a network-facing interface"
+        ))),
+        Some(_) | None => Ok(()),
+    }
+}
 const fn default_port_mapping() -> bool {
     true
 }
@@ -626,6 +665,10 @@ pub struct Config {
     /// mode an operator writes lives in [`NodeSection::nat64`], and by the time
     /// a datapath exists the question has been settled.
     pub nat64: Option<karst_transport::Nat64Prefix>,
+    /// The opt-in loopback Prometheus listener — see [`MetricsSection`].
+    /// Already validated loopback-only by the time it reaches here; see
+    /// `validate_metrics_listen`.
+    pub metrics_listen: Option<SocketAddr>,
     /// Interface addresses — host addresses, not networks. See
     /// [`InterfaceAddress`].
     pub addresses: Vec<InterfaceAddress>,
@@ -683,6 +726,7 @@ impl fmt::Debug for Config {
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .field("userspace_publish", &self.userspace_publish)
             .field("nat64", &self.nat64)
+            .field("metrics_listen", &self.metrics_listen)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
             .field("skipped", &self.skipped)
@@ -772,6 +816,7 @@ impl Config {
             file.node.userspace_socks5_listen,
             &file.node.userspace_publish,
         )?;
+        validate_metrics_listen(file.metrics.listen)?;
         Ok(Self {
             keys,
             listen: file.node.listen,
@@ -782,6 +827,7 @@ impl Config {
             netmap_dns: crate::netmap::DNSConfig::default(),
             userspace_socks5_listen: file.node.userspace_socks5_listen,
             userspace_publish: file.node.userspace_publish,
+            metrics_listen: file.metrics.listen,
             // Left unresolved here on purpose: settling it means a DNS query,
             // and `Config::from_file` is called by tests and by `karst
             // showconf`, neither of which should touch the network. The daemon
@@ -850,6 +896,7 @@ impl Config {
             local.userspace_socks5_listen,
             &local.userspace_publish,
         )?;
+        validate_metrics_listen(local.metrics_listen)?;
         // The node's own addresses carry the *on-link* prefix, so peers are
         // reachable over the interface. A bare address parses as a /32 here,
         // which brings the interface up with nothing on-link — the server is
@@ -955,6 +1002,7 @@ impl Config {
             userspace_socks5_listen: local.userspace_socks5_listen,
             userspace_publish: local.userspace_publish,
             nat64: local.nat64,
+            metrics_listen: local.metrics_listen,
             addresses,
             psk_epoch: netmap.psk_epoch,
             node_id: netmap.node_id.clone(),
@@ -1043,6 +1091,8 @@ pub struct LocalSettings {
     /// mode an operator writes lives in [`NodeSection::nat64`], and by the time
     /// a datapath exists the question has been settled.
     pub nat64: Option<karst_transport::Nat64Prefix>,
+    /// The opt-in loopback Prometheus listener — see [`MetricsSection`].
+    pub metrics_listen: Option<SocketAddr>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
     /// Root-owned durable exit-route selection.
@@ -1060,6 +1110,7 @@ impl fmt::Debug for LocalSettings {
             .field("userspace_socks5_listen", &self.userspace_socks5_listen)
             .field("userspace_publish", &self.userspace_publish)
             .field("nat64", &self.nat64)
+            .field("metrics_listen", &self.metrics_listen)
             .finish_non_exhaustive()
     }
 }
@@ -1995,6 +2046,48 @@ allowed_ips = ["10.99.0.3/32"]
         );
         assert!(rendered.contains("karst0"), "but it must still be useful");
     }
+
+    /// §3.1 of plans/phase-6/08-observability.md: loopback is the only
+    /// address the `[metrics]` listener may bind, enforced at load time.
+    #[test]
+    fn a_loopback_metrics_listen_address_is_accepted() {
+        let dir = Scratch::new("cfg");
+        for addr in ["127.0.0.1:9090", "[::1]:9090"] {
+            let cfg = node_with(dir.path(), "", &format!("[metrics]\nlisten = \"{addr}\"\n"))
+                .unwrap_or_else(|e| panic!("{addr} should be accepted: {e}"));
+            assert_eq!(
+                cfg.metrics_listen,
+                Some(addr.parse().expect("address")),
+                "for {addr}"
+            );
+        }
+    }
+
+    /// The startup rejection §3.1 requires — a misconfigured `[metrics]
+    /// listen` must fail closed, not silently bind a network-facing
+    /// interface.
+    #[test]
+    fn a_non_loopback_metrics_listen_address_is_refused() {
+        let dir = Scratch::new("cfg");
+        for addr in ["0.0.0.0:9090", "192.0.2.10:9090", "[::]:9090"] {
+            let err = node_with(dir.path(), "", &format!("[metrics]\nlisten = \"{addr}\"\n"))
+                .err()
+                .unwrap_or_else(|| panic!("{addr} must be refused, not silently bound"));
+            let message = err.to_string();
+            assert!(
+                message.contains("loopback"),
+                "the refusal for {addr} does not say why: {message}"
+            );
+        }
+    }
+
+    /// Unset is the default and opens no listener at all.
+    #[test]
+    fn metrics_listen_is_unset_by_default() {
+        let dir = Scratch::new("cfg");
+        let cfg = Config::load(&roster(dir.path(), "")).expect("load");
+        assert_eq!(cfg.metrics_listen, None);
+    }
 }
 
 #[cfg(test)]
@@ -2058,6 +2151,7 @@ mod netmap_tests {
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
             relay_ca_file: None,
+            metrics_listen: None,
             exit_node_state_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
             listen: "0.0.0.0:51820".parse().expect("addr"),

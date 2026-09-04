@@ -446,6 +446,7 @@ pub fn run_with_control(
         userspace_socks5_listen: config.userspace_socks5_listen,
         userspace_publish: config.userspace_publish.clone(),
         nat64: config.nat64,
+        metrics_listen: config.metrics_listen,
         relay_ca_file: config.relay_ca_file.clone(),
         exit_node_state_file: config.exit_node_state_file.clone(),
     };
@@ -493,6 +494,16 @@ pub fn run_with_control(
     });
 
     std::thread::scope(|scope| {
+        if let Some(listen) = config.metrics_listen {
+            // Loopback-only is already enforced at config load time
+            // (config::validate_metrics_listen) — this just starts the
+            // listener an operator asked for.
+            scope.spawn(move || {
+                if let Err(e) = crate::metrics_http::serve(listen, socket_path, shutdown) {
+                    tracing::error!(%listen, error = %e, "metrics HTTP listener stopped");
+                }
+            });
+        }
         if let Some(listen) = config.userspace_socks5_listen {
             // Configuration validation guarantees this is the userspace
             // variant. Keep the endpoint inside the scoped daemon lifetime so
@@ -671,6 +682,36 @@ pub fn run_with_control(
                                     host.search_list(),
                                     cache,
                                     &failures,
+                                );
+                            }
+                            if command == ipc::Command::Metrics {
+                                let current = engine_ctl.config();
+                                let selected = exit_node_ctl.and_then(|state| {
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                        .active()
+                                        .map(str::to_owned)
+                                });
+                                let exit_route_active = exit_policy_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
+                                let gateway_active = gateway_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
+                                let active_exit = active_exit_route(
+                                    &current,
+                                    selected.as_deref(),
+                                    exit_route_active,
+                                );
+                                return metrics_report(
+                                    &engine_ctl.stats(),
+                                    relay_dropped.load(Ordering::Relaxed),
+                                    current.route_offers.len(),
+                                    gateway_active,
+                                    active_exit.is_some(),
                                 );
                             }
                             let mut output = report(
@@ -2996,6 +3037,211 @@ pub struct Attachment<'a> {
     pub unreachable_family: Option<u64>,
 }
 
+/// Render `Engine::Stats` and route/gateway state as Prometheus text —
+/// `Command::Metrics`'s payload (plans/phase-6/08-observability.md §3.1,
+/// §5 W6 item 1).
+///
+/// Field names are `bug_report`'s `[stats]` section translated to
+/// `karst_<field>`, not reinvented, so a support engineer reading both a
+/// bugreport and a metrics dump recognizes the same numbers.
+#[allow(clippy::too_many_lines)]
+fn metrics_report(
+    stats: &crate::engine::Stats,
+    relay_dropped: u64,
+    route_offers: usize,
+    gateway_active: bool,
+    exit_route_active: bool,
+) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    let counters: &[(&str, &str, u64)] = &[
+        (
+            "karst_tx_packets",
+            "Packets encrypted and sent.",
+            stats.tx_packets,
+        ),
+        (
+            "karst_rx_packets",
+            "Packets decrypted and delivered to the host.",
+            stats.rx_packets,
+        ),
+        (
+            "karst_unroutable",
+            "Packets from the host with no peer owning the destination.",
+            stats.unroutable,
+        ),
+        (
+            "karst_source_violations",
+            "Packets from a peer claiming a source address it does not own.",
+            stats.source_violations,
+        ),
+        (
+            "karst_mac_failures",
+            "Datagrams discarded by the fragment MAC before any state was touched.",
+            stats.mac_failures,
+        ),
+        (
+            "karst_cookie_replies_issued",
+            "CookieReply datagrams sent under load — §9.1's load-shedding path.",
+            stats.cookie_replies_issued,
+        ),
+        (
+            "karst_tx_dropped_no_session",
+            "Packets dropped because no session was established yet.",
+            stats.tx_dropped_no_session,
+        ),
+        (
+            "karst_decrypt_failures",
+            "Authenticated-decryption failures on inbound transport data.",
+            stats.decrypt_failures,
+        ),
+        (
+            "karst_malformed",
+            "Inbound datagrams that could not even be parsed as a fragment.",
+            stats.malformed,
+        ),
+        (
+            "karst_bedrock_head_agreed",
+            "Peer head claims that agreed with this node's verified Bedrock chain.",
+            stats.bedrock_head_agreed,
+        ),
+        (
+            "karst_bedrock_equivocation",
+            "Peer head claims that diverged from this node's verified Bedrock chain \
+             — any value above zero is an incident.",
+            stats.bedrock_equivocation,
+        ),
+        (
+            "karst_acl_denied_in",
+            "Authenticated packets from a peer that the ACL refused.",
+            stats.acl_denied_in,
+        ),
+        (
+            "karst_acl_denied_out",
+            "Packets from the host the ACL refused to send.",
+            stats.acl_denied_out,
+        ),
+        (
+            "karst_acl_unclassifiable",
+            "Packets denied because their ports could not be established at all.",
+            stats.acl_unclassifiable,
+        ),
+        (
+            "karst_relay_dropped",
+            "Packets dropped by the bounded queue to the relay worker.",
+            relay_dropped,
+        ),
+    ];
+    for (name, help, value) in counters {
+        let _ = writeln!(out, "# HELP {name} {help}");
+        let _ = writeln!(out, "# TYPE {name} counter");
+        let _ = writeln!(out, "{name} {value}");
+    }
+
+    let gauges: &[(&str, &str, u64)] = &[
+        (
+            "karst_route_offers",
+            "Route offers this node's netmap currently carries.",
+            route_offers as u64,
+        ),
+        (
+            "karst_gateway_active",
+            "Whether this node is currently forwarding as a subnet/exit gateway.",
+            u64::from(gateway_active),
+        ),
+        (
+            "karst_exit_route_active",
+            "Whether an exit-route offer is currently selected and installed.",
+            u64::from(exit_route_active),
+        ),
+    ];
+    for (name, help, value) in gauges {
+        let _ = writeln!(out, "# HELP {name} {help}");
+        let _ = writeln!(out, "# TYPE {name} gauge");
+        let _ = writeln!(out, "{name} {value}");
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod metrics_report_tests {
+    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+
+    use super::metrics_report;
+    use crate::engine::Stats;
+
+    /// Every counter and gauge appears with its own `# HELP`/`# TYPE`
+    /// preamble and the right value — the shape a Prometheus scraper
+    /// requires, and the property `tests/leakscan.rs`'s denylist test
+    /// depends on finding real `karst_*` lines to check in the first place.
+    #[test]
+    fn every_field_gets_help_type_and_value() {
+        let stats = Stats {
+            tx_packets: 11,
+            rx_packets: 22,
+            bedrock_equivocation: 3,
+            ..Stats::default()
+        };
+        let out = metrics_report(&stats, 7, 2, true, false);
+
+        assert!(out.contains("# TYPE karst_tx_packets counter"));
+        assert!(out.contains("karst_tx_packets 11"));
+        assert!(out.contains("karst_rx_packets 22"));
+        assert!(out.contains("karst_bedrock_equivocation 3"));
+        assert!(out.contains("karst_relay_dropped 7"));
+        assert!(out.contains("# TYPE karst_route_offers gauge"));
+        assert!(out.contains("karst_route_offers 2"));
+        assert!(
+            out.contains("karst_gateway_active 1"),
+            "gateway_active=true must render as 1, not the word true"
+        );
+        assert!(out.contains("karst_exit_route_active 0"));
+    }
+
+    /// `# HELP`/`# TYPE` lines outnumber value lines only by their own count
+    /// — i.e. every metric name appears exactly three times (HELP, TYPE,
+    /// value), never a stray duplicate from copy-pasting the tuple table.
+    #[test]
+    fn no_metric_name_is_duplicated() {
+        let out = metrics_report(&Stats::default(), 0, 0, false, false);
+        for line in out.lines().filter(|l| l.starts_with("# TYPE ")) {
+            let name = line
+                .strip_prefix("# TYPE ")
+                .and_then(|rest| rest.split(' ').next())
+                .expect("TYPE line has a name");
+            let occurrences = out.matches(name).count();
+            assert_eq!(
+                occurrences, 3,
+                "{name} appears {occurrences} times, want 3 (HELP, TYPE, value)"
+            );
+        }
+    }
+}
+
+/// The selected exit route, but only if it is still a real `Exit`/`Recipient`
+/// offer in `config` *and* actually installed — the same three-way check
+/// `routing_report`'s `[routing]` section and `metrics_report`'s
+/// `karst_exit_route_active` gauge must agree on, so a stale selection
+/// left over from a netmap that no longer offers it does not read as active
+/// in one report and inactive in the other.
+fn active_exit_route<'a>(
+    config: &Config,
+    selected_exit: Option<&'a str>,
+    exit_route_installed: bool,
+) -> Option<&'a str> {
+    selected_exit
+        .filter(|selected| {
+            config.route_offers.iter().any(|offer| {
+                offer.route_id == **selected
+                    && offer.kind == crate::route_offer::Kind::Exit
+                    && offer.role == crate::route_offer::Role::Recipient
+            })
+        })
+        .filter(|_| exit_route_installed)
+}
+
 fn routing_report(
     config: &Config,
     selected_exit: Option<&str>,
@@ -3006,15 +3252,7 @@ fn routing_report(
     use std::fmt::Write as _;
 
     let mut out = String::new();
-    let active_exit = selected_exit
-        .filter(|selected| {
-            config.route_offers.iter().any(|offer| {
-                offer.route_id == **selected
-                    && offer.kind == crate::route_offer::Kind::Exit
-                    && offer.role == crate::route_offer::Role::Recipient
-            })
-        })
-        .filter(|_| exit_route_installed);
+    let active_exit = active_exit_route(config, selected_exit, exit_route_installed);
     let _ = writeln!(out, "\n[routing]");
     let _ = writeln!(out, "offers = {}", config.route_offers.len());
     let _ = writeln!(out, "selected_exit = {selected_exit:?}");
@@ -3068,7 +3306,8 @@ fn report(
         | ipc::Command::DnsQuery(_)
         | ipc::Command::ExitList
         | ipc::Command::ExitUse(_)
-        | ipc::Command::ExitDisable => {
+        | ipc::Command::ExitDisable
+        | ipc::Command::Metrics => {
             unreachable!("handled before general report")
         }
         ipc::Command::Status => {
@@ -3896,6 +4135,7 @@ mod route_tests {
         }
         Config {
             relay_ca_file: None,
+            metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
@@ -4386,6 +4626,7 @@ mod probe_tests {
     fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
         let config = Arc::new(crate::config::Config {
             relay_ca_file: None,
+            metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
@@ -4899,6 +5140,7 @@ mod probe_tests {
         let relays = engine.relays();
         crate::config::Config {
             relay_ca_file: None,
+            metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(

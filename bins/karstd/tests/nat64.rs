@@ -262,6 +262,7 @@ fn config() -> karstd::config::Config {
         relays: Vec::new(),
         turn_servers: Vec::new(),
         relay_ca_file: None,
+        metrics_listen: None,
         peers: Vec::new(),
         routes: karstd::routing::AllowedIps::build(Vec::new()).expect("routes"),
         skipped: Vec::new(),

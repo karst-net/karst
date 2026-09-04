@@ -379,6 +379,7 @@ mod tests {
     fn config() -> Config {
         Config {
             relay_ca_file: None,
+            metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(

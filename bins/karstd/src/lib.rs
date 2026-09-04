@@ -27,6 +27,7 @@ pub mod flow;
 pub mod gateway;
 pub mod home;
 pub mod ipc;
+mod metrics_http;
 pub mod nat64;
 pub mod netmap;
 pub mod ondemand;
