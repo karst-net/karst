@@ -114,6 +114,22 @@ func (h *Hub) Claim(ctx context.Context, identity, token string) error {
 	return h.publish(ctx, event{Kind: "session", Identity: identity, ReplicaID: h.replica, Token: token})
 }
 
+// Touch records that this replica still owns a live stream. It intentionally
+// does not publish: ownership has not changed, and notifications are only for
+// eviction/invalidation edges.
+func (h *Hub) Touch(ctx context.Context, identity, token string) error {
+	result := h.db.WithContext(ctx).Model(&ControlSession{}).
+		Where("identity_pub_key = ? AND replica_id = ? AND session_token = ?", identity, h.replica, token).
+		Update("last_seen_at", time.Now().UTC())
+	if result.Error != nil {
+		return fmt.Errorf("touch control session: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("touch control session: ownership changed")
+	}
+	return nil
+}
+
 func (h *Hub) Release(ctx context.Context, identity, token string) {
 	// Never delete a newer owner's row when an old stream finally exits.
 	h.db.WithContext(ctx).Where("identity_pub_key = ? AND replica_id = ? AND session_token = ?", identity, h.replica, token).Delete(&ControlSession{})

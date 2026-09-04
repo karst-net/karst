@@ -125,6 +125,7 @@ type sessionHandle struct {
 // small so control does not know about PostgreSQL or a particular notifier.
 type SessionCoordinator interface {
 	Claim(context.Context, string, string) error
+	Touch(context.Context, string, string) error
 	Release(context.Context, string, string)
 	OnSession(func(identity, replica, token string))
 	Reconcile(context.Context) error
@@ -261,6 +262,16 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			s.ha.Release(context.Background(), identityKey, token)
 		}
 	}()
+	// Keep the durable ownership record fresh without tying the liveness of an
+	// already authenticated stream to the database. A database outage rejects
+	// new claims but does not tear down this session; that preserves availability
+	// while never accepting a new untracked identity.
+	var heartbeat <-chan time.Time
+	if s.ha != nil {
+		ticker := time.NewTicker(sessionHeartbeatInterval)
+		defer ticker.Stop()
+		heartbeat = ticker.C
+	}
 
 	// From here the node is authenticated, so the connection is a session.
 	//
@@ -353,6 +364,13 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 
 	for {
 		select {
+		case <-heartbeat:
+			touchCtx, cancel := context.WithTimeout(context.Background(), sessionHeartbeatTimeout)
+			err := s.ha.Touch(touchCtx, identityKey, token)
+			cancel()
+			if err != nil {
+				log.WithContext(ctx).WithError(err).Warn("karst: HA session heartbeat failed")
+			}
 		case <-sessionCtx.Done():
 			// Only reachable via eviction above — ctx's own cancellation
 			// (the client hanging up) surfaces through recv's io.EOF instead,
@@ -450,6 +468,11 @@ func sessionIdentityKey(identity []byte) string {
 // context detached from the dead stream's, so without a deadline a stalled
 // database would hold the goroutine for that connection open indefinitely.
 const sessionCloseTimeout = 5 * time.Second
+
+const (
+	sessionHeartbeatInterval = 30 * time.Second
+	sessionHeartbeatTimeout  = 5 * time.Second
+)
 
 // clientAddr reports the address gRPC says the stream came from, or "" when
 // the transport does not supply one — an in-process pipe in a test, for

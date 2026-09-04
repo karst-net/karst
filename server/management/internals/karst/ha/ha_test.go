@@ -47,4 +47,11 @@ func TestClaimNotifiesOtherReplica(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("other replica did not receive session notification")
 	}
+	var before ControlSession
+	require.NoError(t, db.Where("identity_pub_key = ?", "identity").First(&before).Error)
+	time.Sleep(time.Millisecond)
+	require.NoError(t, a.Touch(context.Background(), "identity", "token"))
+	var after ControlSession
+	require.NoError(t, db.Where("identity_pub_key = ?", "identity").First(&after).Error)
+	require.True(t, after.LastSeenAt.After(before.LastSeenAt), "heartbeat must advance durable liveness")
 }
