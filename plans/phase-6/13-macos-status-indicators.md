@@ -85,18 +85,27 @@ staffed and estimated that way rather than folded into "polish."
    state, never color alone; a mixed direct/relayed roster reports the
    relayed state rather than averaging it away, matching
    `Transport`'s own non-bool design.
-   **UNBUILT AND UNVERIFIED — read this before trusting any of it.** It was
-   written on this Linux dev machine, which has no Xcode, no Swift/AppKit
-   toolchain, and no way to run `swift build`; nothing has ever compiled
-   it, and `.github/workflows/ci.yml`'s `macos` job does not build it
-   either (see its existing coverage — build, unit tests, the `macos_pair`
-   suite, package build — none of which is a GUI target). Treat it as a
-   design in Swift, reviewed line by line against real Darwin API
-   signatures from memory, not as working code, until someone with a Mac
-   has built and run it. Remaining, in order: get it to compile at all;
-   wrap the executable in a real `.app` bundle with codesigning (the
-   existing `scripts/build-macos-pkg.sh` pattern for `karstd`/`karst` is the
-   template); wire `dev.karst.karststatus.plist` (already written, also
+   **Written blind, but no longer unverified at the compiler level.**
+   Written on this Linux dev machine, which has no Xcode or Swift/AppKit
+   toolchain — the source was reviewed line by line against real Darwin API
+   signatures from memory, not typed against a compiler. A standalone
+   workflow, `.github/workflows/macos-status-swift-build.yml`, runs
+   `swift build` against it on a real `macos-14` GitHub Actions runner
+   (Swift 5.10, arm64-apple-macosx14.0) rather than waiting for a Mac —
+   pushed on branch `macos-status-swift-check`, and it built clean on the
+   first attempt: all four files compiled, the executable linked, `Build
+   complete! (13.44s)`. That confirms the package compiles; it confirms
+   nothing about runtime behavior — no run has actually shown an
+   `NSStatusItem`, polled a real `karstd`, or exercised the parser against
+   live output. `.github/workflows/ci.yml`'s `macos` job still does not
+   build this package (see its existing coverage — build, unit tests, the
+   `macos_pair` suite, package build — none of which is a GUI target); folding
+   the new workflow into it, or promoting it from ad hoc check to real gate,
+   is undecided. Remaining, in order: exercise it against a running `karstd`
+   on real hardware; wrap the executable in a real `.app` bundle with
+   codesigning (the existing `scripts/build-macos-pkg.sh` pattern for
+   `karstd`/`karst` is the template); wire `dev.karst.karststatus.plist`
+   (already written, also
    unverified) into `Distribution.xml`/`postinstall` as a second package
    component; and — deliberately not done yet — add
    `--status-socket /run/karst-status/karstd.sock` to
