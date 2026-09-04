@@ -11,15 +11,23 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	nbpeer "github.com/netbirdio/netbird/management/server/peer"
+	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -316,6 +324,20 @@ func TestSecondHandshakeRejected(t *testing.T) {
 // the real device's own connection carried on undisturbed. Newest wins now,
 // and the older connection is torn down rather than left running.
 func TestSecondSessionForSameIdentityEvictsFirst(t *testing.T) {
+	// §6 of the observability plan: karst.control.session_handshake must
+	// fire for both the normal connection and the duplicate-identity
+	// eviction path, not only the happy path — a real gap §9 of
+	// 04-pentest.md found for logging (a successful duplicate registration
+	// produced no log line at all), which a span-presence check here
+	// guards against regressing for tracing too. An in-memory exporter
+	// swapped in for this test's global TracerProvider, restored after,
+	// is enough — no collector needed to see whether spans were created.
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
 	f := newFixture(t, nil, nil)
 	defer f.cleanup()
 
@@ -360,6 +382,16 @@ func TestSecondSessionForSameIdentityEvictsFirst(t *testing.T) {
 	if _, err := secondClient.Request([]byte("still the live one")); err != nil {
 		t.Fatalf("second session after eviction: %v", err)
 	}
+
+	var handshakeSpans int
+	for _, span := range exporter.GetSpans() {
+		if span.Name == "karst.control.session_handshake" {
+			handshakeSpans++
+		}
+	}
+	if handshakeSpans != 2 {
+		t.Fatalf("got %d karst.control.session_handshake spans, want 2 (one per session, including the evicted one)", handshakeSpans)
+	}
 }
 
 // Two nodes on the same server must get independent channels.
@@ -397,5 +429,128 @@ func TestConcurrentNodesGetIndependentChannels(t *testing.T) {
 		if _, err := b.Request([]byte("b")); err != nil {
 			t.Fatalf("b request %d: %v", i, err)
 		}
+	}
+}
+
+// fakePeerLister resolves every peer key to one fixed peer.ID — all
+// subscribeOnce needs from PeerLister to register a session for updates.
+// The rest of the interface (routing, prefixes) belongs to tests that
+// actually exercise a netmap, not this one.
+type fakePeerLister struct{ peerID string }
+
+func (fakePeerLister) GetPeersFromAccount(context.Context, string, string, string) ([]*nbpeer.Peer, error) {
+	return nil, nil
+}
+
+func (fakePeerLister) GetAccountIDForPeerKey(context.Context, string) (string, error) { return "", nil }
+
+func (f fakePeerLister) GetPeerByPeerPubKey(context.Context, string) (*nbpeer.Peer, error) {
+	return &nbpeer.Peer{ID: f.peerID}, nil
+}
+
+func (fakePeerLister) AccountPrefixes(context.Context, string) (uint8, uint8, error) {
+	return 16, 64, nil
+}
+
+// TestNetmapPushDurationRecordedExactlyOncePerPush is §6 of the observability
+// plan: management.karst.netmap.push.duration.ms must record exactly one
+// sample per real push, and the notification channel simply closing (the
+// same "superseded" signal a duplicate-identity eviction produces via
+// CreateNotificationChannel, service.go's own comment) must not itself be
+// counted as one.
+func TestNetmapPushDurationRecordedExactlyOncePerPush(t *testing.T) {
+	f := newFixture(t, nil, nil)
+	defer f.cleanup()
+
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer func() {
+		_ = provider.Shutdown(context.Background())
+	}()
+	metrics, err := telemetry.NewKarstMetrics(context.Background(), provider.Meter("test"))
+	if err != nil {
+		t.Fatalf("karst metrics: %v", err)
+	}
+	f.svc.RecordMetricsWith(metrics)
+
+	const peerID = "peer-under-test"
+	updates := update_channel.NewPeersUpdateManager(nil)
+	f.svc.SubscribeToUpdatesWith(fakePeerLister{peerID: peerID}, updates)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	stream, err := f.client.Session(ctx)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := control.Dial(stream, f.svc.Pins(), identity.ControlVerifier{}, []byte("node-under-test"),
+		identity.ControlSigner{Key: f.nodeKey}, true); err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !updates.HasNotificationChannel(peerID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("peer %s was never subscribed to updates", peerID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	pushSamples := func() int64 {
+		var rm metricdata.ResourceMetrics
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != "management.karst.netmap.push.duration.ms" {
+					continue
+				}
+				hist, ok := m.Data.(metricdata.Histogram[int64])
+				if !ok {
+					t.Fatalf("expected Histogram[int64], got %T", m.Data)
+				}
+				var total uint64
+				for _, dp := range hist.DataPoints {
+					total += dp.Count
+				}
+				return int64(total)
+			}
+		}
+		return 0
+	}
+
+	if got := pushSamples(); got != 0 {
+		t.Fatalf("push duration recorded %d samples before any push", got)
+	}
+
+	// One SendNotification at a time, waiting for each to land before the
+	// next: SendNotification deliberately coalesces (its own doc comment),
+	// so firing several back to back would legitimately collapse into fewer
+	// than N real pushes and prove nothing about double-recording.
+	const pushes = 3
+	for i := 1; i <= pushes; i++ {
+		updates.SendNotification(ctx, peerID)
+		waitUntil := time.Now().Add(2 * time.Second)
+		for pushSamples() < int64(i) {
+			if time.Now().After(waitUntil) {
+				t.Fatalf("push %d: only %d samples recorded after 2s", i, pushSamples())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if got := pushSamples(); got != pushes {
+		t.Fatalf("push duration recorded %d samples, want exactly %d (one per SendNotification)", got, pushes)
+	}
+
+	// Replacing the notification channel closes the old one out from under
+	// this session, the same signal an evicting session's supersession
+	// produces. That close reaches the session's select loop as `!ok`, not
+	// as a value — confirm it is not recorded as a push.
+	updates.CreateNotificationChannel(ctx, peerID)
+	time.Sleep(200 * time.Millisecond)
+	if got := pushSamples(); got != pushes {
+		t.Fatalf("closing the notification channel changed the sample count to %d, want unchanged %d — a closed channel is not a push", got, pushes)
 	}
 }

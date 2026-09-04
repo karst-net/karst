@@ -20,14 +20,47 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
+	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
+
+// tracer names every span this package creates — plans/phase-6
+// /08-observability.md §3.4. Reading from the *global* TracerProvider
+// (rather than a field threaded through Service) is deliberate: telemetry
+// .NewTracerProvider is registered once, in main(), and every span call site
+// across internals/karst just calls tracer.Start the same way a log call
+// site just calls log.WithContext — there is exactly one process-wide
+// provider to wire up, not one per struct that wants to create spans.
+var tracer = otel.Tracer("github.com/netbirdio/netbird/management/internals/karst/control")
+
+// netmapPushTriggerUnknown labels management.karst.netmap.push.duration.ms
+// on this package's one call site, which cannot know why a push fired: the
+// channel network_map.PeersUpdateManager.SendNotification signals on carries
+// no reason, only an empty struct{} — the taxonomy the metric's own doc
+// comment names (peer_status, route_change, ...) belongs to update-manager
+// events this package never sees. Falling back to "unknown" here is honest,
+// not a placeholder for work left undone.
+const netmapPushTriggerUnknown = "unknown"
+
+// endSpan closes span, marking it as failed when err is non-nil so a trace
+// viewer distinguishes an ordinary push from one that errored without
+// needing to open the span and read a log line beside it.
+func endSpan(span oteltrace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+	}
+	span.End()
+}
 
 // KindPush marks a server-sent envelope that is not a reply to any client
 // request — an unprompted "your netmap changed, re-fetch now" signal
@@ -93,6 +126,12 @@ type Service struct {
 	// opt in via SubscribeToUpdatesWith.
 	peers   PeerLister
 	updates network_map.PeersUpdateManager
+	// metrics is optional, matching peers/updates' own optionality — nil
+	// means push duration is simply not recorded, the same way nil updates
+	// means no push happens at all. KarstMetrics' own Record*/Set* methods
+	// are nil-receiver-safe, so every call site below reads exactly like it
+	// would with metrics wired.
+	metrics *telemetry.KarstMetrics
 	// active holds the live session's *sessionHandle for every identity
 	// currently connected, keyed by string(identity) — the authenticated
 	// ML-DSA public key, not the caller-supplied nodeID, so this can never be
@@ -128,6 +167,12 @@ func (s *Service) SubscribeToUpdatesWith(peers PeerLister, updates network_map.P
 	s.updates = updates
 }
 
+// RecordMetricsWith attaches KarstMetrics, driving
+// management.karst.netmap.push.duration.ms. Separate from New for the same
+// reason RecordSessionsWith is — a caller that does not want metrics, such
+// as a one-exchange fixture, is unaffected.
+func (s *Service) RecordMetricsWith(m *telemetry.KarstMetrics) { s.metrics = m }
+
 // New builds the service.
 //
 // static is the server's long-lived ML-KEM-768 key and identity is its
@@ -152,6 +197,24 @@ func (s *Service) StaticPublicKey() []byte { return s.static.PublicKey() }
 // peer goes away.
 func (s *Service) Session(stream proto.KarstControlService_SessionServer) error {
 	ctx := stream.Context()
+
+	// karst.control.session_handshake (§3.4 item 3) covers exactly the
+	// handshake-through-registration prefix of this function, not the
+	// long-lived stream loop after it — a span left open for the life of a
+	// connection would be a red flag in any trace viewer, not a useful one.
+	// registered, set true right before the first subscribeOnce call below,
+	// is what marks where that prefix ends: every return between here and
+	// there — including every handshake failure path — falls through this
+	// defer instead, so the span is always closed exactly once no matter
+	// which of those paths is taken, without touching each one individually.
+	handshakeCtx, handshakeSpan := tracer.Start(ctx, "karst.control.session_handshake")
+	ctx = handshakeCtx
+	registered := false
+	defer func() {
+		if !registered {
+			endSpan(handshakeSpan, errors.New("session ended before the handshake reached registration"))
+		}
+	}()
 
 	// The server speaks first. This is what makes a captured ChannelInit
 	// useless on a new connection: the node signs over server_random, which
@@ -273,6 +336,12 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 		owns = true
 	}
 	subscribeOnce(nodeID)
+	registered = true
+	endSpan(handshakeSpan, nil)
+	// The rest of the session is not part of the handshake span — a push
+	// span created hours into a long-lived connection must not nest under a
+	// parent that ended when the connection was still seconds old.
+	ctx = stream.Context()
 	if s.updates != nil {
 		defer func() {
 			if owns {
@@ -369,18 +438,40 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 				// connection from the same node supersedes this one's
 				// registration. Stop selecting on a closed channel and
 				// disclaim ownership, so the deferred cleanup above does not
-				// close the other session's replacement channel.
+				// close the other session's replacement channel. Nothing
+				// was pushed, so neither the span nor the histogram below
+				// fires for this branch — recording either here would be
+				// the double-count §6 of the observability plan explicitly
+				// calls out to guard against.
 				updates, owns = nil, false
 				continue
 			}
-			out, err := ch.Seal(nodeID, []byte{KindPush})
-			if err != nil {
+			// karst.netmap.push (§3.4 item 1) and
+			// management.karst.netmap.push.duration.ms share one
+			// start time and one outcome so they can never disagree about
+			// what "the push" means — see RecordNetmapPushDuration's own
+			// comment on why pushCtx (carrying this span) is what gets
+			// passed to it.
+			pushCtx, pushSpan := tracer.Start(ctx, "karst.netmap.push")
+			pushStart := time.Now()
+			out, sealErr := ch.Seal(nodeID, []byte{KindPush})
+			var sendErr error
+			if sealErr == nil {
+				sendErr = stream.Send(&proto.KarstServerMessage{
+					Msg: &proto.KarstServerMessage_Envelope{Envelope: out},
+				})
+			}
+			pushErr := sealErr
+			if pushErr == nil {
+				pushErr = sendErr
+			}
+			endSpan(pushSpan, pushErr)
+			s.metrics.RecordNetmapPushDuration(pushCtx, netmapPushTriggerUnknown, time.Since(pushStart))
+			if sealErr != nil {
 				return status.Error(codes.Internal, "push sealing failed")
 			}
-			if err := stream.Send(&proto.KarstServerMessage{
-				Msg: &proto.KarstServerMessage_Envelope{Envelope: out},
-			}); err != nil {
-				return err
+			if sendErr != nil {
+				return sendErr
 			}
 		}
 	}

@@ -246,6 +246,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// What makes `/me/sessions` a session history rather than a list of audit
 	// rows with a null end time and a null address.
 	svc.RecordSessionsWith(sessionRecorder{nodes: nodes})
+	// Drives management.karst.netmap.push.duration.ms (plans/phase-6
+	// /08-observability.md §5 W5).
+	svc.RecordMetricsWith(karstMetrics)
 	// GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73): a subscribed node hears about a deprovisioning event
 	// on its already-open stream instead of waiting up to REFRESH's 60 s poll.
 	// The manager's lightweight notification registry is driven beside its

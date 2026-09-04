@@ -29,6 +29,13 @@ type KarstMetrics struct {
 	pskEpochAgeGauge       metric.Int64ObservableGauge
 	relayRegistrySizeGauge metric.Int64ObservableGauge
 
+	// netmapPushDurationHistogram is recorded directly (not cached/observed
+	// like the four gauges above) — a histogram has no single "current
+	// value" to hold between scrapes, so there is nothing for a callback to
+	// read; each push records its own sample as it happens, the same way
+	// the eleven pre-existing *_metrics.go files' histograms already do.
+	netmapPushDurationHistogram metric.Int64Histogram
+
 	mu sync.Mutex
 	// Keyed by account ID. Karst's server-side account model is single-tenant
 	// per deployment in the intended use (PLAN.md §0, bedrock.Scheduler's own
@@ -82,15 +89,24 @@ func NewKarstMetrics(ctx context.Context, meter metric.Meter) (*KarstMetrics, er
 		return nil, err
 	}
 
+	netmapPushDurationHistogram, err := meter.Int64Histogram("management.karst.netmap.push.duration.ms",
+		metric.WithUnit("milliseconds"),
+		metric.WithDescription("Duration of one server-initiated netmap push to a connected node"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &KarstMetrics{
-		ctx:                    ctx,
-		bedrockChainDepthGauge: bedrockChainDepthGauge,
-		bedrockAnchorAgeGauge:  bedrockAnchorAgeGauge,
-		pskEpochAgeGauge:       pskEpochAgeGauge,
-		relayRegistrySizeGauge: relayRegistrySizeGauge,
-		bedrockChainDepth:      make(map[string]int64),
-		bedrockLastAnchoredAt:  make(map[string]time.Time),
-		relayRegistrySize:      make(map[string]int64),
+		ctx:                         ctx,
+		bedrockChainDepthGauge:      bedrockChainDepthGauge,
+		bedrockAnchorAgeGauge:       bedrockAnchorAgeGauge,
+		pskEpochAgeGauge:            pskEpochAgeGauge,
+		relayRegistrySizeGauge:      relayRegistrySizeGauge,
+		netmapPushDurationHistogram: netmapPushDurationHistogram,
+		bedrockChainDepth:           make(map[string]int64),
+		bedrockLastAnchoredAt:       make(map[string]time.Time),
+		relayRegistrySize:           make(map[string]int64),
 	}
 
 	if _, err := meter.RegisterCallback(m.observe,
@@ -165,6 +181,23 @@ func (m *KarstMetrics) SetRelayRegistrySize(accountID string, size int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.relayRegistrySize[accountID] = int64(size)
+}
+
+// RecordNetmapPushDuration records how long one server-initiated netmap push
+// took, labeled by trigger — the update-manager event that caused it
+// (`peer_status`, `route_change`, `policy_change`, `bedrock_anchor`), or
+// "unknown" where the caller cannot tell (see control.Service's own comment
+// on why its one call site always passes "unknown": the update-manager
+// channel it reads carries no reason, by design — see
+// network_map.PeersUpdateManager.SendNotification). ctx should carry the
+// same span used to time the push, so the recorded sample gets a trace
+// exemplar rather than existing as a number with no way back to the request
+// that produced it.
+func (m *KarstMetrics) RecordNetmapPushDuration(ctx context.Context, trigger string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.netmapPushDurationHistogram.Record(ctx, d.Milliseconds(), metric.WithAttributes(attribute.String("trigger", trigger)))
 }
 
 // SetPSKEpochLastBumpAt records when the PSK rotation epoch last advanced,

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
 
 	"github.com/netbirdio/netbird/management/cmd"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
@@ -41,6 +42,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
+	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/auth"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
@@ -166,6 +168,25 @@ func main() {
 	// process has: cmd.Execute blocks until the daemon stops.
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+
+	// Registered once, globally, for the whole process: every span this
+	// binary creates (control/service.go, bedrock/scheduler.go) reads from
+	// whatever otel.SetTracerProvider last set, per telemetry
+	// .NewTracerProvider's own doc comment on why that beats threading a
+	// TracerProvider through every struct that wants to create a span. The
+	// shutdown func is deferred here rather than passed anywhere else,
+	// matching how `defer stop()` above already owns this process's one
+	// shutdown moment — cmd.Execute() returning nil.
+	tp, shutdownTracing, err := telemetry.NewTracerProvider(ctx)
+	if err != nil {
+		log.Fatalf("karst: tracing: %v", err)
+	}
+	otel.SetTracerProvider(tp)
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			log.Warnf("karst: tracing shutdown: %v", err)
+		}
+	}()
 
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
