@@ -496,10 +496,26 @@ jobs:
           lipo -archs /usr/local/bin/karstd | tee /dev/stderr | grep -q x86_64
           lipo -archs /usr/local/bin/karstd | grep -q arm64
           # The second component — plans/phase-6/13-macos-status-indicators.md
-          # §2 item 1 — installed by the same .pkg, same install.
-          test -x "/Applications/Karst Status.app/Contents/MacOS/KarstStatus"
-          test -f "/Applications/Karst Status.app/Contents/Info.plist"
-          test -f /Library/LaunchAgents/dev.karst.karststatus.plist
+          # §2 item 1 — installed by the same .pkg, same install. Explicit
+          # `ls`/diagnostics on failure rather than a bare `test`, which
+          # fails silently under `bash -e` and leaves only "exit code 1" —
+          # exactly what happened chasing the first version of this check.
+          test -x "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" || {
+            echo "::error::Karst Status.app executable missing"
+            ls -la /Applications/ 2>&1 || true
+            ls -laR "/Applications/Karst Status.app" 2>&1 || true
+            exit 1
+          }
+          test -f "/Applications/Karst Status.app/Contents/Info.plist" || {
+            echo "::error::Karst Status.app Info.plist missing"
+            ls -laR "/Applications/Karst Status.app" 2>&1 || true
+            exit 1
+          }
+          test -f /Library/LaunchAgents/dev.karst.karststatus.plist || {
+            echo "::error::dev.karst.karststatus.plist missing"
+            ls -la /Library/LaunchAgents/ 2>&1 || true
+            exit 1
+          }
           lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
             | tee /dev/stderr | grep -q x86_64
           lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
