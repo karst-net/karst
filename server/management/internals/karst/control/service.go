@@ -15,7 +15,7 @@ package control
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -436,11 +436,14 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	}
 }
 
-// sessionIdentityKey is safe for both PostgreSQL text and sync.Map. Raw
-// ML-DSA public keys are arbitrary bytes (including NUL and invalid UTF-8), so
-// using string(identity) as a database text key would reject valid identities.
+// sessionIdentityKey is safe for both PostgreSQL text and its B-tree primary
+// key. ML-DSA public keys are several kilobytes (and arbitrary bytes), which
+// exceeds Postgres's 2704-byte indexed-value limit even when base64 encoded.
+// SHA-256 is a fixed-width collision-resistant identity commitment; collision
+// would be a cryptographic break, not a way to bypass eviction.
 func sessionIdentityKey(identity []byte) string {
-	return base64.RawStdEncoding.EncodeToString(identity)
+	digest := sha256.Sum256(identity)
+	return hex.EncodeToString(digest[:])
 }
 
 // sessionCloseTimeout bounds the write that records a disconnect. It runs on a

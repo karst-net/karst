@@ -24,7 +24,9 @@ import (
 const DefaultNotifyChannel = "karst_ha"
 
 // ControlSession is the durable owner record for one authenticated identity.
-// IdentityPubKey is binary key material encoded as a Go string, not a node ID.
+// IdentityPubKey holds the SHA-256 commitment of its ML-DSA public key, not a
+// caller-controlled node ID. A commitment is required because an ML-DSA key
+// itself is too large for PostgreSQL's B-tree primary-key limit.
 type ControlSession struct {
 	IdentityPubKey string    `gorm:"primaryKey"`
 	ReplicaID      string    `gorm:"not null"`
