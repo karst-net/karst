@@ -259,6 +259,11 @@ web-check:
 walkthrough-tags:
     ./scripts/getting-started-walkthrough.sh tags
 
+# Static Phase 6 documentation invariants; human sign-off remains deliberately
+# outside this target because a document cannot independently review itself.
+documentation-check:
+    ./scripts/documentation-check.sh
+
 # Two namespaces on a veth pair, standing in for §4's two hosts. Needs root.
 walkthrough-a:
     sudo -E env "PATH=$PATH" ./scripts/getting-started-walkthrough.sh path-a

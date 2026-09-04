@@ -65,14 +65,14 @@ finding below is recorded as fixed or closed in the review record:
 
 | # | Finding | Resolution |
 |---|---|---|
-| 1 / #76 | Cookie code existed but the daemon bypassed address validation. | Wired rotating cookie secrets, challenge/retry, and live amplification coverage end to end. |
-| 2 / #77 | The daemon ignored the requested PSK epoch. | Preserved previous PSKs and enforced accept-*n*/*n−1*, reject all others. |
-| 3 / #78 | Formal models omitted the no-DH suite. | Added Verifpal and ProVerif `phreatic-nodh` models and CI coverage. |
-| 4 / #79 | Secret-bearing dependencies did not enable zeroize-on-drop features. | Enabled them and added compile-time regression assertions. |
-| 5 / #80 | Handshake reassembly IDs were predictable counters. | Replaced them with per-call CSPRNG-derived IDs. |
-| 6 / #81 | Handshake `mac2` did not cover payload bytes. | Bound handshake payloads into the fragment MAC. |
-| 7 / #82 | Six X25519 call sites omitted the contributory check. | Applied the crate's constant-time contributory check uniformly. |
-| 8 / #83 | Simultaneous open retained two sessions indefinitely. | Added the specified static-key tie-break and authenticated convergence. |
+| 1 / [#76](https://github.com/karst-net/karst/issues/76) | Cookie code existed but the daemon bypassed address validation. | Wired rotating cookie secrets, challenge/retry, and live amplification coverage end to end. |
+| 2 / [#77](https://github.com/karst-net/karst/issues/77) | The daemon ignored the requested PSK epoch. | Preserved previous PSKs and enforced accept-*n*/*n−1*, reject all others. |
+| 3 / [#78](https://github.com/karst-net/karst/issues/78) | Formal models omitted the no-DH suite. | Added Verifpal and ProVerif `phreatic-nodh` models and CI coverage. |
+| 4 / [#79](https://github.com/karst-net/karst/issues/79) | Secret-bearing dependencies did not enable zeroize-on-drop features. | Enabled them and added compile-time regression assertions. |
+| 5 / [#80](https://github.com/karst-net/karst/issues/80) | Handshake reassembly IDs were predictable counters. | Replaced them with per-call CSPRNG-derived IDs. |
+| 6 / [#81](https://github.com/karst-net/karst/issues/81) | Handshake `mac2` did not cover payload bytes. | Bound handshake payloads into the fragment MAC. |
+| 7 / [#82](https://github.com/karst-net/karst/issues/82) | Six X25519 call sites omitted the contributory check. | Applied the crate's constant-time contributory check uniformly. |
+| 8 / [#83](https://github.com/karst-net/karst/issues/83) | Simultaneous open retained two sessions indefinitely. | Added the specified static-key tie-break and authenticated convergence. |
 
 The details, affected call paths, tests, and issue references are in
 [`phreatic-review-findings.md`](../phreatic-review-findings.md). The review
