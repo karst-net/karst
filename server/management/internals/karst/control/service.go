@@ -15,6 +15,7 @@ package control
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -96,7 +97,7 @@ type Service struct {
 	peers   PeerLister
 	updates network_map.PeersUpdateManager
 	// active holds the live session's *sessionHandle for every identity
-	// currently connected, keyed by string(identity) — the authenticated
+	// currently connected, keyed by the canonical text encoding of identity — the authenticated
 	// ML-DSA public key, not the caller-supplied nodeID, so this can never be
 	// bypassed by presenting a different node ID over the same stolen key.
 	// GitHub issue [#87](https://github.com/karst-net/karst/issues/87): a
@@ -215,6 +216,7 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 		return status.Error(codes.Unauthenticated, "handshake failed")
 	}
 	nodeID := init.GetNodeId()
+	identityKey := sessionIdentityKey(identity)
 
 	// Exactly one live session per identity. A second one arriving is either
 	// an ordinary reconnect (the old TCP path went stale without a clean
@@ -238,7 +240,7 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	token := hex.EncodeToString(tokenBytes[:])
 	if s.ha != nil {
 		claimCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		err := s.ha.Claim(claimCtx, string(identity), token)
+		err := s.ha.Claim(claimCtx, identityKey, token)
 		cancel()
 		if err != nil {
 			log.WithContext(ctx).WithError(err).Warn("karst: refusing new session because HA ownership cannot be recorded")
@@ -246,7 +248,7 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 		}
 	}
 	mine := &sessionHandle{cancel: cancelSession, token: token}
-	if previous, evicted := s.active.Swap(string(identity), mine); evicted {
+	if previous, evicted := s.active.Swap(identityKey, mine); evicted {
 		log.WithContext(ctx).Warnf("karst: a new session for node %x superseded an existing session for the same identity; closing the old connection", nodeID)
 		previous.(*sessionHandle).cancel()
 	}
@@ -254,9 +256,9 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	// this identity's entry for its own *sessionHandle, this session's exit
 	// must not clear that newer one's live registration out from under it.
 	defer func() {
-		s.active.CompareAndDelete(string(identity), mine)
+		s.active.CompareAndDelete(identityKey, mine)
 		if s.ha != nil {
-			s.ha.Release(context.Background(), string(identity), token)
+			s.ha.Release(context.Background(), identityKey, token)
 		}
 	}()
 
@@ -432,6 +434,13 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			}
 		}
 	}
+}
+
+// sessionIdentityKey is safe for both PostgreSQL text and sync.Map. Raw
+// ML-DSA public keys are arbitrary bytes (including NUL and invalid UTF-8), so
+// using string(identity) as a database text key would reject valid identities.
+func sessionIdentityKey(identity []byte) string {
+	return base64.RawStdEncoding.EncodeToString(identity)
 }
 
 // sessionCloseTimeout bounds the write that records a disconnect. It runs on a
