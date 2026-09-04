@@ -105,7 +105,30 @@ fn load(args: &[&str]) -> Result<(Config, Source), String> {
     Ok((config, source))
 }
 
+/// Wires a `tracing-subscriber` transport for the messages §3.2 of
+/// plans/phase-6/08-observability.md migrates off `eprintln!` — a transport
+/// change for existing messages, not a behavior change: `RUST_LOG` unset
+/// still prints everything an operator sees today (`info` and above), so
+/// nobody has to react to this to keep seeing what they already saw.
+/// Writes to stderr, matching where those messages already went.
+///
+/// Only the call sites §3.2 names as prioritized (handshake failures,
+/// Bedrock equivocation, route/gateway state transitions, session
+/// establishment/loss) have moved onto this transport so far; the rest are
+/// tracked in GitHub issue [#101](https://github.com/karst-net/karst/issues/101) rather than left silently half-migrated.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 fn command_run(args: &[&str]) -> ExitCode {
+    init_tracing();
+
     let (config_path, socket) = match parse_args(args) {
         Ok(p) => p,
         Err(e) => {

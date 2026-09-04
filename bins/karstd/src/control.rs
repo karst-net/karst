@@ -591,7 +591,7 @@ impl Client {
         // connection: unlike `fetch`, a bedrock decode/verify failure here
         // says nothing about whether the transport is still good.
         if let Err(e) = self.fetch_bedrock(&mut conn).await {
-            eprintln!("karstd: bedrock fetch failed, enforcing on the last verified log: {e}");
+            tracing::warn!(error = %e, "bedrock fetch failed, enforcing on the last verified log");
         }
         self.conn = Some(conn);
         Ok(outcome)
@@ -645,15 +645,15 @@ impl Client {
         {
             // The server has more than it sent — a bounded reply, by design.
             // The caller polls again; saying so is better than looking stalled.
-            eprintln!(
-                "karstd: bedrock at {} of {}, more to fetch",
-                self.bedrock.verified_seq(),
-                head.seq
+            tracing::info!(
+                verified_seq = self.bedrock.verified_seq(),
+                head_seq = head.seq,
+                "bedrock: more entries to fetch"
             );
         }
 
         if let Err(e) = self.save_bedrock() {
-            eprintln!("karstd: could not persist the verified bedrock log: {e}");
+            tracing::warn!(error = %e, "could not persist the verified bedrock log");
         }
         Ok(outcome)
     }

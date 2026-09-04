@@ -1237,11 +1237,13 @@ impl Engine {
                 self.stats
                     .bedrock_equivocation
                     .fetch_add(1, Ordering::Relaxed);
-                eprintln!(
-                    "karstd: BEDROCK EQUIVOCATION: peer {peer} reports a different log \
-                     at sequence {seq} than this node verified. The coordination server \
-                     has served two histories. The session is left up deliberately; \
-                     investigate before trusting any coverage decision."
+                tracing::error!(
+                    %peer,
+                    seq,
+                    "BEDROCK EQUIVOCATION: peer reports a different log than this node \
+                     verified. The coordination server has served two histories. The \
+                     session is left up deliberately; investigate before trusting any \
+                     coverage decision."
                 );
             }
             crate::bedrock::HeadComparison::PeerAhead { .. }

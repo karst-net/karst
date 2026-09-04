@@ -41,6 +41,12 @@ getrandom = "0.3"
 # them from the same .proto the Go server compiles. `prost` is needed here only
 # to encode the assembled netmap for the on-disk cache.
 prost = "0.14"
+# §3.2 of plans/phase-6/08-observability.md: `tracing`, not `log` +
+# `env_logger` — its span/event model is the one the OTel Rust SDK consumes,
+# so a future client-side trace exporter (§3.3, deferred, not built this
+# phase) would not need a second logging migration on top of this one.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 thiserror = "2"

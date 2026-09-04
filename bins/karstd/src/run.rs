@@ -2474,7 +2474,7 @@ fn apply_gateway(
     let error = match result {
         Ok(_) => None,
         Err(error) => {
-            eprintln!("karstd: gateway forwarding is not ready: {error}");
+            tracing::warn!(%error, "gateway forwarding is not ready");
             Some(error.to_string())
         }
     };
@@ -2810,7 +2810,7 @@ impl Routes {
         for (dst, len) in self.0.difference(&wanted) {
             match tun.remove_route(*dst, *len) {
                 Ok(()) => {}
-                Err(e) => eprintln!("karstd: could not withdraw the route to {dst}/{len}: {e}"),
+                Err(e) => tracing::warn!(%dst, len, error = %e, "could not withdraw route"),
             }
         }
         let mut installed = std::collections::BTreeSet::new();
@@ -2819,9 +2819,9 @@ impl Routes {
                 Ok(()) => {
                     installed.insert((*dst, *len));
                 }
-                Err(e) => eprintln!(
-                    "karstd: could not route {dst}/{len} over the tunnel ({e}); \
-                     that peer will be unreachable"
+                Err(e) => tracing::warn!(
+                    %dst, len, error = %e,
+                    "could not route over the tunnel; that peer will be unreachable"
                 ),
             }
         }
@@ -3463,7 +3463,7 @@ fn refresh_netmap(
         .enable_all()
         .build()
     else {
-        eprintln!("karstd: cannot start the control runtime; the netmap will not refresh");
+        tracing::error!("cannot start the control runtime; the netmap will not refresh");
         return;
     };
 
@@ -3562,7 +3562,7 @@ fn refresh_netmap(
                 outcome
             }
             Err(e) => {
-                eprintln!("karstd: netmap refresh failed ({e}); retrying in {control_backoff:?}");
+                tracing::warn!(error = %e, retry_in = ?control_backoff, "netmap refresh failed; session held open, retrying");
                 // Retry soon rather than waiting out the rest of REFRESH — see
                 // control_backoff's own comment for why that distinction now
                 // matters.
@@ -3578,7 +3578,7 @@ fn refresh_netmap(
         let updated = match client.to_config(local()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("karstd: the new netmap is unusable ({e}); keeping the previous one");
+                tracing::warn!(error = %e, "the new netmap is unusable, keeping the previous one");
                 continue;
             }
         };
@@ -3642,16 +3642,13 @@ fn refresh_netmap(
         let report = engine.reconfigure(&updated);
         discovery.reconcile(&updated, now_ms(started));
         drop(discovery);
-        eprintln!(
-            "karstd: netmap updated ({outcome:?}): {} added, {} removed, {} kept{}",
-            report.added,
-            report.removed,
-            report.kept,
-            if report.epoch_rotated {
-                ", psk epoch rotated"
-            } else {
-                ""
-            }
+        tracing::info!(
+            outcome = ?outcome,
+            added = report.added,
+            removed = report.removed,
+            kept = report.kept,
+            epoch_rotated = report.epoch_rotated,
+            "netmap updated"
         );
         if let Err(e) = client.save_cache() {
             eprintln!("karstd: could not write the netmap cache ({e})");

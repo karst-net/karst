@@ -256,7 +256,7 @@ impl<B: Backend> State<B> {
         };
         if *changed {
             if let Err(error) = self.backend.write(path, "0\n") {
-                eprintln!("karstd: could not restore {path}: {error}");
+                tracing::warn!(path, %error, "could not restore gateway forwarding sysctl");
                 return;
             }
             *changed = false;
@@ -329,7 +329,7 @@ impl Manager {
 impl Drop for Manager {
     fn drop(&mut self) {
         if let Err(error) = self.0.clear() {
-            eprintln!("karstd: could not remove gateway forwarding state: {error}");
+            tracing::warn!(%error, "could not remove gateway forwarding state");
         }
     }
 }
