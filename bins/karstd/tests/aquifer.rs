@@ -56,10 +56,22 @@ const NS_NAT_B: &str = "karst-tn-natb";
 /// The carrier's NAT, for [`Shape::DoubleNat`] only — a second translation
 /// stage in front of node A's own router.
 const NS_CG: &str = "karst-tn-cg";
-/// A private segment behind node A, for the subnet-router row only — a
-/// destination host reachable *only* through node A's own gateway
-/// forwarding, never directly.
+/// A private segment behind node A — a destination host reachable *only*
+/// through a gateway's own forwarding, never directly. Shared by the
+/// subnet-router, exit-node, and dual-stack rows, all through node A.
 const NS_DEST: &str = "karst-tn-dest";
+/// A third node, on the public segment exactly like node A —
+/// [`Shape::Flat`]'s own wiring, extended by one participant — for the
+/// failover row only: a standby gateway node B's route reassigns to.
+const NS_C: &str = "karst-tn-c";
+/// The failover row's *second* destination segment, behind node C rather
+/// than node A. A distinct namespace from [`NS_DEST`] so both gateways can
+/// be live at once during the row, even though [`DEST_PREFIX`] and
+/// [`DEST_HOST`] are reused verbatim — each is isolated inside its own
+/// namespace, and reusing the addressing is what makes "the same advertised
+/// subnet, now behind a different gateway" the row's own point rather than
+/// an accident of two unrelated prefixes.
+const NS_DEST_C: &str = "karst-tn-dest-c";
 
 /// Everything on the public segment hangs off a bridge in [`NS_PUB`], so the
 /// same wiring carries two, three or four participants.
@@ -67,6 +79,8 @@ const IP_PUB: &str = "51.75.10.10";
 /// Where each node sits when it is *on* the public segment.
 const IP_A_PUBLIC: &str = "51.75.10.1";
 const IP_B_PUBLIC: &str = "51.75.10.20";
+/// The failover row's standby gateway, node C.
+const IP_C_PUBLIC: &str = "51.75.10.30";
 /// The outside of each NAT.
 const NAT_A_OUTER: &str = "51.75.10.2";
 const NAT_B_OUTER: &str = "51.75.10.3";
@@ -78,9 +92,10 @@ const IP_B_PRIVATE: &str = "10.98.2.2";
 const IP_B_SAME_LAN: &str = "10.98.1.3";
 const NAT_B_INNER: &str = "10.98.2.1";
 
-/// [`attach_destination_lan`]'s segment — the subnet-router row only.
-/// `DEST_GATEWAY` is node A's own address on it; `DEST_PREFIX` is what the
-/// route offer advertises.
+/// [`attach_destination_lan`]'s segment. `DEST_GATEWAY` is the attaching
+/// gateway's own address on it; `DEST_PREFIX` is what the route offer
+/// advertises — see [`NS_DEST_C`] for why the failover row reuses these
+/// same values on its own, separate segment behind node C.
 const DEST_GATEWAY: &str = "10.99.0.1";
 const DEST_HOST: &str = "10.99.0.2";
 const DEST_PREFIX: &str = "10.99.0.0/24";
@@ -168,10 +183,12 @@ const REFRESH_BOUND: Duration = Duration::from_secs(75);
 /// spare for scheduler jitter under a loaded CI host.
 const PUSH_BOUND: Duration = Duration::from_secs(10);
 
-/// Seeds for the two nodes' control identities. Fixed, so the relay roster can
-/// be written before either daemon has ever run.
+/// Seeds for the nodes' control identities. Fixed, so the relay roster can
+/// be written before any daemon has ever run.
 const SEED_A: u8 = 0xA1;
 const SEED_B: u8 = 0xB2;
+/// The failover row's standby gateway, node C.
+const SEED_C: u8 = 0xC3;
 
 // ── prerequisites ───────────────────────────────────────────────────────────
 
@@ -322,7 +339,9 @@ impl Drop for Aquifer {
         // NS_NAT too, even in the topologies that never create it: deleting a
         // namespace that is not there is free, and an earlier version listed
         // only the two it knew about and left the third behind.
-        for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST] {
+        for ns in [
+            NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST, NS_C, NS_DEST_C,
+        ] {
             let _ = sh(&["ip", "netns", "del", ns]);
             // The NAT64 row writes a per-namespace `resolv.conf` under `/etc`,
             // which is the one thing this fixture leaves outside its own
@@ -822,7 +841,9 @@ struct End<'a> {
 
 /// Build the namespaces, and return the addresses the two nodes listen on.
 fn build_topology(net: &mut Aquifer, shape: Shape) -> (&'static str, &'static str) {
-    for ns in [NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST] {
+    for ns in [
+        NS_A, NS_B, NS_PUB, NS_NAT_A, NS_NAT_B, NS_CG, NS_DEST, NS_C, NS_DEST_C,
+    ] {
         let _ = sh(&["ip", "netns", "del", ns]);
     }
     for ns in [NS_A, NS_B, NS_PUB] {
@@ -1012,45 +1033,53 @@ fn flavor_for_b(shape: Shape) -> Flavor {
     }
 }
 
-/// The subnet-router row's destination LAN: a private segment behind node A,
-/// reachable only through node A's own gateway forwarding.
+/// A gateway's destination LAN: a private segment behind `gateway_ns`,
+/// reachable only through that node's own gateway forwarding.
 ///
 /// **No bridge, unlike [`build_same_lan`].** That row puts two Karst nodes on
 /// one inside segment on purpose — the point is that neither is privileged
-/// over the other. Here there is exactly one thing behind node A and nothing
-/// else needs to share the segment, so a bare veth is the whole topology.
+/// over the other. Here there is exactly one thing behind the gateway and
+/// nothing else needs to share the segment, so a bare veth is the whole
+/// topology.
 ///
 /// **No manual `ip_forward` or masquerade rule, on purpose.** Enabling
-/// forwarding here would test the fixture's own plumbing instead of node A's
-/// `gateway::Manager` — the row exists to prove that reconciling a route
-/// offer with `role = Gateway` is what turns a plain node into a router, not
-/// to assume it and check the traffic crosses.
+/// forwarding here would test the fixture's own plumbing instead of the
+/// gateway's own `gateway::Manager` — the row exists to prove that
+/// reconciling a route offer with `role = Gateway` is what turns a plain
+/// node into a router, not to assume it and check the traffic crosses.
 ///
 /// **The destination host's own default route, not a route to any specific
 /// overlay prefix.** The test route offer that names this segment sets
 /// `masquerade = true`, so every packet the destination host ever sees from
-/// the recipient arrives already rewritten to node A's own address on this
-/// segment (`DEST_GATEWAY`) — an ordinary host on an ordinary LAN, with one
-/// neighbor, needs nothing more specific than a default route to answer it.
-fn attach_destination_lan() {
-    must(&["ip", "netns", "add", NS_DEST]);
-    must(&nsr(NS_DEST, &["ip", "link", "set", "lo", "up"]));
+/// the recipient arrives already rewritten to the gateway's own address on
+/// this segment (`DEST_GATEWAY`) — an ordinary host on an ordinary LAN, with
+/// one neighbor, needs nothing more specific than a default route to answer
+/// it.
+fn attach_destination_lan_to(gateway_ns: &str, dest_ns: &str, gw_dev: &str, dest_dev: &str) {
+    must(&["ip", "netns", "add", dest_ns]);
+    must(&nsr(dest_ns, &["ip", "link", "set", "lo", "up"]));
     veth(
         End {
-            dev: "ktn-a-dest",
-            ns: NS_A,
+            dev: gw_dev,
+            ns: gateway_ns,
             ip: Some(DEST_GATEWAY),
         },
         End {
-            dev: "ktn-dest-a",
-            ns: NS_DEST,
+            dev: dest_dev,
+            ns: dest_ns,
             ip: Some(DEST_HOST),
         },
     );
     must(&nsr(
-        NS_DEST,
+        dest_ns,
         &["ip", "route", "add", "default", "via", DEST_GATEWAY],
     ));
+}
+
+/// The subnet-router, exit-node, and dual-stack rows' shared shape: node A's
+/// own destination LAN, via [`attach_destination_lan_to`].
+fn attach_destination_lan() {
+    attach_destination_lan_to(NS_A, NS_DEST, "ktn-a-dest", "ktn-dest-a");
 }
 
 /// Both nodes on one private segment behind a single NAT.
@@ -1941,7 +1970,11 @@ fn relay_roster(net: &Aquifer) -> PathBuf {
         return roster_path;
     }
     let mut roster = String::new();
-    for seed in [SEED_A, SEED_B] {
+    // SEED_C too, unconditionally: the failover row is the only one that
+    // ever starts a node C, and admitting an identity that never connects
+    // costs the other rows nothing — cheaper than a second, row-specific
+    // roster-building path for one extra `[[client]]` entry.
+    for seed in [SEED_A, SEED_B, SEED_C] {
         use std::fmt::Write as _;
         let _ = write!(
             roster,
@@ -2201,44 +2234,64 @@ fn write_node_configs(net: &Aquifer, pins: &Pins, ca: &Path, ips: (&str, &str)) 
 /// `KarstDNS` end-to-end row to add a `[dns]` table; every other caller passes
 /// `""`.
 fn write_node_configs_with(net: &Aquifer, pins: &Pins, ca: &Path, ips: (&str, &str), extra: &str) {
+    write_node_config(net, "a", SEED_A, ips.0, pins, ca, extra);
+    write_node_config(net, "b", SEED_B, ips.1, pins, ca, extra);
+}
+
+/// One node's keys and configuration — the failover row's standby gateway
+/// joins after the initial pair, so it needs this on its own rather than
+/// through [`write_node_configs_with`]'s fixed two-node loop.
+fn write_node_config(
+    net: &Aquifer,
+    tag: &str,
+    seed: u8,
+    ip: &str,
+    pins: &Pins,
+    ca: &Path,
+    extra: &str,
+) {
     let port_mapping = if std::env::var_os("KARST_AQUIFER_DISABLE_PORT_MAPPING").is_some() {
         "false"
     } else {
         "true"
     };
-    for (tag, seed, ip) in [("a", SEED_A, ips.0), ("b", SEED_B, ips.1)] {
-        let d = net.dir.join(tag);
-        std::fs::create_dir_all(&d).expect("node dir");
-        write_secret(&d.join("identity.key"), &hex(&[seed; 32]));
-        write_secret(&d.join("private.key"), &hex(&[seed; 96]));
-        std::fs::write(
-            d.join("karstd.toml"),
-            format!(
-                "[node]\n\
-                 listen = \"{ip}:51820\"\n\
-                 port_mapping = {port_mapping}\n\
-                 interface = \"karst-tn{tag}\"\n\
-                 private_key_file = \"{}\"\n\
-                 psk_epoch = 7\n\n\
-                 [control]\n\
-                 server = \"http://{IP_PUB}:{SERVER_PORT}\"\n\
-                 server_kem_pin = \"{}\"\n\
-                 server_verify_pin = \"{}\"\n\
-                 identity_key_file = \"{}\"\n\
-                 setup_key = \"fixture\"\n\
-                 cache_file = \"{}\"\n\
-                 relay_ca_file = \"{}\"\n\
-                 {extra}",
-                d.join("private.key").display(),
-                pins.kem,
-                pins.verify,
-                d.join("identity.key").display(),
-                d.join("cache.bin").display(),
-                ca.display(),
-            ),
-        )
-        .expect("write node config");
-    }
+    let d = net.dir.join(tag);
+    std::fs::create_dir_all(&d).expect("node dir");
+    write_secret(&d.join("identity.key"), &hex(&[seed; 32]));
+    write_secret(&d.join("private.key"), &hex(&[seed; 96]));
+    std::fs::write(
+        d.join("karstd.toml"),
+        format!(
+            "[node]\n\
+             listen = \"{ip}:51820\"\n\
+             port_mapping = {port_mapping}\n\
+             interface = \"karst-tn{tag}\"\n\
+             private_key_file = \"{}\"\n\
+             psk_epoch = 7\n\
+             exit_node_state_file = \"{}\"\n\n\
+             [control]\n\
+             server = \"http://{IP_PUB}:{SERVER_PORT}\"\n\
+             server_kem_pin = \"{}\"\n\
+             server_verify_pin = \"{}\"\n\
+             identity_key_file = \"{}\"\n\
+             setup_key = \"fixture\"\n\
+             cache_file = \"{}\"\n\
+             relay_ca_file = \"{}\"\n\
+             {extra}",
+            d.join("private.key").display(),
+            // Under `net.dir`, never the host's real
+            // `crate::exit_node::DEFAULT_STATE_FILE` — this test runs as root
+            // on a shared machine, and every node in every row would
+            // otherwise read and write the exact same file.
+            d.join("exit-route").display(),
+            pins.kem,
+            pins.verify,
+            d.join("identity.key").display(),
+            d.join("cache.bin").display(),
+            ca.display(),
+        ),
+    )
+    .expect("write node config");
 }
 
 fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
@@ -3695,7 +3748,10 @@ fn a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget() {
 /// established by the time this returns. `suffix` only distinguishes each
 /// row's own temp directory — the same reason [`Aquifer`]'s other bespoke
 /// tests each pick their own.
-fn start_routing_topology(suffix: &str) -> Aquifer {
+/// Returns the pins and CA alongside the fixture, not just `net`, for a row
+/// that needs to bring up a further node afterward — the failover row's
+/// standby gateway is the one caller that does.
+fn start_routing_topology(suffix: &str) -> (Aquifer, Pins, PathBuf) {
     let mut net = Aquifer {
         dir: std::env::temp_dir().join(format!("karst-aquifer-{suffix}-{}", std::process::id())),
         services: Vec::new(),
@@ -3737,7 +3793,7 @@ fn start_routing_topology(suffix: &str) -> Aquifer {
                 && field(&status(&net, "b", NS_B), "state").as_deref() == Some("established")
         },
     );
-    net
+    (net, pins, ca)
 }
 
 /// **W7's first row**: a recipient reaches a subnet it has no direct route to
@@ -3761,7 +3817,7 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     if !have_prerequisites() {
         return;
     }
-    let mut net = start_routing_topology("route");
+    let (mut net, _pins, _ca) = start_routing_topology("route");
 
     // Node A's own overlay address, read the same way the revocation row
     // reads node B's — the fixture assigns addresses in registration order,
@@ -3938,7 +3994,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     if !have_prerequisites() {
         return;
     }
-    let mut net = start_routing_topology("exit");
+    let (mut net, _pins, _ca) = start_routing_topology("exit");
 
     let gateway_ip = overlay_peer_address(&net, "b", NS_B);
     let gateway_handle = fixture_handle_for(&gateway_ip);
@@ -4035,22 +4091,342 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
     );
 }
 
+/// **W7's third row**: plan §6's own assertion — "Activating IPv4 exit
+/// routing does not implicitly activate IPv6, or vice versa." The daemon
+/// holds exactly one [`crate::exit_policy::Manager`]-equivalent (`run.rs`'s
+/// single `policy` field), so cross-family independence is a structural
+/// property of the code, not a runtime coincidence — but that is exactly the
+/// kind of claim worth checking against a real kernel rather than trusting
+/// the design: the previous row's own bug was found by looking past what the
+/// daemon *reports* to what the kernel actually holds, and this row applies
+/// the same discipline to family isolation, inspecting `ip rule`/`ip -6
+/// rule` inside the recipient's namespace after each selection rather than
+/// asserting on `karst status` alone.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn selecting_one_ip_familys_exit_route_does_not_activate_the_other() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, _pins, _ca) = start_routing_topology("dualstack");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    for (route_id, prefix) in [("internet-v4", "0.0.0.0/0"), ("internet-v6", "::/0")] {
+        let created = fixture_create_route(&RouteOfferBody {
+            route_id,
+            prefix,
+            gateway_handle: &gateway_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+        });
+        assert!(created, "the fixture rejected the {route_id} offer");
+    }
+
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish with both exit offers in its first netmap",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    let sock = net.dir.join("b.sock");
+    let use_route = |route_id: &str| {
+        let out = Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_B,
+                &bin("karst"),
+                "exit-node",
+                "use",
+                route_id,
+                "--socket",
+                &sock.to_string_lossy(),
+            ])
+            .output()
+            .expect("run `karst exit-node use`");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("selected"),
+            "`karst exit-node use {route_id}` did not report success: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    };
+    // The exit table's own catch-all rule — `EXIT_PRIORITY` in
+    // `exit_policy.rs` — is the one rule that only exists while some family
+    // is actively selected, so its presence per address family is exactly
+    // what "activated" means here.
+    let catch_all_installed = |family: &str| {
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "ip", family, "rule", "show"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("lookup 51888"))
+            .unwrap_or(false)
+    };
+
+    use_route("internet-v4");
+    assert!(
+        catch_all_installed("-4"),
+        "selecting the IPv4 exit route did not install IPv4 catch-all routing"
+    );
+    assert!(
+        !catch_all_installed("-6"),
+        "selecting the IPv4 exit route also activated IPv6 catch-all routing"
+    );
+
+    use_route("internet-v6");
+    assert!(
+        catch_all_installed("-6"),
+        "selecting the IPv6 exit route did not install IPv6 catch-all routing"
+    );
+    assert!(
+        !catch_all_installed("-4"),
+        "selecting the IPv6 exit route left the IPv4 catch-all routing it \
+         replaced still installed — the two families are not independent"
+    );
+}
+
+/// **W7's fourth row**: a route's effective gateway changes to a standby —
+/// plan §6's "An HA gateway loss converges to the standby without two peers
+/// owning the route" and §5 W7 item 1's "two-gateway failover" topology.
+///
+/// This fixture's `routeRegistry` deliberately does not reimplement the
+/// inherited account manager's own HA-group selection (see its own doc
+/// comment) — that algorithm, and the liveness signal that would drive it in
+/// production, already have their own tests. What this row proves instead is
+/// the half that *is* Karst's own: does a recipient correctly follow a route
+/// whose effective gateway has changed, tearing down the old path and
+/// bringing up the new one — the same reasoning the revocation row applies
+/// to "how does the server decide" versus "does the client react correctly
+/// once it has decided."
+///
+/// Node C joins after node A and B are already established, mirroring how a
+/// real standby gateway enrolls independently of the row it will later
+/// serve. Both A and C get their own private destination LAN
+/// ([`attach_destination_lan_to`]), holding the identical prefix — on
+/// purpose, since "the same advertised subnet, now behind a different
+/// gateway" is the whole point — but each with a listener that answers with
+/// its own gateway's name, so reachability alone proves *which* gateway
+/// carried the traffic.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+#[allow(clippy::too_many_lines)]
+fn a_recipients_route_follows_its_effective_gateway_to_a_standby() {
+    if !have_prerequisites() {
+        return;
+    }
+    let (mut net, pins, ca) = start_routing_topology("failover");
+
+    let gateway_a_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_a_handle = fixture_handle_for(&gateway_a_ip);
+
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_a_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+        }),
+        "the fixture rejected the initial route offer to node A"
+    );
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to re-establish with the route offer pointed at node A",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
+    );
+
+    let listener_on = |net: &mut Aquifer, ns: &str, label: &str| {
+        let listener = format!(
+            "import socket\n\
+             s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+             s.bind(('{DEST_HOST}',22)); s.listen(1)\n\
+             c,_=s.accept(); c.sendall(b'{label}'); c.close()\n"
+        );
+        net.spawn_service(
+            ns,
+            "python3",
+            &["-c", &listener],
+            &format!("listener-{}.log", label.replace(' ', "-")),
+        );
+    };
+    let dial = || -> (String, String) {
+        let probe = format!(
+            "import socket,sys\n\
+             s=socket.create_connection(('{DEST_HOST}',22),timeout=15)\n\
+             sys.stdout.write(s.recv(64).decode())\n"
+        );
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &probe])
+            .output()
+            .map(|o| {
+                (
+                    String::from_utf8_lossy(&o.stdout).into_owned(),
+                    String::from_utf8_lossy(&o.stderr).into_owned(),
+                )
+            })
+            .unwrap_or_default()
+    };
+
+    listener_on(&mut net, NS_DEST, "via A");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        dial().0.contains("via A"),
+        "the recipient could not reach the destination through the initial \
+         gateway A\n── node A ──\n{}\n── node B ──\n{}",
+        status(&net, "a", NS_A),
+        status(&net, "b", NS_B),
+    );
+
+    // Bring up the standby gateway, node C — its own leg on the public
+    // segment, but *not yet* its destination LAN. Every node's very first
+    // netmap fetch sees the fixture's one-route roster as it stands at that
+    // moment, and "dest-lan" is still A's until it is explicitly re-pointed
+    // below — so node C necessarily glimpses itself as a plain *recipient*
+    // of its own future prefix first. Attaching the destination LAN only
+    // once that has settled to `role = "gateway"` (below) means the window
+    // is harmless: nothing yet claims 10.99.0.0/24 on node C's kernel for
+    // the transient recipient-side tunnel route to collide with — see
+    // `Routes::wanted`'s own doc comment on the collision this sidesteps.
+    must(&["ip", "netns", "add", NS_C]);
+    must(&nsr(NS_C, &["ip", "link", "set", "lo", "up"]));
+    public_leg("ktn-c", NS_C, IP_C_PUBLIC);
+    write_node_config(&net, "c", SEED_C, IP_C_PUBLIC, &pins, &ca, "");
+    start_node(&mut net, "c", NS_C);
+    wait_for(&net, "node C to come up", Duration::from_secs(30), || {
+        net.log("c.log").contains("up, mtu")
+    });
+
+    // Node C's own overlay address is read from its *own* status, not a peer
+    // block — nothing else has discovered it yet, and nothing needs to.
+    let gateway_c_ip = overlay_peer_address_self(&net, "c", NS_C);
+    let gateway_c_handle = fixture_handle_for(&gateway_c_ip);
+
+    // The failover itself: re-point the same route_id at the standby. This
+    // fixture upserts by ID rather than accumulating a second entry — the
+    // same "replaces rather than accumulating" behavior `routeRegistry`'s own
+    // unit tests already cover — here exercised as the observable effect of
+    // an HA selection production's account manager would make on its own.
+    assert!(
+        fixture_create_route(&RouteOfferBody {
+            route_id: "dest-lan",
+            prefix: DEST_PREFIX,
+            gateway_handle: &gateway_c_handle,
+            metric: 100,
+            masquerade: true,
+            keep_route: false,
+        }),
+        "the fixture rejected re-pointing the route at node C"
+    );
+    // No restart: node C's own control connection stays live and picks the
+    // change up on its next poll, same as node A's own role flipping to
+    // recipient did above — restarting here would reset the in-memory
+    // `Routes` state that `wanted`'s fix depends on to withdraw the stale
+    // recipient-side tunnel route it installed a moment ago.
+    wait_for(
+        &net,
+        "node C's own netmap to reflect its new role as gateway",
+        Duration::from_secs(30),
+        || field(&status(&net, "c", NS_C), "role").as_deref() == Some("gateway"),
+    );
+
+    attach_destination_lan_to(NS_C, NS_DEST_C, "ktn-c-dest", "ktn-dest-c");
+
+    // Node B's last netmap fetch predates node C and the re-pointed route
+    // alike; the same restart-to-refresh pattern every routing row uses.
+    net.stop_node("b", NS_B);
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to establish a session with the standby gateway",
+        Duration::from_secs(60),
+        || peer_established_other_than(&status(&net, "b", NS_B), IP_A_PUBLIC),
+    );
+
+    listener_on(&mut net, NS_DEST_C, "via C");
+    std::thread::sleep(Duration::from_millis(500));
+    let (reply, reply_err) = dial();
+    assert!(
+        reply.contains("via C"),
+        "the recipient did not converge to the standby gateway after \
+         failover: stdout={reply:?} stderr={reply_err:?}\n\
+         ── node A ──\n{}\n── node B ──\n{}\n\
+         ── node C ──\n{}\n── a.log ──\n{}\n── b.log ──\n{}\n── c.log ──\n{}\n\
+         ── server log ──\n{}",
+        status(&net, "a", NS_A),
+        status(&net, "b", NS_B),
+        status(&net, "c", NS_C),
+        net.log("a.log"),
+        net.log("b.log"),
+        net.log("c.log"),
+        net.log("server.log"),
+    );
+}
+
+/// The `[[peer]]` block in `status` that is not the peer at `exclude_ip`'s
+/// `:51820` endpoint. [`field`] alone (first-match) cannot distinguish peers
+/// once a row has more than one — the failover row is the only one that
+/// does, and it wants "node C" rather than "whoever is on this address":
+/// **a peer stuck on relay never gets a direct `endpoint`, so it stays `"-"`
+/// indefinitely** — matching *by* endpoint would wait forever for exactly
+/// the case worth tolerating. `endpoint` narrows out node A instead, whose
+/// address the failover row already knows before this ever runs.
+fn peer_block_other_than<'a>(status: &'a str, exclude_ip: &str) -> Option<&'a str> {
+    let exclude = format!("\"{exclude_ip}:51820\"");
+    status
+        .split("[[peer]]")
+        .find(|block| block.contains("hint = ") && !block.contains(&exclude))
+}
+
+/// Whether the peer other than `exclude_ip` has reached the established
+/// state, direct or relayed either way.
+fn peer_established_other_than(status: &str, exclude_ip: &str) -> bool {
+    peer_block_other_than(status, exclude_ip)
+        .and_then(|block| field(block, "state"))
+        .as_deref()
+        == Some("established")
+}
+
+/// `allowed_ips = ["100.64.0.3/32"]` — the first address, without its prefix
+/// length. Shared by every helper that reads a peer's overlay address off
+/// `karst status`.
+fn first_allowed_address(allowed: &str) -> Option<&str> {
+    allowed
+        .trim_matches(|c| c == '[' || c == ']')
+        .split(',')
+        .next()
+        .and_then(|entry| entry.trim().trim_matches('"').split('/').next())
+}
+
 /// The overlay address of the one peer `tag` holds.
 fn overlay_peer_address(net: &Aquifer, tag: &str, ns: &str) -> String {
     let text = status(net, tag, ns);
     let allowed =
         field(&text, "allowed_ips").unwrap_or_else(|| panic!("node {tag} lists no peer:\n{text}"));
-    // `allowed_ips = ["100.64.0.3/32"]` — take the first address, without its
-    // prefix length.
-    let address = allowed
-        .trim_matches(|c| c == '[' || c == ']')
-        .split(',')
-        .next()
-        .and_then(|entry| entry.trim().trim_matches('"').split('/').next());
-    match address {
-        Some(address) => address.to_owned(),
-        None => panic!("could not read a peer address from {allowed:?}"),
-    }
+    first_allowed_address(&allowed)
+        .unwrap_or_else(|| panic!("could not read a peer address from {allowed:?}"))
+        .to_owned()
+}
+
+/// A node's own overlay address, read from its own status rather than a
+/// peer's — for a node nothing else has discovered yet, so there is no peer
+/// block naming it anywhere else to read this from instead.
+fn overlay_peer_address_self(net: &Aquifer, tag: &str, ns: &str) -> String {
+    let text = status(net, tag, ns);
+    let addresses = field(&text, "addresses")
+        .unwrap_or_else(|| panic!("node {tag} reported no addresses:\n{text}"));
+    first_allowed_address(&addresses)
+        .unwrap_or_else(|| panic!("could not read node {tag}'s own address from {addresses:?}"))
+        .to_owned()
 }
 
 /// One TCP connect over the overlay from node A's namespace.
