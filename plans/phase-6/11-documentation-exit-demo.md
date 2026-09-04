@@ -12,7 +12,8 @@ plan deliberately requires.
 
 - Branch: `phase-6/documentation`
 - Threat-model correction: `99ba57f24cb4dc63755e19968f99168d12364215`
-- Documentation candidate: update after the final pre-review commit
+- Documentation candidate: `b4fe689` (full object ID recorded by the reviewer
+  at sign-off)
 - Released tag and artifact digests used by outsider/operator: pending
 
 ## 1. Mechanical checks
