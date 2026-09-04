@@ -74,7 +74,19 @@ func New(ctx context.Context, db *gorm.DB, pool *pgxpool.Pool, replica, channel 
 		return nil, fmt.Errorf("karst ha: migrate control sessions: %w", err)
 	}
 	h := &Hub{db: db, pool: pool, replica: replica, channel: channel}
-	go h.listen(ctx)
+	ready := make(chan error, 1)
+	go h.listen(ctx, ready)
+	// A claim published before LISTEN is installed is intentionally covered by
+	// reconciliation, but waiting here removes that avoidable gap for normal
+	// startup and makes an unusable notification connection fail at boot.
+	select {
+	case err := <-ready:
+		if err != nil {
+			return nil, err
+		}
+	case <-ctx.Done():
+		return nil, fmt.Errorf("karst ha: starting listener: %w", ctx.Err())
+	}
 	return h, nil
 }
 
@@ -134,16 +146,25 @@ func (h *Hub) publish(ctx context.Context, e event) error {
 	return nil
 }
 
-func (h *Hub) listen(ctx context.Context) {
+func (h *Hub) listen(ctx context.Context, ready chan<- error) {
+	first := true
 	for ctx.Err() == nil {
 		conn, err := h.pool.Acquire(ctx)
 		if err != nil {
+			if first {
+				ready <- fmt.Errorf("karst ha: acquire LISTEN connection: %w", err)
+				return
+			}
 			log.WithError(err).Warn("karst ha: acquiring LISTEN connection")
 			time.Sleep(time.Second)
 			continue
 		}
 		_, err = conn.Conn().Exec(ctx, "LISTEN "+h.channel)
 		if err == nil {
+			if first {
+				ready <- nil
+				first = false
+			}
 			for ctx.Err() == nil {
 				n, waitErr := conn.Conn().WaitForNotification(ctx)
 				if waitErr != nil {
@@ -155,6 +176,11 @@ func (h *Hub) listen(ctx context.Context) {
 					h.dispatch(e)
 				}
 			}
+		}
+		if first {
+			conn.Release()
+			ready <- fmt.Errorf("karst ha: LISTEN %s: %w", h.channel, err)
+			return
 		}
 		conn.Release()
 		if ctx.Err() == nil {
