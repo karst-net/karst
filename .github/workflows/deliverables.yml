@@ -546,6 +546,14 @@ jobs:
           test ! -e "/Applications/Karst Status.app"
           test ! -e /Library/LaunchAgents/dev.karst.karststatus.plist
 
+      # `installer` reports only "a script failed," never which one or why —
+      # the detail is always in this log. Kept as a permanent step, not a
+      # one-off debugging aid: the next `preinstall`/`postinstall` bug that
+      # trips this job deserves the same visibility this one needed.
+      - name: Show install log on failure
+        if: failure()
+        run: sudo tail -n 300 /var/log/install.log
+
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:

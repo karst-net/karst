@@ -5,36 +5,37 @@
 # Fix ownership and, best-effort, start the menu-bar app for whoever is at
 # the console right now.
 #
-# Best-effort throughout, deliberately. This runs as root under
-# `installer`/`sudo installer`, which can happen with nobody in a GUI
-# session at all — a fresh Mac being provisioned unattended, or (as in
-# deliverables.yml's install-and-verify smoke test) a CI runner with no
-# console user. Failing the whole package install because a per-user UI
-# convenience could not start *immediately* would be a strange trade: the
-# LaunchAgent's own `RunAtLoad` already starts it at the next login
-# regardless of what happens here, so nothing is lost by not forcing it —
-# and the install itself must still succeed on a headless box.
-
-set -eu
+# Not `set -e`, deliberately, like status-scripts/preinstall — every line
+# below is best-effort for the same reason that one is. This runs as root
+# under `installer`/`sudo installer`, which can happen with nobody in a GUI
+# session at all: a fresh Mac being provisioned unattended, or (as in
+# deliverables.yml's install-and-verify smoke test) a CI runner whose
+# console user, if it has one, has no real `gui/<uid>` domain for
+# `launchctl` to address. Failing the whole two-component package install
+# because a per-user UI convenience could not be chmod'd or started
+# *immediately* would be a strange trade: the LaunchAgent's own `RunAtLoad`
+# already starts it at the next real login regardless of what happens here.
 
 PLIST="/Library/LaunchAgents/dev.karst.karststatus.plist"
 APP="/Applications/Karst Status.app"
 
 # launchd refuses a plist that is group- or world-writable — the same
-# reason dev.karst.karstd's postinstall fixes its own plist's mode.
-/bin/chmod 0644 "$PLIST"
-/usr/sbin/chown root:wheel "$PLIST"
-/usr/sbin/chown -R root:wheel "$APP"
+# reason dev.karst.karstd's postinstall fixes its own plist's mode. Not
+# fatal if it fails: `pkgbuild --ownership recommended` already set
+# reasonable ownership at build time, so this is defense in depth, not the
+# only thing standing between the plist and a mode launchd will refuse.
+/bin/chmod 0644 "$PLIST" 2>/dev/null || true
+/usr/sbin/chown root:wheel "$PLIST" 2>/dev/null || true
+/usr/sbin/chown -R root:wheel "$APP" 2>/dev/null || true
 
-console_user="$(stat -f%Su /dev/console 2>/dev/null || true)"
+console_user="$(stat -f%Su /dev/console 2>/dev/null)"
 if [ -n "$console_user" ] && [ "$console_user" != "root" ]; then
-    console_uid="$(id -u "$console_user" 2>/dev/null || true)"
+    console_uid="$(id -u "$console_user" 2>/dev/null)"
     if [ -n "$console_uid" ]; then
         /bin/launchctl asuser "$console_uid" /bin/launchctl bootstrap \
             "gui/$console_uid" "$PLIST" 2>/dev/null \
             || /bin/launchctl asuser "$console_uid" /bin/launchctl load -w \
-                "$PLIST" 2>/dev/null \
-            || true
+                "$PLIST" 2>/dev/null
     fi
 fi
 
