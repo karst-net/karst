@@ -14,6 +14,8 @@ package control
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -103,6 +105,10 @@ type Service struct {
 	// indistinguishable from an ordinary reconnect whether the cause was a
 	// legitimate roam or a cloned identity.
 	active sync.Map
+	// ha is optional so SQLite and single-process test deployments retain the
+	// original fast path. When present it makes claiming an identity durable
+	// before this process accepts the stream.
+	ha SessionCoordinator
 }
 
 // sessionHandle is the pointer identity Session's deferred cleanup compares
@@ -111,6 +117,16 @@ type Service struct {
 // on the pointer, never the func it holds.
 type sessionHandle struct {
 	cancel context.CancelFunc
+	token  string
+}
+
+// SessionCoordinator is the cross-replica counterpart to active. It is kept
+// small so control does not know about PostgreSQL or a particular notifier.
+type SessionCoordinator interface {
+	Claim(context.Context, string, string) error
+	Release(context.Context, string, string)
+	OnSession(func(identity, replica, token string))
+	Reconcile(context.Context) error
 }
 
 // RecordSessionsWith attaches a session recorder. Separate from New so that
@@ -126,6 +142,19 @@ func (s *Service) RecordSessionsWith(recorder SessionRecorder) { s.sessions = re
 func (s *Service) SubscribeToUpdatesWith(peers PeerLister, updates network_map.PeersUpdateManager) {
 	s.peers = peers
 	s.updates = updates
+}
+
+// CoordinateSessionsWith enables durable duplicate-identity eviction. The
+// coordinator has already started LISTEN before this method returns; a missed
+// notification is covered by the reconciliation pass.
+func (s *Service) CoordinateSessionsWith(coordinator SessionCoordinator) error {
+	s.ha = coordinator
+	coordinator.OnSession(func(identity, _ string, token string) {
+		if active, ok := s.active.Load(identity); ok && active.(*sessionHandle).token != token {
+			active.(*sessionHandle).cancel()
+		}
+	})
+	return coordinator.Reconcile(context.Background())
 }
 
 // New builds the service.
@@ -202,7 +231,21 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	// sessionCtx.Done() fires for exactly one reason: eviction.
 	sessionCtx, cancelSession := context.WithCancel(context.Background())
 	defer cancelSession()
-	mine := &sessionHandle{cancel: cancelSession}
+	var tokenBytes [32]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return status.Error(codes.Internal, "session setup failed")
+	}
+	token := hex.EncodeToString(tokenBytes[:])
+	if s.ha != nil {
+		claimCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err := s.ha.Claim(claimCtx, string(identity), token)
+		cancel()
+		if err != nil {
+			log.WithContext(ctx).WithError(err).Warn("karst: refusing new session because HA ownership cannot be recorded")
+			return status.Error(codes.Unavailable, "session registry unavailable")
+		}
+	}
+	mine := &sessionHandle{cancel: cancelSession, token: token}
 	if previous, evicted := s.active.Swap(string(identity), mine); evicted {
 		log.WithContext(ctx).Warnf("karst: a new session for node %x superseded an existing session for the same identity; closing the old connection", nodeID)
 		previous.(*sessionHandle).cancel()
@@ -210,7 +253,12 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	// CompareAndDelete, not Delete: if a newer session has already swapped
 	// this identity's entry for its own *sessionHandle, this session's exit
 	// must not clear that newer one's live registration out from under it.
-	defer s.active.CompareAndDelete(string(identity), mine)
+	defer func() {
+		s.active.CompareAndDelete(string(identity), mine)
+		if s.ha != nil {
+			s.ha.Release(context.Background(), string(identity), token)
+		}
+	}()
 
 	// From here the node is authenticated, so the connection is a session.
 	//
