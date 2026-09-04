@@ -758,6 +758,42 @@ behind the management server's authorization middleware, so this only works
 once `HttpConfig.AuthIssuer`, `AuthAudience` and `AuthKeysLocation` in
 `management.json` name a working OIDC provider.
 
+### 7.1 The node control channel is plaintext h2c
+
+The browser API and the node control channel can both arrive at port 33073,
+but they do not have the same transport. The current `karstd` control client
+does **not** implement TLS. Its `[control] server` must resolve to a plaintext
+HTTP/2 (h2c) listener; writing `https://` does not add TLS. KARST-CONTROL still
+authenticates the server with the configured ML-KEM and ML-DSA pins and
+encrypts its records independently of TLS
+([ADR-0011](adr/0011-control-channel-authentication.md)), but the outer
+connection is plaintext.
+
+Consequently, do not point nodes at a TLS-terminating browser reverse proxy.
+The nginx example above is for `/api/` and static console assets. A proxy that
+accepts TLS and forwards ordinary HTTP/1.1 will not carry the node's raw h2c
+stream. Keep the control listener reachable only on a trusted management LAN,
+VPN, or other access-controlled network until the client gains TLS support.
+
+### 7.2 A single TLS origin needs a separate node-control port
+
+A single public origin is suitable for the console, portal, and `/api/`, but
+the tested reverse-proxy topology cannot share that TLS-terminated port with
+node enrollment. Publish two paths instead:
+
+- the public TLS origin sends `/api/` to `karst-control` and serves the web
+  applications; and
+- a second LAN-only, unproxied port exposes `karst-control`'s h2c listener to
+  nodes. Set `[control] server` to that private address and port.
+
+This is the arrangement exercised by
+[`deploy/compose/pentest/docker-compose.yml`](../deploy/compose/pentest/docker-compose.yml)
+and its [`Caddyfile`](../deploy/compose/pentest/Caddyfile). Do not expose the
+unproxied listener to the public Internet. A reverse proxy can share one port
+only if it can route TLS browser traffic and prior-knowledge h2c without
+terminating or translating the node stream; that topology is not shipped or
+validated by Karst.
+
 **Serve them from two paths on one origin**, as above — `/` for the console
 and, say, `/portal/` for the portal. A second hostname means a second TLS name
 and a second CORS configuration to get right, and it buys nothing: the boundary
@@ -773,6 +809,10 @@ path on which one user can name another.
 Checks: `just web-check` (`tsc --noEmit` plus lint, both workspaces),
 `corepack pnpm --filter @karst-net/console test`, and Playwright end-to-end
 suites in each app.
+
+After the first connection, continue with the
+[operations manual](OPERATIONS.md) for routine administration, diagnostics,
+backup, restore, failover, and upgrades.
 
 ---
 

@@ -639,7 +639,7 @@ jobs:
       # Seconds, on every PR, and it is the mechanism the other two rest on: a
       # fenced block added to the walkthrough without a `walkthrough=` tag
       # fails here rather than quietly falling outside every test below.
-      - run: ./scripts/getting-started-walkthrough.sh tags
+      - run: ./scripts/documentation-check.sh
 
   walkthrough-a:
     name: Walkthrough path A (privileged)
