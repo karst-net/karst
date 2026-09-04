@@ -1,8 +1,8 @@
 # Phase 6 — Hardening and beta
 
-**8 weeks · W1 = week of 2026-09-07 · W8 = week of 2026-10-26.**
-Anchored on Phase 5's actual 2026-09-02 close, not on the original Dec 2026
-schedule — see PLAN.md §10's Phase 5 entry and
+**8 weeks.**
+Sequenced from Phase 5's actual close, not the original static schedule — see
+PLAN.md §10's Phase 5 entry and
 [phase-5/00-overview.md](../phase-5/00-overview.md) for why the anchor moved.
 
 This file is written the way [phase-5/00-overview.md](../phase-5/00-overview.md)
@@ -72,12 +72,17 @@ tree at Phase 5's close:
 | HA | Control-server horizontal scaling, Postgres replication, backup/restore, tested RTO/RPO | **The easy 10% is done, the hard 90% is not.** `gorm.io/driver/postgres` is already wired as a single-instance store option (`NewPostgresqlStoreFromSqlStore` exists and is tested), so Postgres itself is not new. Replication, horizontal scaling of `karst-control` itself, backup/restore runbooks, and any DR drill are all unbuilt — `deploy/compose/` has no Postgres service today. |
 | Documentation | Install guide, ops manual, security whitepaper, migration guide | **Unbuilt.** `docs/` holds `GETTING-STARTED.md`, `THREAT-MODEL.md`, and `USE-CASE-ANALYSIS.md`. None of the four Phase 6 docs exist as separate artifacts; the closest thing to an ops manual is scattered across `deploy/compose/README.md` and the `justfile`. |
 
-**One thing PLAN.md's own §10 Phase 6 bullets omit and its §9 platform table
-commits to:** FreeBSD `tun` support is scheduled "6 (best-effort)" in §9's
-platform table but does not appear anywhere in §10's Phase 6 bullet list.
-That is a real gap between two sections of the plan of record, not something
-this file is introducing — see §2 below, which adds it as a bounded,
-explicitly best-effort line rather than leaving it to be noticed in W8.
+**Re-scoped 2026-09-04: Windows moves from Phase 8 into this phase as a firm
+beta-blocking requirement, and FreeBSD's best-effort `tun` line is cut to make
+room.** PLAN.md §9's platform table and §10's Phase 6/Phase 8 bullets are
+updated to match (Windows: 8 → 6; FreeBSD: 6 (best-effort) → dropped,
+unscheduled). [phase-5/07-windows-client.md](../phase-5/07-windows-client.md)
+was written as a Phase 8 handoff carrying an unresolved Wintun/GPL licensing
+question and its own 9-week estimate; folding that into an 8-week phase where
+no engineer was previously dedicated to it is a real compression, not a
+formality — see [10-windows-client.md](10-windows-client.md) for what's
+being pulled forward as-is versus reworked, and §5 below for the risk this
+adds.
 
 ## 2. Workstreams and weeks
 
@@ -93,9 +98,10 @@ explicitly best-effort line rather than leaving it to be noticed in W8.
 | 7 | [ACL-gated SSH](07-acl-gated-ssh.md) | The `"ssh"` HuJSON block as a second, independent authorization gate over TCP/22 — policy enforcement in the datapath/agent, and a console surface to author it | Go 2 | W6–W7 |
 | 8 | [Observability](08-observability.md) | **Done, W4–W7.** All four server metrics (Bedrock chain depth, PSK epoch age, relay-registry size, netmap-push latency — closing the loop on #0's own measurement problem) live on `/metrics`; the three named OTel trace spans, real when an operator points `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` at a collector; `karstd`'s `Command::Metrics` IPC verb and opt-in loopback-only HTTP listener; `karst bugreport` broadened with control-session health, Bedrock chain state, and per-relay/TURN reachability. Exit demonstration run against `v0.0.0-observability.1`, published and cosign-verified — [08-observability-exit-demo.md](08-observability-exit-demo.md); two of its six steps (Bedrock anchor age, PSK epoch rotation) could not be exercised live in one session (a root ceremony and a 24h wall-clock boundary respectively) and are covered instead by the passing deterministic tests, noted there | SRE + Rust 3 | W4–W7 |
 | 9 | [HA](09-ha.md) | **Done, W5–W8, all items closed.** `control_sessions` (Postgres-backed, `LISTEN`/`NOTIFY`) makes duplicate-identity eviction and netmap push fan-out correct across replicas — confirmed against real Postgres in-process tests and, live, by cloning a node's identity across two real `karst-control` processes on two real hosts and watching eviction fire. `deploy/compose/ha/` gives a real two-host topology, now including a checked-in load-balancer front end (`deploy/compose/ha/loadbalancer/`); `scripts/pg-{promote,backup,restore}.sh` are real and were run, not just written. Exit demonstration against `shannon`/`turing`/`lovelace` (not published artifacts — no `v0.0.0-ha.*` tag exists yet, built from source instead; see the exit-demo doc) — [09-ha-exit-demo.md](09-ha-exit-demo.md): **RTO ≈ 45s**, **RPO ≈ 38.5s**, both measured, not asserted, per `docs/operations/ha.md`. Two real bugs found and fixed running that drill: `pg-promote.sh` needed `-u postgres`; RPO is bounded by WAL segment-completion absent `archive_timeout`, now documented with a fix available. §7.6 (automatic client failover through a shared load-balanced entry point) was reattempted 2026-09-04 against the now-shipped load balancer, a fresh node, no other chaos in flight: **measured client failover ≈ 13.7s**, zero operator intervention, `policy.enforcing` never dropped. Two more real bugs found and fixed getting that re-run started: the overlay's `KARST_RELAY_ROSTER_FILE` had no `KARST_AQUIFER`, fatal at startup unconditionally; and `postgres` published no host port, so the other host's replica could not reach the primary at all | SRE | W5–W8 |
-| 10 | FreeBSD, best-effort | `tun` device support only — no packaging, no installer commitment, matching §9's "(best-effort)" qualifier that §10's bullet list dropped. Cut first if the schedule is tight; it is the one item on this list with no exit-criterion dependency | Rust 3 | W7 (if capacity allows) |
+| 10 | [Windows client](10-windows-client.md) | **Pulled forward from Phase 8, firm requirement before beta opens (#12).** Swapped in for FreeBSD's best-effort `tun` line, which is cut from this phase entirely (§6) — no exit-criterion dependency was riding on it. Full port: the Wintun/GPL licensing question resolved (ADR-0015) or the ADR-0012 userspace fallback taken instead, device + service + NRPT DNS + signed MSI, reusing [phase-5/07-windows-client.md](../phase-5/07-windows-client.md)'s technical plan | Rust 3 | W1–W8 |
 | 11 | [Documentation](11-documentation.md) | Install guide, operations manual (this phase's HA runbooks feed it directly), security whitepaper (crypto lead signs off, per [phase-5/09-exit-criteria.md](../phase-5/09-exit-criteria.md) §7's deferred README rewrite), migration guide from WireGuard/Tailscale | All, SRE-owned | W6–W8 |
-| 12 | Public beta with design partners | Opens once #3 and #4's high/critical findings are remediated and re-tested | SRE + all | W7–W8, 30-day stability bar runs past the phase boundary |
+| 12 | Public beta with design partners | Opens once #3 and #4's high/critical findings are remediated and re-tested, **and #10's Windows client exit criteria are met** | SRE + all | W7–W8, 30-day stability bar runs past the phase boundary |
+| 13 | [macOS client status indicators](13-macos-status-indicators.md) | Visual connectivity and throughput indicators for the macOS client. Not a beta gate — the macOS client (Phase 5, done) has no GUI today, only a headless `LaunchDaemon` and `karst status`; this is new menu-bar surface, not a tweak to an existing one | Rust 2 + Frontend 2 | W5–W8 (if capacity allows) |
 
 ## 3. Dependency graph
 
@@ -117,6 +123,10 @@ flowchart LR
     Obs["Observability (8)<br/>W4-W7"] --> HA["HA (9)<br/>W5-W8"]
     HA --> Docs["Documentation (11)<br/>W6-W8"]
     Docs --> Beta
+
+    Windows["Windows client (10)<br/>W1-W8"] --> Beta
+
+    MacIndicators["macOS status indicators (13)<br/>W5-W8"]
 ```
 
 Two hard ordering constraints, both already in PLAN.md and restated here
@@ -136,10 +146,14 @@ violate under pressure:
    settling and this phase's beta opening is the cheapest this will ever be;
    after GA it is not affordable at all.
 
-TURN (#5), subnet routing (#6→#7), and observability (#8→#9) are independent
-of each other and of the crypto-review chain — they can run in parallel
-across three different owner roles, which is why the staffing in §4 spreads
-them that way rather than serializing.
+TURN (#5), subnet routing (#6→#7), observability (#8→#9), and the Windows
+client (#10) are independent of each other and of the crypto-review chain —
+they can run in parallel across different owner roles, which is why the
+staffing in §4 spreads them that way rather than serializing. The Windows
+client is the one exception worth naming here rather than just in §5: it is
+independent in the dependency-graph sense, but it is also the newest hard
+gate on #12, so slipping it is not absorbed the way slipping the
+best-effort item it replaced would have been.
 
 ## 4. Staffing against PLAN.md §10's team
 
@@ -148,13 +162,13 @@ them that way rather than serializing.
 | Person | W1–W2 | W3–W5 | W6–W8 |
 |---|---|---|---|
 | Rust 1 | Anchor tier's Go-adjacent Rust half (#1) | Second reader on the internal crypto review (#3) | Subnet routers (#6) |
-| Rust 2 | Available — pull forward TURN design | TURN fallback (#5) | TURN fallback (#5) |
-| Rust 3 | Available | Observability instrumentation (#8) | FreeBSD `tun` (#10), if capacity allows; else observability (#8) continues |
+| Rust 2 | Available — pull forward TURN design | TURN fallback (#5) | TURN fallback (#5) closed ahead of this row; stretch capacity to macOS status indicators (#13) if #5 leaves no loose ends |
+| Rust 3 | Windows client (#10): Wintun/GPL license answer, ADR-0015, signing-certificate route decided (fall back to ADR-0012 userspace mode by end of W2 if the license answer is no) | Windows client (#10): device/session, service (SCM lifecycle, power events), addressing; observability instrumentation (#8) already landed W2–W4, ahead of this row, so this slot is Windows-only rather than split | Windows client (#10): NRPT DNS, MSI, uninstall/upgrade correctness, CI, signing |
 | Crypto | Anchor tier (#1), netmap-cache suite (#2) | Internal cryptographic review (#3) | Security whitepaper sign-off (#11); review remediation |
 | Go 1 | Anchor tier's server half (#1) | Subnet routers' server half (#6) | Subnet routers (#6) |
 | Go 2 | Phase 5 close-out: the netmap push (#0.1) | Netmap push continued if #0.1's re-estimate ran long; else TURN's server credential minting (#5) | ACL-gated SSH (#7) |
 | Frontend 1 | Available — console audit from Phase 5's read-only ranks 10–12 | Subnet routing console surface (#6) | ACL-gated SSH console surface (#7) |
-| Frontend 2 | Available | Internal pentest support (#4) — the console is a named target | Documentation review, beta onboarding flow |
+| Frontend 2 | Available | Internal pentest support (#4) — the console is a named target | Documentation review, beta onboarding flow, macOS status indicators design (#13) |
 | SRE | Outsider walkthrough (#0.2), release-manifest (#0.3) | Internal pentest (#4), HA design (#9) | HA implementation (#9), documentation (#11), beta logistics (#12) |
 
 **The crypto engineer is oversubscribed again, and the mitigation PLAN.md
@@ -170,6 +184,7 @@ rather than left as a risk to rediscover.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
+| Windows client (#10) compressed from a 9-week Phase 8 estimate into 8 weeks, with an unresolved Wintun/GPL licensing question at the front of it, now gating public beta (#12) | High | **High** — beta cannot open at all without this closing, and the licensing answer is a lawyer's call this plan cannot force on a schedule | Get the Wintun license answer and ADR-0015 in W1 exactly as [10-windows-client.md](10-windows-client.md) specifies; if the answer is no (or is late), take the ADR-0012 userspace-mode fallback immediately rather than absorbing the slip in place — it gives up kernel routing but meets the beta gate, with the kernel path following after |
 | Deprovisioning fix (#0.1) re-estimate runs past W2 | Medium | Medium — delays nothing downstream directly, but it is the one Phase-5 gate item with teeth | Go 2 is dedicated to it alone through W2; do not pull them onto TURN until it closes or is re-estimated with a real number |
 | Crypto engineer single-reader risk carries into Phase 6 | Medium | **High** — a flaw in a fail-closed path (the anchor tier is the newest one) | Rust 1 pairs from W1 on the anchor tier and again as second reader on the internal review (§4) |
 | ADR-0016 flag-day ships before every node can parse it | Low if sequenced per §3, **High** if the beta opens early | **High** — permanently excludes unupgraded nodes from an append-only log | Hold the line in §3's ordering constraint 2; do not let TURN or subnet-routing schedule pressure move the beta date ahead of the anchor tier |
@@ -189,14 +204,18 @@ matching Phase 5's own §6:
   README rewrite (deferred, [phase-5/09-exit-criteria.md](../phase-5/09-exit-criteria.md)
   §7) will need to keep saying so.
 - **No mobile.** Phase 7.
-- **No Windows.** Phase 8; [phase-5/07-windows-client.md](../phase-5/07-windows-client.md)
-  is the handoff plan and this phase does not touch it.
+- **No FreeBSD.** Cut, not merely deprioritized — swapped out for the Windows
+  client (§1, §2 item 10) to make room in an 8-week phase. It carried no
+  exit-criterion dependency, so nothing else here regresses. Picking it back
+  up is a future-phase call, unscheduled as of this rewrite.
 - **No datapath sharding, no ≥ 1 Gbps absolute measurement.** Phase 7.
 - **No CNSA 2.0 profile as a selectable suite (`KARST_3`/suite 3).** Phase 7,
   per PLAN.md §13 Q6. This phase's crypto work (#1, #2) closes gaps in suites
   that already exist; it does not add a new one.
-- **FreeBSD gets `tun` only, best-effort, no installer.** §2 item 10. Full
-  platform parity is not a Phase 6 claim.
+- **Windows is now in scope (§2 item 10) but only to phase-5/07-windows-client.md's
+  §11 exit bar.** ARM64 Windows, an App Store/`NEPacketTunnelProvider`-style
+  sandboxed variant, and anything beyond that file's six exit criteria are
+  still out of scope for this phase.
 
 ## 7. Exit criteria — draft
 
@@ -213,6 +232,14 @@ matching Phase 5's own §6:
 - ACL-gated SSH: the `"ssh"` block is enforced, not parsed and ignored.
 - HA: a documented backup/restore runbook exists **and has been exercised**;
   an RTO/RPO figure is reported from that exercise, not asserted.
+- **Windows client, firm requirement — beta does not open without this.**
+  [phase-5/07-windows-client.md](../phase-5/07-windows-client.md) §11's six
+  criteria all met: signed MSI installs clean with no SmartScreen block and
+  the service starts on boot; a node enrolls and reaches a peer across a NAT;
+  mesh names resolve through NRPT and split-DNS; uninstall removes the
+  service, adapter, firewall rule, and every NRPT rule cleanly; a hard kill
+  followed by reboot leaves DNS working from the revert file; upgrading from
+  the previous MSI replaces rather than duplicates.
 - Install guide, operations manual, security whitepaper (crypto lead signed
   off), and migration guide all published.
 - 30 days of public beta with design partners, against a stated stability bar,

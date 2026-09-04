@@ -10,9 +10,16 @@ question at the front of it. Start W1 with §1, not with code.
 > **Re-baselined 2026-08-27.** There is no Karst Windows client datapath,
 > service, installer, key store, or NRPT integration. Existing `server/client`
 > Windows installer assets belong to the inherited NetBird client and must not
-> be counted as a Karst implementation. PLAN.md now schedules this work in
-> **Phase 8**, not as a Phase 5 exit dependency. This file is retained as the
-> implementation handoff and must be re-estimated before Phase 8 starts.
+> be counted as a Karst implementation. PLAN.md at the time scheduled this
+> work in Phase 8, not as a Phase 5 exit dependency.
+>
+> **Superseded 2026-09-04.** Pulled forward into Phase 6 as a firm requirement
+> before public beta opens — see
+> [phase-6/10-windows-client.md](../phase-6/10-windows-client.md) for the
+> current status, schedule, and risk framing, and PLAN.md §9/§10 for the
+> updated plan of record. §§1-9 below are unchanged and still the
+> implementation reference; only the phase and schedule sections (§10-§11)
+> are superseded.
 
 PLAN.md §9 says "Wintun, Windows service, MSI, WinTUN driver signing". Wintun
 is WireGuard's userspace-facing TUN driver for Windows, distributed as a signed
@@ -215,7 +222,7 @@ Sign `karstd.exe`, `karst.exe`, and the MSI, with a timestamp, and verify with
 Add a `windows` job to CI for the unit and integration tiers on every push;
 signing on tags only.
 
-## 10. Historical Phase 5 schedule (re-estimate for Phase 8)
+## 10. Historical Phase 5 schedule (superseded — see [phase-6/10-windows-client.md](../phase-6/10-windows-client.md) §2 for the current one)
 
 | Week | Work |
 |---|---|
@@ -234,7 +241,7 @@ question, the unfamiliar I/O model, and the fussiest installer, and pretending
 it fits in the same seven weeks would just move the slip to W10 where it
 collides with the walkthrough.
 
-## 11. Phase 8 exit criteria
+## 11. Exit criteria (now Phase 6's beta gate, unchanged — see [phase-6/10-windows-client.md](../phase-6/10-windows-client.md) §2.3)
 
 1. A signed MSI installs on a clean Windows 11 machine with no SmartScreen
    block, and the service starts on boot.
