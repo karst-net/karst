@@ -296,6 +296,12 @@ pub fn run_with_control(
     // it.
     let routes = Mutex::new(Routes::default());
     let exit_policy = Mutex::new(crate::exit_policy::Manager::default());
+    // When the control connection's push signal (GitHub issues #72/#73) last
+    // actually fired — `bugreport`'s control-session-health section
+    // (plans/phase-6/08-observability.md §5 W6 item 3). `None` until the
+    // first one arrives, which `refresh_netmap` reports as absent rather
+    // than a fabricated age.
+    let last_push = Mutex::new(None::<Instant>);
     let exit_node = config
         .exit_node_state_file
         .as_ref()
@@ -629,6 +635,7 @@ pub fn run_with_control(
         let control_endpoint_ctl = control_endpoint.as_deref();
         let gateway_ctl = &gateway;
         let gateway_error_ctl = &gateway_error;
+        let last_push_ctl = &last_push;
         scope.spawn(move || {
             while !shutdown.requested() {
                 match control.accept() {
@@ -729,6 +736,10 @@ pub fn run_with_control(
                                 started,
                                 &relay_dropped,
                                 Some(portmap_state.snapshot()),
+                                last_push_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .map(|at| at.elapsed()),
                             );
                             if matches!(command, ipc::Command::Status | ipc::Command::BugReport) {
                                 let current = engine_ctl.config();
@@ -794,6 +805,7 @@ pub fn run_with_control(
             let gateway_error_refresh = &gateway_error;
             let exit_policy_refresh = &exit_policy;
             let control_endpoint_refresh = control_endpoint.as_deref();
+            let last_push_refresh = &last_push;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -815,6 +827,7 @@ pub fn run_with_control(
                     gateway_error_refresh,
                     relay_out,
                     turn_out,
+                    last_push_refresh,
                 );
             });
         }
@@ -2985,6 +2998,7 @@ pub fn status_report(
         Instant::now(),
         &AtomicU64::new(0),
         Some(portmap::Snapshot::new(config.port_mapping)),
+        None,
     )
 }
 
@@ -3002,7 +3016,14 @@ pub fn bug_report_for_test(
     uptime_secs: u64,
 ) -> String {
     let _ = uptime_secs;
-    bug_report(config, engine, device, Instant::now(), &AtomicU64::new(0))
+    bug_report(
+        config,
+        engine,
+        device,
+        Instant::now(),
+        &AtomicU64::new(0),
+        None,
+    )
 }
 
 /// The live packet device, as reporting sees it.
@@ -3286,7 +3307,7 @@ fn routing_report(
     out
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn report(
     command: &ipc::Command,
     config: &Config,
@@ -3295,13 +3316,21 @@ fn report(
     started: Instant,
     relay_dropped: &AtomicU64,
     portmap: Option<portmap::Snapshot>,
+    since_last_push: Option<Duration>,
 ) -> String {
     use std::fmt::Write as _;
 
     match command {
         ipc::Command::Version => format!("version = \"{}\"\n", env!("CARGO_PKG_VERSION")),
         ipc::Command::Down => "stopping = true\n".to_owned(),
-        ipc::Command::BugReport => bug_report(config, engine, device, started, relay_dropped),
+        ipc::Command::BugReport => bug_report(
+            config,
+            engine,
+            device,
+            started,
+            relay_dropped,
+            since_last_push,
+        ),
         ipc::Command::DnsStatus
         | ipc::Command::DnsQuery(_)
         | ipc::Command::ExitList
@@ -3697,6 +3726,7 @@ fn refresh_netmap(
     gateway_error: &Mutex<Option<String>>,
     relayed: Option<&RelaySender>,
     turned: Option<&TurnSender>,
+    last_push: &Mutex<Option<Instant>>,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -3741,6 +3771,11 @@ fn refresh_netmap(
                 () = pushed.notified() => true,
             }
         });
+        if due {
+            *last_push
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+        }
         let chosen = home
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3964,12 +3999,14 @@ fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::
 ///   nodes' reports, not enough to be a key.
 /// - **No setup key**, which is a bearer credential that enrolls a node.
 /// - **No file contents**, only paths and the facts derived from them.
+#[allow(clippy::too_many_lines)]
 fn bug_report(
     config: &Config,
     engine: &Engine,
     device: Attachment<'_>,
     started: Instant,
     relay_dropped: &AtomicU64,
+    since_last_push: Option<Duration>,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -3997,6 +4034,24 @@ fn bug_report(
     let _ = writeln!(out, "listen = \"{}\"", config.listen);
     let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
     let _ = writeln!(out, "addresses = {addrs:?}");
+
+    let _ = writeln!(out, "\n[control]");
+    // Plaintext h2c, unconditionally: §8 of 04-pentest.md found the
+    // control-channel client has no TLS support at all, a real architectural
+    // gap worth stating here rather than only in that document — reporting
+    // anything else would misrepresent what actually left the wire.
+    let _ = writeln!(out, "transport = \"plaintext (h2c)\"");
+    match since_last_push {
+        Some(elapsed) => {
+            let _ = writeln!(out, "since_last_push_seconds = {}", elapsed.as_secs());
+        }
+        // Absent, not zero: no push has arrived yet in this process's life
+        // (GitHub issues #72/#73's mechanism), which is a materially
+        // different fact from "one just arrived".
+        None => {
+            let _ = writeln!(out, "since_last_push_seconds = \"never\"");
+        }
+    }
 
     let _ = writeln!(out, "\n[crypto]");
     // The epoch is a generation number, not a secret — and a mismatch between
@@ -4043,7 +4098,7 @@ fn bug_report(
     // **Bedrock, and the one counter here that means something is wrong with
     // the coordination server rather than with the network.**
     //
-    write_bedrock(&mut out, &stats);
+    write_bedrock(&mut out, &stats, engine.bedrock().as_deref());
 
     let _ = writeln!(out, "\n[stats]");
     let _ = writeln!(out, "tx_packets = {}", stats.tx_packets);
@@ -5181,13 +5236,43 @@ mod probe_tests {
 ///
 /// Omitted entirely when no head exchange has happened, so a deployment not
 /// running Bedrock is not told about a mechanism it does not use.
-fn write_bedrock(out: &mut String, stats: &crate::engine::Stats) {
+fn write_bedrock(
+    out: &mut String,
+    stats: &crate::engine::Stats,
+    bedrock: Option<&crate::bedrock::Log>,
+) {
     use std::fmt::Write as _;
 
-    if stats.bedrock_equivocation == 0 && stats.bedrock_head_agreed == 0 {
+    if stats.bedrock_equivocation == 0 && stats.bedrock_head_agreed == 0 && bedrock.is_none() {
         return;
     }
     let _ = writeln!(out, "\n[bedrock]");
+    // Chain depth and anchor age mirror the server's own
+    // management.karst.bedrock.chain.depth/.anchor.age.seconds
+    // (plans/phase-6/08-observability.md §5 W6 item 3), so a node-side
+    // report and a server-side scrape describe the same chain from two
+    // vantage points.
+    if let Some(log) = bedrock {
+        let _ = writeln!(out, "chain_depth = {}", log.verified_seq());
+        match log.last_anchored_at() {
+            Some(anchored_at) => {
+                let now = i64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs()),
+                )
+                .unwrap_or(0);
+                let _ = writeln!(
+                    out,
+                    "anchor_age_seconds = {}",
+                    now.saturating_sub(anchored_at)
+                );
+            }
+            None => {
+                let _ = writeln!(out, "anchor_age_seconds = \"never anchored\"");
+            }
+        }
+    }
     let _ = writeln!(out, "peers_agreeing = {}", stats.bedrock_head_agreed);
     let _ = writeln!(
         out,

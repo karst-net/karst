@@ -415,6 +415,17 @@ fn the_bug_report_is_useful_and_says_what_it_omits() {
     // §7.3: whether a session is lattice-only must be visible.
     assert!(report.contains("peers_lattice_only"));
     assert!(report.contains("psk_fallback"));
+
+    // §5 W6 item 3 of the observability plan: control-session health and
+    // Bedrock chain state, the sections this workstream added.
+    assert!(
+        report.contains("transport = \"plaintext (h2c)\""),
+        "control-channel transport must be stated, not left implied: {report}"
+    );
+    assert!(
+        report.contains("since_last_push_seconds = \"never\""),
+        "no push has arrived in this fixture; that must read as absent, not zero: {report}"
+    );
 }
 
 /// A node with no PSKs is lattice-only, and the report must say so plainly —
@@ -459,4 +470,70 @@ fn a_lattice_only_node_is_reported_as_such() {
         "a session resting on ML-KEM alone must not pass unremarked:\n{report}"
     );
     assert!(report.contains("psk_fallback = true"));
+}
+
+/// §5 W6 item 4 of the observability plan: every `field = value` line the
+/// bug report writes is checked by *name*, not only by value. The byte scan
+/// above (`no_psk_bytes_reach_any_diagnostic`) proves no *value* leaks;
+/// this is the complementary, cheaper check that a field was not given a
+/// name suggesting it holds key material in the first place — the kind of
+/// mistake a byte scan only catches after the fact, on whichever fixture
+/// happened to plant a real secret in that field.
+///
+/// Extended to cover the new `[control]`/`[bedrock]` fields this workstream
+/// added, not only the sections that predate it — a denylist that only ran
+/// against the report as it looked the day it was written would miss
+/// exactly the fields most likely to need it.
+#[test]
+fn no_bugreport_field_name_suggests_key_material() {
+    // Field names already known safe by inspection: each describes key
+    // *state* (an epoch number, whether a PSK exists, whether a rekey is in
+    // progress, a chain-depth/anchor-age counter that is Bedrock's own
+    // domain vocabulary) and never the material itself.
+    const ALLOWED: &[&str] = &[
+        "psk_epoch",
+        "psk_fallback",
+        "rekeying",
+        "chain_depth",
+        "anchor_age_seconds",
+    ];
+    const DENYLIST: &[&str] = &["psk", "key", "secret", "token"];
+
+    let netmap = netmap_with_psks();
+    let config = Arc::new(Config::from_netmap(local(), &netmap).expect("config"));
+    let engine = Engine::new(&config);
+    // A verified Bedrock log, so the [bedrock] chain_depth/anchor_age lines
+    // this test exists to cover are actually present to check.
+    engine.set_bedrock(Arc::new(karstd::bedrock::Log::new()));
+    let report = karstd::run::bug_report_for_test(&config, &engine, attachment(), 0);
+
+    let mut checked_a_psk_field = false;
+    for line in report.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let Some((name, _value)) = line.split_once(" = ") else {
+            continue;
+        };
+        let lower = name.to_lowercase();
+        if ALLOWED.contains(&lower.as_str()) {
+            checked_a_psk_field = checked_a_psk_field || lower.contains("psk");
+            continue;
+        }
+        for pattern in DENYLIST {
+            assert!(
+                !lower.contains(pattern),
+                "field {name:?} looks like it could hold key material \
+                 (matches denylist entry {pattern:?}); either it does not \
+                 and belongs on ALLOWED, or it should not be in a bug \
+                 report at all: {report}"
+            );
+        }
+    }
+    assert!(
+        checked_a_psk_field,
+        "fixture produced no psk_* field at all — this test would pass \
+         vacuously without exercising the denylist against anything"
+    );
 }

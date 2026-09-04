@@ -1146,6 +1146,17 @@ impl Engine {
         }
     }
 
+    /// The verified Bedrock log last published by [`Self::set_bedrock`], for
+    /// `bugreport`'s chain-depth and anchor-age sections
+    /// (plans/phase-6/08-observability.md §5 W6 item 3). `None` before the
+    /// first `sync` — no different from `is_present()` being false on the
+    /// log itself, just one lock away from a caller that only has the
+    /// engine.
+    #[must_use]
+    pub fn bedrock(&self) -> Option<Arc<crate::bedrock::Log>> {
+        self.bedrock.read().ok().and_then(|slot| slot.clone())
+    }
+
     /// Send this node's verified head to a peer, if it has not already been
     /// told this one — spec §5, layer 3.
     ///
