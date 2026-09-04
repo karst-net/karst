@@ -13,6 +13,14 @@ Run `../bootstrap.sh` only once; distribute its bootstrap input read-only.
 Account state lives in Postgres. `roster.toml` remains a relay input and has one
 intentional writer; move that duty explicitly during a host failure.
 
+Without an identity provider, set `KARST_BOOTSTRAP_SETUP_KEY_FILE` in the
+`.env` of whichever host starts first (only) — see the checked-in comment in
+`docker-compose.yml`. `/var/lib/karst` is read-only in this overlay, so the
+path must be under `/var/lib/netbird` (e.g.
+`/var/lib/netbird/bootstrap.key`); read it back the same way as
+[Getting started §5](../../../docs/GETTING-STARTED.md#5-path-b-a-coordination-server-and-a-relay-with-containers)'s
+single-host `cat state/bootstrap.key`, from that host's own `./state/netbird/`.
+
 Fence the old primary, update both replicas' DSNs, then promote on the standby:
 
 ```sh
@@ -36,7 +44,21 @@ Clients need a shared, load-balanced (or round-robin DNS) entry point in
 front of both replicas' `KARST_CONTROL_PORT`s to actually fail over
 automatically when one replica's `karst-control` process dies — a
 `karstd.toml` with a single fixed `server` address cannot do this on its
-own, by design (§3.1). This overlay does not ship that front end; provide
-one before relying on automatic per-process failover, and validate it
-directly rather than assuming a TCP proxy is transparent to a long-lived
-gRPC/HTTP2 stream.
+own, by design (§3.1). [`loadbalancer/`](loadbalancer/) ships that front
+end: a `haproxy` TCP-mode proxy, health-checking both replicas and
+round-robining new connections between them. Edit
+`loadbalancer/haproxy.cfg`'s two placeholder `server` lines to the real
+`host:port` of each replica, then run
+`docker compose -f loadbalancer/docker-compose.yml up -d` on the host that
+will be the shared entry point — a third host, not either replica host,
+unless that host's own loss taking down the front end too is acceptable.
+Point every `karstd.toml`'s `[control] server` at the load balancer's
+address, not at either replica directly.
+
+This closes automatic per-process failover for real: a fresh node pointed
+at the load balancer, with one `karst-control` process killed while
+connected, reconnects through the surviving replica without operator
+intervention — measured in [`docs/operations/ha.md`](../../../docs/operations/ha.md),
+which also has the caveat this does **not** cover (a whole host, not just its
+`karst-control` process, going down — the load balancer itself still needs
+its own redundancy plan, same as any other single-instance front end).

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Run this on the shared entry point itself — a third host, not either
+# karst-control replica host, unless you accept that host's loss as also
+# taking down the front end. See ../README.md.
+name: karst-ha-lb
+services:
+  loadbalancer:
+    image: haproxy:2.9
+    restart: unless-stopped
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports: ["${KARST_HA_LB_PORT:-33073}:33073"]

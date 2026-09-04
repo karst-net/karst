@@ -8,3 +8,11 @@
 target
 fuzz/target
 web
+
+# Generated runtime state (deploy/compose/*/.gitignore already ignores it from
+# git). A live deployment's Caddy volume creates root-owned, mode-0700
+# subdirectories under pentest/state/caddy/ that an unprivileged `docker
+# build`'s context walk cannot stat, failing the build entirely on any host
+# that has ever run that overlay.
+deploy/compose/state
+deploy/compose/*/state

@@ -10,6 +10,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-karst}
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    # The other host's postgres (streaming replica, or pg-promote.sh's client)
+    # dials this over the LAN, not just the compose network — found missing
+    # when actually wiring two hosts together, not visible from either host's
+    # compose file read alone.
+    ports: ["${KARST_POSTGRES_PORT:-5432}:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
@@ -24,8 +29,20 @@ services:
       KARST_REPLICA_ID: ${KARST_REPLICA_ID:?stable unique host ID}
       KARST_HA_NOTIFY_CHANNEL: ${KARST_HA_NOTIFY_CHANNEL:-karst_ha}
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      # main.go's roster refresher fatals at startup without an aquifer name
+      # (§5.4) the moment KARST_RELAY_ROSTER_FILE is set — found by actually
+      # starting this overlay's control service, which the checked-in file
+      # never had before this fix, and crash-looped unconditionally.
+      KARST_AQUIFER: ${KARST_AQUIFER:-default}
       KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
       KARST_POLICY_FILE: /var/lib/karst/policy.json
+      # Unset (the default) means no bootstrap key is ever minted on this
+      # replica — `main.go`'s writeBootstrapKey no-ops on an empty path. Set
+      # it, in this host's own .env only, on whichever replica starts first;
+      # /var/lib/karst is read-only here so it must live under /var/lib/netbird.
+      # Setting it on more than one replica mints one extra, functionally
+      # harmless but unnecessary, key per replica that races to start first.
+      KARST_BOOTSTRAP_SETUP_KEY_FILE: ${KARST_BOOTSTRAP_SETUP_KEY_FILE:-}
     volumes:
       - ${KARST_SHARED_STATE_DIR:?bootstrap state}:/var/lib/karst:ro
       - ./state/netbird:/var/lib/netbird
