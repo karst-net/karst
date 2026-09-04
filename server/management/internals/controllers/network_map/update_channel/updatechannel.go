@@ -25,6 +25,9 @@ type PeersUpdateManager struct {
 	channelsMux *sync.RWMutex
 	// metrics provides method to collect application metrics
 	metrics telemetry.AppMetrics
+	// publishNotification is set only by the Postgres HA bootstrap. It runs
+	// after local delivery, so a database outage cannot suppress a local push.
+	publishNotification func(context.Context, string)
 }
 
 var _ network_map.PeersUpdateManager = (*PeersUpdateManager)(nil)
@@ -65,15 +68,23 @@ func (p *PeersUpdateManager) SendUpdate(ctx context.Context, peerID string, upda
 	} else {
 		log.WithContext(ctx).Debugf("peer %s has no channel", peerID)
 	}
+	// Karst streams subscribe through the lightweight invalidation channel.
+	// A remote replica cannot safely receive update's process-local payload, so
+	// it re-fetches authoritative state after this edge-triggered signal.
+	if p.publishNotification != nil {
+		go p.SendNotification(ctx, peerID)
+	}
 }
 
 // SendNotification tells a lightweight subscriber that its state changed.
 // Notifications are deliberately coalesced: one pending invalidation is
 // enough to make the subscriber re-fetch its authoritative state.
 func (p *PeersUpdateManager) SendNotification(ctx context.Context, peerID string) {
-	p.channelsMux.RLock()
-	defer p.channelsMux.RUnlock()
+	p.sendNotification(ctx, peerID, true)
+}
 
+func (p *PeersUpdateManager) sendNotification(ctx context.Context, peerID string, publish bool) {
+	p.channelsMux.RLock()
 	if ch, ok := p.notificationChannels[peerID]; ok {
 		select {
 		case ch <- struct{}{}:
@@ -82,6 +93,25 @@ func (p *PeersUpdateManager) SendNotification(ctx context.Context, peerID string
 			log.WithContext(ctx).Tracef("notification already pending for peer %s", peerID)
 		}
 	}
+	publisher := p.publishNotification
+	p.channelsMux.RUnlock()
+	if publish && publisher != nil {
+		publisher(ctx, peerID)
+	}
+}
+
+// PublishNotificationsWith installs cross-replica edge-triggered delivery.
+// receive must call DeliverNotification, never SendNotification, to avoid
+// rebroadcast loops.
+func (p *PeersUpdateManager) PublishNotificationsWith(publish func(context.Context, string)) {
+	p.channelsMux.Lock()
+	defer p.channelsMux.Unlock()
+	p.publishNotification = publish
+}
+
+// DeliverNotification delivers a notification received from another replica.
+func (p *PeersUpdateManager) DeliverNotification(ctx context.Context, peerID string) {
+	p.sendNotification(ctx, peerID, false)
 }
 
 // CreateChannel creates a go channel for a given peer used to deliver updates relevant to the peer.

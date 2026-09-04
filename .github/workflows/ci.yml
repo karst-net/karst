@@ -457,6 +457,22 @@ jobs:
   go:
     name: Control plane (Go)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: karst
+          POSTGRES_PASSWORD: karst
+          POSTGRES_DB: karst
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U karst -d karst"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      KARST_TEST_POSTGRES_DSN: postgres://karst:karst@localhost:5432/karst?sslmode=disable
     defaults:
       run:
         working-directory: server

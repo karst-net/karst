@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Two copies run on separate hosts; this is not a single-host HA deployment.
+name: karst-ha
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-karst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-karst}
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ${KARST_WAL_ARCHIVE_DIR:?must be off-host}:/var/lib/postgresql/wal-archive
+  control:
+    image: ${KARST_CONTROL_IMAGE:-ghcr.io/karst-net/karst-control:dev}
+    restart: unless-stopped
+    environment:
+      NETBIRD_STORE_ENGINE: postgres
+      NB_STORE_ENGINE_POSTGRES_DSN: ${NB_STORE_ENGINE_POSTGRES_DSN:?current primary DSN}
+      KARST_REPLICA_ID: ${KARST_REPLICA_ID:?stable unique host ID}
+      KARST_HA_NOTIFY_CHANNEL: ${KARST_HA_NOTIFY_CHANNEL:-karst_ha}
+      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
+      KARST_POLICY_FILE: /var/lib/karst/policy.json
+    volumes:
+      - ${KARST_SHARED_STATE_DIR:?bootstrap state}:/var/lib/karst:ro
+      - ./state/netbird:/var/lib/netbird
+      - ./state/management.json:/etc/netbird/management.json
+    ports: ["${KARST_CONTROL_PORT:-33073}:33073"]
+volumes:
+  postgres-data:

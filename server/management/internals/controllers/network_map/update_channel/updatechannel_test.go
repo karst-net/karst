@@ -2,11 +2,16 @@ package update_channel
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map"
+	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/shared/management/proto"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // var peersUpdater *PeersUpdateManager
@@ -29,6 +34,50 @@ func TestNotificationChannelIsNotASyncChannel(t *testing.T) {
 	manager.CloseChannel(ctx, "peer")
 	if _, ok := <-notifications; ok {
 		t.Fatal("notification channel was not closed")
+	}
+}
+
+// Cross-process delivery is deliberately tested against Postgres, not a mock:
+// this catches the LISTEN connection and notification timing that an in-memory
+// manager cannot represent.
+func TestNotificationReachesPeerOnOtherReplica(t *testing.T) {
+	dsn := os.Getenv("KARST_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("KARST_TEST_POSTGRES_DSN is not set")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := "karst_updates_" + time.Now().UTC().Format("150405000000000")
+	a, err := ha.New(ctx, db, pool, "a", channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ha.New(ctx, db, pool, "b", channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := NewPeersUpdateManager(nil), NewPeersUpdateManager(nil)
+	left.PublishNotificationsWith(func(ctx context.Context, peerID string) {
+		if err := a.PublishPeer(ctx, peerID); err != nil {
+			t.Error(err)
+		}
+	})
+	b.OnPeer(func(peerID string) { right.DeliverNotification(context.Background(), peerID) })
+	updates := right.CreateNotificationChannel(context.Background(), "peer-on-b")
+	left.SendNotification(context.Background(), "peer-on-b")
+	select {
+	case <-updates:
+	case <-time.After(5 * time.Second):
+		t.Fatal("peer notification was not delivered to the other replica")
 	}
 }
 

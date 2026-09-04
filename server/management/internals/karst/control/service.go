@@ -14,6 +14,9 @@ package control
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -133,7 +136,7 @@ type Service struct {
 	// would with metrics wired.
 	metrics *telemetry.KarstMetrics
 	// active holds the live session's *sessionHandle for every identity
-	// currently connected, keyed by string(identity) — the authenticated
+	// currently connected, keyed by the canonical text encoding of identity — the authenticated
 	// ML-DSA public key, not the caller-supplied nodeID, so this can never be
 	// bypassed by presenting a different node ID over the same stolen key.
 	// GitHub issue [#87](https://github.com/karst-net/karst/issues/87): a
@@ -142,6 +145,10 @@ type Service struct {
 	// indistinguishable from an ordinary reconnect whether the cause was a
 	// legitimate roam or a cloned identity.
 	active sync.Map
+	// ha is optional so SQLite and single-process test deployments retain the
+	// original fast path. When present it makes claiming an identity durable
+	// before this process accepts the stream.
+	ha SessionCoordinator
 }
 
 // sessionHandle is the pointer identity Session's deferred cleanup compares
@@ -150,6 +157,17 @@ type Service struct {
 // on the pointer, never the func it holds.
 type sessionHandle struct {
 	cancel context.CancelFunc
+	token  string
+}
+
+// SessionCoordinator is the cross-replica counterpart to active. It is kept
+// small so control does not know about PostgreSQL or a particular notifier.
+type SessionCoordinator interface {
+	Claim(context.Context, string, string) error
+	Touch(context.Context, string, string) error
+	Release(context.Context, string, string)
+	OnSession(func(identity, replica, token string))
+	Reconcile(context.Context) error
 }
 
 // RecordSessionsWith attaches a session recorder. Separate from New so that
@@ -172,6 +190,19 @@ func (s *Service) SubscribeToUpdatesWith(peers PeerLister, updates network_map.P
 // reason RecordSessionsWith is — a caller that does not want metrics, such
 // as a one-exchange fixture, is unaffected.
 func (s *Service) RecordMetricsWith(m *telemetry.KarstMetrics) { s.metrics = m }
+
+// CoordinateSessionsWith enables durable duplicate-identity eviction. The
+// coordinator has already started LISTEN before this method returns; a missed
+// notification is covered by the reconciliation pass.
+func (s *Service) CoordinateSessionsWith(coordinator SessionCoordinator) error {
+	s.ha = coordinator
+	coordinator.OnSession(func(identity, _ string, token string) {
+		if active, ok := s.active.Load(identity); ok && active.(*sessionHandle).token != token {
+			active.(*sessionHandle).cancel()
+		}
+	})
+	return coordinator.Reconcile(context.Background())
+}
 
 // New builds the service.
 //
@@ -249,6 +280,7 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 		return status.Error(codes.Unauthenticated, "handshake failed")
 	}
 	nodeID := init.GetNodeId()
+	identityKey := sessionIdentityKey(identity)
 
 	// Exactly one live session per identity. A second one arriving is either
 	// an ordinary reconnect (the old TCP path went stale without a clean
@@ -265,15 +297,44 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	// sessionCtx.Done() fires for exactly one reason: eviction.
 	sessionCtx, cancelSession := context.WithCancel(context.Background())
 	defer cancelSession()
-	mine := &sessionHandle{cancel: cancelSession}
-	if previous, evicted := s.active.Swap(string(identity), mine); evicted {
+	var tokenBytes [32]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return status.Error(codes.Internal, "session setup failed")
+	}
+	token := hex.EncodeToString(tokenBytes[:])
+	if s.ha != nil {
+		claimCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err := s.ha.Claim(claimCtx, identityKey, token)
+		cancel()
+		if err != nil {
+			log.WithContext(ctx).WithError(err).Warn("karst: refusing new session because HA ownership cannot be recorded")
+			return status.Error(codes.Unavailable, "session registry unavailable")
+		}
+	}
+	mine := &sessionHandle{cancel: cancelSession, token: token}
+	if previous, evicted := s.active.Swap(identityKey, mine); evicted {
 		log.WithContext(ctx).Warnf("karst: a new session for node %x superseded an existing session for the same identity; closing the old connection", nodeID)
 		previous.(*sessionHandle).cancel()
 	}
 	// CompareAndDelete, not Delete: if a newer session has already swapped
 	// this identity's entry for its own *sessionHandle, this session's exit
 	// must not clear that newer one's live registration out from under it.
-	defer s.active.CompareAndDelete(string(identity), mine)
+	defer func() {
+		s.active.CompareAndDelete(identityKey, mine)
+		if s.ha != nil {
+			s.ha.Release(context.Background(), identityKey, token)
+		}
+	}()
+	// Keep the durable ownership record fresh without tying the liveness of an
+	// already authenticated stream to the database. A database outage rejects
+	// new claims but does not tear down this session; that preserves availability
+	// while never accepting a new untracked identity.
+	var heartbeat <-chan time.Time
+	if s.ha != nil {
+		ticker := time.NewTicker(sessionHeartbeatInterval)
+		defer ticker.Stop()
+		heartbeat = ticker.C
+	}
 
 	// From here the node is authenticated, so the connection is a session.
 	//
@@ -372,6 +433,13 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 
 	for {
 		select {
+		case <-heartbeat:
+			touchCtx, cancel := context.WithTimeout(context.Background(), sessionHeartbeatTimeout)
+			err := s.ha.Touch(touchCtx, identityKey, token)
+			cancel()
+			if err != nil {
+				log.WithContext(ctx).WithError(err).Warn("karst: HA session heartbeat failed")
+			}
 		case <-sessionCtx.Done():
 			// Only reachable via eviction above — ctx's own cancellation
 			// (the client hanging up) surfaces through recv's io.EOF instead,
@@ -477,10 +545,25 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 	}
 }
 
+// sessionIdentityKey is safe for both PostgreSQL text and its B-tree primary
+// key. ML-DSA public keys are several kilobytes (and arbitrary bytes), which
+// exceeds Postgres's 2704-byte indexed-value limit even when base64 encoded.
+// SHA-256 is a fixed-width collision-resistant identity commitment; collision
+// would be a cryptographic break, not a way to bypass eviction.
+func sessionIdentityKey(identity []byte) string {
+	digest := sha256.Sum256(identity)
+	return hex.EncodeToString(digest[:])
+}
+
 // sessionCloseTimeout bounds the write that records a disconnect. It runs on a
 // context detached from the dead stream's, so without a deadline a stalled
 // database would hold the goroutine for that connection open indefinitely.
 const sessionCloseTimeout = 5 * time.Second
+
+const (
+	sessionHeartbeatInterval = 30 * time.Second
+	sessionHeartbeatTimeout  = 5 * time.Second
+)
 
 // clientAddr reports the address gRPC says the stream came from, or "" when
 // the transport does not supply one — an in-process pipe in a test, for

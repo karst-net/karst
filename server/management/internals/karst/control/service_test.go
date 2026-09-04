@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -25,10 +27,13 @@ import (
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/proto"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // These run over a real gRPC server on a real (in-memory) socket, with real
@@ -392,6 +397,78 @@ func TestSecondSessionForSameIdentityEvictsFirst(t *testing.T) {
 	if handshakeSpans != 2 {
 		t.Fatalf("got %d karst.control.session_handshake spans, want 2 (one per session, including the evicted one)", handshakeSpans)
 	}
+}
+
+// This is the HA regression for #87: unlike the preceding test, the clone is
+// accepted by a different Service process and eviction crosses real Postgres
+// LISTEN/NOTIFY rather than a shared Go map.
+func TestSecondSessionOnOtherReplicaEvictsFirst(t *testing.T) {
+	dsn := os.Getenv("KARST_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("KARST_TEST_POSTGRES_DSN is not set")
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func([]byte) []byte { return key.Public() }
+	first, second := newFixture(t, lookup, nil), newFixture(t, lookup, nil)
+	defer first.cleanup()
+	defer second.cleanup()
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := "karst_control_ha_" + time.Now().UTC().Format("150405000000000")
+	h1, err := ha.New(ctx, db, pool, "one", channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := ha.New(ctx, db, pool, "two", channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.svc.CoordinateSessionsWith(h1); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.svc.CoordinateSessionsWith(h2); err != nil {
+		t.Fatal(err)
+	}
+
+	dial := func(f *fixture) *control.Client {
+		stream, err := f.client.Session(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := control.Dial(stream, f.svc.Pins(), identity.ControlVerifier{}, nil, identity.ControlSigner{Key: key}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client
+	}
+	live := dial(first)
+	if _, err := live.Request([]byte("live")); err != nil {
+		t.Fatalf("initial request: %v", err)
+	}
+	clone := dial(second)
+	if _, err := clone.Request([]byte("clone")); err != nil {
+		t.Fatalf("clone request: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := live.Request([]byte("must be evicted")); err != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("first replica still served the cloned identity")
 }
 
 // Two nodes on the same server must get independent channels.
