@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -25,11 +26,13 @@ import (
 	"google.golang.org/grpc"
 	"gorm.io/gorm"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
+	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
@@ -247,6 +250,29 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// inherited SyncResponse channels, so Karst does not cause construction of
 	// a full upstream network map that it would discard.
 	svc.SubscribeToUpdatesWith(peers, s.PeersUpdateManager())
+	// HA is active only for Postgres. A SQLite deployment remains deliberately
+	// single-replica rather than pretending its local file can coordinate one.
+	if sql.GetStoreEngine() == "postgres" {
+		replica := os.Getenv("KARST_REPLICA_ID")
+		if replica == "" {
+			replica, _ = os.Hostname()
+		}
+		hub, err := ha.New(context.Background(), db, sql.PostgresPool(), replica, os.Getenv("KARST_HA_NOTIFY_CHANNEL"))
+		if err != nil {
+			return nil, err
+		}
+		if err := svc.CoordinateSessionsWith(hub); err != nil {
+			return nil, fmt.Errorf("karst: reconcile HA sessions: %w", err)
+		}
+		if updates, ok := s.PeersUpdateManager().(*update_channel.PeersUpdateManager); ok {
+			updates.PublishNotificationsWith(func(ctx context.Context, peerID string) {
+				if err := hub.PublishPeer(ctx, peerID); err != nil {
+					log.WithError(err).Warn("karst: publish HA peer notification")
+				}
+			})
+			hub.OnPeer(func(peerID string) { updates.DeliverNotification(context.Background(), peerID) })
+		}
+	}
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{
 		Register: func(reg grpc.ServiceRegistrar) {

@@ -3774,6 +3774,12 @@ func (s *SqlStore) GetDB() *gorm.DB {
 	return s.db
 }
 
+// PostgresPool returns the pgx pool used by a Postgres-backed store. It is
+// intentionally nil for other engines. Karst's HA notifier needs a dedicated
+// connection for LISTEN; using a GORM query connection would lose the
+// subscription as soon as that connection returned to its pool.
+func (s *SqlStore) PostgresPool() *pgxpool.Pool { return s.pool }
+
 // SetFieldEncrypt sets the field encryptor for encrypting sensitive user data.
 func (s *SqlStore) SetFieldEncrypt(enc *crypt.FieldEncrypt) {
 	s.fieldEncrypt = enc
