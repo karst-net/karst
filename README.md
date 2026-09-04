@@ -50,7 +50,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SCIM 2.0 (deprovisioning timing tracked as an open gap, see status above) |
 | Console / portal (TypeScript) | Admin console and self-service portal; client-user lifecycle verified against a real server — create/invite a user, enroll a Linux device, revoke, deprovision |
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS, host integration. **Linux and macOS both shipping** (`systemd-resolved`/NetworkManager/`resolv.conf` on Linux, `/etc/resolver` on macOS); macOS's resolver *search list* is a stated Phase 6 gap, not silent. Windows is Phase 8 |
-| **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, and client enforcement — all exercised end to end against a real server and node. Automated audit anchoring is deferred to Phase 6 pending [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier |
+| **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, client enforcement, and automated audit anchoring through [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier — implemented in both languages against shared vectors |
 
 **874 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
