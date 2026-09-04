@@ -969,5 +969,6 @@ Everything found by review and not yet fixed is in
 | Architecture decisions, each with its alternatives and costs | [docs/adr/](adr/) |
 | Handshake, relay, NAT traversal, control channel, DNS, network lock | [spec/](../spec/) |
 | Annotated node configuration | [docs/karstd-example.toml](karstd-example.toml) |
+| Subnet routers and exit nodes: prerequisites, NAT modes, privacy, recovery | [docs/subnet-routers-and-exit-nodes.md](subnet-routers-and-exit-nodes.md) |
 | The co-located deployment in detail | [deploy/compose/README.md](../deploy/compose/README.md) |
 | Reporting a vulnerability, with an explicit safe harbour | [SECURITY.md](../SECURITY.md) |

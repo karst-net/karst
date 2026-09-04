@@ -117,23 +117,21 @@ impl<B: Backend> State<B> {
         self.clear();
         self.backend.run(&["-Version".to_owned()])?;
 
-        // Remove only a stale route carrying Karst's protocol marker. This
-        // makes crash recovery idempotent without flushing the numeric table.
-        let _ = self.backend.run(&strings(&[
-            family.flag(),
-            "route",
-            "del",
-            "default",
-            "dev",
-            interface,
-            "table",
-            TABLE,
-            "proto",
-            PROTOCOL,
-        ]));
-
         let mut applied = Vec::new();
         let mut apply = |add: Vec<String>, delete: Vec<String>| -> io::Result<()> {
+            // Best-effort delete before every add, not only the route below:
+            // a crashed prior instance leaves its route *and* every rule
+            // behind under Karst's own protocol marker — `Drop` does not run
+            // under `SIGKILL` — and `ip rule add`, unlike `nft add table`, is
+            // not idempotent against an exact duplicate. Without this, a bare
+            // crash and restart with no netmap change at all made every one
+            // of these five installs fail with "File exists" and the whole
+            // activation roll back, leaving a previously-consented exit route
+            // permanently dormant until something *else* changed enough to
+            // retry — found by `bins/karstd/tests/aquifer.rs`'s own crash-
+            // recovery row, which is the only one that restarts a node with
+            // truly nothing about its config or netmap different from before.
+            let _ = self.backend.run(&delete);
             self.backend.run(&add)?;
             applied.push(delete);
             Ok(())
@@ -359,16 +357,43 @@ mod tests {
     struct Mock {
         commands: Vec<Vec<String>>,
         fail_at: Option<usize>,
+        /// A crude kernel: an `add` whose spec (everything but the verb) is
+        /// already present fails "File exists", the way a real `ip rule
+        /// add`/`ip route add` does — unlike `nft add table`, neither
+        /// tolerates an exact duplicate. `del` clears presence and is itself
+        /// never an error, matching `remove_route`'s own "already absent is
+        /// not a failure" convention. Empty (the default) for every test that
+        /// is not specifically about this.
+        already_present: std::collections::HashSet<Vec<String>>,
+    }
+
+    /// `args` with its verb (`add`/`del`, always index 2 — `-4`/`-6`, then
+    /// `route`/`rule`, then the verb) removed, so `add priority 260 ...` and
+    /// `del priority 260 ...` key the same install.
+    fn spec_key(args: &[String]) -> Vec<String> {
+        let mut key = args.to_vec();
+        if key.len() > 2 {
+            key.remove(2);
+        }
+        key
     }
 
     impl Backend for Mock {
         fn run(&mut self, args: &[String]) -> io::Result<()> {
             self.commands.push(args.to_vec());
             if self.fail_at == Some(self.commands.len()) {
-                Err(io::Error::other("synthetic ip failure"))
-            } else {
-                Ok(())
+                return Err(io::Error::other("synthetic ip failure"));
             }
+            match args.get(2).map(String::as_str) {
+                Some("add") if !self.already_present.insert(spec_key(args)) => {
+                    return Err(io::Error::other("RTNETLINK answers: File exists"));
+                }
+                Some("del") => {
+                    self.already_present.remove(&spec_key(args));
+                }
+                _ => {}
+            }
+            Ok(())
         }
     }
 
@@ -402,8 +427,12 @@ mod tests {
 
     #[test]
     fn a_partial_failure_rolls_every_applied_stage_back() {
+        // Position 9, not 6: each of the five installs now issues a
+        // best-effort delete before its add (the crash-recovery fix above),
+        // so the load-bearing last step — the exit table's own catch-all
+        // rule — is the ninth command, not the sixth.
         let mut state = state(Mock {
-            fail_at: Some(6),
+            fail_at: Some(9),
             ..Mock::default()
         });
         let escapes = ["192.0.2.10".parse().unwrap()].into_iter().collect();
@@ -415,6 +444,42 @@ mod tests {
             .commands
             .iter()
             .any(|command| command.get(2).is_some_and(|v| v == "del")));
+    }
+
+    /// **The crash-recovery fix.** A prior instance's route and every rule
+    /// survive a `SIGKILL` — `Drop` never runs — so a fresh process reusing
+    /// the exact same priorities against the exact same kernel must not
+    /// treat that as a failure. Before the fix, `bins/karstd/tests/
+    /// aquifer.rs`'s own crash-recovery row hit exactly this: a bare crash
+    /// and restart with no netmap change at all left a previously-active
+    /// exit route permanently dormant.
+    #[test]
+    fn activation_tolerates_a_stale_rule_or_route_from_a_crashed_prior_instance() {
+        let escapes: BTreeSet<IpAddr> = ["192.0.2.10".parse().unwrap()].into_iter().collect();
+
+        // What a prior instance would have left installed before the crash.
+        let mut crashed = state(Mock::default());
+        crashed
+            .activate("karst0", Family::V4, escapes.clone())
+            .unwrap();
+        let already_present: std::collections::HashSet<Vec<String>> = crashed
+            .backend
+            .commands
+            .iter()
+            .filter(|command| command.get(2).map(String::as_str) == Some("add"))
+            .map(|command| spec_key(command))
+            .collect();
+
+        // A fresh process, with no memory of any of that — `undo` starts
+        // empty, the same as any freshly constructed `State` — reusing the
+        // exact same priorities against a kernel that still has them.
+        let mut fresh = state(Mock {
+            already_present,
+            ..Mock::default()
+        });
+        fresh
+            .activate("karst0", Family::V4, escapes)
+            .expect("a bare crash and restart with an unchanged netmap must not fail activation");
     }
 
     #[test]

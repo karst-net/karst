@@ -139,16 +139,42 @@ func (m *memoryAccount) remove(handle string) bool {
 	for _, h := range m.order {
 		survivorIDs = append(survivorIDs, m.peers[h].ID)
 	}
-	updates := m.updates
 	m.mu.Unlock()
 
-	if updates != nil {
-		for _, peerID := range survivorIDs {
-			updates.SendNotification(context.Background(), peerID)
-			updates.SendUpdate(context.Background(), peerID, &network_map.UpdateMessage{})
-		}
-	}
+	m.notify(survivorIDs)
 	return true
+}
+
+// allPeerIDs returns every currently registered peer's stable ID — for a
+// change that potentially affects everyone still on the roster, the same set
+// `remove`'s own survivor list computes for a revocation.
+func (m *memoryAccount) allPeerIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.order))
+	for _, h := range m.order {
+		ids = append(ids, m.peers[h].ID)
+	}
+	return ids
+}
+
+// notify pushes both halves production's own deprovisioning path fans out —
+// see `remove`'s own doc comment for why both calls, not just one, are
+// required to actually reach `control.Service.subscribeOnce`'s channel.
+// `m.updates` is nil whenever the fixture was not started with `--control`,
+// which every row but the ones driving this admin surface at all leaves it
+// as.
+func (m *memoryAccount) notify(peerIDs []string) {
+	m.mu.Lock()
+	updates := m.updates
+	m.mu.Unlock()
+	if updates == nil {
+		return
+	}
+	for _, peerID := range peerIDs {
+		updates.SendNotification(context.Background(), peerID)
+		updates.SendUpdate(context.Background(), peerID, &network_map.UpdateMessage{})
+	}
 }
 
 // listing is one row of the control surface's peer list.
