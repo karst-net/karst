@@ -177,5 +177,5 @@ confirming that was acceptable.
   bridge-subnet requirement and the shared-entry-point gap this overlay
   does not close.
 - `docs/operations/ha.md`: the real RTO/RPO numbers and the open item from
-  step 6, in place of the "not yet run" placeholders §8's definition of
-  done required be replaced with a real drill, not a writeup of one.
+  step 6, replacing the "not yet run" placeholders — §8's definition of
+  done requires a real drill's numbers here, not a writeup of one.
