@@ -75,7 +75,7 @@ impl Scratch {
         } else {
             std::env::temp_dir()
         };
-        let dir = base.join(format!("krst-{:x}-{tag}", hasher.finish() as u32));
+        let dir = base.join(format!("krst-{:x}-{tag}", hasher.finish()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch directory");
         Self(dir)
