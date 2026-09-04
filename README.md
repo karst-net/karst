@@ -5,18 +5,17 @@
 **A post-quantum mesh VPN with self-hosted coordination, an admin console, and
 user management.**
 
-> **Status: pre-alpha. Usable, not reviewed.** Phase 5 of 7 complete
-> (2026-09-02); Phase 6 (hardening and beta) is underway. A non-expert admin
-> can install the server, connect nodes across Linux and macOS behind real
-> NATs, write an ACL, and lock the network down to a signed authority list —
-> entirely from the console and the published installers. But **nothing here
-> has had external cryptographic or security review** (that is Phase 8, after
-> GA), the wire formats are still changing without compatibility guarantees,
-> and two things Phase 5's own exit gate asked for are not yet true:
-> deprovisioning a user is measured at 48.9s against a 30s bound
-> (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)), and the gate's outsider-run
-> walkthrough has not happened yet. "Usable" and "reviewed" are different
-> claims, and Phase 5 only earns the first one.
+> **Status: pre-alpha; internally reviewed, not externally reviewed.** Phase 6
+> hardening is underway. Deprovisioning is measured at 2.0s against its 30s CI
+> bound, but the required unaided outsider walkthrough remains unrun. No
+> external cryptographic review or external penetration test has happened;
+> both are Phase 8 work, and wire formats may still change without compatibility
+> guarantees. Start with the [install guide](docs/GETTING-STARTED.md), then use
+> the [operations manual](docs/OPERATIONS.md),
+> [security whitepaper](docs/SECURITY-WHITEPAPER.md), and
+> [WireGuard/Tailscale migration guide](docs/MIGRATING-FROM-WIREGUARD-TAILSCALE.md).
+> The whitepaper and this wording still require the recorded crypto-lead
+> sign-off before the documentation workstream can close.
 
 Karst is a Tailscale-equivalent overlay network in which every long-term
 cryptographic dependency is post-quantum. The driving threat is
