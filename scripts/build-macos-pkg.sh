@@ -189,6 +189,8 @@ pkgbuild \
   "$component"
 
 echo "==> pkgbuild (Karst Status)"
+echo "==> staged tree before pkgbuild:"
+find "$stage_status" | sort
 pkgbuild \
   --root "$stage_status" \
   --identifier dev.karst.karststatus \
@@ -197,6 +199,8 @@ pkgbuild \
   --install-location / \
   --ownership recommended \
   "$status_component"
+echo "==> payload pkgbuild actually recorded:"
+pkgutil --payload-files "$status_component"
 
 echo "==> productbuild"
 productbuild \
