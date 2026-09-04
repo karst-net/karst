@@ -7,6 +7,7 @@ while [ $# -gt 0 ]; do case "$1" in --backup) backup=$2; shift 2;; --target-time
 : "${PGDATA:?set stopped restore target}"; : "${KARST_WAL_ARCHIVE_DIR:?set off-host archive}"
 [ ! -e "$PGDATA/postmaster.pid" ] || { echo "pg-restore: postgres is running" >&2; exit 1; }
 mv "$PGDATA" "$PGDATA.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"; cp -a "$backup" "$PGDATA"
+rm -f "$PGDATA/standby.signal"
 echo "restore_command = 'cp $KARST_WAL_ARCHIVE_DIR/%f %p'" >> "$PGDATA/postgresql.auto.conf"
 echo "recovery_target_time = '$time'" >> "$PGDATA/postgresql.auto.conf"
 echo "recovery_target_action = 'promote'" >> "$PGDATA/postgresql.auto.conf"; touch "$PGDATA/recovery.signal"
