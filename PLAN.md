@@ -918,8 +918,8 @@ with shape and text).
 | Linux (x86-64, arm64) | `/dev/net/tun`, systemd unit; Debian and RHEL packages for clients and services | 2 (platform); 5 (packages) |
 | Docker/Kubernetes | userspace mode, sidecar + operator | 4 |
 | macOS | `utun`, LaunchDaemon, signed+notarized pkg; App Store NetworkExtension variant later | 5 |
-| Windows | Wintun, Windows service, MSI, WinTUN driver signing | 8 |
-| FreeBSD | `tun` | 6 (best-effort) |
+| Windows | Wintun, Windows service, MSI, WinTUN driver signing | 6, pulled forward from 8 on 2026-09-04 as a firm beta-blocking requirement |
+| FreeBSD | `tun` | Unscheduled — cut from its 6 (best-effort) slot on 2026-09-04 to make room for Windows; no exit-criterion depended on it |
 | iOS / Android | NetworkExtension / VpnService, Rust core via UniFFI | 7 |
 
 Mobile is where a greenfield Rust core pays off — one UniFFI-generated binding
@@ -4205,12 +4205,11 @@ entry carries no dates of its own; the record is
     `v0.0.0-signing-test.1` captured a real digest, signature, and
     `cosign verify` pass for all three images on 2026-08-30.)
 
-### Phase 6 — Hardening and beta (8 weeks · Sep–Nov 2026)
+### Phase 6 — Hardening, beta, and the Windows client (8 weeks)
 
-Anchored on the week of **2026-09-07**, the Monday after Phase 5's
-2026-09-02 close — kicking off next week rather than on the original Dec
-2026 schedule. Adjust the anchor if the start slips; keep the durations, per
-§10's rule above. Detailed planning material —
+Sequenced from Phase 5's actual close rather than the original static
+schedule; keep the durations, per §10's rule above. Detailed planning
+material —
 a re-baseline against the tree, workstream-by-workstream scope, a dependency
 graph, staffing, and risks — is [`plans/phase-6/`](plans/phase-6/), same
 relationship to this block as [`plans/phase-5/`](plans/phase-5/) had to
@@ -4259,6 +4258,15 @@ Phase 5's.
 - **Internal penetration test** of the control plane and console, against a
   deployment stood up from the published artifacts rather than a lab rig, so
   that what is tested is what a self-hoster actually runs.
+- ⬅️ **Windows client**, pulled forward from Phase 8 on 2026-09-04 and made a
+  firm requirement before the public beta below opens — Wintun integration
+  (or the ADR-0012 userspace-mode fallback if the licensing question in
+  [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md) §1 isn't
+  answered in time), Windows service, signed MSI installer, NRPT DNS. This
+  swaps out FreeBSD's best-effort `tun` line in §9's platform table, which is
+  cut from this phase rather than merely deprioritized. See
+  [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md) for the
+  full plan and the schedule risk this compression carries.
 - ⬅️ **TURN fallback**, slipped from Phase 4 on 2026-08-20 under the option that
   bullet reserved: client-side allocation, permissions, channel binding and
   credential refresh; control-server ephemeral credential minting; coturn added
@@ -4278,9 +4286,11 @@ Phase 5's.
   whitepaper, migration guide from WireGuard/Tailscale.
 - Public beta with design partners.
 - **Exit:** all high/critical findings from the internal review and internal
-  penetration test remediated and re-tested; 30 days of beta with a defined
-  stability bar met. **This exit no longer carries an external opinion**, which
-  is what it meant before 2026-08-21; the external work is Phase 8.
+  penetration test remediated and re-tested; the Windows client meets
+  [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md)'s exit
+  criteria; 30 days of beta with a defined stability bar met. **This exit no
+  longer carries an external opinion**, which is what it meant before
+  2026-08-21; the external work is Phase 8.
 
 ### Phase 7 — GA and mobile (12 weeks · Nov 2026–Jan 2027)
 
@@ -4301,11 +4311,14 @@ Phase 5's.
   Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
 - v1.0 GA.
 
-### Phase 8 — External review and Windows client (post-GA · from Jan 2027)
+### Phase 8 — External review (post-GA · from Jan 2027)
 
 Moved out of Phase 6 on 2026-08-21: the external engagements are not going to
 happen on that timeline, and a plan that keeps them there is a plan that
-reports an assurance it will not have.
+reports an assurance it will not have. The Windows client, originally
+scheduled here, was pulled forward into Phase 6 on 2026-09-04 as a firm
+beta-blocking requirement — see Phase 6's bullet list above and
+[phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md).
 
 - **External cryptographic review** of PHREATIC and its implementation. Budget
   4–6 weeks of lead time for booking, and book it well before the phase opens —
@@ -4313,11 +4326,8 @@ reports an assurance it will not have.
   window and Phase 6), each time because the lead time was noticed at the start
   of the phase rather than ahead of it.
 - **External penetration test** of the control plane and console.
-- Windows client: Wintun integration, Windows service, signed MSI installer,
-  and WinTUN driver signing.
 - **Exit:** all high/critical findings remediated and re-tested, and the report
-  published or summarized publicly; the Windows client is installable and
-  connects successfully to the control plane.
+  published or summarized publicly.
 
 **What this costs, stated plainly.** v1.0 ships without external cryptographic
 review. The mitigations are real but partial — Verifpal in Phase 1, ProVerif in
@@ -4381,7 +4391,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
 | ML-KEM or ML-DSA cryptanalytic advance | Critical | Low | Hybrid construction means a break costs no confidentiality; agility layer allows swapping suites |
 | Greenfield scope exceeds estimate | High | **High** | Phase-5 usable milestone; mobile and SaaS explicitly deferred; ruthless non-goals |
 | Platform DNS integration breakage | Medium | High | Per-platform tests, conservative fallbacks, `karst doctor` diagnostics |
-| Windows driver signing delays | Medium | Medium | Start certificate acquisition well before Phase 8. macOS notarization is resolved — Apple Developer Program enrollment landed 2026-09-01 and produced a signed, notarized `.pkg` on the first tagged run; this risk now covers Windows only |
+| Windows client (Wintun/GPL licensing question, plus driver signing) delays past the beta gate | High | **High** | Raised from Medium/Medium on 2026-09-04 when the Windows client was pulled forward from Phase 8 into Phase 6 as a firm beta-blocking requirement, compressing what was a 9-week estimate into 8 weeks with no prior dedicated staffing. Resolve the Wintun license question and start certificate acquisition in Phase 6's first week; fall back to ADR-0012 userspace mode if the license answer is late — see [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md). macOS notarization is separately resolved — Apple Developer Program enrollment landed 2026-09-01 and produced a signed, notarized `.pkg` on the first tagged run |
 | Crypto review finds a protocol flaw late | High | **High** | Verifpal in Phase 1 and ProVerif in Phase 3 pull discovery earlier, and Phase 6 adds an internal review. Raised from Medium on 2026-08-21: external review moved to Phase 8, so the first independent look now lands **after** GA and any flaw it finds is found in deployments. Book the reviewers well ahead of the phase — the item has already slipped twice on lead time alone |
 | No WireGuard interop limits adoption | Medium | Certain | Accepted consequence of the greenfield decision; mitigate with a migration guide and side-by-side operation support |
 | Trademark collision forces a rename | Low–Medium | **High** | ADR-0007 makes trademark the only defensive lever; a collision already appears likely. Search concluded and name settled as a Phase 0 exit criterion, before repo/crate/SPDX names harden |
