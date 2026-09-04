@@ -191,8 +191,24 @@ pkgbuild \
 echo "==> pkgbuild (Karst Status)"
 echo "==> staged tree before pkgbuild:"
 find "$stage_status" | sort
+
+# `pkgbuild` infers a "bundle component" for any .app in `--root` and, by
+# default, makes it relocatable and version-checked: at install time it goes
+# looking for an existing copy anywhere Launch Services knows about, by
+# bundle identifier, and can decide the payload does not need to be placed
+# at all — silently. `installer` still reports success; nothing under
+# /Applications ever appears. That is exactly what a first version of this
+# script hit: "The install was successful," and no app. `--analyze` plus
+# forcing both flags off makes pkgbuild treat this bundle like every other
+# file in the payload — always placed at the literal root-relative path.
+component_plist="$dist/karst-status-component.plist"
+pkgbuild --analyze --root "$stage_status" "$component_plist"
+plutil -replace 0.BundleIsRelocatable -bool NO "$component_plist"
+plutil -replace 0.BundleIsVersionChecked -bool NO "$component_plist"
+
 pkgbuild \
   --root "$stage_status" \
+  --component-plist "$component_plist" \
   --identifier dev.karst.karststatus \
   --version "$pkg_version" \
   --scripts "$root/packaging/macos/status-scripts" \
