@@ -92,27 +92,42 @@ or explicit acceptance of the existing migration race.
   and `TestNotificationReachesPeerOnOtherReplica` were also run against a
   real local Postgres container (not just trusted from CI config) and pass.
 
-## Known gap: automatic failover through a shared entry point — not closed
+## Client failover through a shared entry point — closed, re-run 2026-09-04
 
 §7 step 6 (kill one `karst-control` process while a node is connected,
 confirm it reconnects through the *other* replica without operator
-intervention) was attempted but not conclusively demonstrated in this run.
-`karstd.toml` pins a single fixed `server` address (§3.1: this is by
-design — the overlay assumes an operator-provided shared entry point, which
-this repo does not ship). An ad-hoc HAProxy TCP round-robin was stood up for
-the drill; after extended chaos testing (repeated primary kills, a PITR
-restore across timelines, many client restarts) the node's netmap sync
-became unreliable through it in a way that did not look like the HA
-session/eviction logic — no session ever failed to *evict* correctly, only
-a normal-looking connect-then-disconnect loop that also reproduced briefly
-against a direct, un-proxied connection to a single replica later in the
-same run. This looks like accumulated drill-environment state (the ad-hoc
-proxy, or the node's netmap cache/PSK-epoch state after jumping Postgres
-timelines twice) rather than a defect in the shipped design, but it was not
-run to ground. **Before relying on this in production**: stand up the real
-load-balanced entry point the design assumes, and re-run this specific
-step in isolation (fresh node, fresh cache, no other chaos in flight) to get
-a clean pass/fail and, if it fails again, a reproducible bug report.
+intervention) was attempted but not conclusively demonstrated in the first
+run on 2026-09-04 (full account in the exit-demo doc's history). That
+attempt used an ad-hoc HAProxy improvised mid-drill, on top of extended
+prior chaos (repeated primary kills, a PITR restore across timelines, many
+client restarts), and produced a connect-then-disconnect loop that was
+never run to ground.
+
+The re-run used the real, checked-in load balancer this workstream now
+ships — [`deploy/compose/ha/loadbalancer/`](../../deploy/compose/ha/loadbalancer/),
+an HAProxy TCP-mode proxy health-checking both replicas — a fresh node with
+no prior cache, and no other chaos in flight. `shannon` ran the primary
+Postgres and one replica, `turing` the streaming replica and the second,
+and the load balancer ran on a third host (`lovelace`), fronting both.
+
+The fresh node's session landed on `turing`. Killing `turing`'s
+`karst-control` container (not the database, via `docker kill`) at
+`2026-09-04T20:07:36.696Z`: the data plane never dropped (the node kept
+advertising to its peer throughout), and the control channel noticed the
+dead stream and retried at `20:07:49.347645Z` — the roughly 13-second gap is
+the periodic netmap-refresh-poll interval finding the dead connection, not a
+slow TCP-level failure detection. `control_sessions` showed the session
+re-claimed by `shannon` at `20:07:50.435034Z`. **Measured client failover:
+~13.7 seconds**, zero operator intervention, `policy.enforcing` never
+dropped to `false`. Full record: [the HA exit-demo doc](../../plans/phase-6/09-ha-exit-demo.md#6-replica-process-kill-and-client-failover--closed-re-run-2026-09-04).
+
+Two real bugs in the checked-in overlay were found and fixed getting this
+far: `docker-compose.yml` set `KARST_RELAY_ROSTER_FILE` without
+`KARST_AQUIFER`, which fatals `karst-control` at startup unconditionally
+(fixed by adding `KARST_AQUIFER`); and the `postgres` service published no
+host port, so the other host's replica had no way to reach the primary
+across two real hosts (fixed by adding one). Neither had been exercised for
+real before this run.
 
 ## #75 re-estimate
 

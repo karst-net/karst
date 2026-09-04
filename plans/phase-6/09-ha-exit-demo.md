@@ -124,33 +124,69 @@ corruption.
   restore; `shannon` was rebuilt as its replica the same way as step 4,
   confirmed streaming.
 
-## 6. Replica-process kill and client failover — attempted, not conclusively closed
+## 6. Replica-process kill and client failover — closed, re-run 2026-09-04
 
-Killing a single `karst-control` process and confirming the client
-reconnects through the *other* replica requires the shared entry point §7's
-preamble assumes exists — a single `karstd.toml` `server` line cannot fail
-over on its own, by design (§3.1). This overlay does not ship one, so an
-ad-hoc HAProxy TCP round-robin was stood up for the drill (not part of this
-workstream's deliverables).
+The first attempt (above) was inconclusive: an ad-hoc HAProxy improvised
+mid-drill, layered on top of extended prior chaos testing (repeated primary
+kills, a PITR restore across two WAL timelines, many client restarts),
+produced a connect-then-disconnect loop that did not look like a session-
+eviction failure but was never run to ground. Per that section's own call
+for a clean re-run, this workstream now ships a real load-balancer
+deliverable — [`deploy/compose/ha/loadbalancer/`](../../deploy/compose/ha/loadbalancer/),
+an HAProxy TCP-mode proxy health-checking both replicas — rather than
+leaving the shared entry point as something an operator must invent, and
+the re-run used it, a fresh node, and no other chaos in flight, exactly as
+called for.
 
-After extended chaos testing beforehand (repeated primary kills, a PITR
-restore that moved Postgres across two WAL timelines, many client
-restarts), the node's netmap sync became unreliable going through the
-proxy — a connect-then-disconnect loop that did not look like a session-
-eviction or `ha.Hub` failure (no session ever failed to *evict* correctly;
-every `Claim`/`NOTIFY` round trip in steps 2–5 above worked). The same
-instability reproduced briefly against a direct, un-proxied connection to a
-single replica later in the same run, which points at accumulated
-drill-environment state — the ad-hoc proxy, or the node's netmap
-cache/PSK-epoch state after two live timeline jumps — rather than a defect
-in the shipped cross-replica design.
+Two real bugs were found and fixed getting the overlay itself to start
+before the re-run could even begin:
 
-**This step needs a clean re-run to close out**: a real load-balanced entry
-point (not an ad-hoc proxy improvised mid-drill), a fresh node with no prior
-cache, and no other chaos in flight, to get an unambiguous pass/fail. Until
-then this is an open item, not a passed check — recorded honestly in
-[docs/operations/ha.md](../../docs/operations/ha.md) rather than assumed
-from the design.
+- `deploy/compose/ha/docker-compose.yml` set `KARST_RELAY_ROSTER_FILE`
+  without `KARST_AQUIFER`, and `cmd/karst-control/main.go`'s roster
+  refresher fatals at startup without an aquifer name (§5.4) the moment a
+  roster path is set. Every control replica crash-looped on first start,
+  unconditionally — this overlay had never actually been started with a
+  roster path set before. Fixed by adding `KARST_AQUIFER` (default
+  `default`), matching the base single-host deployment.
+- The `postgres` service published no host port, so the *other* host's
+  Postgres (streaming replica, or an operator's `pg-promote.sh` client)
+  had no way to reach the primary at all across two real hosts — invisible
+  from either host's compose file read alone, only found by actually wiring
+  two hosts together. Fixed by adding a `ports` mapping.
+
+Topology: `shannon` (primary Postgres + one `karst-control` replica) and
+`turing` (streaming replica + second `karst-control` replica), matching §7's
+setup. The load balancer ran on `lovelace` — the third host, deliberately
+not co-located with either replica — fronting both replicas' control ports.
+A fresh node (new identity, no prior cache, run outside `lovelace`'s own
+enrolled production `karstd`) enrolled through the load balancer using the
+bootstrap key (§8.1) and reached `policy.enforcing = true` with a netmap.
+
+The control session landed on `turing` (confirmed via `control_sessions`).
+`docker kill` against `turing`'s `karst-control` container (not the
+database) at **2026-09-04T20:07:36.696Z**. The node's data plane never
+dropped — it kept advertising to its peer throughout, the same "session held
+open" behavior steps 3 and 5 already relied on. The control channel noticed
+the dead stream and retried at **20:07:49.347645Z**
+(`netmap refresh failed; session held open, retrying`, `retry_in=1s`) — the
+~13s gap is the periodic netmap-refresh-poll interval, not a slow TCP-level
+failure detection, and is itself worth documenting rather than assuming
+away. `control_sessions` showed the session re-claimed by `shannon` at
+**20:07:50.435034Z**. **Total measured client failover: ~13.7s**, end to
+end, with zero operator intervention and `policy.enforcing` never dropping
+to `false`.
+
+One environmental gotcha, not a repo bug, cost real time before this run:
+the first attempt used a `karstd`/`karst` binary that was two days stale
+relative to the freshly built server image, and a genuine cross-version
+netmap-hash disagreement (`VersionMismatch`) was briefly mistaken for a
+protocol bug. Rebuilding the client from the exact commit under test
+resolved it immediately. Recorded here so a future re-run does not spend the
+same hour: **before treating a `VersionMismatch` as a server/client protocol
+bug, rebuild the client from the commit under test.**
+
+This closes §7 step 6 and the corresponding "known gap" in
+[docs/operations/ha.md](../../docs/operations/ha.md).
 
 ## Cleanup
 
