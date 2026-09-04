@@ -58,7 +58,11 @@ type KarstMetrics struct {
 // callback.
 func NewKarstMetrics(ctx context.Context, meter metric.Meter) (*KarstMetrics, error) {
 	bedrockChainDepthGauge, err := meter.Int64ObservableGauge("management.karst.bedrock.chain.depth",
-		metric.WithUnit("1"),
+		// Deliberately no WithUnit("1") — verified against a real scrape
+		// (go.opentelemetry.io/otel/exporters/prometheus v0.64.0) that unit
+		// "1" appends a "_ratio" suffix to the exported name, which is
+		// wrong for a plain count. An empty unit exports as bare
+		// management_karst_bedrock_chain_depth.
 		metric.WithDescription("Head sequence number of an account's Bedrock audit chain"),
 	)
 	if err != nil {
@@ -82,7 +86,7 @@ func NewKarstMetrics(ctx context.Context, meter metric.Meter) (*KarstMetrics, er
 	}
 
 	relayRegistrySizeGauge, err := meter.Int64ObservableGauge("management.karst.relay.registry.size",
-		metric.WithUnit("1"),
+		// No WithUnit("1") — see bedrockChainDepthGauge's identical comment.
 		metric.WithDescription("Number of relays registered to an account"),
 	)
 	if err != nil {
