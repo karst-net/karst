@@ -2745,12 +2745,36 @@ impl Routes {
         config: &Config,
         selected_exit: Option<&str>,
     ) -> std::collections::BTreeSet<(std::net::IpAddr, u8)> {
+        // A prefix this node itself gateways is never routed over its own
+        // tunnel — it is reachable through the gateway's own local network
+        // instead, and that route is not karstd's to manage.
+        //
+        // Checked against `route_offers` directly, not merely by the absence
+        // of the prefix from a peer's `allowed_ips`: a role transition (this
+        // node was a plain recipient of the prefix, pointed at a *different*
+        // gateway, until an HA failover just made it the gateway itself)
+        // leaves a stale `(prefix, some-other-peer)` entry installed for up
+        // to one more reconciliation cycle after the netmap already agrees
+        // this node is now the gateway. Withdrawing that stale entry only
+        // undoes what karstd itself added — it cannot know to restore a
+        // kernel route it never owned, such as the gateway's own connected
+        // route to its local LAN, so the prefix must never be added here in
+        // the first place once this node is the gateway for it.
+        let gatewayed: std::collections::BTreeSet<(std::net::IpAddr, u8)> = config
+            .route_offers
+            .iter()
+            .filter(|offer| offer.role == crate::route_offer::Role::Gateway)
+            .map(|offer| (offer.prefix.base(), offer.prefix.len()))
+            .collect();
         let mut out = std::collections::BTreeSet::new();
         for peer in &config.peers {
             for range in &peer.allowed_ips {
                 // A default cryptokey route identifies an exit gateway. Kernel
                 // routing is a separate, locally consented decision below.
                 if range.len() == 0 {
+                    continue;
+                }
+                if gatewayed.contains(&(range.base(), range.len())) {
                     continue;
                 }
                 let on_link = config
@@ -4056,6 +4080,53 @@ mod route_tests {
 
         assert!(Routes::wanted(&cfg, None).is_empty());
         assert!(Routes::wanted(&cfg, Some("not-offered")).is_empty());
+    }
+
+    fn gateway_offer(route_id: &str, prefix: &str) -> crate::route_offer::Offer {
+        use karst_control_client::transport::pb;
+        crate::route_offer::Offer::from_wire(
+            pb::KarstRouteOffer {
+                route_id: route_id.to_owned(),
+                prefix: prefix.to_owned(),
+                gateway_id: vec![1],
+                metric: 100,
+                kind: pb::KarstRouteKind::Subnet as i32,
+                masquerade: true,
+                keep_route: false,
+                role: pb::KarstRouteRole::Gateway as i32,
+            },
+            &[1],
+        )
+        .expect("gateway offer")
+    }
+
+    /// **A prefix this node gateways is never routed over its own tunnel** —
+    /// `plans/phase-6/06-subnet-routers-and-exit-nodes.md` §4's "Gateway
+    /// nodes receive a corresponding forwarding grant but do not install
+    /// their own advertised prefix into the TUN." Reachability to it is the
+    /// gateway's own local network, a route karstd does not own and must not
+    /// overwrite: an aquifer.rs namespace row (the failover topology) found
+    /// this the hard way — an `ip route replace` for the same prefix a
+    /// destination LAN's own connected route already covered silently
+    /// destroyed that route, and nothing ever restored it, leaving the LAN
+    /// unreachable even after the stale entry was withdrawn.
+    ///
+    /// A peer's `allowed_ips` still naming the prefix — as it would for one
+    /// reconciliation cycle right after an HA failover reassigns the route to
+    /// this node, before the peer table catches up — must not defeat this:
+    /// `route_offers` is checked directly rather than trusted to have already
+    /// been reflected everywhere else.
+    #[test]
+    fn a_route_this_node_gateways_is_never_installed_over_its_own_tunnel() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["100.64.0.2/32", "10.99.0.0/24"]]);
+        cfg.route_offers
+            .push(gateway_offer("dest-lan", "10.99.0.0/24"));
+
+        assert!(
+            Routes::wanted(&cfg, None).is_empty(),
+            "a prefix this node gateways must never be wanted over the tunnel, \
+             even while a peer's allowed_ips still names it"
+        );
     }
 
     #[test]

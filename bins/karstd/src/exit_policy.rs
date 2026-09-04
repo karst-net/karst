@@ -9,6 +9,19 @@
 //! rules that may use the main-table default. The catch-all lookup is installed
 //! last and removed first, so partial setup/cleanup cannot capture Karst's own
 //! transport.
+//!
+//! **All three priorities sit below 32766.** Every network namespace and host
+//! carries the kernel's own unconditional `32766: from all lookup main` rule
+//! (and `32767: from all lookup default`) whether or not Karst has ever run.
+//! It is *not* suppressed — only Karst's own `MAIN_PRIORITY` rule below sets
+//! `suppress_prefixlength 0` — so a priority number at or above 32766 would
+//! never be reached: the kernel's own default-route rule always matches a
+//! packet to any destination first and terminates the lookup right there.
+//! Confirmed the hard way — `bins/karstd/tests/aquifer.rs`'s exit-node row
+//! reproduced exactly this against a real network namespace holding an
+//! ordinary pre-existing default route, which every one of this module's own
+//! mocked unit tests below is structurally unable to see, since `Mock`
+//! records calls rather than asking a kernel to resolve one.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -17,9 +30,9 @@ use std::process::{Command, Stdio};
 
 const TABLE: &str = "51888";
 const PROTOCOL: &str = "186";
-const ESCAPE_PRIORITY: u32 = 51_800;
-const MAIN_PRIORITY: u32 = 51_950;
-const EXIT_PRIORITY: u32 = 51_960;
+const ESCAPE_PRIORITY: u32 = 100;
+const MAIN_PRIORITY: u32 = 250;
+const EXIT_PRIORITY: u32 = 260;
 const MAX_ESCAPES: usize = (MAIN_PRIORITY - ESCAPE_PRIORITY) as usize;
 
 trait Backend {
@@ -379,12 +392,12 @@ mod tests {
         let mut state = state(Mock::default());
         state.activate("karst0", Family::V4, escapes).unwrap();
         let activation = state.backend.commands.last().unwrap().join(" ");
-        assert!(activation.contains("priority 51960 lookup 51888"));
+        assert!(activation.contains("priority 260 lookup 51888"));
 
         let before = state.backend.commands.len();
         state.clear();
         let first_cleanup = state.backend.commands[before].join(" ");
-        assert!(first_cleanup.contains("del priority 51960"));
+        assert!(first_cleanup.contains("del priority 260"));
     }
 
     #[test]

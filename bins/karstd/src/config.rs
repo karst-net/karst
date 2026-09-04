@@ -344,6 +344,17 @@ pub struct NodeSection {
     /// See [`crate::nat64`] for what each gate is protecting against.
     #[serde(default)]
     pub nat64: crate::nat64::Mode,
+    /// Where root-owned local exit-route consent is stored.
+    ///
+    /// Absent — the deployed default — means
+    /// [`crate::exit_node::DEFAULT_STATE_FILE`], a fixed host path deliberately
+    /// not meant to move under routine configuration. This exists for the one
+    /// case that legitimately needs a different path: more than one `karstd`
+    /// on the same host, such as an integration test running several nodes in
+    /// separate network namespaces, which would otherwise all share one root's
+    /// worth of exit-route state.
+    #[serde(default)]
+    pub exit_node_state_file: Option<PathBuf>,
 }
 
 /// The `[control]` table: how to reach the coordination server.

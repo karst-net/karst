@@ -1046,7 +1046,10 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
-        exit_node_state_file: Some(crate::exit_node::DEFAULT_STATE_FILE.into()),
+        exit_node_state_file: Some(file.node.exit_node_state_file.as_ref().map_or_else(
+            || crate::exit_node::DEFAULT_STATE_FILE.into(),
+            |p| resolve(p, dir),
+        )),
     };
 
     // A current-thread runtime, created and dropped here. The datapath is
