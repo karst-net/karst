@@ -47,15 +47,35 @@ pub(crate) struct Scratch(PathBuf);
 impl Scratch {
     /// Create an empty directory named for `tag`.
     ///
+    /// Two things keep this short rather than merely unique, found by a real
+    /// macOS CI failure — `bind control socket: path must be shorter than
+    /// SUN_LEN` — not caught in review:
+    ///
+    /// - The base is `/tmp`, not [`std::env::temp_dir`]. The latter is
+    ///   `TMPDIR`, which on macOS is a long per-session path under
+    ///   `/var/folders/...`; `/tmp` is a short, always-present symlink on
+    ///   every platform this crate targets. A Unix domain socket path
+    ///   created under a test's scratch directory has a small fixed limit
+    ///   (macOS's `SUN_LEN` is ~104 bytes) that the long form can exceed
+    ///   once joined with a socket file name, even though Linux's own
+    ///   `/tmp`-based `temp_dir()` never gets close.
+    /// - The uniqueness suffix is a hash of `(pid, thread id)`, not their
+    ///   `Debug` forms spelled out — `ThreadId(12)` alone is eleven bytes
+    ///   this doesn't need to spend.
+    ///
     /// # Panics
     /// If the directory cannot be created, which a test cannot proceed without.
     #[must_use]
     pub(crate) fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "karst-scratch-{}-{:?}-{tag}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (std::process::id(), std::thread::current().id()).hash(&mut hasher);
+        let base = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!("krst-{:x}-{tag}", hasher.finish() as u32));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch directory");
         Self(dir)
