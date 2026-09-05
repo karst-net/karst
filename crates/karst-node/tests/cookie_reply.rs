@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_node::{Action, Session};
 use karst_noise::handshake::{PeerPublic, StaticKeys};
 use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, FragMacKey, COOKIE_LEN};
@@ -22,35 +21,22 @@ use karst_proto::{split_datagram, MessageType};
 const PSK: [u8; 32] = [0x42; 32];
 const TEST_SEED: [u8; 32] = [0x99; 32];
 
-fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
+fn keys(a: u8, _b: u8) -> Arc<StaticKeys> {
+    Arc::new(StaticKeys::from_seed(&[a; 64]))
 }
 fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
     Arc::new(PeerPublic {
         kem_pk: k.kem_pk.clone(),
-        dh_pk: k.dh_pk,
+
         psk: PSK,
     })
-}
-fn policy() -> SuitePolicy {
-    SuitePolicy {
-        minimum: SuiteId::KARST_1,
-        supported: vec![SuiteId::KARST_1],
-    }
 }
 
 /// An initiator session, dialled but not yet answered — `Handshaking`.
 fn dialling() -> (Session, u32) {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
-    let mut a = Session::new(
-        Arc::clone(&a_keys),
-        peer_of(&b_keys),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        1,
-    );
+    let mut a = Session::new(Arc::clone(&a_keys), peer_of(&b_keys), 7, 1);
     let actions = a.connect(0, [0xAA; 32]);
     let reassembly_id = actions
         .iter()
@@ -159,7 +145,7 @@ fn a_reply_with_no_outstanding_handshake_is_ignored() {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
     // Idle: never dialled, so `reassembly_id` is still its initial value.
-    let mut a = Session::new(a_keys, peer_of(&b_keys), policy(), SuiteId::KARST_1, 7, 1);
+    let mut a = Session::new(a_keys, peer_of(&b_keys), 7, 1);
     let cookie = [0x44; COOKIE_LEN];
     let datagram = reply_fragment(&b_keys, 0, &cookie);
     let (hdr, payload) = split_datagram(&datagram).expect("split");

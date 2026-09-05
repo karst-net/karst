@@ -42,8 +42,7 @@ func newStore(t *testing.T) *node.Store {
 // handshake without them.
 func testKeys() node.DataPlaneKeys {
 	return node.DataPlaneKeys{
-		KemPublicKey: bytes.Repeat([]byte{0xAB}, 1184),
-		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
+		KemPublicKey: bytes.Repeat([]byte{0xAB}, 1568),
 	}
 }
 
@@ -143,10 +142,8 @@ func TestRegisterRejectsMalformedDataPlaneKeys(t *testing.T) {
 		keys node.DataPlaneKeys
 	}{
 		{"no keys at all", node.DataPlaneKeys{}},
-		{"missing kem", node.DataPlaneKeys{DhPublicKey: bytes.Repeat([]byte{1}, 32)}},
-		{"missing dh", node.DataPlaneKeys{KemPublicKey: bytes.Repeat([]byte{1}, 1184)}},
-		{"short kem", node.DataPlaneKeys{KemPublicKey: bytes.Repeat([]byte{1}, 1183), DhPublicKey: bytes.Repeat([]byte{1}, 32)}},
-		{"long dh", node.DataPlaneKeys{KemPublicKey: bytes.Repeat([]byte{1}, 1184), DhPublicKey: bytes.Repeat([]byte{1}, 33)}},
+		{"missing kem", node.DataPlaneKeys{}},
+		{"short kem", node.DataPlaneKeys{KemPublicKey: bytes.Repeat([]byte{1}, 1567)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,8 +167,7 @@ func TestDataPlaneKeysCanRotate(t *testing.T) {
 	}
 
 	rotated := node.DataPlaneKeys{
-		KemPublicKey: bytes.Repeat([]byte{0x11}, 1184),
-		DhPublicKey:  bytes.Repeat([]byte{0x22}, 32),
+		KemPublicKey: bytes.Repeat([]byte{0x11}, 1568),
 	}
 	again, err := s.Register(k.Public(), rotated)
 	if err != nil {
@@ -185,8 +181,7 @@ func TestDataPlaneKeysCanRotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !bytes.Equal(rec.KemPublicKey, rotated.KemPublicKey) ||
-		!bytes.Equal(rec.DhPublicKey, rotated.DhPublicKey) {
+	if !bytes.Equal(rec.KemPublicKey, rotated.KemPublicKey) {
 		t.Fatal("rotated keys were not persisted")
 	}
 	if !bytes.Equal(rec.PublicKey, k.Public()) {

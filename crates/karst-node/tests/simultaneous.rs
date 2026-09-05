@@ -45,7 +45,6 @@
 
 use std::sync::Arc;
 
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_node::{Action, Session};
 use karst_noise::handshake::{PeerPublic, ResponderRandomness, StaticKeys};
 use karst_noise::transport::REKEY_AFTER_MS;
@@ -56,8 +55,8 @@ const PSK: [u8; 32] = [0x42; 32];
 const SRC_A: SourceKey = [0x11; 18];
 const SRC_B: SourceKey = [0x22; 18];
 
-fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
+fn keys(a: u8, _b: u8) -> Arc<StaticKeys> {
+    Arc::new(StaticKeys::from_seed(&[a; 64]))
 }
 
 /// Which side's static KEM key wins §13.12's simultaneous-open tie-break,
@@ -72,21 +71,13 @@ fn a_wins_tiebreak() -> bool {
 fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
     Arc::new(PeerPublic {
         kem_pk: k.kem_pk.clone(),
-        dh_pk: k.dh_pk,
+
         psk: PSK,
     })
 }
 
-fn policy() -> SuitePolicy {
-    SuitePolicy {
-        minimum: SuiteId::KARST_1,
-        supported: vec![SuiteId::KARST_1],
-    }
-}
-
 fn rrand(n: u8) -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [n; 32],
         encap_rand_e: [n ^ 0x0F; 32],
         encap_rand_s: [n ^ 0xF0; 32],
     }
@@ -126,8 +117,8 @@ impl Both {
         let bk = keys(0xB1, 0xB2);
         let (ap, bp) = (peer_of(&ak), peer_of(&bk));
         Self {
-            a: Session::new(ak, bp, policy(), SuiteId::KARST_1, 7, 1),
-            b: Session::new(bk, ap, policy(), SuiteId::KARST_1, 7, 2),
+            a: Session::new(ak, bp, 7, 1),
+            b: Session::new(bk, ap, 7, 2),
             a_reasm: Reassembler::new(ReasmConfig::default()),
             b_reasm: Reassembler::new(ReasmConfig::default()),
             round: 0,

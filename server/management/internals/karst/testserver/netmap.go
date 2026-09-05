@@ -519,7 +519,6 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		}
 		handle, err := nodes.Register(k, node.DataPlaneKeys{
 			KemPublicKey: kemKey(byte(0x40 + i)),
-			DhPublicKey:  pattern(32, byte(0x50+i)),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("preload peer: %w", err)
@@ -527,7 +526,7 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 		account.register(handle, fmt.Sprintf("preloaded-%d", i))
 
 		if r.bedrockFixture != nil && i < r.coverPreloaded {
-			if err := r.bedrockFixture.countersign(handle, k, kemKey(byte(0x40+i)), pattern(32, byte(0x50+i))); err != nil {
+			if err := r.bedrockFixture.countersign(handle, k, kemKey(byte(0x40+i))); err != nil {
 				return nil, fmt.Errorf("countersign preloaded peer: %w", err)
 			}
 		}
@@ -586,7 +585,6 @@ func (r *router) handleLogin(_ context.Context, identityPub, body []byte) ([]byt
 
 	handle, err := r.nodes.Register(identityPub, node.DataPlaneKeys{
 		KemPublicKey: req.GetKemPublicKey(),
-		DhPublicKey:  req.GetDhPublicKey(),
 	})
 	// Countersign the enrolling node, when Bedrock is on. Its handle is not
 	// known until this moment, which is exactly the situation the offline
@@ -596,7 +594,7 @@ func (r *router) handleLogin(_ context.Context, identityPub, body []byte) ([]byt
 	// node itself rather than on the peer it is meant to be about.
 	if err == nil && r.bedrockFixture != nil && r.bedrockFixture.coverEnrolling {
 		if err := r.bedrockFixture.countersign(handle, identityPub,
-			req.GetKemPublicKey(), req.GetDhPublicKey()); err != nil {
+			req.GetKemPublicKey()); err != nil {
 			return nil, fmt.Errorf("countersign enrolling node: %w", err)
 		}
 	}
@@ -625,7 +623,7 @@ func generateIdentity() ([]byte, error) {
 	return k.Public(), nil
 }
 
-// kemKey makes a real ML-KEM-768 encapsulation key. A 1184-byte pattern is not
+// kemKey makes a real ML-KEM-1024 encapsulation key. A 1568-byte pattern is not
 // one, and node.Register rejects it — deliberately, since a key that does not
 // parse is shipped to every peer and none of them can handshake with it.
 func kemKey(seed byte) []byte {
@@ -633,7 +631,7 @@ func kemKey(seed byte) []byte {
 	for i := range s {
 		s[i] = seed + byte(i)
 	}
-	dk, err := mlkem.NewDecapsulationKey768(s[:])
+	dk, err := mlkem.NewDecapsulationKey1024(s[:])
 	if err != nil {
 		fail("mlkem seed: %v", err)
 	}
@@ -760,7 +758,7 @@ func newBedrockFixture(mode proto.KarstBedrockMode) (*bedrockFixture, error) {
 // from node.Store.Register, and the two must agree — verifyNodeSign checks that
 // the handle is the one the identity key derives to, so a disagreement here
 // fails loudly rather than producing a chain nobody can use.
-func (f *bedrockFixture) countersign(handle string, identity, kem, dh []byte) error {
+func (f *bedrockFixture) countersign(handle string, identity, kem []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -769,7 +767,7 @@ func (f *bedrockFixture) countersign(handle string, identity, kem, dh []byte) er
 	}
 	f.at++
 	entry, input := f.builder.Prepare(f.at, bedrock.OpNodeSign,
-		bedrock.NodeSignBody(handle, identity, kem, dh, 0, 0))
+		bedrock.NodeSignBody(handle, identity, kem, 0, 0))
 	sigs, err := bedrock.SignAuthorities(input,
 		bedrock.AuthoritySigner{Index: 0, Key: f.authority})
 	if err != nil {

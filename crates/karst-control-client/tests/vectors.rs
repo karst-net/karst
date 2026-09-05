@@ -131,7 +131,6 @@ struct VersionRoute {
 struct VersionPeer {
     node_id: String,
     kem_public_key: String,
-    dh_public_key: String,
     dns_name: String,
     endpoint: String,
     allowed_ips: Option<Vec<String>>,
@@ -159,7 +158,6 @@ struct DigestCase {
     epoch: u32,
     node_id: String,
     kem_public_key: String,
-    dh_public_key: String,
     dns_name: String,
     endpoint: String,
     #[serde(default)]
@@ -417,7 +415,6 @@ fn peer_digest_matches() {
         let entry = PeerEntry {
             node_id: &unhex(&c.node_id),
             kem_public_key: &unhex(&c.kem_public_key),
-            dh_public_key: &unhex(&c.dh_public_key),
             dns_name: &c.dns_name,
             endpoint: &c.endpoint,
             home_relay: &unhex(&c.home_relay),
@@ -462,7 +459,7 @@ fn peer_digest_covers_the_epoch() {
 struct VersionInputs {
     ids: Vec<Vec<u8>>,
     kems: Vec<Vec<u8>>,
-    dhs: Vec<Vec<u8>>,
+
     homes: Vec<Vec<u8>>,
     ips: Vec<Vec<String>>,
     ports: Vec<Vec<(u32, u32)>>,
@@ -501,7 +498,7 @@ fn inputs(c: &VersionCase) -> VersionInputs {
     VersionInputs {
         ids: peers.iter().map(|p| unhex(&p.node_id)).collect(),
         kems: peers.iter().map(|p| unhex(&p.kem_public_key)).collect(),
-        dhs: peers.iter().map(|p| unhex(&p.dh_public_key)).collect(),
+
         homes: peers.iter().map(|p| unhex(&p.home_relay)).collect(),
         ips: peers
             .iter()
@@ -535,7 +532,6 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         .map(|(i, p)| PeerEntry {
             node_id: &held.ids[i],
             kem_public_key: &held.kems[i],
-            dh_public_key: &held.dhs[i],
             dns_name: &p.dns_name,
             endpoint: &p.endpoint,
             home_relay: &held.homes[i],

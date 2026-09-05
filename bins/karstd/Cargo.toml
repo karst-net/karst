@@ -50,7 +50,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 thiserror = "2"
-x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 zeroize = { version = "1", default-features = false }
 # The control channel is the only async code in the daemon: tonic is async, and
 # reimplementing HTTP/2 to avoid a runtime would be a poor trade. It runs on a

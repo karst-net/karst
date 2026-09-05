@@ -299,7 +299,6 @@ pub struct NodeSign {
     pub identity_key: Vec<u8>,
     /// The static keys PHREATIC authenticates against — spec §6.1.
     pub kem_public_key: Vec<u8>,
-    pub dh_public_key: Vec<u8>,
     pub not_before: i64,
     /// Zero means no expiry.
     pub expiry: i64,
@@ -321,10 +320,8 @@ pub fn node_handle(identity_key: &[u8]) -> String {
     Base64::encode_string(&h.finalize())
 }
 
-/// ML-KEM-768 static public key size (`S_pk`).
-pub const KEM_PUBLIC_KEY: usize = 1184;
-/// X25519 static public key size (`D_pk`).
-pub const DH_PUBLIC_KEY: usize = 32;
+/// ML-KEM-1024 static public key size (`S_pk`).
+pub const KEM_PUBLIC_KEY: usize = 1568;
 
 /// A parsed `node-revoke` body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -408,13 +405,11 @@ pub fn parse_node_sign(body: &[u8]) -> Result<NodeSign, Error> {
     let handle = c.lp_str()?;
     let identity_key = c.lp()?.to_vec();
     let kem_public_key = c.lp()?.to_vec();
-    let dh_public_key = c.lp()?.to_vec();
     let not_before = read_time(&mut c)?;
     let expiry = read_time(&mut c)?;
     c.finish()?;
     if identity_key.len() != NODE_IDENTITY_KEY
         || kem_public_key.len() != KEM_PUBLIC_KEY
-        || dh_public_key.len() != DH_PUBLIC_KEY
         || handle.is_empty()
     {
         return Err(Error::Malformed);
@@ -423,7 +418,6 @@ pub fn parse_node_sign(body: &[u8]) -> Result<NodeSign, Error> {
         handle,
         identity_key,
         kem_public_key,
-        dh_public_key,
         not_before,
         expiry,
     })
@@ -560,7 +554,7 @@ pub fn authority_list_body(authorities: &[Vec<u8>], q: u32, anchor_keys: &[Vec<u
 
 /// Build a `node-sign` body — §3.4.
 ///
-/// All three keys, not just the identity key. See spec §6.1: the identity key
+/// Both identity and static KEM keys. See spec §6.1: the identity key
 /// is not used by PHREATIC, so covering only it would authorize a node to exist
 /// without constraining which session keys are its.
 #[must_use]
@@ -569,7 +563,6 @@ pub fn node_sign_body(
     handle: &str,
     identity_key: &[u8],
     kem_public_key: &[u8],
-    dh_public_key: &[u8],
     not_before: i64,
     expiry: i64,
 ) -> Vec<u8> {
@@ -577,7 +570,6 @@ pub fn node_sign_body(
     put_lp(&mut out, handle.as_bytes());
     put_lp(&mut out, identity_key);
     put_lp(&mut out, kem_public_key);
-    put_lp(&mut out, dh_public_key);
     put_u64(&mut out, not_before as u64);
     put_u64(&mut out, expiry as u64);
     out

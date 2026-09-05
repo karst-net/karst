@@ -4,7 +4,6 @@
 package control_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -219,7 +218,6 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 		SetupKey:     setupKey,
 		Meta:         &proto.PeerSystemMeta{Hostname: "karst-node", GoOS: "linux", NetbirdVersion: "0.0.0"},
 		KemPublicKey: validKemKey(0xAB),
-		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -427,7 +425,6 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 		SetupKey:     enrollment.Key,
 		Meta:         &proto.PeerSystemMeta{Hostname: "karst-node", GoOS: "linux", NetbirdVersion: "0.0.0"},
 		KemPublicKey: validKemKey(0xAB),
-		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

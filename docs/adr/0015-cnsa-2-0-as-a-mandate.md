@@ -324,6 +324,11 @@ configuration, and must be tested — not described.
 
 ### Alternatives rejected
 
+> **Amendment, 2026-09-05.** [ADR-0018](0018-cnsa-2-0-as-the-sole-suite.md)
+> reverses the alternative below: CNSA 2.0 is now the only deployment target,
+> and the other PHREATIC suite and profile-selection mechanism are removed.
+> The original rationale is retained to explain the decision at that time.
+
 **Make CNSA 2.0 the only profile.** Simplest to reason about and wrong for the
 audience ADR-0001 identified: it costs the non-AES-NI hardware a large constant
 factor, and it discards the hybrid that ADR-0002 argued for on

@@ -81,23 +81,12 @@ pub mod consts {
 }
 
 pub mod sizes {
-    //! Message sizes for suite `KARST_1` — §6.
-    //!
-    //! **This module is `KARST_1` only, deliberately.** Sizes for *every* suite
-    //! are computed from the registry by `karst_crypto::Suite::message_sizes`,
-    //! which is where a new suite is checked against §6.4. What these constants
-    //! buy is the compile-time assertion below: this crate does not depend on
-    //! `karst-crypto`, so the invariants can be `const`-asserted here for the
-    //! shipping suite and only tested there for the rest. `KARST_2` needs three
-    //! fragments (§6.5) and would fail invariant 2 as written, which is why it
-    //! is not tabulated here.
+    //! Fixed CNSA 2.0 handshake message sizes — §6.
 
-    /// ML-KEM-768 encapsulation key.
-    pub const ML_KEM_768_PK: usize = 1184;
-    /// ML-KEM-768 ciphertext.
-    pub const ML_KEM_768_CT: usize = 1088;
-    /// X25519 public key.
-    pub const X25519_PK: usize = 32;
+    /// ML-KEM-1024 encapsulation key.
+    pub const ML_KEM_1024_PK: usize = 1568;
+    /// ML-KEM-1024 ciphertext.
+    pub const ML_KEM_1024_CT: usize = 1568;
     /// AEAD tag.
     pub const AEAD_TAG: usize = 16;
     /// TAI64N timestamp.
@@ -109,9 +98,8 @@ pub mod sizes {
         + 4                             // sender_index
         + 2                             // suite_id
         + 4                             // psk_epoch
-        + ML_KEM_768_PK                 // e_kem_pk
-        + X25519_PK                     // e_dh_pk
-        + ML_KEM_768_CT                 // ct_s
+        + ML_KEM_1024_PK                 // e_kem_pk
+        + ML_KEM_1024_CT                 // ct_s
         + super::consts::PEER_ID_HINT_LEN + TIMESTAMP + AEAD_TAG; // enc_ident
 
     /// `HandshakeResponse` — §6.2.
@@ -119,9 +107,8 @@ pub mod sizes {
         + 3                                 // reserved
         + 4                                 // sender_index
         + 4                                 // receiver_index
-        + ML_KEM_768_CT                     // ct_e
-        + ML_KEM_768_CT                     // ct_ss
-        + X25519_PK                         // e_dh_pk
+        + ML_KEM_1024_CT                     // ct_e
+        + ML_KEM_1024_CT                     // ct_ss
         + AEAD_TAG; // enc_empty
 
     /// `CookieReply` — §6.3.
@@ -139,15 +126,8 @@ pub mod sizes {
 /// an address-unvalidated source than it received.
 const _: () = assert!(sizes::HANDSHAKE_INIT > sizes::HANDSHAKE_RESPONSE);
 
-/// Invariant 2 — a **`KARST_1`** `HandshakeInit` must fit two fragments.
-/// Headroom is 38 bytes; any new field larger than that forces a third fragment
-/// and changes the `DoS` analysis in §9.
-///
-/// Two fragments is a property of `KARST_1` and `KARST_2`, not of the protocol:
-/// `KARST_2` needs three (§6.5), which is inside the four-fragment cap and
-/// costs it real loss performance. The cap that applies to every suite is
-/// asserted in `karst-crypto`, over the registry.
-const _: () = assert!(sizes::HANDSHAKE_INIT <= 2 * consts::FRAGMENT_PAYLOAD_MAX);
+/// Invariant 2 — the init fits three fragments with 414 bytes of headroom.
+const _: () = assert!(sizes::HANDSHAKE_INIT <= 3 * consts::FRAGMENT_PAYLOAD_MAX);
 
 /// The header must be exactly the size the field layout implies.
 const _: () = assert!(consts::FRAGMENT_HEADER == 4 + 1 + 3 + consts::FRAG_MAC_LEN);
@@ -368,31 +348,31 @@ mod tests {
 
     #[test]
     fn spec_sizes_match_the_specification() {
-        assert_eq!(sizes::HANDSHAKE_INIT, 2378, "spec §6.1");
-        assert_eq!(sizes::HANDSHAKE_RESPONSE, 2236, "spec §6.2");
+        assert_eq!(sizes::HANDSHAKE_INIT, 3210, "spec §6.1");
+        assert_eq!(sizes::HANDSHAKE_RESPONSE, 3164, "spec §6.2");
         assert_eq!(consts::FRAGMENT_PAYLOAD_MAX, 1208, "spec §5");
     }
 
     /// §6.4 invariant 1. The compile-time assertion above proves the ordering;
     /// this pins the actual margin so a change is visible in review.
     #[test]
-    fn anti_amplification_margin_is_142_bytes() {
+    fn anti_amplification_margin_is_46_bytes() {
         assert_eq!(
             sizes::HANDSHAKE_INIT - sizes::HANDSHAKE_RESPONSE,
-            142,
+            46,
             "anti-amplification margin changed — re-read spec §6.4"
         );
     }
 
     /// §6.4 invariant 2 — the tightest constraint in the protocol.
     #[test]
-    fn handshake_init_fits_two_fragments_with_38_bytes_headroom() {
-        assert_eq!(fragments_needed(sizes::HANDSHAKE_INIT), Some(2));
-        assert_eq!(fragments_needed(sizes::HANDSHAKE_RESPONSE), Some(2));
+    fn handshake_init_fits_three_fragments_with_414_bytes_headroom() {
+        assert_eq!(fragments_needed(sizes::HANDSHAKE_INIT), Some(3));
+        assert_eq!(fragments_needed(sizes::HANDSHAKE_RESPONSE), Some(3));
         assert_eq!(
-            2 * consts::FRAGMENT_PAYLOAD_MAX - sizes::HANDSHAKE_INIT,
-            38,
-            "fragment headroom changed — any field over 38 B forces a third \
+            3 * consts::FRAGMENT_PAYLOAD_MAX - sizes::HANDSHAKE_INIT,
+            414,
+            "fragment headroom changed — any field over 414 B forces a fourth \
              fragment and changes the DoS analysis (spec §6.4)"
         );
     }

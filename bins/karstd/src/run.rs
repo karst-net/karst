@@ -165,7 +165,6 @@ impl Shutdown {
 /// randomness across handshakes is a key-recovery risk, not untidiness.
 fn responder_randomness() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: random_seed(),
         encap_rand_e: random_seed(),
         encap_rand_s: random_seed(),
     }
@@ -4424,12 +4423,10 @@ mod route_tests {
                     kem_pk: {
                         use karst_crypto::kem::{keypair_from_seed, KemKind};
                         let seed = u8::try_from(index).unwrap_or(0).wrapping_add(0x22);
-                        let (_, pk) = keypair_from_seed(KemKind::MlKem768, &[seed; 64]);
+                        let (_, pk) = keypair_from_seed(KemKind::MlKem1024, &[seed; 64]);
                         pk
                     },
-                    dh_pk: x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(
-                        [0x33u8; 32],
-                    )),
+
                     psk: [0u8; 32],
                 }),
                 endpoint: None,
@@ -4445,10 +4442,7 @@ mod route_tests {
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-                &[0x11; 64],
-                &[0x12; 32],
-            )),
+            keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
             interface: "karst0".to_owned(),
@@ -4993,10 +4987,7 @@ mod probe_tests {
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-                &[0x11; 64],
-                &[0x12; 32],
-            )),
+            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,
             interface: "karst0".to_owned(),
@@ -5507,10 +5498,7 @@ mod probe_tests {
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-                &[0x11; 64],
-                &[0x12; 32],
-            )),
+            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:0".parse().expect("addr"),
             port_mapping: false,
             interface: "karst0".to_owned(),

@@ -76,7 +76,6 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 	// (phreatic-v1.md §4).
 	keys := node.DataPlaneKeys{
 		KemPublicKey: req.GetKemPublicKey(),
-		DhPublicKey:  req.GetDhPublicKey(),
 	}
 	handle, err := node.ValidateRegistration(identity, keys)
 	if err != nil {

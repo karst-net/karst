@@ -183,7 +183,6 @@ func (h *NetmapHandler) refuseIfUncovered(ctx context.Context, accountID, self s
 	}
 	keys := bedrock.PeerKeys{
 		KemPublicKey: identity.KemPublicKey,
-		DhPublicKey:  identity.DhPublicKey,
 	}
 	if !state.IsCovered(self, keys, time.Now().UTC().Unix()) {
 		return status.Error(codes.PermissionDenied,
@@ -379,7 +378,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			AllowedIps:   allowedIPsOf(p),
 			DnsName:      p.DNSLabel,
 			KemPublicKey: id.KemPublicKey,
-			DhPublicKey:  id.DhPublicKey,
+
 			// Where to reach this peer when no direct path exists. Empty for a
 			// peer holding no relay, which is a peer reachable only directly.
 			HomeRelay: id.HomeRelay,
@@ -499,7 +498,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	//
 	// This is not a delta — it is the case that makes deltas mostly
 	// unnecessary. A node polls repeatedly and the answer is usually identical;
-	// re-shipping 1184-byte KEM keys and a PSK per peer each time is the
+	// re-shipping 1568-byte KEM keys and a PSK per peer each time is the
 	// expensive part, and it is pure waste. A true delta needs per-node
 	// history, which costs the O(1) server state §2.6 chose deliberately.
 	if req.GetKnownVersion() != 0 && req.GetKnownVersion() == resp.Version {
@@ -634,7 +633,7 @@ func PeerDigest(p *proto.KarstNetmapPeer, epoch uint32) uint64 {
 
 	writeField(h, p.GetNodeId())
 	writeField(h, p.GetKemPublicKey())
-	writeField(h, p.GetDhPublicKey())
+
 	writeField(h, []byte(p.GetDnsName()))
 	writeField(h, []byte(p.GetEndpoint()))
 	// The home relay is routable content: it is the second way a node reaches
@@ -724,7 +723,7 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	for _, p := range resp.GetPeers() {
 		writeField(h, p.GetNodeId())
 		writeField(h, p.GetKemPublicKey())
-		writeField(h, p.GetDhPublicKey())
+
 		writeField(h, []byte(p.GetDnsName()))
 		writeField(h, []byte(p.GetEndpoint()))
 		writeField(h, p.GetHomeRelay())

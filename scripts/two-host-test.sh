@@ -150,8 +150,8 @@ done
 pub() { ssh -n -o BatchMode=yes "$1" "$BIN/karstd pubkey --config $RUN/stub.toml"; }
 A_PUB=$(pub "$HOST_A"); B_PUB=$(pub "$HOST_B")
 field() { printf '%s\n' "$2" | sed -n "s/$1 = \"\(.*\)\"/\1/p"; }
-A_KEM=$(field kem_public_key "$A_PUB"); A_DH=$(field dh_public_key "$A_PUB")
-B_KEM=$(field kem_public_key "$B_PUB"); B_DH=$(field dh_public_key "$B_PUB")
+A_KEM=$(field kem_public_key "$A_PUB")
+B_KEM=$(field kem_public_key "$B_PUB")
 
 # A per-pair PSK (spec §2.6). Phase 3's control plane distributes these; here it
 # is shared out of band, which is exactly the Phase 2 arrangement. Without one
@@ -162,7 +162,7 @@ PSK=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 # ── configuration ───────────────────────────────────────────────────────────
 say "Writing rosters"
 write_config() {
-    local host=$1 me=$2 peer_name=$3 peer_kem=$4 peer_dh=$5 peer_addr=$6 peer_ip=$7
+    local host=$1 me=$2 peer_name=$3 peer_kem=$4 peer_addr=$5 peer_ip=$6
     local endpoint=""
     # An empty peer address means that peer is behind NAT: leave the endpoint
     # out and it is learned from the handshake.
@@ -178,15 +178,14 @@ psk_epoch = 1
 [[peer]]
 name = \"$peer_name\"
 kem_public_key = \"$peer_kem\"
-dh_public_key = \"$peer_dh\"
 psk = \"$PSK\"
 $endpoint
 allowed_ips = [\"$SUBNET.$peer_ip/32\"]
 CFG
 chmod 600 $RUN/karstd.toml && $BIN/karstd check --config $RUN/karstd.toml"
 }
-write_config "$HOST_A" 1 "$HOST_B" "$B_KEM" "$B_DH" "$ADDR_B" 2
-write_config "$HOST_B" 2 "$HOST_A" "$A_KEM" "$A_DH" "$ADDR_A" 1
+write_config "$HOST_A" 1 "$HOST_B" "$B_KEM" "$ADDR_B" 2
+write_config "$HOST_B" 2 "$HOST_A" "$A_KEM" "$ADDR_A" 1
 
 # ── start ───────────────────────────────────────────────────────────────────
 say "Starting daemons"

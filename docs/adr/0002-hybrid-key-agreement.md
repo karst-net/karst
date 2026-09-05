@@ -1,6 +1,6 @@
 # ADR-0002: Hybrid key agreement, but not hybrid signatures
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0018
 - **Date:** 2026-08-09
 - **Deciders:** TBD
 - **Related:** ADR-0001 (algorithm selection), ADR-0004 (PSK hedge), ADR-0006 (agility layer)
@@ -8,6 +8,8 @@
 ---
 
 ## Context
+
+> **Superseded, 2026-09-05.** [ADR-0018](0018-cnsa-2-0-as-the-sole-suite.md) makes CNSA 2.0 the sole PHREATIC suite and removes all application DH keys. This ADR is retained as the historical rationale for the former hybrid.
 
 Having chosen ML-KEM-768 and ML-DSA-65 (ADR-0001), a separate question follows:
 should classical algorithms be combined with them, or should Karst be

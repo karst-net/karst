@@ -115,7 +115,6 @@ func TestNoPSKBytesReachTheLogs(t *testing.T) {
 	dpk := func(seed byte) node.DataPlaneKeys {
 		return node.DataPlaneKeys{
 			KemPublicKey: validKemKey(seed),
-			DhPublicKey:  bytes.Repeat([]byte{seed ^ 0xFF}, 32),
 		}
 	}
 	self, err := identity.Generate()

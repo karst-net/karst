@@ -805,7 +805,7 @@ func describeEntry(e *bedrock.Entry) map[string]any {
 			out["handle"] = n.Handle
 			out["identity"] = fingerprints([][]byte{n.IdentityKey})[0]
 			out["kem"] = fingerprints([][]byte{n.KemPublicKey})[0]
-			out["dh"] = fingerprints([][]byte{n.DhPublicKey})[0]
+
 			out["not_before"] = n.NotBefore
 			out["expiry"] = n.Expiry
 		}
@@ -930,7 +930,7 @@ func (h *handler) bedrockRequestsExport(w http.ResponseWriter, r *http.Request) 
 				util.WriteError(r.Context(), err, w)
 				return
 			}
-			entries = append(entries, bedrock.Entry{Seq: state.HeadSeq + uint64(len(entries)) + 1, Time: time.Now().UTC().Unix(), Op: bedrock.OpNodeSign, Body: bedrock.NodeSignBody(handle, identity.PublicKey, identity.KemPublicKey, identity.DhPublicKey, 0, 0)})
+			entries = append(entries, bedrock.Entry{Seq: state.HeadSeq + uint64(len(entries)) + 1, Time: time.Now().UTC().Unix(), Op: bedrock.OpNodeSign, Body: bedrock.NodeSignBody(handle, identity.PublicKey, identity.KemPublicKey, 0, 0)})
 		}
 		if len(entries) == 0 {
 			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "all enrolled nodes are already covered"), w)
@@ -1109,8 +1109,8 @@ func (h *handler) relayHealth(w http.ResponseWriter, r *http.Request) {
 // enrolledKeys returns the caller's authorized nodes as the coverage query
 // needs them: handle to the datapath keys the netmap presents for that node.
 //
-// The keys, not just the handles. Coverage binds a handle to its ML-KEM and
-// X25519 static keys (spec §6.1), so a check that passed only handles would
+// The keys, not just the handles. Coverage binds a handle to its ML-KEM
+// static key (spec §6.1), so a check that passed only handles would
 // report a node as covered while the log covers a *different* key under that
 // name — which is the substitution the mechanism exists to catch.
 func (h *handler) enrolledKeys(ctx context.Context, accountID, userID string) (map[string]bedrock.PeerKeys, error) {
@@ -1129,7 +1129,6 @@ func (h *handler) enrolledKeys(ctx context.Context, accountID, userID string) (m
 		}
 		out[identity.Handle] = bedrock.PeerKeys{
 			KemPublicKey: identity.KemPublicKey,
-			DhPublicKey:  identity.DhPublicKey,
 		}
 	}
 	return out, nil
@@ -2174,7 +2173,7 @@ func containsHandle(nodes []nodeResponse, handle string) bool {
 	return false
 }
 
-// nodeResponse has no identity public key, KEM key, DH key, PSK, or discovery
+// nodeResponse has no identity public key, KEM key, PSK, or discovery
 // key. Handles are stable identifiers, not key material, and are the only
 // identity value this REST surface returns.
 type nodeResponse struct {

@@ -30,6 +30,12 @@ A Karst node identity comprises **three** keypairs:
 > sizes are unchanged at 2378/2236, and the netmap grows 32 B per peer against
 > ~3200 B already. See `spec/phreatic-v1.md` §13.1.
 
+> **Amendment, 2026-09-05.** [ADR-0018](0018-cnsa-2-0-as-the-sole-suite.md)
+> removes the static DH key again. Node identity now consists of ML-DSA-87
+> and ML-KEM-1024 keypairs. Bedrock binds the sole static KEM session input;
+> no DH session key remains outside that authorization scope.
+
+
 The open question this ADR resolves: **how does the initiator present its
 identity in msg1?**
 

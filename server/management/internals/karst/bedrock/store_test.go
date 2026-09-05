@@ -32,8 +32,8 @@ func newStore(t *testing.T) *bedrock.Store {
 // not tell "covered" from "covered under a different key".
 func enrolled() map[string]bedrock.PeerKeys {
 	return map[string]bedrock.PeerKeys{
-		"node-a": {KemPublicKey: bytes.Repeat([]byte{0xA1}, 1184), DhPublicKey: bytes.Repeat([]byte{0xA2}, 32)},
-		"node-b": {KemPublicKey: bytes.Repeat([]byte{0xB1}, 1184), DhPublicKey: bytes.Repeat([]byte{0xB2}, 32)},
+		"node-a": {KemPublicKey: bytes.Repeat([]byte{0xA1}, 1568)},
+		"node-b": {KemPublicKey: bytes.Repeat([]byte{0xB1}, 1568)},
 	}
 }
 
@@ -69,8 +69,8 @@ func TestACoveredNodeNeedsNoacknowledgment(t *testing.T) {
 
 	state := &bedrock.State{
 		Covered: map[string]bedrock.NodeCoverage{
-			"node-a": {Handle: "node-a", KemPublicKey: keys["node-a"].KemPublicKey, DhPublicKey: keys["node-a"].DhPublicKey},
-			"node-b": {Handle: "node-b", KemPublicKey: keys["node-b"].KemPublicKey, DhPublicKey: keys["node-b"].DhPublicKey},
+			"node-a": {Handle: "node-a", KemPublicKey: keys["node-a"].KemPublicKey},
+			"node-b": {Handle: "node-b", KemPublicKey: keys["node-b"].KemPublicKey},
 		},
 		Revoked: map[string]int64{},
 	}
@@ -93,7 +93,7 @@ func TestASubstitutedKeyCountsAsUncovered(t *testing.T) {
 	state := &bedrock.State{
 		Covered: map[string]bedrock.NodeCoverage{
 			// node-a's handle, node-b's keys.
-			"node-a": {Handle: "node-a", KemPublicKey: keys["node-b"].KemPublicKey, DhPublicKey: keys["node-b"].DhPublicKey},
+			"node-a": {Handle: "node-a", KemPublicKey: keys["node-b"].KemPublicKey},
 		},
 		Revoked: map[string]int64{},
 	}

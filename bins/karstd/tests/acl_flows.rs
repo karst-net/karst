@@ -50,10 +50,7 @@ fn tcp(src: [u8; 4], src_port: u16, dst: [u8; 4], dst_port: u16) -> Vec<u8> {
 }
 
 fn keys(byte: u8) -> Arc<karst_noise::handshake::StaticKeys> {
-    Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-        &[byte; 64],
-        &[byte; 32],
-    ))
+    Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[byte; 64]))
 }
 
 /// One node holding the other as its only peer.
@@ -93,7 +90,7 @@ fn config_for(
             node_id: Vec::new(),
             public: Arc::new(karst_noise::handshake::PeerPublic {
                 kem_pk: peer_keys.kem_pk.clone(),
-                dh_pk: peer_keys.dh_pk,
+
                 psk: [0x77; 32],
             }),
             endpoint: Some("203.0.113.1:51820".parse().expect("endpoint")),

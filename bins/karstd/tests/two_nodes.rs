@@ -64,10 +64,10 @@ fn sh(args: &[&str]) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-fn public_of(n: u8) -> (String, String) {
-    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[n; 64]);
-    let dh = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([n; 32]));
-    (encode_hex(&kem_pk.to_bytes()), encode_hex(dh.as_bytes()))
+fn public_of(n: u8) -> String {
+    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[n; 64]);
+
+    encode_hex(&kem_pk.to_bytes())
 }
 
 /// Build the two namespaces joined by a veth pair, so the daemons' UDP sockets
@@ -172,12 +172,12 @@ fn start(tag: &str, netns: &str, me: u8, peer: u8, my_ip: u8, peer_endpoint: Opt
     std::fs::create_dir_all(&dir).expect("temp dir");
 
     let key = dir.join("node.key");
-    let mut seed = [me; 96];
-    seed[64..].fill(me);
+    let seed = [me; 64];
+
     std::fs::write(&key, encode_hex(&seed)).expect("write key");
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).expect("chmod");
 
-    let (kem, dh) = public_of(peer);
+    let kem = public_of(peer);
     let endpoint = peer_endpoint.map_or_else(String::new, |e| format!("endpoint = \"{e}\"\n"));
     let peer_ip = 3 - my_ip;
     let toml = format!(
@@ -191,7 +191,6 @@ private_key_file = "node.key"
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 {endpoint}allowed_ips = ["10.77.0.{peer_ip}/32"]
 "#
     );
@@ -442,7 +441,7 @@ fn the_cli_reports_a_live_tunnel() {
 
     // Nothing secret may appear. A status command is exactly what ends up
     // pasted into a bug report (THREAT-MODEL R5).
-    let private = encode_hex(&[0xA1u8; 96]);
+    let private = encode_hex(&[0xA1u8; 64]);
     assert!(!status.contains(&private), "private key material in status");
     assert!(!status.to_lowercase().contains("psk = "), "PSK in status");
 

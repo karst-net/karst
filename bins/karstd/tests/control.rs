@@ -188,7 +188,6 @@ fn offline_ceremony_for(
             &identity.handle(),
             &identity_public,
             &static_keys.kem_pk.to_bytes(),
-            static_keys.dh_pk.as_bytes(),
             0,
             0,
         ),
@@ -260,10 +259,7 @@ fn section_with_floor(
 }
 
 fn keys(seed: u8) -> Arc<karst_noise::handshake::StaticKeys> {
-    Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-        &[seed; 64],
-        &[seed; 32],
-    ))
+    Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[seed; 64]))
 }
 
 fn local(seed: u8) -> LocalSettings {

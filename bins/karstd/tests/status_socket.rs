@@ -48,7 +48,7 @@ fn start(tag: &str, with_status_socket: bool) -> Node {
     std::fs::create_dir_all(&dir).expect("temp dir");
 
     let key = dir.join("node.key");
-    std::fs::write(&key, karstd::config::encode_hex(&[0x11; 96])).expect("write key");
+    std::fs::write(&key, karstd::config::encode_hex(&[0x11; 64])).expect("write key");
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).expect("chmod key");
 
     // Userspace mode and no `[[peer]]` at all — `File::peers` defaults to

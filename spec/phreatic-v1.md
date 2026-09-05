@@ -6,18 +6,11 @@
 - **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
   in software under any license. Independent implementations are wanted.
 
-> **Partially implementable.** §5, §6 and §9 are stable enough to build
-> against; §14 lists what remains. All three Verifpal models verify; ProVerif
-> verifies the base model and the X25519-broken variant, but the ML-KEM-broken
-> variant **does not terminate** — see §13.3, and do not read ADR-0002's
-> either-family claim as fully proved. **No external cryptographic review has
-> happened**, and symbolic models say nothing about implementation behavior.
->
-> §13 records four changes discovered while writing and modeling this
-> document: a **static X25519 key added to node identity** (§13.1), `psk_epoch`
-> **bound into the transcript** (§13.2), and two properties that are easy to
-> implement wrongly — HandshakeInit is unauthenticated by design (§12.5), and
-> the responder has no assurance until the first transport message (§12.6).
+> **Pre-release specification.** PHREATIC uses the sole CNSA 2.0 suite
+> defined by [ADR-0018](../docs/adr/0018-cnsa-2-0-as-the-sole-suite.md).
+> Symbolic models check the key schedule, not implementation behavior or
+> side channels. External cryptographic review remains outstanding. See
+> [the model results](models/README.md) and §13.3 for proof limits.
 
 ---
 
@@ -36,8 +29,7 @@ twenty times larger.
 ### 1.1 Relationship to prior work
 
 PHREATIC is a KEM-based Noise `IK`-shaped pattern, following **PQNoise** (Angel,
-Dowling, Hülsing, Rösler, Schwabe, CCS 2022) for the KEM adaptation, with a
-classical Diffie–Hellman mixed into the same chaining key. It owes
+Dowling, Hülsing, Rösler, Schwabe, CCS 2022) for the KEM adaptation. It owes
 **PQ-WireGuard** (Hülsing et al., IEEE S&P 2021) its security-proof structure
 and **Rosenpass** its approach to stateless responders under load. It is **not**
 interoperable with WireGuard.
@@ -61,10 +53,9 @@ OPTIONAL are to be interpreted as in RFC 2119 / RFC 8174.
 |---|---|
 | `a ‖ b` | Concatenation |
 | `LE16/LE32/LE64(n)` | Unsigned little-endian integer |
-| `HASH(x)` | Suite hash (SHA-512 in suites 1–2) |
-| `HKDF(ck, ikm, n)` | HKDF with the suite hash; Extract with salt `ck`, Expand to `n` 32-byte outputs |
-| `AEAD(k, n, ad, pt)` | Suite AEAD; `n` a 96-bit nonce, `ad` associated data |
-| `X25519(sk, pk)` | RFC 7748 scalar multiplication |
+| `HASH(x)` | SHA-384 |
+| `HKDF(ck, ikm, n)` | HKDF-SHA-384; Extract with salt `ck`, Expand to `n` 32-byte outputs |
+| `AEAD(k, n, ad, pt)` | AES-256-GCM; `n` a 96-bit nonce, `ad` associated data |
 | `KEM.Encaps(pk) → (ct, ss)` | ML-KEM encapsulation |
 | `KEM.Decaps(sk, ct) → ss` | ML-KEM decapsulation |
 
@@ -76,21 +67,17 @@ preserves forward compatibility for suite additions.
 
 ## 3. Cryptographic suites
 
-Per [ADR-0006](../docs/adr/0006-cryptographic-agility-layer.md), algorithms are
-selected only as complete named suites from a fixed allowlist. Implementations
-MUST reject unknown suite identifiers. There is no per-primitive negotiation and
-no runtime-extensible registry.
+PHREATIC has one fixed suite, per
+[ADR-0018](../docs/adr/0018-cnsa-2-0-as-the-sole-suite.md). Implementations
+MUST accept only identifier `0x0002`, and MUST reject every other identifier
+before processing the handshake body. There is no suite negotiation or fallback.
 
-| ID | Name | KEM | DH | Signature | AEAD | Hash | Category |
-|---|---|---|---|---|---|---|---|
-| `0x0001` | `KARST_1` | ML-KEM-768 | X25519 | ML-DSA-87 | AES-256-GCM | SHA-512 | 3 |
-| `0x0002` | `KARST_2` | ML-KEM-1024 | — | ML-DSA-87 | AES-256-GCM | SHA-384 | 5 |
+| ID | Name | KEM | Signature | AEAD | Hash | Category |
+|---|---|---|---|---|---|---|
+| `0x0002` | `KARST_2` | ML-KEM-1024 | ML-DSA-87 | AES-256-GCM | SHA-384 | 5 |
 
-An implementation claiming a suite MUST run every algorithm the table names for
-it. The suite is bound into the transcript before any secret is derived, so two
-ends that disagree about any of them derive different keys and the handshake
-fails rather than producing traffic mislabelled as one thing and encrypted with
-another.
+The identifier is bound into the transcript before any secret is derived.
+Implementations MUST run every algorithm in this row.
 
 ### 3.1 The registry was renumbered on 2026-08-25 — **amends this draft**
 
@@ -118,42 +105,27 @@ deployed base and therefore nothing to be incompatible with. Any document,
 capture or test vector predating 2026-08-25 must be read against the "Before"
 column. `0x0003` is left unallocated rather than recycled a second time.
 
-Suite `0x0002` is the CNSA 2.0 profile and is **PQ-only** (no classical hybrid).
-Per [ADR-0015](../docs/adr/0015-cnsa-2-0-as-a-mandate.md) it is a deliverable
-rather than a demonstration, and it is implemented: ML-KEM-1024, AES-256-GCM
-and SHA-384, with the three Diffie–Hellman operations of §7.1 and the `e_dh_pk`
-fields of §6.1 and §6.2 **absent** rather than zero-filled. An implementation
-MAY still decline to offer it; one that offers it MUST run all four algorithms.
+> **Amendment, 2026-09-05.** ADR-0018 retires `0x0001` and all application
+> DH keys, and removes suite selection. `0x0002` keeps its numeric value and
+> is the only accepted suite. The renumbering table above is historical.
 
-**A node's suite class is fixed by its static KEM key, not chosen per session.**
-`peer_id_hint` is derived from `S_pk` (§4), so a node holding both an
-ML-KEM-768 and an ML-KEM-1024 static key would have two identities. An
-implementation MUST refuse a suite whose KEM is not the parameter set of its own
-`S`, and MUST refuse one whose KEM is not the parameter set of the resolved
-peer's `S_pk`. The consequence is that a `0x0002` node and a `0x0001` node do
-not interoperate; moving a deployment between them is a re-keying, not a
-negotiation.
-
-`0x0000` and `0xFFFF` are reserved and MUST NOT be used.
-
-All sizes below are for suite `0x0001` unless stated otherwise.
+`0x0000` and `0xFFFF` remain reserved. No retired identifier is reused.
+All current message sizes below describe `0x0002`.
 
 ---
 
 ## 4. Node identity
 
-A Karst node holds **three** long-term keypairs:
+A Karst node holds **two** long-term keypairs:
 
 | Key | Algorithm | Size (pk) | Purpose |
 |---|---|---|---|
 | Identity `I` | ML-DSA-87 | 2592 B | Signed by the Bedrock chain; establishes the node is authorized to exist |
-| Static KEM `S` | ML-KEM-768 or ML-KEM-1024 | 1184 B or 1568 B | Post-quantum authentication in the handshake |
-| Static DH `D` | X25519 | 32 B | Classical authentication in the handshake |
+| Static KEM `S` | ML-KEM-1024 | 1568 B | Post-quantum authentication in the handshake |
 
 `I` is **not used by PHREATIC**. It serves Bedrock chain verification
-(PLAN.md §4.5) and is listed for completeness. `D` is unused under suite
-`0x0002`, which has no classical half; a node MAY hold one anyway so that one
-key file serves either class.
+(PLAN.md §4.5) and is listed for completeness. `S` is the only static
+session-key input. There is no static or ephemeral DH key.
 
 The **peer identity hint** is
 
@@ -164,18 +136,12 @@ peer_id_hint = SHA-512("Karst peer-id v1" ‖ S_pk)[0..32]
 32 bytes, unsalted and session-independent, per
 [ADR-0005](../docs/adr/0005-identity-model-and-peer-presentation.md).
 
-**SHA-512 here is fixed, not the suite hash.** A responder resolves the hint
-before it knows which suite is in play — the suite is in the header, but a
-responder maintains one precomputed table for its whole roster and a
-suite-dependent hint would need one table per suite for no gain. The binding of
-a peer's static key *into* a session is step 3 of §7.1, `MixHash(HASH(S_r_pk))`,
-which does use the suite hash. The same reasoning fixes the fragment MAC key of
-§9.2 at SHA-512: it is checked on fragments that do not carry the suite field at
-all.
-
-`S_pk` is 1184 bytes under suite `0x0001` and 1568 under `0x0002`, so
-a node's hint changes if its suite class does. Changing class means every peer's
-netmap entry must be updated with the new `S_pk`.
+**SHA-512 here is fixed, independently of the SHA-384 transcript.** The
+hint is a precomputed roster lookup label. The static key is separately bound
+into the session at step 3 of §7.1, `MixHash(HASH(S_r_pk))`, using SHA-384.
+The fragment MAC key of §9.2 also uses SHA-512 independently of the transcript.
+`S_pk` is exactly 1568 bytes; replacing it changes the node's hint and requires
+updating the peer's netmap entry.
 
 > **Normative note — do not session-bind the hint.** Deriving it as
 > `MAC(ss, S_pk)` or any session-dependent function gains nothing (an attacker
@@ -185,7 +151,7 @@ netmap entry must be updated with the new `S_pk`.
 > derive the hint as specified.
 
 A node MUST know, for every peer it may communicate with, that peer's
-`peer_id_hint`, `S_pk`, `D_pk` and current per-pair PSK. These are distributed
+`peer_id_hint`, `S_pk` and current per-pair PSK. These are distributed
 in the netmap.
 
 ---
@@ -232,28 +198,24 @@ DF bit.
 
 ## 6. Handshake messages
 
-### 6.1 HandshakeInit (`type = 0x01`) — 2378 bytes
+### 6.1 HandshakeInit (`type = 0x01`) — 3210 bytes
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | `type = 0x01` |
 | 1 | 3 | reserved |
 | 4 | 4 | `sender_index` |
-| 8 | 2 | `suite_id` |
+| 8 | 2 | `suite_id = 0x0002` |
 | 10 | 4 | `psk_epoch` |
-| 14 | 1184 | `e_kem_pk` — initiator ephemeral ML-KEM public key |
-| 1198 | 32 | `e_dh_pk` — initiator ephemeral X25519 public key |
-| 1230 | 1088 | `ct_s` — `KEM.Encaps(S_r)` ciphertext |
-| 2318 | 60 | `enc_ident` — AEAD over `peer_id_hint ‖ timestamp` (44 B plaintext + 16 B tag) |
-| **2378** | | **total** |
+| 14 | 1568 | `e_kem_pk` — initiator ephemeral ML-KEM-1024 public key |
+| 1582 | 1568 | `ct_s` — `KEM.Encaps(S_r)` ciphertext |
+| 3150 | 60 | `enc_ident` — AEAD over `peer_id_hint ‖ timestamp` (44 B plaintext + 16 B tag) |
+| **3210** | | **total** |
 
-`timestamp` is 12 bytes, TAI64N, for replay rejection.
+`timestamp` is 12 bytes, TAI64N, for replay rejection. A responder MUST check
+`suite_id` against `0x0002` before processing the body. No DH field is present.
 
-Under suite `0x0002` the `e_dh_pk` row is **absent** — not zero-filled — and
-`e_kem_pk` and `ct_s` are 1568 bytes each, giving 3210 (§6.5). A responder MUST
-resolve and accept `suite_id` before reading any field whose length it decides.
-
-### 6.2 HandshakeResponse (`type = 0x02`) — 2236 bytes
+### 6.2 HandshakeResponse (`type = 0x02`) — 3164 bytes
 
 | Offset | Size | Field |
 |---|---|---|
@@ -261,14 +223,10 @@ resolve and accept `suite_id` before reading any field whose length it decides.
 | 1 | 3 | reserved |
 | 4 | 4 | `sender_index` |
 | 8 | 4 | `receiver_index` |
-| 12 | 1088 | `ct_e` — `KEM.Encaps(e_kem_pk)` ciphertext |
-| 1100 | 1088 | `ct_ss` — `KEM.Encaps(S_i)` ciphertext |
-| 2188 | 32 | `e_dh_pk` — responder ephemeral X25519 public key |
-| 2220 | 16 | `enc_empty` — AEAD tag over empty plaintext, confirming key agreement |
-| **2236** | | **total** |
-
-Under suite `0x0002` the `e_dh_pk` row is absent and both ciphertexts are 1568
-bytes, giving 3164.
+| 12 | 1568 | `ct_e` — `KEM.Encaps(e_kem_pk)` ciphertext |
+| 1580 | 1568 | `ct_ss` — `KEM.Encaps(S_i)` ciphertext |
+| 3148 | 16 | `enc_empty` — AEAD tag over empty plaintext, confirming key agreement |
+| **3164** | | **total** |
 
 ### 6.3 CookieReply (`type = 0x03`) — 64 bytes
 
@@ -284,47 +242,25 @@ bytes, giving 3164.
 
 Implementations MUST enforce, and test suites MUST assert:
 
-1. **Anti-amplification:** `|HandshakeInit| > |HandshakeResponse|` — 2378 > 2236,
-   a margin of **142 bytes**. A responder MUST NOT emit more bytes to an
+1. **Anti-amplification:** `|HandshakeInit| > |HandshakeResponse|` — 3210 > 3164,
+   a margin of **46 bytes**. A responder MUST NOT emit more bytes to an
    address-unvalidated source than it has received from it.
-2. **Fragment budget:** `|HandshakeInit| ≤ 2 × 1208 = 2416`. Current headroom is
-   **38 bytes**.
+2. **Fragment budget:** `|HandshakeInit| ≤ 3 × 1208 = 3624`. Current headroom
+   is **414 bytes**. A field exceeding that budget requires a fourth fragment
+   and a new analysis of loss and denial-of-service behavior.
 
-> **The 38-byte headroom is the tightest constraint in this specification.**
-> Any field added to HandshakeInit larger than 38 bytes forces a third fragment,
-> degrading loss behavior by roughly 50% and changing the DoS analysis.
-> Proposals that grow HandshakeInit MUST be evaluated against this budget before
-> anything else.
-
-Both invariants are enforced as **compile-time assertions** in `karst-proto`,
-not merely as tests, so a field addition that breaks either fails the build.
+Both invariants are compile-time assertions in `karst-proto`.
 
 ### 6.5 Suite `0x0002` needs three fragments
 
-The two-fragment property is specific to suite `0x0001`. The CNSA 2.0
-profile uses ML-KEM-1024 — 1568-byte encapsulation keys *and* ciphertexts — and
-carries no X25519:
+Both handshake messages require three fragments, within the four-fragment
+cap. All three fragments of each message must arrive. At independent 5%
+per-datagram loss, per-message success is approximately `0.95³ = 86%` before
+retries. This is an availability cost of the fixed parameter sizes.
 
-| Suite | HandshakeInit | HandshakeResponse | Fragments |
-|---|---|---|---|
-| `0x0001` | 2378 | 2236 | **2** |
-| `0x0002` | 3210 | 3164 | **3** |
-
-Anti-amplification still holds (3210 > 3164, margin 46 bytes) and three is
-within the four-fragment cap, but the CNSA profile has **materially worse loss
-behavior**: three fragments must arrive for a handshake to complete, so at 5%
-path loss per-message success falls to roughly 86% against 90% for two.
-
-This is a property of the parameter sizes, not a defect, and it is recorded
-here so it is known before Phase 7 rather than discovered during it. An
-operator enabling suite `0x0002` on a lossy link should expect more handshake
-retries. `karst-crypto` computes message sizes from suite parameters rather
-than tabulating them, and asserts the fragment cap for **every** suite, so a
-future suite cannot silently exceed it.
-
-Nothing else about §5 changes: the same 24-byte fragment header, the same
-1208-byte payload bound, the same MAC, the same reassembler. Three fragments is
-a count, not a different fragmentation.
+The 24-byte fragment header, 1208-byte payload bound, MAC, and reassembler
+are those defined in §5 and §9. `karst-crypto` derives message sizes from the
+fixed parameters and tests their fragment counts.
 
 ---
 
@@ -343,56 +279,39 @@ MixKeyAndHash(x):   ck, t, k ← HKDF(ck, x, 3);  MixHash(t)
 ### 7.1 Initiator
 
 ```
- 1.  h  ← HASH(PROTOCOL_LABEL);   ck ← h
- 2.  MixHash(header_prefix)                  // all 14 header bytes — §13.4
- 3.  MixHash(HASH(S_r_pk))                  // responder static, from netmap
- 4.  MixHash(e_kem_pk);  MixHash(e_dh_pk)
+ 1.  h ← HASH(PROTOCOL_LABEL); ck ← h[0..32]
+ 2.  MixHash(header_prefix)                 // all 14 header bytes — §13.4
+ 3.  MixHash(HASH(S_r_pk))                   // responder static, from netmap
+ 4.  MixHash(e_kem_pk)
  5.  (ct_s, ss_s) ← KEM.Encaps(S_r_pk)
-     MixKey(ss_s);  MixHash(ct_s)           // PQ auth of responder
- 6.  dh_es ← X25519(e_dh_sk, D_r_pk)
-     MixKey(dh_es)                          // classical auth of responder
- 7.  enc_ident ← AEAD(k, 0, h, peer_id_hint ‖ timestamp)
+     MixKey(ss_s); MixHash(ct_s)             // authentication of responder
+ 6.  enc_ident ← AEAD(k, 0, h, peer_id_hint ‖ timestamp)
      MixHash(enc_ident)
      ── send HandshakeInit ──
- 8.  ss_e  ← KEM.Decaps(e_kem_sk, ct_e);  MixKey(ss_e);  MixHash(ct_e)
- 9.  ss_ss ← KEM.Decaps(S_i_sk, ct_ss);   MixKey(ss_ss); MixHash(ct_ss)
-10.  dh_ee ← X25519(e_dh_sk, e_dh_r_pk);  MixKey(dh_ee)
-11.  dh_se ← X25519(D_i_sk,  e_dh_r_pk);  MixKey(dh_se)
-12.  MixKeyAndHash(psk[psk_epoch])          // PSK mixed LAST — gates the key
-12a. MixHash(response_header)               // all 12 header bytes — §13.4
-13.  verify enc_empty;  T_send, T_recv ← HKDF(ck, ε, 2)
+ 7.  ss_e ← KEM.Decaps(e_kem_sk, ct_e); MixKey(ss_e); MixHash(ct_e)
+ 8.  ss_ss ← KEM.Decaps(S_i_sk, ct_ss); MixKey(ss_ss); MixHash(ct_ss)
+ 9.  MixKeyAndHash(psk[psk_epoch])           // PSK mixed LAST — gates the key
+ 9a. MixHash(response_header)               // all 12 header bytes — §13.4
+10.  verify enc_empty; T_send, T_recv ← HKDF(ck, ε, 2)
 ```
 
-The responder performs the mirrored operations.
-
-**Under a suite with no classical half — `0x0002` — steps 6, 10 and 11 do not
-exist**, and step 4 mixes only `e_kem_pk`. Nothing is substituted for them: a
-zero or a placeholder mixed in their place would be a value both ends agree on
-and neither derives, which reads as a contribution in the transcript and is
-worth nothing in the key. `HASH` throughout is the suite hash, so `0x0002` runs
-SHA-384 and its transcript is 48 bytes wide.
+The responder performs the mirrored operations. `HASH` is SHA-384 and the
+transcript is 48 bytes wide. Chaining and message keys are 32 bytes. No DH
+operation or placeholder contribution is mixed into this schedule.
 
 ### 7.2 Why the ordering matters
 
-- The PSK is mixed **last**, after every KEM and DH contribution, so it gates
+- The PSK is mixed **last**, after every KEM contribution, so it gates
   the final session key rather than seasoning an early chaining value
   ([ADR-0004](../docs/adr/0004-handshake-mtu-and-kem-selection.md) §3).
 - The **entire header prefix** is bound at step 2, before any secret material,
   so a downgrade attempt — or tampering with any header field — invalidates the
   transcript ([ADR-0006](../docs/adr/0006-cryptographic-agility-layer.md),
   §13.4).
-- Three KEM encapsulations and three DH operations pair off: `ss_s`/`dh_es`
-  authenticate the responder, `ss_e`/`dh_ee` provide forward secrecy,
-  `ss_ss`/`dh_se` authenticate the initiator. **Each property survives if either
-  family holds** — the claim ADR-0002 makes, now structurally true for
-  authentication as well as confidentiality (§13.1).
-- **Suite `0x0002` gives that hedge up deliberately.** CNSA 2.0 does not call
-  for a classical hybrid ([ADR-0015](../docs/adr/0015-cnsa-2-0-as-a-mandate.md)
-  item 6), and a hedge a deployment is not permitted to rely on is 32 bytes of
-  transcript for nothing. All three properties still hold on the lattice side,
-  and the PSK still gates the final key under every suite. An operator choosing
-  between the profiles is trading assumption diversity against conformance, and
-  should know that is the trade.
+- Three KEM encapsulations provide the three properties: `ss_s` authenticates
+  the responder, `ss_e` provides forward secrecy, and `ss_ss` authenticates
+  the initiator. The PSK gates the final key. There is no classical
+  assumption-diversity hedge; see ADR-0018 for the accepted tradeoff.
 
 ### 7.3 PSK selection and fallback
 
@@ -498,9 +417,7 @@ already hold both values:
 > other end's own outstanding or newly-completed handshake in that role MUST
 > be discarded rather than installed.
 
-KEM public keys are compared, not the classical DH ones, because every suite
-has one — `KARST_2` has no DH half at all (§7.1) — and not `peer_id_hint`,
-because the hint is a one-way hash: comparing the raw values both ends
+The tie-break compares the static KEM public keys directly. Comparing values both ends
 already parsed out of the netmap and their own key file needs one fewer
 derivation and is exactly as valid for breaking a tie.
 
@@ -688,14 +605,14 @@ an error.
    an adversary holding the responder's static key plus recorded traffic
    recovers `peer_id_hint`, a one-way function of a public key, not the key.
 2. **The netmap is a secret.** It carries per-pair PSKs and, under §13.1, static
-   DH keys. It MUST be encrypted at rest and MUST NOT appear in logs, traces or
+   KEM keys. It MUST be encrypted at rest and MUST NOT appear in logs, traces or
    diagnostic bundles.
 3. **The fragment reassembler is the pre-authentication attack surface.** It
    processes attacker-controlled bytes before any authentication and is the most
    security-critical code in an implementation. Continuous fuzzing is REQUIRED;
    a memory-safe language is strongly RECOMMENDED.
 4. **A compromised coordination server** cannot decrypt traffic — it holds no
-   KEM or DH private keys — but it derives the PSKs. Server compromise combined
+   KEM private keys — but it derives the PSKs. Server compromise combined
    with a full lattice break is a total break (`docs/THREAT-MODEL.md` §5).
 5. **HandshakeInit is unauthenticated by design.** `k2` derives from `ss_s` and
    `dh_es`, both computable by anyone holding the responder's *public* `S_r`
@@ -727,39 +644,17 @@ an error.
 
    All of these MUST wait for the first authenticated transport message.
 
-7. **Every X25519 Diffie-Hellman output MUST be checked for contributory
-   behavior and the handshake refused if it is not** — RFC 7748's recommended
-   check, missing from the reference implementation until found during Phase
-   6's internal cryptographic review's constant-time reading (GitHub issue
-   [#82](https://github.com/karst-net/karst/issues/82)). A public key on
-   Curve25519's small subgroup — the identity point, canonically, itself a
-   valid-looking 32-byte encoding — forces `diffie_hellman`'s output to a
-   fixed value computable by anyone, without either party's secret key.
-
-   **This is defense in depth, not a fix for a network-exploitable gap in
-   this draft specifically.** §13.4's full-header transcript binding already
-   defeats the classic version of this attack — a MITM substituting one
-   party's wire-carried ephemeral key — against a genuine exchange between
-   two honest parties: the substituted key is mixed into the transcript hash
-   before the handshake's own confirmatory AEAD tags, so tampering it there
-   already fails those tags for an unrelated reason, with or without this
-   check (`crates/karst-node/tests/handshake.rs`'s
-   `every_byte_of_handshake_init_is_authenticated` already pinned this,
-   including at the ephemeral-key field, before the check existed). What the
-   check actually closes: a peer's **static** DH key, sourced from the
-   netmap rather than the wire, is bound by no such transcript property — a
-   corrupted or malicious netmap entry carrying a low-order static key would
-   otherwise complete a handshake with a predictable classical contribution
-   silently. The check is applied uniformly to every DH leg regardless of
-   whether the key is wire- or netmap-sourced, since a single rule is easier
-   to keep correct under future change than one that depends on which
-   binding property happens to cover which field today.
 
 ---
 
 ## 13. Changes arising from this draft
 
 ### 13.1 Static X25519 key added to node identity — **amends ADR-0005**
+
+> **Historical and reversed, 2026-09-05.** ADR-0018 removes the DH identity
+> introduced here. The following records why it was needed for the former
+> hybrid. Current identities and the key schedule are defined in §4 and §7.
+
 
 [ADR-0005](../docs/adr/0005-identity-model-and-peer-presentation.md) defines node
 identity as ML-DSA-87 plus a static ML-KEM-768 key. Writing §7 exposed a gap:
@@ -808,7 +703,7 @@ a demultiplexing failure rather than a compromise — but there is no reason to
 leave any attacker-controlled header field outside the transcript.
 
 **Both messages now bind their full header prefix**: 14 bytes for
-HandshakeInit (step 2) and 12 for HandshakeResponse (step 12a). The responder
+HandshakeInit (step 2) and 12 for HandshakeResponse (step 9a). The responder
 binds the bytes **as received**, including reserved fields, so a peer that sets
 a reserved byte is detected rather than silently tolerated. This supersedes the
 narrower rule in §13.2, which it subsumes.
@@ -817,6 +712,10 @@ This is the sort of gap a specification alone does not surface; it took a test
 that flipped every byte and demanded rejection.
 
 ### 13.5 The retransmission backoff needs a cap and a give-up bound
+
+> **Historical measurements.** These results used the retired two-fragment
+> handshake. ADR-0018 retains the retry policy but moves to three fragments
+> per message; the same 25 seeds at 40% loss now complete 20 connections.
 
 Draft 0.2's §10 gave `HANDSHAKE_RETRY_INITIAL` as "300 ms, jittered exponential
 backoff" and stopped there — no ceiling on the interval, and no total attempt
@@ -1034,61 +933,22 @@ suite; the values that protect data all follow the suite.
 
 ### 13.3 Formal verification results
 
-Models in `spec/models/`. Both tools were pulled into Phase 1 — ProVerif was
-originally Phase 3, moved forward because §13.1 and §13.2 were caught by hand
-when a model should have caught them.
+ADR-0018 promotes the former no-DH model to `phreatic.{vp,pv}` as the
+sole handshake model. There is no DH-broken companion because the protocol
+has no DH contribution.
 
-**Verifpal** (0.80.1, active attacker) — all passing:
-
-| Model | Assumption | Result |
+| Model | Scope | Result |
 |---|---|---|
-| `phreatic.vp` | Suite `KARST_1`, all primitives sound | 6/6 |
-| `phreatic-nodh.vp` | Suite `KARST_2` (CNSA 2.0) — no classical DH, per §7.1/§7.2 | 6/6 |
-| `phreatic-kem-broken.vp` | `KARST_1`, `KEM_ENCAP[weak]` — ML-KEM totally broken | 6/6 |
-| `phreatic-dh-broken.vp` | `KARST_1`, `PUBKEY[weak]` — X25519 keys recovered | 6/6 |
+| `phreatic.vp` | Sole CNSA handshake | 6/6 queries pass |
+| `phreatic-kem-broken.vp` | Broken KEM, secret PSK | 6/6 queries pass |
+| `phreatic.pv` | Sole CNSA handshake | 4/4 queries pass |
+| `phreatic-kem-broken.pv` | Broken KEM, secret PSK | No completed proof; see model status |
 
-`phreatic-nodh.vp` closes the gap this document itself flagged in §14 item 7's
-resolution note: the no-DH key schedule is now modeled, not just implemented.
-It has no broken-primitive companions of its own — suite `0x0002` deliberately
-carries no classical hybrid to break, so there is nothing analogous to model.
-
-**ProVerif** (2.05, unbounded sessions):
-
-| Model | Assumption | Result |
-|---|---|---|
-| `phreatic.pv` | Suite `KARST_1`, all primitives sound | **4/4** |
-| `phreatic-nodh.pv` | Suite `KARST_2` (CNSA 2.0) — no classical DH, per §7.1/§7.2 | **4/4**, 0.03 s |
-| `phreatic-dh-broken.pv` | `KARST_1`, public `dlog` destructor — total X25519 break | **4/4** |
-| `phreatic-kem-broken.pv` | `KARST_1`, public `break_kem` destructor | **does not terminate** |
-
-`phreatic-nodh.pv` verifies faster than the base model, not slower: dropping
-the three DH-derived chaining-key mixes shortens the same nesting
-`phreatic-kem-broken.pv`'s divergence (§13.3 below) comes from, rather than
-lengthening it.
-
-ProVerif verifies transport confidentiality, PSK secrecy, **injective**
-agreement on the transport message (so a replayed message cannot be accepted
-twice), and session-key agreement.
-
-**ADR-0002's "secure if either family holds" claim is not fully proved, and
-should not be reported as such.** The classical-break direction *is* proved:
-`phreatic-dh-broken.pv` passes 4/4 under a total X25519 break, which is the
-harvest-now-decrypt-later case this project exists to address. The
-lattice-break direction has Verifpal verification only (bounded, weaker);
-`phreatic-kem-broken.pv` was killed at 50 minutes CPU without a summary, and
-dropping its correspondence queries did not help.
-
-That is a **limitation of the analysis, not a known weakness**: the `break_kem`
-destructor makes nearly every term attacker-derivable and explodes ProVerif's
-saturation, which is a normal outcome for rich equational theories and implies
-nothing about security either way. Closing the gap — by restructuring the model
-to avoid the universal destructor, or by taking it to Tamarin — belongs in the
-external cryptographic review brief (`spec/models/README.md`).
-
-**These are symbolic design checks, not proofs of an implementation.** They say
-nothing about concrete security margins, side channels, or code behavior. In
-particular neither tool reasons about denial of service, so §9 is unverified by
-them and rests on the spoofed-source test suite instead.
+The broken-KEM Verifpal result depends on the secret PSK; it does not
+establish a classical hedge or security after compromise of both inputs.
+ProVerif's broken-KEM analysis historically does not terminate. A run without
+a result proves neither security nor an attack. [Model status and the
+investigation](models/README.md) record the limits and reproducible commands.
 
 ### 13.10 `CookieReply`'s construction, and a correction to §13.7's table
 
@@ -1224,22 +1084,15 @@ fully usable in both directions throughout regardless.
 | 4 | `LOAD_THRESHOLD` — needs empirical tuning | Implementation |
 | ~~5~~ | ~~Exact MAC construction~~ — **resolved:** HMAC with the suite hash, truncated to 16 B (§9.2) | — |
 | 6 | Padding bucket sizes for the transport phase | Metadata posture |
-| ~~7~~ | ~~The CNSA suite's key schedule with no DH contribution~~ — **resolved:** steps 6, 10 and 11 are absent, nothing substituted (§7.1); implemented and tested | — |
-| 8 | Out-of-band-KEM variant (ADR-0004 §4) framing | Optional profile |
+| ~~7~~ | ~~The CNSA suite's key schedule with no DH contribution~~ — **resolved:** the sole ten-step schedule (§7.1) is implemented and tested | — |
+| 8 | Out-of-band-KEM variant (ADR-0004 §4) framing | Requires a new design decision |
 | ~~9~~ | ~~Rekey state machine — precise transition table, including simultaneous open~~ — **resolved:** §8.1 gives the state machine and the tie-break that converges a simultaneous open onto one session; §13.12 | — |
 | ~~10~~ | ~~§13.8 — fragment MAC no longer covers the payload.~~ — **resolved:** the adversarial reading found the argument doesn't hold for `mac2` on the two handshake types; §13.11 restores payload coverage there and leaves §13.8 as written for `CookieReply`/`TransportData` | — |
 
 Items 1 and 2 are gates, not tasks; item 2's base model now passes (§13.3).
 Item 5 is resolved, which unblocks implementation of the fragmentation layer.
-Item 7 is resolved by ADR-0015 item 1, which made the CNSA suite a running one
-rather than a reserved row — **the models in items 1 and 2 had a second key
-schedule to cover**, and the no-DH variant is the one where a missing
-contribution would be hardest to notice by reading. **Both halves are now
-closed**: `phreatic-nodh.vp` and `phreatic-nodh.pv` (§13.3) model suite
-`0x0002`'s key schedule with steps 6, 10 and 11 absent, found during Phase 6's
-internal cryptographic review and closed together (GitHub issue
-[#78](https://github.com/karst-net/karst/issues/78)) — Verifpal first, then
-ProVerif, each run against the tool itself rather than merely written.
+Item 7 was initially resolved by ADR-0015 and issue #78. ADR-0018 makes that
+schedule the only one and promotes its models to `phreatic.{vp,pv}` (§13.3).
 
 **Item 10 was the one to read most sceptically, and it did not fully survive
 the reading.** Every other change in §13 fixed something that was wrong;

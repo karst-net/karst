@@ -25,7 +25,6 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use karst_crypto::hash;
 use karst_crypto::kem::KemPublicKey;
-use karst_crypto::SuitePolicy;
 use karst_node::{Action, Session};
 use karst_noise::handshake::{peer_id_hint, PeerPublic, ResponderRandomness};
 use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, FragMacKey};
@@ -388,8 +387,6 @@ pub struct Engine {
     /// Locked separately and released before any session work, so the outbound
     /// path never touches it.
     reasm: Mutex<Reassembler>,
-    /// Suite policy, identical for every peer until the netmap distributes it.
-    policy: SuitePolicy,
     /// This node's verified Bedrock log, for peer head comparison (§5 layer 3).
     ///
     /// `None` until the control client has verified one. Held here rather than
@@ -440,33 +437,12 @@ impl Engine {
     /// Build an engine over a loaded configuration.
     #[must_use]
     pub fn new(config: &Arc<Config>) -> Self {
-        // **The policy is read off this node's own static key** (ADR-0015
-        // item 1). A node can only speak suites its KEM parameter set can
-        // serve, so deriving the policy from the key rather than from a second
-        // configuration line means the two cannot disagree — a node with an
-        // ML-KEM-1024 key offers `KARST_2` and refuses everything below it; one
-        // with an ML-KEM-768 key offers `KARST_1`. Which key gets generated is
-        // `node.crypto_profile`'s decision, made once.
-        //
-        // **Each profile now holds exactly one suite** (ADR-0015 item 7). There
-        // used to be two Category 3 rows differing only in the AEAD, and this
-        // comment used to explain which one `select` preferred; removing
-        // ChaCha20-Poly1305 removed the choice. Across profiles there is no
-        // fallback at all, and that is the point of a mandate.
-        //
-        // The AES suite and the CNSA suite were both named in the registry long
-        // before anything implemented them (FINDINGS 53); each was added to a
-        // `supported` list only once a handshake could actually run it, because
-        // a suite offered but not implemented makes every crypto-posture report
-        // lie.
-        let policy = karst_crypto::Profile::for_kem(config.keys.kem_kind()).policy();
         let in_mac_key = FragMacKey::new(&mac1_key(&config.keys.kem_pk.to_bytes()));
-        let roster = build_roster(config, &policy, &HashMap::new());
+        let roster = build_roster(config, &HashMap::new());
         Self {
             roster: RwLock::new(Arc::new(roster)),
             bedrock: RwLock::new(None),
             reasm: Mutex::new(Reassembler::new(ReasmConfig::default())),
-            policy,
             in_mac_key,
             cookie: Mutex::new(None),
             stats: Counters::default(),
@@ -682,7 +658,7 @@ impl Engine {
             .iter()
             .map(|(hint, (_, slot))| (*hint, Arc::clone(slot)))
             .collect();
-        let next = build_roster(config, &self.policy, &carried);
+        let next = build_roster(config, &carried);
 
         // Count from the two rosters rather than from the builder, so the
         // report describes what actually happened.
@@ -1291,7 +1267,6 @@ impl Engine {
     fn cookie_reply_nonce(rand: &ResponderRandomness) -> [u8; 12] {
         let d = hash::Algorithm::Sha512.digest(&[
             b"Karst cookie-reply nonce v1",
-            &rand.e_dh_seed,
             &rand.encap_rand_e,
             &rand.encap_rand_s,
         ]);
@@ -1311,7 +1286,6 @@ impl Engine {
     fn seed_from(rand: &ResponderRandomness) -> [u8; 32] {
         let d = hash::Algorithm::Sha512.digest(&[
             b"Karst per-datagram seed v1",
-            &rand.e_dh_seed,
             &rand.encap_rand_e,
             &rand.encap_rand_s,
         ]);
@@ -1730,7 +1704,6 @@ impl Engine {
 
         let result = karst_noise::handshake::respond(
             &roster.config.keys,
-            &self.policy,
             msg,
             |hint, epoch| {
                 let index = *by_hint.get(hint)?;
@@ -1743,7 +1716,7 @@ impl Engine {
             index,
         );
 
-        let (Ok((msg2, pending, suite)), Some(peer)) = (result, matched) else {
+        let (Ok((msg2, pending)), Some(peer)) = (result, matched) else {
             return;
         };
         // The two bindings must agree. Silent, like every other §11 discard:
@@ -1761,7 +1734,6 @@ impl Engine {
                     &pending.confirm(),
                     &msg2,
                     now_ms,
-                    suite,
                     Self::seed_from(rand),
                 )
             })
@@ -1813,7 +1785,6 @@ impl Engine {
 
         let result = karst_noise::handshake::respond(
             &roster.config.keys,
-            &self.policy,
             msg,
             |hint, epoch| {
                 let index = *by_hint.get(hint)?;
@@ -1833,7 +1804,7 @@ impl Engine {
         // §11: an unresolvable hint, a refused suite and a failed AEAD are all
         // silent discards, and deliberately indistinguishable — answering would
         // make this node an oracle for roster membership.
-        let (Ok((msg2, pending, suite)), Some(peer)) = (result, matched) else {
+        let (Ok((msg2, pending)), Some(peer)) = (result, matched) else {
             return;
         };
 
@@ -1855,7 +1826,6 @@ impl Engine {
                     &pending.confirm(),
                     &msg2,
                     now_ms,
-                    suite,
                     Self::seed_from(rand),
                 )
             })
@@ -2063,19 +2033,7 @@ impl Engine {
                     .is_some_and(|p| Self::lock(&p.session).rekeying()),
                 allowed_ips: peer.allowed_ips.iter().map(ToString::to_string).collect(),
                 psk_is_fallback: peer.psk_is_fallback,
-                suite: roster.peers.get(index).map_or_else(
-                    || "unknown".to_owned(),
-                    |runtime| {
-                        Self::lock(&runtime.session)
-                            .suite()
-                            .params()
-                            .name
-                            .to_owned()
-                    },
-                    // Configuration and runtime peers are normally updated as
-                    // one roster, but status must remain diagnostic-only if a
-                    // transitional state is ever observed.
-                ),
+                suite: karst_crypto::SUITE_NAME.to_owned(),
                 transport: match self.via(&roster, index) {
                     Some(Via::Direct(_)) => Transport::Direct,
                     Some(Via::Relay { .. }) => Transport::Relay,
@@ -2138,11 +2096,7 @@ fn relay_source_key(id: &[u8; karst_relay_proto::consts::ID_LEN]) -> karst_trans
     key
 }
 
-fn build_roster(
-    config: &Arc<Config>,
-    policy: &SuitePolicy,
-    carried: &HashMap<[u8; 32], Arc<PeerSlot>>,
-) -> Roster {
+fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>) -> Roster {
     let mut peers = Vec::with_capacity(config.peers.len());
     let mut by_hint = HashMap::with_capacity(config.peers.len());
     let mut relay_ids = Vec::with_capacity(config.peers.len());
@@ -2186,22 +2140,6 @@ fn build_roster(
                 session: Mutex::new(Session::new(
                     Arc::clone(&config.keys),
                     Arc::clone(&peer.public),
-                    policy.clone(),
-                    // **Initiate at the policy's floor**, which is `KARST_1`
-                    // under the default profile and `KARST_2` under CNSA 2.0
-                    // (ADR-0015 item 1). This was the constant `KARST_1`, which
-                    // a Category 5 node cannot serve at all.
-                    //
-                    // The floor rather than the strongest supported suite,
-                    // because nothing tells this node which suites a *peer*
-                    // accepts: the netmap carries no suite advertisement, and
-                    // there is no downgrade retry by design (ADR-0006). Since
-                    // ADR-0015 item 7 each profile holds one suite, so the
-                    // floor is the only suite — but the rule is the one that
-                    // has to survive the next row being added, and reaching for
-                    // the strongest would then strand every peer that had not
-                    // yet been upgraded.
-                    policy.minimum,
                     config.psk_epoch,
                     local_index,
                 )),

@@ -468,11 +468,7 @@ fn print_log(entries: &[karst_bedrock::Entry]) -> Result<(), String> {
                 "  {h}  identity {}  {window}{revoked}",
                 fingerprint(&c.identity_key)
             );
-            println!(
-                "        kem {}  dh {}",
-                fingerprint(&c.kem_public_key),
-                fingerprint(&c.dh_public_key)
-            );
+            println!("        kem {}", fingerprint(&c.kem_public_key));
         }
     }
     Ok(())
@@ -798,16 +794,15 @@ fn describe(seq: u64, op: Op, body: &[u8], time: i64) -> String {
                     (nb, 0) => format!("from {}, no expiry", utc(nb)),
                     (nb, ex) => format!("from {}, expires {}", utc(nb), utc(ex)),
                 };
-                // All three fingerprints, because all three are what the
+                // Both fingerprints, because both are what the
                 // countersignature authorizes (spec §6.1) and an admin who
                 // checked only the identity key would be approving datapath
                 // keys they never saw.
                 format!(
-                    "countersign node {:?}, {window}\n      identity {}\n      kem      {}\n      dh       {}",
+                    "countersign node {:?}, {window}\n      identity {}\n      kem      {}",
                     n.handle,
                     fingerprint(&n.identity_key),
-                    fingerprint(&n.kem_public_key),
-                    fingerprint(&n.dh_public_key)
+                    fingerprint(&n.kem_public_key)
                 )
             },
         ),

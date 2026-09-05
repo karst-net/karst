@@ -10,32 +10,20 @@
 //!
 //! * `suite_id` and `psk_epoch` are bound **before any secret material**, so a
 //!   downgrade attempt invalidates the transcript (§13.2).
-//! * The per-pair PSK is mixed **last**, after every KEM and DH contribution,
+//! * The per-pair PSK is mixed **last**, after every KEM contribution,
 //!   so it gates the final session key rather than seasoning an early chaining
 //!   value (ADR-0004 §3).
 //!
-//! # Both algorithms come from the suite
-//!
-//! This type used to hardcode ChaCha20-Poly1305 and SHA-512. ADR-0015 item 2
-//! made the AEAD a field; item 1 does the same for the hash, because the CNSA
-//! suite is SHA-384. Neither is negotiated *here*: the suite id is mixed into the
-//! transcript before any secret material, so two ends that disagree about
-//! either algorithm diverge immediately and every subsequent tag fails.
-//!
-//! The chaining key and the message key stay 32 bytes under both hashes — HKDF
-//! is asked for 32-byte chunks regardless of its output block size — so only
-//! the transcript hash changes width. That is why [`KEY_LEN`] is still a
-//! constant and the transcript is a [`Digest`] carrying its own length.
+//! Uses fixed AES-256-GCM and SHA-384 parameters (ADR-0018).
 
 use karst_crypto::aead::{Algorithm, Cipher};
 use karst_crypto::hash::{self, Digest};
-use karst_crypto::SuiteId;
 use zeroize::Zeroize;
 
 /// Protocol label — §7.
 pub const PROTOCOL_LABEL: &[u8] = b"Karst PHREATIC v1";
 
-/// Chaining-key and message-key length. The same under both suite hashes.
+/// Chaining-key and message-key length. Fixed by the protocol.
 pub const KEY_LEN: usize = 32;
 
 /// Transport keys produced by [`SymmetricState::split`].
@@ -71,9 +59,9 @@ pub struct SymmetricState {
     ck: [u8; KEY_LEN],
     k: Option<[u8; KEY_LEN]>,
     h: Digest,
-    /// The AEAD this handshake's suite selects — ADR-0015 item 2.
+    /// The fixed AES-256-GCM algorithm.
     aead: Algorithm,
-    /// The hash this handshake's suite selects — ADR-0015 item 1.
+    /// The fixed SHA-384 transcript hash.
     hash: hash::Algorithm,
 }
 
@@ -95,26 +83,21 @@ impl Drop for SymmetricState {
     }
 }
 
-impl SymmetricState {
-    /// Start a transcript for a suite — §7.1 step 1.
-    ///
-    /// Both algorithms are fixed here, from the suite the initiator chose and
-    /// the responder accepted. Nothing downstream may override them.
-    #[must_use]
-    pub fn for_suite(suite: SuiteId) -> Self {
-        Self::with_algorithms(
-            Algorithm::for_suite(suite),
-            hash::Algorithm::for_suite(suite),
-        )
+impl Default for SymmetricState {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// A state over algorithms named directly, for tests that are exercising
-    /// the mixing rules rather than a suite.
+impl SymmetricState {
+    /// Start a CNSA 2.0 transcript — §7.1 step 1.
     #[must_use]
-    pub fn with_algorithms(aead: Algorithm, hash: hash::Algorithm) -> Self {
+    pub fn new() -> Self {
+        let aead = Algorithm::Aes256Gcm;
+        let hash = hash::Algorithm::Sha384;
         let h = hash.digest(&[PROTOCOL_LABEL]);
         let mut ck = [0u8; KEY_LEN];
-        // Both hashes are longer than the chaining key, so this always fills.
+        // SHA-384 is longer than the chaining key, so this always fills.
         if let Some(head) = h.as_bytes().get(..KEY_LEN) {
             ck.copy_from_slice(head);
         }
@@ -151,7 +134,7 @@ impl SymmetricState {
     }
 
     /// `ck, t, k ← HKDF(ck, input, 3)` then `MixHash(t)`. Used for the PSK so
-    /// it contributes to the transcript as well as the key (§7.1 step 12).
+    /// it contributes to the transcript as well as the key (§7.1 step 9).
     pub fn mix_key_and_hash(&mut self, input: &[u8]) {
         let mut okm = [0u8; KEY_LEN * 3];
         if !self.hash.hkdf(&self.ck, input, &mut okm) {
@@ -204,7 +187,7 @@ impl SymmetricState {
         Ok(pt)
     }
 
-    /// Derive the two transport keys — §7.1 step 13.
+    /// Derive the two transport keys — §7.1 step 10.
     #[must_use]
     pub fn split(&self) -> TransportKeys {
         let mut okm = [0u8; KEY_LEN * 2];
@@ -226,7 +209,7 @@ impl SymmetricState {
     /// Current transcript hash. Exposed for tests and for binding into the
     /// fragment MAC; it is public data.
     ///
-    /// Its length is the suite's, not a constant — 48 bytes under `KARST_2`.
+    /// Its length is 48 bytes (SHA-384), with no padding.
     #[must_use]
     pub fn transcript(&self) -> Digest {
         self.h
@@ -248,7 +231,7 @@ mod tests {
     /// The shipping suite, for the tests below that are about the mixing rules
     /// rather than about which algorithms a suite picks.
     fn st() -> SymmetricState {
-        SymmetricState::for_suite(SuiteId::KARST_1)
+        SymmetricState::new()
     }
 
     #[test]
@@ -342,7 +325,7 @@ mod tests {
     fn the_psk_changes_the_derived_keys() {
         let derive = |psk: &[u8]| {
             let mut s = st();
-            s.mix_key(b"kem and dh secrets");
+            s.mix_key(b"kem secrets");
             s.mix_key_and_hash(psk);
             s.split().initiator_to_responder
         };
@@ -383,64 +366,11 @@ mod tests {
         assert!(rendered.contains("redacted") || rendered.contains("has_key"));
     }
 
-    // ── The suite chooses both algorithms (ADR-0015 items 1, 2 and 7) ──────
-
-    /// Each suite's transcript must be its advertised width. A 48-byte
-    /// transcript silently widened to 64 would still let both ends agree, which
-    /// is precisely why this is asserted rather than assumed.
     #[test]
-    fn the_transcript_is_the_suites_hash_length() {
-        for (id, len) in [(SuiteId::KARST_1, 64), (SuiteId::KARST_2, 48)] {
-            let mut s = SymmetricState::for_suite(id);
-            assert_eq!(s.transcript().len(), len, "{}", id.params().name);
-            assert_eq!(s.hash().output_len(), id.params().hash_len);
-            s.mix_hash(b"more");
-            assert_eq!(s.transcript().len(), len, "after mixing");
-        }
-    }
-
-    /// **The two suites must not derive the same keys** from identical inputs.
-    /// The suite id is mixed into the transcript before any secret material, so
-    /// in a real handshake they would already have diverged — this checks the
-    /// algorithms themselves also differ, so the defense does not rest on that
-    /// one field alone.
-    ///
-    /// Note what carries the separation: the *hash*, not the AEAD. Both suites
-    /// run AES-256-GCM since ADR-0015 item 7 removed ChaCha20-Poly1305, and the
-    /// AEAD never reached the key schedule anyway. When there were two AEADs,
-    /// `KARST_1` and `KARST_2` differed only in that and derived *identical*
-    /// keys — which was correct then and is worth remembering, because it means
-    /// an AEAD choice is not and never was a key-separation mechanism.
-    #[test]
-    fn the_two_suites_derive_different_keys_from_identical_inputs() {
-        let derive = |id| {
-            let mut s = SymmetricState::for_suite(id);
-            s.mix_hash(b"identical transcript input");
-            s.mix_key(b"identical secret material");
-            s.mix_key_and_hash(&[7u8; 32]);
-            s.split().initiator_to_responder
-        };
-        assert_ne!(
-            derive(SuiteId::KARST_1),
-            derive(SuiteId::KARST_2),
-            "SHA-512 and SHA-384 must not agree"
-        );
-    }
-
-    /// A message sealed under one suite must not open under the other. Here
-    /// that rests entirely on the associated data's width, since both suites
-    /// run the same AEAD — which is exactly why the transcript is the AAD.
-    #[test]
-    fn a_message_sealed_for_one_suite_does_not_open_under_the_other() {
-        let mut a = SymmetricState::for_suite(SuiteId::KARST_1);
-        let mut b = SymmetricState::for_suite(SuiteId::KARST_2);
-        a.mix_key(b"shared");
-        b.mix_key(b"shared");
-        let ct = a.encrypt_and_hash(b"hello").expect("encrypt");
-        assert_eq!(
-            b.decrypt_and_hash(&ct),
-            Err(AeadError),
-            "the CNSA state opened a KARST_1 message"
-        );
+    fn transcript_uses_sha384_without_padding() {
+        let mut s = SymmetricState::new();
+        assert_eq!(s.transcript().len(), 48);
+        s.mix_hash(b"more");
+        assert_eq!(s.transcript().len(), 48);
     }
 }

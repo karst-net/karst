@@ -1,53 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! The two suite hashes, and the HKDF built on them — [ADR-0001], and
-//! [ADR-0015] for why the second one exists.
+//! SHA-384 for the PHREATIC transcript and HKDF; SHA-512 for peer identity
+//! hints and fragment MAC derivation (spec §4 and §9.2).
 //!
-//! | Suite | Hash | Output |
-//! |---|---|---|
-//! | `KARST_1` | SHA-512 | 64 B |
-//! | `KARST_2` | SHA-384 | 48 B |
-//!
-//! # Why the CNSA suite hashes *shorter*
-//!
-//! It looks like a downgrade and is not. CNSA 2.0 names SHA-384 and SHA-512
-//! both, and 384 bits of output is Category 5 against Grover — the choice
-//! here follows the profile's own pairing of SHA-384 with AES-256 rather than
-//! any belief that 512 was insufficient. What it costs is a shorter transcript
-//! hash, and what it buys is a suite an auditor can check against the published
-//! profile line by line.
-//!
-//! # The transcript length becomes a variable
-//!
-//! Until [ADR-0015] item 1, `karst-noise` hashed with SHA-512 unconditionally
-//! and `HASH_LEN` was a constant 64. Two suites with different output lengths
-//! make that a per-session property, which is why [`Digest`] carries its own
-//! length rather than being a `[u8; 64]`: a 48-byte transcript zero-padded to
-//! 64 would hash the padding, and the two ends would agree on it, and nobody
-//! would notice for years.
-//!
-//! # What is *not* suite-dependent
-//!
-//! Two SHA-512 uses stay fixed no matter which suite a session negotiates,
-//! because both are computed before a suite is known:
-//!
-//! * `peer_id_hint` (spec §4) is a roster lookup label. A responder precomputes
-//!   a table of them; making it suite-dependent would mean one entry per suite
-//!   for no gain, since the real binding of a peer's static key into the
-//!   session is `MixHash(HASH(S_r_pk))` at step 3, which *does* use the suite
-//!   hash.
-//! * The fragment MAC key (spec §9.2, `karst_proto::dos`) is derived from a
-//!   public static key and checked on fragments that do not carry the suite
-//!   field at all — only fragment 0 of a `HandshakeInit` does.
-//!
-//! [ADR-0001]: ../../../docs/adr/0001-cryptographic-algorithm-selection.md
-//! [ADR-0015]: ../../../docs/adr/0015-cnsa-2-0-as-a-mandate.md
+//! [`Digest`] retains the actual digest length so SHA-384 transcript hashes
+//! never include zero padding from the larger SHA-512 storage.
 
 use hkdf::Hkdf;
 use sha2::{Digest as _, Sha384, Sha512};
-
-use crate::SuiteId;
 
 /// Longest output any registered suite hash produces.
 ///
@@ -63,18 +24,6 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    /// The hash a suite selects.
-    ///
-    /// Total, because a `SuiteId` cannot be constructed for a suite outside the
-    /// registry — the same reason `SuiteId::params` is total.
-    #[must_use]
-    pub fn for_suite(suite: SuiteId) -> Self {
-        match suite.params().hash {
-            "SHA-384" => Self::Sha384,
-            _ => Self::Sha512,
-        }
-    }
-
     /// The registry's name for this algorithm.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -211,20 +160,6 @@ mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use crate::SUITES;
-
-    /// The registry is the authority. A row naming a hash with no
-    /// implementation behind it is exactly the failure FINDINGS 53 recorded for
-    /// the AEAD, so it is asserted here for the same reason.
-    #[test]
-    fn every_suite_selects_an_implemented_hash_of_the_advertised_length() {
-        for s in SUITES {
-            let a = Algorithm::for_suite(s.id);
-            assert_eq!(a.name(), s.hash, "{} advertises {}", s.name, s.hash);
-            assert_eq!(a.output_len(), s.hash_len, "{}", s.name);
-            assert_eq!(a.digest(&[b"x"]).len(), s.hash_len, "{}", s.name);
-        }
-    }
 
     #[test]
     fn the_two_hashes_are_the_documented_lengths() {

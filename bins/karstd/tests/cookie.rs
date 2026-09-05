@@ -35,7 +35,6 @@ const B_ADDR: &str = "127.0.0.1:51832";
 
 fn rand() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [0xF1; 32],
         encap_rand_e: [0xF2; 32],
         encap_rand_s: [0xF3; 32],
     }
@@ -70,16 +69,16 @@ fn write600(path: &Path, contents: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
 }
 
-fn public_of(n: u8) -> (String, String) {
-    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[n; 64]);
-    let dh = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([n; 32]));
-    (encode_hex(&kem_pk.to_bytes()), encode_hex(dh.as_bytes()))
+fn public_of(n: u8) -> String {
+    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[n; 64]);
+
+    encode_hex(&kem_pk.to_bytes())
 }
 fn private_of(n: u8) -> String {
-    encode_hex(&[n; 96])
+    encode_hex(&[n; 64])
 }
 fn kem_pk_bytes(n: u8) -> Vec<u8> {
-    keypair_from_seed(KemKind::MlKem768, &[n; 64]).1.to_bytes()
+    keypair_from_seed(KemKind::MlKem1024, &[n; 64]).1.to_bytes()
 }
 
 fn config_for(tag: &str, me: u8, peer: u8, listen: &str, peer_endpoint: &str) -> Config {
@@ -87,7 +86,7 @@ fn config_for(tag: &str, me: u8, peer: u8, listen: &str, peer_endpoint: &str) ->
     let key = dir.join("node.key");
     write600(&key, &private_of(me));
 
-    let (kem, dh) = public_of(peer);
+    let kem = public_of(peer);
     let my_octet = if me == 0xA1 { 1 } else { 2 };
     let peer_octet = 3 - my_octet;
     let toml = format!(
@@ -101,7 +100,6 @@ private_key_file = "node.key"
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 endpoint = "{peer_endpoint}"
 allowed_ips = ["10.79.0.{peer_octet}/32"]
 "#
@@ -129,7 +127,7 @@ fn deliver(to: &Engine, from_addr: SocketAddr, out: Output, now: u64) -> Output 
 /// whether the shape is legal, not whether the content is.
 fn flood(b: &Engine, b_kem_pk: &[u8], count: u16, now: u64) {
     let key = FragMacKey::new(&mac1_key(b_kem_pk));
-    let fake_msg = vec![0xABu8; 2378]; // HandshakeInit's real size, garbage content
+    let fake_msg = vec![0xABu8; 3210]; // HandshakeInit's real size, garbage content
     for i in 0..count {
         let frags = fragment(
             MessageType::HandshakeInit,
@@ -177,7 +175,7 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
 
     // A dials, unaware B is under load.
     let msg1 = a.connect_all(2, seed);
-    assert_eq!(msg1.datagrams.len(), 2, "HandshakeInit is two fragments");
+    assert_eq!(msg1.datagrams.len(), 3, "HandshakeInit is three fragments");
 
     // B refuses to allocate reassembly state for A and answers with cookies
     // instead of a `HandshakeResponse` — this is Finding 1's fix actually
@@ -202,8 +200,8 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     let retry = deliver(&a, b_addr, challenge, 4);
     assert_eq!(
         retry.datagrams.len(),
-        2,
-        "the retried HandshakeInit is two fragments, same as the first attempt"
+        3,
+        "the retried HandshakeInit is three fragments, same as the first attempt"
     );
 
     // B accepts it this time: the fragments verify under mac2, which only a
@@ -213,7 +211,7 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     let msg2 = deliver(&b, a_addr, retry, 5);
     assert_eq!(
         msg2.datagrams.len(),
-        2,
+        3,
         "B answers with a HandshakeResponse"
     );
 
@@ -248,7 +246,7 @@ fn an_off_path_spoofer_gets_no_more_than_the_amplification_bound_allows() {
     // One more, address-unvalidated, from a spoofed source that will never
     // read the reply — modelling the attacker rather than a real peer.
     let key = FragMacKey::new(&mac1_key(&kem_pk_bytes(0xB1)));
-    let fake_msg = vec![0xCDu8; 2378];
+    let fake_msg = vec![0xCDu8; 3210];
     let frags = fragment(MessageType::HandshakeInit, 999, &fake_msg, &key).expect("fragments");
     let spoofed: SocketAddr = "127.0.0.1:59999".parse().unwrap();
     let out = b.inbound(&frags[0], spoofed, 2, &rand());

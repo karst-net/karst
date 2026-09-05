@@ -55,7 +55,7 @@ pub mod consts {
     /// Handshake nonce.
     pub const RANDOM_LEN: usize = 32;
 
-    /// ML-DSA-87 signature. Suite `KARST_1` is the only suite in v1 and the
+    /// ML-DSA-87 signature. Suite `KARST_2` is the only suite in v1 and the
     /// version byte implies it, so this is fixed rather than negotiated; a
     /// second signature algorithm means a second protocol version.
     pub const SIG_LEN: usize = 4627;

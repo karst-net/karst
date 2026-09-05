@@ -126,13 +126,13 @@ type versionRoute struct {
 }
 
 type versionPeer struct {
-	NodeID       string   `json:"node_id"`
-	KemPublicKey string   `json:"kem_public_key"`
-	DhPublicKey  string   `json:"dh_public_key"`
-	DNSName      string   `json:"dns_name"`
-	Endpoint     string   `json:"endpoint"`
-	HomeRelay    string   `json:"home_relay"`
-	AllowedIPs   []string `json:"allowed_ips"`
+	NodeID       string `json:"node_id"`
+	KemPublicKey string `json:"kem_public_key"`
+
+	DNSName    string   `json:"dns_name"`
+	Endpoint   string   `json:"endpoint"`
+	HomeRelay  string   `json:"home_relay"`
+	AllowedIPs []string `json:"allowed_ips"`
 	// Present so the vector proves the PSK bytes are NOT hashed: two cases
 	// differ only here and must produce the same version.
 	PSK string `json:"psk"`
@@ -156,15 +156,15 @@ type versionPortRange struct {
 // endless resending of unchanged entries or — worse — a change that is never
 // delivered because both sides believe it already arrived.
 type digestCase struct {
-	Epoch        uint32   `json:"epoch"`
-	NodeID       string   `json:"node_id"`
-	KemPublicKey string   `json:"kem_public_key"`
-	DhPublicKey  string   `json:"dh_public_key"`
-	DNSName      string   `json:"dns_name"`
-	Endpoint     string   `json:"endpoint"`
-	HomeRelay    string   `json:"home_relay"`
-	AllowedIPs   []string `json:"allowed_ips"`
-	Digest       uint64   `json:"digest"`
+	Epoch        uint32 `json:"epoch"`
+	NodeID       string `json:"node_id"`
+	KemPublicKey string `json:"kem_public_key"`
+
+	DNSName    string   `json:"dns_name"`
+	Endpoint   string   `json:"endpoint"`
+	HomeRelay  string   `json:"home_relay"`
+	AllowedIPs []string `json:"allowed_ips"`
+	Digest     uint64   `json:"digest"`
 }
 
 type helloSigCase struct {
@@ -397,23 +397,23 @@ func TestVectors(t *testing.T) {
 	} {
 		p := &proto.KarstNetmapPeer{
 			NodeId:       []byte(tc.nodeID),
-			KemPublicKey: pattern(1184, 0xD0),
-			DhPublicKey:  pattern(32, 0xE0),
-			DnsName:      tc.dnsName,
-			Endpoint:     tc.endpoint,
-			HomeRelay:    tc.home,
-			AllowedIps:   tc.ips,
+			KemPublicKey: pattern(1568, 0xD0),
+
+			DnsName:    tc.dnsName,
+			Endpoint:   tc.endpoint,
+			HomeRelay:  tc.home,
+			AllowedIps: tc.ips,
 		}
 		got.Cases.PeerDigest = append(got.Cases.PeerDigest, digestCase{
 			Epoch:        tc.epoch,
 			NodeID:       hex.EncodeToString(p.GetNodeId()),
 			KemPublicKey: hex.EncodeToString(p.GetKemPublicKey()),
-			DhPublicKey:  hex.EncodeToString(p.GetDhPublicKey()),
-			DNSName:      tc.dnsName,
-			Endpoint:     tc.endpoint,
-			HomeRelay:    hex.EncodeToString(tc.home),
-			AllowedIPs:   tc.ips,
-			Digest:       control.PeerDigest(p, tc.epoch),
+
+			DNSName:    tc.dnsName,
+			Endpoint:   tc.endpoint,
+			HomeRelay:  hex.EncodeToString(tc.home),
+			AllowedIPs: tc.ips,
+			Digest:     control.PeerDigest(p, tc.epoch),
 		})
 	}
 
@@ -440,10 +440,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x70))},
@@ -460,10 +460,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 			},
 			psks: []string{hex.EncodeToString(pattern(32, 0x71))},
@@ -480,10 +480,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 				PacketFilter: []*proto.KarstFilterRule{{
 					Srcs:  []string{"node-two"},
@@ -505,10 +505,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 				EgressFilter: []*proto.KarstEgressRule{{
 					Dsts:  []string{"node-two"},
@@ -568,10 +568,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "default")},
 			},
@@ -590,10 +590,10 @@ func TestVectors(t *testing.T) {
 				Addresses: []string{"100.64.0.1"},
 				Peers: []*proto.KarstNetmapPeer{{
 					NodeId:       []byte("node-two"),
-					KemPublicKey: pattern(1184, 0xD0),
-					DhPublicKey:  pattern(32, 0xE0),
-					DnsName:      "beta",
-					AllowedIps:   []string{"100.64.0.2/32"},
+					KemPublicKey: pattern(1568, 0xD0),
+
+					DnsName:    "beta",
+					AllowedIps: []string{"100.64.0.2/32"},
 				}},
 				Relays: []*proto.KarstRelay{relayFor("203.0.113.7:443", "relay.example.com", 0xA0, "eu-west")},
 			},
@@ -677,11 +677,11 @@ func TestVectors(t *testing.T) {
 			vp := versionPeer{
 				NodeID:       hex.EncodeToString(p.GetNodeId()),
 				KemPublicKey: hex.EncodeToString(p.GetKemPublicKey()),
-				DhPublicKey:  hex.EncodeToString(p.GetDhPublicKey()),
-				DNSName:      p.GetDnsName(),
-				Endpoint:     p.GetEndpoint(),
-				HomeRelay:    hex.EncodeToString(p.GetHomeRelay()),
-				AllowedIPs:   p.GetAllowedIps(),
+
+				DNSName:    p.GetDnsName(),
+				Endpoint:   p.GetEndpoint(),
+				HomeRelay:  hex.EncodeToString(p.GetHomeRelay()),
+				AllowedIPs: p.GetAllowedIps(),
 			}
 			if i < len(tc.psks) {
 				vp.PSK = tc.psks[i]

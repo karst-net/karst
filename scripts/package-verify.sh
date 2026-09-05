@@ -149,13 +149,13 @@ want "karstd --help runs"         /usr/bin/karstd --help
 want "karst --help runs"          /usr/bin/karst --help
 
 key=$(/usr/bin/karstd genkey 2>/dev/null || true)
-# 96 bytes of hex seed: 64 for the ML-KEM key, 32 for X25519. Measured with
+# 64 bytes of hex seed for ML-KEM-1024. Measured with
 # ${#key} rather than `wc -c`, which right-pads on some userlands and would
 # match a zero-length key against a naive pattern.
-if [ "${#key}" -ge 192 ]; then
+if [ "${#key}" -eq 128 ]; then
   pass "karstd genkey produces a ${#key}-character key"
 else
-  fail "karstd genkey produced ${#key} characters, expected >= 192"
+  fail "karstd genkey produced ${#key} characters, expected 128"
 fi
 
 # ── 3. The service is not started for an unconfigured machine ───────────────

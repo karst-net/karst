@@ -43,12 +43,11 @@ use karstd::engine::{Engine, Via};
 use karstd::routing::{AllowedIps, Prefix};
 
 fn keys(seed: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[seed; 64], &[seed; 32]))
+    Arc::new(StaticKeys::from_seed(&[seed; 64]))
 }
 
 fn rand() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [0x21; 32],
         encap_rand_e: [0x22; 32],
         encap_rand_s: [0x23; 32],
     }
@@ -78,7 +77,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         node_id: handle(&[peer; 2592]).into_bytes(),
         public: Arc::new(PeerPublic {
             kem_pk: peer_keys.kem_pk.clone(),
-            dh_pk: peer_keys.dh_pk,
+
             psk: [0x77; 32],
         }),
         endpoint: Some(peer_endpoint(peer)),
@@ -222,14 +221,7 @@ fn chain(seed: u8) -> Log {
     let (entry, input) = b.prepare(
         1100,
         Op::NodeSign,
-        node_sign_body(
-            &handle(&identity),
-            &identity,
-            &vec![seed; 1184],
-            &[seed; 32],
-            0,
-            0,
-        ),
+        node_sign_body(&handle(&identity), &identity, &vec![seed; 1568], 0, 0),
     );
     b.commit(
         entry,

@@ -106,7 +106,6 @@ func newNetmapFixture(t *testing.T, peerCount int) *netFixture {
 	keys := func(seed byte) node.DataPlaneKeys {
 		return node.DataPlaneKeys{
 			KemPublicKey: validKemKey(seed),
-			DhPublicKey:  bytes.Repeat([]byte{seed ^ 0xFF}, 32),
 		}
 	}
 
@@ -210,11 +209,8 @@ func TestNetmapCarriesPeersAndKeys(t *testing.T) {
 		t.Fatalf("psk epoch: got %d want 3", resp.GetPskEpoch())
 	}
 	for _, p := range resp.GetPeers() {
-		if len(p.GetKemPublicKey()) != 1184 {
-			t.Fatalf("kem key is %d bytes, want 1184", len(p.GetKemPublicKey()))
-		}
-		if len(p.GetDhPublicKey()) != 32 {
-			t.Fatalf("dh key is %d bytes, want 32", len(p.GetDhPublicKey()))
+		if len(p.GetKemPublicKey()) != 1568 {
+			t.Fatalf("kem key is %d bytes, want 1568", len(p.GetKemPublicKey()))
 		}
 		if len(p.GetPsk()) != psk.Size {
 			t.Fatalf("psk is %d bytes, want %d", len(p.GetPsk()), psk.Size)
@@ -407,7 +403,6 @@ func TestVersionChangesWithContent(t *testing.T) {
 		}
 		h, err := f.handler.Nodes.Register(k.Public(), node.DataPlaneKeys{
 			KemPublicKey: validKemKey(0x77),
-			DhPublicKey:  bytes.Repeat([]byte{0x88}, 32),
 		})
 		if err != nil {
 			t.Fatalf("register: %v", err)
@@ -456,7 +451,7 @@ func TestVersionChangesWithContent(t *testing.T) {
 }
 
 // A node that already holds the current version is told so and sent no peers,
-// which is the whole point: re-shipping 1184-byte keys and a PSK per peer on
+// which is the whole point: re-shipping 1568-byte keys and a PSK per peer on
 // every poll is pure waste.
 func TestUnchangedShortCircuit(t *testing.T) {
 	f := newNetmapFixture(t, 3)
@@ -956,7 +951,6 @@ func TestDeltaSendsNewPeers(t *testing.T) {
 	}
 	h, err := f.handler.Nodes.Register(k.Public(), node.DataPlaneKeys{
 		KemPublicKey: validKemKey(0x55),
-		DhPublicKey:  bytes.Repeat([]byte{0x66}, 32),
 	})
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -1086,7 +1080,7 @@ func TestDeltaEntriesAreComplete(t *testing.T) {
 		t.Fatalf("got %d peers", len(d.GetPeers()))
 	}
 	p := d.GetPeers()[0]
-	if len(p.GetKemPublicKey()) != 1184 || len(p.GetDhPublicKey()) != 32 {
+	if len(p.GetKemPublicKey()) != 1568 {
 		t.Fatal("a delta entry omitted the PHREATIC keys")
 	}
 	if len(p.GetPsk()) != psk.Size || len(p.GetAllowedIps()) == 0 {
@@ -1159,9 +1153,9 @@ func TestChangingTheOnLinkPrefixChangesTheVersion(t *testing.T) {
 	}
 }
 
-// validKemKey makes a real ML-KEM-768 encapsulation key.
+// validKemKey makes a real ML-KEM-1024 encapsulation key.
 //
-// A 1184-byte pattern is not one: FIPS 203 requires every 12-bit coefficient to
+// A 1568-byte pattern is not one: FIPS 203 requires every 12-bit coefficient to
 // be below q, and node.Register now checks that rather than only the length —
 // because a key that does not parse is shipped to every peer in the account and
 // none of them can handshake with it.
@@ -1170,7 +1164,7 @@ func validKemKey(seed byte) []byte {
 	for i := range s {
 		s[i] = seed + byte(i)
 	}
-	dk, err := mlkem.NewDecapsulationKey768(s[:])
+	dk, err := mlkem.NewDecapsulationKey1024(s[:])
 	if err != nil {
 		panic("mlkem seed: " + err.Error())
 	}
@@ -1223,7 +1217,6 @@ func coveringState(t *testing.T, f *netFixture, handles ...string) *bedrock.Stat
 			Handle:       h,
 			IdentityKey:  id.PublicKey,
 			KemPublicKey: id.KemPublicKey,
-			DhPublicKey:  id.DhPublicKey,
 		}
 	}
 	return st
@@ -1305,7 +1298,7 @@ func TestEnforcingServesNodeCoveredByARealBedrockCeremony(t *testing.T) {
 	if err != nil {
 		t.Fatalf("self identity: %v", err)
 	}
-	nodeSign, input := builder.Prepare(1100, bedrock.OpNodeSign, bedrock.NodeSignBody(f.selfH, identity.PublicKey, identity.KemPublicKey, identity.DhPublicKey, 0, 0))
+	nodeSign, input := builder.Prepare(1100, bedrock.OpNodeSign, bedrock.NodeSignBody(f.selfH, identity.PublicKey, identity.KemPublicKey, 0, 0))
 	authoritySigs, err := bedrock.SignAuthorities(input, bedrock.AuthoritySigner{Index: 0, Key: authority})
 	if err != nil {
 		t.Fatalf("sign node: %v", err)

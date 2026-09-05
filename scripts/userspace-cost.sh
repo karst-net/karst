@@ -127,8 +127,8 @@ keys() {
     field() { sed -n "s/$1 = \"\(.*\)\"/\1/p" "$2"; }
     ( cd "$RUN/s" && "$BIN/karstd" pubkey --config stub.toml > pub.txt )
     ( cd "$RUN/p" && "$BIN/karstd" pubkey --config stub.toml > pub.txt )
-    S_KEM=$(field kem_public_key "$RUN/s/pub.txt"); S_DH=$(field dh_public_key "$RUN/s/pub.txt")
-    P_KEM=$(field kem_public_key "$RUN/p/pub.txt"); P_DH=$(field dh_public_key "$RUN/p/pub.txt")
+    S_KEM=$(field kem_public_key "$RUN/s/pub.txt")
+    P_KEM=$(field kem_public_key "$RUN/p/pub.txt")
     # A per-pair PSK, as §2.6 requires of a real deployment. Identical in both
     # scenarios, so it is in neither difference — but a run without one takes a
     # different branch of the key schedule and logs a warning, and a benchmark
@@ -136,11 +136,11 @@ keys() {
     PSK=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 }
 
-# $1 = tag, $2 = own overlay, $3 = own port, $4 = peer kem, $5 = peer dh,
-# $6 = peer underlay, $7 = peer port, $8 = peer overlay, $9 = "userspace"|"tun"
+# $1 = tag, $2 = own overlay, $3 = own port, $4 = peer kem,
+# $5 = peer underlay, $6 = peer port, $7 = peer overlay, $8 = "userspace"|"tun"
 write_config() {
     local attachment=""
-    [ "$9" = userspace ] && attachment=$(printf 'network_mode = "userspace"\nuserspace_socks5_listen = "127.0.0.1:%s"\n' "$SOCKS_PORT")
+    [ "$8" = userspace ] && attachment=$(printf 'network_mode = "userspace"\nuserspace_socks5_listen = "127.0.0.1:%s"\n' "$SOCKS_PORT")
     cat > "$RUN/$1/karstd.toml" <<CFG
 [node]
 listen = "0.0.0.0:$3"
@@ -152,10 +152,9 @@ $attachment
 [[peer]]
 name = "other"
 kem_public_key = "$4"
-dh_public_key = "$5"
 psk = "$PSK"
-endpoint = "$6:$7"
-allowed_ips = ["$8/32"]
+endpoint = "$5:$6"
+allowed_ips = ["$7/32"]
 CFG
     chmod 600 "$RUN/$1/karstd.toml"
 }
@@ -209,8 +208,8 @@ run_karst() {    # $1 = tun|userspace
     say "Scenario: $mode"
     topology
     keys
-    write_config s "$OVERLAY_S" "$PORT_S" "$P_KEM" "$P_DH" "$UNDERLAY_P" "$PORT_P" "$OVERLAY_P" "$mode"
-    write_config p "$OVERLAY_P" "$PORT_P" "$S_KEM" "$S_DH" "$UNDERLAY_S" "$PORT_S" "$OVERLAY_S" tun
+    write_config s "$OVERLAY_S" "$PORT_S" "$P_KEM" "$UNDERLAY_P" "$PORT_P" "$OVERLAY_P" "$mode"
+    write_config p "$OVERLAY_P" "$PORT_P" "$S_KEM" "$UNDERLAY_S" "$PORT_S" "$OVERLAY_S" tun
     start_node s $NS_S
     start_node p $NS_P
     wait_established

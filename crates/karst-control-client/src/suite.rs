@@ -62,8 +62,8 @@ const V1: Suite = Suite {
 ///
 /// **Both primitives now exist and this row is still not implemented**, which
 /// is the honest state: `karst_crypto::aead` has AES-256-GCM and
-/// `karst_crypto::kem` now dispatches between both parameter sets at run time,
-/// but `channel.rs` and `transport.rs` name `MlKem768Backend` and
+/// `karst_crypto::kem` supplies ML-KEM-1024,
+/// but `channel.rs` and `transport.rs` use ML-KEM-768 and
 /// ChaCha20-Poly1305 directly, so speaking v2 is a matter of dispatching there.
 /// Flipping this flag first would advertise a suite the channel does not run.
 ///

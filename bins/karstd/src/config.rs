@@ -34,15 +34,13 @@ use std::sync::Arc;
 
 use karst_crypto::kem::{KemKind, KemPublicKey};
 use karst_noise::handshake::{PeerPublic, StaticKeys};
-use x25519_dalek::PublicKey as DhPublic;
 
 use crate::filter::PacketFilter;
 use crate::netmap::Netmap;
 use crate::routing::{AllowedIps, InterfaceAddress, Prefix};
 
-/// Bytes of seed material a node's private key file carries: 64 for ML-KEM-768
-/// plus 32 for X25519.
-pub const PRIVATE_KEY_LEN: usize = 96;
+/// Bytes of seed material a node's private key file carries: 64 for ML-KEM-1024.
+pub const PRIVATE_KEY_LEN: usize = 64;
 
 /// Where `karstd` looks for its configuration unless told otherwise.
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/karst/karstd.toml";
@@ -279,42 +277,6 @@ fn dns_for_network_mode(mut dns: DnsSettings, mode: NetworkMode) -> DnsSettings 
     dns
 }
 
-/// `node.crypto_profile`, as it appears in TOML.
-///
-/// A thin serde shell over [`karst_crypto::Profile`], which holds the reasoning
-/// and the suites. It exists separately only because `karst-crypto` carries no
-/// serde dependency — the crate is a registry, not a configuration format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CryptoProfile {
-    /// `KARST_1` and `KARST_2` — the shipping profile.
-    #[default]
-    Default,
-    /// `KARST_2` alone — CNSA 2.0. This node generates an ML-KEM-1024 static
-    /// key and refuses every suite below Category 5.
-    Cnsa2,
-}
-
-impl From<CryptoProfile> for karst_crypto::Profile {
-    fn from(p: CryptoProfile) -> Self {
-        match p {
-            CryptoProfile::Default => Self::Default,
-            CryptoProfile::Cnsa2 => Self::Cnsa2,
-        }
-    }
-}
-
-impl CryptoProfile {
-    /// The KEM parameter set this profile's static key uses.
-    ///
-    /// Read from the profile's floor rather than tabulated again here, so the
-    /// key and the policy cannot come apart — `karst-crypto` asserts that every
-    /// suite in a profile shares one parameter set.
-    pub(crate) fn kem_kind(self) -> KemKind {
-        KemKind::for_suite(karst_crypto::Profile::from(self).policy().minimum)
-    }
-}
-
 /// The `[node]` table.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -347,17 +309,8 @@ pub struct NodeSection {
     /// server-managed node, whose addresses are assigned by the server.
     #[serde(default)]
     pub addresses: Vec<String>,
-    /// File holding the 96-byte hex private key seed.
+    /// File holding the 64-byte hex private key seed.
     pub private_key_file: PathBuf,
-    /// Which cipher-suite profile this node runs — `"default"` or `"cnsa2"`.
-    ///
-    /// One word chooses two things that must not disagree: the parameter set of
-    /// this node's static KEM key, and the floor it enforces (ADR-0015 item 1).
-    /// Changing it changes the node's `peer_id_hint` from the same key file, so
-    /// every peer's roster entry has to be updated with the new public key —
-    /// `karstd pubkey` prints it.
-    #[serde(default)]
-    pub crypto_profile: CryptoProfile,
     /// PSK epoch these PSKs belong to (§2.6).
     #[serde(default = "default_epoch")]
     pub psk_epoch: u32,
@@ -550,10 +503,8 @@ const fn default_epoch() -> u32 {
 pub struct PeerSection {
     /// Name, for logs and `karst status`.
     pub name: String,
-    /// Peer's ML-KEM-768 encapsulation key, hex.
+    /// Peer's ML-KEM-1024 encapsulation key, hex.
     pub kem_public_key: String,
-    /// Peer's X25519 static public key, hex.
-    pub dh_public_key: String,
     /// Per-pair PSK, hex. Absent selects the lattice-only fallback of §7.3,
     /// which is reported at startup rather than assumed.
     pub psk: Option<String>,
@@ -774,12 +725,8 @@ impl Config {
             source,
         })?;
         let seed = decode_hex(seed.trim(), PRIVATE_KEY_LEN, "private_key_file")?;
-        let (kem_seed, dh_seed) = split_seed(&seed)?;
-        let keys = Arc::new(StaticKeys::from_seed_of_kind(
-            file.node.crypto_profile.kem_kind(),
-            &kem_seed,
-            &dh_seed,
-        ));
+        let kem_seed = split_seed(&seed)?;
+        let keys = Arc::new(StaticKeys::from_seed(&kem_seed));
 
         let addresses = file
             .node
@@ -920,10 +867,9 @@ impl Config {
 
         // **One unusable peer must not cost the whole netmap.** A peer entry
         // that cannot be parsed is skipped, not fatal — and the difference
-        // matters more than it looks. The server validates a registered node's
-        // data-plane keys by *length*, so a node that registers 1184 bytes of
-        // anything ends up in every other node's netmap; refusing the netmap
-        // over it would let one bad registration take down every node in the
+        // matters more than it looks. Even though the server validates registered
+        // ML-KEM-1024 keys, a malformed peer from a compromised server must
+        // not cause refusal of the entire netmap and take down every node in the
         // account. Dropping the entry costs reachability to that one peer,
         // which is what it costs anyway — nobody can handshake with a key that
         // does not parse.
@@ -1175,13 +1121,6 @@ pub fn load_keys(path: &Path) -> Result<Arc<StaticKeys>, ConfigError> {
     #[derive(serde::Deserialize)]
     struct NodeKey {
         private_key_file: PathBuf,
-        /// **Also read here, and it must be.** The seed alone does not
-        /// determine the public key: the same 64 bytes expand to an ML-KEM-768
-        /// key or an ML-KEM-1024 one depending on the profile. Ignoring this
-        /// would make `karstd pubkey` print a Category 3 key for a CNSA node,
-        /// which the operator would then paste into every peer's roster.
-        #[serde(default)]
-        crypto_profile: CryptoProfile,
     }
 
     let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -1200,12 +1139,8 @@ pub fn load_keys(path: &Path) -> Result<Arc<StaticKeys>, ConfigError> {
         source,
     })?;
     let seed = decode_hex(seed.trim(), PRIVATE_KEY_LEN, "private_key_file")?;
-    let (kem_seed, dh_seed) = split_seed(&seed)?;
-    Ok(Arc::new(StaticKeys::from_seed_of_kind(
-        parsed.node.crypto_profile.kem_kind(),
-        &kem_seed,
-        &dh_seed,
-    )))
+    let kem_seed = split_seed(&seed)?;
+    Ok(Arc::new(StaticKeys::from_seed(&kem_seed)))
 }
 
 impl Peer {
@@ -1237,16 +1172,6 @@ impl Peer {
                     field: "kem_public_key",
                 }
             })?;
-        let dh: [u8; 32] =
-            entry
-                .dh_public_key
-                .as_slice()
-                .try_into()
-                .map_err(|_| ConfigError::InvalidKey {
-                    peer: name.clone(),
-                    field: "dh_public_key",
-                })?;
-
         // §7.3: an absent PSK is the lattice-only fallback, and the netmap
         // models it as `None` rather than as zeros precisely so that reaching
         // the zero key requires naming the case.
@@ -1286,11 +1211,7 @@ impl Peer {
         Ok(Self {
             name,
             node_id: entry.node_id.clone(),
-            public: Arc::new(PeerPublic {
-                kem_pk,
-                dh_pk: DhPublic::from(dh),
-                psk,
-            }),
+            public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint,
             allowed_ips,
             psk_is_fallback,
@@ -1316,14 +1237,8 @@ impl Peer {
         pairs: &mut Vec<(Prefix, usize)>,
     ) -> Result<Self, ConfigError> {
         let name = section.name;
-        // A peer's KEM parameter set is that peer's property, so the length is
-        // read rather than required: 1 184 bytes is ML-KEM-768, 1 568 is
-        // ML-KEM-1024, and nothing else is either (ADR-0015 item 1). The hex is
-        // decoded at whichever of the two it claims to be, and the parse then
-        // has to agree.
-        let kem_bytes = decode_hex_of_either(
+        let kem_bytes = decode_hex(
             &section.kem_public_key,
-            KemKind::MlKem768.public_key_len(),
             KemKind::MlKem1024.public_key_len(),
             "kem_public_key",
         )?;
@@ -1333,13 +1248,6 @@ impl Peer {
                 field: "kem_public_key",
             }
         })?;
-
-        let dh_bytes = decode_hex(&section.dh_public_key, 32, "dh_public_key")?;
-        let mut dh = [0u8; 32];
-        dh.copy_from_slice(dh_bytes.get(..32).ok_or_else(|| ConfigError::InvalidKey {
-            peer: name.clone(),
-            field: "dh_public_key",
-        })?);
 
         let psk_is_fallback = section.psk.is_none();
         let mut psk = [0u8; 32];
@@ -1382,11 +1290,7 @@ impl Peer {
         Ok(Self {
             name,
             node_id: Vec::new(),
-            public: Arc::new(PeerPublic {
-                kem_pk,
-                dh_pk: DhPublic::from(dh),
-                psk,
-            }),
+            public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint: section.endpoint,
             allowed_ips,
             psk_is_fallback,
@@ -1442,28 +1346,6 @@ pub(crate) fn decode_hex_public(s: &str, expect_len: usize) -> Result<Vec<u8>, C
     decode_hex(s, expect_len, "key")
 }
 
-/// Decode hex that may legitimately be one of two lengths.
-///
-/// Only the KEM public key needs this, and only because the two ML-KEM
-/// parameter sets are distinguished by length alone. The error names both
-/// lengths, so an operator who has pasted a truncated key sees what the two
-/// legal answers were.
-fn decode_hex_of_either(s: &str, a: usize, b: usize, field: &str) -> Result<Vec<u8>, ConfigError> {
-    let len = s.trim().len() / 2;
-    if len == a || len == b {
-        return decode_hex(s, len, field);
-    }
-    Err(ConfigError::Hex {
-        field: field.to_owned(),
-        reason: format!(
-            "expected {} or {} hex characters ({a} or {b} bytes), found {}",
-            a * 2,
-            b * 2,
-            s.trim().len()
-        ),
-    })
-}
-
 fn decode_hex(s: &str, expect_len: usize, field: &str) -> Result<Vec<u8>, ConfigError> {
     let s = s.trim();
     let bad = |reason: String| ConfigError::Hex {
@@ -1501,22 +1383,11 @@ const fn nibble(b: u8) -> Option<u8> {
     }
 }
 
-fn split_seed(seed: &[u8]) -> Result<([u8; 64], [u8; 32]), ConfigError> {
-    let bad = || ConfigError::Hex {
+fn split_seed(seed: &[u8]) -> Result<[u8; 64], ConfigError> {
+    seed.try_into().map_err(|_| ConfigError::Hex {
         field: "private_key_file".to_owned(),
         reason: format!("expected {PRIVATE_KEY_LEN} bytes of seed"),
-    };
-    let kem: [u8; 64] = seed
-        .get(..64)
-        .ok_or_else(bad)?
-        .try_into()
-        .map_err(|_| bad())?;
-    let dh: [u8; 32] = seed
-        .get(64..96)
-        .ok_or_else(bad)?
-        .try_into()
-        .map_err(|_| bad())?;
-    Ok((kem, dh))
+    })
 }
 
 /// Render bytes as lower-case hex — for generating a key file or printing a
@@ -1553,14 +1424,13 @@ mod tests {
         encode_hex(&[0x11u8; PRIVATE_KEY_LEN])
     }
 
-    fn peer_keys() -> (String, String) {
-        let (_, pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem768, &[0x22; 64]);
-        let dh = DhPublic::from(&x25519_dalek::StaticSecret::from([0x33u8; 32]));
-        (encode_hex(&pk.to_bytes()), encode_hex(dh.as_bytes()))
+    fn peer_keys() -> String {
+        let (_, pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem1024, &[0x22; 64]);
+        encode_hex(&pk.to_bytes())
     }
 
     fn roster(dir: &Path, extra_peer: &str) -> PathBuf {
-        let (kem, dh) = peer_keys();
+        let kem = peer_keys();
         write(dir, "node.key", &keys_hex(), 0o600);
         let toml = format!(
             r#"
@@ -1574,7 +1444,6 @@ psk_epoch = 7
 [[peer]]
 name = "bob"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 endpoint = "192.0.2.20:51820"
 allowed_ips = ["10.99.0.2/32"]
 {extra_peer}
@@ -1583,73 +1452,14 @@ allowed_ips = ["10.99.0.2/32"]
         write(dir, "karstd.toml", &toml, 0o600)
     }
 
-    /// A whole configuration under the CNSA profile: a Category 5 node and a
-    /// Category 5 peer. Both keys change size, which is the point.
-    fn cnsa_roster(dir: &Path) -> PathBuf {
-        let (_, pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem1024, &[0x22; 64]);
-        let kem = encode_hex(&pk.to_bytes());
-        let dh =
-            encode_hex(DhPublic::from(&x25519_dalek::StaticSecret::from([0x33u8; 32])).as_bytes());
-        write(dir, "node.key", &keys_hex(), 0o600);
-        let toml = format!(
-            r#"
-[node]
-listen = "0.0.0.0:51820"
-interface = "karst0"
-addresses = ["10.99.0.1/24"]
-private_key_file = "node.key"
-crypto_profile = "cnsa2"
-
-[[peer]]
-name = "bob"
-kem_public_key = "{kem}"
-dh_public_key = "{dh}"
-allowed_ips = ["10.99.0.2/32"]
-"#
-        );
-        write(dir, "karstd.toml", &toml, 0o600)
-    }
-
-    /// **One word decides the node's category** — ADR-0015 item 1. The same key
-    /// file expands to an ML-KEM-1024 static key under `cnsa2` and an
-    /// ML-KEM-768 one by default, and the two are different identities.
     #[test]
-    fn the_crypto_profile_chooses_the_static_keys_parameter_set() {
-        let dir = Scratch::new("cfg-profile");
-        let default_cfg = Config::load(&roster(dir.path(), "")).expect("default roster");
-        assert_eq!(default_cfg.keys.kem_kind(), KemKind::MlKem768);
-
-        let cnsa_dir = Scratch::new("cfg-cnsa");
-        let cnsa_cfg = Config::load(&cnsa_roster(cnsa_dir.path())).expect("cnsa roster");
-        assert_eq!(cnsa_cfg.keys.kem_kind(), KemKind::MlKem1024);
-        assert_eq!(cnsa_cfg.keys.kem_pk.to_bytes().len(), 1568);
-        assert_eq!(
-            cnsa_cfg.peers.first().expect("bob").public.kem_pk.kind(),
-            KemKind::MlKem1024
-        );
-
-        // The same seed, and therefore a different identity.
-        assert_ne!(
-            default_cfg.keys.hint(),
-            cnsa_cfg.keys.hint(),
-            "one key file must not yield the same peer_id_hint under both profiles"
-        );
-    }
-
-    /// `karstd pubkey` must print the key the profile actually generates. It
-    /// reads a cut-down view of the file, so this is the one place the profile
-    /// could be forgotten and the mistake would only surface as every peer
-    /// holding the wrong key.
-    #[test]
-    fn load_keys_honors_the_crypto_profile() {
+    fn load_keys_matches_the_configured_static_key() {
         let dir = Scratch::new("cfg-pubkey");
-        let path = cnsa_roster(dir.path());
-        let keys = load_keys(&path).expect("load_keys");
+        let path = roster(dir.path(), "");
+        let keys = load_keys(&path).expect("load keys");
+        let config = Config::load(&path).expect("load config");
         assert_eq!(keys.kem_kind(), KemKind::MlKem1024);
-
-        let default_dir = Scratch::new("cfg-pubkey-default");
-        let keys = load_keys(&roster(default_dir.path(), "")).expect("load_keys");
-        assert_eq!(keys.kem_kind(), KemKind::MlKem768);
+        assert_eq!(keys.kem_pk, config.keys.kem_pk);
     }
 
     /// A peer key of neither length is refused with an error naming both, so an
@@ -1661,13 +1471,13 @@ allowed_ips = ["10.99.0.2/32"]
         let path = roster(dir.path(), "");
         let text = std::fs::read_to_string(&path).expect("read");
         let broken = text.replace(
-            &format!("kem_public_key = \"{}\"", peer_keys().0),
+            &format!("kem_public_key = \"{}\"", peer_keys()),
             "kem_public_key = \"aabbcc\"",
         );
         write(dir.path(), "karstd.toml", &broken, 0o600);
         let err = Config::load(&path).expect_err("a 3-byte KEM key is not a key");
         let text = err.to_string();
-        assert!(text.contains("1184") && text.contains("1568"), "{text}");
+        assert!(text.contains("1568"), "{text}");
     }
 
     #[test]
@@ -1967,7 +1777,7 @@ host_integration = "resolvconf"
     #[test]
     fn rejects_two_peers_claiming_one_range() {
         let dir = Scratch::new("cfg");
-        let (kem, dh) = peer_keys();
+        let kem = peer_keys();
         let path = roster(
             dir.path(),
             &format!(
@@ -1975,7 +1785,6 @@ host_integration = "resolvconf"
 [[peer]]
 name = "carol"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 allowed_ips = ["10.99.0.2/32"]
 "#
             ),
@@ -1986,7 +1795,7 @@ allowed_ips = ["10.99.0.2/32"]
     #[test]
     fn rejects_duplicate_peer_names() {
         let dir = Scratch::new("cfg");
-        let (kem, dh) = peer_keys();
+        let kem = peer_keys();
         let path = roster(
             dir.path(),
             &format!(
@@ -1994,7 +1803,6 @@ allowed_ips = ["10.99.0.2/32"]
 [[peer]]
 name = "bob"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 allowed_ips = ["10.99.0.3/32"]
 "#
             ),
@@ -2103,8 +1911,7 @@ mod netmap_tests {
     use karst_control_client::transport::pb;
 
     pub(super) fn wire_peer(id: &str, dns: &str, ip: &str) -> pb::KarstNetmapPeer {
-        let (_, kem_pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem768, &[0x22; 64]);
-        let dh = DhPublic::from(&x25519_dalek::StaticSecret::from([0x33u8; 32]));
+        let (_, kem_pk) = karst_crypto::kem::keypair_from_seed(KemKind::MlKem1024, &[0x22; 64]);
         pb::KarstNetmapPeer {
             home_relay: Vec::new(),
             node_id: id.as_bytes().to_vec(),
@@ -2112,7 +1919,6 @@ mod netmap_tests {
             dns_name: dns.to_owned(),
             endpoint: String::new(),
             kem_public_key: kem_pk.to_bytes().clone(),
-            dh_public_key: dh.as_bytes().to_vec(),
             psk: vec![0x44; 32],
             psk_previous: vec![0x45; 32],
             disco_key: vec![0x46; 32],
@@ -2153,7 +1959,7 @@ mod netmap_tests {
             relay_ca_file: None,
             metrics_listen: None,
             exit_node_state_file: None,
-            keys: Arc::new(StaticKeys::from_seed(&[0x11; 64], &[0x12; 32])),
+            keys: Arc::new(StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),
             port_mapping: true,
             interface: "karst0".to_owned(),
@@ -2434,7 +2240,7 @@ mod skip_tests {
     #[test]
     fn an_unusable_peer_is_skipped_rather_than_taking_the_netmap_down() {
         let mut broken = wire_peer("bbb", "broken", "100.64.0.3");
-        broken.kem_public_key = vec![0xFF; 1184]; // right length, not a key
+        broken.kem_public_key = vec![0xFF; 1568]; // right length, not a key
 
         let map = netmap(
             vec!["100.64.0.1/16".to_owned()],
@@ -2467,7 +2273,7 @@ mod skip_tests {
     #[test]
     fn skipping_a_peer_does_not_misalign_the_filter() {
         let mut broken = wire_peer("aaa", "broken", "100.64.0.2");
-        broken.dh_public_key = vec![0x01; 8]; // too short
+        broken.kem_public_key = vec![0x01; 8]; // too short
 
         let map = netmap(
             vec!["100.64.0.1/16".to_owned()],
@@ -2521,7 +2327,7 @@ mod skip_tests {
     #[test]
     fn a_skipped_peer_is_still_reported_as_held() {
         let mut broken = wire_peer("bbb", "broken", "100.64.0.3");
-        broken.kem_public_key = vec![0xFF; 1184];
+        broken.kem_public_key = vec![0xFF; 1568];
         let map = netmap(
             vec!["100.64.0.1/16".to_owned()],
             vec![wire_peer("aaa", "alpha", "100.64.0.2"), broken],

@@ -42,40 +42,10 @@ interface = "karst0"
 # spec §13.6 explains what follows from it.
 addresses = ["10.77.0.1/24", "fd7a:5ea5::1/64"]
 
-# 96 bytes of hex seed: 64 for the ML-KEM key, 32 for X25519. Generate with
+# 64 bytes of hex seed for the ML-KEM-1024 key. Generate with
 # `karstd genkey`. Refused unless the file is mode 600 — a key readable by
 # group or other is not a key.
 private_key_file = "/etc/karst/node.key"
-
-# Which cipher-suite profile this node runs. Omitted means "default".
-#
-#   default   KARST_1 — ML-KEM-768 with an X25519 hybrid, AES-256-GCM,
-#             SHA-512. Category 3. What every node runs unless told otherwise.
-#   cnsa2     KARST_2 — ML-KEM-1024, AES-256-GCM, SHA-384, no classical half.
-#             Category 5, the CNSA 2.0 profile (ADR-0015).
-#
-# Both run AES-256-GCM. There was a third suite running ChaCha20-Poly1305 and
-# it was removed (ADR-0015 item 7): it is not a NIST algorithm, so no deployment
-# under a mandate could select it. A node without AES-NI or ARMv8 crypto
-# extensions therefore pays for AES in software.
-#
-# **This is not a preference, it is a class.** One word chooses two things that
-# must not disagree: the parameter set of this node's static KEM key, and the
-# floor it refuses below. A `cnsa2` node and a `default` node cannot talk to
-# each other — a mandated deployment may not fall back, and a node without an
-# ML-KEM-1024 key has nothing to answer with. Moving a fleet between profiles
-# is a re-keying, planned as one.
-#
-# Changing this changes the public key the same seed expands to, and therefore
-# this node's identity. Re-run `karstd pubkey` and update every peer's roster
-# entry — the key is 1568 bytes of hex under `cnsa2` against 1184 by default,
-# so a stale entry fails to load rather than failing quietly.
-#
-# `cnsa2` costs one extra handshake fragment: a KARST_2 HandshakeInit is 3210
-# bytes and needs three datagrams where KARST_1 needs two, so on a lossy link
-# expect more handshake retries (spec §6.5).
-#
-# crypto_profile = "cnsa2"
 
 # Which PSK epoch the psk values below belong to (§2.6). Rotation arrives with
 # the control plane; until then this stays put.
@@ -91,17 +61,13 @@ psk_epoch = 1
 # Used in logs and `karstd check`. Must be unique.
 name = "bob"
 
-# From `karstd pubkey` on that node. The KEM key is 1184 bytes under the
-# default profile and 1568 under `cnsa2`; its length is what says which, so
-# there is no second field to keep in step and no way to claim one and paste
-# the other. The X25519 key is 32 bytes and unused under `cnsa2`.
-kem_public_key = "…2368 hex characters…"
-dh_public_key = "…64 hex characters…"
+# From `karstd pubkey` on the peer: 1568 bytes, encoded as 3136 hex characters.
+kem_public_key = "…3136 hex characters…"
 
 # Per-pair pre-shared key, 32 bytes of hex. OPTIONAL, and its absence is
 # reported at startup rather than assumed: without it the handshake still has
-# both key families, but loses the shared secret that would survive a break of
-# both (spec §7.3). Supplying one makes this file as sensitive as the private
+# ML-KEM, but loses the shared secret that would survive a KEM break
+# (spec §7.3). Supplying one makes this file as sensitive as the private
 # key, and karstd then requires mode 600 on it too.
 # psk = "…64 hex characters…"
 
@@ -123,6 +89,5 @@ allowed_ips = ["10.77.0.2/32", "fd7a:5ea5::2/128"]
 [[peer]]
 name = "carol"
 kem_public_key = "…"
-dh_public_key = "…"
 allowed_ips = ["10.77.0.3/32"]
 # No endpoint: carol is behind NAT and will connect to us.

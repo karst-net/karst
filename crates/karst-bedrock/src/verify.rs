@@ -36,7 +36,6 @@ pub struct NodeCoverage {
     /// The static keys PHREATIC actually authenticates against — spec §6.1.
     /// Covering these is what makes the mechanism more than a formality.
     pub kem_public_key: Vec<u8>,
-    pub dh_public_key: Vec<u8>,
     pub not_before: i64,
     /// Zero means no expiry.
     pub expiry: i64,
@@ -52,7 +51,6 @@ pub struct NodeCoverage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerKeys<'a> {
     pub kem_public_key: &'a [u8],
-    pub dh_public_key: &'a [u8],
 }
 
 /// The result of verifying a log: everything a node needs to make an
@@ -96,11 +94,13 @@ impl State {
     ///
     /// **The datapath keys are what is compared.** Checking the identity key
     /// here would not do: it is not used by PHREATIC (`phreatic-v1.md` §4) and
-    /// does not appear in a netmap, so a check that ignored the static KEM and
-    /// DH keys would authorize a node to exist without constraining which
+    /// does not appear in a netmap, so a check that ignored the static KEM
+    /// key would authorize a node to exist without constraining which
     /// session keys are its — and a compromised server would still substitute
     /// the keys a handshake actually runs against. Spec §6.1. The identity key
     /// is bound to the handle during chain verification instead.
+    /// DH session keys no longer exist (ADR-0018); binding the remaining KEM
+    /// input preserves coverage of every static session-key input.
     ///
     /// This is the whole enforcement decision, in one total function with no
     /// I/O, so that the node's datapath filter and the console's "who would be
@@ -112,7 +112,7 @@ impl State {
         };
         // Not constant time — every value here is public — but comparing the
         // datapath keys at all is the entire point of the mechanism.
-        if c.kem_public_key != keys.kem_public_key || c.dh_public_key != keys.dh_public_key {
+        if c.kem_public_key != keys.kem_public_key {
             return false;
         }
         if t < c.not_before {
@@ -417,7 +417,6 @@ fn apply(st: &mut State, e: &Entry, genesis: Option<crate::log::Genesis>) -> Res
                     handle: n.handle,
                     identity_key: n.identity_key,
                     kem_public_key: n.kem_public_key,
-                    dh_public_key: n.dh_public_key,
                     not_before: n.not_before,
                     expiry: n.expiry,
                 },

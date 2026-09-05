@@ -111,8 +111,7 @@ func oidcLoginRequest(t *testing.T, token, setupKey string) []byte {
 		JwtToken:     token,
 		SetupKey:     setupKey,
 		Meta:         &proto.PeerSystemMeta{Hostname: "h", GoOS: "linux", NetbirdVersion: "0.0.0"},
-		KemPublicKey: bytesRepeat(0xAB, 1184),
-		DhPublicKey:  bytesRepeat(0xCD, 32),
+		KemPublicKey: bytesRepeat(0xAB, 1568),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

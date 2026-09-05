@@ -40,7 +40,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 
 | Area | Status |
 |---|---|
-| **PHREATIC** — handshake and datapath ([spec](spec/phreatic-v1.md)) | Draft 0.2. ML-KEM-768 + X25519, fragmentation, stateless-under-load responder, rekey |
+| **PHREATIC** — handshake and datapath ([spec](spec/phreatic-v1.md)) | Draft 0.2. ML-KEM-1024, fragmentation, stateless-under-load responder, rekey |
 | **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrollment, netmap, per-pair PSKs and disco keys, encrypted cache |
 | **Ponor** — relay ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 relay identity, structural admission |
 | **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
@@ -154,8 +154,8 @@ Notable decisions, each with an ADR:
 
 | | |
 |---|---|
-| Hybrid X25519 + ML-KEM-768, ML-DSA-65, SLH-DSA-192s | [0001](docs/adr/0001-cryptographic-algorithm-selection.md), [0002](docs/adr/0002-hybrid-key-agreement.md) |
-| Greenfield Rust datapath — a 2378-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
+| CNSA 2.0 only: ML-KEM-1024, ML-DSA-87, AES-256-GCM, SHA-384 | [0018](docs/adr/0018-cnsa-2-0-as-the-sole-suite.md) |
+| Greenfield Rust datapath — a 3210-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
 | Fragmentation with a stateless-under-load responder; per-pair PSK hedge | [0004](docs/adr/0004-handshake-mtu-and-kem-selection.md) |
 | MIT/Apache clients, AGPL server, DCO not CLA, no commercial license | [0007](docs/adr/0007-licensing.md) |
 | Relay co-located with the coordination server; TURN fallback | [0008](docs/adr/0008-relay-infrastructure-and-funding.md) |

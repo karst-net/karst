@@ -136,9 +136,7 @@ fn netmap_with_psks() -> Netmap {
     use karst_crypto::kem::{keypair_from_seed, KemKind};
 
     let peer = |id: &str, ip: &str, seed: u8| {
-        let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[seed; 64]);
-        let dh =
-            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([seed ^ 0xFF; 32]));
+        let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[seed; 64]);
         pb::KarstNetmapPeer {
             home_relay: Vec::new(),
             node_id: id.as_bytes().to_vec(),
@@ -146,7 +144,6 @@ fn netmap_with_psks() -> Netmap {
             dns_name: id.to_owned(),
             endpoint: String::new(),
             kem_public_key: kem_pk.to_bytes().clone(),
-            dh_public_key: dh.as_bytes().to_vec(),
             psk: PSK.to_vec(),
             psk_previous: PREVIOUS_PSK.to_vec(),
             disco_key: DISCO_KEY.to_vec(),
@@ -185,10 +182,7 @@ fn local() -> LocalSettings {
     LocalSettings {
         relay_ca_file: None,
         metrics_listen: None,
-        keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-            &[0x11; 64],
-            &[0x12; 32],
-        )),
+        keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
         listen: "0.0.0.0:51820".parse().expect("addr"),
         port_mapping: true,
         interface: "karst0".to_owned(),
@@ -272,7 +266,6 @@ fn every_diagnostic(config: &Arc<Config>, netmap: &Netmap) -> String {
 
 fn rand() -> karst_noise::handshake::ResponderRandomness {
     karst_noise::handshake::ResponderRandomness {
-        e_dh_seed: [0xF1; 32],
         encap_rand_e: [0xF2; 32],
         encap_rand_s: [0xF3; 32],
     }
@@ -434,8 +427,8 @@ fn the_bug_report_is_useful_and_says_what_it_omits() {
 fn a_lattice_only_node_is_reported_as_such() {
     use karst_crypto::kem::{keypair_from_seed, KemKind};
 
-    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[0x41; 64]);
-    let dh = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0xBEu8; 32]));
+    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[0x41; 64]);
+
     let mut resp = pb::KarstNetmapResponse {
         psk_epoch: 0,
         node_id: b"self".to_vec(),
@@ -448,7 +441,6 @@ fn a_lattice_only_node_is_reported_as_such() {
             endpoint: String::new(),
             home_relay: Vec::new(),
             kem_public_key: kem_pk.to_bytes().clone(),
-            dh_public_key: dh.as_bytes().to_vec(),
             psk: Vec::new(),
             psk_previous: Vec::new(),
             disco_key: Vec::new(),
