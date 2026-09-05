@@ -1,2 +1,76 @@
 <!doctype html>
-<html lang="en"><meta charset="utf-8"><title>Install Karst</title><body><main><h1>Install and verify Karst</h1><p>Download the installer for your platform from the Karst portal. Before installing, compute its SHA-256 checksum and compare it character-for-character with the checksum shown beside that release.</p><h2>Windows</h2><pre>Get-FileHash karst-windows-amd64.msi -Algorithm SHA256</pre><h2>macOS and Linux</h2><pre>sha256sum INSTALLER</pre><p>Do not install an artifact whose checksum differs. Download it again from the portal; if it still differs, contact your administrator.</p></main></body></html>
+<html lang="en"><meta charset="utf-8"><title>Install Karst</title><body><main>
+<h1>Install and verify Karst</h1>
+<p>Download the installer for your platform from the <a href="/#/download">Download</a> page. Before installing, compute its SHA-256 checksum and compare it character-for-character with the checksum shown beside that release. Do not install an artifact whose checksum differs — download it again from the portal, and if it still differs, contact your administrator.</p>
+
+<h2>macOS</h2>
+<ol>
+  <li>Download <code>karst-macos-universal.pkg</code> and verify it:
+    <pre>sha256sum karst-macos-universal.pkg</pre>
+    It is signed and notarized, so Gatekeeper accepts it on a clean machine without an override.</li>
+  <li>Install it, either by double-clicking the downloaded file or from a terminal:
+    <pre>sudo installer -pkg karst-macos-universal.pkg -target /</pre></li>
+  <li>The package installs <code>karstd</code> and <code>karst</code> to <code>/usr/local/bin</code>, an example configuration at <code>/etc/karst/karstd.toml.example</code>, and the <strong>Karst Status</strong> menu bar app in <code>/Applications</code>. It also installs the <code>karstd</code> LaunchDaemon, but <strong>does not start it</strong> — there is no <code>/etc/karst/karstd.toml</code> yet, and starting a daemon with nothing to run on would only hand you a crash loop.</li>
+  <li>Continue with <a href="#configuring-from-the-console">configuring the client from the admin console</a> below.</li>
+</ol>
+<p>To remove Karst from a Mac: <code>sudo /usr/local/bin/karst-uninstall</code>.</p>
+
+<h2>Linux</h2>
+<ol>
+  <li>Download the package matching your distribution and CPU architecture and verify it:
+    <pre>sha256sum karst-client_&lt;version&gt;_amd64.deb   # or the .rpm / arm64 build you downloaded</pre></li>
+  <li>Install it:
+    <pre>
+# Debian, Ubuntu (amd64 or arm64)
+sudo apt install ./karst-client_&lt;version&gt;_amd64.deb
+
+# Fedora, RHEL (x86_64 or aarch64)
+sudo dnf install ./karst-client-&lt;version&gt;.x86_64.rpm</pre>
+    <code>apt</code> and <code>dnf</code> resolve dependencies from a local file; <code>dpkg -i</code> or <code>rpm -i</code> work too but leave you to install any missing dependency by hand.</li>
+  <li>The package installs <code>karstd</code> and <code>karst</code> to <code>/usr/bin</code> and a <code>karstd</code> systemd unit, but — same as macOS — <strong>does not enable or start it</strong>: <code>karstd</code> exits non-zero with no <code>/etc/karst/karstd.toml</code>, and a service that restarts forever is a worse first impression than one that waits.</li>
+  <li>Continue with <a href="#configuring-from-the-console">configuring the client from the admin console</a> below.</li>
+</ol>
+<p>To remove Karst from a Linux host: <code>sudo apt remove karst-client</code> or <code>sudo dnf remove karst-client</code>.</p>
+
+<h2 id="configuring-from-the-console">Configuring the client from the admin console</h2>
+<p>Installing the package gets the binaries and the service definition onto the machine. The client does nothing until it is configured with where to enroll and what key to enroll with — and that key comes from your organization's admin console.</p>
+<ol>
+  <li><strong>Generate the node's key</strong> — the same command on macOS and Linux. It never leaves this machine:
+    <pre>
+sudo sh -c 'umask 077 && karstd genkey > /etc/karst/node.key'
+sudo chmod 600 /etc/karst/node.key</pre></li>
+  <li><strong>In the admin console</strong>, open <em>Setup</em> (on a new deployment) or <em>Auth keys → Create auth key</em>, and note down three things:
+    <ul>
+      <li>the coordination server's public URL, entered or shown in that view;</li>
+      <li>the one-time enrollment key it issues — it is shown only once, so copy it immediately; and</li>
+      <li>the server's KEM and signature pins. These are not printed by the console — your administrator reads them from the coordination server's own startup log the first time it runs, and they do not change afterward.</li>
+    </ul></li>
+  <li><strong>Write <code>/etc/karst/karstd.toml</code></strong> with all four of those values. This is the same file on both platforms:
+    <pre>
+[node]
+listen = "0.0.0.0:51820"
+interface = "karst0"
+private_key_file = "/etc/karst/node.key"
+
+[control]
+server = "http://karst.example.com:33073"
+server_kem_pin = "&lt;from the server's startup log&gt;"
+server_verify_pin = "&lt;from the server's startup log&gt;"
+setup_key = "&lt;the one-time key from the console&gt;"
+cache_file = "/var/lib/karst/netmap.cache"</pre>
+    <code>server</code> is <code>http://</code>, not <code>https://</code>, even though the console itself is served over TLS — the control channel is its own protocol, authenticated by the two pins below rather than by TLS, and writing <code>https://</code> here does not add encryption the daemon knows how to speak. Ask your administrator for the address if this one does not resolve for you; it is not necessarily the same host or port as the console. <code>identity_key_file</code> can be left unset — <code>karstd</code> creates <code>/etc/karst/identity.key</code> itself on first run. Both pins are mandatory: a node that trusted only one of them would connect but silently lose forward secrecy, which is worse than refusing to start.</li>
+  <li><strong>Validate the configuration</strong> before starting anything:
+    <pre>sudo karstd check --config /etc/karst/karstd.toml</pre></li>
+  <li><strong>Start the service.</strong>
+    <pre>
+# macOS
+sudo launchctl bootstrap system /Library/LaunchDaemons/dev.karst.karstd.plist
+
+# Linux
+sudo systemctl enable --now karstd</pre></li>
+  <li><strong>Confirm it enrolled</strong>, both locally and in the console. Locally:
+    <pre>karst status</pre>
+    reports the peer's session state and whether its path is <code>direct</code> or <code>relay</code> — a brand new node is relayed first and typically goes direct within seconds. In the console, open <strong>Machines</strong> and confirm the new device has a current observation and crypto posture.</li>
+</ol>
+<p>If the node never appears, or the console's <strong>Machines</strong> view goes stale, re-check the server URL and pins before creating another enrollment key — a wrong pin fails silently rather than with an error naming it. Never paste an enrollment key or a pin into a ticket, chat, or shell history you do not control.</p>
+</main></body></html>
