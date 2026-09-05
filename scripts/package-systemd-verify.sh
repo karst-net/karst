@@ -75,8 +75,8 @@ REFUSED
   exit 2
 fi
 
-package=$(find "$package_dir" -maxdepth 1 -name 'karst-client*.deb' | head -1)
-[ -n "$package" ] || { echo "package-systemd-verify: no karst-client .deb in $package_dir" >&2; exit 2; }
+package=$(find "$package_dir" -maxdepth 1 -name 'karst-client-linux*.deb' | head -1)
+[ -n "$package" ] || { echo "package-systemd-verify: no karst-client-linux .deb in $package_dir" >&2; exit 2; }
 
 section "install"
 dpkg --install "$package"
@@ -319,7 +319,7 @@ rm -f "$saved" "$applied"
 # ── Removal leaves nothing running ──────────────────────────────────────────
 
 section "removal"
-dpkg --remove karst-client
+dpkg --remove karst-client-linux
 systemctl daemon-reload
 if systemctl is-active karstd.service >/dev/null 2>&1; then
   fail "the service is still running after removal"

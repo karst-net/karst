@@ -49,7 +49,7 @@
 
 set -euo pipefail
 
-package="${1:-dist/macos/karst-macos-universal.pkg}"
+package="${1:-dist/macos/karst-client-macos.pkg}"
 
 missing=0
 note() { echo "  - $1"; missing=1; }

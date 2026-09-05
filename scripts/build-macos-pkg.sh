@@ -176,7 +176,7 @@ fi
 # removes both from one place but treats them as two things throughout.
 component="$dist/karst-component.pkg"
 status_component="$dist/karst-status-component.pkg"
-product="$dist/karst-macos-universal.pkg"
+product="$dist/karst-client-macos.pkg"
 
 echo "==> pkgbuild (karstd)"
 pkgbuild \

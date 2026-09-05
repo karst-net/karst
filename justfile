@@ -54,9 +54,9 @@ packages version="0.0.1":
     # is the packaging's upgrade path, not a difference between two builds.
     for packager in deb rpm; do
         VERSION={{ version }} ARCH="$arch" nfpm package --packager "$packager" \
-            --target dist/packages/old/ --config packaging/nfpm/karst-client.yaml
+            --target dist/packages/old/ --config packaging/nfpm/karst-client-linux.yaml
         VERSION={{ version }}.1 ARCH="$arch" nfpm package --packager "$packager" \
-            --target dist/packages/new/ --config packaging/nfpm/karst-client.yaml
+            --target dist/packages/new/ --config packaging/nfpm/karst-client-linux.yaml
     done
     # Advisory here, fatal in CI. A developer on a current distribution cannot
     # produce a 2.34-floor binary without the release container, and refusing

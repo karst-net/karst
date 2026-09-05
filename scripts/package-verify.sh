@@ -15,7 +15,7 @@
 #
 #   scripts/package-verify.sh OLD_DIR NEW_DIR
 #
-# where each directory holds one karst-client package (.deb or .rpm) and NEW is
+# where each directory holds one karst-client-linux package (.deb or .rpm) and NEW is
 # a higher version than OLD. Run it as root, in a throwaway machine or
 # container: it installs packages and writes under /etc and /var.
 #
@@ -82,8 +82,8 @@ fi
 
 find_package() {
   local dir=$1 found
-  found=$(find "$dir" -maxdepth 1 -name "karst-client*.$family" | head -1)
-  [ -n "$found" ] || { echo "package-verify: no karst-client .$family in $dir" >&2; exit 2; }
+  found=$(find "$dir" -maxdepth 1 -name "karst-client-linux*.$family" | head -1)
+  [ -n "$found" ] || { echo "package-verify: no karst-client-linux .$family in $dir" >&2; exit 2; }
   echo "$found"
 }
 
@@ -101,15 +101,15 @@ install_package() {
 
 remove_package() {
   case $family in
-    deb) dpkg --remove karst-client ;;
-    rpm) rpm --erase karst-client ;;
+    deb) dpkg --remove karst-client-linux ;;
+    rpm) rpm --erase karst-client-linux ;;
   esac
 }
 
 installed_version() {
   case $family in
-    deb) dpkg-query --showformat='${Version}' --show karst-client ;;
-    rpm) rpm --query --queryformat '%{VERSION}-%{RELEASE}' karst-client ;;
+    deb) dpkg-query --showformat='${Version}' --show karst-client-linux ;;
+    rpm) rpm --query --queryformat '%{VERSION}-%{RELEASE}' karst-client-linux ;;
   esac
 }
 

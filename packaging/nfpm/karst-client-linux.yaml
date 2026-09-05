@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 
-name: karst-client
+name: karst-client-linux
 arch: ${ARCH}
 platform: linux
 version: "${VERSION}"

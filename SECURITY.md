@@ -118,9 +118,9 @@ and notarized by Apple, which is what lets Gatekeeper accept it. Both are
 checkable locally:
 
 ```sh
-pkgutil --check-signature karst-macos-universal.pkg
-spctl --assess --type install -vv karst-macos-universal.pkg
-xcrun stapler validate karst-macos-universal.pkg
+pkgutil --check-signature karst-client-macos.pkg
+spctl --assess --type install -vv karst-client-macos.pkg
+xcrun stapler validate karst-client-macos.pkg
 ```
 
 Container images are signed keylessly with cosign, so there is no public key to

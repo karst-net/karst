@@ -53,11 +53,11 @@ while IFS= read -r path; do
     # Debian names the architecture amd64/arm64; RPM says x86_64/aarch64. The
     # manifest normalizes to the Debian spelling so the portal has one word per
     # architecture rather than two.
-    karst-client_*_amd64.deb)      assets+=("$(emit_asset "$path" linux amd64 deb)") ;;
-    karst-client_*_arm64.deb)      assets+=("$(emit_asset "$path" linux arm64 deb)") ;;
-    karst-client-*.x86_64.rpm)     assets+=("$(emit_asset "$path" linux amd64 rpm)") ;;
-    karst-client-*.aarch64.rpm)    assets+=("$(emit_asset "$path" linux arm64 rpm)") ;;
-    karst-macos-universal.pkg)     assets+=("$(emit_asset "$path" macos universal pkg)") ;;
+    karst-client-linux_*_amd64.deb)   assets+=("$(emit_asset "$path" linux amd64 deb)") ;;
+    karst-client-linux_*_arm64.deb)   assets+=("$(emit_asset "$path" linux arm64 deb)") ;;
+    karst-client-linux-*.x86_64.rpm)  assets+=("$(emit_asset "$path" linux amd64 rpm)") ;;
+    karst-client-linux-*.aarch64.rpm) assets+=("$(emit_asset "$path" linux arm64 rpm)") ;;
+    karst-client-macos.pkg)           assets+=("$(emit_asset "$path" macos universal pkg)") ;;
     karst-*-x64.msi | karst-windows-*.msi)
                                    assets+=("$(emit_asset "$path" windows amd64 msi)") ;;
   esac
