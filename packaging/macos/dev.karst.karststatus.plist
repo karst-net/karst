@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  KarstStatus, the menu-bar status indicator, as a per-user LaunchAgent.
+
+  Installed by karst-status-component.pkg — the second pkg-ref in
+  Distribution.xml, built alongside dev.karst.karstd's component in one
+  .pkg by scripts/build-macos-pkg.sh, so a user downloads and runs one
+  installer for both. status-scripts/postinstall loads this for whoever is
+  at the console at install time, best-effort; RunAtLoad below covers every
+  login after that regardless. See
+  plans/phase-6/13-macos-status-indicators.md §2 item 1.
+
+  A LaunchAgent, not a LaunchDaemon: this runs in the logged-in user's GUI
+  session, which is the only place an NSStatusItem can exist at all —
+  karstd's own LaunchDaemon has no GUI session to run one in, which is the
+  entire reason this is a second process rather than a flag on the first.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.karst.karststatus</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Karst Status.app/Contents/MacOS/KarstStatus</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      Restart on a crash, but not on a clean exit — the same rule
+      dev.karst.karstd.plist uses, for the same reason: relaunching after a
+      deliberate quit would make the menu-bar item impossible to dismiss.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!--
+      No StandardOutPath/StandardErrorPath: unlike karstd, this process
+      never runs as root and has no /var/log/karst write access to lose by
+      going to the default (per-user) launchd log instead.
+    -->
+</dict>
+</plist>

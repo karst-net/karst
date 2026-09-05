@@ -37,6 +37,12 @@ USAGE:
 OPTIONS:
     -c, --config PATH   configuration file (default: /etc/karst/karstd.toml)
     -s, --socket PATH   control socket (default: /run/karst/karstd.sock)
+    --status-socket PATH
+                        a second, unprivileged read-only socket serving
+                        `status` only — for a per-user client that cannot
+                        reach the admin socket above. Absent unless given;
+                        nothing binds it by default. See
+                        `karstd::ipc::bind_unprivileged_status`.
     -h, --help          this text
 
 Use `karst status` to inspect a running daemon.
@@ -73,10 +79,11 @@ fn config_path(args: &[&str]) -> Result<PathBuf, String> {
     Ok(parse_args(args)?.0)
 }
 
-/// Parse the option pair every subcommand accepts.
-fn parse_args(args: &[&str]) -> Result<(PathBuf, PathBuf), String> {
+/// Parse the option set every subcommand accepts.
+fn parse_args(args: &[&str]) -> Result<(PathBuf, PathBuf, Option<PathBuf>), String> {
     let mut config = PathBuf::from(DEFAULT_CONFIG);
     let mut socket = None;
+    let mut status_socket = None;
     let mut it = args.iter().copied();
     while let Some(arg) = it.next() {
         match arg {
@@ -89,10 +96,17 @@ fn parse_args(args: &[&str]) -> Result<(PathBuf, PathBuf), String> {
             "-s" | "--socket" => {
                 socket = Some(it.next().ok_or_else(|| format!("{arg} needs a path"))?);
             }
+            "--status-socket" => {
+                status_socket = Some(
+                    it.next()
+                        .ok_or_else(|| format!("{arg} needs a path"))?
+                        .into(),
+                );
+            }
             other => return Err(format!("unknown option {other:?}")),
         }
     }
-    Ok((config, karstd::ipc::socket_path(socket)))
+    Ok((config, karstd::ipc::socket_path(socket), status_socket))
 }
 
 /// Load a configuration from whichever source the file names.
@@ -129,7 +143,7 @@ fn init_tracing() {
 fn command_run(args: &[&str]) -> ExitCode {
     init_tracing();
 
-    let (config_path, socket) = match parse_args(args) {
+    let (config_path, socket, status_socket) = match parse_args(args) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("karstd: {e}");
@@ -149,6 +163,7 @@ fn command_run(args: &[&str]) -> ExitCode {
         &Shutdown::default(),
         &socket,
         client,
+        status_socket.as_deref(),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

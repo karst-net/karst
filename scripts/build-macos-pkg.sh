@@ -59,9 +59,15 @@ version="${VERSION:-0.0.0+git.$(git -C "$root" rev-parse --short HEAD 2>/dev/nul
 pkg_version="${version%%+*}"
 
 dist="$root/dist/macos"
+# Two staging roots, not one, because they become two separate `pkgbuild`
+# components below — see the "the packages" section for why. `stage` is
+# `dev.karst.karstd`'s; `stage_status` is `dev.karst.karststatus`'s.
 stage="$dist/root"
+stage_status="$dist/root-status"
 rm -rf "$dist"
-mkdir -p "$dist" "$stage/usr/local/bin" "$stage/Library/LaunchDaemons" "$stage/etc/karst"
+mkdir -p "$dist" \
+  "$stage/usr/local/bin" "$stage/Library/LaunchDaemons" "$stage/etc/karst" \
+  "$stage_status/Applications" "$stage_status/Library/LaunchAgents"
 
 # ── universal binaries ──────────────────────────────────────────────────────
 #
@@ -92,6 +98,35 @@ cp "$root/docs/karstd-example.toml" "$stage/etc/karst/karstd.toml.example"
 cp "$root/packaging/macos/uninstall.sh" "$stage/usr/local/bin/karst-uninstall"
 chmod 0755 "$stage/usr/local/bin/karst-uninstall"
 
+# ── the menu-bar status app (Swift) ─────────────────────────────────────────
+#
+# Universal like the Rust binaries above, via SwiftPM's own multi-arch
+# support rather than a second `lipo` invocation: passing `--arch` twice
+# tells `swift build` to produce one fat binary directly, under a build
+# directory (`.build/apple/...`) distinct from a single-arch build's.
+echo "==> building KarstStatus"
+(cd "$root/packaging/macos/KarstStatus" && \
+    swift build -c release --arch arm64 --arch x86_64)
+status_bin="$root/packaging/macos/KarstStatus/.build/apple/Products/Release/KarstStatus"
+[ -x "$status_bin" ] \
+  || { echo "error: KarstStatus build did not produce $status_bin" >&2; exit 1; }
+lipo -info "$status_bin"
+
+app="$stage_status/Applications/Karst Status.app"
+mkdir -p "$app/Contents/MacOS"
+cp "$status_bin" "$app/Contents/MacOS/KarstStatus"
+chmod 0755 "$app/Contents/MacOS/KarstStatus"
+cp "$root/packaging/macos/KarstStatus/Info.plist" "$app/Contents/Info.plist"
+# The template ships "0.0.0" — see its own comment. Both keys, because
+# Gatekeeper and Spotlight read `CFBundleShortVersionString` but some
+# tooling (and a `defaults read`) expects `CFBundleVersion` too, and a
+# mismatch between them is worse than redundancy.
+plutil -replace CFBundleShortVersionString -string "$pkg_version" "$app/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$pkg_version" "$app/Contents/Info.plist"
+
+cp "$root/packaging/macos/dev.karst.karststatus.plist" "$stage_status/Library/LaunchAgents/"
+chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
+
 # ── signing the binaries ────────────────────────────────────────────────────
 # The policy argument is not decoration. `-p codesigning` lists only identities
 # valid for signing *code*, and a Developer ID Installer certificate is not one
@@ -120,16 +155,30 @@ if [ -n "$codesign_identity" ]; then
       --sign "$codesign_identity" "$stage/usr/local/bin/$binary"
     codesign --verify --strict --verbose=2 "$stage/usr/local/bin/$binary"
   done
+  echo "==> codesign Karst Status.app"
+  codesign --force --options runtime --timestamp \
+    --sign "$codesign_identity" "$app"
+  codesign --verify --strict --verbose=2 "$app"
 else
-  echo "==> no Developer ID Application identity: binaries will be UNSIGNED"
+  echo "==> no Developer ID Application identity: binaries and Karst Status.app will be UNSIGNED"
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 
-# ── the package ─────────────────────────────────────────────────────────────
+# ── the packages ─────────────────────────────────────────────────────────────
+#
+# Two `pkgbuild` components from the two staging roots, one `productbuild`
+# distribution over both — plans/phase-6/13-macos-status-indicators.md:
+# users should not have to download two files for one feature. Separate
+# components rather than one merged root because they need different
+# install scripts (status-scripts/ never touches /etc/karst or the daemon's
+# config) and because separate `pkgutil` receipts mean either can be
+# inspected, upgraded or removed without the other — see uninstall.sh, which
+# removes both from one place but treats them as two things throughout.
 component="$dist/karst-component.pkg"
+status_component="$dist/karst-status-component.pkg"
 product="$dist/karst-macos-universal.pkg"
 
-echo "==> pkgbuild"
+echo "==> pkgbuild (karstd)"
 pkgbuild \
   --root "$stage" \
   --identifier dev.karst.karstd \
@@ -138,6 +187,36 @@ pkgbuild \
   --install-location / \
   --ownership recommended \
   "$component"
+
+echo "==> pkgbuild (Karst Status)"
+echo "==> staged tree before pkgbuild:"
+find "$stage_status" | sort
+
+# `pkgbuild` infers a "bundle component" for any .app in `--root` and, by
+# default, makes it relocatable and version-checked: at install time it goes
+# looking for an existing copy anywhere Launch Services knows about, by
+# bundle identifier, and can decide the payload does not need to be placed
+# at all — silently. `installer` still reports success; nothing under
+# /Applications ever appears. That is exactly what a first version of this
+# script hit: "The install was successful," and no app. `--analyze` plus
+# forcing both flags off makes pkgbuild treat this bundle like every other
+# file in the payload — always placed at the literal root-relative path.
+component_plist="$dist/karst-status-component.plist"
+pkgbuild --analyze --root "$stage_status" "$component_plist"
+plutil -replace 0.BundleIsRelocatable -bool NO "$component_plist"
+plutil -replace 0.BundleIsVersionChecked -bool NO "$component_plist"
+
+pkgbuild \
+  --root "$stage_status" \
+  --component-plist "$component_plist" \
+  --identifier dev.karst.karststatus \
+  --version "$pkg_version" \
+  --scripts "$root/packaging/macos/status-scripts" \
+  --install-location / \
+  --ownership recommended \
+  "$status_component"
+echo "==> payload pkgbuild actually recorded:"
+pkgutil --payload-files "$status_component"
 
 echo "==> productbuild"
 productbuild \
@@ -186,6 +265,6 @@ else
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 
-rm -f "$component"
+rm -f "$component" "$status_component"
 shasum -a 256 "$product" | tee "$product.sha256"
 echo "==> $product"

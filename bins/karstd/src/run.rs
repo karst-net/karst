@@ -199,11 +199,14 @@ pub fn run_with_socket(
     shutdown: &Shutdown,
     socket_path: &std::path::Path,
 ) -> io::Result<()> {
-    run_with_control(config, shutdown, socket_path, None)
+    run_with_control(config, shutdown, socket_path, None, None)
 }
 
 /// As [`run_with_socket`], with a control-server client that keeps the netmap
-/// current.
+/// current, and optionally a second, unprivileged status listener —
+/// `ipc::bind_unprivileged_status`'s module note has the reasoning.
+/// `status_socket_path` is `None` unless `karstd` was started with
+/// `--status-socket`; nothing binds by default.
 ///
 /// # Errors
 /// As [`run`].
@@ -213,6 +216,7 @@ pub fn run_with_control(
     shutdown: &Shutdown,
     socket_path: &std::path::Path,
     control_client: Option<crate::control::Client>,
+    status_socket_path: Option<&std::path::Path>,
 ) -> io::Result<()> {
     let control_endpoint = control_client
         .as_ref()
@@ -334,6 +338,16 @@ pub fn run_with_control(
     // request; a blocking accept would hold the daemon open until someone
     // connected.
     control.set_nonblocking(true)?;
+
+    // The unprivileged status listener — absent unless `--status-socket` named
+    // a path. Bound here, alongside the admin socket, so both fail startup
+    // together rather than one of them silently never coming up.
+    let status_control = status_socket_path
+        .map(ipc::bind_unprivileged_status)
+        .transpose()?;
+    if let Some(listener) = &status_control {
+        listener.set_nonblocking(true)?;
+    }
 
     let started = Instant::now();
     // No mutex. The engine locks per peer internally — see its module docs and
@@ -649,6 +663,9 @@ pub fn run_with_control(
         let last_push_ctl = &last_push;
         let relay_health_ctl = &relay_health;
         let turn_health_ctl = &turn_health;
+        // A second handle: the block below moves `relay_dropped` itself into
+        // this closure, so anything after it needs its own `Arc`.
+        let relay_dropped_status = Arc::clone(&relay_dropped);
         scope.spawn(move || {
             while !shutdown.requested() {
                 match control.accept() {
@@ -807,7 +824,7 @@ pub fn run_with_control(
                         });
                         if matches!(handled, Ok(Some(ipc::Command::Down))) {
                             shutdown.request();
-                            stop(socket_path);
+                            stop(socket_path, status_socket_path);
                         }
                     }
                     // Nothing waiting. Sleeping beats spinning, and the
@@ -819,6 +836,71 @@ pub fn run_with_control(
                 }
             }
         });
+
+        // ── unprivileged status socket ───────────────────────────────────────
+        //
+        // Present only when `status_socket_path` was `Some` — see
+        // `ipc::bind_unprivileged_status`'s module note. Serves exactly one
+        // thing, `status`, regardless of what is sent: not `down`, not
+        // `bugreport`, nothing a local user without `sudo` should be able to
+        // reach through the socket the admin thread above owns.
+        if let Some(status_listener) = &status_control {
+            scope.spawn(move || {
+                while !shutdown.requested() {
+                    match status_listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let _ = stream.set_nonblocking(false);
+                            let _ = ipc::serve(&mut stream, |command| {
+                                if command != ipc::Command::Status {
+                                    return "error = \"this socket serves status only\"\n"
+                                        .to_owned();
+                                }
+                                report(
+                                    &ipc::Command::Status,
+                                    config,
+                                    engine_ctl,
+                                    Attachment {
+                                        name: tun_ctl.name(),
+                                        mtu: tun_ctl.mtu(),
+                                        sockets: tun_ctl
+                                            .userspace()
+                                            .map(|stack| stack.socket_count()),
+                                        unreachable_family: socket_ctl
+                                            .is_ipv4_only()
+                                            .then(|| socket_ctl.unreachable_family()),
+                                    },
+                                    started,
+                                    &relay_dropped_status,
+                                    Some(portmap_state.snapshot()),
+                                    BugReportExtras {
+                                        since_last_push: last_push_ctl
+                                            .lock()
+                                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                            .map(|at| at.elapsed()),
+                                        relay_health: relay_health_ctl
+                                            .lock()
+                                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                            .iter()
+                                            .map(|(k, v)| (k.clone(), *v))
+                                            .collect(),
+                                        turn_health: turn_health_ctl
+                                            .lock()
+                                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                            .iter()
+                                            .map(|(k, v)| (k.clone(), *v))
+                                            .collect(),
+                                    },
+                                )
+                            });
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(TICK);
+                        }
+                        Err(_) => std::thread::sleep(TICK),
+                    }
+                }
+            });
+        }
 
         // ── netmap refresh ─────────────────────────────────────────────────
         if let Some(client) = control_client {
@@ -983,6 +1065,9 @@ pub fn run_with_control(
     // makes the next start look like a stale-socket recovery rather than a
     // clean one.
     let _ = std::fs::remove_file(socket_path);
+    if let Some(path) = status_socket_path {
+        let _ = std::fs::remove_file(path);
+    }
     if let Some(runtime) = dns_runtime
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3095,8 +3180,11 @@ fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
 /// persistent, so the kernel removes it when this process's descriptor closes,
 /// which happens on any exit. The only thing that would otherwise be left
 /// behind is the socket file, removed here first.
-fn stop(socket_path: &std::path::Path) -> ! {
+fn stop(socket_path: &std::path::Path, status_socket_path: Option<&std::path::Path>) -> ! {
     let _ = std::fs::remove_file(socket_path);
+    if let Some(path) = status_socket_path {
+        let _ = std::fs::remove_file(path);
+    }
     std::process::exit(0)
 }
 
@@ -3622,6 +3710,10 @@ fn report(
                 // it is stated rather than left to be inferred from a latency
                 // measurement. "none" is a third answer and a different problem.
                 let _ = writeln!(out, "transport = \"{}\"", p.transport);
+                // Running totals, not rates — a caller wanting throughput
+                // samples this twice and differences it. See `PeerStatus`.
+                let _ = writeln!(out, "tx_bytes = {}", p.tx_bytes);
+                let _ = writeln!(out, "rx_bytes = {}", p.rx_bytes);
             }
             out
         }
@@ -4297,6 +4389,8 @@ fn bug_report(
         // Whether a PSK exists, never what it is.
         let _ = writeln!(out, "psk_fallback = {}", p.psk_is_fallback);
         let _ = writeln!(out, "transport = \"{}\"", p.transport);
+        let _ = writeln!(out, "tx_bytes = {}", p.tx_bytes);
+        let _ = writeln!(out, "rx_bytes = {}", p.rx_bytes);
     }
 
     out

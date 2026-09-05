@@ -21,20 +21,36 @@
     </volume-check>
 
     <!--
-      System volume only. The daemon's paths are absolute — /usr/local/bin,
-      /Library/LaunchDaemons, /etc/karst — so installing onto any other volume
-      would produce a package whose files are not where its plist says.
+      System volume only. Both components' paths are absolute —
+      /usr/local/bin, /Library/LaunchDaemons, /etc/karst, /Applications,
+      /Library/LaunchAgents — so installing onto any other volume would
+      produce a package whose files are not where its plists say.
     -->
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
     <domains enable_localSystem="true" enable_anywhere="false" enable_currentUserHome="false"/>
 
+    <!--
+      Two components, one package. `customize="never"` above means an
+      operator never sees a choice screen either way — both install
+      together, silently — so this is about keeping the daemon and the
+      menu-bar app as separately identified, separately upgradable and
+      separately uninstallable `pkgutil` receipts, not about giving anyone
+      an option. plans/phase-6/13-macos-status-indicators.md: users should
+      not have to download two files for one feature, which is why this is
+      one Distribution rather than two products.
+    -->
     <choices-outline>
         <line choice="dev.karst.karstd"/>
+        <line choice="dev.karst.karststatus"/>
     </choices-outline>
 
     <choice id="dev.karst.karstd" visible="false" title="Karst node agent">
         <pkg-ref id="dev.karst.karstd"/>
     </choice>
+    <choice id="dev.karst.karststatus" visible="false" title="Karst status indicator">
+        <pkg-ref id="dev.karst.karststatus"/>
+    </choice>
 
     <pkg-ref id="dev.karst.karstd">karst-component.pkg</pkg-ref>
+    <pkg-ref id="dev.karst.karststatus">karst-status-component.pkg</pkg-ref>
 </installer-gui-script>

@@ -1,0 +1,33 @@
+name: macOS status app (Swift)
+
+# Ad hoc build check for packaging/macos/KarstStatus —
+# plans/phase-6/13-macos-status-indicators.md. That package was written on a
+# Linux machine with no Swift/AppKit toolchain available to verify it; this
+# is the fastest way to find out whether it actually compiles, without
+# waiting on a Mac. Deliberately its own workflow rather than a job added to
+# ci.yml: it needs no Rust, no Go, none of that workflow's other jobs, and
+# keeping it separate means running it costs nothing beyond itself.
+#
+# Not yet a merge gate — see the plan doc's own "unbuilt and unverified"
+# note. Whether this becomes a permanent part of `ci` (probably folded into
+# the existing `macos` job once the app is real) is a decision for whoever
+# picks this item back up, not made here by adding a job nobody asked to be
+# a gate yet.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packaging/macos/KarstStatus/**'
+      - '.github/workflows/macos-status-swift-build.yml'
+
+jobs:
+  build:
+    name: swift build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build
+        working-directory: packaging/macos/KarstStatus
