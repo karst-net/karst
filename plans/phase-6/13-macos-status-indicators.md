@@ -112,19 +112,54 @@ staffed and estimated that way rather than folded into "polish."
    build this package (see its existing coverage — build, unit tests, the
    `macos_pair` suite, package build — none of which is a GUI target); folding
    the new workflow into it, or promoting it from ad hoc check to real gate,
-   is undecided. Remaining, in order: exercise it against a running `karstd`
-   on real hardware; wrap the executable in a real `.app` bundle with
-   codesigning (the existing `scripts/build-macos-pkg.sh` pattern for
-   `karstd`/`karst` is the template); wire `dev.karst.karststatus.plist`
-   (already written, also
-   unverified) into `Distribution.xml`/`postinstall` as a second package
-   component; and — deliberately not done yet — add
-   `--status-socket /run/karst-status/karstd.sock` to
-   `dev.karst.karstd.plist`'s `ProgramArguments`, which should land together
-   with a working app, not before: the flag is opt-in so a Linux server
-   upgrade never silently starts exposing peer endpoints to every local
-   user, and turning it on in the shipping installer with no consumer yet
-   built would spend that opt-in for nothing.
+   is undecided.
+
+   **Packaging is now done too.** `scripts/build-macos-pkg.sh` builds
+   `Karst Status.app` as a universal binary (`swift build --arch arm64
+   --arch x86_64`), assembles and codesigns the bundle alongside
+   `karstd`/`karst`, and `packaging/macos/Distribution.xml` carries it as a
+   second `pkg-ref` in the *same* `.pkg` — one download installs both, per
+   this section's own ask. `packaging/macos/status-scripts/` is the
+   LaunchAgent equivalent of `dev.karst.karstd`'s own preinstall/postinstall,
+   and `uninstall.sh` removes the app, its LaunchAgent, and its `pkgutil`
+   receipt alongside the daemon's. Verified for real, not just built: PR
+   #105's `deliverables.yml` `macos-package` job — real Apple Developer ID
+   signing (this org's actual certificates, already configured), a real
+   `sudo installer` on a `macos-14` runner, layout assertions (the `.app`
+   present, universal, its `CFBundleIdentifier` correct, the `LaunchAgent`
+   plist present), then `karst-uninstall` and confirmation everything is
+   gone — passed end to end on the fourth attempt. The first three each
+   found a real bug, not a flake:
+     1. `status-scripts/postinstall` used `set -eu` while addressing a GUI
+        session that may not exist (no console user on a CI runner) —
+        hardened to be as best-effort as `preinstall` already was, and
+        `deliverables.yml` gained a permanent "show `/var/log/install.log`
+        on failure" step, since `installer` itself never says which script
+        failed or why.
+     2. The layout assertions themselves failed silently (a bare `test -x
+        ...` prints nothing under `bash -e`) — rewritten to `ls` the
+        relevant directory before exiting, which is what actually exposed
+        bug 3.
+     3. **The real one.** `pkgbuild` infers a "bundle component" for any
+        `.app` in `--root` and defaults it relocatable and version-checked:
+        at install time it can decide, silently, that the payload does not
+        need placing at all — `installer` still reports "The install was
+        successful," and `/Applications/Karst Status.app` never appears.
+        Fixed with `pkgbuild --analyze` plus `--component-plist` forcing
+        both off, so the bundle is always placed at its literal
+        root-relative path like every other file in the payload.
+
+   None of this proves the app *runs*: the CI runner has no console user,
+   so `status-scripts/postinstall`'s `launchctl bootstrap` only exercises
+   its best-effort "nobody to start it for" path, never its real one.
+   Remaining: exercise it against a running `karstd` with a real login
+   session on real hardware; and — deliberately still not done —
+   add `--status-socket /run/karst-status/karstd.sock` to
+   `dev.karst.karstd.plist`'s `ProgramArguments`, which should land once
+   someone has confirmed the app actually works, not before: the flag is
+   opt-in so a Linux server upgrade never silently starts exposing peer
+   endpoints to every local user, and turning it on with an unconfirmed
+   consumer would spend that opt-in for nothing.
 2. ~~**Throughput counters** in `karstd`, exposed through `Command::Status` or
    a new IPC verb, sampled and differenced client-side (or server-side, if a
    rate is more useful than a running total — decide against how
