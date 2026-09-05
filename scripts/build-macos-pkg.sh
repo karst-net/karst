@@ -54,9 +54,9 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="${VERSION:-0.0.0+git.$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 # pkgbuild's --version must be a plain dotted number; the full version with its
-# git metadata goes in the filename and in `karst --version`, which is where
-# anyone actually looks for it.
-pkg_version="${version%%+*}"
+# git metadata or pre-release label (e.g. "0.1.0-rc.1") goes in the filename
+# and in `karst --version`, which is where anyone actually looks for it.
+pkg_version="${version%%[-+]*}"
 
 dist="$root/dist/macos"
 # Two staging roots, not one, because they become two separate `pkgbuild`

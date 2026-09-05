@@ -5,7 +5,7 @@ name: karst-control
 arch: ${ARCH}
 platform: linux
 version: "${VERSION}"
-release: "1"
+release: "${RELEASE}"
 section: net
 priority: optional
 maintainer: Karst contributors <maintainers@karst.net>

@@ -53,9 +53,9 @@ packages version="0.0.1":
     # sorts above "0.0.1" for both dpkg and rpm — because what is being tested
     # is the packaging's upgrade path, not a difference between two builds.
     for packager in deb rpm; do
-        VERSION={{ version }} ARCH="$arch" nfpm package --packager "$packager" \
+        VERSION={{ version }} RELEASE=1 ARCH="$arch" nfpm package --packager "$packager" \
             --target dist/packages/old/ --config packaging/nfpm/karst-client-linux.yaml
-        VERSION={{ version }}.1 ARCH="$arch" nfpm package --packager "$packager" \
+        VERSION={{ version }}.1 RELEASE=1 ARCH="$arch" nfpm package --packager "$packager" \
             --target dist/packages/new/ --config packaging/nfpm/karst-client-linux.yaml
     done
     # Advisory here, fatal in CI. A developer on a current distribution cannot

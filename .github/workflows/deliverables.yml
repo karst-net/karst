@@ -44,7 +44,6 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     env:
-      VERSION: 0.0.0+git.${{ github.sha }}
       ARCH: ${{ matrix.arch }}
     steps:
       # Before checkout, which otherwise falls back to a REST tarball and says
@@ -66,6 +65,11 @@ jobs:
       # than the line it costs to keep.
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # A tag names a release version; anything else gets a version nobody
+      # will ever tag over. scripts/release-version.sh is what packages-verify
+      # and the upgrade fixture below both have to agree with.
+      - name: Compute release version
+        run: ./scripts/release-version.sh >> "$GITHUB_ENV"
       # `arduino/setup-protoc` unpacks a musl binary that will not run here, so
       # protoc comes from its own release archive.
       - name: protoc
@@ -110,9 +114,17 @@ jobs:
       # released, and it is a separate artefact so it cannot be mistaken for
       # one. An upgrade path that is only ever exercised by real releases is
       # one that gets tested for the first time by users.
+      #
+      # Same VERSION as the real build, one release higher — not a hardcoded
+      # higher version, because on a tag the real build's VERSION *is* the
+      # tag: a fixture fixed at "0.0.1" would sort *below* a real "0.1.0" and
+      # `rpm --upgrade` would correctly refuse to install it, which is a
+      # packaging test failing for a reason that has nothing to do with
+      # packaging. Appending ".1" to RELEASE sorts higher under both dpkg's and
+      # rpm's version comparison regardless of what RELEASE already is.
       - name: Build the upgrade fixture
         env:
-          VERSION: 0.0.1+git.${{ github.sha }}
+          RELEASE: ${{ env.RELEASE }}.1
         run: |
           mkdir -p dist/upgrade-fixture
           nfpm package --packager deb --target dist/upgrade-fixture/ --config packaging/nfpm/karst-client-linux.yaml
@@ -409,7 +421,6 @@ jobs:
     name: macOS package
     runs-on: macos-14
     env:
-      VERSION: 0.0.0+git.${{ github.sha }}
       # Lifted to job scope because the `secrets` context is not available in
       # an `if:` condition and a step's own `env:` is not visible to its own
       # `if:` either. Testing `env.X != ''` at job scope is the only way to ask
@@ -421,6 +432,11 @@ jobs:
       APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
     steps:
       - uses: actions/checkout@v4
+      # A tag names a release version; anything else gets a version nobody
+      # will ever tag over. The same script the Linux packages job uses, so a
+      # release's macOS build and its .deb/.rpm always agree on VERSION.
+      - name: Compute release version
+        run: ./scripts/release-version.sh >> "$GITHUB_ENV"
       - uses: arduino/setup-protoc@v3
         with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       # No `targets:` input on purpose. It would add them to `stable`, which is
@@ -648,3 +664,42 @@ jobs:
             export KARST_NOTARY_KEY="$key"
           fi
           ./scripts/appstore-submit-macos.sh dist/macos/karst-client-macos.pkg
+
+  # The point of everything above: a page a person can actually click
+  # "Download" on. `release-artefacts` only produces a workflow artifact,
+  # which needs a GitHub login and the Actions UI to find — not something to
+  # hand a user. This job takes that same signed, checksummed, SBOM'd set and
+  # publishes it as a GitHub Release attached to the tag.
+  publish-release:
+    name: Publish GitHub Release
+    # Matches publish-images: `v`-prefixed tags only, so a stray tag that does
+    # not name a version cannot publish a release for one.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-artefacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artefacts-${{ github.sha }}
+          path: dist/release
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          # A tag with a pre-release label (v0.1.0-rc.1) publishes as a GitHub
+          # pre-release, so it never displays as "Latest" ahead of the stable
+          # version it precedes.
+          prerelease=()
+          if [[ "$tag" == *-* ]]; then prerelease=(--prerelease); fi
+          # Recursive and sorted rather than a `dist/release/*` glob: the SBOMs
+          # live one directory down, in `dist/release/sbom/`, and a directory
+          # is not a file `gh release create` can attach.
+          mapfile -t files < <(find dist/release -type f | sort)
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes \
+            "${prerelease[@]}" \
+            "${files[@]}"
