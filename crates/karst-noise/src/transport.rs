@@ -12,7 +12,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use karst_crypto::aead::{Algorithm, Cipher, TAG_LEN as AEAD_TAG_LEN};
-use karst_crypto::SuiteId;
 
 use crate::symmetric::TransportKeys;
 
@@ -178,20 +177,10 @@ impl TransportSession {
     /// The two directions use different keys, so each side sends under one and
     /// receives under the other.
     ///
-    /// **There is no constructor that names an AEAD directly.** There was one,
-    /// alongside a `new` that defaulted to ChaCha20-Poly1305, and the default
-    /// was how a suite's choice could be quietly ignored (FINDINGS 53). Taking
-    /// the suite means the AEAD is derived where it is used and cannot be
-    /// chosen independently of what the handshake transcript already bound.
+    /// AES-256-GCM is fixed by the PHREATIC protocol.
     #[must_use]
-    pub fn for_suite(
-        keys: &TransportKeys,
-        role: Role,
-        peer_index: u32,
-        now_ms: u64,
-        suite: SuiteId,
-    ) -> Self {
-        let aead = Algorithm::for_suite(suite);
+    pub fn new(keys: &TransportKeys, role: Role, peer_index: u32, now_ms: u64) -> Self {
+        let aead = Algorithm::Aes256Gcm;
         let (send_key, recv_key) = match role {
             Role::Initiator => (keys.initiator_to_responder, keys.responder_to_initiator),
             Role::Responder => (keys.responder_to_initiator, keys.initiator_to_responder),
@@ -354,8 +343,8 @@ mod tests {
             responder_to_initiator: [2u8; 32],
         };
         (
-            TransportSession::for_suite(&keys, Role::Initiator, 7, 0, SuiteId::KARST_1),
-            TransportSession::for_suite(&keys, Role::Responder, 9, 0, SuiteId::KARST_1),
+            TransportSession::new(&keys, Role::Initiator, 7, 0),
+            TransportSession::new(&keys, Role::Responder, 9, 0),
         )
     }
 
@@ -475,7 +464,7 @@ mod tests {
             initiator_to_responder: [1u8; 32],
             responder_to_initiator: [2u8; 32],
         };
-        let wrong = TransportSession::for_suite(&keys, Role::Initiator, 0, 0, SuiteId::KARST_1);
+        let wrong = TransportSession::new(&keys, Role::Initiator, 0, 0);
         let msg = i.seal(b"for the responder", 0).unwrap();
         assert_eq!(
             wrong.open(&msg, 0),

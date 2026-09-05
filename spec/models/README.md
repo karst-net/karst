@@ -1,61 +1,47 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Formal models
 
-Two tools, deliberately. **Verifpal** gives fast feedback on design blunders and
-runs in seconds. **ProVerif** reasons over unbounded sessions with an explicit
-equational theory and is the release gate (PLAN.md §2.5).
+Verifpal checks design properties quickly. ProVerif checks unbounded sessions
+with explicit equational theories. These are symbolic models, not proofs of
+implementation correctness, constant-time behavior, or computational security.
 
 ```sh
-just verify        # Verifpal ×4 + every ProVerif model, including the must-fail ones
-just verify-slow   # long-running broken-primitive variants (nightly)
-./gen-variants.sh  # regenerate the generated .pv variants
+just verify        # two Verifpal models and the ProVerif release gates
+just verify-slow   # the deliberately broken KEM ProVerif model
+./gen-variants.sh  # regenerate broken-primitive and missing-binding variants
 ```
 
-## Status
+## Sole PHREATIC model
 
-Karst has four protocols and each has its own model. They are not variants of
-one another: PHREATIC is the UDP data plane, KARST-CONTROL the node↔server
-channel, Ponor the node↔relay one, AVEN the peer↔peer path discovery that runs
-on the same socket as PHREATIC.
+[ADR-0018](../../docs/adr/0018-cnsa-2-0-as-the-sole-suite.md) makes CNSA 2.0
+the only PHREATIC suite. The former `phreatic-nodh` models were promoted to
+`phreatic.pv` and `phreatic.vp` with Git renames. There is no DH primitive left
+in this schedule, so there is no DH-broken variant to verify. The separate
+control-channel, Ponor, and AVEN models retain their respective scopes.
 
-### Verifpal 0.80.0 — seconds
+The KEM-broken variant exposes all encapsulated shared secrets. Its remaining
+confidentiality contribution is the private per-pair PSK. It cannot establish
+the retired claim of security from either a classical or a lattice family.
+The Verifpal variant is maintained from the sole schedule with weak KEM
+encapsulation; the ProVerif variant adds the public `break_kem` destructor
+through `gen-variants.sh`.
 
-| Model | Assumption | Status |
+## Verification status
+
+Verifpal 0.80.1 was run on 2026-09-05 after promotion:
+
+| Model | Assumption | Result |
 |---|---|---|
-| `phreatic.vp` | Suite `KARST_1`, all primitives sound | ✅ 6/6, active attacker |
-| `phreatic-nodh.vp` | Suite `KARST_2` (CNSA 2.0) — no classical DH at all, per spec §7.1/§7.2 | ✅ 6/6, active attacker |
-| `phreatic-kem-broken.vp` | `KARST_1`, `KEM_ENCAP[weak]` — ML-KEM broken | ✅ 6/6 |
-| `phreatic-dh-broken.vp` | `KARST_1`, `PUBKEY[weak]` — X25519 keys recovered | ✅ 6/6 |
+| `phreatic.vp` | Sound KEM and private PSK | 6/6 queries pass |
+| `phreatic-kem-broken.vp` | KEM secrets exposed; private PSK | 6/6 queries pass |
 
-`phreatic-nodh.vp` is hand-written, not `gen-variants.sh`-generated: it models a
-different suite's key schedule (spec §7.1's no-DH branch), not a broken
-primitive on top of the same one. It has no broken-primitive companions —
-`KARST_2` deliberately carries no classical hybrid to break (spec §7.2), so
-breaking its one KEM family *is* breaking the suite, which is the trade the
-suite makes rather than a gap in coverage. Closes GitHub issue
-[#78](https://github.com/karst-net/karst/issues/78).
-
-### ProVerif 2.05 — unbounded sessions
-
-| Model | Assumption | Status |
-|---|---|---|
-| `phreatic.pv` | Suite `KARST_1`, all primitives sound | ✅ **4/4**, seconds |
-| `phreatic-nodh.pv` | Suite `KARST_2` (CNSA 2.0) — no classical DH at all | ✅ **4/4**, 0.03 s |
-| `karst-control.pv` | All primitives sound | ✅ **4/4**, seconds |
-| `ponor.pv` | All primitives sound, and a relay the client uses is hostile | ✅ **4/4**, seconds |
-| `aven.pv` | All primitives sound, and a peer of A's is compromised | ✅ **4/4**, seconds |
-| `phreatic-dh-broken.pv` | `KARST_1`, public `dlog` destructor | ✅ **4/4**, ~15 min |
-| `phreatic-kem-broken.pv` | `KARST_1`, public `break_kem` destructor | ❌ **does not terminate** — see below |
-
-`phreatic-nodh.pv` closes the ProVerif half of GitHub issue
-[#78](https://github.com/karst-net/karst/issues/78) — `phreatic-nodh.vp`
-(above) closed the Verifpal half. Hand-written, not generated: it drops the
-X25519 machinery entirely rather than adding a destructor, since suite
-`KARST_2` never has it (spec §7.1). It runs faster than the base model, not
-slower — dropping three of the seven chaining-key mixes shortens the nesting
-`phreatic-kem-broken.pv` chokes on below, it does not lengthen it. No
-broken-primitive companion, for the same reason `phreatic-nodh.vp` has none:
-`KARST_2` has one cryptographic family, not two to trade off.
+ProVerif 2.05 passed all four queries on the promoted `phreatic.pv` on
+2026-09-05 through `just verify`, along with the independent protocol gates
+and expected-failure variants. A fresh `timeout 300 just verify-slow` run
+against the regenerated KEM-broken model reached the 300-second limit with
+exit 124 and no verification summary. That model remains **unverified**. The historical divergence investigation
+below concerns the retired hybrid schedule and does not prove divergence
+of the new model.
 
 Queries, per model:
 
@@ -108,41 +94,21 @@ then impersonates its own clients elsewhere. The client checks the relay's
 identity locally in both versions; what the variant removes is the *binding* of
 that identity into what the client signs, and the two are not the same thing.
 
-## `phreatic-kem-broken.pv` does not terminate
+## Historical KEM-broken nontermination investigation
 
-Killed at 50 minutes CPU with no verification summary. Dropping the two
-correspondence queries did not help within 30 minutes either.
+Before ADR-0018, the hybrid KEM-broken ProVerif model was killed after 50
+minutes CPU without a verification summary; dropping correspondence queries
+did not resolve it. The classical-broken model passed 4/4 and the bounded
+Verifpal KEM-broken model passed 6/6. Those results never proved the hybrid's
+full either-family claim. The models that produced them are retained in Git
+history; [RUNNING.md](RUNNING.md) is the historical run log.
 
-This is a **limitation of the analysis, not a known weakness in the protocol**.
-The `break_kem` destructor lets the attacker recover a shared secret from any
-ciphertext, which makes almost every term attacker-derivable and explodes
-ProVerif's saturation. Non-termination on rich equational theories is a normal
-ProVerif outcome and says nothing about security either way.
-
-What we do have for that direction:
-
-- **Verifpal verifies it** (`phreatic-kem-broken.vp`, 6/6) — a weaker
-  guarantee, bounded rather than unbounded, but not nothing.
-- **The symmetric direction is proved.** `phreatic-dh-broken.pv` passes 4/4
-  under a total X25519 break, which is the *harvest-now-decrypt-later*
-  case — the threat this project exists to address.
-
-**Do not report ADR-0002's "secure if either family holds" as fully proved.**
-It is proved for a classical break and verified only symbolically-and-bounded
-for a lattice break.
-
-### Why it diverges
-
-Not a protocol problem. ProVerif saturates Horn clauses; non-termination means
-saturation keeps producing non-subsumed clauses.
-
-In the base model `encap_ss(p, r)` is `[private]`, so the attacker cannot build
-those terms and the seven-deep chaining key is closed to it. Adding
-`break_kem(encap_ct(p,r)) = encap_ss(p,r)` gives an **infinite derivable
-family**: pick any `p`, `r`, build the ciphertext with the public constructor,
-apply `break_kem`. `phreatic-dh-broken.pv` terminates because `dlog` yields
-*exponents*, which re-enter only through `exp` under ProVerif's special-cased DH
-equation — bounded.
+ProVerif's public `break_kem(encap_ct(p,r)) = encap_ss(p,r)` destructor
+creates an unbounded attacker-derivable family of shared-secret terms.
+Combined with the former seven-deep free-function key schedule, saturation
+continued generating non-subsumed clauses. Nontermination proves neither an
+attack nor security. Removing DH shortens the schedule but does not justify
+assuming the destructor now terminates.
 
 ### What was measured, not guessed
 
@@ -169,39 +135,8 @@ AEAD-with-transcript-as-AAD.
 Run on 48 cores, the queue reached **51 468 against a base of 4 123** and was
 still widening after 28 minutes. This is divergence, not slowness.
 
-### Remaining options
-
-| Option | Cost | What it buys | What it loses |
-|---|---|---|---|
-| ~~`nounif` declarations~~ | — | **Tried (D) — no effect whatsoever** | — |
-| **Bounded sessions** (`P \| P`, not `!P`) | minutes | Guaranteed termination | Bounded-session only — Verifpal already gives this |
-| **`set attacker = passive`** | minutes | Terminates easily | Much weaker claim |
-| **Tamarin** | weeks | Backward search with user-supplied lemmas and induction; built for the case where forward saturation will not converge. Used for the WireGuard and TLS 1.3 mechanised proofs | Steep; usually needs an oracle script to steer heuristics |
-| **CryptoVerif** | expert | Computational bounds rather than symbolic | realiztically needs its authors; complements rather than replaces |
-
-**Recommendation — now evidence-backed rather than a judgment call.** Four
-independent approaches have failed, including ProVerif's own canonical
-anti-divergence mechanism, which had *literally zero* effect. Further ProVerif
-work is not a good use of anyone's time.
-
-Tamarin's backward search with user-supplied lemmas and induction is built for
-precisely the case where forward saturation will not converge, and it is what
-the WireGuard and TLS 1.3 mechanised proofs used. **Scope it as Tamarin work in
-the Phase 6 external-review brief.**
-
-### Verification environment
-
-The base and `dh-broken` results were re-confirmed on `lovelace` (48 cores,
-251 GB, x86-64) rather than a transient VM, so they are not artifacts of a
-truncated run. ProVerif 2.05 built from source there — the Ubuntu package is
-not in the enabled repositories, and the opam package pulls in `lablgtk` →
-`libgtk2.0-dev`, which is needed only for the GUI.
-
-### Do not run these on a transient machine
-
-A killed run produces no summary, which is indistinguishable from
-non-termination. Use `run-remote.sh` / `collect-remote.sh`, which launch
-detached via `nohup` and report the three outcomes separately.
+The experiments in this section remain historical evidence. Their references
+to seven key mixes and the DH-broken comparison describe the retired model.
 
 ## `check-proverif.sh` — why the obvious CI check is wrong
 
@@ -247,62 +182,10 @@ external binaries — never vendored, linked, or added as dependencies. The
 - Anything computational: concrete margins, side channels, implementation
   behavior.
 
-## Running the long models
+## Running long models
 
-**Do not run the broken-primitive variants on a transient machine.** A killed
-run produces no summary, which is indistinguishable from a model that does not
-terminate — precisely the confusion that cost us a day.
-
-```sh
-./run-remote.sh lovelace      # launches detached via nohup
-./collect-remote.sh lovelace karst-verify-YYYYMMDD-HHMMSS
-```
-
-`collect-remote.sh` distinguishes the three outcomes explicitly: all queries
-true, a query false, or **no summary** (still running or non-terminating). CI
-must make the same distinction — treating "no output" as success is the failure
-mode to design against.
-
-## Why `phreatic-kem-broken.pv` does not terminate
-
-Not a protocol problem. `ProVerif` saturates Horn clauses; non-termination means
-saturation keeps producing non-subsumed clauses.
-
-In the base model `encap_ss(p, r)` is `[private]`, so the attacker cannot build
-those terms, and the seven-deep chaining key
-`mixck(mixck(...(H(LBL), ss_s)..., psk))` is closed to it — the clause set stays
-finite.
-
-Adding `break_kem(encap_ct(p,r)) = encap_ss(p,r)` gives the attacker an
-**infinite derivable family**: pick any `p`, `r`, build the ciphertext with the
-public constructor, apply `break_kem`. Since `mixck` is a free binary symbol
-over `bitstring`, resolution can then assemble `mixck(mixck(mixck(...)))` to
-arbitrary depth with attacker-controlled slots at every level.
-
-`phreatic-dh-broken.pv` terminates because `dlog(exp(g,x)) = x` yields
-*exponents*, which re-enter only through `exp` under `ProVerif`'s special-cased
-DH equation — bounded, with no unbounded nesting into the key schedule.
-
-**The cause is the nested free-function key schedule meeting an unbounded
-attacker-derivable secret family.**
-
-### Options, cheapest first
-
-| Option | Cost | What it buys | What it loses |
-|---|---|---|---|
-| **Flatten the key schedule** — one n-ary KDF instead of 7 nested `mixck` | hours | Removes the nesting outright | Cannot express "PSK mixed last"; use the nested model for ordering |
-| **`nounif` declarations** | hours | `ProVerif`'s canonical anti-divergence tool; guides clause selection | May still fail to prove; sound either way |
-| **One query per file** | minutes | Isolates the expensive injective query so cheap ones land | Nothing |
-| **Bound sessions** (`P \| P` not `!P`) | minutes | Guaranteed termination | Bounded-session only — `Verifpal` already gives this |
-| **`set attacker = passive`** | minutes | Terminates easily | Much weaker claim |
-| **Tamarin** | weeks | Backward search with user-supplied lemmas and induction; the tool used for WireGuard and TLS 1.3 | Steep; usually needs an oracle script to steer heuristics |
-| **CryptoVerif** | expert | Computational bounds, not just symbolic | realiztically needs its authors; complements rather than replaces |
-
-**Recommended split:** the nested model proves ordering and agreement; a
-flattened model proves the broken-primitive claims. Two models, two purposes,
-each stating what it does not cover. Tamarin belongs in the Phase 6 external
-review budget, not Phase 1.
-
-Until then the honest position — stated in the README and `THREAT-MODEL.md` —
-is that ADR-0002's "secure if either family holds" is **proved in the classical
-direction and bounded-verified in the lattice direction**.
+Run the actual model under a durable process and retain its output. Poll that
+process rather than starting another copy when an observation times out.
+`check-proverif.sh` requires the expected true and false query counts and
+rejects missing summaries, errors, and timeouts. A KEM-broken run without a
+summary must be reported as unverified, even when the fast path passes.

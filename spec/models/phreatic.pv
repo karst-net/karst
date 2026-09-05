@@ -1,37 +1,23 @@
 (* SPDX-License-Identifier: CC-BY-4.0
- *
- * PHREATIC v1 — ProVerif model (suite KARST_1)
- * Models spec/phreatic-v1.md §7. Run: proverif phreatic.pv
- *
- * Complements the Verifpal models. Verifpal gives fast feedback on design
- * blunders; ProVerif reasons over unbounded sessions with an explicit
- * equational theory, which is what makes it a release gate (PLAN.md §2.5).
- *
- * Variants generated from this file by `just verify` (see gen-variants.sh):
- *   phreatic-kem-broken.pv  adds a public destructor recovering the KEM shared
- *                           secret from any ciphertext — total ML-KEM break.
- *   phreatic-dh-broken.pv   adds a public discrete-log destructor — total
- *                           X25519 break, i.e. the quantum adversary.
- * ADR-0002 requires confidentiality to survive BOTH.
- *
- * NOT modeled: fragmentation, cookies, the fragment MAC. Those are resource
- * -exhaustion defenses; ProVerif reasons about secrecy and correspondence, not
- * DoS. Covered by the spoofed-source test suite instead.
+ * PHREATIC v1 — sole CNSA 2.0 key schedule (ADR-0018).
+ * Promoted from phreatic-nodh.pv; run: proverif phreatic.pv.
+ * Models transport confidentiality, PSK secrecy, injective agreement and
+ * session-key agreement with unbounded sessions. No classical DH primitive.
+ * Symbolic design check only: fragmentation, cookies, side channels and
+ * computational implementation security are outside this model.
  *)
 
 (* ─── Types ────────────────────────────────────────────────────────────── *)
 
-type skem.        (* ML-KEM-768 decapsulation key *)
-type pkem.        (* ML-KEM-768 encapsulation key *)
+type skem.        (* ML-KEM-1024 decapsulation key *)
+type pkem.        (* ML-KEM-1024 encapsulation key *)
 type rnd.         (* encapsulation randomness *)
-type exponent.    (* X25519 scalar *)
-type G.           (* X25519 group element *)
 
 free c: channel.
 
 (* Public protocol constants *)
 free LBL:   bitstring.   (* "Karst PHREATIC v1" *)
-free SUITE: bitstring.   (* LE16(suite_id)      *)
+free SUITE: bitstring.   (* LE16(suite_id) — 0x0002 here *)
 free EPOCH: bitstring.   (* LE32(psk_epoch) — bound at step 2, spec §13.2 *)
 free EMPTY: bitstring.
 
@@ -44,17 +30,9 @@ fun encap_ss(pkem, rnd): bitstring [private].
 reduc forall sk: skem, r: rnd;
     decap(sk, encap_ct(pkem_of(sk), r)) = encap_ss(pkem_of(sk), r).
 
-(* ─── X25519 ───────────────────────────────────────────────────────────── *)
-
-const g: G [data].
-fun exp(G, exponent): G.
-equation forall x: exponent, y: exponent;
-    exp(exp(g, x), y) = exp(exp(g, y), x).
-
 (* ─── Hashing, KDF, AEAD ───────────────────────────────────────────────── *)
 
 fun cat(bitstring, bitstring): bitstring [data].
-fun g2b(G): bitstring [data, typeConverter].
 fun p2b(pkem): bitstring [data, typeConverter].
 
 fun H(bitstring): bitstring.
@@ -82,7 +60,9 @@ event ResponderAccepted(bitstring).
 (* 1. Transport confidentiality — the primary claim. *)
 query attacker(secretPayload).
 
-(* 2. The PSK must never be recoverable from the wire (§2.6). *)
+(* 2. The PSK must never be recoverable from the wire (§2.6). Still the one
+      hedge this suite keeps — spec §7.2: "the PSK still gates the final key
+      under every suite." *)
 query attacker(psk).
 
 (* 3. Responder authenticates the initiator: injective agreement, so a
@@ -95,124 +75,109 @@ query m: bitstring;
 query a: pkem, b: pkem, k: bitstring;
     event(ResponderComplete(a, b, k)) ==> event(InitiatorComplete(a, b, k)).
 
-(* ─── Initiator (spec §6.1, key schedule §7.1) ─────────────────────────── *)
+(* ─── Initiator (spec §6.1/§6.5, key schedule §7.1 steps 1–6) ──────────── *)
+(* e_dh_pk is absent, not zero-filled (spec §6.1). Step 4 mixes only e_kem_pk. *)
 
-let initiator(skI: skem, xI: exponent, pkR: pkem, DR: G) =
+let initiator(skI: skem, pkR: pkem) =
     new ekI: skem;
-    new eI: exponent;
     new rs: rnd;
     new ts: bitstring;
 
     let EK  = pkem_of(ekI) in
-    let ED  = exp(g, eI) in
     let pkI = pkem_of(skI) in
 
-    (* peer_id_hint = HASH(label ‖ S_i) — §4, session-independent *)
+    (* peer_id_hint = HASH(label ‖ S_i) — §4, session-independent, SHA-512
+       under every suite including this one (§4's normative note). *)
     let hint = H(cat(LBL, p2b(pkI))) in
 
     let h0 = H(LBL) in
     let h1 = H(cat(h0, cat(SUITE, EPOCH))) in       (* §13.2 *)
     let h2 = H(cat(h1, H(p2b(pkR)))) in
-    let h3 = H(cat(h2, cat(p2b(EK), g2b(ED)))) in
+    let h3 = H(cat(h2, p2b(EK))) in                 (* step 4 — ephemeral KEM public key *)
 
     let cts = encap_ct(pkR, rs) in
-    let sss = encap_ss(pkR, rs) in                   (* PQ auth of responder *)
+    let sss = encap_ss(pkR, rs) in                   (* PQ auth of responder —
+                                                          the only authentication
+                                                          this suite has for it *)
     let ck1 = mixck(h0, sss) in
+    let k1  = mixk (h0, sss) in
     let h4  = H(cat(h3, cts)) in
 
-    let dhes = exp(DR, eI) in                        (* classical auth of resp *)
-    let ck2  = mixck(ck1, g2b(dhes)) in
-    let k2   = mixk (ck1, g2b(dhes)) in
-
-    let encid = aead(k2, cat(hint, ts), h4) in
+    let encid = aead(k1, cat(hint, ts), h4) in
     let h5    = H(cat(h4, encid)) in
 
-    out(c, (EK, ED, cts, encid));
+    out(c, (EK, cts, encid));
 
-    in(c, (cte: bitstring, ctss: bitstring, EDR: G, encempty: bitstring));
+    in(c, (cte: bitstring, ctss: bitstring, encempty: bitstring));
 
     let sse  = decap(ekI, cte)  in                   (* forward secrecy *)
-    let ssss = decap(skI, ctss) in                   (* PQ auth of initiator *)
-    let ck3  = mixck(ck2, sse)  in
-    let ck4  = mixck(ck3, ssss) in
+    let ssss = decap(skI, ctss) in                   (* PQ auth of initiator —
+                                                          the only authentication
+                                                          this suite has for it *)
+    let ck2  = mixck(ck1, sse)  in
+    let ck3  = mixck(ck2, ssss) in
 
-    let dhee = exp(EDR, eI) in
-    let dhse = exp(EDR, xI) in                       (* classical auth of init *)
-    let ck5  = mixck(ck4, g2b(dhee)) in
-    let ck6  = mixck(ck5, g2b(dhse)) in
+    let ck4 = mixck(ck3, psk) in                     (* PSK mixed LAST — still
+                                                          gates the final key
+                                                          (spec §7.2) *)
+    let k4  = mixk (ck3, psk) in
 
-    let ck7 = mixck(ck6, psk) in                     (* PSK mixed LAST *)
-    let k7  = mixk (ck6, psk) in
+    let h6 = H(cat(h5, cat(cte, ctss))) in            (* no EDR *)
+    let ok = adec(k4, encempty, h6) in                (* fails closed *)
 
-    let h6 = H(cat(h5, cat(cte, cat(ctss, g2b(EDR))))) in
-    let ok = adec(k7, encempty, h6) in                (* fails closed *)
-
-    let Ts = mixk(ck7, EMPTY) in
+    let Ts = mixk(ck4, EMPTY) in
     event InitiatorComplete(pkI, pkR, Ts);
 
     let data = aead(Ts, secretPayload, EMPTY) in
     event InitiatorSent(data);
     out(c, data).
 
-(* ─── Responder (spec §6.2) ────────────────────────────────────────────── *)
+(* ─── Responder (spec §6.2/§6.5) ───────────────────────────────────────── *)
 
-let responder(skR: skem, xR: exponent, pkI: pkem, DI: G) =
+let responder(skR: skem, pkI: pkem) =
     (* Typed input: the attacker may still supply any term of these types. *)
-    in(c, (EK: pkem, ED: G, cts: bitstring, encid: bitstring));
+    in(c, (EK: pkem, cts: bitstring, encid: bitstring));
 
     let pkR = pkem_of(skR) in
 
     let sss = decap(skR, cts) in
     let ck1 = mixck(H(LBL), sss) in
+    let k1  = mixk (H(LBL), sss) in
 
     let h0 = H(LBL) in
     let h1 = H(cat(h0, cat(SUITE, EPOCH))) in
     let h2 = H(cat(h1, H(p2b(pkR)))) in
-    let h3 = H(cat(h2, cat(p2b(EK), g2b(ED)))) in
+    let h3 = H(cat(h2, p2b(EK))) in
     let h4 = H(cat(h3, cts)) in
 
-    let dhes = exp(ED, xR) in
-    let ck2  = mixck(ck1, g2b(dhes)) in
-    let k2   = mixk (ck1, g2b(dhes)) in
-
     (* Transcript binding check — fails closed on any tampering. *)
-    let ident = adec(k2, encid, h4) in
+    let ident = adec(k1, encid, h4) in
     let h5 = H(cat(h4, encid)) in
 
-    new eR: exponent;
     new re: rnd;
     new rss: rnd;
-    let EDR = exp(g, eR) in
 
     let cte  = encap_ct(EK,  re)  in
     let sse  = encap_ss(EK,  re)  in
     let ctss = encap_ct(pkI, rss) in
     let ssss = encap_ss(pkI, rss) in
-    let ck3  = mixck(ck2, sse)  in
-    let ck4  = mixck(ck3, ssss) in
+    let ck2  = mixck(ck1, sse)  in
+    let ck3  = mixck(ck2, ssss) in
 
-    let dhee = exp(ED, eR) in
-    let dhse = exp(DI, eR) in
-    let ck5  = mixck(ck4, g2b(dhee)) in
-    let ck6  = mixck(ck5, g2b(dhse)) in
+    let ck4 = mixck(ck3, psk) in
+    let k4  = mixk (ck3, psk) in
 
-    let ck7 = mixck(ck6, psk) in
-    let k7  = mixk (ck6, psk) in
+    let h6 = H(cat(h5, cat(cte, ctss))) in
+    let encempty = aead(k4, EMPTY, h6) in
 
-    let h6 = H(cat(h5, cat(cte, cat(ctss, g2b(EDR))))) in
-    let encempty = aead(k7, EMPTY, h6) in
+    out(c, (cte, ctss, encempty));
 
-    out(c, (cte, ctss, EDR, encempty));
+    let Tr = mixk(ck4, EMPTY) in
 
-    let Tr = mixk(ck7, EMPTY) in
-
-    (* ResponderComplete is deliberately NOT emitted here. At this point the
-       responder has derived keys but has no assurance the initiator exists or
-       ever completed — it has seen only a HandshakeInit, which anyone holding
-       the responder's public keys can fabricate (§12.5). Placing the event
-       here makes query 4 FALSE, correctly: a 1-RTT protocol cannot give the
-       responder agreement before the initiator's first authenticated message.
-       Assurance arrives with the transport message below. See §12.6. *)
+    (* ResponderComplete is deliberately NOT emitted here — same reasoning as
+       phreatic.pv: at this point the responder has derived keys but has no
+       assurance the initiator exists or ever completed (§12.5). Assurance
+       arrives with the transport message below (§12.6). *)
 
     in(c, data: bitstring);
     let recovered = adec(Tr, data, EMPTY) in
@@ -222,16 +187,15 @@ let responder(skR: skem, xR: exponent, pkI: pkem, DI: G) =
 (* ─── Main ─────────────────────────────────────────────────────────────── *)
 
 process
-    new skI: skem;  new xI: exponent;
-    new skR: skem;  new xR: exponent;
+    new skI: skem;
+    new skR: skem;
     let pkI = pkem_of(skI) in
     let pkR = pkem_of(skR) in
-    let DI  = exp(g, xI) in
-    let DR  = exp(g, xR) in
 
     (* Public keys are public. Their *distribution* is authenticated by the
        coordination server (THREAT-MODEL §4, B2), which is modeled by the
-       processes using the real key terms rather than attacker-supplied ones. *)
-    out(c, (pkI, pkR, DI, DR));
+       processes using the real key terms rather than attacker-supplied ones.
+       No DI/DR to publish alongside them — this suite has no static DH key. *)
+    out(c, (pkI, pkR));
 
-    ( (! initiator(skI, xI, pkR, DR)) | (! responder(skR, xR, pkI, DI)) )
+    ( (! initiator(skI, pkR)) | (! responder(skR, pkI)) )

@@ -69,7 +69,6 @@ func nodeKeys(t *testing.T, seed byte) testNode {
 		Identity: identity,
 		Keys: PeerKeys{
 			KemPublicKey: patternBytes(KemPublicKeySize, seed),
-			DhPublicKey:  patternBytes(DhPublicKeySize, seed+1),
 		},
 	}
 }
@@ -86,7 +85,7 @@ func patternBytes(n int, seed byte) []byte {
 // the handle must be the one the identity key derives to, so letting a caller
 // pass one would only let a fixture build an entry the verifier must reject.
 func signBody(n testNode, notBefore, expiry int64) []byte {
-	return NodeSignBody(n.Handle, n.Identity, n.Keys.KemPublicKey, n.Keys.DhPublicKey, notBefore, expiry)
+	return NodeSignBody(n.Handle, n.Identity, n.Keys.KemPublicKey, notBefore, expiry)
 }
 
 // fixture is a small but complete network: three roots at k=2, three
@@ -874,7 +873,7 @@ func TestNodeSignHandleMustMatchItsIdentityKey(t *testing.T) {
 	// Alice's handle, Mallory's identity key.
 	f.appendAuth(t, 1200, OpNodeSign, NodeSignBody(
 		alice.Handle, mallory.Identity,
-		alice.Keys.KemPublicKey, alice.Keys.DhPublicKey, 0, 0))
+		alice.Keys.KemPublicKey, 0, 0))
 	mustBreak(t, f.entries(), "a handle that does not derive from its identity key")
 }
 
@@ -895,8 +894,7 @@ func TestCoverageComparesTheDatapathKeys(t *testing.T) {
 		name string
 		keys PeerKeys
 	}{
-		{"a substituted KEM key", PeerKeys{other.Keys.KemPublicKey, f.alice.Keys.DhPublicKey}},
-		{"a substituted DH key", PeerKeys{f.alice.Keys.KemPublicKey, other.Keys.DhPublicKey}},
+		{"a substituted KEM key", PeerKeys{other.Keys.KemPublicKey}},
 		{"both substituted", other.Keys},
 	} {
 		if st.IsCovered(f.alice.Handle, tc.keys, 2000) {

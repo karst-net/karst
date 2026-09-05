@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! The data-plane AEAD, selected by cipher suite — [ADR-0001], and [ADR-0015]
-//! for why there is now only one.
-//!
-//! | Suite | AEAD |
-//! |---|---|
-//! | `KARST_1` | AES-256-GCM |
-//! | `KARST_2` | AES-256-GCM |
+//! The sole PHREATIC data-plane AEAD is AES-256-GCM (ADR-0018).
 //!
 //! # ChaCha20-Poly1305 was here, and is gone
 //!
@@ -34,11 +28,8 @@
 //!
 //! # One algorithm, and still an enum
 //!
-//! [`Algorithm`] has a single variant. That is deliberate: [`Algorithm::for_suite`]
-//! is the mechanism that stops a registry row naming an AEAD nothing runs —
-//! the defect FINDINGS 53 recorded, when AES-256-GCM was named everywhere and
-//! implemented nowhere — and it has to survive having exactly one answer today.
-//! Adding the next AEAD is a variant and a match arm, with no caller changed.
+//! [`Algorithm`] has a single AES-256-GCM variant. The enum is the shared
+//! cipher API's extension point; PHREATIC uses this fixed algorithm.
 //!
 //! [`KEY_LEN`], [`NONCE_LEN`] and [`TAG_LEN`] stay named constants for the same
 //! reason. A second AEAD that agreed on 32/12/16 would slot in behind
@@ -92,8 +83,6 @@ const _: () = {
     assert_zeroizes_on_drop::<aes::Aes256>();
 };
 
-use crate::SuiteId;
-
 /// AEAD key length.
 pub const KEY_LEN: usize = 32;
 /// AEAD nonce length.
@@ -108,23 +97,6 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    /// The AEAD a suite selects.
-    ///
-    /// Total, because a `SuiteId` cannot be constructed for a suite outside the
-    /// registry — the same reason `SuiteId::params` is total.
-    ///
-    /// This was a match on `suite.params().aead` until ADR-0015 item 7 left one
-    /// AEAD in the registry, and it becomes one again when a second is added.
-    /// The guard against a row naming an algorithm nothing runs does not live
-    /// here in the meantime — it lives in
-    /// `every_suite_selects_an_implemented_aead`, which compares this answer
-    /// against each row's own string, and which is where it always did the
-    /// work.
-    #[must_use]
-    pub fn for_suite(_suite: SuiteId) -> Self {
-        Self::Aes256Gcm
-    }
-
     /// The registry's name for this algorithm.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -288,21 +260,6 @@ mod tests {
         [Algorithm::Aes256Gcm]
     }
 
-    #[test]
-    fn every_suite_selects_an_implemented_aead() {
-        for suite in crate::SUITES {
-            let a = Algorithm::for_suite(suite.id);
-            assert_eq!(
-                a.name(),
-                suite.aead,
-                "{}: the registry names {} and the selector chose {}",
-                suite.name,
-                suite.aead,
-                a.name()
-            );
-        }
-    }
-
     /// **No suite may reach a non-NIST AEAD** — ADR-0015 item 7. The registry
     /// asserts its rows say AES-256-GCM; this asserts the selector cannot
     /// produce anything else, so the two halves of the claim are independent.
@@ -310,9 +267,6 @@ mod tests {
     fn the_only_implemented_aead_is_fips_approved() {
         for a in all() {
             assert_eq!(a.name(), "AES-256-GCM");
-        }
-        for suite in crate::SUITES {
-            assert_eq!(Algorithm::for_suite(suite.id), Algorithm::Aes256Gcm);
         }
     }
 

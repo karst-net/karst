@@ -13,28 +13,21 @@
 
 use std::sync::Arc;
 
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_node::{Action, Session};
 use karst_noise::handshake::{PeerPublic, StaticKeys};
 use karst_proto::split_datagram;
 
 const PSK: [u8; 32] = [0x42; 32];
 
-fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
+fn keys(a: u8, _b: u8) -> Arc<StaticKeys> {
+    Arc::new(StaticKeys::from_seed(&[a; 64]))
 }
 fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
     Arc::new(PeerPublic {
         kem_pk: k.kem_pk.clone(),
-        dh_pk: k.dh_pk,
+
         psk: PSK,
     })
-}
-fn policy() -> SuitePolicy {
-    SuitePolicy {
-        minimum: SuiteId::KARST_1,
-        supported: vec![SuiteId::KARST_1],
-    }
 }
 
 /// The `reassembly_id` fragment 0 of a set of `Send` actions carries.
@@ -53,22 +46,8 @@ fn two_freshly_dialled_sessions_do_not_pick_the_same_first_reassembly_id() {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
 
-    let mut s1 = Session::new(
-        Arc::clone(&a_keys),
-        peer_of(&b_keys),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        1,
-    );
-    let mut s2 = Session::new(
-        Arc::clone(&a_keys),
-        peer_of(&b_keys),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        2,
-    );
+    let mut s1 = Session::new(Arc::clone(&a_keys), peer_of(&b_keys), 7, 1);
+    let mut s2 = Session::new(Arc::clone(&a_keys), peer_of(&b_keys), 7, 2);
 
     let id1 = reassembly_id_of(&s1.connect(0, [0x11; 32]));
     let id2 = reassembly_id_of(&s2.connect(0, [0x22; 32]));
@@ -86,7 +65,7 @@ fn two_freshly_dialled_sessions_do_not_pick_the_same_first_reassembly_id() {
 fn a_handshake_retry_does_not_increment_the_previous_id_by_one() {
     let a_keys = keys(1, 2);
     let b_keys = keys(3, 4);
-    let mut s = Session::new(a_keys, peer_of(&b_keys), policy(), SuiteId::KARST_1, 7, 1);
+    let mut s = Session::new(a_keys, peer_of(&b_keys), 7, 1);
 
     let id1 = reassembly_id_of(&s.connect(0, [0x33; 32]));
     // `RETRY_INITIAL_MS` (300 ms) must have passed for `poll` to retransmit.

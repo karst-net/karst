@@ -321,7 +321,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 	created := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{
-		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), DhPublicKey: []byte("dh-public-material"), CreatedAt: created},
+		"handle-a": {Handle: "handle-a", PublicKey: []byte("identity-public-material"), KemPublicKey: []byte("kem-public-material"), CreatedAt: created},
 	}, fakePeers{
 		{Key: "fork-only-peer", Name: "not-karst", UserID: "user-a"},
 		{Key: "handle-a", Name: "karst-node", UserID: "user-a", Status: &peer.PeerStatus{LastSeen: created}},
@@ -351,7 +351,7 @@ func TestListNodes_OnlyEnrolledNodesAndNoKeyMaterial(t *testing.T) {
 func TestNodeResponsesNeverContainSecretFixtureMaterial(t *testing.T) {
 	secrets := []string{"known-psk-fixture-bytes", "known-disco-fixture-bytes", "known-setup-key-fixture-bytes"}
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1]), DhPublicKey: []byte(secrets[2])}}, fakePeers{{Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, router)
 	for _, path := range []string{"/karst/v1/nodes", "/karst/v1/nodes/handle-a"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
@@ -601,7 +601,6 @@ func TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing(t *testing.T) {
 	identityKey := nodeKey.Public()
 	handle := node.Handle(identityKey)
 	kem := bytes.Repeat([]byte{0x44}, bedrock.KemPublicKeySize)
-	dh := bytes.Repeat([]byte{0x55}, bedrock.DhPublicKeySize)
 
 	builder := bedrock.NewBuilder()
 	genesis, input := builder.Prepare(1, bedrock.OpGenesis, bedrock.GenesisBody("test.karst.", [][]byte{root.Public()}, 1, [][]byte{authority.Public()}, 1, nil))
@@ -610,7 +609,7 @@ func TestBedrockOfflineCeremonyCoversEnrollmentBeforeEnforcing(t *testing.T) {
 	require.NoError(t, builder.Commit(genesis, rootSigs))
 
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{handle: {Handle: handle, PublicKey: identityKey, KemPublicKey: kem, DhPublicKey: dh}}, fakePeers{{Key: handle, UserID: "user-a"}}, nil, auditLog, nil, nil, nil, configuration, chain, scanPermissions{role: types.UserRoleOwner}, router)
+	RegisterEndpoints(fakeNodes{handle: {Handle: handle, PublicKey: identityKey, KemPublicKey: kem}}, fakePeers{{Key: handle, UserID: "user-a"}}, nil, auditLog, nil, nil, nil, configuration, chain, scanPermissions{role: types.UserRoleOwner}, router)
 	user := auth.UserAuth{AccountId: "account-a", UserId: "user-a"}
 	bootstrapBody, err := json.Marshal(map[string]string{"format": "bedrock-log-v1", "payload": base64.StdEncoding.EncodeToString(bedrock.EncodeLog(builder.Entries()))})
 	require.NoError(t, err)
@@ -822,7 +821,7 @@ func TestAllRegisteredResponsesExcludeSecretSentinels(t *testing.T) {
 	require.NoError(t, err)
 	for _, role := range []types.UserRole{types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin, types.UserRoleAuditor, types.UserRoleUser} {
 		router := mux.NewRouter()
-		RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1]), DhPublicKey: []byte(secrets[2])}}, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, scanAudit{}, scanPolicy{}, scanRelays{}, scanTurns{}, bedrockStore, nil, scanPermissions{role: role}, router)
+		RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a", PublicKey: []byte(secrets[0]), KemPublicKey: []byte(secrets[1])}}, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "node", UserID: "user-a", SSHKey: secrets[2]}}, nil, scanAudit{}, scanPolicy{}, scanRelays{}, scanTurns{}, bedrockStore, nil, scanPermissions{role: role}, router)
 		require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 			template, err := route.GetPathTemplate()
 			if err != nil || !strings.HasPrefix(template, "/karst/v1/") {

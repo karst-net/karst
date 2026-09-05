@@ -268,7 +268,6 @@ fn command_pubkey(args: &[&str]) -> ExitCode {
                 "kem_public_key = \"{}\"",
                 encode_hex(&keys.kem_pk.to_bytes())
             );
-            println!("dh_public_key = \"{}\"", encode_hex(keys.dh_pk.as_bytes()));
             ExitCode::SUCCESS
         }
         Err(e) => {

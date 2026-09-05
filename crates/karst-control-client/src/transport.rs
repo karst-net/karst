@@ -463,15 +463,19 @@ fn build_init<S: Signer>(
     present_identity: bool,
     randomness: &EncapRandomness,
 ) -> Result<(pb::ChannelInit, Keys), Error> {
-    use karst_crypto::kem::{Kem, MlKem768Backend};
+    use ml_kem::kem::TryKeyInit;
 
-    let static_pk = MlKem768Backend::public_key_from_bytes(&pins.static_kem)
+    let static_pk = ml_kem::EncapsulationKey768::new_from_slice(&pins.static_kem)
+        .ok()
         .ok_or(Error::Protocol("pinned server KEM key is malformed"))?;
-    let eph_pk = MlKem768Backend::public_key_from_bytes(&hello.eph_kem_pk)
+    let eph_pk = ml_kem::EncapsulationKey768::new_from_slice(&hello.eph_kem_pk)
+        .ok()
         .ok_or(Error::Protocol("server ephemeral key is malformed"))?;
 
-    let (ct_static, ss_static) = MlKem768Backend::encapsulate(&static_pk, &randomness.statik);
-    let (ct_eph, ss_eph) = MlKem768Backend::encapsulate(&eph_pk, &randomness.ephemeral);
+    let (ct_static, ss_static) =
+        static_pk.encapsulate_deterministic(&ml_kem::array::Array(randomness.statik));
+    let (ct_eph, ss_eph) =
+        eph_pk.encapsulate_deterministic(&ml_kem::array::Array(randomness.ephemeral));
 
     let signature = signer
         .sign(&channel::init_signing_input(
@@ -493,8 +497,8 @@ fn build_init<S: Signer>(
 
     Ok((
         pb::ChannelInit {
-            ct_static,
-            ct_eph,
+            ct_static: ct_static.to_vec(),
+            ct_eph: ct_eph.to_vec(),
             // A node the server already knows must not present a key: that is
             // identity substitution, not re-registration.
             identity_pk: if present_identity {

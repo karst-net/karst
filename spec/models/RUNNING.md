@@ -1,4 +1,6 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
+> Historical log: the DH-bearing PHREATIC models were retired on 2026-09-05 by [ADR-0018](../../docs/adr/0018-cnsa-2-0-as-the-sole-suite.md). Current model results are in [README.md](README.md).
 # In-flight verification runs
 
 Launched 2026-08-10 on **lovelace** (48 cores, 251 GB, x86-64), detached under

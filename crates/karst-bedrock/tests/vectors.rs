@@ -96,7 +96,6 @@ struct LogCase {
 struct CoverageCase {
     handle: String,
     kem_public_key: String,
-    dh_public_key: String,
     at: i64,
     covered: bool,
 }
@@ -235,7 +234,6 @@ fn body_encodings_match_the_go_implementation() {
                     &b.handle,
                     &b.identity_key,
                     &b.kem_public_key,
-                    &b.dh_public_key,
                     b.not_before,
                     b.expiry,
                 )
@@ -298,13 +296,12 @@ fn logs_verify_to_the_same_state_as_go() {
 
         for (i, cov) in c.coverage.iter().enumerate() {
             let kem = unhex(&cov.kem_public_key);
-            let dh = unhex(&cov.dh_public_key);
+
             assert_eq!(
                 st.is_covered(
                     &cov.handle,
                     karst_bedrock::PeerKeys {
                         kem_public_key: &kem,
-                        dh_public_key: &dh,
                     },
                     cov.at
                 ),

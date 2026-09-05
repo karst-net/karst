@@ -119,7 +119,6 @@ use sha2::{Digest, Sha256};
 pub struct PeerEntry<'a> {
     pub node_id: &'a [u8],
     pub kem_public_key: &'a [u8],
-    pub dh_public_key: &'a [u8],
     pub dns_name: &'a str,
     pub endpoint: &'a str,
     /// The relay this peer holds a connection to — `ponor-v1.md` §9.1.
@@ -153,7 +152,6 @@ pub fn peer_digest(entry: &PeerEntry<'_>, epoch: u32) -> u64 {
     push(&mut h, &epoch.to_be_bytes());
     push(&mut h, entry.node_id);
     push(&mut h, entry.kem_public_key);
-    push(&mut h, entry.dh_public_key);
     push(&mut h, entry.dns_name.as_bytes());
     push(&mut h, entry.endpoint.as_bytes());
     push(&mut h, entry.home_relay);
@@ -297,7 +295,6 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     for p in content.peers {
         push(&mut h, p.node_id);
         push(&mut h, p.kem_public_key);
-        push(&mut h, p.dh_public_key);
         push(&mut h, p.dns_name.as_bytes());
         push(&mut h, p.endpoint.as_bytes());
         push(&mut h, p.home_relay);

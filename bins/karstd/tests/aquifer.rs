@@ -417,7 +417,7 @@ fn offline_ceremony_for_node_a() -> Vec<u8> {
     let root = RootKey::from_seed(&[0xC1; ROOT_SEED]).expect("root");
     let authority = AuthorityKey::from_seed(&[0xD2; 32]).expect("authority");
     let identity = karstd::control::Identity::from_seed(&[SEED_A; 32]);
-    let static_keys = karst_noise::handshake::StaticKeys::from_seed(&[SEED_A; 64], &[SEED_A; 32]);
+    let static_keys = karst_noise::handshake::StaticKeys::from_seed(&[SEED_A; 64]);
 
     let mut builder = Builder::new();
     let (genesis, input) = builder.prepare(
@@ -449,7 +449,6 @@ fn offline_ceremony_for_node_a() -> Vec<u8> {
             &identity.handle(),
             &identity.public_key(),
             &static_keys.kem_pk.to_bytes(),
-            static_keys.dh_pk.as_bytes(),
             0,
             0,
         ),
@@ -2258,7 +2257,7 @@ fn write_node_config(
     let d = net.dir.join(tag);
     std::fs::create_dir_all(&d).expect("node dir");
     write_secret(&d.join("identity.key"), &hex(&[seed; 32]));
-    write_secret(&d.join("private.key"), &hex(&[seed; 96]));
+    write_secret(&d.join("private.key"), &hex(&[seed; 64]));
     std::fs::write(
         d.join("karstd.toml"),
         format!(

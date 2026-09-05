@@ -29,26 +29,25 @@ type NodeCoverage struct {
 	Handle string
 	// IdentityKey is the ML-DSA-65 control-channel key.
 	IdentityKey []byte
-	// KemPublicKey and DhPublicKey are the static keys PHREATIC actually
+	// KemPublicKey is the static key PHREATIC actually
 	// authenticates against — spec §6.1. Covering these is what makes the
 	// mechanism more than a formality.
 	KemPublicKey []byte
-	DhPublicKey  []byte
-	NotBefore    int64
-	Expiry       int64 // zero means no expiry
+
+	NotBefore int64
+	Expiry    int64 // zero means no expiry
 }
 
 // PeerKeys is what a netmap presents for a peer, as the coverage query sees it.
 //
 // The identity key is deliberately absent. A netmap carries a peer's handle,
-// KEM key and DH key — never its ML-DSA identity key — so a predicate that took
+// KEM key — never its ML-DSA identity key — so a predicate that took
 // one could only be handed the value already in the log, and comparing the log
 // to itself proves nothing. The identity binding is checked once, during chain
 // verification, as the invariant handle == Handle(identity_key); see
 // verifyNodeSign.
 type PeerKeys struct {
 	KemPublicKey []byte
-	DhPublicKey  []byte
 }
 
 // State is the result of verifying a log: everything a node needs in order to
@@ -286,9 +285,9 @@ func (st *State) apply(e *Entry, genesis *Genesis) error {
 			Handle:       n.Handle,
 			IdentityKey:  n.IdentityKey,
 			KemPublicKey: n.KemPublicKey,
-			DhPublicKey:  n.DhPublicKey,
-			NotBefore:    n.NotBefore,
-			Expiry:       n.Expiry,
+
+			NotBefore: n.NotBefore,
+			Expiry:    n.Expiry,
 		}
 		// A re-signature supersedes an earlier revocation: an operator who
 		// countersigns a handle again after revoking it means to readmit it.
@@ -395,7 +394,7 @@ func validateAnchorKeys(anchorKeys, roots, authorities [][]byte) error {
 //
 // **The datapath keys are what is compared.** Checking the identity key here
 // would not do: it is not used by PHREATIC (phreatic-v1.md §4) and does not
-// appear in a netmap, so a check that ignored the static KEM and DH keys would
+// appear in a netmap, so a check that ignored the static KEM key would
 // authorize a node to exist without constraining which session keys are its —
 // and a compromised server would still substitute the keys a handshake actually
 // runs against. Spec §6.1. The identity key is bound to the handle during chain
@@ -411,8 +410,7 @@ func (st *State) IsCovered(handle string, keys PeerKeys, t int64) bool {
 	}
 	// Constant time is not required — every value here is public — but
 	// comparing the datapath keys at all is the point of the mechanism.
-	if !bytes.Equal(c.KemPublicKey, keys.KemPublicKey) ||
-		!bytes.Equal(c.DhPublicKey, keys.DhPublicKey) {
+	if !bytes.Equal(c.KemPublicKey, keys.KemPublicKey) {
 		return false
 	}
 	if t < c.NotBefore {

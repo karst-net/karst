@@ -16,12 +16,11 @@
 //! No future ever touches the packet path, and the executor cannot be starved
 //! by a busy tunnel because it does not share a thread with one.
 //!
-//! # The node holds three long-term keys
+//! # The node holds two long-term keys
 //!
-//! phreatic-v1.md §4: an ML-DSA-87 identity, an ML-KEM-768 static key and an
-//! X25519 static key. The identity authenticates *this* channel and is
-//! deliberately **not** used by PHREATIC; the other two are what peers actually
-//! handshake with, and are registered here so peers can be given them.
+//! phreatic-v1.md §4: an ML-DSA-87 identity, an ML-KEM-1024 static key. The identity authenticates *this* channel and is
+//! deliberately **not** used by PHREATIC; the KEM key is what peers
+//! handshake with, and is registered here so peers can be given it.
 //!
 //! They live in separate files. A single file would mean that leaking the
 //! control identity also leaks the data-plane keys, which are the ones that
@@ -299,7 +298,6 @@ pub struct Client {
     sessions: Vec<pb::KarstSessionObservation>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
-    dh_public: Vec<u8>,
     /// Empty until the first registration completes.
     node_id: Vec<u8>,
     netmap: Netmap,
@@ -410,7 +408,6 @@ impl Client {
             conn: None,
             pushed: Arc::new(tokio::sync::Notify::new()),
             kem_public: keys.kem_pk.to_bytes().clone(),
-            dh_public: keys.dh_pk.as_bytes().to_vec(),
             node_id: Vec::new(),
             netmap: Netmap::new(),
             bedrock: crate::bedrock::Log::new(),
@@ -706,7 +703,6 @@ impl Client {
             let handle = String::from_utf8_lossy(&peer.node_id).into_owned();
             let keys = karst_bedrock::PeerKeys {
                 kem_public_key: &peer.kem_public_key,
-                dh_public_key: &peer.dh_public_key,
             };
             if let Some(reason) = self.bedrock.classify(&handle, keys, now) {
                 out.push(crate::bedrock::Exclusion { handle, reason });
@@ -729,7 +725,6 @@ impl Client {
                 &handle,
                 karst_bedrock::PeerKeys {
                     kem_public_key: &self.kem_public,
-                    dh_public_key: &self.dh_public,
                 },
                 now,
             )
@@ -798,7 +793,6 @@ impl Client {
             // phreatic-v1.md requires every node to know its peers' S_pk and
             // D_pk, and the netmap is where they are distributed from.
             kem_public_key: self.kem_public.clone(),
-            dh_public_key: self.dh_public.clone(),
             ..pb::KarstLoginRequest::default()
         };
 
@@ -1459,7 +1453,7 @@ mod tests {
     }
 
     fn keys() -> karst_noise::handshake::StaticKeys {
-        karst_noise::handshake::StaticKeys::from_seed(&[0x21; 64], &[0x22; 32])
+        karst_noise::handshake::StaticKeys::from_seed(&[0x21; 64])
     }
 
     /// A mistyped pin must stop the daemon at startup with the field name in
@@ -1514,8 +1508,7 @@ mod tests {
                 allowed_ips: vec!["100.64.0.2/32".to_owned()],
                 dns_name: "alpha".to_owned(),
                 endpoint: String::new(),
-                kem_public_key: vec![0x11; 1184],
-                dh_public_key: vec![0x12; 32],
+                kem_public_key: vec![0x11; 1568],
                 psk: psk.clone(),
                 psk_previous: Vec::new(),
                 disco_key: vec![0xCD; 32],

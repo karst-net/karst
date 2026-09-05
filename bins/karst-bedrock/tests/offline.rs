@@ -42,7 +42,6 @@ fn authority(seed: u8) -> AuthorityKey {
 struct NodeKeys {
     identity: Vec<u8>,
     kem: Vec<u8>,
-    dh: Vec<u8>,
 }
 
 /// A node's keys. The identity key is a pattern rather than a real ML-DSA-65
@@ -51,8 +50,7 @@ struct NodeKeys {
 fn node_keys(seed: u8) -> NodeKeys {
     NodeKeys {
         identity: vec![seed; karst_crypto::sign::NODE_IDENTITY_KEY],
-        kem: vec![seed; 1184],
-        dh: vec![seed.wrapping_add(1); 32],
+        kem: vec![seed; 1568],
     }
 }
 
@@ -63,7 +61,6 @@ fn sign_body(_handle: &str, k: &NodeKeys) -> Vec<u8> {
         &karst_bedrock::log::node_handle(&k.identity),
         &k.identity,
         &k.kem,
-        &k.dh,
         0,
         0,
     )
@@ -189,7 +186,6 @@ fn a_node_is_countersigned_offline_and_becomes_covered() {
             &karst_bedrock::log::node_handle(&node.identity),
             karst_bedrock::PeerKeys {
                 kem_public_key: &node.kem,
-                dh_public_key: &node.dh,
             },
             2000
         ),

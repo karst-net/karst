@@ -313,7 +313,7 @@ impl Log {
         let Some(c) = state.covered.get(handle) else {
             return Some(Reason::NotCountersigned);
         };
-        if c.kem_public_key != keys.kem_public_key || c.dh_public_key != keys.dh_public_key {
+        if c.kem_public_key != keys.kem_public_key {
             return Some(Reason::KeyMismatch);
         }
         if state.revoked.get(handle).is_some_and(|&eff| eff <= t) {
@@ -360,7 +360,6 @@ mod tests {
     pub(super) struct NodeKeys {
         pub(super) identity: Vec<u8>,
         pub(super) kem: Vec<u8>,
-        pub(super) dh: Vec<u8>,
     }
 
     impl NodeKeys {
@@ -373,7 +372,6 @@ mod tests {
         pub(super) fn keys(&self) -> karst_bedrock::PeerKeys<'_> {
             karst_bedrock::PeerKeys {
                 kem_public_key: &self.kem,
-                dh_public_key: &self.dh,
             }
         }
     }
@@ -387,8 +385,7 @@ mod tests {
         // handle derives to it, and a pattern satisfies both.
         let node = NodeKeys {
             identity: vec![0x33; karst_crypto::sign::NODE_IDENTITY_KEY],
-            kem: vec![0x33; 1184],
-            dh: vec![0x34; 32],
+            kem: vec![0x33; 1568],
         };
 
         let mut b = Builder::new();
@@ -414,7 +411,6 @@ mod tests {
                 &karst_bedrock::log::node_handle(&node.identity),
                 &node.identity,
                 &node.kem,
-                &node.dh,
                 0,
                 0,
             ),
@@ -623,13 +619,12 @@ mod mode_tests {
 
         // Right handle, keys the log does not cover: this is the substitution
         // Bedrock exists to catch, and it must not be reported as a mere gap.
-        let other = vec![0xEE; 1184];
+        let other = vec![0xEE; 1568];
         assert_eq!(
             log.classify(
                 &node.handle(),
                 PeerKeys {
                     kem_public_key: &other,
-                    dh_public_key: &node.dh,
                 },
                 2000
             ),
@@ -642,8 +637,7 @@ mod mode_tests {
     fn an_empty_log_covers_nothing() {
         let log = Log::new();
         let keys = PeerKeys {
-            kem_public_key: &[0u8; 1184],
-            dh_public_key: &[0u8; 32],
+            kem_public_key: &[0u8; 1568],
         };
         assert_eq!(
             log.classify("anyone", keys, 2000),
@@ -662,7 +656,7 @@ mod mode_tests {
 //
 // Two peers comparing heads *with each other* can. This must ride the PHREATIC
 // session and nothing else: the coordination server knows each pair's PSK
-// (PLAN.md §2.6), but not the ephemeral ML-KEM and X25519 secrets, so a
+// (PLAN.md §2.6), but not the ephemeral ML-KEM secrets, so a
 // PHREATIC session is the only channel between two nodes that is confidential
 // from the party being audited.
 

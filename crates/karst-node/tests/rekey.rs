@@ -22,7 +22,6 @@
 
 use std::sync::Arc;
 
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_node::{Action, CloseReason, Session};
 use karst_noise::handshake::{PeerPublic, ResponderRandomness, StaticKeys};
 use karst_noise::transport::{REJECT_AFTER_MS, REKEY_AFTER_MS};
@@ -33,25 +32,18 @@ const PSK: [u8; 32] = [0x42; 32];
 const SRC_A: karst_proto::reassembly::SourceKey = [0x11; 18];
 const SRC_B: karst_proto::reassembly::SourceKey = [0x22; 18];
 
-fn keys(a: u8, b: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[a; 64], &[b; 32]))
+fn keys(a: u8, _b: u8) -> Arc<StaticKeys> {
+    Arc::new(StaticKeys::from_seed(&[a; 64]))
 }
 fn peer_of(k: &StaticKeys) -> Arc<PeerPublic> {
     Arc::new(PeerPublic {
         kem_pk: k.kem_pk.clone(),
-        dh_pk: k.dh_pk,
+
         psk: PSK,
     })
 }
-fn policy() -> SuitePolicy {
-    SuitePolicy {
-        minimum: SuiteId::KARST_1,
-        supported: vec![SuiteId::KARST_1],
-    }
-}
 fn rrand(n: u8) -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [n; 32],
         encap_rand_e: [n ^ 0x0F; 32],
         encap_rand_s: [n ^ 0xF0; 32],
     }
@@ -77,8 +69,8 @@ impl Pair {
         b_pub: Arc<PeerPublic>,
     ) -> Self {
         Self {
-            a: Session::new(a_keys, b_pub, policy(), SuiteId::KARST_1, 7, 1),
-            b: Session::new(b_keys, a_pub, policy(), SuiteId::KARST_1, 7, 2),
+            a: Session::new(a_keys, b_pub, 7, 1),
+            b: Session::new(b_keys, a_pub, 7, 2),
             a_reasm: Reassembler::new(ReasmConfig::default()),
             b_reasm: Reassembler::new(ReasmConfig::default()),
             round: 0,
@@ -613,14 +605,7 @@ fn a_fresh_handshake_init_does_not_disturb_a_working_session() {
     // that nothing will ever finish. §12.5 makes this constructible by anyone;
     // building it here from a second session with the same identity keeps the
     // fixture honest about *what B sees*, which is all this test is about.
-    let mut stray = Session::new(
-        Arc::clone(&ak),
-        Arc::clone(&bp),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        9,
-    );
+    let mut stray = Session::new(Arc::clone(&ak), Arc::clone(&bp), 7, 9);
     let intrusion = Pair::sends(stray.connect(1_100, [0x77; 32]));
     assert!(!intrusion.is_empty(), "the fixture must produce an init");
     let (answer, _) = p.deliver_to_b(intrusion, 1_100);
@@ -658,14 +643,7 @@ fn keys_a_responder_derived_are_adopted_once_a_message_proves_them() {
     p.assert_traffic_flows(1_000, "the first session");
 
     // A restarts: same identity, no memory of the session B still holds.
-    let mut restarted = Session::new(
-        Arc::clone(&ak),
-        Arc::clone(&bp),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        1,
-    );
+    let mut restarted = Session::new(Arc::clone(&ak), Arc::clone(&bp), 7, 1);
     let mut reasm = Reassembler::new(ReasmConfig::default());
     let init = Pair::sends(restarted.connect(2_000, [0x33; 32]));
     let (response, _) = p.deliver_to_b(init, 2_000);
@@ -709,14 +687,7 @@ fn keys_nothing_proves_are_dropped_when_they_expire() {
     );
     p.establish(0);
 
-    let mut stray = Session::new(
-        Arc::clone(&ak),
-        Arc::clone(&bp),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        9,
-    );
+    let mut stray = Session::new(Arc::clone(&ak), Arc::clone(&bp), 7, 9);
     let intrusion = Pair::sends(stray.connect(1_000, [0x77; 32]));
     let _ = p.deliver_to_b(intrusion, 1_000);
 
@@ -825,14 +796,7 @@ fn only_the_keys_a_message_proved_are_adopted() {
 
     // A peer that restarts, handshakes, and sends — the ordinary case that
     // should be adopted.
-    let mut restarted = Session::new(
-        Arc::clone(&ak),
-        Arc::clone(&bp),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        1,
-    );
+    let mut restarted = Session::new(Arc::clone(&ak), Arc::clone(&bp), 7, 1);
     let mut reasm = Reassembler::new(ReasmConfig::default());
     let init = Pair::sends(restarted.connect(1_000, [0x33; 32]));
     let (response, _) = p.deliver_to_b(init, 1_000);
@@ -856,14 +820,7 @@ fn only_the_keys_a_message_proved_are_adopted() {
     }
     assert_eq!(opened, 1, "the restarted node's message must open");
 
-    let mut stray = Session::new(
-        Arc::clone(&ak),
-        Arc::clone(&bp),
-        policy(),
-        SuiteId::KARST_1,
-        7,
-        9,
-    );
+    let mut stray = Session::new(Arc::clone(&ak), Arc::clone(&bp), 7, 9);
     let intrusion = Pair::sends(stray.connect(1_150, [0x77; 32]));
     let _ = p.deliver_to_b(intrusion, 1_150);
 

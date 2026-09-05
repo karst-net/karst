@@ -43,7 +43,7 @@ scp -q -o BatchMode=yes "$HERE"/*.pv "$HERE"/gen-variants.sh "$HOST:~/$REMOTE_DI
 ssh -o BatchMode=yes "$HOST" "cd ~/$REMOTE_DIR && ./gen-variants.sh"
 
 # Base model first: fast, and a failure there invalidates the rest.
-for m in phreatic phreatic-dh-broken phreatic-kem-broken; do
+for m in phreatic phreatic-kem-broken; do
     echo "==> $m (nohup, detached)"
     ssh -o BatchMode=yes "$HOST" \
         "cd ~/$REMOTE_DIR && nohup nice -n 10 proverif $m.pv > $m.out 2>&1 &"
@@ -53,7 +53,7 @@ cat <<MSG
 
 Launched detached on $HOST in ~/$REMOTE_DIR.
 
-Expected: phreatic ~seconds, phreatic-dh-broken ~minutes,
+Expected: phreatic ~seconds,
 phreatic-kem-broken may not terminate at all (see spec/models/README.md).
 
 Collect with:

@@ -9,7 +9,7 @@
 //
 // It replaces NetBird's EncryptedMessage, which fuses three roles into one
 // X25519 key — authentication handle, primary index, and transport encryption
-// key. Karst's identity is ML-DSA-87 plus a static ML-KEM-768 key and has no
+// key. Karst's identity is ML-DSA-87 plus a static ML-KEM-1024 key and has no
 // such object, so the envelope names an opaque handle and carries the
 // cryptography separately.
 
@@ -45,10 +45,9 @@ message KarstLoginRequest {
   //
   // They are registered here because peers cannot handshake without them:
   // "A node MUST know, for every peer it may communicate with, that peer's
-  // peer_id_hint, S_pk, D_pk and current per-pair PSK. These are distributed
+  // peer_id_hint, S_pk and current per-pair PSK. These are distributed
   // in the netmap."
-  bytes kem_public_key = 4;   // Static KEM S — ML-KEM-768, 1184 B
-  bytes dh_public_key = 5;    // Static DH D — X25519, 32 B
+  bytes kem_public_key = 4;   // Static KEM S — ML-KEM-1024, 1568 B
 
   // OIDC ID token, for interactive registration (PLAN.md §4.2 step 2).
   //
@@ -84,7 +83,7 @@ message KarstNetmapRequest {
   // replies with only what differs.
   //
   // The saving is large because a digest is 8 bytes against roughly 2.4 KB for
-  // a peer entry (a 1184-byte KEM key, a 32-byte DH key, two 32-byte PSKs,
+  // a peer entry (a 1568-byte KEM key, two 32-byte PSKs,
   // addresses). At 200 peers that is a 1.6 KB request instead of a ~480 KB
   // response.
   //
@@ -122,7 +121,7 @@ message KarstSessionObservation {
   bool lattice_only = 4;
   // The netmap PSK epoch used to interpret lattice_only.
   uint32 psk_epoch = 5;
-  // The negotiated hybrid suite, for example "ML-KEM-768 + X25519".
+  // The fixed PHREATIC suite, "KARST_2_MLKEM1024_MLDSA87_AES256GCM_SHA384".
   string suite = 6;
 }
 
@@ -161,8 +160,7 @@ message KarstNetmapPeer {
   bytes home_relay = 10;
 
   // PHREATIC keys (phreatic-v1.md §4).
-  bytes kem_public_key = 5;   // S_pk, 1184 B
-  bytes dh_public_key = 6;    // D_pk, 32 B
+  bytes kem_public_key = 5;   // S_pk, 1568 B
 
   // The per-pair PSK for (recipient, this peer) at psk_epoch (PLAN.md §2.6).
   //

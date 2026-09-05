@@ -4,7 +4,7 @@
 //! A real handshake carried over the fragmentation layer — `spec/phreatic-v1.md`
 //! §5, §6, §9.
 //!
-//! `karst-noise` produces 2378-byte messages and `karst-proto` carries 1208-byte
+//! `karst-noise` produces 3210-byte messages and `karst-proto` carries 1208-byte
 //! fragments. These tests join the two, which is where mismatches between the
 //! specification's arithmetic and the implementation would surface.
 
@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use karst_crypto::kem::KemKind;
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_noise::handshake::{
     initiate, respond, InitiatorRandomness, PeerPublic, ResponderRandomness, SessionParams,
     StaticKeys, TIMESTAMP_LEN,
@@ -27,42 +26,35 @@ const PSK: [u8; 32] = [0x42; 32];
 const SRC: SourceKey = [3; 18];
 
 fn alice() -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[0xA1; 64], &[0xA2; 32]))
+    Arc::new(StaticKeys::from_seed(&[0xA1; 64]))
 }
 fn bob() -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[0xB1; 64], &[0xB2; 32]))
+    Arc::new(StaticKeys::from_seed(&[0xB1; 64]))
 }
 fn peer_of(k: &StaticKeys) -> PeerPublic {
     PeerPublic {
         kem_pk: k.kem_pk.clone(),
-        dh_pk: k.dh_pk,
+
         psk: PSK,
     }
 }
 fn irand() -> InitiatorRandomness {
     InitiatorRandomness {
         e_kem_seed: [0xE1; 64],
-        e_dh_seed: [0xE2; 32],
+
         encap_rand: [0xE3; 32],
         timestamp: [1; TIMESTAMP_LEN],
     }
 }
 fn rrand() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [0xF1; 32],
         encap_rand_e: [0xF2; 32],
         encap_rand_s: [0xF3; 32],
     }
 }
-fn policy() -> SuitePolicy {
-    SuitePolicy {
-        minimum: SuiteId::KARST_1,
-        supported: vec![SuiteId::KARST_1],
-    }
-}
+
 fn params() -> SessionParams {
     SessionParams {
-        suite: SuiteId::KARST_1,
         psk_epoch: 7,
         sender_index: 1,
     }
@@ -83,7 +75,7 @@ fn init_fragments(a: &Arc<StaticKeys>, b: &StaticKeys) -> (Vec<u8>, Vec<Vec<u8>>
     (msg1, frags, key)
 }
 
-/// The headline joint property: a 2378-byte handshake message survives the
+/// The headline joint property: a 3210-byte handshake message survives the
 /// round trip through fragmentation and reassembly byte-for-byte, and the
 /// reassembled bytes still drive a working handshake.
 #[test]
@@ -91,8 +83,8 @@ fn a_real_handshake_survives_fragmentation_and_reassembly() {
     let (a, b) = (alice(), bob());
     let (msg1, frags, key) = init_fragments(&a, &b);
 
-    assert_eq!(msg1.len(), 2378, "spec §6.1");
-    assert_eq!(frags.len(), 2, "spec §6.4 — two fragments");
+    assert_eq!(msg1.len(), 3210, "spec §6.1");
+    assert_eq!(frags.len(), 3, "spec §6.4 — three fragments");
 
     let mut r = Reassembler::new(Config::default());
     let mut reassembled = None;
@@ -128,16 +120,15 @@ fn a_real_handshake_survives_fragmentation_and_reassembly() {
 
     // And the reassembled bytes still work as a handshake.
     let a_hint = a.hint();
-    let (msg2, _, _) = respond(
+    let (msg2, _) = respond(
         &b,
-        &policy(),
         &got,
         |h, _e| (*h == a_hint).then(|| peer_of(&a)),
         &rrand(),
         2,
     )
     .unwrap();
-    assert_eq!(msg2.len(), 2236, "spec §6.2");
+    assert_eq!(msg2.len(), 3164, "spec §6.2");
 }
 
 /// Fragments may arrive in any order.
@@ -306,9 +297,8 @@ fn anti_amplification_holds_on_the_wire() {
     let received: usize = frags.iter().map(Vec::len).sum();
 
     let a_hint = a.hint();
-    let (msg2, _, _) = respond(
+    let (msg2, _) = respond(
         &b,
-        &policy(),
         &msg1,
         |h, _e| (*h == a_hint).then(|| peer_of(&a)),
         &rrand(),
@@ -330,127 +320,21 @@ fn anti_amplification_holds_on_the_wire() {
     );
 }
 
-// ── KARST_2 needs three fragments — spec §6.5, ADR-0015 item 1 ──────────────
-
-/// **The CNSA profile crosses the two-fragment line, and that is a property
-/// worth a test rather than a table.** `KARST_2` carries 1 568-byte ML-KEM-1024
-/// keys and ciphertexts and no X25519, giving a 3 210-byte `HandshakeInit`:
-/// three fragments where `KARST_1` needs two, so three datagrams must arrive
-/// for a handshake to complete instead of two.
-///
-/// Everything else about the fragmentation layer is unchanged — same 1 208-byte
-/// payloads, same MAC, same reassembler — which is exactly what this asserts,
-/// because a suite that needed a *different* fragmentation would be a different
-/// protocol.
-#[test]
-fn a_cnsa_handshake_needs_three_fragments_and_still_reassembles() {
-    let a = Arc::new(StaticKeys::from_seed_of_kind(
-        KemKind::MlKem1024,
-        &[0xA1; 64],
-        &[0xA2; 32],
-    ));
-    let b = Arc::new(StaticKeys::from_seed_of_kind(
-        KemKind::MlKem1024,
-        &[0xB1; 64],
-        &[0xB2; 32],
-    ));
-
-    let cnsa_params = SessionParams {
-        suite: SuiteId::KARST_2,
-        psk_epoch: 7,
-        sender_index: 1,
-    };
-    let cnsa_policy = SuitePolicy {
-        minimum: SuiteId::KARST_2,
-        supported: vec![SuiteId::KARST_2],
-    };
-
-    let (_, msg1) = initiate(Arc::clone(&a), Arc::new(peer_of(&b)), cnsa_params, &irand()).unwrap();
-    assert_eq!(msg1.len(), 3210, "spec §6.5");
-
-    let key = mac1_key(&b.kem_pk.to_bytes());
-    let frags = fragment(
-        MessageType::HandshakeInit,
-        0xC0FF_EE00,
-        &msg1,
-        &FragMacKey::new(&key),
-    )
-    .unwrap();
-    assert_eq!(frags.len(), 3, "spec §6.5 — three fragments, not two");
-    assert!(
-        frags.len() <= consts::MAX_FRAGMENTS as usize,
-        "still inside the four-fragment hard cap"
-    );
-
-    let mut r = Reassembler::new(Config::default());
-    let mut reassembled = None;
-    for datagram in &frags {
-        assert!(
-            datagram.len() <= consts::DATAGRAM_MAX - consts::IPV6_HEADER - consts::UDP_HEADER,
-            "each datagram must still fit the minimum MTU"
-        );
-        let (hdr, payload) = split_datagram(datagram).unwrap();
-        assert!(
-            verify_frag_mac(
-                &key,
-                MessageType::HandshakeInit as u8,
-                hdr.reassembly_id,
-                hdr.idx,
-                hdr.count,
-                payload,
-                &hdr.frag_mac
-            ),
-            "the fragment MAC is suite-independent and must still verify"
-        );
-        if let Accept::Complete(msg) = r.push(SRC, true, &hdr, payload, 0) {
-            reassembled = Some(msg.to_vec());
-        }
-    }
-
-    let got = reassembled.expect("three fragments must reassemble");
-    assert_eq!(got, msg1, "reassembly must be byte-exact");
-    assert_eq!(r.occupied(), 0, "slot released on completion");
-
-    let a_hint = a.hint();
-    let (msg2, _, suite) = respond(
-        &b,
-        &cnsa_policy,
-        &got,
-        |h, _e| (*h == a_hint).then(|| peer_of(&a)),
-        &rrand(),
-        2,
-    )
-    .unwrap();
-    assert_eq!(suite, SuiteId::KARST_2);
-    assert_eq!(msg2.len(), 3164, "spec §6.5");
-    assert!(
-        msg1.len() > msg2.len(),
-        "anti-amplification still holds, by 46 bytes"
-    );
-}
-
-/// **Two fragments of a three-fragment message must not complete.** The
-/// reassembler counts what the header claims, and `KARST_2` is the first suite
-/// where a missing third fragment is a real operational case rather than a
-/// hypothetical — three-in-three at 5% path loss is roughly 86% against 90%
-/// for two (§6.5).
+/// Every fragment is required to complete the handshake.
 #[test]
 fn a_cnsa_handshake_does_not_complete_on_two_of_its_three_fragments() {
     let a = Arc::new(StaticKeys::from_seed_of_kind(
         KemKind::MlKem1024,
         &[0xA1; 64],
-        &[0xA2; 32],
     ));
     let b = Arc::new(StaticKeys::from_seed_of_kind(
         KemKind::MlKem1024,
         &[0xB1; 64],
-        &[0xB2; 32],
     ));
     let (_, msg1) = initiate(
         Arc::clone(&a),
         Arc::new(peer_of(&b)),
         SessionParams {
-            suite: SuiteId::KARST_2,
             psk_epoch: 7,
             sender_index: 1,
         },

@@ -455,10 +455,8 @@ pub struct Peer {
     /// guess — a guess sends a handshake to a relay the peer is not connected
     /// to and then waits out the timeout.
     pub home_relay: Vec<u8>,
-    /// ML-KEM-768 encapsulation key, 1184 B.
+    /// ML-KEM-1024 encapsulation key, 1568 B.
     pub kem_public_key: Vec<u8>,
-    /// X25519 static public key, 32 B.
-    pub dh_public_key: Vec<u8>,
     /// PSK for the current epoch. Absent means the §7.3 lattice-only fallback.
     pub psk: Option<Psk>,
     /// PSK for the previous epoch, so a rotation is answerable in both
@@ -503,7 +501,6 @@ impl Peer {
             endpoint: p.endpoint,
             home_relay: p.home_relay,
             kem_public_key: p.kem_public_key,
-            dh_public_key: p.dh_public_key,
             psk,
             psk_previous,
             disco_key,
@@ -518,7 +515,6 @@ impl Peer {
             endpoint: self.endpoint.clone(),
             home_relay: self.home_relay.clone(),
             kem_public_key: self.kem_public_key.clone(),
-            dh_public_key: self.dh_public_key.clone(),
             psk: self.psk.as_ref().map(|p| p.0.to_vec()).unwrap_or_default(),
             psk_previous: self
                 .psk_previous
@@ -540,7 +536,6 @@ impl Peer {
             &PeerEntry {
                 node_id: &self.node_id,
                 kem_public_key: &self.kem_public_key,
-                dh_public_key: &self.dh_public_key,
                 dns_name: &self.dns_name,
                 endpoint: &self.endpoint,
                 home_relay: &self.home_relay,
@@ -864,7 +859,6 @@ impl Netmap {
             .map(|p| PeerEntry {
                 node_id: &p.node_id,
                 kem_public_key: &p.kem_public_key,
-                dh_public_key: &p.dh_public_key,
                 dns_name: &p.dns_name,
                 endpoint: &p.endpoint,
                 home_relay: &p.home_relay,
@@ -1033,8 +1027,7 @@ mod tests {
             allowed_ips: vec![format!("{ip}/32")],
             dns_name: id.to_owned(),
             endpoint: String::new(),
-            kem_public_key: vec![0x11; 1184],
-            dh_public_key: vec![0x22; 32],
+            kem_public_key: vec![0x11; 1568],
             psk: vec![0x33; PSK_LEN],
             psk_previous: vec![0x44; PSK_LEN],
             disco_key: vec![0x55; PSK_LEN],
@@ -1344,7 +1337,7 @@ mod tests {
     fn a_delta_entry_replaces_rather_than_merges() {
         let mut map = loaded();
         let mut updated = wire_peer("aaa", "100.64.0.9");
-        updated.kem_public_key = vec![0xAB; 1184];
+        updated.kem_public_key = vec![0xAB; 1568];
         let resp = sealed(
             pb::KarstNetmapResponse {
                 delta: true,
@@ -1355,7 +1348,7 @@ mod tests {
         );
         map.apply(resp).expect("apply");
         let peer = map.peer(b"aaa").expect("still held");
-        assert_eq!(peer.kem_public_key, vec![0xAB; 1184]);
+        assert_eq!(peer.kem_public_key, vec![0xAB; 1568]);
         assert_eq!(peer.allowed_ips, vec!["100.64.0.9/32".to_owned()]);
     }
 

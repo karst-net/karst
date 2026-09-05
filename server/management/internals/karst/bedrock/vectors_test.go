@@ -108,9 +108,9 @@ type logCase struct {
 type coverageCase struct {
 	Handle       string `json:"handle"`
 	KemPublicKey string `json:"kem_public_key"`
-	DhPublicKey  string `json:"dh_public_key"`
-	At           int64  `json:"at"`
-	Covered      bool   `json:"covered"`
+
+	At      int64 `json:"at"`
+	Covered bool  `json:"covered"`
 }
 
 // rejectedCase is a log that MUST fail verification, with the reason it must
@@ -233,7 +233,7 @@ func TestVectors(t *testing.T) {
 			"everything passes every valid case. " +
 			"2026-08-25: both tiers moved to ML-DSA-87 (ADR-0015 Option A); CNSA 2.0 " +
 			"excludes SLH-DSA, so the hash-based root is gone and root cases now " +
-			"carry a 32-byte seed. node-sign covers the ML-KEM and X25519 static keys as " +
+			"carry a 32-byte seed. node-sign covers the ML-KEM static key as " +
 			"well as the ML-DSA identity key (spec §6.1) — the identity key is not " +
 			"used by PHREATIC, so covering it alone authorized a node to exist " +
 			"without constraining which session keys were its. Pre-change bodies " +
@@ -363,8 +363,7 @@ func TestVectors(t *testing.T) {
 			// Each datapath key swapped in isolation, so a verifier that
 			// compares only one of the two fails exactly one of these rather
 			// than none.
-			keyCase(f.alice.Handle, PeerKeys{f.bob.Keys.KemPublicKey, f.alice.Keys.DhPublicKey}, 1350),
-			keyCase(f.alice.Handle, PeerKeys{f.alice.Keys.KemPublicKey, f.bob.Keys.DhPublicKey}, 1350),
+			keyCase(f.alice.Handle, PeerKeys{f.bob.Keys.KemPublicKey}, 1350),
 		}),
 	})
 
@@ -567,11 +566,10 @@ func coverageCases(st *State, in []coverageCase) []coverageCase {
 	out := make([]coverageCase, 0, len(in))
 	for _, c := range in {
 		kem, err1 := hex.DecodeString(c.KemPublicKey)
-		dh, err2 := hex.DecodeString(c.DhPublicKey)
-		if err1 != nil || err2 != nil {
+		if err1 != nil {
 			continue
 		}
-		c.Covered = st.IsCovered(c.Handle, PeerKeys{KemPublicKey: kem, DhPublicKey: dh}, c.At)
+		c.Covered = st.IsCovered(c.Handle, PeerKeys{KemPublicKey: kem}, c.At)
 		out = append(out, c)
 	}
 	return out
@@ -582,7 +580,7 @@ func keyCase(handle string, k PeerKeys, at int64) coverageCase {
 	return coverageCase{
 		Handle:       handle,
 		KemPublicKey: hex.EncodeToString(k.KemPublicKey),
-		DhPublicKey:  hex.EncodeToString(k.DhPublicKey),
-		At:           at,
+
+		At: at,
 	}
 }

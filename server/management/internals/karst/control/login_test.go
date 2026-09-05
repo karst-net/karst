@@ -124,7 +124,6 @@ func loginRequest(t *testing.T, hostname string) []byte {
 		// peers cannot handshake with a node whose data-plane keys are
 		// unknown, and it would simply be skipped when building netmaps.
 		KemPublicKey: validKemKey(0xAB),
-		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -275,7 +274,6 @@ func TestLoginWithoutMetaRejected(t *testing.T) {
 	payload, err := pb.Marshal(&proto.KarstLoginRequest{
 		SetupKey:     "K",
 		KemPublicKey: validKemKey(0xAB),
-		DhPublicKey:  bytes.Repeat([]byte{0xCD}, 32),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -356,7 +354,7 @@ func TestRejectedLoginDoesNotRotateDataPlaneKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identity: %v", err)
 	}
-	old := node.DataPlaneKeys{KemPublicKey: validKemKey(0x11), DhPublicKey: bytes.Repeat([]byte{0x22}, 32)}
+	old := node.DataPlaneKeys{KemPublicKey: validKemKey(0x11)}
 	handle, err := nodes.Register(key.Public(), old)
 	if err != nil {
 		t.Fatalf("seed identity: %v", err)
@@ -366,7 +364,6 @@ func TestRejectedLoginDoesNotRotateDataPlaneKeys(t *testing.T) {
 		SetupKey:     "REJECTED",
 		Meta:         &proto.PeerSystemMeta{Hostname: "h"},
 		KemPublicKey: validKemKey(0x33),
-		DhPublicKey:  bytes.Repeat([]byte{0x44}, 32),
 	}
 	payload, err := pb.Marshal(req)
 	if err != nil {
@@ -380,7 +377,7 @@ func TestRejectedLoginDoesNotRotateDataPlaneKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get identity: %v", err)
 	}
-	if !bytes.Equal(got.KemPublicKey, old.KemPublicKey) || !bytes.Equal(got.DhPublicKey, old.DhPublicKey) {
+	if !bytes.Equal(got.KemPublicKey, old.KemPublicKey) {
 		t.Fatal("rejected login rotated data-plane keys")
 	}
 }

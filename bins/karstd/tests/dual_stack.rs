@@ -51,7 +51,6 @@ use karstd::routing::{AllowedIps, Prefix};
 
 fn rand() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [0x21; 32],
         encap_rand_e: [0x22; 32],
         encap_rand_s: [0x23; 32],
     }
@@ -62,7 +61,7 @@ fn seed(byte: u8) -> impl Fn() -> [u8; 32] {
 }
 
 fn keys(byte: u8) -> Arc<StaticKeys> {
-    Arc::new(StaticKeys::from_seed(&[byte; 64], &[byte; 32]))
+    Arc::new(StaticKeys::from_seed(&[byte; 64]))
 }
 
 /// How the receiving socket reports a source address.
@@ -111,7 +110,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         node_id: handle(&[peer; 2592]).into_bytes(),
         public: Arc::new(karst_noise::handshake::PeerPublic {
             kem_pk: peer_keys.kem_pk.clone(),
-            dh_pk: peer_keys.dh_pk,
+
             psk: [0x77; 32],
         }),
         // The other node's IPv4 endpoint, exactly as a netmap would carry it.

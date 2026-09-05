@@ -435,22 +435,20 @@ func ParseAuthorityList(b []byte) (*AuthorityList, error) {
 // Datapath key sizes. These are what a PHREATIC session authenticates against,
 // and therefore what a countersignature must cover — spec §6.1.
 const (
-	// KemPublicKeySize is 1184 bytes (ML-KEM-768 S_pk).
-	KemPublicKeySize = 1184
-	// DhPublicKeySize is 32 bytes (X25519 D_pk).
-	DhPublicKeySize = 32
+	// KemPublicKeySize is 1568 bytes (ML-KEM-1024 S_pk).
+	KemPublicKeySize = 1568
 )
 
 // NodeSignBody builds a node-sign body — spec §3.4.
 //
-// All three keys, not just the identity key. See spec §6.1: the identity key is
+// Both identity and static KEM keys. See spec §6.1: the identity key is
 // not used by PHREATIC, so covering only it would authorize a node to exist
 // without constraining which session keys are its.
-func NodeSignBody(handle string, identityKey, kemKey, dhKey []byte, notBefore, expiry int64) []byte {
+func NodeSignBody(handle string, identityKey, kemKey []byte, notBefore, expiry int64) []byte {
 	out := appendLP(nil, []byte(handle))
 	out = appendLP(out, identityKey)
 	out = appendLP(out, kemKey)
-	out = appendLP(out, dhKey)
+
 	out = appendBE64(out, uint64(notBefore))
 	return appendBE64(out, uint64(expiry))
 }
@@ -460,11 +458,11 @@ type NodeSign struct {
 	Handle string
 	// IdentityKey is the ML-DSA-65 control-channel key the handle derives from.
 	IdentityKey []byte
-	// KemPublicKey and DhPublicKey are the static keys PHREATIC authenticates
+	// KemPublicKey is the static key PHREATIC authenticates
 	// against — spec §6.1.
 	KemPublicKey []byte
-	DhPublicKey  []byte
-	NotBefore    int64
+
+	NotBefore int64
 	// Expiry of zero means no expiry.
 	Expiry int64
 }
@@ -475,7 +473,7 @@ func ParseNodeSign(b []byte) (*NodeSign, error) {
 	n := &NodeSign{Handle: string(c.lp())}
 	identity := c.lp()
 	kem := c.lp()
-	dh := c.lp()
+
 	n.NotBefore = int64(c.u64())
 	n.Expiry = int64(c.u64())
 	if !c.done() {
@@ -487,15 +485,12 @@ func ParseNodeSign(b []byte) (*NodeSign, error) {
 	if len(kem) != KemPublicKeySize {
 		return nil, fmt.Errorf("%w: KEM key is %d bytes, want %d", ErrMalformed, len(kem), KemPublicKeySize)
 	}
-	if len(dh) != DhPublicKeySize {
-		return nil, fmt.Errorf("%w: DH key is %d bytes, want %d", ErrMalformed, len(dh), DhPublicKeySize)
-	}
 	if n.Handle == "" {
 		return nil, fmt.Errorf("%w: node-sign with an empty handle", ErrMalformed)
 	}
 	n.IdentityKey = append([]byte(nil), identity...)
 	n.KemPublicKey = append([]byte(nil), kem...)
-	n.DhPublicKey = append([]byte(nil), dh...)
+
 	return n, nil
 }
 

@@ -69,11 +69,10 @@ type Identity struct {
 	// ML-DSA-87 identity key. Authenticates the control channel; deliberately
 	// not used by PHREATIC (phreatic-v1.md §4).
 	PublicKey []byte `gorm:"not null"`
-	// The two keys PHREATIC does use: static KEM S (ML-KEM-768, 1184 B) and
-	// static DH D (X25519, 32 B). Peers cannot handshake without them, and the
-	// netmap is how they are distributed.
+	// PHREATIC authenticates against static KEM S (ML-KEM-1024, 1568 B).
+	// The netmap distributes this key to peers.
 	KemPublicKey []byte
-	DhPublicKey  []byte
+
 	// HomeRelay is the Ponor relay this node reports holding a connection to
 	// (ponor-v1.md §9.1), or empty for a node holding none.
 	//
@@ -245,13 +244,12 @@ func (s *Store) AllSessionObservations() ([]SessionObservation, error) {
 
 // DataPlaneKeys are a node's PHREATIC keys, supplied at registration.
 type DataPlaneKeys struct {
-	KemPublicKey []byte // ML-KEM-768, 1184 B
-	DhPublicKey  []byte // X25519, 32 B
+	KemPublicKey []byte // ML-KEM-1024, 1568 B
 }
 
 const (
-	kemPublicKeySize = 1184
-	dhPublicKeySize  = 32
+	kemPublicKeySize = 1568
+
 	// A Ponor relay id is a SHA-256 digest over the relay's identity key.
 	relayIDSize       = 32
 	maxSessionReports = 4096
@@ -268,7 +266,7 @@ func ValidateRegistration(pub []byte, keys DataPlaneKeys) (string, error) {
 	if len(pub) != identity.PublicKeySize {
 		return "", fmt.Errorf("%w: %d bytes, want %d", ErrBadPublicKey, len(pub), identity.PublicKeySize)
 	}
-	// Parsed, not merely measured. A length check alone accepts 1184 bytes of
+	// Parsed, not merely measured. A length check alone accepts 1568 bytes of
 	// anything, and that key is then shipped to *every* peer in the account —
 	// none of which can handshake with it, and each of which has to decide what
 	// to do with an entry it cannot use. Rejecting it at registration is the
@@ -276,16 +274,13 @@ func ValidateRegistration(pub []byte, keys DataPlaneKeys) (string, error) {
 	//
 	// FIPS 203 gives the check for free: ByteDecode must round-trip, so a
 	// coefficient outside [0, q) is refused by the standard library.
-	if _, err := mlkem.NewEncapsulationKey768(keys.KemPublicKey); err != nil {
+	if _, err := mlkem.NewEncapsulationKey1024(keys.KemPublicKey); err != nil {
 		if len(keys.KemPublicKey) != kemPublicKeySize {
 			return "", fmt.Errorf("%w: kem key is %d bytes, want %d",
 				ErrBadPublicKey, len(keys.KemPublicKey), kemPublicKeySize)
 		}
-		return "", fmt.Errorf("%w: kem key is not a valid ML-KEM-768 encapsulation key: %v",
+		return "", fmt.Errorf("%w: kem key is not a valid ML-KEM-1024 encapsulation key: %v",
 			ErrBadPublicKey, err)
-	}
-	if len(keys.DhPublicKey) != dhPublicKeySize {
-		return "", fmt.Errorf("%w: dh key is %d bytes, want %d", ErrBadPublicKey, len(keys.DhPublicKey), dhPublicKeySize)
 	}
 	return Handle(pub), nil
 }
@@ -314,12 +309,10 @@ func (s *Store) Register(pub []byte, keys DataPlaneKeys) (string, error) {
 		// The data-plane keys MAY change: they are rotated independently of
 		// the identity, and a node that regenerates them re-registers under
 		// the same handle. The identity key is what must not move.
-		if !bytesEqual(existing.KemPublicKey, keys.KemPublicKey) ||
-			!bytesEqual(existing.DhPublicKey, keys.DhPublicKey) {
+		if !bytesEqual(existing.KemPublicKey, keys.KemPublicKey) {
 			if err := s.db.Model(&Identity{}).Where("handle = ?", handle).
 				Updates(map[string]any{
 					"kem_public_key": keys.KemPublicKey,
-					"dh_public_key":  keys.DhPublicKey,
 					"updated_at":     now,
 				}).Error; err != nil {
 				return "", fmt.Errorf("node: update keys: %w", err)
@@ -335,7 +328,6 @@ func (s *Store) Register(pub []byte, keys DataPlaneKeys) (string, error) {
 		Handle:       handle,
 		PublicKey:    pub,
 		KemPublicKey: keys.KemPublicKey,
-		DhPublicKey:  keys.DhPublicKey,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

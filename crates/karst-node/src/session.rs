@@ -15,7 +15,6 @@
 use std::sync::Arc;
 
 use karst_crypto::hash;
-use karst_crypto::{SuiteId, SuitePolicy};
 use karst_noise::handshake::{
     initiate, respond, HandshakeError, Initiator, InitiatorRandomness, PeerPublic,
     ResponderRandomness, SessionParams, StaticKeys,
@@ -240,8 +239,7 @@ pub struct Session {
     /// it once per peer would put the same secret in N places to be zeroized.
     keys: Arc<StaticKeys>,
     peer: Arc<PeerPublic>,
-    policy: SuitePolicy,
-    suite: SuiteId,
+
     psk_epoch: u32,
     index: u32,
     state: State,
@@ -298,14 +296,7 @@ impl core::fmt::Debug for Session {
 impl Session {
     /// Create an idle session for a peer.
     #[must_use]
-    pub fn new(
-        keys: Arc<StaticKeys>,
-        peer: Arc<PeerPublic>,
-        policy: SuitePolicy,
-        suite: SuiteId,
-        psk_epoch: u32,
-        index: u32,
-    ) -> Self {
+    pub fn new(keys: Arc<StaticKeys>, peer: Arc<PeerPublic>, psk_epoch: u32, index: u32) -> Self {
         // Both MAC keys are derived before the two `Arc`s are moved into the
         // struct, so neither has to be re-read afterwards.
         let out_mac_key = FragMacKey::new(&mac1_key(&peer.kem_pk.to_bytes()));
@@ -313,8 +304,7 @@ impl Session {
         Self {
             keys,
             peer,
-            policy,
-            suite,
+
             psk_epoch,
             index,
             state: State::Idle,
@@ -437,32 +427,11 @@ impl Session {
         matches!(self.state, State::Established { rekey: Some(_), .. })
     }
 
-    /// This session's suite policy, as distributed in the netmap.
-    #[must_use]
-    pub fn policy(&self) -> &SuitePolicy {
-        &self.policy
-    }
-
-    /// The suite bound into this session's handshake parameters. It is exposed
-    /// for authenticated control-plane posture reporting, never inferred from
-    /// a display string.
-    #[must_use]
-    pub const fn suite(&self) -> SuiteId {
-        self.suite
-    }
-
     /// Begin a handshake. No-op if one is already in flight or established.
     ///
-    /// Refuses outright if the configured suite is below the local floor: an
-    /// initiator chooses its own suite, so nothing else would catch a
-    /// misconfiguration that offers something the node itself rejects
-    /// (ADR-0006).
     pub fn connect(&mut self, now_ms: u64, seed: [u8; 32]) -> Vec<Action> {
         if !matches!(self.state, State::Idle) {
             return Vec::new();
-        }
-        if !self.policy.accepts(self.suite) {
-            return vec![Action::Closed(CloseReason::Rejected)];
         }
         self.start_handshake(now_ms, seed)
     }
@@ -475,7 +444,6 @@ impl Session {
         self.attempt = self.attempt.wrapping_add(1);
         let rand = derive_initiator_randomness(&seed, self.attempt);
         let params = SessionParams {
-            suite: self.suite,
             psk_epoch: self.psk_epoch,
             sender_index: self.index,
         };
@@ -700,15 +668,11 @@ impl Session {
             _ => (None, None),
         };
         self.state = State::Established {
-            // The negotiated suite's AEAD — ADR-0015 item 2. Before this, every
-            // suite ran ChaCha20-Poly1305 and a `KARST_2` session would have
-            // reported an AEAD it was not using.
-            session: Arc::new(TransportSession::for_suite(
+            session: Arc::new(TransportSession::new(
                 &keys,
                 Role::Initiator,
                 self.index,
                 now_ms,
-                self.suite,
             )),
             rekey: None,
             initiated: true,
@@ -721,17 +685,8 @@ impl Session {
     /// §13.12's simultaneous-open tie-break: the higher static KEM public key
     /// wins, and its holder's initiator handshake is the one both ends keep.
     ///
-    /// A pure, local function of two values both ends already hold — no
-    /// message carries it and no round trip resolves it. KEM public keys are
-    /// used rather than the classical DH ones because every suite has one
-    /// (`KARST_2` has no DH half at all — §7.1), and rather than
-    /// `peer_id_hint` because the hint is a hash: correct either way for
-    /// breaking the tie, but comparing the values both ends already parsed
-    /// out of the netmap and their own key file is one fewer derivation.
-    /// Byte-string comparison needs no assumption about the encoding beyond
-    /// it being the same length on both ends, which it is: both parties'
-    /// static keys are the same parameter set, or the handshake that got
-    /// this far would not have.
+    /// Both peers compare their static ML-KEM-1024 public keys from the netmap.
+    /// This is the sole session identity key, and both encodings have equal length.
     fn wins_simultaneous_open_tiebreak(&self) -> bool {
         self.keys.kem_pk.to_bytes() > self.peer.kem_pk.to_bytes()
     }
@@ -799,7 +754,7 @@ impl Session {
     /// failed authentication.
     pub fn accept(
         keys: &StaticKeys,
-        policy: &SuitePolicy,
+
         datagram: &[u8],
         peer: &PeerPublic,
         rand: &ResponderRandomness,
@@ -807,9 +762,8 @@ impl Session {
         now_ms: u64,
     ) -> Result<(Vec<u8>, TransportSession), HandshakeError> {
         let expected = karst_noise::handshake::peer_id_hint(&peer.kem_pk.to_bytes());
-        let (msg2, pending, suite) = respond(
+        let (msg2, pending) = respond(
             keys,
-            policy,
             datagram,
             |h, _epoch| {
                 if *h != expected {
@@ -817,7 +771,7 @@ impl Session {
                 }
                 Some(PeerPublic {
                     kem_pk: peer.kem_pk.clone(),
-                    dh_pk: peer.dh_pk,
+
                     psk: peer.psk,
                 })
             },
@@ -829,7 +783,7 @@ impl Session {
         let keys = pending.confirm();
         Ok((
             msg2,
-            TransportSession::for_suite(&keys, Role::Responder, index, now_ms, suite),
+            TransportSession::new(&keys, Role::Responder, index, now_ms),
         ))
     }
 
@@ -856,19 +810,16 @@ impl Session {
         keys: &TransportKeys,
         msg2: &[u8],
         now_ms: u64,
-        suite: SuiteId,
+
         seed: [u8; 32],
     ) -> Vec<Action> {
         self.answered = Some((init.to_vec(), msg2.to_vec()));
         let mut actions = self.emit(MessageType::HandshakeResponse, msg2, seed);
-        // The suite the *initiator* chose, not this session's configured one:
-        // a responder adopts what it was offered and its policy accepted.
-        let derived = Arc::new(TransportSession::for_suite(
+        let derived = Arc::new(TransportSession::new(
             keys,
             Role::Responder,
             self.index,
             now_ms,
-            suite,
         ));
         // §12.6: a working session is not torn down on the strength of a
         // `HandshakeInit`, which anyone can fabricate. The keys wait beside it
@@ -1098,7 +1049,6 @@ impl Session {
         let peer = Arc::clone(&self.peer);
         let result = respond(
             &self.keys,
-            &self.policy,
             datagram,
             |h, _epoch| {
                 if *h != expected {
@@ -1106,20 +1056,20 @@ impl Session {
                 }
                 Some(PeerPublic {
                     kem_pk: peer.kem_pk.clone(),
-                    dh_pk: peer.dh_pk,
+
                     psk: peer.psk,
                 })
             },
             rand,
             self.index,
         );
-        let Ok((msg2, pending, suite)) = result else {
+        let Ok((msg2, pending)) = result else {
             return Vec::new(); // §11 — silent discard
         };
         // §12.6: no assurance until a transport message authenticates. The
         // session is usable for sending, but `Established` here means "keys
         // agreed", not "peer verified".
-        self.adopt_responder(datagram, &pending.confirm(), &msg2, now_ms, suite, seed)
+        self.adopt_responder(datagram, &pending.confirm(), &msg2, now_ms, seed)
     }
 
     /// Dispatch an already-reassembled message.
@@ -1157,20 +1107,17 @@ fn derive_initiator_randomness(seed: &[u8; 32], attempt: u32) -> InitiatorRandom
         let s = seed.get(i % 32).copied().unwrap_or(0);
         *b = s ^ a0.wrapping_add(u8::try_from(i % 251).unwrap_or(0));
     }
-    let mut e_dh_seed = [0u8; 32];
+
     let mut encap_rand = [0u8; 32];
     for i in 0..32 {
         let s = seed.get(i).copied().unwrap_or(0);
-        if let Some(b) = e_dh_seed.get_mut(i) {
-            *b = s.wrapping_add(a0).wrapping_add(0x11);
-        }
         if let Some(b) = encap_rand.get_mut(i) {
             *b = s.wrapping_add(a0).wrapping_add(0x22);
         }
     }
     InitiatorRandomness {
         e_kem_seed,
-        e_dh_seed,
+
         encap_rand,
         timestamp: [0; 12],
     }
@@ -1209,7 +1156,6 @@ fn derive_reassembly_id(seed: &[u8; 32]) -> u32 {
 fn seed_from_responder_randomness(rand: &ResponderRandomness) -> [u8; 32] {
     let d = hash::Algorithm::Sha512.digest(&[
         b"Karst per-datagram seed v1",
-        &rand.e_dh_seed,
         &rand.encap_rand_e,
         &rand.encap_rand_s,
     ]);

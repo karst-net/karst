@@ -32,7 +32,6 @@ const B_ADDR: &str = "127.0.0.1:51822";
 
 fn rand() -> ResponderRandomness {
     ResponderRandomness {
-        e_dh_seed: [0xF1; 32],
         encap_rand_e: [0xF2; 32],
         encap_rand_s: [0xF3; 32],
     }
@@ -73,16 +72,16 @@ fn write600(path: &Path, contents: &str) {
 }
 
 /// Public keys for the node whose private seed is `n` repeated.
-fn public_of(n: u8) -> (String, String) {
-    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[n; 64]);
-    let dh = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([n; 32]));
-    (encode_hex(&kem_pk.to_bytes()), encode_hex(dh.as_bytes()))
+fn public_of(n: u8) -> String {
+    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[n; 64]);
+
+    encode_hex(&kem_pk.to_bytes())
 }
 
-/// A private key file: 64 bytes of KEM seed then 32 of X25519, both `n`.
+/// A private key file: 64 bytes of ML-KEM-1024 seed, all `n`.
 fn private_of(n: u8) -> String {
-    let mut seed = [n; 96];
-    seed[64..].fill(n);
+    let seed = [n; 64];
+
     encode_hex(&seed)
 }
 
@@ -92,7 +91,7 @@ fn config_for(tag: &str, me: u8, peer: u8, listen: &str, peer_endpoint: Option<&
     let key = dir.join("node.key");
     write600(&key, &private_of(me));
 
-    let (kem, dh) = public_of(peer);
+    let kem = public_of(peer);
     let endpoint = peer_endpoint.map_or_else(String::new, |e| format!("endpoint = \"{e}\"\n"));
     let my_octet = if me == 0xA1 { 1 } else { 2 };
     let peer_octet = 3 - my_octet;
@@ -109,7 +108,6 @@ psk_epoch = 3
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 {endpoint}allowed_ips = ["10.77.0.{peer_octet}/32"]
 "#
     );
@@ -124,8 +122,8 @@ fn config_for_two_peers(tag: &str) -> Config {
     let key = dir.join("node.key");
     write600(&key, &private_of(0xA1));
 
-    let (kem1, dh1) = public_of(0xB1);
-    let (kem2, dh2) = public_of(0xC1);
+    let kem1 = public_of(0xB1);
+    let kem2 = public_of(0xC1);
     let toml = format!(
         r#"
 [node]
@@ -137,14 +135,12 @@ private_key_file = "node.key"
 [[peer]]
 name = "one"
 kem_public_key = "{kem1}"
-dh_public_key = "{dh1}"
 endpoint = "{B_ADDR}"
 allowed_ips = ["10.77.0.2/32"]
 
 [[peer]]
 name = "two"
 kem_public_key = "{kem2}"
-dh_public_key = "{dh2}"
 endpoint = "127.0.0.1:51823"
 allowed_ips = ["10.77.0.3/32"]
 "#
@@ -184,12 +180,12 @@ fn establish(a: &Engine, b: &Engine) {
 
     // A initiates; B answers; A completes.
     let msg1 = a.connect_all(0, seed);
-    assert_eq!(msg1.datagrams.len(), 2, "HandshakeInit is two fragments");
+    assert_eq!(msg1.datagrams.len(), 3, "HandshakeInit is three fragments");
     let msg2 = deliver(b, a_addr, msg1, 1);
     assert_eq!(
         msg2.datagrams.len(),
-        2,
-        "HandshakeResponse is two fragments"
+        3,
+        "HandshakeResponse is three fragments"
     );
     let nothing = deliver(a, b_addr, msg2, 2);
     assert!(nothing.datagrams.is_empty());
@@ -387,7 +383,7 @@ fn a_retransmitted_handshake_is_answered_again() {
     let msg1 = a.connect_all(0, seed);
     let first: Vec<Vec<u8>> = msg1.datagrams.iter().map(|(d, _)| d.clone()).collect();
     let r1 = deliver(&b, a_addr, msg1, 1);
-    assert_eq!(r1.datagrams.len(), 2);
+    assert_eq!(r1.datagrams.len(), 3);
 
     let mut r2 = Output::default();
     for d in &first {
@@ -396,7 +392,7 @@ fn a_retransmitted_handshake_is_answered_again() {
     }
     assert_eq!(
         r2.datagrams.len(),
-        2,
+        3,
         "the responder must answer a retransmission rather than ignore it"
     );
 }
@@ -506,8 +502,8 @@ fn an_expired_session_is_re_dialled() {
     let out = a.poll(expired, seed);
     assert_eq!(
         out.datagrams.len(),
-        2,
-        "an idle peer with an endpoint must be re-dialled (HandshakeInit is two fragments)"
+        3,
+        "an idle peer with an endpoint must be re-dialled (HandshakeInit is three fragments)"
     );
 
     // And it must actually recover, end to end.
@@ -766,8 +762,8 @@ fn config_with_two_peers(tag: &str, me: u8, first: u8, second: u8) -> Config {
     let key = dir.join("node.key");
     write600(&key, &private_of(me));
 
-    let (kem1, dh1) = public_of(first);
-    let (kem2, dh2) = public_of(second);
+    let kem1 = public_of(first);
+    let kem2 = public_of(second);
     let toml = format!(
         r#"
 [node]
@@ -780,14 +776,12 @@ psk_epoch = 3
 [[peer]]
 name = "other"
 kem_public_key = "{kem1}"
-dh_public_key = "{dh1}"
 endpoint = "{B_ADDR}"
 allowed_ips = ["10.77.0.2/32"]
 
 [[peer]]
 name = "newcomer"
 kem_public_key = "{kem2}"
-dh_public_key = "{dh2}"
 allowed_ips = ["10.77.0.3/32"]
 "#
     );
@@ -925,7 +919,7 @@ fn a_psk_epoch_rotation_does_not_interrupt_a_live_session() {
     let dir = Scratch::new("recfg-epoch");
     let key = dir.join("node.key");
     write600(&key, &private_of(0xA1));
-    let (kem, dh) = public_of(0xB1);
+    let kem = public_of(0xB1);
     let write_epoch = |epoch: u32, name: &str| {
         let toml = format!(
             r#"
@@ -939,7 +933,6 @@ psk_epoch = {epoch}
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 endpoint = "{B_ADDR}"
 allowed_ips = ["10.77.0.2/32"]
 "#
@@ -1011,7 +1004,7 @@ struct EpochConfig<'a> {
 fn config_at_epoch(dir: &Scratch, p: EpochConfig<'_>) -> Arc<Config> {
     let key = dir.join(&format!("{}.key", p.name));
     write600(&key, &private_of(p.me));
-    let (kem, dh) = public_of(p.peer);
+    let kem = public_of(p.peer);
     let my_octet = if p.me == 0xA1 { 1 } else { 2 };
     let peer_octet = 3 - my_octet;
     let prev_line = p
@@ -1029,7 +1022,6 @@ psk_epoch = {epoch}
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 psk = "{psk}"
 {prev_line}endpoint = "{peer_endpoint}"
 allowed_ips = ["10.78.0.{peer_octet}/32"]

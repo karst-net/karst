@@ -382,10 +382,7 @@ mod tests {
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
-            keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(
-                &[0x11; 64],
-                &[0x12; 32],
-            )),
+            keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().unwrap(),
             port_mapping: false,
             interface: "karst0".to_owned(),

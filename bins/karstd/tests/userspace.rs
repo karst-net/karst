@@ -213,10 +213,10 @@ fn have_prerequisites() -> bool {
 // ── keys ────────────────────────────────────────────────────────────────────
 
 /// The public halves of the deterministic seed a node is started with.
-fn public_of(n: u8) -> (String, String) {
-    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem768, &[n; 64]);
-    let dh = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([n; 32]));
-    (encode_hex(&kem_pk.to_bytes()), encode_hex(dh.as_bytes()))
+fn public_of(n: u8) -> String {
+    let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[n; 64]);
+
+    encode_hex(&kem_pk.to_bytes())
 }
 
 // ── the two daemons ─────────────────────────────────────────────────────────
@@ -316,10 +316,10 @@ fn start(spec: &Spec) -> Node {
     std::fs::create_dir_all(&dir).expect("temp dir");
 
     let key = dir.join("node.key");
-    std::fs::write(&key, encode_hex(&[spec.seed; 96])).expect("write key");
+    std::fs::write(&key, encode_hex(&[spec.seed; 64])).expect("write key");
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).expect("chmod key");
 
-    let (kem, dh) = public_of(spec.peer_seed);
+    let kem = public_of(spec.peer_seed);
     // Userspace mode has no host interface and no route table, so the whole
     // difference between the two configurations is these two lines.
     let attachment = match spec.mode {
@@ -354,7 +354,6 @@ private_key_file = "node.key"
 [[peer]]
 name = "other"
 kem_public_key = "{kem}"
-dh_public_key = "{dh}"
 endpoint = "127.0.0.1:{peer_listen}"
 allowed_ips = ["{peer_address}/32"]
 "#,
