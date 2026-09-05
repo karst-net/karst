@@ -547,9 +547,10 @@ jobs:
           # since Actions runs `bash -e` without `pipefail`. A check written
           # that way passes whether `genkey` produced a key or crashed.
           key=$(sudo /usr/local/bin/karstd genkey 2>/dev/null)
-          # 96 bytes of hex seed: 64 for the ML-KEM key, 32 for X25519.
-          [ "${#key}" -ge 192 ] \
-            || { echo "::error::genkey produced ${#key} chars, expected >=192"; exit 1; }
+          # 64 bytes of hex seed for the ML-KEM key (ADR-0015: CNSA 2.0 is
+          # ML-KEM-1024 only, no X25519 half since the CNSA-only migration).
+          [ "${#key}" -eq 128 ] \
+            || { echo "::error::genkey produced ${#key} chars, expected 128"; exit 1; }
           # No config was installed, so the daemon must not be loaded — see the
           # postinstall script for why that is the intended outcome.
           if launchctl print system/dev.karst.karstd >/dev/null 2>&1; then
