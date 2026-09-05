@@ -99,7 +99,7 @@ ambiguity nobody re-derived.
 
 ## 3. Cryptographic suite
 
-Suite `0x0001` (`KARST_1`), the same registry entry as `phreatic-v1.md` §3.
+Suite `0x0002` (`KARST_2`), the same fixed suite as `phreatic-v1.md` §3.
 Ponor uses only the signature and hash halves, which are unaffected by that
 registry's renumbering (`phreatic-v1.md` §3.1) — the row that moved into
 `0x0001` names the same ML-DSA-87 and SHA-512:

@@ -8,7 +8,7 @@ processes attacker-controlled bytes before anything is verified.
 |---|---|
 | `fragment_header` | Fragment codec (spec §5) |
 | `reassembly` | Reassembler (§9.1) — asserts the DoS invariants continuously |
-| `handshake_respond` | `respond()` (§6.1) — ML-KEM decap, X25519 and AEAD on unauthenticated bytes |
+| `handshake_respond` | `respond()` (§6.1) — ML-KEM decap and AEAD on unauthenticated bytes |
 | `dns_message` | KarstDNS client and upstream DNS wire decoder |
 
 ## Seed the corpus first

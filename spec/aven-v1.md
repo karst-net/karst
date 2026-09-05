@@ -64,7 +64,7 @@ in bytes.
 
 ## 3. Cryptographic suite
 
-Suite `0x0001` (`KARST_1`), as `phreatic-v1.md` §3. AVEN uses only the hash
+Suite `0x0002` (`KARST_2`), as `phreatic-v1.md` §3. AVEN uses only the hash
 half, which that registry's renumbering (`phreatic-v1.md` §3.1) did not change:
 
 | Role | Algorithm | Size |

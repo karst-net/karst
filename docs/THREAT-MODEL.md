@@ -122,11 +122,11 @@ ADR-0007 chose AGPL — so a modified server must be published.
 
 | Threat | Mitigation | Decided | Validated by |
 |---|---|---|---|
-| Harvest-now-decrypt-later (T1) | Hybrid X25519 + ML-KEM-768; PSK mixed last | ADR-0001, ADR-0002 | ProVerif model; KATs |
-| ML-KEM cryptanalytic break | X25519 hybrid (classical adv.); per-pair PSK (quantum adv.) | ADR-0002, ADR-0004 | ProVerif secrecy under compromised-KEM oracle |
+| Harvest-now-decrypt-later (T1) | ML-KEM-1024; PSK mixed last | ADR-0001, ADR-0002 | ProVerif model; KATs |
+| ML-KEM cryptanalytic break | Private per-pair PSK; no classical hedge (ADR-0018) | ADR-0002, ADR-0004 | Verifpal KEM-broken model; ProVerif result separately tracked |
 | ML-KEM *implementation* flaw (KyberSlash class) | Hybrid; verified `libcrux-ml-kem`; differential testing vs PQClean | ADR-0001 | CI KATs, differential tests |
 | Handshake DoS via reassembly state | Per-fragment MACs; mandatory cookie under load; zero pre-validation state; 4-fragment cap; bounded per-source budget | ADR-0004 | Spoofed-source flood tests; `kani` on reassembler |
-| Amplification | Never act on partial reassembly; never emit more than received; msg1 (2378 B) > msg2 (2236 B) | ADR-0004 | Asserted ratio tests in CI |
+| Amplification | Never act on partial reassembly; never emit more than received; msg1 (3210 B) > msg2 (3164 B) | ADR-0004 | Asserted ratio tests in CI |
 | Suite downgrade | Suite ID bound into transcript; server-published minimum suite enforced **at the node** | ADR-0006 | ProVerif downgrade case |
 | PSK downgrade to all-zero fallback | Fallback modeled explicitly; lattice-only sessions flagged in console | ADR-0004, §8.1 | Verifpal + ProVerif no-downgrade property |
 | Replay | Timestamp in AEAD payload; session indices; 64-bit counters | §2.2 | Protocol tests |

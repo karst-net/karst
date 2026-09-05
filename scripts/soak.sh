@@ -88,7 +88,7 @@ B_PUB=$(sh_b "$BIN/karstd pubkey --config $RUN/stub.toml")
 PSK=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 write_config() {
-    local runner=$1 me=$2 peer=$3 kem=$4 dh=$5 addr=$6 peer_ip=$7
+    local runner=$1 me=$2 peer=$3 kem=$4 addr=$5 peer_ip=$6
     "$runner" "cat > $RUN/karstd.toml <<'CFG'
 [node]
 listen = \"0.0.0.0:$PORT\"
@@ -100,15 +100,14 @@ psk_epoch = 1
 [[peer]]
 name = \"$peer\"
 kem_public_key = \"$kem\"
-dh_public_key = \"$dh\"
 psk = \"$PSK\"
 endpoint = \"$addr:$PORT\"
 allowed_ips = [\"$SUBNET.$peer_ip/32\"]
 CFG
 chmod 600 $RUN/karstd.toml"
 }
-write_config sh_a 1 "$HOST_B" "$(field kem_public_key "$B_PUB")" "$(field dh_public_key "$B_PUB")" "$ADDR_B" 2
-write_config sh_b 2 "$HOST_A" "$(field kem_public_key "$A_PUB")" "$(field dh_public_key "$A_PUB")" "$ADDR_A" 1
+write_config sh_a 1 "$HOST_B" "$(field kem_public_key "$B_PUB")" "$ADDR_B" 2
+write_config sh_b 2 "$HOST_A" "$(field kem_public_key "$A_PUB")" "$ADDR_A" 1
 
 say "Starting daemons"
 # **`setsid --fork`, not `setsid ... &`.** The difference is the whole reason

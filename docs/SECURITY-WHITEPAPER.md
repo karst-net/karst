@@ -29,15 +29,14 @@ break is explicitly a total break. ([Threat model §§4–5](THREAT-MODEL.md#4-t
 
 ## 2. Cryptographic design
 
-PHREATIC is Karst's UDP dataplane protocol. Its implemented fixed allowlist
-contains `KARST_1` (ML-KEM-768, X25519, ML-DSA-87, AES-256-GCM, SHA-512) and
-`KARST_2` (ML-KEM-1024, ML-DSA-87, AES-256-GCM, SHA-384, with no classical DH
-half). The suite identifier and PSK epoch are transcript-bound, unknown suites
+PHREATIC is Karst's UDP dataplane protocol. Its sole suite is `0x0002`
+(`KARST_2`): ML-KEM-1024, ML-DSA-87, AES-256-GCM, and SHA-384.
+The suite identifier and PSK epoch are transcript-bound, unknown suites
 are rejected, and per-pair PSKs are mixed last. A responder accepts only the
 current and immediately previous PSK epoch. ([PHREATIC §§3, 7](../spec/phreatic-v1.md#3-cryptographic-suites))
 
-Each node identity comprises an ML-DSA-87 identity key, a static ML-KEM key,
-and—under `KARST_1`—a static X25519 key. Bedrock authorizes those node keys by
+Each node identity comprises an ML-DSA-87 identity key and a static
+ML-KEM-1024 key. Bedrock authorizes those node keys by
 an append-only, hash-chained, quorum-signed log. Its capability-scoped anchor
 tier can bind that chain to the independently hash-chained administrative
 audit log without giving an online anchor key node-authorization power.
@@ -71,7 +70,7 @@ finding below is recorded as fixed or closed in the review record:
 | 4 / [#79](https://github.com/karst-net/karst/issues/79) | Secret-bearing dependencies did not enable zeroize-on-drop features. | Enabled them and added compile-time regression assertions. |
 | 5 / [#80](https://github.com/karst-net/karst/issues/80) | Handshake reassembly IDs were predictable counters. | Replaced them with per-call CSPRNG-derived IDs. |
 | 6 / [#81](https://github.com/karst-net/karst/issues/81) | Handshake `mac2` did not cover payload bytes. | Bound handshake payloads into the fragment MAC. |
-| 7 / [#82](https://github.com/karst-net/karst/issues/82) | Six X25519 call sites omitted the contributory check. | Applied the crate's constant-time contributory check uniformly. |
+| 7 / [#82](https://github.com/karst-net/karst/issues/82) | Six X25519 call sites omitted the contributory check. | Applied the constant-time check uniformly; ADR-0018 later retired application DH entirely. |
 | 8 / [#83](https://github.com/karst-net/karst/issues/83) | Simultaneous open retained two sessions indefinitely. | Added the specified static-key tie-break and authenticated convergence. |
 
 The details, affected call paths, tests, and issue references are in
@@ -109,10 +108,11 @@ review and an internal penetration test; neither is represented here as a
 substitute for independent assessment. Wire formats remain pre-alpha and may
 change without compatibility guarantees. ([Phase 6 overview §6](../plans/phase-6/00-overview.md#6-what-this-phase-does-not-do))
 
-The lattice-break ProVerif variant does not terminate, so the claim that the
-hybrid construction remains secure if ML-KEM fails has bounded Verifpal
-evidence rather than the same ProVerif result as the classical-break case.
-([Model record](../spec/models/README.md))
+PHREATIC no longer claims a classical/lattice hybrid hedge. Verifpal verifies
+the KEM-broken model with a private PSK, while unbounded ProVerif verification
+of that variant must be reported separately from the sound-KEM base model.
+The historical hybrid KEM-broken model did not terminate.
+([Model record](../spec/models/README.md), [ADR-0018](adr/0018-cnsa-2-0-as-the-sole-suite.md))
 
 ## 6. Sign-off
 

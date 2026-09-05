@@ -366,7 +366,7 @@ hold no netmap" in a request. Let `LP(x)` be a four-byte big-endian length of
 ```
 "karst-netmap-version-v1" || BE32(psk_epoch) ||
 LP(node_id) || LP(dns_name) || LP(addresses[0]) || ... ||
-each peer's LP(node_id, kem_public_key, dh_public_key, dns_name, endpoint,
+each peer's LP(node_id, kem_public_key, dns_name, endpoint,
                allowed_ips[0], ...) ||
 each ingress filter rule's LP(sources..., BE32(first) || BE32(last), ...) ||
 LP("karst-egress-filter") ||

@@ -31,7 +31,7 @@
 # outside all of this.
 #
 # What is *not* extracted are the assertions. Those are test logic, not
-# documentation, and they live here: that `genkey` emits 96 bytes, that a key
+# documentation, and they live here: that `genkey` emits 64 bytes, that a key
 # file readable by group is refused, that the pins convert to the hex the
 # document says they do, that a relay whose roster stops being rewritten
 # fails closed at ninety seconds and recovers.
@@ -366,8 +366,8 @@ path_a() {
 		# §4 makes two claims about this file in the same breath. Both are
 		# checkable and neither is checked anywhere else.
 		assert_mode "$dir/node.key" 600 "$node's data-plane key is mode 600"
-		assert_hex_len "$(cat "$dir/node.key")" 192 \
-			"$node's key is 96 bytes of hex — 64 for ML-KEM, 32 for X25519"
+		assert_hex_len "$(cat "$dir/node.key")" 128 \
+			"$node's key is 64 bytes of hex for ML-KEM-1024"
 
 		WT_SUBST=$subst run_step A node-config
 	done
@@ -378,22 +378,18 @@ path_a() {
 	# works at this point deliberately — "a new node needs to publish its key
 	# precisely in order to be added elsewhere" — and running it in the only
 	# order that is useful is the test of that claim.
-	local kem_alice dh_alice kem_bob dh_bob
+	local kem_alice kem_bob
 	for node in alice bob; do
 		[ "$node" = alice ] && { ns=$NS_A; subst=$subst_a; } || { ns=$NS_B; subst=$subst_b; }
 		WT_CTX=(ip netns exec "$ns")
 		WT_SUBST=$subst run_step A pubkey
-		local kem dh
+		local kem
 		kem=$(sed -n 's/^kem_public_key = "\(.*\)"/\1/p' "$WORK/.out")
-		dh=$(sed -n 's/^dh_public_key *= "\(.*\)"/\1/p' "$WORK/.out")
-		assert_hex_len "$kem" 2368 "$node's ML-KEM public key is 2368 hex characters"
-		assert_hex_len "$dh" 64 "$node's X25519 public key is 64 hex characters"
+		assert_hex_len "$kem" 3136 "$node's ML-KEM public key is 3136 hex characters"
 		if [ "$node" = alice ]; then
 			kem_alice=$kem
-			dh_alice=$dh
 		else
 			kem_bob=$kem
-			dh_bob=$dh
 		fi
 	done
 
@@ -401,10 +397,10 @@ path_a() {
 	# Each node is given the *other* node's printed keys, which is the paste
 	# step the document describes in prose.
 	WT_CTX=(ip netns exec "$NS_A")
-	WT_SUBST=$subst_a WTP_kem_public_key=$kem_bob WTP_dh_public_key=$dh_bob \
+	WT_SUBST=$subst_a WTP_kem_public_key=$kem_bob \
 		run_step A peer-config
 	WT_CTX=(ip netns exec "$NS_B")
-	WT_SUBST=$subst_b WTP_kem_public_key=$kem_alice WTP_dh_public_key=$dh_alice \
+	WT_SUBST=$subst_b WTP_kem_public_key=$kem_alice \
 		run_step A peer-config
 
 	# ── the mode-600 refusal ────────────────────────────────────────────────

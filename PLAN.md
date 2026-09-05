@@ -1,5 +1,11 @@
 # Karst — Implementation Plan
 
+> **Current cryptographic scope:** [ADR-0018](docs/adr/0018-cnsa-2-0-as-the-sole-suite.md)
+> makes CNSA 2.0 the sole PHREATIC suite and removes application DH keys.
+> The plan below is a historical implementation record; its earlier suite,
+> identity, and message-size comparisons are superseded by that decision.
+
+
 **A post-quantum mesh VPN with self-hosted coordination, admin console, and user management.**
 
 Status: draft v1 · Plan date: 2026-08-08 · Schedule re-anchored 2026-08-18 ·

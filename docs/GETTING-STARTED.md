@@ -246,8 +246,8 @@ LAN, or one with a routable address).
 `docs/karstd-example.toml` is the annotated version of this file; what follows
 is the minimum.
 
-**On each node**, generate the data-plane key. It is 96 bytes of hex — 64 for
-the ML-KEM key, 32 for X25519 — and `karstd` refuses to read it unless it is
+**On each node**, generate the data-plane key. It is a 64-byte seed encoded as 128 hex characters
+for the ML-KEM-1024 key — and `karstd` refuses to read it unless it is
 mode 600:
 
 ```sh walkthrough=A step=genkey
@@ -266,12 +266,11 @@ addresses = ["10.77.0.1/24"]
 private_key_file = "/etc/karst/node.key"
 ```
 
-Print each node's public keys and paste them into the other's file:
+Print each node's public key and paste them into the other's file:
 
 ```sh walkthrough=A step=pubkey
 sudo karstd pubkey --config /etc/karst/karstd.toml
-# kem_public_key = "…2368 hex characters…"
-# dh_public_key  = "…64 hex characters…"
+# kem_public_key = "…3136 hex characters…"
 ```
 
 `pubkey` deliberately works before any peer is configured — a new node needs to
@@ -282,7 +281,6 @@ file:
 [[peer]]
 name = "bob"
 kem_public_key = "…from bob's `karstd pubkey`…"
-dh_public_key = "…from bob's `karstd pubkey`…"
 endpoint = "192.0.2.20:51820"
 # Cryptokey routing, and it cuts both ways: outbound it selects the peer,
 # inbound a packet from bob sourced outside these ranges is DROPPED.
@@ -637,7 +635,7 @@ server = "http://karst.example.com:33073"
 server_kem_pin = "…2368 hex characters…"     # hex, not the base64 the log prints
 server_verify_pin = "…hex…"
 # The node's ML-DSA-87 control identity. A 32-byte seed, CREATED ON FIRST RUN —
-# do not generate it with `karstd genkey`, which produces the 96-byte
+# do not generate it with `karstd genkey`, which produces the 64-byte
 # data-plane key. Its own file, because phreatic-v1.md §4 is explicit that the
 # control identity is not used by PHREATIC: a leak of one is not the other.
 identity_key_file = "/etc/karst/identity.key"
@@ -990,7 +988,6 @@ The failure modes below are the ones that do not announce themselves.
 | Everything enrolls; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
 | Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt` |
 | `karstd` refuses to start over a key file | key is readable by group or other | `chmod 600` — a key readable by anyone is not a key |
-| Two nodes never handshake, both look healthy | mismatched `crypto_profile` | a `cnsa2` node and a `default` node cannot talk; moving a fleet between profiles is a re-keying |
 | Coordination server exits with "read-only file system" | `management.json` mounted `:ro` | it writes a generated store key back on first boot |
 | A peer entry fails to load after a profile change | the key's *length* is what says which profile it belongs to, so a stale entry fails loudly rather than quietly | re-run `karstd pubkey` on that node and update every roster entry naming it |
 | `karst: no daemon is listening on …` | `karstd` is not running, or a different `--socket` | `systemctl status karstd` |

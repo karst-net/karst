@@ -101,7 +101,7 @@ server's copy is a cache of it.
 |---|---|---|
 | `genesis` | `k`-of-`n` roots | Zone, root keys, `n`, `k`, initial authority list, `q`, optional anchor-key list |
 | `authority-list` | `k`-of-`n` roots | Replacement authority set, `q`, optional anchor-key list |
-| `node-sign` | `q` authorities | Handle, ML-DSA-87 identity key, ML-KEM-768 static key, X25519 static key, not-before, expiry |
+| `node-sign` | `q` authorities | Handle, ML-DSA-87 identity key, ML-KEM-1024 static key, not-before, expiry |
 | `node-revoke` | `q` authorities | Handle, reason, effective time |
 | `quorum-change` | `q` authorities under the **old** threshold | New `q` |
 | `anchor` | ≥1 authority **or anchor key** | Audit-log head hash and sequence |
@@ -172,7 +172,7 @@ authority-list  BE32(a) || a × LP(authority_pk) || BE32(q)
                          [ || BE32(s) || s × LP(anchor_pk) ]
 
 node-sign       LP(handle) || LP(ml_dsa_public_key)
-                           || LP(kem_public_key) || LP(dh_public_key)
+                           || LP(kem_public_key)
                            || BE64(not_before) || BE64(expiry)
 
 node-revoke     LP(handle) || LP(reason) || BE64(effective)
@@ -321,7 +321,7 @@ Three layers, in increasing cost:
    handshake. Divergence at a common sequence is proof of equivocation.
 
    It must ride the PHREATIC session and nothing else. The coordination server
-   knows each pair's PSK (PLAN.md §2.6) but not the ephemeral ML-KEM and X25519
+   knows each pair's PSK (PLAN.md §2.6) but not the ephemeral ML-KEM
    secrets, so a PHREATIC session is the only channel between two nodes that is
    confidential from the party being audited. A comparison over the netmap, the
    relay, or AVEN would be one the server could forge into agreement.
@@ -371,9 +371,8 @@ Three modes:
 | `enforcing` | Drop uncovered peers |
 
 A node is **covered** at time `t` when the log contains a `node-sign` for its
-handle binding **all three** of the keys the netmap presents for it — the
-ML-DSA-87 identity key, the ML-KEM-768 static key `S_pk`, and the X25519 static
-key `D_pk` — with `not_before <= t` and (`expiry == 0` or `t < expiry`), and no
+handle binding the ML-DSA-87 identity key and the ML-KEM-1024 static key
+`S_pk` — with `not_before <= t` and (`expiry == 0` or `t < expiry`), and no
 later `node-revoke` for that handle with `effective <= t`.
 
 Coverage binds the handle **and the keys together**. A `node-sign` for a handle
@@ -382,18 +381,25 @@ makes a compromised server unable to substitute keys it controls.
 
 ### 6.1 Why the datapath keys are covered and not just the identity key
 
+ADR-0018 removes DH session keys system-wide. The earlier warning that
+omitting DH authorization would leave session keys unconstrained assumed
+those keys existed. Bedrock still binds every static session-key input: the
+remaining KEM key. Its scope shrank with the protocol, without leaving a
+session identity key outside authorization.
+
+
 This is the part that decides whether Bedrock does anything at all, so it is
 stated at length.
 
-A Karst node has three keypairs (ADR-0005). The ML-DSA-87 **identity** key
+A Karst node has two keypairs (ADR-0018). The ML-DSA-87 **identity** key
 authenticates the control channel and is what the node handle is derived from.
-The ML-KEM-768 and X25519 **static** keys are what a PHREATIC session actually
+The ML-KEM-1024 **static** key is what a PHREATIC session actually
 authenticates against — and `phreatic-v1.md` §4 is explicit that the identity
 key "is **not used by PHREATIC**".
 
 So a `node-sign` covering only the identity key would authorize *that a node may
 exist* while saying nothing about *which session keys are its*. The netmap would
-still be the only source of `S_pk` and `D_pk`, backed by nothing but the
+still be the only source of `S_pk`, backed by nothing but the
 server's word — and a compromised server could hand node A an entry for handle
 B carrying keys the attacker controls. A's handshake would succeed, against the
 attacker, with the network lock switched on and reporting healthy.
