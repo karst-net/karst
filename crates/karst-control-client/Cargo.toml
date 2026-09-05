@@ -13,8 +13,6 @@ workspace = true
 
 [dependencies]
 karst-crypto.workspace = true
-# The control channel has its own ML-KEM-768 suite, independent of PHREATIC.
-ml-kem = { version = "0.3", default-features = false, features = ["zeroize"] }
 tonic = { version = "0.14", default-features = false, features = ["codegen", "transport"] }
 tonic-prost = "0.14"
 prost = "0.14"

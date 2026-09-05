@@ -74,6 +74,6 @@ mod tests {
         assert_eq!(sizes.handshake_response, 3164);
         assert_eq!(sizes.handshake_init.div_ceil(1208), 3);
         assert_eq!(sizes.handshake_response.div_ceil(1208), 3);
-        assert!(sizes.handshake_response <= sizes.handshake_init);
+        assert!(sizes.handshake_response < sizes.handshake_init);
     }
 }

@@ -1399,7 +1399,6 @@ dependencies = [
  "hkdf",
  "karst-crypto",
  "ml-dsa",
- "ml-kem",
  "prost",
  "prost-types",
  "rand 0.8.7",

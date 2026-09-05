@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! ML-KEM-1024 backend and length-checked key wrappers for PHREATIC.
+//! ML-KEM backends and length-checked key wrappers.
+//!
+//! `MlKem1024Backend` is the sole PHREATIC application-suite parameter set
+//! ([ADR-0015]); `MlKem768Backend` exists only so the control channel's
+//! independent ML-KEM-768 suite ([ADR-0011]) shares this crate's
+//! parse/encapsulate logic instead of reimplementing it — it is deliberately
+//! absent from [`KemKind`]/[`KemPublicKey`]/[`KemSecretKey`], which dispatch
+//! over the application suite only.
+//!
 //! Secret keys zeroize on drop through the required `ml-kem/zeroize` feature.
+//!
+//! [ADR-0011]: ../../../docs/adr/0011-control-channel-authentication.md
+//! [ADR-0015]: ../../../docs/adr/0015-cnsa-2-0-as-a-mandate.md
 
 use crate::KeyDistribution;
 
@@ -62,43 +73,82 @@ mod rustcrypto {
     use crate::KeyDistribution;
     use ml_kem::array::Array;
     use ml_kem::kem::{Decapsulate, FromSeed, KeyExport, TryKeyInit};
-    use ml_kem::{MlKem1024, Seed, B32};
+    use ml_kem::{MlKem1024, MlKem768, Seed, B32};
 
-    /// ML-KEM-1024 (FIPS 203), `RustCrypto` backend, Category 5.
-    #[derive(Debug, Clone, Copy)]
-    pub struct MlKem1024Backend;
+    /// The two parameter sets differ only in sizes and in the `ml-kem` types
+    /// they name, so the impl is written once and instantiated twice. Writing
+    /// it out twice invites the two to drift — and a KEM whose two halves
+    /// disagree about, say, whether a wrong-length ciphertext is an error is
+    /// exactly the kind of difference that would only show up on the suite
+    /// nobody exercises.
+    macro_rules! ml_kem_backend {
+        (
+            $backend:ident, $params:ty, $dk:ty, $ek:ty,
+            $pk_len:expr, $ct_len:expr, $doc:literal
+        ) => {
+            #[doc = $doc]
+            #[derive(Debug, Clone, Copy)]
+            pub struct $backend;
 
-    impl Kem for MlKem1024Backend {
-        const PUBLIC_KEY_LEN: usize = 1568;
-        const CIPHERTEXT_LEN: usize = 1568;
-        const KEY_DISTRIBUTION: KeyDistribution = KeyDistribution::InBand;
+            impl Kem for $backend {
+                const PUBLIC_KEY_LEN: usize = $pk_len;
+                const CIPHERTEXT_LEN: usize = $ct_len;
+                const KEY_DISTRIBUTION: KeyDistribution = KeyDistribution::InBand;
 
-        type SecretKey = ml_kem::DecapsulationKey1024;
-        type PublicKey = ml_kem::EncapsulationKey1024;
+                type SecretKey = $dk;
+                type PublicKey = $ek;
 
-        fn keypair_from_seed(seed: &[u8; 64]) -> (Self::SecretKey, Self::PublicKey) {
-            let s: Seed = Array(*seed);
-            <MlKem1024>::from_seed(&s)
-        }
+                fn keypair_from_seed(seed: &[u8; 64]) -> (Self::SecretKey, Self::PublicKey) {
+                    let s: Seed = Array(*seed);
+                    <$params>::from_seed(&s)
+                }
 
-        fn public_key_bytes(pk: &Self::PublicKey) -> Vec<u8> {
-            pk.to_bytes().to_vec()
-        }
+                fn public_key_bytes(pk: &Self::PublicKey) -> Vec<u8> {
+                    pk.to_bytes().to_vec()
+                }
 
-        fn public_key_from_bytes(bytes: &[u8]) -> Option<Self::PublicKey> {
-            <Self::PublicKey as TryKeyInit>::new_from_slice(bytes).ok()
-        }
+                fn public_key_from_bytes(bytes: &[u8]) -> Option<Self::PublicKey> {
+                    <Self::PublicKey as TryKeyInit>::new_from_slice(bytes).ok()
+                }
 
-        fn encapsulate(pk: &Self::PublicKey, m: &[u8; 32]) -> (Vec<u8>, [u8; SHARED_SECRET_LEN]) {
-            let msg: B32 = Array(*m);
-            let (ct, ss) = pk.encapsulate_deterministic(&msg);
-            (ct.to_vec(), ss.0)
-        }
+                fn encapsulate(
+                    pk: &Self::PublicKey,
+                    m: &[u8; 32],
+                ) -> (Vec<u8>, [u8; SHARED_SECRET_LEN]) {
+                    let msg: B32 = Array(*m);
+                    let (ct, ss) = pk.encapsulate_deterministic(&msg);
+                    (ct.to_vec(), ss.0)
+                }
 
-        fn decapsulate(sk: &Self::SecretKey, ct: &[u8]) -> Option<[u8; SHARED_SECRET_LEN]> {
-            sk.decapsulate_slice(ct).ok().map(|ss| ss.0)
-        }
+                fn decapsulate(sk: &Self::SecretKey, ct: &[u8]) -> Option<[u8; SHARED_SECRET_LEN]> {
+                    sk.decapsulate_slice(ct).ok().map(|ss| ss.0)
+                }
+            }
+        };
     }
+
+    ml_kem_backend!(
+        MlKem768Backend,
+        MlKem768,
+        ml_kem::DecapsulationKey768,
+        ml_kem::EncapsulationKey768,
+        1184,
+        1088,
+        "ML-KEM-768 (FIPS 203), `RustCrypto` backend, Category 3. Used only by the \
+         control channel's independent suite (ADR-0011) — the PHREATIC application \
+         suite is ML-KEM-1024 only (ADR-0015)."
+    );
+
+    ml_kem_backend!(
+        MlKem1024Backend,
+        MlKem1024,
+        ml_kem::DecapsulationKey1024,
+        ml_kem::EncapsulationKey1024,
+        1568,
+        1568,
+        "ML-KEM-1024 (FIPS 203), `RustCrypto` backend. Category 5 — `KARST_2`, the profile \
+         CNSA 2.0 mandates ([ADR-0015](../../../docs/adr/0015-cnsa-2-0-as-a-mandate.md))."
+    );
 
     // A compile-time guarantee, not a runtime one — this crate forbids
     // `unsafe_code`, which rules out actually inspecting freed memory the way
@@ -108,12 +158,13 @@ mod rustcrypto {
     // material silently going unzeroized again. See the module note.
     const _: () = {
         const fn assert_zeroizes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroizes_on_drop::<ml_kem::DecapsulationKey768>();
         assert_zeroizes_on_drop::<ml_kem::DecapsulationKey1024>();
     };
 }
 
 #[cfg(feature = "ml-kem-rustcrypto")]
-pub use rustcrypto::MlKem1024Backend;
+pub use rustcrypto::{MlKem1024Backend, MlKem768Backend};
 
 #[cfg(feature = "ml-kem-rustcrypto")]
 mod dispatch {
@@ -181,10 +232,8 @@ mod dispatch {
     }
 
     /// A decapsulation key whose parameter set is known at run time.
-    ///
-    /// Boxed to keep per-session state compact.
     pub enum KemSecretKey {
-        MlKem1024(Box<<MlKem1024Backend as Kem>::SecretKey>),
+        MlKem1024(<MlKem1024Backend as Kem>::SecretKey),
     }
 
     // Hand-written and redacting. The derive would print a decapsulation key
@@ -221,7 +270,7 @@ mod dispatch {
     /// An encapsulation key whose parameter set is known at run time.
     #[derive(Clone)]
     pub enum KemPublicKey {
-        MlKem1024(Box<<MlKem1024Backend as Kem>::PublicKey>),
+        MlKem1024(<MlKem1024Backend as Kem>::PublicKey),
     }
 
     impl core::fmt::Debug for KemPublicKey {
@@ -268,8 +317,9 @@ mod dispatch {
         #[must_use]
         pub fn from_bytes(kind: KemKind, bytes: &[u8]) -> Option<Self> {
             match kind {
-                KemKind::MlKem1024 => MlKem1024Backend::public_key_from_bytes(bytes)
-                    .map(|k| Self::MlKem1024(Box::new(k))),
+                KemKind::MlKem1024 => {
+                    MlKem1024Backend::public_key_from_bytes(bytes).map(Self::MlKem1024)
+                }
             }
         }
 
@@ -301,10 +351,7 @@ mod dispatch {
         match kind {
             KemKind::MlKem1024 => {
                 let (sk, pk) = MlKem1024Backend::keypair_from_seed(seed);
-                (
-                    KemSecretKey::MlKem1024(Box::new(sk)),
-                    KemPublicKey::MlKem1024(Box::new(pk)),
-                )
+                (KemSecretKey::MlKem1024(sk), KemPublicKey::MlKem1024(pk))
             }
         }
     }
@@ -320,7 +367,7 @@ mod tests {
     // target library code on the pre-authentication path, not assertions.
     #![allow(clippy::panic, clippy::expect_used)]
 
-    use super::{Kem, MlKem1024Backend, SHARED_SECRET_LEN};
+    use super::{Kem, MlKem1024Backend, MlKem768Backend, SHARED_SECRET_LEN};
     use crate::KeyDistribution;
 
     fn seed(b: u8) -> [u8; 64] {
@@ -419,6 +466,11 @@ mod tests {
     #[test]
     fn ml_kem_1024_behaves() {
         battery::<MlKem1024Backend>();
+    }
+
+    #[test]
+    fn ml_kem_768_behaves() {
+        battery::<MlKem768Backend>();
     }
 
     // ── The registry ───────────────────────────────────────────────────────
