@@ -541,16 +541,32 @@ jobs:
           # documentation, its peer keys are placeholders, and it is *meant*
           # to fail validation until an operator fills them in.
           #
-          # Measured with `${#key}`, not `wc -c` through a pipe. BSD `wc`
-          # right-pads its output, so an empty key prints "       0" and never
-          # matches `^0$` — and a pipeline's status is its last command's,
-          # since Actions runs `bash -e` without `pipefail`. A check written
-          # that way passes whether `genkey` produced a key or crashed.
+          # Checked with `[ -n "$key" ]`, not a pipe through `wc -c`. A
+          # pipeline's status is its last command's, since Actions runs
+          # `bash -e` without `pipefail` — a check written that way passes
+          # whether `genkey` produced a key or crashed.
           key=$(sudo /usr/local/bin/karstd genkey 2>/dev/null)
-          # 64 bytes of hex seed for the ML-KEM key (ADR-0015: CNSA 2.0 is
-          # ML-KEM-1024 only, no X25519 half since the CNSA-only migration).
-          [ "${#key}" -eq 128 ] \
-            || { echo "::error::genkey produced ${#key} chars, expected 128"; exit 1; }
+          [ -n "$key" ] \
+            || { echo "::error::genkey produced no key"; exit 1; }
+          # Verified by round-tripping through `pubkey` rather than by
+          # asserting a hex length here: the seed's byte count is a property
+          # of whichever KEM karst-crypto currently ships, and a length
+          # hardcoded in this workflow is exactly what went stale and broke
+          # this job when the CNSA-only migration shrank the seed from 96 to
+          # 64 bytes. Feeding genkey's output back through pubkey instead
+          # checks the thing that actually matters — that the two agree on
+          # the seed's shape — so a future algorithm swap that changes the
+          # length needs no edit here.
+          keydir=$(mktemp -d)
+          trap 'sudo rm -rf "$keydir"' EXIT
+          printf '%s' "$key" | sudo tee "$keydir/node.key" > /dev/null
+          sudo chmod 600 "$keydir/node.key"
+          printf '[node]\nprivate_key_file = "%s"\n' "$keydir/node.key" \
+            | sudo tee "$keydir/karstd.toml" > /dev/null
+          pubkey_out=$(sudo /usr/local/bin/karstd pubkey --config "$keydir/karstd.toml" 2>&1) \
+            || { echo "::error::pubkey rejected the key genkey produced: $pubkey_out"; exit 1; }
+          echo "$pubkey_out" | grep -q '^kem_public_key = "[0-9a-f]\+"$' \
+            || { echo "::error::pubkey did not print a kem_public_key: $pubkey_out"; exit 1; }
           # No config was installed, so the daemon must not be loaded — see the
           # postinstall script for why that is the intended outcome.
           if launchctl print system/dev.karst.karstd >/dev/null 2>&1; then
