@@ -698,7 +698,12 @@ jobs:
           # live one directory down, in `dist/release/sbom/`, and a directory
           # is not a file `gh release create` can attach.
           mapfile -t files < <(find dist/release -type f | sort)
+          # `--repo` explicitly: this job has no checkout step (nothing else
+          # it does needs one), and `gh` otherwise shells out to `git` to
+          # infer the repository, which fails with "not a git repository"
+          # against a bare artifact-only workspace.
           gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$tag" \
             --generate-notes \
             "${prerelease[@]}" \
