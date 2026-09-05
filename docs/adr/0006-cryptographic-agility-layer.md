@@ -69,6 +69,16 @@ Suite 3 is defined now and implemented in Phase 7. Defining it early forces
 the layer to be genuinely general rather than accidentally shaped around
 suite 1.
 
+> **Superseded in part, 2026-09-05, by [ADR-0018](0018-cnsa-2-0-as-the-sole-suite.md).**
+>
+> | Earlier mechanism | Current decision |
+> |---|---|
+> | Multiple suites and a local policy floor | Deleted; `0x0002` is the sole accepted constant |
+> | Foreseeable change 4: retiring X25519 | Completed for application identities and PHREATIC |
+> | Registry entries for future agility | Another suite requires superseding ADR-0018 |
+>
+> The earlier registry and renumbering note below remain historical records.
+
 > **Superseded 2026-08-25 by [ADR-0015](0015-cnsa-2-0-as-a-mandate.md) item 7.**
 > The table above is the v1 registry as decided here and is kept as the record
 > of that decision; **it is not what the code does.** The ChaCha20-Poly1305 row
