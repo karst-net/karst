@@ -918,7 +918,7 @@ with shape and text).
 | Linux (x86-64, arm64) | `/dev/net/tun`, systemd unit; Debian and RHEL packages for clients and services | 2 (platform); 5 (packages) |
 | Docker/Kubernetes | userspace mode, sidecar + operator | 4 |
 | macOS | `utun`, LaunchDaemon, signed+notarized pkg; App Store NetworkExtension variant later | 5 |
-| Windows | Wintun, Windows service, MSI, WinTUN driver signing | 6, pulled forward from 8 on 2026-09-04 as a firm beta-blocking requirement |
+| Windows | Wintun (upstream-signed DLL), Windows service, MSI | Functional client: 6, beta-blocking; paid Karst artifact signing: 8 (deferred 2026-09-05 due to cost) |
 | FreeBSD | `tun` | Unscheduled — cut from its 6 (best-effort) slot on 2026-09-04 to make room for Windows; no exit-criterion depended on it |
 | iOS / Android | NetworkExtension / VpnService, Rust core via UniFFI | 7 |
 
@@ -4262,7 +4262,9 @@ Phase 5's.
   firm requirement before the public beta below opens — Wintun integration
   (or the ADR-0012 userspace-mode fallback if the licensing question in
   [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md) §1 isn't
-  answered in time), Windows service, signed MSI installer, NRPT DNS. This
+  answered in time), Windows service, MSI installer, NRPT DNS. Paid Karst
+  artifact signing is deferred to Phase 8 as of 2026-09-05 because of cost;
+  unsigned executables/MSI are permitted and must be documented as such. This
   swaps out FreeBSD's best-effort `tun` line in §9's platform table, which is
   cut from this phase rather than merely deprioritized. See
   [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md) for the
@@ -4311,7 +4313,7 @@ Phase 5's.
   Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
 - v1.0 GA.
 
-### Phase 8 — External review (post-GA · from Jan 2027)
+### Phase 8 — External review and Windows signing (post-GA · from Jan 2027)
 
 Moved out of Phase 6 on 2026-08-21: the external engagements are not going to
 happen on that timeline, and a plan that keeps them there is a plan that
@@ -4320,6 +4322,12 @@ scheduled here, was pulled forward into Phase 6 on 2026-09-04 as a firm
 beta-blocking requirement — see Phase 6's bullet list above and
 [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md).
 
+- **Windows artifact signing**, deferred here on 2026-09-05 due to cost:
+  select and enroll with a signing provider, fund the service/certificate,
+  sign and timestamp `karstd.exe`, `karst.exe`, and the MSI in release CI,
+  verify signatures and test installation on a clean Windows machine. Record
+  observed SmartScreen behavior; do not assume signing guarantees no warnings.
+  The functional client remains a Phase 6 beta requirement.
 - **External cryptographic review** of PHREATIC and its implementation. Budget
   4–6 weeks of lead time for booking, and book it well before the phase opens —
   this item has now missed two phases it was scheduled in (Phase 3's booking
@@ -4327,7 +4335,8 @@ beta-blocking requirement — see Phase 6's bullet list above and
   of the phase rather than ahead of it.
 - **External penetration test** of the control plane and console.
 - **Exit:** all high/critical findings remediated and re-tested, and the report
-  published or summarized publicly.
+  published or summarized publicly; Windows release artifacts signed,
+  timestamped, signature-verified, and tested on a clean machine.
 
 **What this costs, stated plainly.** v1.0 ships without external cryptographic
 review. The mitigations are real but partial — Verifpal in Phase 1, ProVerif in
@@ -4391,7 +4400,7 @@ losing a week to it. Build it in Phase 2, before it's desperately needed.
 | ML-KEM or ML-DSA cryptanalytic advance | Critical | Low | Hybrid construction means a break costs no confidentiality; agility layer allows swapping suites |
 | Greenfield scope exceeds estimate | High | **High** | Phase-5 usable milestone; mobile and SaaS explicitly deferred; ruthless non-goals |
 | Platform DNS integration breakage | Medium | High | Per-platform tests, conservative fallbacks, `karst doctor` diagnostics |
-| Windows client (Wintun/GPL licensing question, plus driver signing) delays past the beta gate | High | **High** | Raised from Medium/Medium on 2026-09-04 when the Windows client was pulled forward from Phase 8 into Phase 6 as a firm beta-blocking requirement, compressing what was a 9-week estimate into 8 weeks with no prior dedicated staffing. Resolve the Wintun license question and start certificate acquisition in Phase 6's first week; fall back to ADR-0012 userspace mode if the license answer is late — see [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md). macOS notarization is separately resolved — Apple Developer Program enrollment landed 2026-09-01 and produced a signed, notarized `.pkg` on the first tagged run |
+| Windows client (Wintun distribution review and native integration) delays past the beta gate | High | **High** | Raised from Medium/Medium on 2026-09-04 when the Windows client was pulled forward from Phase 8 into Phase 6 as a firm beta-blocking requirement, compressing what was a 9-week estimate into 8 weeks with no prior dedicated staffing. Resolve the Wintun distribution review in Phase 6; paid artifact signing is deferred to Phase 8 due to cost (2026-09-05); fall back to ADR-0012 userspace mode if the license answer is late — see [phase-6/10-windows-client.md](plans/phase-6/10-windows-client.md). macOS notarization is separately resolved — Apple Developer Program enrollment landed 2026-09-01 and produced a signed, notarized `.pkg` on the first tagged run |
 | Crypto review finds a protocol flaw late | High | **High** | Verifpal in Phase 1 and ProVerif in Phase 3 pull discovery earlier, and Phase 6 adds an internal review. Raised from Medium on 2026-08-21: external review moved to Phase 8, so the first independent look now lands **after** GA and any flaw it finds is found in deployments. Book the reviewers well ahead of the phase — the item has already slipped twice on lead time alone |
 | No WireGuard interop limits adoption | Medium | Certain | Accepted consequence of the greenfield decision; mitigate with a migration guide and side-by-side operation support |
 | Trademark collision forces a rename | Low–Medium | **High** | ADR-0007 makes trademark the only defensive lever; a collision already appears likely. Search concluded and name settled as a Phase 0 exit criterion, before repo/crate/SPDX names harden |

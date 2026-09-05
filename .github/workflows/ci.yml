@@ -103,6 +103,20 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
 
+  # First Windows port gate: portable packet codecs and userspace TCP/UDP.
+  # Expand to karstd and privileged adapter tests as the native port lands.
+  windows-core:
+    name: Windows portable networking
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p karst-proto -p karst-tun --all-targets -- -D warnings
+      - run: cargo test --locked -p karst-proto -p karst-tun --lib --tests
+
   # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the
   # job above. Without this job the entire kernel-facing surface — interface
   # creation, MTU, address assignment, real packets — would be untested, which

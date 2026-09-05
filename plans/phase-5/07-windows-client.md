@@ -189,7 +189,13 @@ Requirements that are easy to miss and expensive to add later:
 - ARM64 is out of scope for Phase 5. Say so in the docs; Windows on ARM users
   will otherwise file the issue.
 
-## 8. Signing — start in W1
+## 8. Signing — deferred to Phase 8
+
+**Superseded 2026-09-05:** The project owner deferred paid artifact signing
+because of cost. Provider selection, purchase/enrollment, executable and MSI
+signing, and signed-release verification belong to Phase 8. The historical
+provider notes below must be revalidated then. Phase 6 permits unsigned Karst
+artifacts; the upstream Wintun DLL retains its existing signature.
 
 Since mid-2023 every OV and EV code-signing certificate must have its private
 key on FIPS-140-2 hardware, which means either a shipped USB token or a cloud
@@ -241,10 +247,12 @@ question, the unfamiliar I/O model, and the fussiest installer, and pretending
 it fits in the same seven weeks would just move the slip to W10 where it
 collides with the walkthrough.
 
-## 11. Exit criteria (now Phase 6's beta gate, unchanged — see [phase-6/10-windows-client.md](../phase-6/10-windows-client.md) §2.3)
+## 11. Exit criteria (Phase 6 beta gate; signing deferred 2026-09-05 — see [phase-6/10-windows-client.md](../phase-6/10-windows-client.md) §2.3)
 
-1. A signed MSI installs on a clean Windows 11 machine with no SmartScreen
-   block, and the service starts on boot.
+1. An MSI installs on a clean Windows 11 machine, and the service starts on
+   boot. Unsigned Karst artifacts are permitted until Phase 8; document the
+   unsigned status and observed installation prompts. Signing and absence of
+   SmartScreen warnings are not Phase 6 exit criteria.
 2. The node enrolls from the console's auth key and reaches a peer across a NAT.
 3. Mesh names resolve through NRPT; a split-DNS route resolves internally.
 4. Uninstall removes the service, the adapter, the firewall rule, and every
