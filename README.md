@@ -203,8 +203,10 @@ just test-privileged   # namespaces, TUN devices, the NAT matrix — needs sudo
 just verify            # Verifpal ×3 + every ProVerif model, must-fail ones included
 ```
 
-Requires Rust 1.88+, Go 1.27+, Node 22+ and `pnpm`. The privileged tests need
-Linux, `nft` and root. Go 1.27 is a hard floor: the control plane uses the
+Requires Rust 1.88+, Go 1.27+, Node 24.12+ (24.x LTS) and `pnpm`.
+Run `nvm install` and `nvm use` from the repository root to select the Node
+version used by CI; `web/package.json` pins pnpm through Corepack.
+The privileged tests need Linux, `nft` and root. Go 1.27 is a hard floor: the control plane uses the
 standard library's `crypto/mldsa`, which replaced a third-party shim in
 [ADR-0011](docs/adr/0011-control-channel-authentication.md).
 

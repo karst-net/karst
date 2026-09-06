@@ -537,7 +537,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
+        with: { node-version-file: .nvmrc }
       - name: Regenerate Go OpenAPI types
         run: cd server/shared/management/http/api && ./generate-karst.sh
       - name: Generated Go types are committed
@@ -951,7 +951,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version-file: .nvmrc
       - name: Install web dependencies
         working-directory: web
         run: |
