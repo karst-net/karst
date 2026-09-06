@@ -80,6 +80,10 @@ importers:
       oidc-client-ts:
         specifier: ^3.5.0
         version: 3.5.0
+    devDependencies:
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   packages/tokens:
     devDependencies:

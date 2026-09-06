@@ -435,14 +435,11 @@ async fn a_cached_netmap_survives_the_server_going_away() {
     let dir = Scratch::new("cache");
     let version;
     let handle;
+    let mut original_section;
     {
         let server = start_server(2);
-        let mut client = Client::new(
-            &section(&server, dir.path(), Some("netmap.bin")),
-            dir.path(),
-            &keys(0x35),
-        )
-        .expect("client");
+        original_section = section(&server, dir.path(), Some("netmap.bin"));
+        let mut client = Client::new(&original_section, dir.path(), &keys(0x35)).expect("client");
         client.sync().await.expect("sync");
         client.save_cache().expect("save");
         version = client.netmap().version;
@@ -450,19 +447,10 @@ async fn a_cached_netmap_survives_the_server_going_away() {
         // The server is killed here, when `server` drops.
     }
 
-    // A fresh client with the same identity file and no reachable server.
-    let dead = ControlSection {
-        bedrock_mode: None,
-        control_minimum_version: None,
-        relay_ca_file: None,
-        server: "http://127.0.0.1:1".to_owned(),
-        server_kem_pin: encode_hex(&[0x01; 1184]),
-        server_verify_pin: encode_hex(&[0x02; 2592]),
-        identity_key_file: dir.join("identity.key"),
-        setup_key: None,
-        cache_file: Some(dir.join("netmap.bin")),
-    };
-    let mut offline = Client::new(&dead, dir.path(), &keys(0x35)).expect("client");
+    // Restart against the original server, now stopped. The enrollment receipt
+    // binds the identity to this address and pins even when loading offline.
+    original_section.setup_key = None;
+    let mut offline = Client::new(&original_section, dir.path(), &keys(0x35)).expect("client");
     let loaded = offline
         .load_cache()
         .expect("a cache exists")

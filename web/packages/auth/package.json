@@ -9,5 +9,11 @@
   },
   "dependencies": {
     "oidc-client-ts": "^3.5.0"
+  },
+  "scripts": {
+    "lint": "eslint src --max-warnings 0"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
   }
 }
