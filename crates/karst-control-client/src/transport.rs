@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, Notify};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::Channel as TonicChannel;
+use tonic::transport::{Channel as TonicChannel, ClientTlsConfig};
 use tonic::Streaming;
 
 use crate::channel::{self, Keys, Record};
@@ -242,7 +242,11 @@ impl Connection {
         S: Signer,
         V: Verifier,
     {
-        let channel = TonicChannel::from_shared(endpoint)
+        // `https://` gets a TLS-wrapped h2 connection; `http://` stays the
+        // plain h2c this client has always spoken. Either way the pins below
+        // are what actually authenticate the server — see `crate::tls`.
+        let wants_tls = endpoint.starts_with("https://");
+        let mut builder = TonicChannel::from_shared(endpoint)
             .map_err(|_| Error::Protocol("endpoint is not a valid URI"))?
             // A held-open connection needs its own keepalive: nothing else on
             // this stream is periodic once a push can make a poll arrive late,
@@ -251,10 +255,16 @@ impl Connection {
             // built-in HTTP/2 ping is the whole fix — no application-level
             // ping message is needed on top of it.
             .http2_keep_alive_interval(Duration::from_secs(30))
-            .keep_alive_timeout(Duration::from_secs(10))
-            .connect()
-            .await
-            .map_err(Error::Transport)?;
+            .keep_alive_timeout(Duration::from_secs(10));
+        if wants_tls {
+            builder = builder
+                .tls_config_with_verifier(
+                    ClientTlsConfig::new(),
+                    Arc::new(crate::tls::AcceptAny::new()),
+                )
+                .map_err(Error::Transport)?;
+        }
+        let channel = builder.connect().await.map_err(Error::Transport)?;
         let mut client = KarstControlServiceClient::new(channel);
 
         // A modest buffer: the node sends one request at a time and waits, so

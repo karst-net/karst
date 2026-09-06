@@ -10,6 +10,7 @@ pub mod handle;
 pub mod netmap;
 pub mod psk;
 pub mod suite;
+mod tls;
 pub mod transport;
 
 pub use channel::{derive_keys, hello_signing_input, init_signing_input, Keys, Record};

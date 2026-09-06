@@ -628,9 +628,10 @@ interface = "karst0"
 private_key_file = "/etc/karst/node.key"
 
 [control]
-# http:// unless you gave karst-control a certificate (§6.2). The control
-# channel carries its own ML-KEM-768 handshake and the server is authenticated
-# by the pins, not by TLS — ADR-0011.
+# https:// works through a TLS-terminating reverse proxy (§7.1) or plain
+# http:// straight to karst-control — either way the control channel carries
+# its own ML-KEM-768 handshake and the server is authenticated by the pins,
+# never by the TLS certificate. See §7.1 before picking one.
 server = "http://karst.example.com:33073"
 server_kem_pin = "…2368 hex characters…"     # hex, not the base64 the log prints
 server_verify_pin = "…hex…"
@@ -756,41 +757,46 @@ behind the management server's authorization middleware, so this only works
 once `HttpConfig.AuthIssuer`, `AuthAudience` and `AuthKeysLocation` in
 `management.json` name a working OIDC provider.
 
-### 7.1 The node control channel is plaintext h2c
+### 7.1 The node control channel: TLS is transport, not authentication
 
-The browser API and the node control channel can both arrive at port 33073,
-but they do not have the same transport. The current `karstd` control client
-does **not** implement TLS. Its `[control] server` must resolve to a plaintext
-HTTP/2 (h2c) listener; writing `https://` does not add TLS. KARST-CONTROL still
-authenticates the server with the configured ML-KEM and ML-DSA pins and
-encrypts its records independently of TLS
-([ADR-0011](adr/0011-control-channel-authentication.md)), but the outer
-connection is plaintext.
+The browser API and the node control channel can both arrive at port 33073.
+`karst-control-client` can dial either scheme:
 
-Consequently, do not point nodes at a TLS-terminating browser reverse proxy.
-The nginx example above is for `/api/` and static console assets. A proxy that
-accepts TLS and forwards ordinary HTTP/1.1 will not carry the node's raw h2c
-stream. Keep the control listener reachable only on a trusted management LAN,
-VPN, or other access-controlled network until the client gains TLS support.
+- `http://` — plaintext HTTP/2 (h2c), straight to a `karst-control` listener
+  with no TLS in front of it.
+- `https://` — the same h2 stream wrapped in TLS, so it can pass through a
+  TLS-terminating reverse proxy on a shared port (the console and `/api/`
+  already need one).
 
-### 7.2 A single TLS origin needs a separate node-control port
+Either way, **the certificate proves nothing**. KARST-CONTROL authenticates
+the server with the configured ML-KEM and ML-DSA pins and encrypts its records
+independently of TLS ([ADR-0011](adr/0011-control-channel-authentication.md)),
+and `crates/karst-control-client/src/tls.rs` accepts whatever certificate the
+`https://` endpoint presents — expired, self-signed, wrong name, doesn't
+matter. That is deliberate, not an oversight: there is no CA to provision for
+a channel that already authenticates itself, and a bad or absent cert cannot
+weaken it. Real server impersonation still fails, at the pins, with
+`Error::ServerAuth`. What TLS buys here is purely the ability to share a port
+with TLS-only infrastructure — treat `https://` as a firewall-and-proxy
+convenience, never as the reason a node trusts the server.
 
-A single public origin is suitable for the console, portal, and `/api/`, but
-the tested reverse-proxy topology cannot share that TLS-terminated port with
-node enrollment. Publish two paths instead:
+### 7.2 A single TLS origin can now carry both
 
-- the public TLS origin sends `/api/` to `karst-control` and serves the web
-  applications; and
-- a second LAN-only, unproxied port exposes `karst-control`'s h2c listener to
-  nodes. Set `[control] server` to that private address and port.
+Since the control client accepts any certificate over `https://`, one public
+TLS origin can serve the console, portal, `/api/`, and node enrollment on the
+same port — the general shape §1's nginx example already used for the
+browser-facing routes extends to `/management.*` (or wherever the proxy sends
+node traffic) without a second listener. Point `[control] server` at that
+origin with `https://`.
 
-This is the arrangement exercised by
-[`deploy/compose/pentest/docker-compose.yml`](../deploy/compose/pentest/docker-compose.yml)
-and its [`Caddyfile`](../deploy/compose/pentest/Caddyfile). Do not expose the
-unproxied listener to the public Internet. A reverse proxy can share one port
-only if it can route TLS browser traffic and prior-knowledge h2c without
-terminating or translating the node stream; that topology is not shipped or
-validated by Karst.
+The LAN-only, unproxied second port
+([`deploy/compose/pentest/docker-compose.yml`](../deploy/compose/pentest/docker-compose.yml),
+its [`Caddyfile`](../deploy/compose/pentest/Caddyfile)) predates this and is no
+longer required — it was a workaround for a real gap found during the
+Phase 6 pentest (`plans/phase-6/04-pentest.md` §8), fixed once
+`karst-control-client` gained TLS support. It is still a legitimate choice if
+you would rather keep node traffic off the public origin entirely; it is just
+no longer the only option.
 
 **Serve them from two paths on one origin**, as above — `/` for the console
 and, say, `/portal/` for the portal. A second hostname means a second TLS name
@@ -980,6 +986,7 @@ The failure modes below are the ones that do not announce themselves.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `invalid float, expected nothing` | a `[control]` value (e.g. `setup_key`, `server`) written unquoted; TOML reads the leading digits as a number | quote every value in `[control]` — they are all strings, even ones that look like an address or a bare hex token |
 | `server_kem_pin: field key: contains a non-hexadecimal character` | pin pasted as base64 from the log; the field is hex | `base64 -d \| xxd -p -c 0` (§5) |
 | `server_kem_pin is 2368 bytes, but … uses a 1184-byte key` | the conversion ran over a log holding more than one start, so it decoded every copy of the pin into one string | add `\| tail -1` after the `grep` (§5). Exactly double the right length is the tell |
 | Nodes reject the netmap entirely, no relay used | a DNS name in `relays.json` `address` | use `IP:port`; the name goes in `tls_server_name` |

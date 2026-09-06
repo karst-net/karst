@@ -13,7 +13,8 @@ workspace = true
 
 [dependencies]
 karst-crypto.workspace = true
-tonic = { version = "0.14", default-features = false, features = ["codegen", "transport"] }
+tonic = { version = "0.14", default-features = false, features = ["codegen", "transport", "tls-aws-lc"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
 tonic-prost = "0.14"
 prost = "0.14"
 prost-types = "0.14"
@@ -32,5 +33,6 @@ tonic-prost-build = "0.14"
 hex = "0.4"
 ml-dsa = "0.1"
 rand = "0.8"
+rcgen = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

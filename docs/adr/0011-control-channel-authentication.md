@@ -235,6 +235,12 @@ has no implementation of.
   enforces it: `node_id` is opaque bytes with no key operations defined on it.
 - Confidentiality survives a TLS-terminating proxy, so the control server can
   be deployed behind ordinary infrastructure without leaking PSKs.
+  **Updated 2026-09-06:** `karst-control-client` took this literally —
+  `[control] server` now accepts `https://` and validates nothing about the
+  certificate it gets back, because this line was already true. The pins do
+  the authenticating either way; TLS is purely a way to share a port with
+  browser-facing infrastructure that expects one. See
+  `crates/karst-control-client/src/tls.rs` and GETTING-STARTED.md §7.1.
 - The control channel becomes post-quantum, closing a gap that would otherwise
   have made the datapath's PQ guarantees moot for anything a CRQC could harvest
   now and decrypt later.

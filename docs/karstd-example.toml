@@ -91,3 +91,24 @@ name = "carol"
 kem_public_key = "…"
 allowed_ips = ["10.77.0.3/32"]
 # No endpoint: carol is behind NAT and will connect to us.
+
+# ── enrolling into a coordination server instead ────────────────────────────
+#
+# Everything above is Path A: two nodes and a hand-written roster, no
+# coordination server. If you are instead joining a server (a "control
+# plane"), delete the [[peer]] blocks above and add a [control] table — the
+# netmap it fetches replaces the roster. Full walkthrough: GETTING-STARTED.md
+# §6.3 and §8.
+#
+# Every value below is a TOML string: it MUST be in quotes, even the ones
+# that look like a bare number or an address. `server = 10.0.0.5:33073` or
+# `setup_key = 8f3a91b2…` without quotes fails to parse with
+# "invalid float, expected nothing" — TOML reads the unquoted digits as a
+# number and chokes on the rest.
+#
+# [control]
+# server = "http://karst.example.com:33073"
+# server_kem_pin = "…2368 hex characters…"
+# server_verify_pin = "…hex…"
+# identity_key_file = "/etc/karst/identity.key"
+# setup_key = "…"
