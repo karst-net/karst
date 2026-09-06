@@ -2,20 +2,23 @@
 // Copyright the Karst contributors.
 
 #![forbid(unsafe_code)]
-//! `karst` — the command-line interface to a running `karstd`.
+//! `karst` — first-run enrollment and control of a running `karstd`.
 //!
-//! Talks to the daemon's local control socket. It holds no keys, opens no
-//! sockets on the network, and needs no privileges beyond reaching that socket
-//! — which is itself the administrative boundary (see `karstd::ipc`).
+//! Status and administration use the protected local control socket. The
+//! explicit `enroll` command provisions local keys and authenticates the pinned
+//! server before a daemon exists; it needs permission to write the service's
+//! configuration and state directories.
 
 use std::process::ExitCode;
 
 use karstd::ipc::{self, Command};
 
 const USAGE: &str = "\
-karst — control a running karstd
+karst — enroll a device and control karstd
 
 USAGE:
+    karst enroll --bundle FILE  enroll using a trusted bundle (run with sudo)
+      [--config PATH] [--state-dir PATH]  absolute paths for custom installations
     karst status     peers, session state, tunnel MTU
     karst dns status KarstDNS listener, host integration, and routes
     karst dns query NAME  explain the resolver path for NAME
@@ -56,6 +59,10 @@ fn main() -> ExitCode {
         print!("{USAGE}");
         return ExitCode::FAILURE;
     };
+
+    if *first == "enroll" {
+        return command_enroll(rest);
+    }
 
     // `dns revert` needs no running daemon — it is meant to work when there
     // is none — so it never enters the IPC path below.
@@ -181,4 +188,52 @@ fn command_dns_revert(args: &[&str]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[cfg(unix)]
+fn command_enroll(args: &[&str]) -> ExitCode {
+    let mut bundle = None;
+    let mut config = std::path::PathBuf::from("/etc/karst/karstd.toml");
+    let mut state = std::path::PathBuf::from("/var/lib/karst");
+    let mut it = args.iter().copied();
+    while let Some(arg) = it.next() {
+        match (arg, it.next()) {
+            ("--bundle", Some(path)) => bundle = Some(std::path::PathBuf::from(path)),
+            ("--config", Some(path)) => config = path.into(),
+            ("--state-dir", Some(path)) => state = path.into(),
+            _ => {
+                eprintln!(
+                    "usage: sudo karst enroll --bundle FILE [--config PATH] [--state-dir PATH]"
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(bundle) = bundle else {
+        eprintln!("karst: --bundle FILE is required");
+        return ExitCode::FAILURE;
+    };
+    match karstd::enrollment::enroll(&bundle, &config, &state) {
+        Ok(()) => {
+            println!(
+                "Device enrolled. Configuration saved to {}. Delete the downloaded bundle.",
+                config.display()
+            );
+            #[cfg(target_os = "linux")]
+            println!("Start the installed service: sudo systemctl enable --now karstd\nThen check: sudo karst status\nNetwork access still requires your deployment's ACL and Bedrock approval.");
+            #[cfg(target_os = "macos")]
+            println!("Start the installed launchd service, then check: sudo karst status");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("karst: enrollment failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn command_enroll(_: &[&str]) -> ExitCode {
+    eprintln!("karst: guided enrollment is not yet supported on this platform");
+    ExitCode::FAILURE
 }

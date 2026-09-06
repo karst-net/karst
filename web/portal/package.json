@@ -16,7 +16,8 @@
     "@vitejs/plugin-react": "latest",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "@karst-net/auth": "workspace:*"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",

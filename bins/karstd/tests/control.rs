@@ -924,3 +924,62 @@ async fn the_default_floor_accepts_the_shipping_suite() {
         Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x72)).expect("client");
     client.sync().await.expect("the shipping suite was refused");
 }
+
+#[test]
+#[ignore = "builds and runs the Go control server"]
+fn guided_enrollment_publishes_config_and_reconnects_without_cache_or_grant() {
+    let server = start_server(1);
+    let scratch = Scratch::new("guided-enrollment");
+    std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let bundle = scratch.join("bundle.toml");
+    let state = scratch.join("state");
+    let config = scratch.join("karstd.toml");
+    let content = format!("server = \"http://{}\"\nserver_kem_pin = \"{}\"\nserver_verify_pin = \"{}\"\nsetup_key = \"fixture\"\n",server.address,server.kem_pin,server.verify_pin);
+    std::fs::write(&bundle, &content).unwrap();
+    std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o600)).unwrap();
+    karstd::enrollment::enroll(&bundle, &config, &state).expect("guided enrollment");
+    let configured = std::fs::read_to_string(&config).unwrap();
+    assert!(!configured.contains("setup_key"));
+    assert!(!state.join("netmap.cache").exists());
+    assert!(state.join("identity.key.enrolled").exists());
+    let keys = karstd::config::load_keys(&config).unwrap();
+    let value: toml::Value = toml::from_str(&configured).unwrap();
+    let section: ControlSection = value["control"].clone().try_into().unwrap();
+    let mut client = Client::new(&section, &state, &keys).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .block_on(client.sync())
+        .expect("identity reconnect and netmap without enrollment secret or cache");
+    let original_key = std::fs::read(state.join("node.key")).unwrap();
+    assert!(
+        karstd::enrollment::enroll(&bundle, &config, &state).is_err(),
+        "must refuse overwrite"
+    );
+    assert_eq!(original_key, std::fs::read(state.join("node.key")).unwrap());
+}
+
+#[test]
+#[ignore = "builds and runs the Go control server"]
+fn guided_enrollment_wrong_pin_never_publishes_configuration() {
+    let server = start_server(0);
+    let scratch = Scratch::new("guided-wrong-pin");
+    std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let bundle = scratch.join("bundle.toml");
+    let state = scratch.join("state");
+    let config = scratch.join("karstd.toml");
+    let wrong_identity = Identity::from_seed(&[0x51; 32]);
+    let content = format!("server = \"http://{}\"\nserver_kem_pin = \"{}\"\nserver_verify_pin = \"{}\"\nsetup_key = \"fixture\"\n",server.address,server.kem_pin,encode_hex(&wrong_identity.public_key()));
+    std::fs::write(&bundle, content).unwrap();
+    std::fs::set_permissions(&bundle, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(karstd::enrollment::enroll(&bundle, &config, &state).is_err());
+    assert!(!config.exists());
+    assert!(!state.join("identity.key.enrolled").exists());
+    let original_key = std::fs::read(state.join("node.key")).unwrap();
+    let content = format!("server = \"http://{}\"\nserver_kem_pin = \"{}\"\nserver_verify_pin = \"{}\"\nsetup_key = \"fixture\"\n",server.address,server.kem_pin,server.verify_pin);
+    std::fs::write(&bundle, content).unwrap();
+    karstd::enrollment::enroll(&bundle, &config, &state).expect("retry with corrected pins");
+    assert_eq!(original_key, std::fs::read(state.join("node.key")).unwrap());
+}

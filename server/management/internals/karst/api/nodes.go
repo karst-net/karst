@@ -70,10 +70,6 @@ type sessionCloser interface {
 	CloseSessionsForHandle(handle string, at time.Time) error
 }
 
-type enrollmentKeyBinder interface {
-	BindEnrollmentKey(key, userID string) error
-}
-
 // peerReader is the existing, permission-aware peer listing. Its result is
 // already scoped to the authenticated caller, so it is the authorization
 // boundary for the peer half of the join.
@@ -102,7 +98,7 @@ type peerWriter interface {
 // implements it; keeping it separate preserves the read-only test seam and
 // ensures this small portal surface cannot acquire arbitrary account writes.
 type setupKeyIssuer interface {
-	CreateSetupKey(context.Context, string, string, types.SetupKeyType, time.Duration, []string, int, string, bool, bool) (*types.SetupKey, error)
+	CreateEnrollmentKey(context.Context, string, string) (*types.SetupKey, error)
 }
 
 type ownDeviceWriter interface {
@@ -560,17 +556,8 @@ func (h *handler) meenroll(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "device enrollment is not configured"), w)
 		return
 	}
-	key, err := issuer.CreateSetupKey(r.Context(), user.AccountId, "portal device", types.SetupKeyOneOff, 15*time.Minute, nil, 1, user.UserId, false, false)
+	key, err := issuer.CreateEnrollmentKey(r.Context(), user.AccountId, user.UserId)
 	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	binder, ok := h.nodes.(enrollmentKeyBinder)
-	if !ok {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "portal enrollment ownership is not configured"), w)
-		return
-	}
-	if err := binder.BindEnrollmentKey(key.Key, user.UserId); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
@@ -578,6 +565,7 @@ func (h *handler) meenroll(w http.ResponseWriter, r *http.Request) {
 	if key.ExpiresAt != nil {
 		expires = key.ExpiresAt.UTC()
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	util.WriteJSONObject(r.Context(), w, map[string]any{"key": key.Key, "expires_at": expires})
 }
 
@@ -2504,4 +2492,18 @@ func filterNodes(nodes []nodeResponse, keep func(nodeResponse) bool) []nodeRespo
 		}
 	}
 	return filtered
+}
+
+// RegisterEnrollmentMetadata delivers public control pins through the same
+// authenticated API as member enrollment. The browser supplies its HTTPS
+// origin; no forwarded Host header becomes a trust anchor here.
+func RegisterEnrollmentMetadata(router *mux.Router, kem, verify []byte) {
+	router.HandleFunc("/karst/v1/me/enrollment", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		util.WriteJSONObject(r.Context(), w, map[string]any{"server_kem_pin": fmt.Sprintf("%x", kem), "server_verify_pin": fmt.Sprintf("%x", verify), "control_minimum_version": 1})
+	}).Methods(http.MethodGet)
 }

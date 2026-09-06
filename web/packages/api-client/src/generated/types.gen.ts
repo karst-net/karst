@@ -47,6 +47,18 @@ export type DeviceRename = {
     name: string;
 };
 
+export type EnrollmentSettings = {
+    /**
+     * Hex ML-KEM-1024 public key
+     */
+    server_kem_pin: string;
+    /**
+     * Hex ML-DSA-87 verification key
+     */
+    server_verify_pin: string;
+    control_minimum_version: 1;
+};
+
 export type DeviceEnrollment = {
     /**
      * Returned once when the one-use device key is created.
@@ -575,6 +587,31 @@ export type ListMyDevicesResponses = {
 };
 
 export type ListMyDevicesResponse = ListMyDevicesResponses[keyof ListMyDevicesResponses];
+
+export type GetMyEnrollmentSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/enrollment';
+};
+
+export type GetMyEnrollmentSettingsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetMyEnrollmentSettingsError = GetMyEnrollmentSettingsErrors[keyof GetMyEnrollmentSettingsErrors];
+
+export type GetMyEnrollmentSettingsResponses = {
+    /**
+     * Public control pins delivered through the authenticated HTTPS origin
+     */
+    200: EnrollmentSettings;
+};
+
+export type GetMyEnrollmentSettingsResponse = GetMyEnrollmentSettingsResponses[keyof GetMyEnrollmentSettingsResponses];
 
 export type EnrollMyDeviceData = {
     body?: never;

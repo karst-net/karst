@@ -278,6 +278,7 @@ const server = http.createServer((request, response) => {
   // router. Fixtures only expose the member's own devices; there is no user
   // identifier to forge in any of these paths.
   if (method === "GET" && karst === "/me/devices") return json(response, 200, memberDevices);
+  if (method === "GET" && karst === "/me/enrollment") return json(response, 200, { server_kem_pin: "ab".repeat(1568), server_verify_pin: "cd".repeat(2592), control_minimum_version: 1 });
   if (method === "POST" && karst === "/me/devices/enroll") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
   if (method === "GET" && karst === "/me/access") return json(response, 200, memberAccess);
   if (method === "GET" && karst === "/me/sessions") return json(response, 200, memberSessions);

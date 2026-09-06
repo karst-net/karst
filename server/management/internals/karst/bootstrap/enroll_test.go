@@ -132,12 +132,11 @@ func TestMintBootstrapKeyOnAnEmptyDeployment(t *testing.T) {
 		if k.Revoked {
 			t.Error("the key was born revoked")
 		}
-		if k.ExpiresAt != nil {
-			t.Errorf("the key expires at %s; the file holding it would go stale silently", k.ExpiresAt)
+		if k.ExpiresAt == nil || time.Until(*k.ExpiresAt) > time.Hour || time.Until(*k.ExpiresAt) < 59*time.Minute {
+			t.Errorf("bootstrap key must expire in one hour: %v", k.ExpiresAt)
 		}
-		if k.UsageLimit != 0 {
-			t.Errorf("usage limit %d; the deployment's Nth node would be refused "+
-				"against a console that does not exist yet", k.UsageLimit)
+		if k.UsageLimit != 10 {
+			t.Errorf("bootstrap usage limit = %d, want 10", k.UsageLimit)
 		}
 	}
 	if !found {
@@ -159,6 +158,23 @@ func TestEachBootstrapKeyIsDistinct(t *testing.T) {
 	second, err := bootstrap.MintBootstrapKey(ctx, am, bootstrap.BootstrapKeyOptions{})
 	if err != nil {
 		t.Fatalf("second: %v", err)
+	}
+	accountID, userID, err := am.GetAccountIDFromUserAuth(ctx, userAuthFor(bootstrap.BootstrapUserID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := am.ListSetupKeys(ctx, accountID, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := 0
+	for _, key := range keys {
+		if key.IsValid() {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("rotation left %d live keys, want 1", live)
 	}
 	if first == second {
 		t.Fatal("two mints returned the same key")

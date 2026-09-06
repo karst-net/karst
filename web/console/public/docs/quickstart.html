@@ -29,10 +29,11 @@
     <h1>Karst quickstart</h1>
     <p>Open the Karst administration console and complete <strong>First-run setup</strong>. You need the public HTTPS URL of your coordination server.</p>
     <ol>
-      <li>Enter the public server URL in <strong>First-run setup</strong>.</li>
-      <li>Create a one-time enrollment key. Copy it immediately; it is shown only once.</li>
-      <li>Install the Karst node package on the machine you want to connect. Put the one-time key in <code>[control] setup_key</code> in <code>/etc/karst/karstd.toml</code>, alongside the server URL and pins from the installation guide. Validate it with <code>sudo karstd check --config /etc/karst/karstd.toml</code>, then start it with <code>sudo systemctl enable --now karstd</code>. There is no <code>karst up</code> command.</li>
-      <li>Open <strong>Machines</strong> and confirm the new node has a current observation and crypto posture.</li>
+      <li>Configure the coordination server and identity provider, and open the console or <code>/portal/</code> over trusted HTTPS. Sign in as the user who will own the device.</li>
+      <li>Install the Karst Linux client package on the device. In the portal, confirm that installation is complete and select <strong>Create enrollment bundle</strong>. Download the bundle; it contains the server pins and a one-device credential valid for fifteen minutes.</li>
+      <li>In the download directory run <code>chmod 600 karst-enrollment.toml</code>, then <code>sudo karst enroll --bundle karst-enrollment.toml</code>. The client generates its private keys locally, authenticates the pinned server, and writes <code>/etc/karst/karstd.toml</code> without retaining the enrollment credential.</li>
+      <li>After successful enrollment delete the bundle, then run <code>sudo systemctl enable --now karstd</code> and <code>sudo karst status</code>. If enrollment fails, retry with the same device state. Existing configurations are never overwritten.</li>
+      <li>Confirm the device in Machines. If Bedrock is enforcing, complete the offline signing ceremony; network access also requires an ACL. Enrollment does not automatically grant access to every device.</li>
     </ol>
     <p>If the node is absent or stale, check its service logs and confirm its coordination-server URL before generating another key. Never paste a one-time key into a ticket, chat, or shell history you do not control.</p>
   </main></body>

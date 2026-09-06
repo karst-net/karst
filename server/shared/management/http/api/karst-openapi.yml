@@ -70,6 +70,13 @@ paths:
       responses:
         '200': {description: Devices owned by the authenticated subject, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/MyDevice'}}}}}
         default: {$ref: '#/components/responses/Error'}
+  /me/enrollment:
+    get:
+      operationId: getMyEnrollmentSettings
+      tags: [portal]
+      responses:
+        '200': {description: Public control pins delivered through the authenticated HTTPS origin, content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentSettings'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /me/devices/enroll:
     post:
       operationId: enrollMyDevice
@@ -408,6 +415,13 @@ components:
       required: [name]
       additionalProperties: false
       properties: {name: {type: string, minLength: 1}}
+    EnrollmentSettings:
+      type: object
+      required: [server_kem_pin, server_verify_pin, control_minimum_version]
+      properties:
+        server_kem_pin: {type: string, description: Hex ML-KEM-1024 public key}
+        server_verify_pin: {type: string, description: Hex ML-DSA-87 verification key}
+        control_minimum_version: {type: integer, enum: [1]}
     DeviceEnrollment:
       type: object
       required: [key, expires_at]

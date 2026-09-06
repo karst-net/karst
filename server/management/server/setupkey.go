@@ -284,3 +284,89 @@ func (am *DefaultAccountManager) prepareSetupKeyEvents(ctx context.Context, tran
 
 	return eventsToStore
 }
+
+// CreateEnrollmentKey grants one device to an existing, eligible member. It
+// deliberately exposes none of the administrative setup-key options.
+func (am *DefaultAccountManager) CreateEnrollmentKey(ctx context.Context, accountID, userID string) (*types.SetupKey, error) {
+	var key *types.SetupKey
+	var plain string
+	err := am.Store.ExecuteInTransaction(ctx, func(tx store.Store) error {
+		user, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, userID)
+		if err != nil {
+			return err
+		}
+		if user.AccountID != accountID || user.IsBlocked() || user.PendingApproval || user.IsServiceUser {
+			return status.Errorf(status.PermissionDenied, "user cannot enroll a device")
+		}
+		keys, err := tx.GetAccountSetupKeys(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return err
+		}
+		recent := 0
+		for _, previous := range keys {
+			if previous.OwnerUserID == userID && previous.CreatedAt.After(time.Now().Add(-15*time.Minute)) {
+				recent++
+			}
+		}
+		if recent >= 5 {
+			return status.Errorf(status.TooManyRequests, "too many enrollment requests; wait 15 minutes before trying again")
+		}
+		key, plain = types.GenerateSetupKey("portal device", types.SetupKeyOneOff, 15*time.Minute, nil, 1, false, false)
+		key.AccountID = accountID
+		key.OwnerUserID = userID
+		return tx.SaveSetupKey(ctx, key)
+	})
+	if err != nil {
+		return nil, err
+	}
+	am.StoreEvent(ctx, userID, key.Id, accountID, activity.SetupKeyCreated, key.EventMeta())
+	key.Key = plain
+	return key, nil
+}
+
+// RotateBootstrapKey bounds first-deployment access and invalidates previous
+// bootstrap credentials in the same transaction, including ones whose file was lost.
+func (am *DefaultAccountManager) RotateBootstrapKey(ctx context.Context, accountID, userID, name string, expiry time.Duration, limit int) (*types.SetupKey, error) {
+	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.SetupKeys, operations.Create)
+	if err != nil {
+		return nil, status.NewPermissionValidationError(err)
+	}
+	if !allowed {
+		return nil, status.NewPermissionDeniedError()
+	}
+	if expiry <= 0 || limit <= 0 {
+		return nil, status.Errorf(status.InvalidArgument, "bootstrap credentials must have an expiry and usage limit")
+	}
+	var key *types.SetupKey
+	var plain string
+	err = am.Store.ExecuteInTransaction(ctx, func(tx store.Store) error {
+		user, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, userID)
+		if err != nil {
+			return err
+		}
+		if user.AccountID != accountID || user.IsBlocked() {
+			return status.NewPermissionDeniedError()
+		}
+		keys, err := tx.GetAccountSetupKeys(ctx, store.LockingStrengthUpdate, accountID)
+		if err != nil {
+			return err
+		}
+		for _, old := range keys {
+			if old.Name == name && !old.Revoked {
+				old.Revoked = true
+				if err := tx.SaveSetupKey(ctx, old); err != nil {
+					return err
+				}
+			}
+		}
+		key, plain = types.GenerateSetupKey(name, types.SetupKeyReusable, expiry, nil, limit, false, false)
+		key.AccountID = accountID
+		return tx.SaveSetupKey(ctx, key)
+	})
+	if err != nil {
+		return nil, err
+	}
+	am.StoreEvent(ctx, userID, key.Id, accountID, activity.SetupKeyCreated, key.EventMeta())
+	key.Key = plain
+	return key, nil
+}

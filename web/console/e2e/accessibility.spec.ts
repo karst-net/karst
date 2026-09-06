@@ -84,40 +84,18 @@ test("policy syntax errors surface their line number", async ({ page }) => {
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
 });
 
-test("first-run setup produces a copyable daemon configuration", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("https://control.example.test");
-  await page.getByRole("button", { name: "Create enrollment key" }).click();
-  await expect(page.getByLabel("Control configuration")).toHaveValue('[control]\nserver = "https://control.example.test"\nserver_kem_pin = "…"\nserver_verify_pin = "…"\nsetup_key = "setup-fixture-secret"');
-  await expect(page.getByText("sudo systemctl enable --now karstd")).toBeVisible();
+test("setup waits for installation and refuses enrollment over HTTP", async ({ page }) => {
+ await page.goto("/#/setup");
+ await expect(page.getByRole("button", { name: "Create enrollment bundle" })).toBeDisabled();
+ await page.getByRole("checkbox").check();
+ await page.getByRole("button", { name: "Create enrollment bundle" }).click();
+ await expect(page.getByRole("alert")).toContainText("trusted HTTPS");
 });
 
-test("setup cannot mint a key before it knows the server URL", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("");
-  // A key issued without a URL produces an enrollment command that cannot work,
-  // and the key is one-time — the admin burns it discovering that.
-  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeDisabled();
-  await page.getByLabel("Server URL").fill("https://control.example.test");
-  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeEnabled();
-});
-
-test("setup progress and server URL survive leaving the page", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("https://persisted.example.test");
-  await page.getByRole("listitem").filter({ hasText: "Configure the coordination server" }).getByRole("button", { name: "Mark complete" }).click();
-  // Setup spans a restart and a walk to another machine. Component state lost
-  // both on the first navigation, which made step 1 configure nothing.
-  await page.goto("/#/machines");
-  await page.goto("/#/setup");
-  await expect(page.getByLabel("Server URL")).toHaveValue("https://persisted.example.test");
-  await expect(page.getByRole("listitem").filter({ hasText: "Configure the coordination server" }).getByRole("button")).toHaveText("Complete");
-});
-
-test("quickstart documents the daemon configuration enrollment flow", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByRole("link", { name: "Read the quickstart" }).click();
-  await expect(page.getByText("There is no")).toContainText("karst up");
+test("quickstart documents guided enrollment", async ({ page }) => {
+ await page.goto("/#/setup");
+ await page.getByRole("link", { name: "installation guide" }).click();
+ await expect(page.locator("body")).toContainText("karst enroll");
 });
 
 test("auth-key creation is keyboard accessible", async ({ page }) => {

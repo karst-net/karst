@@ -13,6 +13,9 @@ importers:
       '@karst-net/api-client':
         specifier: workspace:*
         version: link:../packages/api-client
+      '@karst-net/auth':
+        specifier: workspace:*
+        version: link:../packages/auth
       '@karst-net/tokens':
         specifier: workspace:*
         version: link:../packages/tokens
@@ -72,6 +75,12 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/auth:
+    dependencies:
+      oidc-client-ts:
+        specifier: ^3.5.0
+        version: 3.5.0
+
   packages/tokens:
     devDependencies:
       typescript:
@@ -93,6 +102,9 @@ importers:
 
   portal:
     dependencies:
+      '@karst-net/auth':
+        specifier: workspace:*
+        version: link:../packages/auth
       '@karst-net/tokens':
         specifier: workspace:*
         version: link:../packages/tokens

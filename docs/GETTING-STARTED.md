@@ -630,10 +630,10 @@ private_key_file = "/etc/karst/node.key"
 [control]
 # https:// works through a TLS-terminating reverse proxy (§7.1) or plain
 # http:// straight to karst-control — either way the control channel carries
-# its own ML-KEM-768 handshake and the server is authenticated by the pins,
+# its own ML-KEM-1024 handshake and the server is authenticated by the pins,
 # never by the TLS certificate. See §7.1 before picking one.
 server = "http://karst.example.com:33073"
-server_kem_pin = "…2368 hex characters…"     # hex, not the base64 the log prints
+server_kem_pin = "…3136 hex characters…"     # hex, not the base64 the log prints
 server_verify_pin = "…hex…"
 # The node's ML-DSA-87 control identity. A 32-byte seed, CREATED ON FIRST RUN —
 # do not generate it with `karstd genkey`, which produces the 64-byte
@@ -847,19 +847,18 @@ sudo cat /var/lib/karst/bootstrap.key
 
 That value goes in `[control] setup_key` verbatim. Four things about it:
 
-- **The file is the idempotence rule, not the database.** The plaintext is
-  stored nowhere — the server keeps a SHA-256, exactly as it does for a key
-  issued through the API — so if the file exists the server leaves it alone,
-  and if you delete it the next start mints a *second* live key rather than
-  reprinting the first.
-- **It is reusable, unlimited, and does not expire.** Both alternatives fail in
-  the dark: a usage limit refuses the deployment's Nth node against a console
-  that does not exist yet, and an expiry turns a working file into a rejected
-  one at a moment nothing announces.
-- **It is opt-in and mode 600.** Unset the variable and the server mints
-  nothing.
-- **Revoke it** from the console (Auth keys) once authentication works. It is a
-  standing enrollment credential for the whole deployment.
+- **It permits ten enrollments and expires after one hour.** Existing enrolled
+  nodes reconnect using their identity and do not need the key to remain valid.
+- **It is opt-in and mode 600.** Unset the variable to stop automatic issuance.
+- **Renew explicitly** by removing the bootstrap key file and restarting the
+  control server. Renewal atomically revokes previous bootstrap keys before
+  issuing the replacement. Existing files are retained across normal restarts;
+  the startup log explains the expiry and renewal procedure.
+- **Revoke it** from Auth keys once ordinary sign-in works.
+
+On upgrade, legacy portal grants and unlimited bootstrap keys are revoked.
+Download a fresh portal bundle; for a bootstrap deployment, renew the file as
+above. This does not revoke enrolled devices.
 
 The bootstrap user lands in the account the first identity-provider user will
 land in, so nodes enrolled this way are visible in the console once there is
@@ -882,19 +881,56 @@ curl -X POST http://karst.example.com:33073/api/setup-keys \
 The console's first-run view drives exactly this endpoint (Auth keys → Create
 auth key) once authentication works.
 
-Two things in the console are aspirational and will not work as shown:
+### 8.3 Guided client enrollment
 
-- Its first-run view prints `karst up --login-server … --auth-key …`. **There is
-  no `karst up`.** The CLI is deliberately an interface to a *running* daemon;
-  bringing the tunnel up means running `karstd` with a configuration, which is a
-  service-manager job. Put the key in `[control] setup_key` instead.
-- Bedrock is an offline ceremony: the console exports node-sign requests and
-  imports verified responses. It never receives an authority private key.
+Serve the portal at `/portal/` on the same trusted HTTPS origin as the control
+server. Register these exact redirect URIs with the identity provider:
+`https://HOST/oidc/callback`, `https://HOST/silent-renew.html`,
+`https://HOST/portal/oidc/callback`, and
+`https://HOST/portal/silent-renew.html`. Allow `/` and `/portal/` as post-logout
+redirects. Both apps read `/config.json` for `oidcAuthority` and `oidcClientId`.
+Configure Authorization Code with PKCE. The portal sends bearer tokens from
+memory and derives device ownership from the authenticated user on the server.
 
-Once a node holds a setup key and both pins, enrollment is automatic on start:
-`karstd` registers, receives a netmap, and `karst status` shows peers with
-`state = established`, first over the relay and then — within seconds, if
-AVEN can find a path — `transport = direct`.
+Install the Linux client package first. Sign into the portal as the device's
+owner, confirm installation, and create an enrollment bundle. The bundle
+contains both control pins obtained through the authenticated HTTPS API and a
+one-use, fifteen-minute credential. This is explicitly Web-PKI bootstrap trust;
+operators requiring independently provisioned pins should distribute their own
+bundle instead. Never transfer a bundle through an untrusted channel.
+
+Run each command after the previous one succeeds:
+
+```sh walkthrough=none reason="guided enrollment requires a signed-in portal and downloaded bundle"
+chmod 600 karst-enrollment.toml
+sudo karst enroll --bundle karst-enrollment.toml
+rm karst-enrollment.toml
+sudo systemctl enable --now karstd
+sudo karst status
+```
+
+`karst enroll` creates data-plane and control keys locally under
+`/var/lib/karst`, authenticates the pinned server, and publishes
+`/etc/karst/karstd.toml` without a setup key. The identity's `.enrolled` receipt
+survives netmap-cache loss. Failed attempts retain the same local identity for
+retry; existing configurations are refused rather than overwritten. Custom
+installations can pass absolute `--config` and `--state-dir` paths and must
+configure their service to use those paths. Guided installation currently
+supports Unix; the portal instructions target the Linux package.
+
+A member can issue at most five credentials per fifteen minutes. Expired,
+revoked, consumed, blocked-owner and pending-owner grants are rejected. The
+server also bounds login-handler work per replica (10 attempts per second,
+burst 100); deployments should retain ingress abuse controls across replicas.
+
+Enrollment does not imply traffic authorization. Bedrock remains an offline
+ceremony: export node-sign requests and import verified responses, then confirm
+the required ACL and `karst status`. The console never receives an authority
+private key. A device with a saved enrollment receipt cannot silently enroll
+again after revocation. To deliberately enroll a revoked device again, stop
+its service, archive the old configuration, and use a newly issued bundle with
+a fresh `--state-dir`. Do not remove only the netmap cache or reuse a revoked
+identity expecting the setup key to override revocation.
 
 ---
 

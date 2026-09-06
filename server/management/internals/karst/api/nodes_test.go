@@ -204,7 +204,8 @@ type enrollmentWriter struct {
 	}
 }
 
-func (w enrollmentWriter) CreateSetupKey(_ context.Context, _ string, _ string, keyType types.SetupKeyType, expiry time.Duration, _ []string, limit int, user string, ephemeral bool, _ bool) (*types.SetupKey, error) {
+func (w enrollmentWriter) CreateEnrollmentKey(_ context.Context, _ string, user string) (*types.SetupKey, error) {
+	keyType, expiry, limit, ephemeral := types.SetupKeyOneOff, 15*time.Minute, 1, false
 	*w.got = struct {
 		keyType   types.SetupKeyType
 		expiry    time.Duration

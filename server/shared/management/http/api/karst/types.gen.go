@@ -135,6 +135,21 @@ func (e DiagnosticSeverity) Valid() bool {
 	}
 }
 
+// Defines values for EnrollmentSettingsControlMinimumVersion.
+const (
+	EnrollmentSettingsControlMinimumVersionN1 EnrollmentSettingsControlMinimumVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the EnrollmentSettingsControlMinimumVersion enum.
+func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
+	switch e {
+	case EnrollmentSettingsControlMinimumVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NodePostureStatus.
 const (
 	NodePostureStatusLatticeOnly NodePostureStatus = "lattice_only"
@@ -547,6 +562,20 @@ type Diagnostic struct {
 
 // DiagnosticSeverity defines model for Diagnostic.Severity.
 type DiagnosticSeverity string
+
+// EnrollmentSettings defines model for EnrollmentSettings.
+type EnrollmentSettings struct {
+	ControlMinimumVersion EnrollmentSettingsControlMinimumVersion `json:"control_minimum_version"`
+
+	// ServerKemPin Hex ML-KEM-1024 public key
+	ServerKemPin string `json:"server_kem_pin"`
+
+	// ServerVerifyPin Hex ML-DSA-87 verification key
+	ServerVerifyPin string `json:"server_verify_pin"`
+}
+
+// EnrollmentSettingsControlMinimumVersion defines model for EnrollmentSettings.ControlMinimumVersion.
+type EnrollmentSettingsControlMinimumVersion int
 
 // Error defines model for Error.
 type Error struct {

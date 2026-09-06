@@ -20,6 +20,7 @@ pub mod control;
 pub mod disco;
 pub mod dns;
 pub mod engine;
+pub mod enrollment;
 pub mod exit_node;
 pub mod exit_policy;
 pub mod filter;

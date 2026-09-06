@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
+
+	"golang.org/x/time/rate"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/realip"
 
@@ -40,8 +43,10 @@ type PeerLoginer interface {
 // the same 44 characters a WireGuard key occupies (see package node). The
 // business layer never inspects it, so it does not care what produced it.
 type LoginHandler struct {
-	Nodes    *node.Store
-	Accounts PeerLoginer
+	limitOnce sync.Once
+	attempts  *rate.Limiter
+	Nodes     *node.Store
+	Accounts  PeerLoginer
 	// OIDC enables interactive registration. Nil means the server accepts
 	// setup keys only, and a node presenting a token is refused rather than
 	// quietly falling back to one.
@@ -55,6 +60,16 @@ type LoginHandler struct {
 // the peer handle from that key rather than from anything the request says,
 // so a request cannot ask to be someone else.
 func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) ([]byte, error) {
+	// Bound the unauthenticated enrollment work per replica. Reconnecting
+	// enrolled clients authenticate by identity without invoking this handler.
+	h.limitOnce.Do(func() {
+		if h.attempts == nil {
+			h.attempts = rate.NewLimiter(10, 100)
+		}
+	})
+	if !h.attempts.Allow() {
+		return nil, status.Error(codes.ResourceExhausted, "too many enrollment attempts; retry later")
+	}
 	req := &proto.KarstLoginRequest{}
 	if err := pb.Unmarshal(payload, req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "malformed login request")
@@ -104,27 +119,22 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 		if userID != "" && userID != setupKeyOwner {
 			return nil, status.Error(codes.PermissionDenied, "setup key owner does not match authenticated user")
 		}
-		userID = setupKeyOwner
 	}
 
 	peer, _, _, _, err := h.Accounts.LoginPeer(ctx, types.PeerLogin{
 		// Named for WireGuard by the fork; carries a Karst node handle here.
 		// Renaming the field is a forked-code change and therefore a
 		// cherry-pick cost, so it is deferred deliberately.
-		WireGuardPubKey: handle,
-		Meta:            extractMeta(req.GetMeta()),
-		SetupKey:        req.GetSetupKey(),
-		UserID:          userID,
-		ConnectionIP:    connectionIP(ctx),
-		ExtraDNSLabels:  req.GetDnsLabels(),
+		WireGuardPubKey:  handle,
+		Meta:             extractMeta(req.GetMeta()),
+		SetupKey:         req.GetSetupKey(),
+		UserID:           userID,
+		EnrollmentUserID: setupKeyOwner,
+		ConnectionIP:     connectionIP(ctx),
+		ExtraDNSLabels:   req.GetDnsLabels(),
 	})
 	if err != nil {
 		return nil, err
-	}
-	if setupKeyOwner != "" {
-		if err := h.Nodes.ConsumeEnrollmentKey(req.GetSetupKey()); err != nil {
-			return nil, err
-		}
 	}
 
 	// Authorization succeeded. It is now safe to create the Karst-owned

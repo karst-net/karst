@@ -43,6 +43,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/account"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/store"
+	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -152,6 +153,16 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: node store: %w", err)
 	}
+	// Old portal grants bypassed consumption and can no longer be trusted.
+	// Invalidate them on upgrade, including grants whose ownership row was
+	// deleted by the old redemption path. Newly issued grants carry ownership
+	// atomically in the setup-key row and are unaffected on later starts.
+	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (owner_user_id = ? OR owner_user_id IS NULL)", "portal device", "").Update("revoked", true).Error; err != nil {
+		return nil, fmt.Errorf("karst: invalidate legacy enrollment grants: %w", err)
+	}
+	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (expires_at IS NULL OR usage_limit = 0)", BootstrapKeyName).Update("revoked", true).Error; err != nil {
+		return nil, fmt.Errorf("karst: invalidate unbounded bootstrap grants: %w", err)
+	}
 	// Sessions a previous process was serving are still open in the table: its
 	// streams' deferred closes did not run, because the process is gone. Close
 	// them at the last request each one was seen making, and drop history past
@@ -204,6 +215,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// metrics middleware and its built-in routes. Karst therefore has no second
 	// authentication path, while the route ordering stays mechanically clear.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
+		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.PermissionsManager(), router)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
