@@ -1,5 +1,10 @@
 # macOS client
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#111](https://github.com/karst-net/karst/issues/111), [#113](https://github.com/karst-net/karst/issues/113), [#131](https://github.com/karst-net/karst/issues/131).
+
 **PLAN.md §9 · W2–W8 · Rust 2.**
 
 ## 0. Status — ✅ done, closed 2026-09-01

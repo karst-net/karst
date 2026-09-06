@@ -1,5 +1,10 @@
 # Phase 5 — KarstDNS, Bedrock, admin console
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#131](https://github.com/karst-net/karst/issues/131).
+
 **✅ Closed 2026-09-02.** Scheduled as 10 weeks, W1 = week of 2026-10-19
 through W10 = week of 2026-12-21, anchored on PLAN.md §10's 2026-08-10 start
 plus Phase 4's planned ten weeks. It did not run on that schedule: §0 below

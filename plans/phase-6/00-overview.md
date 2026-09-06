@@ -1,5 +1,10 @@
 # Phase 6 — Hardening and beta
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#116](https://github.com/karst-net/karst/issues/116).
+
 **8 weeks.**
 Sequenced from Phase 5's actual close, not the original static schedule — see
 PLAN.md §10's Phase 5 entry and

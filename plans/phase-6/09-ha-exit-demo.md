@@ -1,5 +1,10 @@
 # HA exit demonstration (workstream 9, §7)
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#114](https://github.com/karst-net/karst/issues/114).
+
 Every IP address below is a placeholder (`203.0.113.0/24` — RFC 5737 — for
 real LAN addresses), not the deployment's actual addressing — this is a
 public repository. Hostnames (`shannon`, `turing`, `lovelace`) are real, per

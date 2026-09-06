@@ -1,5 +1,10 @@
 # The control API the console consumes
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#128](https://github.com/karst-net/karst/issues/128).
+
 **Not named in PLAN.md's Phase 5 block · W1–W6 · Go 1, with Go 2 from W3.**
 
 ## 1. Why this file exists

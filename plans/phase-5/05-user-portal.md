@@ -1,5 +1,10 @@
 # User portal — `karst-portal`
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#107](https://github.com/karst-net/karst/issues/107).
+
 **PLAN.md §8.2 · W7–W9 · Frontend 2, after the console's second engineer rolls
 off the read-only views.**
 

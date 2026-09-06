@@ -1,5 +1,10 @@
 # Admin console — `karst-console`
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#128](https://github.com/karst-net/karst/issues/128).
+
 **PLAN.md §8.1, §8.3 · W2–W10 · Frontend 1 and 2.**
 
 ## 1. Starting point

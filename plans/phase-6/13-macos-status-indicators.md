@@ -1,5 +1,10 @@
 # macOS client status indicators
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#112](https://github.com/karst-net/karst/issues/112).
+
 Added 2026-09-04. Not a beta gate (#12) — [00-overview.md](00-overview.md)
 §2 item 13, best-effort against remaining capacity after TURN (#5) and the
 console surfaces (#6, #7) are staffed.

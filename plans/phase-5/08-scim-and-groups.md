@@ -1,5 +1,9 @@
 # SCIM 2.0 provisioning and group sync
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+
 **PLAN.md §4.4 · W5–W8 · Go 2, with a Rust change in W6 that is not optional —
 see §2.** *Amended 2026-08-29: the Rust change is not a change, it is the
 larger half of §2, and it is unestimated. Do not schedule W6 from this line.*

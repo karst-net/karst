@@ -1,5 +1,10 @@
 # KarstDNS
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#131](https://github.com/karst-net/karst/issues/131).
+
 **PLAN.md §7 · W1–W7 · Rust 1, with Rust 2/3 taking the macOS and Windows
 integrations inside their own client weeks.**
 

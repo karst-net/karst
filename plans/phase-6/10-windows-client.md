@@ -1,5 +1,10 @@
 # Windows client — pulled forward from Phase 8
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#110](https://github.com/karst-net/karst/issues/110).
+
 **Re-scoped 2026-09-04.** [00-overview.md](00-overview.md) §1/§2 item 10:
 Windows moves out of Phase 8 and becomes a firm requirement before public
 beta (#12) opens, swapped in for the FreeBSD best-effort line that this

@@ -1,5 +1,10 @@
 # Windows client
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#110](https://github.com/karst-net/karst/issues/110).
+
 **PLAN.md §9 · W2–W9 · Rust 3.**
 
 The longest of the three client ports and the one with an unresolved licensing

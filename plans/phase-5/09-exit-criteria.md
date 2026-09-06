@@ -1,5 +1,10 @@
 # Exit criteria, docs, and the walkthrough
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#107](https://github.com/karst-net/karst/issues/107).
+
 **W8–W10 · SRE, with everyone on call for the findings it produces.**
 
 **Status at Phase 5 close, 2026-09-02: ten of twelve claims demonstrated.**

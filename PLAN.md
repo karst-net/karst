@@ -1,5 +1,9 @@
 # Karst — Implementation Plan
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](plans/README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+
 > **Current cryptographic scope:** [ADR-0018](docs/adr/0018-cnsa-2-0-as-the-sole-suite.md)
 > makes CNSA 2.0 the sole PHREATIC suite and removes application DH keys.
 > The plan below is a historical implementation record; its earlier suite,

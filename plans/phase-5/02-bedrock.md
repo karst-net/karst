@@ -1,5 +1,10 @@
 # Bedrock — the network lock
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#130](https://github.com/karst-net/karst/issues/130).
+
 **PLAN.md §4.5 · W1–W8 · Crypto lead, with Rust 1 pairing from W5 and Go 1 on
 the server side from W6.**
 

@@ -2,6 +2,11 @@
 
 # Documentation exit demonstration record
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#107](https://github.com/karst-net/karst/issues/107), [#114](https://github.com/karst-net/karst/issues/114), [#115](https://github.com/karst-net/karst/issues/115).
+
 This is the evidence record for
 [`11-documentation.md`](11-documentation.md) §§6–8. A maintainer must not mark
 the workstream complete while any disposition below is pending. CI supplies

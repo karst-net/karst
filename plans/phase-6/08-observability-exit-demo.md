@@ -1,5 +1,10 @@
 # Observability exit demonstration (workstream 8, §7)
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#130](https://github.com/karst-net/karst/issues/130).
+
 Every IP address below is a placeholder (`203.0.113.7` — RFC 5737 — for the
 deployment's real external address, `192.168.1.x` for the real LAN address),
 not the deployment's actual addressing — this is a public repository.

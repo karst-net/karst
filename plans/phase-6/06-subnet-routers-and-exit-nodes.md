@@ -1,5 +1,10 @@
 # Subnet routers and exit nodes
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#109](https://github.com/karst-net/karst/issues/109).
+
 **PLAN.md Phase 6, workstream 6 · W4–W7 · Rust 1, Go 1, Frontend 1.**
 
 This is the detailed plan behind [00-overview.md](00-overview.md) §2 item 6.

@@ -1,5 +1,10 @@
 # Documentation
 
+> **Archived planning record — 2026-09-06.** Remaining work is tracked in
+> [GitHub issues via the migration index](../README.md). This notice supersedes
+> all backlog/status instructions below; retain the text as historical context.
+> Tracking: [#115](https://github.com/karst-net/karst/issues/115).
+
 **PLAN.md Phase 6, workstream 11 · W6–W8 · All, SRE-owned.**
 
 This is the detailed plan behind [00-overview.md](00-overview.md) §2 item 11.
