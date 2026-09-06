@@ -27,8 +27,8 @@ fi
 has docs/THREAT-MODEL.md "External cryptographic review"
 has docs/THREAT-MODEL.md "Phase 8"
 
-has docs/GETTING-STARTED.md "### 7.1 The node control channel is plaintext h2c"
-has docs/GETTING-STARTED.md "### 7.2 A single TLS origin needs a separate node-control port"
+has docs/GETTING-STARTED.md "### 7.1 The node control channel: TLS is transport, not authentication"
+has docs/GETTING-STARTED.md "### 7.2 A single TLS origin can now carry both"
 has docs/GETTING-STARTED.md "[operations manual](OPERATIONS.md)"
 
 for heading in \
