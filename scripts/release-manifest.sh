@@ -57,7 +57,8 @@ while IFS= read -r path; do
     karst-client-linux_*_arm64.deb)   assets+=("$(emit_asset "$path" linux arm64 deb)") ;;
     karst-client-linux-*.x86_64.rpm)  assets+=("$(emit_asset "$path" linux amd64 rpm)") ;;
     karst-client-linux-*.aarch64.rpm) assets+=("$(emit_asset "$path" linux arm64 rpm)") ;;
-    karst-client-macos.pkg)           assets+=("$(emit_asset "$path" macos universal pkg)") ;;
+    karst-client-macos-arm64.pkg)     assets+=("$(emit_asset "$path" macos arm64 pkg)") ;;
+    karst-client-macos-x86_64.pkg)    assets+=("$(emit_asset "$path" macos amd64 pkg)") ;;
     karst-*-x64.msi | karst-windows-*.msi)
                                    assets+=("$(emit_asset "$path" windows amd64 msi)") ;;
   esac

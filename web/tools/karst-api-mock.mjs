@@ -56,7 +56,8 @@ const prefix = "/api/karst/v1";
 // No Windows row: the client is Phase 8, so a manifest offering one would be
 // describing a file that does not exist.
 const releaseAssets = [
-  { platform: "macos", arch: "universal", format: "pkg", name: "karst-client-macos.pkg", url: "/releases/karst-client-macos.pkg", sha256: "31a05d7fd3946767a06d2638a63d7f6df13ce8cb4a4e06631d0a0258de4f4f57" },
+  { platform: "macos", arch: "arm64", format: "pkg", name: "karst-client-macos-arm64.pkg", url: "/releases/karst-client-macos-arm64.pkg", sha256: "31a05d7fd3946767a06d2638a63d7f6df13ce8cb4a4e06631d0a0258de4f4f57" },
+  { platform: "macos", arch: "amd64", format: "pkg", name: "karst-client-macos-x86_64.pkg", url: "/releases/karst-client-macos-x86_64.pkg", sha256: "7a2c4e1b9d8f3065412789abcde0123456789fedcba9876543210abcdef1234" },
   { platform: "linux", arch: "amd64", format: "deb", name: "karst-client-linux_0.1.0-1_amd64.deb", url: "/releases/karst-client-linux_0.1.0-1_amd64.deb", sha256: "c10b418474a5ba59159d55ef58d54a24d8b9f341f089f67f1fd9b20a398b12f7" },
   { platform: "linux", arch: "arm64", format: "deb", name: "karst-client-linux_0.1.0-1_arm64.deb", url: "/releases/karst-client-linux_0.1.0-1_arm64.deb", sha256: "9d5f2a1c3e4b6789012345678901234567890abcdef1234567890abcdef12345" },
   { platform: "linux", arch: "amd64", format: "rpm", name: "karst-client-linux-0.1.0-1.x86_64.rpm", url: "/releases/karst-client-linux-0.1.0-1.x86_64.rpm", sha256: "b783bb7b65d1b9c8a5b0f81fd22cfe481ba6807e2b01986f8cf07b61185d1139" },

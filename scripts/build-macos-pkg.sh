@@ -2,8 +2,21 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 #
-# Build the macOS client package: universal binaries, a .pkg, and — when the
-# Apple credentials are present — signing, notarization and stapling.
+# Build one architecture's macOS client package: a native .pkg for arm64 or
+# x86_64, and — when the Apple credentials are present — signing,
+# notarization and stapling.
+#
+# ## Why arch-specific rather than universal
+#
+# An earlier version of this script joined both architectures with `lipo`
+# into one fat binary and shipped a single `karst-client-macos.pkg`. A
+# universal binary's arm64 slice runs natively — it does not invoke Rosetta —
+# but every download carries the other architecture's bytes too, whichever
+# machine it lands on. Building one architecture at a time and shipping
+# `karst-client-macos-<arch>.pkg` separately halves the download for the
+# common case. The cost is running this script twice — once per `--arch` — and
+# signing/notarizing twice; `just macos-package` and the `deliverables.yml`
+# `macos-package` matrix both do that so nobody has to remember to.
 #
 # ## Why the signing is conditional rather than required
 #
@@ -37,13 +50,38 @@
 
 set -euo pipefail
 
+arch=""
 require_signing=0
-for arg in "$@"; do
-  case "$arg" in
-    --require-signing) require_signing=1 ;;
-    *) echo "usage: $0 [--require-signing]" >&2; exit 2 ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --arch)
+      arch="${2:-}"
+      shift 2
+      ;;
+    --arch=*)
+      arch="${1#--arch=}"
+      shift
+      ;;
+    --require-signing)
+      require_signing=1
+      shift
+      ;;
+    *)
+      echo "usage: $0 --arch <arm64|x86_64> [--require-signing]" >&2
+      exit 2
+      ;;
   esac
 done
+
+case "$arch" in
+  arm64)  rust_target=aarch64-apple-darwin ;;
+  x86_64) rust_target=x86_64-apple-darwin ;;
+  *)
+    echo "usage: $0 --arch <arm64|x86_64> [--require-signing]" >&2
+    echo "error: --arch is required and must be arm64 or x86_64" >&2
+    exit 2
+    ;;
+esac
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "error: this builds a macOS package and needs macOS — pkgbuild," >&2
@@ -58,37 +96,26 @@ version="${VERSION:-0.0.0+git.$(git -C "$root" rev-parse --short HEAD 2>/dev/nul
 # and in `karst --version`, which is where anyone actually looks for it.
 pkg_version="${version%%[-+]*}"
 
+# Everything below is namespaced by $arch and lives under one shared
+# dist/macos, rather than each build wiping the directory: building both
+# architectures in sequence (as a developer running `just macos-package`
+# would) must leave both .pkg files behind, not just the second one.
 dist="$root/dist/macos"
-# Two staging roots, not one, because they become two separate `pkgbuild`
-# components below — see the "the packages" section for why. `stage` is
-# `dev.karst.karstd`'s; `stage_status` is `dev.karst.karststatus`'s.
-stage="$dist/root"
-stage_status="$dist/root-status"
-rm -rf "$dist"
+stage="$dist/root-$arch"
+stage_status="$dist/root-status-$arch"
+rm -rf "$stage" "$stage_status"
 mkdir -p "$dist" \
   "$stage/usr/local/bin" "$stage/Library/LaunchDaemons" "$stage/etc/karst" \
   "$stage_status/Applications" "$stage_status/Library/LaunchAgents"
 
-# ── universal binaries ──────────────────────────────────────────────────────
-#
-# Both architectures, not just Apple Silicon. Self-hosters run old Intel Macs
-# as always-on boxes, and that is exactly this project's audience.
-targets=(aarch64-apple-darwin x86_64-apple-darwin)
-for target in "${targets[@]}"; do
-  echo "==> building $target"
-  rustup target add "$target" >/dev/null
-  (cd "$root" && cargo build --locked --release --target "$target" \
-      --package karstd --package karst-cli)
-done
+# ── the native binaries ─────────────────────────────────────────────────────
+echo "==> building $rust_target"
+rustup target add "$rust_target" >/dev/null
+(cd "$root" && cargo build --locked --release --target "$rust_target" \
+    --package karstd --package karst-cli)
 
 for binary in karstd karst; do
-  echo "==> lipo $binary"
-  inputs=()
-  for target in "${targets[@]}"; do
-    inputs+=("$root/target/$target/release/$binary")
-  done
-  lipo -create -output "$stage/usr/local/bin/$binary" "${inputs[@]}"
-  chmod 0755 "$stage/usr/local/bin/$binary"
+  install -m 0755 "$root/target/$rust_target/release/$binary" "$stage/usr/local/bin/$binary"
 done
 lipo -info "$stage/usr/local/bin/karstd"
 
@@ -100,14 +127,15 @@ chmod 0755 "$stage/usr/local/bin/karst-uninstall"
 
 # ── the menu-bar status app (Swift) ─────────────────────────────────────────
 #
-# Universal like the Rust binaries above, via SwiftPM's own multi-arch
-# support rather than a second `lipo` invocation: passing `--arch` twice
-# tells `swift build` to produce one fat binary directly, under a build
-# directory (`.build/apple/...`) distinct from a single-arch build's.
-echo "==> building KarstStatus"
-(cd "$root/packaging/macos/KarstStatus" && \
-    swift build -c release --arch arm64 --arch x86_64)
-status_bin="$root/packaging/macos/KarstStatus/.build/apple/Products/Release/KarstStatus"
+# One `--arch` rather than two: a single-arch `swift build` lands its binary
+# under `.build/<arch>-apple-macosx/release/`, not the `.build/apple/...`
+# layout a multi-arch (`--arch` passed twice) build uses for its fat binary.
+# `--show-bin-path` asks SwiftPM for that directory directly instead of this
+# script hardcoding a path that is a SwiftPM implementation detail.
+echo "==> building KarstStatus ($arch)"
+(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch")
+status_bin_dir="$(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch" --show-bin-path)"
+status_bin="$status_bin_dir/KarstStatus"
 [ -x "$status_bin" ] \
   || { echo "error: KarstStatus build did not produce $status_bin" >&2; exit 1; }
 lipo -info "$status_bin"
@@ -174,11 +202,20 @@ fi
 # config) and because separate `pkgutil` receipts mean either can be
 # inspected, upgraded or removed without the other — see uninstall.sh, which
 # removes both from one place but treats them as two things throughout.
-component="$dist/karst-component.pkg"
-status_component="$dist/karst-status-component.pkg"
-product="$dist/karst-client-macos.pkg"
+#
+# The component files themselves keep the plain names `Distribution.xml`
+# refers to (`karst-component.pkg`, `karst-status-component.pkg`) — that XML
+# is shared across both architectures rather than templated per-arch — so
+# they are staged in an arch-namespaced directory instead of being renamed;
+# `productbuild --package-path` just points at that directory.
+component_dir="$dist/components-$arch"
+rm -rf "$component_dir"
+mkdir -p "$component_dir"
+component="$component_dir/karst-component.pkg"
+status_component="$component_dir/karst-status-component.pkg"
+product="$dist/karst-client-macos-$arch.pkg"
 
-echo "==> pkgbuild (karstd)"
+echo "==> pkgbuild (karstd, $arch)"
 pkgbuild \
   --root "$stage" \
   --identifier dev.karst.karstd \
@@ -188,7 +225,7 @@ pkgbuild \
   --ownership recommended \
   "$component"
 
-echo "==> pkgbuild (Karst Status)"
+echo "==> pkgbuild (Karst Status, $arch)"
 echo "==> staged tree before pkgbuild:"
 find "$stage_status" | sort
 
@@ -201,7 +238,7 @@ find "$stage_status" | sort
 # script hit: "The install was successful," and no app. `--analyze` plus
 # forcing both flags off makes pkgbuild treat this bundle like every other
 # file in the payload — always placed at the literal root-relative path.
-component_plist="$dist/karst-status-component.plist"
+component_plist="$component_dir/karst-status-component.plist"
 pkgbuild --analyze --root "$stage_status" "$component_plist"
 plutil -replace 0.BundleIsRelocatable -bool NO "$component_plist"
 plutil -replace 0.BundleIsVersionChecked -bool NO "$component_plist"
@@ -218,10 +255,10 @@ pkgbuild \
 echo "==> payload pkgbuild actually recorded:"
 pkgutil --payload-files "$status_component"
 
-echo "==> productbuild"
+echo "==> productbuild ($arch)"
 productbuild \
   --distribution "$root/packaging/macos/Distribution.xml" \
-  --package-path "$dist" \
+  --package-path "$component_dir" \
   "$product"
 
 if [ -n "$installer_identity" ]; then
@@ -265,6 +302,6 @@ else
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 
-rm -f "$component" "$status_component"
+rm -rf "$component_dir"
 shasum -a 256 "$product" | tee "$product.sha256"
 echo "==> $product"

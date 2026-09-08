@@ -113,14 +113,15 @@ Only the signing subkey is held by CI; the certifying primary key is offline,
 so a compromise of the release pipeline can be revoked without changing this
 key's identity.
 
-The macOS `.pkg` is separately signed with a Developer ID Installer certificate
-and notarized by Apple, which is what lets Gatekeeper accept it. Both are
-checkable locally:
+The macOS `.pkg`s — one per architecture, `karst-client-macos-arm64.pkg` and
+`karst-client-macos-x86_64.pkg` — are separately signed with a Developer ID
+Installer certificate and notarized by Apple, which is what lets Gatekeeper
+accept them. Both are checkable locally:
 
 ```sh
-pkgutil --check-signature karst-client-macos.pkg
-spctl --assess --type install -vv karst-client-macos.pkg
-xcrun stapler validate karst-client-macos.pkg
+pkgutil --check-signature karst-client-macos-arm64.pkg
+spctl --assess --type install -vv karst-client-macos-arm64.pkg
+xcrun stapler validate karst-client-macos-arm64.pkg
 ```
 
 Container images are signed keylessly with cosign, so there is no public key to

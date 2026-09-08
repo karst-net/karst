@@ -268,16 +268,19 @@ jobs:
           pattern: linux-packages-*-${{ github.sha }}
           path: dist/release
           merge-multiple: true
-      # The macOS package belongs in the same set: it is an artefact of the
-      # release, it needs a checksum for the same reason, and the portal's
-      # download page has to be able to offer it. On a push it is unsigned and
-      # Gatekeeper will refuse it — see the macos-package job — which is a
-      # reason not to publish that build, not a reason to leave it out of the
-      # set the release is assembled from.
+      # The macOS packages belong in the same set: each is an artefact of the
+      # release, each needs a checksum for the same reason, and the portal's
+      # download page has to be able to offer the right one for a visitor's
+      # Mac. On a push they are unsigned and Gatekeeper will refuse them — see
+      # the macos-package job — which is a reason not to publish that build,
+      # not a reason to leave it out of the set the release is assembled from.
+      # Pattern-based like the Linux packages above: the macos-package job is
+      # a matrix of one artefact per architecture, not a single upload.
       - uses: actions/download-artifact@v4
         with:
-          name: macos-package-${{ github.sha }}
+          pattern: macos-package-*-${{ github.sha }}
           path: dist/release
+          merge-multiple: true
       - name: Checksums
         run: |
           cd dist/release
@@ -438,8 +441,25 @@ jobs:
             --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
             "$IMAGE@$DIGEST"
 
-  # The macOS client package: two architectures joined with `lipo`, a .pkg, and
-  # — when the Apple credentials exist — signing, notarization and stapling.
+  # The macOS client packages: one native .pkg per architecture, and — when
+  # the Apple credentials exist — signing, notarization and stapling for each.
+  #
+  # ## Why a matrix instead of one `lipo`-joined universal .pkg
+  #
+  # An earlier version of this job built both architectures and joined them
+  # with `lipo` into a single universal binary. That binary's arm64 slice runs
+  # natively on Apple Silicon — a universal binary never invokes Rosetta — but
+  # every download carried the other architecture's bytes regardless of which
+  # Mac fetched it. Building each architecture as its own package halves the
+  # common-case download, at the cost of running the packaging (and signing,
+  # and notarization) twice — which is exactly what this matrix is for.
+  #
+  # `arm64` and `x86_64` need different runner architectures to *install and
+  # run* what they build, not just cross-compile it: `x86_64-apple-darwin`
+  # binaries cannot execute on an Apple Silicon runner without Rosetta, and
+  # this job installs its own package and runs the binaries inside it as its
+  # verification step. `macos-15-intel` is GitHub's last Intel image
+  # (retiring alongside macOS 15, not before); `macos-14` is Apple Silicon.
   #
   # ## Why signing is conditional and not required here
   #
@@ -457,8 +477,16 @@ jobs:
   # per-push notarization queue is a per-push wait; and `--require-signing`
   # goes with it, so a tag can never quietly produce an unsigned artefact.
   macos-package:
-    name: macOS package
-    runs-on: macos-14
+    name: macOS package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x86_64
+            runner: macos-15-intel
     env:
       # Lifted to job scope because the `secrets` context is not available in
       # an `if:` condition and a step's own `env:` is not visible to its own
@@ -529,9 +557,9 @@ jobs:
         run: |
           # Tags must be signed and notarized; pushes may not be.
           if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
-            ./scripts/build-macos-pkg.sh --require-signing
+            ./scripts/build-macos-pkg.sh --arch ${{ matrix.arch }} --require-signing
           else
-            ./scripts/build-macos-pkg.sh
+            ./scripts/build-macos-pkg.sh --arch ${{ matrix.arch }}
           fi
 
       # Installing the package it just built proves the scripts run as root,
@@ -542,14 +570,19 @@ jobs:
       # why clean-machine verification stays a manual release step.
       - name: Install, verify layout, uninstall
         run: |
-          sudo installer -pkg dist/macos/karst-client-macos.pkg -target /
+          sudo installer -pkg "dist/macos/karst-client-macos-${{ matrix.arch }}.pkg" -target /
           test -x /usr/local/bin/karstd
           test -x /usr/local/bin/karst
           test -f /Library/LaunchDaemons/dev.karst.karstd.plist
           test -f /etc/karst/karstd.toml.example
           test -d /var/log/karst
-          lipo -archs /usr/local/bin/karstd | tee /dev/stderr | grep -q x86_64
-          lipo -archs /usr/local/bin/karstd | grep -q arm64
+          # Thin, not fat: this package carries one architecture, and it must
+          # be the one the matrix asked for — not the runner's host arch,
+          # which is how a silently-wrong cross-build would otherwise pass.
+          got="$(lipo -archs /usr/local/bin/karstd)"
+          [ "$got" = "${{ matrix.arch }}" ] || {
+            echo "::error::karstd is '$got', expected ${{ matrix.arch }}"; exit 1;
+          }
           # The second component — plans/phase-6/13-macos-status-indicators.md
           # §2 item 1 — installed by the same .pkg, same install. Explicit
           # `ls`/diagnostics on failure rather than a bare `test`, which
@@ -571,10 +604,10 @@ jobs:
             ls -la /Library/LaunchAgents/ 2>&1 || true
             exit 1
           }
-          lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
-            | tee /dev/stderr | grep -q x86_64
-          lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" \
-            | grep -q arm64
+          got="$(lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus")"
+          [ "$got" = "${{ matrix.arch }}" ] || {
+            echo "::error::KarstStatus is '$got', expected ${{ matrix.arch }}"; exit 1;
+          }
           plutil -extract CFBundleIdentifier raw \
             "/Applications/Karst Status.app/Contents/Info.plist" \
             | tee /dev/stderr | grep -q '^dev\.karst\.karststatus$'
@@ -589,8 +622,8 @@ jobs:
           /usr/local/bin/karstd --help > /dev/null
           /usr/local/bin/karst --help > /dev/null
           # `genkey` is the first thing a new node runs, and it is the one
-          # command that exercises the crypto in the installed universal
-          # binary rather than just its argument parser.
+          # command that exercises the crypto in the installed binary rather
+          # than just its argument parser.
           #
           # Not `karstd check` on the example config: that file is
           # documentation, its peer keys are placeholders, and it is *meant*
@@ -645,10 +678,10 @@ jobs:
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: macos-package-${{ github.sha }}
+          name: macos-package-${{ matrix.arch }}-${{ github.sha }}
           path: |
-            dist/macos/karst-client-macos.pkg
-            dist/macos/karst-client-macos.pkg.sha256
+            dist/macos/karst-client-macos-${{ matrix.arch }}.pkg
+            dist/macos/karst-client-macos-${{ matrix.arch }}.pkg.sha256
           if-no-files-found: error
 
       - name: Remove the signing keychain
@@ -685,9 +718,14 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
+      # arm64 only — this job is a stub that refuses to submit anything until
+      # a NEPacketTunnelProvider variant exists (see the script's own header),
+      # and Apple Silicon is the architecture that submission would actually
+      # target. Nothing here depends on which architecture's precondition
+      # check runs, since KARST_APPSTORE_READY is never set.
       - uses: actions/download-artifact@v4
         with:
-          name: macos-package-${{ github.sha }}
+          name: macos-package-arm64-${{ github.sha }}
           path: dist/macos
       - name: Submit
         env:
@@ -702,7 +740,7 @@ jobs:
             chmod 600 "$key"
             export KARST_NOTARY_KEY="$key"
           fi
-          ./scripts/appstore-submit-macos.sh dist/macos/karst-client-macos.pkg
+          ./scripts/appstore-submit-macos.sh dist/macos/karst-client-macos-arm64.pkg
 
   # The point of everything above: a page a person can actually click
   # "Download" on. `release-artefacts` only produces a workflow artifact,

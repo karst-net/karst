@@ -156,7 +156,7 @@ or CI tasks, not deployment operations.
 | `just packages VERSION` | Build `.deb`/`.rpm` artifacts and their upgrade fixture after release binaries exist. |
 | `just packages-verify` | Install, upgrade, and uninstall those packages on every documented Linux distribution. |
 | `just packages-verify-systemd` | Verify packaged systemd startup and DNS recovery after `SIGKILL`. |
-| `just macos-package` | Build the universal `.pkg`; signs/notarizes only when credentials are supplied. |
+| `just macos-package [arch]` | Build the arm64 and x86_64 `.pkg`s (or just one, given `arm64`/`x86_64`); signs/notarizes only when credentials are supplied. |
 | `just licenses` | Refresh third-party license material for a release. |
 | `just licenses-check` | Verify SPDX coverage before publishing. |
 | `just secrets-scan` | Scan the release checkout for leaked credentials. |

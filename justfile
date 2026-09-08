@@ -139,10 +139,18 @@ macos-test-pair-here:
     [ -n "$bin" ] || { echo "could not locate the macos_pair test binary"; exit 1; }
     sudo env "PATH=$PATH" KARST_PAIR_ON_HOST=1 "$bin" --ignored --test-threads=1 --nocapture
 
-# The universal .pkg. Signed and notarized only if the credentials are in the
-# environment — see the script's header for which ones.
-macos-package:
-    ./scripts/build-macos-pkg.sh
+# One arch-specific .pkg (arm64 or x86_64), or both if no arch is given.
+# Signed and notarized only if the credentials are in the environment — see
+# the script's header for which ones.
+macos-package arch="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{arch}}" ]; then
+        ./scripts/build-macos-pkg.sh --arch "{{arch}}"
+    else
+        ./scripts/build-macos-pkg.sh --arch arm64
+        ./scripts/build-macos-pkg.sh --arch x86_64
+    fi
 
 test-karstd:
     @just _privileged karstd two_nodes
