@@ -44,7 +44,13 @@ KARST="/usr/local/bin/karst"
 # command text itself needs to be valid, and its one variable part (a
 # mktemp-generated path) is.
 run_privileged() {
-    /usr/bin/osascript <<'APPLESCRIPT' "$1"
+    # `-` tells osascript to read the script from stdin; without it, given a
+    # trailing argument, osascript treats that argument as the script *file*
+    # to run instead of as argv — silently failing with "No such file or
+    # directory" on the whole shell command string, never reaching the
+    # `on error` handler below (that one only catches errors from *inside*
+    # the AppleScript, not osascript's own argument-parsing failures).
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT'
 on run argv
     try
         return do shell script (item 1 of argv) with administrator privileges
@@ -59,7 +65,8 @@ APPLESCRIPT
 # being dismissed (Escape) — the same two-outcome shape as the Linux script's
 # `zenity --question`.
 ask_retry() {
-    /usr/bin/osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+    # See run_privileged's comment on the leading `-`.
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT' >/dev/null 2>&1
 on run argv
     display dialog (item 1 of argv) with title "Karst Setup" buttons {"Close", "Retry"} default button "Retry" cancel button "Close"
 end run
@@ -79,7 +86,8 @@ APPLESCRIPT
 # re-enrollment") is what names the config file specifically as the thing
 # standing in the way, and this does exactly that, nothing more.
 ask_recovery() {
-    /usr/bin/osascript <<'APPLESCRIPT' "$1" 2>/dev/null
+    # See run_privileged's comment on the leading `-`.
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT' 2>/dev/null
 on run argv
     try
         set theResult to display dialog (item 1 of argv) with title "Karst Setup" buttons {"Close", "Start Over", "Retry"} default button "Retry" cancel button "Close"
@@ -92,7 +100,8 @@ APPLESCRIPT
 }
 
 show_info() {
-    /usr/bin/osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+    # See run_privileged's comment on the leading `-`.
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT' >/dev/null 2>&1
 on run argv
     display dialog (item 1 of argv) with title "Karst Setup" buttons {"OK"} default button "OK"
 end run
