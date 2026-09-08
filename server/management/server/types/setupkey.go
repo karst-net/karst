@@ -34,13 +34,17 @@ type SetupKey struct {
 	Id string
 	// AccountID is a reference to Account that this object belongs
 	AccountID string `json:"-" gorm:"index"`
-	Key       string
-	KeySecret string `gorm:"index"`
-	Name      string
-	Type      SetupKeyType
-	CreatedAt time.Time
-	ExpiresAt *time.Time
-	UpdatedAt time.Time `gorm:"autoUpdateTime:false"`
+	// OwnerUserID scopes a self-enrollment key to its member. It is not JWT authentication.
+	OwnerUserID string `json:"-"`
+	// InvitationIssuerID identifies administrator-issued device invitations.
+	InvitationIssuerID string `json:"-" gorm:"index"`
+	Key                string
+	KeySecret          string `gorm:"index"`
+	Name               string
+	Type               SetupKeyType
+	CreatedAt          time.Time
+	ExpiresAt          *time.Time
+	UpdatedAt          time.Time `gorm:"autoUpdateTime:false"`
 	// Revoked indicates whether the key was revoked or not (we don't remove them for tracking purposes)
 	Revoked bool
 	// UsedTimes indicates how many times the key was used
@@ -68,6 +72,8 @@ func (key *SetupKey) Copy() *SetupKey {
 	return &SetupKey{
 		Id:                  key.Id,
 		AccountID:           key.AccountID,
+		OwnerUserID:         key.OwnerUserID,
+		InvitationIssuerID:  key.InvitationIssuerID,
 		Key:                 key.Key,
 		KeySecret:           key.KeySecret,
 		Name:                key.Name,
@@ -87,6 +93,9 @@ func (key *SetupKey) Copy() *SetupKey {
 
 // EventMeta returns activity event meta related to the setup key
 func (key *SetupKey) EventMeta() map[string]any {
+	if key.InvitationIssuerID != "" {
+		return map[string]any{"name": key.Name, "type": "device-invitation", "groups": key.AutoGroups}
+	}
 	return map[string]any{"name": key.Name, "type": key.Type, "key": key.KeySecret}
 }
 

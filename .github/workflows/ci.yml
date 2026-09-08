@@ -96,7 +96,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
-        with: { components: rustfmt, clippy }
+        with: { components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -505,8 +505,8 @@ jobs:
       # Upstream's own tests are how a cherry-picked security fix gets
       # validated. They need testdata fixtures, which a package-graph prune
       # silently removes and which neither build nor vet can detect.
-      - name: Upstream smoke test (proves fixtures survive)
-        run: go test -count=1 -run Test_RegisterPeerByUser ./management/server/
+      - name: Enrollment security and upstream fixture smoke tests
+        run: go test -count=1 -run "Test_RegisterPeerByUser|TestEnrollment|TestDeviceInvitation" ./management/server/
       # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
       # the coordination server is a vulnerability in the component that holds
       # every per-pair PSK.

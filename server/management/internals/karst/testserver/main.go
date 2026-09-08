@@ -37,6 +37,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -77,6 +78,17 @@ func main() {
 		}
 		handler = r
 		netmapRouter = r
+		// The packaged desktop test enrolls unpredictable, locally generated
+		// identities. Use the production refresher to admit them to its relay.
+		for i, arg := range os.Args {
+			if arg == "--roster" && i+1 < len(os.Args) {
+				refresher, err := roster.New(r.nodes, roster.Config{Path: os.Args[i+1], Aquifer: "fixture-account", Interval: time.Second}, log.Printf)
+				if err != nil {
+					fail("roster fixture: %v", err)
+				}
+				go refresher.Run(context.Background())
+			}
+		}
 		// Real identity lookup, so a returning node is recognized by its handle
 		// rather than having to present its key again.
 		lookup = r.nodes.LookupFunc()
@@ -170,6 +182,24 @@ func serveControl(addr string, r *router) {
 	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(r.account.list())
+	})
+	// Test-only offline-authority action, on the explicitly enabled fixture
+	// control listener. Production never exposes this signing shortcut.
+	mux.HandleFunc("/approve", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost || r.bedrockFixture == nil {
+			http.Error(w, "approval fixture unavailable", http.StatusBadRequest)
+			return
+		}
+		identity, err := r.nodes.Get(req.URL.Query().Get("handle"))
+		if err != nil {
+			http.Error(w, "unknown node", http.StatusNotFound)
+			return
+		}
+		if err := r.bedrockFixture.countersign(identity.Handle, identity.PublicKey, identity.KemPublicKey); err != nil {
+			http.Error(w, "approval failed", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, "approved")
 	})
 	mux.HandleFunc("/remove", func(w http.ResponseWriter, req *http.Request) {
 		handle := req.URL.Query().Get("handle")

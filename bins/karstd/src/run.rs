@@ -305,6 +305,11 @@ pub fn run_with_control(
     // first one arrives, which `refresh_netmap` reports as absent rather
     // than a fabricated age.
     let last_push = Mutex::new(None::<Instant>);
+    let control_synchronized = std::sync::atomic::AtomicBool::new(
+        control_client
+            .as_ref()
+            .is_some_and(crate::control::Client::has_live_connection),
+    );
     let exit_node = config
         .exit_node_state_file
         .as_ref()
@@ -660,6 +665,7 @@ pub fn run_with_control(
         let gateway_ctl = &gateway;
         let gateway_error_ctl = &gateway_error;
         let last_push_ctl = &last_push;
+        let control_synchronized_ctl = &control_synchronized;
         let relay_health_ctl = &relay_health;
         let turn_health_ctl = &turn_health;
         // A second handle: the block below moves `relay_dropped` itself into
@@ -790,6 +796,13 @@ pub fn run_with_control(
                                         .collect(),
                                 },
                             );
+                            if command == ipc::Command::Status {
+                                output = format!(
+                                    "control_synchronized = {}\ncontrol_peers = {}\n{output}",
+                                    control_synchronized_ctl.load(Ordering::Relaxed),
+                                    engine_ctl.config().peers.len()
+                                );
+                            }
                             if matches!(command, ipc::Command::Status | ipc::Command::BugReport) {
                                 let current = engine_ctl.config();
                                 let selected = exit_node_ctl.and_then(|state| {
@@ -920,6 +933,7 @@ pub fn run_with_control(
             let exit_policy_refresh = &exit_policy;
             let control_endpoint_refresh = control_endpoint.as_deref();
             let last_push_refresh = &last_push;
+            let control_synchronized_refresh = &control_synchronized;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -942,6 +956,7 @@ pub fn run_with_control(
                     relay_out,
                     turn_out,
                     last_push_refresh,
+                    control_synchronized_refresh,
                 );
             });
         }
@@ -3955,6 +3970,7 @@ fn refresh_netmap(
     relayed: Option<&RelaySender>,
     turned: Option<&TurnSender>,
     last_push: &Mutex<Option<Instant>>,
+    control_synchronized: &std::sync::atomic::AtomicBool,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -4045,6 +4061,7 @@ fn refresh_netmap(
         published = chosen;
 
         let synced = runtime.block_on(client.sync());
+        control_synchronized.store(synced.is_ok(), Ordering::Relaxed);
         // Publish the verified log before the `Unchanged` early return below.
         // The Bedrock fetch runs on every sync regardless of whether the netmap
         // moved, and the two advance independently — a log that grew while the

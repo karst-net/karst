@@ -11,7 +11,25 @@ priority: optional
 maintainer: Karst contributors <maintainers@karst.net>
 description: Karst node agent and command-line client
 license: MIT OR Apache-2.0
+overrides:
+  deb:
+    depends:
+      - zenity
+      - pkexec
+  rpm:
+    depends:
+      - polkit
+    # Full desktop distributions install this automatically. Minimal UBI lacks
+    # Zenity in its repositories but must still support the headless client.
+    recommends:
+      - zenity
 contents:
+  - src: packaging/desktop/karst-setup
+    dst: /usr/bin/karst-setup
+    file_info:
+      mode: 0755
+  - src: packaging/desktop/karst-setup.desktop
+    dst: /usr/share/applications/karst-setup.desktop
   - src: dist/karstd
     dst: /usr/bin/karstd
     file_info:

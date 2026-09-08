@@ -117,6 +117,30 @@ func (e BedrockStatusMode) Valid() bool {
 	}
 }
 
+// Defines values for DeviceInvitationState.
+const (
+	DeviceInvitationStateExpired  DeviceInvitationState = "expired"
+	DeviceInvitationStatePending  DeviceInvitationState = "pending"
+	DeviceInvitationStateRedeemed DeviceInvitationState = "redeemed"
+	DeviceInvitationStateRevoked  DeviceInvitationState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the DeviceInvitationState enum.
+func (e DeviceInvitationState) Valid() bool {
+	switch e {
+	case DeviceInvitationStateExpired:
+		return true
+	case DeviceInvitationStatePending:
+		return true
+	case DeviceInvitationStateRedeemed:
+		return true
+	case DeviceInvitationStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DiagnosticSeverity.
 const (
 	DiagnosticSeverityError   DiagnosticSeverity = "error"
@@ -129,6 +153,21 @@ func (e DiagnosticSeverity) Valid() bool {
 	case DiagnosticSeverityError:
 		return true
 	case DiagnosticSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EnrollmentSettingsControlMinimumVersion.
+const (
+	EnrollmentSettingsControlMinimumVersionN1 EnrollmentSettingsControlMinimumVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the EnrollmentSettingsControlMinimumVersion enum.
+func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
+	switch e {
+	case EnrollmentSettingsControlMinimumVersionN1:
 		return true
 	default:
 		return false
@@ -532,6 +571,29 @@ type DeviceEnrollment struct {
 	Key *string `json:"key,omitempty"`
 }
 
+// DeviceInvitation defines model for DeviceInvitation.
+type DeviceInvitation struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Credential Bearer credential returned only by creation. Never included in list or revocation responses.
+	Credential *string               `json:"credential,omitempty"`
+	ExpiresAt  time.Time             `json:"expires_at"`
+	Groups     []string              `json:"groups"`
+	Id         string                `json:"id"`
+	Name       string                `json:"name"`
+	RedeemedAt *time.Time            `json:"redeemed_at,omitempty"`
+	State      DeviceInvitationState `json:"state"`
+}
+
+// DeviceInvitationState defines model for DeviceInvitation.State.
+type DeviceInvitationState string
+
+// DeviceInvitationDraft defines model for DeviceInvitationDraft.
+type DeviceInvitationDraft struct {
+	Groups []string `json:"groups"`
+	Name   string   `json:"name"`
+}
+
 // DeviceRename defines model for DeviceRename.
 type DeviceRename struct {
 	Name string `json:"name"`
@@ -547,6 +609,20 @@ type Diagnostic struct {
 
 // DiagnosticSeverity defines model for Diagnostic.Severity.
 type DiagnosticSeverity string
+
+// EnrollmentSettings defines model for EnrollmentSettings.
+type EnrollmentSettings struct {
+	ControlMinimumVersion EnrollmentSettingsControlMinimumVersion `json:"control_minimum_version"`
+
+	// ServerKemPin Hex ML-KEM-1024 public key
+	ServerKemPin string `json:"server_kem_pin"`
+
+	// ServerVerifyPin Hex ML-DSA-87 verification key
+	ServerVerifyPin string `json:"server_verify_pin"`
+}
+
+// EnrollmentSettingsControlMinimumVersion defines model for EnrollmentSettings.ControlMinimumVersion.
+type EnrollmentSettingsControlMinimumVersion int
 
 // Error defines model for Error.
 type Error struct {
@@ -931,6 +1007,9 @@ type SetBedrockModeJSONRequestBody = BedrockModeWrite
 
 // ImportBedrockResponsesJSONRequestBody defines body for ImportBedrockResponses for application/json ContentType.
 type ImportBedrockResponsesJSONRequestBody = SignedBundle
+
+// CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
+type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft
 
 // RenameMyDeviceJSONRequestBody defines body for RenameMyDevice for application/json ContentType.
 type RenameMyDeviceJSONRequestBody = DeviceRename

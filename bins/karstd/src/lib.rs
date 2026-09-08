@@ -20,6 +20,7 @@ pub mod control;
 pub mod disco;
 pub mod dns;
 pub mod engine;
+pub mod enrollment;
 pub mod exit_node;
 pub mod exit_policy;
 pub mod filter;
@@ -41,6 +42,7 @@ pub mod routing;
 pub mod run;
 #[cfg(test)]
 mod scratch;
+pub mod setup;
 mod socks5;
 pub mod turn;
 pub mod wake;

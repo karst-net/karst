@@ -57,37 +57,17 @@ const (
 
 // BootstrapKeyOptions are the properties of the minted key.
 //
-// The zero value is the documented default: reusable, unlimited, and with no
-// expiry. That is a strong credential and the comment on MintBootstrapKey
-// argues for it rather than around it.
+// The zero value issues at most ten enrollments over one hour. Renewal
+// invalidates previous bootstrap credentials, even when their file was lost.
 type BootstrapKeyOptions struct {
-	// UserID owns the account. Empty means BootstrapUserID.
-	UserID string
-	// Name is the key's name in the console. Empty means BootstrapKeyName.
-	Name string
-	// ExpiresIn is the key's validity. Zero means it never expires.
-	ExpiresIn time.Duration
-	// UsageLimit is how many nodes may enroll with it. Zero is unlimited.
+	UserID     string
+	Name       string
+	ExpiresIn  time.Duration
 	UsageLimit int
 }
 
-// MintBootstrapKey creates an enrollment key without an identity provider.
-//
-// Returns the plaintext key, which exists only here: the store keeps a SHA-256
-// of it, exactly as it does for a key issued through the API, so it cannot be
-// recovered later and a caller that loses it must mint another.
-//
-// # Why the default is unlimited and does not expire
-//
-// Both alternatives fail in the dark. A usage limit means the fourth node in a
-// three-node deployment is refused with an error about a key the operator has
-// no way to inspect; an expiry means the file on disk goes from working to
-// silently rejected at a moment nothing announces. This key's whole reason to
-// exist is a deployment with no console to diagnose either from.
-//
-// What contains it instead is that it is opt-in, written 0600, logged loudly
-// at every start, and revocable from the console the moment one works —
-// which is the sentence the log line asks the operator to act on.
+// MintBootstrapKey creates a bounded bootstrap credential and atomically
+// revokes previous credentials with the same bootstrap name.
 func MintBootstrapKey(ctx context.Context, accounts account.Manager, opts BootstrapKeyOptions) (string, error) {
 	if accounts == nil {
 		return "", errors.New("karst: no account manager")
@@ -113,8 +93,20 @@ func MintBootstrapKey(ctx context.Context, accounts account.Manager, opts Bootst
 		return "", fmt.Errorf("karst: resolve the bootstrap account: %w", err)
 	}
 
-	key, err := accounts.CreateSetupKey(ctx, accountID, name, types.SetupKeyReusable,
-		opts.ExpiresIn, nil, opts.UsageLimit, resolvedUser, false, false)
+	expiry, limit := opts.ExpiresIn, opts.UsageLimit
+	if expiry == 0 {
+		expiry = time.Hour
+	}
+	if limit == 0 {
+		limit = 10
+	}
+	issuer, ok := accounts.(interface {
+		RotateBootstrapKey(context.Context, string, string, string, time.Duration, int) (*types.SetupKey, error)
+	})
+	if !ok {
+		return "", errors.New("karst: atomic bootstrap key rotation is unavailable")
+	}
+	key, err := issuer.RotateBootstrapKey(ctx, accountID, resolvedUser, name, expiry, limit)
 	if err != nil {
 		return "", fmt.Errorf("karst: create the bootstrap setup key: %w", err)
 	}

@@ -630,10 +630,10 @@ private_key_file = "/etc/karst/node.key"
 [control]
 # https:// works through a TLS-terminating reverse proxy (§7.1) or plain
 # http:// straight to karst-control — either way the control channel carries
-# its own ML-KEM-768 handshake and the server is authenticated by the pins,
+# its own ML-KEM-1024 handshake and the server is authenticated by the pins,
 # never by the TLS certificate. See §7.1 before picking one.
 server = "http://karst.example.com:33073"
-server_kem_pin = "…2368 hex characters…"     # hex, not the base64 the log prints
+server_kem_pin = "…3136 hex characters…"     # hex, not the base64 the log prints
 server_verify_pin = "…hex…"
 # The node's ML-DSA-87 control identity. A 32-byte seed, CREATED ON FIRST RUN —
 # do not generate it with `karstd genkey`, which produces the 64-byte
@@ -847,19 +847,18 @@ sudo cat /var/lib/karst/bootstrap.key
 
 That value goes in `[control] setup_key` verbatim. Four things about it:
 
-- **The file is the idempotence rule, not the database.** The plaintext is
-  stored nowhere — the server keeps a SHA-256, exactly as it does for a key
-  issued through the API — so if the file exists the server leaves it alone,
-  and if you delete it the next start mints a *second* live key rather than
-  reprinting the first.
-- **It is reusable, unlimited, and does not expire.** Both alternatives fail in
-  the dark: a usage limit refuses the deployment's Nth node against a console
-  that does not exist yet, and an expiry turns a working file into a rejected
-  one at a moment nothing announces.
-- **It is opt-in and mode 600.** Unset the variable and the server mints
-  nothing.
-- **Revoke it** from the console (Auth keys) once authentication works. It is a
-  standing enrollment credential for the whole deployment.
+- **It permits ten enrollments and expires after one hour.** Existing enrolled
+  nodes reconnect using their identity and do not need the key to remain valid.
+- **It is opt-in and mode 600.** Unset the variable to stop automatic issuance.
+- **Renew explicitly** by removing the bootstrap key file and restarting the
+  control server. Renewal atomically revokes previous bootstrap keys before
+  issuing the replacement. Existing files are retained across normal restarts;
+  the startup log explains the expiry and renewal procedure.
+- **Revoke it** from Auth keys once ordinary sign-in works.
+
+On upgrade, legacy portal grants and unlimited bootstrap keys are revoked.
+Download a fresh portal bundle; for a bootstrap deployment, renew the file as
+above. This does not revoke enrolled devices.
 
 The bootstrap user lands in the account the first identity-provider user will
 land in, so nodes enrolled this way are visible in the console once there is
@@ -882,19 +881,50 @@ curl -X POST http://karst.example.com:33073/api/setup-keys \
 The console's first-run view drives exactly this endpoint (Auth keys → Create
 auth key) once authentication works.
 
-Two things in the console are aspirational and will not work as shown:
+### 8.3 Guided client enrollment
 
-- Its first-run view prints `karst up --login-server … --auth-key …`. **There is
-  no `karst up`.** The CLI is deliberately an interface to a *running* daemon;
-  bringing the tunnel up means running `karstd` with a configuration, which is a
-  service-manager job. Put the key in `[control] setup_key` instead.
-- Bedrock is an offline ceremony: the console exports node-sign requests and
-  imports verified responses. It never receives an authority private key.
+In the administrative console, open **Machines → Add machine** or **First-run
+setup**. Enter a device label, select its access groups, and click **Create
+invitation**. Copy the invitation and give it privately to the intended recipient.
+It authorizes one device, expires in 24 hours, and is displayed only on creation.
+Pending invitations can be revoked from the same screen; history is retained.
 
-Once a node holds a setup key and both pins, enrollment is automatic on start:
-`karstd` registers, receives a netmap, and `karst status` shows peers with
-`state = established`, first over the relay and then — within seconds, if
-AVEN can find a path — `transport = direct`.
+On the Linux desktop, install the client package with the distribution's graphical
+package installer, then open **Karst Setup** from the applications menu. Paste the
+invitation and click **Connect**. Approve the operating-system permission prompt.
+Setup creates the local identity, verifies the server, registers the device, saves
+its configuration, and enables and starts the service automatically. The recipient
+needs no portal account or identity-provider login, and does not edit configuration,
+manage a bundle file, or run a service command.
+
+The invitation includes the control address, both public server pins, and a
+single-use bearer credential. The administrative console must be served over
+trusted HTTPS. Delivery of the invitation establishes the recipient's initial
+trust: never transfer it through an untrusted channel. Possession authorizes a
+device; it does not prove the recipient's human identity. Access groups are fixed
+when the invitation is issued; revoke and reissue to change an unused invitation's
+scope. Administrators can issue at most twenty invitations per fifteen minutes.
+
+Setup reports **Waiting for administrator approval** when Bedrock requires the
+new device to be countersigned. The administrator completes the existing offline
+ceremony; the recipient does not visit another authentication system. Network
+policy still determines access. A running service and control connection do not
+promise that a particular resource is permitted by policy.
+
+If the network or service startup fails, reopen **Karst Setup** and choose
+**Retry**. Once registration is saved, retry uses the same local identity without
+another invitation. Private keys remain under `/var/lib/karst`, and the saved
+`/etc/karst/karstd.toml` contains no enrollment credential. The `.enrolled` identity
+receipt survives netmap-cache loss. Device revocation never silently triggers
+re-enrollment.
+
+The desktop flow currently targets the Linux systemd package and requires a
+normal desktop session with an OS authorization agent. Administrative console
+sign-in remains configured by the deployment; this does not create an IdP step
+for the recipient. The existing `karst enroll --bundle FILE` interface remains
+available for administrators provisioning custom Unix installations. It is not
+required for the desktop invitation flow.
+
 
 ---
 

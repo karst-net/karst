@@ -29,11 +29,12 @@
     <h1>Karst quickstart</h1>
     <p>Open the Karst administration console and complete <strong>First-run setup</strong>. You need the public HTTPS URL of your coordination server.</p>
     <ol>
-      <li>Enter the public server URL in <strong>First-run setup</strong>.</li>
-      <li>Create a one-time enrollment key. Copy it immediately; it is shown only once.</li>
-      <li>Install the Karst node package on the machine you want to connect. Put the one-time key in <code>[control] setup_key</code> in <code>/etc/karst/karstd.toml</code>, alongside the server URL and pins from the installation guide. Validate it with <code>sudo karstd check --config /etc/karst/karstd.toml</code>, then start it with <code>sudo systemctl enable --now karstd</code>. There is no <code>karst up</code> command.</li>
-      <li>Open <strong>Machines</strong> and confirm the new node has a current observation and crypto posture.</li>
+      <li>In the administrative console, open <strong>Machines → Add machine</strong>. Enter a device label, select its access groups, and create an invitation. Give it privately to the recipient. It expires in 24 hours and authorizes one device.</li>
+      <li>Install the Karst Linux client package on the device and open <strong>Karst Setup</strong> from the applications menu.</li>
+      <li>Paste the invitation, select <strong>Connect</strong>, and approve the operating-system permission prompt. No recipient account, portal login, or identity-provider interaction is required.</li>
+      <li>Setup verifies the server, generates local keys, registers the device, and starts its service automatically. If it reports pending Bedrock approval, ask the administrator to approve the device. If setup fails, choose <strong>Retry</strong>; saved registration does not require another invitation.</li>
+      <li>Confirm the device in Machines. If Bedrock is enforcing, complete the offline signing ceremony; network access also requires an ACL. Enrollment does not automatically grant access to every device.</li>
     </ol>
-    <p>If the node is absent or stale, check its service logs and confirm its coordination-server URL before generating another key. Never paste a one-time key into a ticket, chat, or shell history you do not control.</p>
+    <p>If setup cannot finish, use its status message and Retry action. A registered device does not need another invitation to retry its connection. Administrators can revoke unused invitations and review device status in the console.</p>
   </main></body>
 </html>

@@ -84,40 +84,13 @@ test("policy syntax errors surface their line number", async ({ page }) => {
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
 });
 
-test("first-run setup produces a copyable daemon configuration", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("https://control.example.test");
-  await page.getByRole("button", { name: "Create enrollment key" }).click();
-  await expect(page.getByLabel("Control configuration")).toHaveValue('[control]\nserver = "https://control.example.test"\nserver_kem_pin = "…"\nserver_verify_pin = "…"\nsetup_key = "setup-fixture-secret"');
-  await expect(page.getByText("sudo systemctl enable --now karstd")).toBeVisible();
-});
-
-test("setup cannot mint a key before it knows the server URL", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("");
-  // A key issued without a URL produces an enrollment command that cannot work,
-  // and the key is one-time — the admin burns it discovering that.
-  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeDisabled();
-  await page.getByLabel("Server URL").fill("https://control.example.test");
-  await expect(page.getByRole("button", { name: "Create enrollment key" })).toBeEnabled();
-});
-
-test("setup progress and server URL survive leaving the page", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByLabel("Server URL").fill("https://persisted.example.test");
-  await page.getByRole("listitem").filter({ hasText: "Configure the coordination server" }).getByRole("button", { name: "Mark complete" }).click();
-  // Setup spans a restart and a walk to another machine. Component state lost
-  // both on the first navigation, which made step 1 configure nothing.
-  await page.goto("/#/machines");
-  await page.goto("/#/setup");
-  await expect(page.getByLabel("Server URL")).toHaveValue("https://persisted.example.test");
-  await expect(page.getByRole("listitem").filter({ hasText: "Configure the coordination server" }).getByRole("button")).toHaveText("Complete");
-});
-
-test("quickstart documents the daemon configuration enrollment flow", async ({ page }) => {
-  await page.goto("/#/setup");
-  await page.getByRole("link", { name: "Read the quickstart" }).click();
-  await expect(page.getByText("There is no")).toContainText("karst up");
+test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
+ await page.goto("/#/setup");
+ await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
+ await page.getByLabel("Device label").fill("Laptop");
+ await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+ await page.getByRole("button", { name: "Create invitation" }).click();
+ await expect(page.getByRole("alert")).toContainText("HTTPS");
 });
 
 test("auth-key creation is keyboard accessible", async ({ page }) => {
@@ -172,15 +145,12 @@ test("a machine can be renamed", async ({ page }) => {
   await expect(page.locator("tbody tr").filter({ hasText: "alice-laptop" })).toBeVisible();
 });
 
-test("adding a machine issues a key and explains where it goes", async ({ page }) => {
+test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();
-  await page.getByLabel("New machine name").fill("laptop-bob");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await expect(page.getByLabel("Enrollment key")).toHaveValue("setup-fixture-secret");
-  // A machine is not created by an admin; it enrolls itself. The dialog has to
-  // say what to do with the key or the flow stops here.
-  await expect(page.getByText("setup_key")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Device label")).toBeVisible();
+  await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
 });
 
 test("the machine filter narrows the list without hiding the count", async ({ page }) => {

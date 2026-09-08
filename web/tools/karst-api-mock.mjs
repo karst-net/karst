@@ -27,6 +27,7 @@ const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deplo
 
 let fixture = buildFixture();
 let setupKeys = [];
+let invitations = [];
 let users = seedUsers();
 let groups = seedGroups();
 let routes = fixture.routes.map((route) => ({ ...route }));
@@ -154,6 +155,7 @@ const server = http.createServer((request, response) => {
       const empty = Boolean(body.empty);
       fixture = buildFixture({ empty });
       setupKeys = [];
+      invitations = [];
       users = empty ? [] : seedUsers();
       groups = empty ? [] : seedGroups();
       routes = fixture.routes.map((route) => ({ ...route }));
@@ -278,6 +280,16 @@ const server = http.createServer((request, response) => {
   // router. Fixtures only expose the member's own devices; there is no user
   // identifier to forge in any of these paths.
   if (method === "GET" && karst === "/me/devices") return json(response, 200, memberDevices);
+  if (method === "GET" && karst === "/invitations") return json(response, 200, invitations);
+  if (method === "POST" && karst === "/invitations") return readBody(request).then(draft => {
+    if (!draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
+    const item = { id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
+    invitations.push(item);
+    return json(response, 200, { ...item, credential: "invitation-fixture-secret" });
+  });
+  const revokeInvitation = karst.match(/^\/invitations\/([^/]+)\/revoke$/);
+  if (method === "POST" && revokeInvitation) return replace(invitations, revokeInvitation[1], { state: "revoked" }, response);
+  if (method === "GET" && karst === "/me/enrollment") return json(response, 200, { server_kem_pin: "ab".repeat(1184), server_verify_pin: "cd".repeat(2592), control_minimum_version: 1 });
   if (method === "POST" && karst === "/me/devices/enroll") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
   if (method === "GET" && karst === "/me/access") return json(response, 200, memberAccess);
   if (method === "GET" && karst === "/me/sessions") return json(response, 200, memberSessions);

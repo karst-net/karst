@@ -19,10 +19,8 @@
 # a higher version than OLD. Run it as root, in a throwaway machine or
 # container: it installs packages and writes under /etc and /var.
 #
-# Deliberately driven by `dpkg`/`rpm` and not by `apt`/`dnf`. The packages
-# declare no dependencies, so a local install needs no repository, and reaching
-# for a package manager that wants the network turns a packaging test into a
-# mirror-availability test.
+# Use the distribution package manager for installation so the desktop setup
+# dependencies are resolved exactly as they are for a fresh client machine.
 
 set -euo pipefail
 
@@ -92,10 +90,10 @@ new_package=$(find_package "$new_dir")
 
 install_package() {
   case $family in
-    deb) dpkg --install "$1" ;;
+    deb) apt-get update && apt-get install -y --no-install-recommends "$1" ;;
     # -U rather than -i so the same call serves install and upgrade, which is
     # what an operator following the docs would run either way.
-    rpm) rpm --upgrade --verbose "$1" ;;
+    rpm) dnf install -y "$1" ;;
   esac
 }
 
@@ -125,6 +123,15 @@ if ! install_package "$old_package"; then
   exit 1
 fi
 pass "the package installs"
+
+# Full distributions must resolve the setup dependencies automatically. Minimal
+# UBI verifies the headless client separately because its repos omit Zenity.
+want "the setup launcher ships" test -x /usr/bin/karst-setup
+want "the desktop entry ships" test -f /usr/share/applications/karst-setup.desktop
+if [[ "${KARST_VERIFY_DESKTOP:-1}" == 1 ]]; then
+  want "the invitation dialog installs automatically" test -x /usr/bin/zenity
+  want "OS authorization installs automatically" test -x /usr/bin/pkexec
+fi
 
 want "karstd is installed"        test -x /usr/bin/karstd
 want "karst is installed"         test -x /usr/bin/karst

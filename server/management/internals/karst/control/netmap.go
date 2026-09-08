@@ -169,7 +169,7 @@ func (h *NetmapHandler) refuseIfUncovered(ctx context.Context, accountID, self s
 			// being explicit: an operator cannot reach `enforcing` without a
 			// log except by editing the database.
 			return status.Error(codes.PermissionDenied,
-				"bedrock enforcement is on but this account has no log, so no node is covered")
+				"KARST_BEDROCK_APPROVAL_REQUIRED: bedrock enforcement is on but this account has no log, so no node is covered")
 		}
 		return fmt.Errorf("bedrock state: %w", err)
 	}
@@ -186,7 +186,7 @@ func (h *NetmapHandler) refuseIfUncovered(ctx context.Context, accountID, self s
 	}
 	if !state.IsCovered(self, keys, time.Now().UTC().Unix()) {
 		return status.Error(codes.PermissionDenied,
-			"this node is not countersigned by the Bedrock log, and the aquifer is enforcing; "+
+			"KARST_BEDROCK_APPROVAL_REQUIRED: this node is not countersigned by the Bedrock log, and the aquifer is enforcing; "+
 				"an authority must countersign its handle and static keys")
 	}
 	return nil

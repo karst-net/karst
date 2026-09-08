@@ -5,13 +5,42 @@ info:
   description: |
     Karst-owned administrative API. All paths inherit the management server's
     authentication middleware. Public keys may be represented by stable
-    handles, but this API never returns PSKs, discovery keys, setup keys, or
-    private node material.
+    handles. This API never returns PSKs, discovery keys, or private node
+    material. Enrollment issuance returns a single-use bearer credential once;
+    list and status responses never return that credential.
 servers:
   - url: /api/karst/v1
 security:
   - bearerAuth: []
 paths:
+  /invitations:
+    get:
+      operationId: listDeviceInvitations
+      tags: [enrollment]
+      responses:
+        '200': {description: Account-scoped invitation lifecycle, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DeviceInvitation'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createDeviceInvitation
+      tags: [enrollment]
+      description: Authorize one device for 24 hours without requiring a recipient account. The credential is returned only on creation. Access groups are immutable.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceInvitationDraft'}}}}
+      responses:
+        '200': {description: New invitation with its one-time-displayed credential, headers: {Cache-Control: {schema: {type: string}, description: no-store}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceInvitation'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /invitations/{id}/revoke:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      operationId: revokeDeviceInvitation
+      tags: [enrollment]
+      description: Revoke unused enrollment authorization. Already registered devices are managed separately.
+      responses:
+        '200': {description: Updated invitation state, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceInvitation'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /nodes:
     get:
       operationId: listNodes
@@ -69,6 +98,13 @@ paths:
       tags: [portal]
       responses:
         '200': {description: Devices owned by the authenticated subject, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/MyDevice'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /me/enrollment:
+    get:
+      operationId: getMyEnrollmentSettings
+      tags: [portal]
+      responses:
+        '200': {description: Public control pins delivered through the authenticated HTTPS origin, content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentSettings'}}}}
         default: {$ref: '#/components/responses/Error'}
   /me/devices/enroll:
     post:
@@ -373,6 +409,25 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
+    DeviceInvitationDraft:
+      type: object
+      additionalProperties: false
+      required: [name, groups]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        groups: {type: array, minItems: 1, maxItems: 100, items: {type: string}}
+    DeviceInvitation:
+      type: object
+      required: [id, name, groups, state, expires_at, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        groups: {type: array, items: {type: string}}
+        state: {type: string, enum: [pending, redeemed, expired, revoked]}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        redeemed_at: {type: string, format: date-time}
+        credential: {type: string, description: Bearer credential returned only by creation. Never included in list or revocation responses.}
     Error:
       type: object
       required: [code, message]
@@ -408,6 +463,13 @@ components:
       required: [name]
       additionalProperties: false
       properties: {name: {type: string, minLength: 1}}
+    EnrollmentSettings:
+      type: object
+      required: [server_kem_pin, server_verify_pin, control_minimum_version]
+      properties:
+        server_kem_pin: {type: string, description: Hex ML-KEM-1024 public key}
+        server_verify_pin: {type: string, description: Hex ML-DSA-87 verification key}
+        control_minimum_version: {type: integer, enum: [1]}
     DeviceEnrollment:
       type: object
       required: [key, expires_at]

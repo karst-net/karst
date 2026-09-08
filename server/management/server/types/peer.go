@@ -30,6 +30,8 @@ type PeerLogin struct {
 	Meta nbpeer.PeerSystemMeta
 	// UserID indicates that JWT was used to log in, and it was valid. Can be empty when SetupKey is used or auth is not required.
 	UserID string
+	// EnrollmentUserID is legacy setup-key ownership, never proof of user authentication.
+	EnrollmentUserID string
 	// SetupKey references to a server.SetupKey to log in. Can be empty when UserID is used or auth is not required.
 	SetupKey string
 	// ConnectionIP is the real IP of the peer

@@ -47,3 +47,5 @@ export function Dialog({ open, title, onClose, children }: { open: boolean; titl
     {children}
   </dialog>;
 }
+
+export { Enrollment, type EnrollmentMetadata, type EnrollmentGrant } from "./enrollment";

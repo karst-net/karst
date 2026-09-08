@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
+import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
+
 import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
@@ -33,9 +35,9 @@ async function authHeaders(init?: RequestInit): Promise<HeadersInit> {
 
 async function http<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
   const response = await fetch(url, { ...init, headers: await authHeaders(init) });
-  if (response.status === 401 && !retried) {
+  if (response.status === 401) {
     const config = await loadConfig();
-    if (config.oidcAuthority && (await renewOnce(config))) return http(url, init, true);
+    if (!retried && config.oidcAuthority && (await renewOnce(config))) return http(url, init, true);
     if (config.oidcAuthority) login(config);
   }
   if (!response.ok) {
@@ -66,6 +68,12 @@ async function auditExport(format: "json" | "csv"): Promise<AuditPage["items"] |
 // These live on the management API rather than /karst/v1. Karst owns nodes,
 // policy, relays, Bedrock, posture and audit; users, groups, keys, routes and
 // nameservers are the fork's and are reused as they are (ADR-0009).
+
+export type DeviceInvitation = {
+  id: string; name: string; groups: string[];
+  state: "pending" | "redeemed" | "expired" | "revoked";
+  expires_at: string; created_at: string; redeemed_at?: string; credential?: string;
+};
 
 export type SetupKeyType = "one-off" | "reusable";
 export type SetupKey = {
@@ -109,6 +117,11 @@ export type BedrockBundle = { format: "bedrock-signed-bundle-v1"; payload: strin
 export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string };
 
 export const api = {
+  invitations: () => request<DeviceInvitation[]>("/invitations"),
+  createInvitation: (name: string, groups: string[]) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups }) }),
+  revokeInvitation: (id: string) => request<DeviceInvitation>(`/invitations/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
+  enrollmentMetadata: () => request<EnrollmentMetadata>("/me/enrollment"),
+  enroll: () => request<EnrollmentGrant>("/me/devices/enroll", { method: "POST" }),
   // ── machines ───────────────────────────────────────────────────────────────
   nodes: () => request<NodePage>("/nodes?limit=100"),
   node: (handle: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`),

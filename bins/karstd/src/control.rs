@@ -276,6 +276,8 @@ pub struct Client {
     pins: ServerPins,
     identity: Arc<Identity>,
     setup_key: Option<String>,
+    enrollment_file: PathBuf,
+    enrollment_binding: String,
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
     /// Held across many [`sync`](Client::sync) calls rather than reopened per
@@ -348,10 +350,40 @@ impl Client {
         config_dir: &Path,
         keys: &karst_noise::handshake::StaticKeys,
     ) -> Result<Self, Error> {
+        use sha2::{Digest as _, Sha384};
         let identity = Arc::new(Identity::load_or_create(&resolve(
             &section.identity_key_file,
             config_dir,
         ))?);
+        let mut enrollment_file = resolve(&section.identity_key_file, config_dir).into_os_string();
+        enrollment_file.push(".enrolled");
+        let enrollment_file = PathBuf::from(enrollment_file);
+        // Bind the receipt to this deployment and local identity, not to a
+        // disposable topology cache. Changing pins requires explicit repair.
+        let binding = format!(
+            "{}\n{}\n{}\n{}",
+            section.server,
+            section.server_kem_pin,
+            section.server_verify_pin,
+            identity.handle()
+        );
+        let enrollment_binding = encode_hex(&Sha384::digest(binding.as_bytes()));
+        let registered = match std::fs::read_to_string(&enrollment_file) {
+            Ok(saved) => {
+                check_permissions(&enrollment_file)?;
+                if saved != enrollment_binding {
+                    return Err(Error::Key("enrollment receipt does not match this identity and server; explicit re-enrollment is required".to_owned()));
+                }
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(source) => {
+                return Err(Error::Io {
+                    path: enrollment_file.clone(),
+                    source,
+                })
+            }
+        };
         let control_minimum = section.control_minimum_version.unwrap_or(1);
         let pins = ServerPins {
             static_kem: decode_hex_any(&section.server_kem_pin, "server_kem_pin")?,
@@ -401,14 +433,24 @@ impl Client {
             sessions: Vec::new(),
             endpoint: section.server.clone(),
             pins,
+            node_id: if registered {
+                identity.handle().into_bytes()
+            } else {
+                Vec::new()
+            },
             identity,
-            setup_key: section.setup_key.clone(),
+            enrollment_file,
+            enrollment_binding,
+            setup_key: if registered {
+                None
+            } else {
+                section.setup_key.clone()
+            },
             cache_file,
             seal,
             conn: None,
             pushed: Arc::new(tokio::sync::Notify::new()),
             kem_public: keys.kem_pk.to_bytes().clone(),
-            node_id: Vec::new(),
             netmap: Netmap::new(),
             bedrock: crate::bedrock::Log::new(),
             bedrock_file,
@@ -435,6 +477,11 @@ impl Client {
             );
             self.endpoint = reachable;
         }
+    }
+
+    /// Whether the last synchronization retained an authenticated connection.
+    pub(crate) fn has_live_connection(&self) -> bool {
+        self.conn.is_some()
     }
 
     /// The netmap this client currently holds.
@@ -550,6 +597,14 @@ impl Client {
     #[must_use]
     pub fn push_signal(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.pushed)
+    }
+
+    /// Authenticate and durably enroll without changing host networking.
+    ///
+    /// # Errors
+    /// Returns server, credential, pin, or receipt persistence failures.
+    pub async fn enroll(&mut self) -> Result<(), Error> {
+        self.ensure_connected().await
     }
 
     /// Register with the server and fetch a netmap.
@@ -777,6 +832,7 @@ impl Client {
 
     async fn login(&mut self, conn: &mut Connection) -> Result<(), Error> {
         use prost::Message as _;
+        use zeroize::Zeroize as _;
 
         let req = pb::KarstLoginRequest {
             setup_key: self.setup_key.clone().unwrap_or_default(),
@@ -815,6 +871,10 @@ impl Client {
                 "the server assigned handle {:?}, but this node's identity derives {expected:?}",
                 String::from_utf8_lossy(&resp.node_id)
             )));
+        }
+        write_secret(&self.enrollment_file, &self.enrollment_binding)?;
+        if let Some(mut key) = self.setup_key.take() {
+            key.zeroize();
         }
         self.node_id.clone_from(&resp.node_id);
         // The held connection's own copy — see `Connection::set_node_id`. A
@@ -885,9 +945,19 @@ impl Client {
         let mut payload = Vec::with_capacity(body.len() + 1);
         payload.push(kind);
         payload.extend_from_slice(body);
-        conn.request(&payload)
-            .await
-            .map_err(|e| Error::Server(e.to_string()))
+        conn.request(&payload).await.map_err(|e| {
+            if kind == KIND_NETMAP {
+                if let karst_control_client::transport::Error::Status(status) = &e {
+                    if status
+                        .message()
+                        .starts_with("KARST_BEDROCK_APPROVAL_REQUIRED:")
+                    {
+                        return Error::Uncovered;
+                    }
+                }
+            }
+            Error::Server(e.to_string())
+        })
     }
 
     /// Turn the held netmap into a datapath configuration.
@@ -1173,7 +1243,7 @@ fn write_secret(path: &Path, contents: &str) -> Result<(), Error> {
     write_secret_bytes(path, contents.as_bytes())
 }
 
-fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Error> {
+pub(crate) fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Error> {
     use std::io::Write as _;
     let parent = path
         .parent()

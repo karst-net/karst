@@ -1,0 +1,40 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+# Runs as the desktop user. Only the fixed setup helper receives elevated
+# privileges; the invitation is passed on stdin, never in argv or a file.
+set -uo pipefail
+
+while true; do
+    if [[ -f /etc/karst/karstd.toml ]]; then
+        if message=$(/usr/bin/pkexec /usr/bin/karst setup --resume 2>&1); then
+            if [[ "$message" == Connected.* ]]; then
+                /usr/bin/zenity --info --title='Karst Setup' --text="$message"
+                exit 0
+            fi
+            if /usr/bin/zenity --question --title='Karst Setup' --text="$message" --ok-label='Retry' --cancel-label='Close'; then
+                continue
+            fi
+            exit 0
+        fi
+    else
+        if ! invitation=$(/usr/bin/zenity --entry --title='Karst Setup' --text='Paste the enrollment invitation from your administrator.' --hide-text --ok-label='Connect'); then
+            exit 0
+        fi
+        if message=$(printf '%s' "$invitation" | /usr/bin/pkexec /usr/bin/karst setup --stdin 2>&1); then
+            unset invitation
+            if [[ "$message" == Connected.* ]]; then
+                /usr/bin/zenity --info --title='Karst Setup' --text="$message"
+                exit 0
+            fi
+            if /usr/bin/zenity --question --title='Karst Setup' --text="$message" --ok-label='Retry' --cancel-label='Close'; then
+                continue
+            fi
+            exit 0
+        fi
+        unset invitation
+    fi
+    if ! /usr/bin/zenity --question --title='Karst Setup' --text="${message:-Setup was cancelled or operating-system permission was denied.}" --ok-label='Retry' --cancel-label='Close'; then
+        exit 0
+    fi
+done

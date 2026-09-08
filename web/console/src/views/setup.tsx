@@ -1,48 +1,71 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
-
 import { useEffect, useState } from "react";
-import { api } from "../api";
-import { readPref, writePref } from "../prefs";
-
-const steps: Array<[string, string]> = [
-  ["Configure the coordination server", "Open the installation guide and enter its public URL."],
-  ["Create an enrollment key", "Create a short-lived auth key for the first node."],
-  ["Connect a node", "Install Karst, add the key to its daemon configuration, then start the service."],
-  ["Confirm the node", "Return to Machines and confirm the node reports a current posture."],
-];
+import { api, type DeviceInvitation, type Group } from "../api";
 
 export function Setup({ go }: { go: (route: string) => void }) {
-  // Setup spans a restart and a trip to another machine to run the enrollment
-  // command. Progress and the server URL live in the browser rather than in
-  // component state, which used to lose both on the first navigation and left
-  // step 1 configuring nothing at all.
-  const [done, setDone] = useState(() => Number.parseInt(readPref("setup.done") ?? "0", 10) || 0);
-  const [serverUrl, setServerUrl] = useState(() => readPref("setup.serverUrl") ?? "");
-  const [key, setKey] = useState<string>();
-  const [error, setError] = useState<string>();
-  useEffect(() => { writePref("setup.done", String(done)); }, [done]);
-  useEffect(() => { writePref("setup.serverUrl", serverUrl); }, [serverUrl]);
-  const create = async () => {
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [invitations, setInvitations] = useState<DeviceInvitation[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [name, setName] = useState("");
+  const [invitation, setInvitation] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const refresh = async () => setInvitations(await api.invitations());
+  useEffect(() => {
+    let active = true;
+    Promise.all([api.groups(), api.invitations()]).then(([allGroups, allInvitations]) => {
+      if (active) { setGroups(allGroups.filter(group => group.name !== "All")); setInvitations(allInvitations); }
+    }).catch(() => { if (active) setError("Could not load invitations. Refresh to try again."); });
+    return () => { active = false; };
+  }, []);
+  async function create() {
+    setError(""); setBusy(true); setInvitation(""); setCopied(false);
     try {
-      const created = await api.createSetupKey({ name: "First node", type: "one-off", expires_in: 86_400, usage_limit: 1, auto_groups: [], ephemeral: false });
-      setKey(created.key); setError(undefined); setDone((current) => Math.max(current, 2));
-    } catch (failure) { setError((failure as Error).message); }
-  };
-  return <section>
-    <h2>Set up your Karst network</h2>
-    <p className="lede">Follow these steps in order. Nothing is hidden behind source code or a terminal-only configuration.</p>
-    <ol className="steps">{steps.map(([title, description], index) => <li key={title}>
-      <div>
-        <strong>{title}</strong><p>{description}</p>
-        {index === 0 && <label>Server URL<input aria-label="Server URL" placeholder="https://karst.example.com" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} /></label>}
-        {index === 1 && <><button disabled={!serverUrl} onClick={() => void create()}>Create enrollment key</button>{!serverUrl && <p>Enter the server URL in step 1 first — the enrollment command needs it.</p>}{error && <p role="alert">{error}</p>}</>}
-        {index === 2 && (key
-          ? <><p>On the machine you are adding, put this one-time key in <code>/etc/karst/karstd.toml</code>. Keep the server pins from the installation guide; the key is shown only once.</p><label>Control configuration<textarea aria-label="Control configuration" readOnly rows={5} value={`[control]\nserver = "${serverUrl}"\nserver_kem_pin = "…"\nserver_verify_pin = "…"\nsetup_key = "${key}"`} /></label><p>Then validate and start the daemon: <code>sudo karstd check --config /etc/karst/karstd.toml</code> followed by <code>sudo systemctl enable --now karstd</code>.</p></>
-          : <p>The configuration snippet appears here once you have created a key.</p>)}
-      </div>
-      <button onClick={() => setDone((current) => Math.max(current, index + 1))}>{done > index ? "Complete" : "Mark complete"}</button>
-    </li>)}</ol>
-    <p><a href="/docs/quickstart.html">Read the quickstart</a> · <button className="link" onClick={() => go("keys")}>Create an auth key</button> · <button className="link" onClick={() => go("machines")}>View machines</button></p>
+      if (location.protocol !== "https:") throw new Error("Open the administrative console over HTTPS before creating an invitation.");
+      const metadata = await api.enrollmentMetadata();
+      const grant = await api.createInvitation(name.trim(), selected);
+      if (!grant.credential) throw new Error("The server did not return an invitation credential.");
+      const payload = JSON.stringify({ server: location.origin, ...metadata, setup_key: grant.credential });
+      const bytes = new TextEncoder().encode(payload);
+      const encoded = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(""))
+        .replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+      setInvitation(`karst-invite-v1:${encoded}`);
+      setInvitations(previous => [{ ...grant, credential: undefined }, ...previous]);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not create an invitation."); }
+    finally { setBusy(false); }
+  }
+  async function revoke(id: string) {
+    setBusy(true); setError("");
+    try { await api.revokeInvitation(id); await refresh(); }
+    catch { setError("Could not revoke the invitation. Try again."); }
+    finally { setBusy(false); }
+  }
+  return <section><h2>Add device</h2>
+    <p>Create an invitation for one device. The recipient installs Karst and pastes it into setup. No account or identity-provider login is needed.</p>
+    {error && <p role="alert">{error}</p>}
+    <form onSubmit={event => { event.preventDefault(); void create(); }}>
+      <label>Device label<input value={name} maxLength={100} required onChange={event => setName(event.target.value)} /></label>
+      <fieldset><legend>Access groups</legend>
+        {groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, group.id] : previous.filter(id => id !== group.id))} />{group.name}</label>)}
+        {groups.length === 0 && <p>Create an access group before issuing an invitation. <button type="button" onClick={() => go("groups")}>Manage groups</button></p>}
+      </fieldset>
+      <p>The invitation expires in 24 hours and can enroll one device. Its access groups cannot be changed after issuance.</p>
+      <button disabled={busy || !name.trim() || selected.length === 0}>Create invitation</button>
+    </form>
+    {invitation && <section aria-label="New invitation">
+      <p>Share this invitation privately with the recipient. It is displayed only now.</p>
+      <label>Enrollment invitation<textarea aria-label="Enrollment invitation" readOnly value={invitation} spellCheck={false} /></label>
+      <button onClick={() => { void navigator.clipboard.writeText(invitation).then(() => setCopied(true)).catch(() => setError("Copy failed. Select and copy the invitation above.")); }}>{copied ? "Copied" : "Copy invitation"}</button>
+      <button onClick={() => setInvitation("")}>Dismiss invitation</button>
+    </section>}
+    <h3>Invitations</h3>
+    <button disabled={busy} onClick={() => { void refresh().catch(() => setError("Could not refresh invitations.")); }}>Refresh status</button>
+    <ul>{invitations.map(item => <li key={item.id}>{item.name} — {item.state} — expires {new Date(item.expires_at).toLocaleString()}
+      {item.state === "pending" && <button disabled={busy} onClick={() => { void revoke(item.id); }}>Revoke {item.name}</button>}
+    </li>)}</ul>
+    <p>Network policy and any required Bedrock approval determine when a registered device can connect.</p>
+    <button onClick={() => go("machines")}>View machines</button>
   </section>;
 }

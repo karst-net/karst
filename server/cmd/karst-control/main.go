@@ -262,7 +262,7 @@ func writeBootstrapKey(ctx context.Context, accounts account.Manager) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	switch {
 	case errors.Is(err, fs.ErrExist):
-		log.Infof("karst: an enrollment key is already in %s; keeping it", path)
+		log.Warnf("karst: bootstrap key file %s already exists; keys expire after one hour or ten enrollments. To renew, remove the file and restart; renewal revokes the previous key.", path)
 		return
 	case err != nil:
 		log.Fatalf("karst: %s=%s: %v", karstBootstrapKeyEnv, path, err)
@@ -288,7 +288,7 @@ func writeBootstrapKey(ctx context.Context, accounts account.Manager) {
 			path, err, bootstrap.BootstrapKeyName)
 	}
 	log.Warnf("karst: wrote a bootstrap enrollment key to %s. Put it in a node's "+
-		"[control] setup_key, and revoke it once an identity provider is configured.", path)
+		"[control] setup_key. It expires after one hour or ten enrollments; revoke it once an identity provider is configured.", path)
 }
 
 // startBedrockAnchorScheduler runs ADR-0016's anchor tier automatically: the

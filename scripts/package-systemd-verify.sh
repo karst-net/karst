@@ -79,7 +79,8 @@ package=$(find "$package_dir" -maxdepth 1 -name 'karst-client-linux*.deb' | head
 [ -n "$package" ] || { echo "package-systemd-verify: no karst-client-linux .deb in $package_dir" >&2; exit 2; }
 
 section "install"
-dpkg --install "$package"
+apt-get update
+apt-get install -y --no-install-recommends "$package"
 pass "the package installs"
 systemctl daemon-reload
 want "systemd can load the unit" systemctl cat karstd.service

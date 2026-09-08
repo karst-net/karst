@@ -864,6 +864,10 @@ func (am *DefaultAccountManager) handleSetupKeyAddedPeer(ctx context.Context, en
 // Each new Peer will be assigned a new next net.IP from the Account.Network and Account.Network.LastIP will be updated (IP's are not reused).
 // The peer property is just a placeholder for the Peer properties to pass further
 func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKey, userID string, peer *nbpeer.Peer, temporary bool) (*nbpeer.Peer, *types.Network, []*posture.Checks, bool, error) {
+	return am.addPeer(ctx, accountID, setupKey, userID, "", peer, temporary)
+}
+
+func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKey, userID, enrollmentOwner string, peer *nbpeer.Peer, temporary bool) (*nbpeer.Peer, *types.Network, []*posture.Checks, bool, error) {
 	if setupKey == "" && userID == "" && !peer.ProxyMeta.Embedded {
 		// no auth method provided => reject access
 		return nil, nil, nil, false, status.ErrNoAuthMethodProvided
@@ -872,8 +876,13 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
 	upperKey := strings.ToUpper(setupKey)
 	hashedKey := sha256.Sum256([]byte(upperKey))
 	encodedHashedKey := b64.StdEncoding.EncodeToString(hashedKey[:])
-	addedByUser := len(userID) > 0
 	addedBySetupKey := len(setupKey) > 0
+	// A key remains a credential even when it carries member ownership or a
+	// JWT accompanies it. Never allow user metadata to bypass its checks.
+	addedByUser := len(userID) > 0 && !addedBySetupKey
+	if enrollmentOwner != "" && !addedBySetupKey {
+		return nil, nil, nil, false, status.ErrNoAuthMethodProvided
+	}
 
 	// This is a handling for the case when the same machine (with the same WireGuard pub key) tries to register twice.
 	// Such case is possible when AddPeer function takes long time to finish after AcquireWriteLockByUID (e.g., database is slow)
@@ -896,6 +905,37 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
 		return nil, nil, nil, false, err
 	}
 	accountID = peerAddConfig.AccountID
+	memberEnrollment := false
+	if addedBySetupKey {
+		sk, err := am.Store.GetSetupKeyBySecret(ctx, store.LockingStrengthNone, encodedHashedKey)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		owner := sk.OwnerUserID
+		if owner == "" {
+			owner = enrollmentOwner
+		}
+		if owner != "" {
+			if userID != "" && userID != owner {
+				return nil, nil, nil, false, status.Errorf(status.PermissionDenied, "enrollment owner mismatch")
+			}
+			userID = owner
+		}
+		if userID != "" {
+			user, err := am.Store.GetUserByUserID(ctx, store.LockingStrengthNone, userID)
+			if err != nil {
+				return nil, nil, nil, false, err
+			}
+			if user.AccountID != accountID || user.IsBlocked() || user.PendingApproval {
+				return nil, nil, nil, false, status.Errorf(status.PermissionDenied, "enrollment owner is not eligible")
+			}
+			// Membership policy supplies groups, never an untrusted request.
+			if owner != "" {
+				memberEnrollment = true
+				peerAddConfig.GroupsToAdd = slices.Clone(user.AutoGroups)
+			}
+		}
+	}
 	ephemeral := peerAddConfig.Ephemeral
 
 	if (strings.ToLower(peer.Meta.Hostname) == "iphone" || strings.ToLower(peer.Meta.Hostname) == "ipad") && userID != "" {
@@ -924,11 +964,11 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
 		SSHKey:                      peer.SSHKey,
 		LastLogin:                   &registrationTime,
 		CreatedAt:                   registrationTime,
-		LoginExpirationEnabled:      addedByUser && !temporary,
+		LoginExpirationEnabled:      userID != "" && !temporary,
 		Ephemeral:                   ephemeral,
 		ProxyMeta:                   peer.ProxyMeta,
 		Location:                    peer.Location,
-		InactivityExpirationEnabled: addedByUser && !temporary,
+		InactivityExpirationEnabled: userID != "" && !temporary,
 		ExtraDNSLabels:              peer.ExtraDNSLabels,
 		AllowExtraDNSLabels:         peerAddConfig.AllowExtraDNSLabels,
 	}
@@ -1008,6 +1048,18 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
 		}
 
 		err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+			if userID != "" {
+				user, err := transaction.GetUserByUserID(ctx, store.LockingStrengthUpdate, userID)
+				if err != nil {
+					return err
+				}
+				if user.AccountID != accountID || user.IsBlocked() || user.PendingApproval {
+					return status.Errorf(status.PermissionDenied, "enrollment owner is not eligible")
+				}
+				if memberEnrollment && !slices.Equal(user.AutoGroups, peerAddConfig.GroupsToAdd) {
+					return status.Errorf(status.PreconditionFailed, "membership changed during enrollment; retry")
+				}
+			}
 			err = transaction.AddPeerToAccount(ctx, newPeer)
 			if err != nil {
 				return err
@@ -1262,7 +1314,7 @@ func (am *DefaultAccountManager) handlePeerLoginNotFound(ctx context.Context, lo
 			ExtraDNSLabels: login.ExtraDNSLabels,
 		}
 
-		return am.AddPeer(ctx, "", login.SetupKey, login.UserID, newPeer, false)
+		return am.addPeer(ctx, "", login.SetupKey, login.UserID, login.EnrollmentUserID, newPeer, false)
 	}
 
 	log.WithContext(ctx).Errorf("failed while logging in peer %s: %v", login.WireGuardPubKey, err)

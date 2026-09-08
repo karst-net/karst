@@ -4,6 +4,7 @@
 package control_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
+	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
 )
 
@@ -80,6 +82,16 @@ type consoleCase struct {
 
 func consoleMutations() []consoleCase {
 	return []consoleCase{
+		{
+			name: "issue a device invitation", method: http.MethodPost,
+			path: "/karst/v1/invitations", body: `{"name":"Laptop","groups":["console-invited"]}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/invitations",
+		},
+		{
+			name: "revoke a device invitation", method: http.MethodPost,
+			path: "/karst/v1/invitations/unknown-invitation/revoke", body: "",
+			want: []int{http.StatusNotFound}, template: "/karst/v1/invitations/{id}/revoke",
+		},
 		{
 			name: "rename a node", method: http.MethodPatch,
 			path: "/karst/v1/nodes/unknown-handle", body: `{"name":"renamed"}`,
@@ -189,6 +201,9 @@ func consoleMutations() []consoleCase {
 func consoleRouter(t *testing.T) *mux.Router {
 	t.Helper()
 	am, s, _ := realAccountManager(t)
+	if err := s.CreateGroup(context.Background(), &types.Group{ID: "console-invited", AccountID: consoleAccountID, Name: "Invited devices", Issued: "api"}); err != nil {
+		t.Fatalf("invitation group: %v", err)
+	}
 
 	// A private DSN per test: the shared in-memory name is process-wide, and a
 	// policy row left by one test changes the version another test rolls back
