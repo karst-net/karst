@@ -631,11 +631,24 @@ jobs:
           # and done nothing — this only proves the app installed cleanly,
           # not that it runs. See the plan doc for what a real on-host run
           # would still need to confirm.
-          # Both binaries run at all. `--help` rather than `--version`, which
-          # `karstd` does not accept — an option it does not know is an option
-          # it refuses, and the run subcommand is not something to invoke here.
+          # Both binaries run at all.
           /usr/local/bin/karstd --help > /dev/null
           /usr/local/bin/karst --help > /dev/null
+          # KARST_VERSION (scripts/release-version.sh's third output line,
+          # set by the "Compute release version" step above) is what
+          # bins/karstd/build.rs embeds. Checking it here is what would catch
+          # a build that silently fell back to "dev" — the exact "which
+          # build is this actually" question that motivated adding it.
+          got_daemon_version="$(/usr/local/bin/karstd --version)"
+          [ "$got_daemon_version" = "karstd $KARST_VERSION" ] || {
+            echo "::error::karstd --version printed '$got_daemon_version', expected 'karstd $KARST_VERSION'"
+            exit 1
+          }
+          got_cli_version="$(/usr/local/bin/karst --version)"
+          [ "$got_cli_version" = "karst $KARST_VERSION" ] || {
+            echo "::error::karst --version printed '$got_cli_version', expected 'karst $KARST_VERSION'"
+            exit 1
+          }
           # `genkey` is the first thing a new node runs, and it is the one
           # command that exercises the crypto in the installed binary rather
           # than just its argument parser.

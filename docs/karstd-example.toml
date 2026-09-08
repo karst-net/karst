@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: CC-BY-4.0
 # Copyright the Karst contributors.
 #
+# Do not copy this file to karstd.toml verbatim. Every placeholder below —
+# the peer keys especially — is invalid on purpose, and karstd refuses to
+# start on it. If you have an enrollment invitation from an administrator,
+# use Karst Setup (macOS/Linux) or `karst enroll --bundle FILE` instead;
+# this file is for the peer-to-peer path below, with no coordination server
+# at all, and every placeholder needs replacing by hand before it will work.
+#
 # Example karstd roster — Phase 2.
 #
 # There is no coordination server yet, so peers are listed by hand. Phase 3

@@ -50,6 +50,7 @@ OPTIONS:
                         /var/run/karst-status/karstd.sock, which is what
                         Karst Status.app polls; the two must agree, so
                         change one only alongside the other.
+    -V, --version       print the version and exit
     -h, --help          this text
 
 Use `karst status` to inspect a running daemon.
@@ -63,6 +64,14 @@ fn main() -> ExitCode {
         None => command_run(&[]),
         Some((&"-h" | &"--help", _)) => {
             print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        // Ahead of the generic `starts_with('-')` run-with-options case
+        // below: `parse_args` does not know this flag, and without this arm
+        // `karstd --version` would fail as an unrecognized option instead
+        // of printing one.
+        Some((&"-V" | &"--version", _)) => {
+            println!("karstd {}", karstd::VERSION);
             ExitCode::SUCCESS
         }
         Some((&"genkey", _)) => command_genkey(),
@@ -149,6 +158,10 @@ fn init_tracing() {
 
 fn command_run(args: &[&str]) -> ExitCode {
     init_tracing();
+    // First line out, ahead of anything that can fail — a config load error
+    // logged one line down is useless for "is this even the build I think
+    // it is" without this one above it to answer that first.
+    eprintln!("karstd: version {}", karstd::VERSION);
 
     let (config_path, socket, status_socket) = match parse_args(args) {
         Ok(p) => p,

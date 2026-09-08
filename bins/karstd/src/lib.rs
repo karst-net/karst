@@ -53,6 +53,16 @@ pub use filter::PacketFilter;
 pub use netmap::Netmap;
 pub use routing::{AllowedIps, InterfaceAddress, Prefix};
 
+/// The exact release this binary was built from — `build.rs` reads
+/// `KARST_VERSION` (scripts/release-version.sh's third output line) at
+/// compile time, so this is the pushed tag (`v0.1.0-rc.6`) on a release
+/// build, `0.0.0+git.<sha>` on an untagged CI build, or `dev` for a plain
+/// local `cargo build`. `karstd --version`, `karst --version`, and karstd's
+/// first startup log line all report this — `karst-cli` reads it from here
+/// rather than running its own `build.rs`, so the daemon and the CLI that
+/// talks to it can never disagree about which build either one is.
+pub const VERSION: &str = env!("KARST_VERSION");
+
 /// Fill a buffer from the operating system's CSPRNG.
 ///
 /// Handshakes need fresh randomness per attempt, and the sans-io crates take it

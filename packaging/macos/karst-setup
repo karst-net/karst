@@ -66,6 +66,31 @@ end run
 APPLESCRIPT
 }
 
+# $1: the dialog text. Prints "Retry" or "Start Over" on stdout, or nothing
+# for "Close"/Escape. Used only when --resume itself failed: a config file
+# that exists but was never a real enrollment (hand-copied from
+# karstd.toml.example, left behind by an interrupted run, whatever the
+# cause) would otherwise wedge this script on --resume forever with no way
+# back to the invitation prompt — the exact dead end that motivated adding
+# this. "Start Over" removes it and re-enters the loop, where a missing
+# config sends the top of the loop back to ask_invitation. It does not touch
+# the state directory or any existing private key — enroll_bundle's own
+# refusal ("configuration already exists ... explicitly remove it before
+# re-enrollment") is what names the config file specifically as the thing
+# standing in the way, and this does exactly that, nothing more.
+ask_recovery() {
+    /usr/bin/osascript <<'APPLESCRIPT' "$1" 2>/dev/null
+on run argv
+    try
+        set theResult to display dialog (item 1 of argv) with title "Karst Setup" buttons {"Close", "Start Over", "Retry"} default button "Retry" cancel button "Close"
+        return button returned of theResult
+    on error
+        return ""
+    end try
+end run
+APPLESCRIPT
+}
+
 show_info() {
     /usr/bin/osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
 on run argv
@@ -88,8 +113,10 @@ APPLESCRIPT
 
 while true; do
     if [[ -f "$CONFIG" ]]; then
+        via_resume=1
         message=$(run_privileged "$KARST setup --resume")
     else
+        via_resume=0
         invitation=$(ask_invitation)
         [[ -n "$invitation" ]] || exit 0
         tmpdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/karst-setup.XXXXXX") || exit 1
@@ -118,7 +145,24 @@ while true; do
         exit 0
     fi
     reason="${message#ERROR:}"
-    if ! ask_retry "${reason:-Setup was cancelled or operating-system permission was denied.}"; then
+    reason="${reason:-Setup was cancelled or operating-system permission was denied.}"
+    # --resume failing gets the third option: enroll_invitation itself never
+    # leaves $CONFIG behind on failure (it stages and validates in a scratch
+    # file first, writing the real one only once enrollment succeeds), so a
+    # $CONFIG that --resume can't make sense of — hand-copied from the
+    # example, left over from something else entirely — has no other way
+    # back to the invitation prompt.
+    if [[ "$via_resume" -eq 1 ]]; then
+        case "$(ask_recovery "$reason")" in
+            Retry) continue ;;
+            "Start Over")
+                run_privileged "/bin/rm -f '$CONFIG'"
+                continue
+                ;;
+            *) exit 0 ;;
+        esac
+    fi
+    if ! ask_retry "$reason"; then
         exit 0
     fi
 done

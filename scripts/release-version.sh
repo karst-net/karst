@@ -7,6 +7,15 @@
 #
 #   scripts/release-version.sh >> "$GITHUB_ENV"
 #
+# Also prints KARST_VERSION, a third value neither VERSION nor RELEASE can
+# stand in for: bins/karstd/build.rs and bins/karst-cli/build.rs read it to
+# embed the exact tag a binary was built from — `karstd --version`, `karst
+# --version`, and karstd's own first startup log line all report it, so a
+# running process can be matched back to a release rather than trusted on
+# faith. VERSION alone can't do this: it strips a tag's pre-release label
+# entirely (v0.1.0-rc.5 and v0.1.0-rc.6 both become "0.1.0"), which is
+# exactly the ambiguity this exists to remove.
+#
 # A tag `vX.Y.Z` is a plain release: VERSION=X.Y.Z, RELEASE=1. A tag
 # `vX.Y.Z-somelabel` (a beta, an rc, ...) is a pre-release: VERSION=X.Y.Z,
 # RELEASE=0.somelabel, with the label's own hyphens turned to dots (neither
@@ -36,10 +45,13 @@ if [[ "$ref" == refs/tags/v* ]]; then
   else
     release="1"
   fi
+  karst_version="v${tag}"
 else
   version="0.0.0+git.${sha}"
   release="1"
+  karst_version="$version"
 fi
 
 echo "VERSION=$version"
 echo "RELEASE=$release"
+echo "KARST_VERSION=$karst_version"

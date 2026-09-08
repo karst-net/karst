@@ -31,13 +31,15 @@ USAGE:
     karst bugreport  a support bundle, safe to attach to an issue
     karst metrics    Engine::Stats and route/gateway state as Prometheus text
     karst down       ask the daemon to stop
-    karst version    daemon version
+    karst version    the running daemon's version (needs the daemon up)
 
 OPTIONS:
     -s, --socket PATH   control socket (default: /run/karst/karstd.sock on
                          Linux, /var/run/karst/karstd.sock on macOS)
     -c, --config PATH   configuration file, for `dns revert` only
                          (default: /etc/karst/karstd.toml)
+    -V, --version       this CLI's own version, no daemon needed — for the
+                         daemon's, use `karst version`
     -h, --help          this text
 
 `dns revert` does not talk to the daemon — it undoes whatever host DNS change
@@ -98,6 +100,13 @@ fn main() -> ExitCode {
     let command = match (*first, rest) {
         ("-h" | "--help", _) => {
             print!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        // This CLI's own build, no socket needed — distinct from `karst
+        // version` below, which asks the running daemon for *its* build and
+        // fails if there is none to ask.
+        ("-V" | "--version", _) => {
+            println!("karst {}", karstd::VERSION);
             return ExitCode::SUCCESS;
         }
         ("status", _) => Command::Status,

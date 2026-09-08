@@ -3560,7 +3560,7 @@ fn report(
     use std::fmt::Write as _;
 
     match command {
-        ipc::Command::Version => format!("version = \"{}\"\n", env!("CARGO_PKG_VERSION")),
+        ipc::Command::Version => format!("version = \"{}\"\n", crate::VERSION),
         ipc::Command::Down => "stopping = true\n".to_owned(),
         ipc::Command::BugReport => bug_report(
             config,
@@ -4264,7 +4264,7 @@ fn bug_report(
     let _ = writeln!(out, "# Safe to attach to an issue.\n");
 
     let _ = writeln!(out, "[karst]");
-    let _ = writeln!(out, "version = \"{}\"", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(out, "version = \"{}\"", crate::VERSION);
     let _ = writeln!(out, "uptime_seconds = {}", started.elapsed().as_secs());
 
     let _ = writeln!(out, "\n[host]");
