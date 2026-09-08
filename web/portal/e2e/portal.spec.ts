@@ -37,7 +37,7 @@ test("enrollment bundle includes real pins and a usable command", async ({ page 
  await expect(link).toBeVisible();
  const content = await link.evaluate(async el => fetch((el as HTMLAnchorElement).href).then(r => r.text()));
  expect(content).toContain('server = "https://enroll.test"');
- expect(content).toContain('server_kem_pin = "' + "ab".repeat(1568) + '"');
+ expect(content).toContain('server_kem_pin = "' + "ab".repeat(1184) + '"');
  expect(content).toContain('server_verify_pin = "' + "cd".repeat(2592) + '"');
  expect(content).toContain('setup_key = "member-one-time-key"');
  await expect(page.getByRole("status")).toContainText("sudo karst enroll --bundle");

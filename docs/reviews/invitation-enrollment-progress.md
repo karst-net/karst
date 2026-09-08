@@ -30,7 +30,8 @@ on the published branch.
   wrong server trust, identity-only restart, policy enforcement, and Bedrock.
 - Console: production build and all 52 browser tests passed. Browser assertions
   include envelope pins, selected groups, absence from persistent browser storage,
-  dismissal, status reload, revocation, and accessibility.
+  dismissal, status reload, revocation, and accessibility. All 10 portal browser
+  tests also pass with the shared fixture using the shipping 1184-byte KEM pin.
 - Real-store invitation lifecycle, concurrency, expiry, issuance limits, and
   administrator/member console mutation tests passed. The migration regression
   preserves administrator invitations while invalidating legacy grants.
