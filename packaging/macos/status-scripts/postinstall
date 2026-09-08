@@ -18,6 +18,8 @@
 
 PLIST="/Library/LaunchAgents/dev.karst.karststatus.plist"
 APP="/Applications/Karst Status.app"
+SETUP_APP="/Applications/Karst Setup.app"
+CONFIG="/etc/karst/karstd.toml"
 
 # launchd refuses a plist that is group- or world-writable — the same
 # reason dev.karst.karstd's postinstall fixes its own plist's mode. Not
@@ -36,6 +38,21 @@ if [ -n "$console_user" ] && [ "$console_user" != "root" ]; then
             "gui/$console_uid" "$PLIST" 2>/dev/null \
             || /bin/launchctl asuser "$console_uid" /bin/launchctl load -w \
                 "$PLIST" 2>/dev/null
+
+        # A first install with no config yet: open Karst Setup for whoever is
+        # sitting at the console, the same best-effort way as the LaunchAgent
+        # above, so the invitation prompt is the first thing they see rather
+        # than something they have to already know to go find in Launchpad.
+        # `dev.karst.karstd`'s own postinstall installs first (Distribution.xml
+        # lists it first) and only prints instructions — it cannot launch this
+        # app itself because this component, which ships it, has not installed
+        # yet at that point. Skipped entirely on an upgrade/reinstall where
+        # $CONFIG already exists: reopening the app over a working enrollment
+        # would be a surprise, not a convenience.
+        if [ ! -f "$CONFIG" ]; then
+            /bin/launchctl asuser "$console_uid" /usr/bin/open "$SETUP_APP" \
+                2>/dev/null || true
+        fi
     fi
 fi
 

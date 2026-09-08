@@ -228,6 +228,10 @@ fn command_dns_revert(args: &[&str]) -> ExitCode {
 fn command_enroll(args: &[&str]) -> ExitCode {
     let mut bundle = None;
     let mut config = std::path::PathBuf::from("/etc/karst/karstd.toml");
+    // See karstd::setup's STATE for why this default differs on macOS.
+    #[cfg(target_os = "macos")]
+    let mut state = std::path::PathBuf::from("/var/db/karst");
+    #[cfg(not(target_os = "macos"))]
     let mut state = std::path::PathBuf::from("/var/lib/karst");
     let mut it = args.iter().copied();
     while let Some(arg) = it.next() {

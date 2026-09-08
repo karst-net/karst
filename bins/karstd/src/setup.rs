@@ -11,7 +11,16 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CONFIG: &str = "/etc/karst/karstd.toml";
+// `/var/lib` is FHS, not a macOS convention — nothing on a stock Mac creates
+// it, so the non-recursive directory creation in `enrollment::enroll_bundle`
+// fails with ENOENT the moment it tries to create `/var/lib/karst` under a
+// missing parent. `/var/db` is the established macOS analogue (already used
+// by `karst_dns::host::macos::REVERT_STATE` for the same reason) and exists
+// on every stock install.
+#[cfg(target_os = "linux")]
 const STATE: &str = "/var/lib/karst";
+#[cfg(target_os = "macos")]
+const STATE: &str = "/var/db/karst";
 
 fn read_invitation(reader: impl Read) -> Result<zeroize::Zeroizing<String>, String> {
     let mut invitation = zeroize::Zeroizing::new(String::new());
