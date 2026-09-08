@@ -24,6 +24,7 @@ LABEL="dev.karst.karstd"
 STATUS_PLIST="/Library/LaunchAgents/dev.karst.karststatus.plist"
 STATUS_LABEL="dev.karst.karststatus"
 STATUS_APP="/Applications/Karst Status.app"
+SETUP_APP="/Applications/Karst Setup.app"
 
 # 1. Revert host DNS *first*, while the binary that knows what to revert and
 #    the config that says which mechanism was used are both still present.
@@ -64,6 +65,7 @@ rm -f /etc/karst/karstd.toml.example
 rm -rf /var/log/karst
 rm -f "$STATUS_PLIST"
 rm -rf "$STATUS_APP"
+rm -rf "$SETUP_APP"
 # The DNS revert above consumed the record inside it; this takes the directory
 # only if that worked, so a leftover record survives to be reverted next time
 # rather than being deleted along with the machine's chance of recovering.

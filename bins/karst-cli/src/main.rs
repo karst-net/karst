@@ -17,7 +17,7 @@ const USAGE: &str = "\
 karst — enroll a device and control karstd
 
 USAGE:
-    karst setup --stdin        desktop setup helper (Linux; invitation on stdin)
+    karst setup --stdin        desktop setup helper (Linux, macOS; invitation on stdin)
     karst setup --resume       retry startup using the saved device identity
     karst enroll --bundle FILE  enroll using a trusted bundle (run with sudo)
       [--config PATH] [--state-dir PATH]  absolute paths for custom installations
@@ -34,7 +34,8 @@ USAGE:
     karst version    daemon version
 
 OPTIONS:
-    -s, --socket PATH   control socket (default: /run/karst/karstd.sock)
+    -s, --socket PATH   control socket (default: /run/karst/karstd.sock on
+                         Linux, /var/run/karst/karstd.sock on macOS)
     -c, --config PATH   configuration file, for `dns revert` only
                          (default: /etc/karst/karstd.toml)
     -h, --help          this text
@@ -62,7 +63,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if *first == "setup" {
         let resume = match rest {
             ["--stdin"] => false,

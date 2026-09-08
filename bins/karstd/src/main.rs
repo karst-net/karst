@@ -36,7 +36,8 @@ USAGE:
 
 OPTIONS:
     -c, --config PATH   configuration file (default: /etc/karst/karstd.toml)
-    -s, --socket PATH   control socket (default: /run/karst/karstd.sock)
+    -s, --socket PATH   control socket (default: /run/karst/karstd.sock on
+                         Linux, /var/run/karst/karstd.sock on macOS)
     --status-socket PATH
                         a second, unprivileged read-only socket serving
                         `status` only — for a per-user client that cannot

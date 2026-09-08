@@ -27,6 +27,17 @@
         <string>/usr/local/bin/karstd</string>
         <string>--config</string>
         <string>/etc/karst/karstd.toml</string>
+        <!--
+          Without this, karst-tun/../ipc.rs's DEFAULT_STATUS_SOCKET is never
+          bound — the flag is opt-in, "nothing binds it by default, on any
+          platform" — and Karst Status.app's poll of that path (see
+          AppDelegate.swift) always fails silently. This is the "the macOS
+          .pkg, currently the only one" the constant's own doc comment
+          already claims passes it; wiring it in here is what actually
+          makes that claim true.
+        -->
+        <string>--status-socket</string>
+        <string>/var/run/karst-status/karstd.sock</string>
     </array>
 
     <key>RunAtLoad</key>

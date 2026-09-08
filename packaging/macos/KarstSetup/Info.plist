@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Template. scripts/build-macos-pkg.sh copies this into the built .app
+  bundle and patches CFBundleShortVersionString/CFBundleVersion with the
+  real package version via `plutil -replace` — the "0.0.0" here is never
+  what ships. Mirrors KarstStatus/Info.plist, one directory over: same
+  pattern, a different CFBundleExecutable — a shell script this time, not
+  a Swift binary, which `Contents/MacOS/<name>` neither knows nor cares
+  about.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Karst Setup</string>
+    <key>CFBundleDisplayName</key>
+    <string>Karst Setup</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.karst.karstsetup</string>
+    <key>CFBundleExecutable</key>
+    <string>karst-setup</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!--
+      No Dock icon, no Cmd-Tab entry — this app is a sequence of native
+      dialogs and nothing else, and a bouncing Dock icon for that is worse
+      than none. Still fully launchable from Launchpad, Spotlight and the
+      Applications folder, which is the whole point: the user opens it
+      deliberately, the way docs/GETTING-STARTED.md §8.3 already describes
+      for the Linux desktop entry.
+    -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright the Karst contributors. MIT OR Apache-2.0.</string>
+</dict>
+</plist>

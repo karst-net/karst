@@ -20,8 +20,8 @@
     It is signed and notarized, so Gatekeeper accepts it on a clean machine without an override.</li>
   <li>Install it, either by double-clicking the downloaded file or from a terminal:
     <pre>sudo installer -pkg karst-client-macos-arm64.pkg -target /   # or -x86_64.pkg</pre></li>
-  <li>The package installs <code>karstd</code> and <code>karst</code> to <code>/usr/local/bin</code>, an example configuration at <code>/etc/karst/karstd.toml.example</code>, and the <strong>Karst Status</strong> menu bar app in <code>/Applications</code>. It also installs the <code>karstd</code> LaunchDaemon, but <strong>does not start it</strong> — there is no <code>/etc/karst/karstd.toml</code> yet, and starting a daemon with nothing to run on would only hand you a crash loop.</li>
-  <li>Continue with <a href="#configuring-from-the-console">configuring the client from the admin console</a> below.</li>
+  <li>The package installs <code>karstd</code> and <code>karst</code> to <code>/usr/local/bin</code>, an example configuration at <code>/etc/karst/karstd.toml.example</code>, and the <strong>Karst Status</strong> menu bar app and <strong>Karst Setup</strong> app in <code>/Applications</code>. It also installs the <code>karstd</code> LaunchDaemon, but <strong>does not start it</strong> — there is no <code>/etc/karst/karstd.toml</code> yet, and starting a daemon with nothing to run on would only hand you a crash loop.</li>
+  <li>Have an invitation from your administrator? Open <strong>Karst Setup</strong> from Launchpad, Spotlight, or the Applications folder, paste it in, and it creates the local identity, registers the device, and starts the service for you — skip the rest of this section. Otherwise, continue with <a href="#configuring-from-the-console">configuring the client from the admin console</a> below.</li>
 </ol>
 <p>To remove Karst from a Mac: <code>sudo /usr/local/bin/karst-uninstall</code>.</p>
 

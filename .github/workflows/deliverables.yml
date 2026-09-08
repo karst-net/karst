@@ -611,6 +611,21 @@ jobs:
           plutil -extract CFBundleIdentifier raw \
             "/Applications/Karst Status.app/Contents/Info.plist" \
             | tee /dev/stderr | grep -q '^dev\.karst\.karststatus$'
+          # Karst Setup rides in the same component/staging root as Karst
+          # Status (scripts/build-macos-pkg.sh's own comment says why), which
+          # is exactly the shape that let one .app silently go unplaced the
+          # first time this job caught it — see the --analyze loop's comment
+          # in that script. Checking this second bundle here is what would
+          # have caught a regression back to that bug for it specifically.
+          test -x "/Applications/Karst Setup.app/Contents/MacOS/karst-setup" || {
+            echo "::error::Karst Setup.app executable missing"
+            ls -la /Applications/ 2>&1 || true
+            ls -laR "/Applications/Karst Setup.app" 2>&1 || true
+            exit 1
+          }
+          plutil -extract CFBundleIdentifier raw \
+            "/Applications/Karst Setup.app/Contents/Info.plist" \
+            | tee /dev/stderr | grep -q '^dev\.karst\.karstsetup$'
           # This runner has no console user, so status-scripts/postinstall's
           # best-effort `launchctl bootstrap` is expected to have found none
           # and done nothing — this only proves the app installed cleanly,
@@ -655,6 +670,18 @@ jobs:
             || { echo "::error::pubkey rejected the key genkey produced: $pubkey_out"; exit 1; }
           echo "$pubkey_out" | grep -q '^kem_public_key = "[0-9a-f]\+"$' \
             || { echo "::error::pubkey did not print a kem_public_key: $pubkey_out"; exit 1; }
+          # `karst setup --resume` is new cross-platform code (bins/karstd/src/setup.rs
+          # was Linux-only) and Karst Setup.app's whole reason to exist is
+          # calling it, so it gets its own exercise here rather than trusting
+          # `cargo check` alone: no config exists yet, so this must fail with
+          # the specific "enroll first" message, not hang, crash, or — worse —
+          # report success by accident.
+          setup_out=$(/usr/local/bin/karst setup --resume 2>&1) && {
+            echo "::error::karst setup --resume succeeded with no configuration: $setup_out"
+            exit 1
+          }
+          echo "$setup_out" | grep -q '^No usable saved device configuration' \
+            || { echo "::error::unexpected karst setup --resume message: $setup_out"; exit 1; }
           # No config was installed, so the daemon must not be loaded — see the
           # postinstall script for why that is the intended outcome.
           if launchctl print system/dev.karst.karstd >/dev/null 2>&1; then
@@ -665,6 +692,7 @@ jobs:
           test ! -e /usr/local/bin/karstd
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
           test ! -e "/Applications/Karst Status.app"
+          test ! -e "/Applications/Karst Setup.app"
           test ! -e /Library/LaunchAgents/dev.karst.karststatus.plist
 
       # `installer` reports only "a script failed," never which one or why —

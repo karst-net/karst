@@ -3,7 +3,7 @@
 
 //! Privileged setup invoked by the desktop launcher. Credentials arrive only
 //! through stdin; paths and service names are fixed by the installed package.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::io::{Read, Write as _};
 use std::path::Path;
@@ -42,6 +42,17 @@ pub fn from_stdin(resume: bool) -> Result<String, String> {
         let invitation = read_invitation(std::io::stdin().lock())?;
         crate::enrollment::enroll_invitation(&invitation, Path::new(CONFIG), Path::new(STATE))?;
     }
+    start_service()?;
+    readiness(Path::new(CONFIG))
+}
+
+/// Enable and start the daemon, by whatever this platform's service manager
+/// is. Both variants report the same two failure modes the caller already
+/// knows how to word: "the manager could not run at all" versus "it ran and
+/// said no" — the daemon logs (`journalctl`/`/var/log/karst/karstd.log`) are
+/// where the real reason lives, and repeating it here would only go stale.
+#[cfg(target_os = "linux")]
+fn start_service() -> Result<(), String> {
     let status = Command::new("/usr/bin/systemctl")
         .args(["enable", "--now", "karstd.service"])
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
@@ -49,7 +60,33 @@ pub fn from_stdin(resume: bool) -> Result<String, String> {
     if !status.success() {
         return Err("Device registered, but service startup failed. Choose Retry; no new invitation is needed.".to_owned());
     }
-    readiness(Path::new(CONFIG))
+    Ok(())
+}
+
+/// `launchctl bootstrap` is `systemctl enable --now`'s macOS counterpart —
+/// it both loads the daemon into the system domain and starts it, and
+/// `RunAtLoad` in the plist means a future boot needs no help from this at
+/// all. The `load -w` fallback matches `packaging/macos/scripts/postinstall`
+/// exactly, for the same reason it is there: `bootstrap` refuses a label
+/// that is already loaded on some macOS versions, where `load -w` does not.
+#[cfg(target_os = "macos")]
+fn start_service() -> Result<(), String> {
+    const PLIST: &str = "/Library/LaunchDaemons/dev.karst.karstd.plist";
+    let bootstrap = Command::new("/bin/launchctl")
+        .args(["bootstrap", "system", PLIST])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .status().map_err(|_| "Device registered, but the service manager could not start. Choose Retry; no new invitation is needed.".to_owned())?;
+    if bootstrap.success() {
+        return Ok(());
+    }
+    let status = Command::new("/bin/launchctl")
+        .args(["load", "-w", PLIST])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .status().map_err(|_| "Device registered, but the service manager could not start. Choose Retry; no new invitation is needed.".to_owned())?;
+    if !status.success() {
+        return Err("Device registered, but service startup failed. Choose Retry; no new invitation is needed.".to_owned());
+    }
+    Ok(())
 }
 
 fn readiness(config: &Path) -> Result<String, String> {

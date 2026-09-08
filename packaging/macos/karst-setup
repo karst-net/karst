@@ -1,0 +1,124 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# The macOS counterpart of packaging/desktop/karst-setup: prompts for an
+# enrollment invitation with a native dialog and hands it to a privileged
+# `karst setup --stdin`. Ships as "Karst Setup.app"'s sole executable —
+# launched by the user from Launchpad/Spotlight/the Applications folder, the
+# same way the Linux package's desktop entry is, not auto-started at login.
+#
+# ## Why this can't just pipe stdin like the Linux script does
+#
+# packaging/desktop/karst-setup pipes the invitation straight into
+# `pkexec karst setup --stdin`, so the secret never touches argv or a file —
+# pkexec execs the target as a child, inheriting the pipe. macOS's equivalent,
+# `osascript ... do shell script "..." with administrator privileges`, has no
+# such primitive: it authenticates via Authorization Services and then execs
+# `/bin/sh -c "<the whole command string>"` as a fresh process, not a child of
+# this one, so there is nothing to pipe into it.
+#
+# The invitation therefore goes through a file instead — but a narrowly-scoped
+# one, not the "never a file" the Linux comment warns against for a different
+# threat (an unprivileged local reader). It is written by this (unprivileged)
+# process at mode 0600 inside a mode-700 directory this process just created
+# under $TMPDIR, so only this user and root can ever open it; the privileged
+# `karst setup` process reads it via shell redirection (never as an argv
+# value, so it cannot appear in `ps`), and this script removes the directory
+# the moment it is done with it — with an EXIT trap as a second line of
+# defense against being killed mid-flight (Ctrl-C, a logout), not against
+# the ordinary case, which needs no defending: a cancelled *admin-password*
+# prompt just makes `do shell script` raise, which `run_privileged` already
+# turns into a normal "ERROR:" return and control reaches the cleanup below
+# regardless.
+set -uo pipefail
+
+CONFIG="/etc/karst/karstd.toml"
+KARST="/usr/local/bin/karst"
+
+# $1: the exact shell command line to run as root. Prints its stdout on
+# success; prints "ERROR:" followed by whatever text `do shell script`
+# raised on a non-zero exit (its own stderr text, in practice). Passed as a
+# single argv item to osascript rather than interpolated into the AppleScript
+# source, so nothing here needs AppleScript-string escaping — only the shell
+# command text itself needs to be valid, and its one variable part (a
+# mktemp-generated path) is.
+run_privileged() {
+    osascript <<'APPLESCRIPT' "$1"
+on run argv
+    try
+        return do shell script (item 1 of argv) with administrator privileges
+    on error errText
+        return "ERROR:" & errText
+    end try
+end run
+APPLESCRIPT
+}
+
+# $1: the dialog text. Returns 0 for "Retry", 1 for "Close" or the dialog
+# being dismissed (Escape) — the same two-outcome shape as the Linux script's
+# `zenity --question`.
+ask_retry() {
+    osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+on run argv
+    display dialog (item 1 of argv) with title "Karst Setup" buttons {"Close", "Retry"} default button "Retry" cancel button "Close"
+end run
+APPLESCRIPT
+}
+
+show_info() {
+    osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+on run argv
+    display dialog (item 1 of argv) with title "Karst Setup" buttons {"OK"} default button "OK"
+end run
+APPLESCRIPT
+}
+
+# Returns the pasted text on stdout, or nothing if the dialog was cancelled.
+ask_invitation() {
+    osascript <<'APPLESCRIPT' 2>/dev/null
+try
+    set theResult to display dialog "Paste the enrollment invitation from your administrator." default answer "" with title "Karst Setup" buttons {"Cancel", "Connect"} default button "Connect" with hidden answer
+    return text returned of theResult
+on error
+    return ""
+end try
+APPLESCRIPT
+}
+
+while true; do
+    if [[ -f "$CONFIG" ]]; then
+        message=$(run_privileged "$KARST setup --resume")
+    else
+        invitation=$(ask_invitation)
+        [[ -n "$invitation" ]] || exit 0
+        tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/karst-setup.XXXXXX") || exit 1
+        chmod 700 "$tmpdir"
+        # Belt and suspenders: removed explicitly the moment it's no longer
+        # needed (every normal iteration), and by this trap if the script is
+        # interrupted (e.g. Ctrl-C while the administrator prompt is up)
+        # before it gets there. Re-armed each iteration, so a prior
+        # iteration's directory — already removed explicitly — is never
+        # double-covered by a stale trap pointing at the wrong path.
+        trap 'rm -rf "$tmpdir"' EXIT
+        invite_file="$tmpdir/invitation"
+        printf '%s' "$invitation" > "$invite_file"
+        chmod 600 "$invite_file"
+        unset invitation
+        message=$(run_privileged "$KARST setup --stdin < '$invite_file'")
+        rm -rf "$tmpdir"
+        trap - EXIT
+    fi
+    if [[ "$message" != ERROR:* ]]; then
+        if [[ "$message" == Connected.* ]]; then
+            show_info "$message"
+            exit 0
+        fi
+        if ask_retry "$message"; then continue; fi
+        exit 0
+    fi
+    reason="${message#ERROR:}"
+    if ! ask_retry "${reason:-Setup was cancelled or operating-system permission was denied.}"; then
+        exit 0
+    fi
+done

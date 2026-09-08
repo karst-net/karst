@@ -890,8 +890,11 @@ It authorizes one device, expires in 24 hours, and is displayed only on creation
 Pending invitations can be revoked from the same screen; history is retained.
 
 On the Linux desktop, install the client package with the distribution's graphical
-package installer, then open **Karst Setup** from the applications menu. Paste the
-invitation and click **Connect**. Approve the operating-system permission prompt.
+package installer, then open **Karst Setup** from the applications menu. On macOS,
+run the signed `.pkg` installer, then open **Karst Setup** from Launchpad, Spotlight,
+or the Applications folder — it is not in the Dock and does not open automatically.
+Either way: paste the invitation and click **Connect**. Approve the operating-system
+permission prompt (`pkexec` on Linux, an administrator-password prompt on macOS).
 Setup creates the local identity, verifies the server, registers the device, saves
 its configuration, and enables and starts the service automatically. The recipient
 needs no portal account or identity-provider login, and does not edit configuration,
@@ -918,9 +921,11 @@ another invitation. Private keys remain under `/var/lib/karst`, and the saved
 receipt survives netmap-cache loss. Device revocation never silently triggers
 re-enrollment.
 
-The desktop flow currently targets the Linux systemd package and requires a
-normal desktop session with an OS authorization agent. Administrative console
-sign-in remains configured by the deployment; this does not create an IdP step
+The desktop flow targets the Linux systemd package and the macOS `.pkg`, and
+requires a normal desktop session with an OS authorization agent (`pkexec` on
+Linux, Authorization Services on macOS) — headless installs still use
+`karst enroll --bundle FILE` below. Administrative console sign-in remains
+configured by the deployment; this does not create an IdP step
 for the recipient. The existing `karst enroll --bundle FILE` interface remains
 available for administrators provisioning custom Unix installations. It is not
 required for the desktop invitation flow.

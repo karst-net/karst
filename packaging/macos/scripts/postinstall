@@ -38,6 +38,10 @@ else
     cat <<'EOF'
 karst: installed, and not yet started — there is no /etc/karst/karstd.toml.
 
+Have an enrollment invitation from your administrator? Open Karst Setup from
+Launchpad or the Applications folder, paste it in, and it handles the rest.
+
+Configuring by hand instead:
   1. Write a configuration; /etc/karst/karstd.toml.example is a starting point.
   2. sudo launchctl bootstrap system /Library/LaunchDaemons/dev.karst.karstd.plist
   3. karst status

@@ -10,10 +10,13 @@ import Foundation
 /// policy — because this exists to be glanced at, not opened.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Where `karstd --status-socket` was told to listen —
-    /// `ipc::DEFAULT_STATUS_SOCKET` on the Rust side. Hardcoded rather than
-    /// configurable: the two must agree, and a mismatched pair fails as "not
-    /// running" rather than something a user can debug from this app alone.
-    private static let socketPath = "/run/karst-status/karstd.sock"
+    /// `ipc::DEFAULT_STATUS_SOCKET` on the Rust side (its macOS variant:
+    /// `/run` does not exist on macOS at all — the root volume is a
+    /// read-only sealed system volume — `/var/run` is Darwin's equivalent).
+    /// Hardcoded rather than configurable: the two must agree, and a
+    /// mismatched pair fails as "not running" rather than something a user
+    /// can debug from this app alone.
+    private static let socketPath = "/var/run/karst-status/karstd.sock"
     private static let pollInterval: TimeInterval = 2.0
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

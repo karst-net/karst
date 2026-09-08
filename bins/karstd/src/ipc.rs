@@ -51,7 +51,22 @@ use std::path::{Path, PathBuf};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 /// Where the socket lives unless told otherwise.
+///
+/// Not the same literal on every platform: `/run` is a Linux/systemd tmpfs
+/// convention and does not exist at all on macOS, where the root volume is a
+/// read-only, cryptographically sealed system volume (SSV, macOS 11+) that
+/// `mkdir` cannot write to regardless of privilege. `/var/run` is the BSD/
+/// Darwin equivalent — `/var` is on the writable Data volume — and is what
+/// macOS has actually used for exactly this purpose since `NeXTSTEP`. Getting
+/// this wrong does not fail loudly: `karstd` would fail to bind at startup
+/// (caught immediately), but every *client* default — `karst status`, `karst
+/// down`, and `karstd::setup::from_stdin`'s own readiness poll — would just
+/// never find the socket and report the daemon as unreachable, which is a
+/// much harder failure to place.
+#[cfg(target_os = "linux")]
 pub const DEFAULT_SOCKET: &str = "/run/karst/karstd.sock";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_SOCKET: &str = "/var/run/karst/karstd.sock";
 
 /// Where a `--status-socket`-equipped packaging (the macOS `.pkg`, currently
 /// the only one) points both `karstd` and its status client at. Not a
@@ -61,8 +76,12 @@ pub const DEFAULT_SOCKET: &str = "/run/karst/karstd.sock";
 /// menu-bar app's connect target cannot drift apart. Deliberately a sibling
 /// directory of `DEFAULT_SOCKET`'s, not inside it — that directory is `0700`
 /// (see the module note), and a socket inside it would inherit an
-/// unreachable parent regardless of its own mode.
+/// unreachable parent regardless of its own mode. Same Linux-vs-macOS split
+/// as `DEFAULT_SOCKET`, for the same reason.
+#[cfg(target_os = "linux")]
 pub const DEFAULT_STATUS_SOCKET: &str = "/run/karst-status/karstd.sock";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_STATUS_SOCKET: &str = "/var/run/karst-status/karstd.sock";
 
 /// Commands the CLI may send. Deliberately tiny and text-based: this is a
 /// local administrative interface, not a protocol to grow features into.

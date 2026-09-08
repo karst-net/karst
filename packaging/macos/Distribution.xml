@@ -32,12 +32,15 @@
     <!--
       Two components, one package. `customize="never"` above means an
       operator never sees a choice screen either way — both install
-      together, silently — so this is about keeping the daemon and the
-      menu-bar app as separately identified, separately upgradable and
-      separately uninstallable `pkgutil` receipts, not about giving anyone
-      an option. plans/phase-6/13-macos-status-indicators.md: users should
-      not have to download two files for one feature, which is why this is
-      one Distribution rather than two products.
+      together, silently — so this is about keeping the daemon and the two
+      user-facing apps (the menu-bar status indicator and the guided-setup
+      helper — scripts/build-macos-pkg.sh stages both into the same root, so
+      they ship as one `dev.karst.karststatus` component/receipt rather than
+      three) as separately identified, separately upgradable and separately
+      uninstallable `pkgutil` receipts, not about giving anyone an option.
+      plans/phase-6/13-macos-status-indicators.md: users should not have to
+      download two files for one feature, which is why this is one
+      Distribution rather than two products.
     -->
     <choices-outline>
         <line choice="dev.karst.karstd"/>
@@ -47,7 +50,7 @@
     <choice id="dev.karst.karstd" visible="false" title="Karst node agent">
         <pkg-ref id="dev.karst.karstd"/>
     </choice>
-    <choice id="dev.karst.karststatus" visible="false" title="Karst status indicator">
+    <choice id="dev.karst.karststatus" visible="false" title="Karst status indicator and setup helper">
         <pkg-ref id="dev.karst.karststatus"/>
     </choice>
 
