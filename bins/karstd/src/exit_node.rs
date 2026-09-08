@@ -8,7 +8,13 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+// `/var/lib` does not exist on a stock macOS install; `/var/db` is this
+// codebase's macOS analogue (see `karstd::setup::STATE` and
+// `karst_dns::host::macos::REVERT_STATE`).
+#[cfg(target_os = "linux")]
 pub const DEFAULT_STATE_FILE: &str = "/var/lib/karst/exit-route";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_STATE_FILE: &str = "/var/db/karst/exit-route";
 
 #[derive(Debug)]
 pub struct Selection {
