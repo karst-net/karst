@@ -38,14 +38,15 @@ else
     cat <<'EOF'
 karst: installed, and not yet started — there is no /etc/karst/karstd.toml.
 
-Have an enrollment invitation from your administrator? Open Karst Setup from
-Launchpad or the Applications folder, paste it in, and it handles the rest.
-Do NOT copy /etc/karst/karstd.toml.example to karstd.toml as a shortcut —
-its placeholder peer key is deliberately invalid, karstd will refuse to
-start on it, and Karst Setup won't offer the invitation prompt again while
-any file sits at that path, valid or not. If you already did this: sudo rm
-/etc/karst/karstd.toml, then reopen Karst Setup (or use "Start Over" in the
-dialog it shows for a config it cannot use).
+Have an enrollment invitation from your administrator? Open Karst from
+Launchpad or the Applications folder, choose "Setup…" from its menu-bar
+item, paste it in, and it handles the rest. Do NOT copy
+/etc/karst/karstd.toml.example to karstd.toml as a shortcut — its
+placeholder peer key is deliberately invalid, karstd will refuse to start
+on it, and "Setup…" won't offer the invitation prompt again while any file
+sits at that path, valid or not. If you already did this: sudo rm
+/etc/karst/karstd.toml, then choose "Setup…" again (or use "Start Over" in
+the dialog it shows for a config it cannot use).
 
 No invitation, and connecting by hand to a peer you configure yourself —
 no coordination server at all? See the [[peer]] section of

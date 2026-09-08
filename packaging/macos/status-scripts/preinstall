@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 #
-# Stop any already-running Karst Status before its binary is replaced —
+# Stop any already-running Karst.app before its binary is replaced —
 # the same ordering dev.karst.karstd's own preinstall uses, for the same
 # reason.
 #

@@ -588,15 +588,15 @@ jobs:
           # `ls`/diagnostics on failure rather than a bare `test`, which
           # fails silently under `bash -e` and leaves only "exit code 1" —
           # exactly what happened chasing the first version of this check.
-          test -x "/Applications/Karst Status.app/Contents/MacOS/KarstStatus" || {
-            echo "::error::Karst Status.app executable missing"
+          test -x "/Applications/Karst.app/Contents/MacOS/KarstStatus" || {
+            echo "::error::Karst.app executable missing"
             ls -la /Applications/ 2>&1 || true
-            ls -laR "/Applications/Karst Status.app" 2>&1 || true
+            ls -laR "/Applications/Karst.app" 2>&1 || true
             exit 1
           }
-          test -f "/Applications/Karst Status.app/Contents/Info.plist" || {
-            echo "::error::Karst Status.app Info.plist missing"
-            ls -laR "/Applications/Karst Status.app" 2>&1 || true
+          test -f "/Applications/Karst.app/Contents/Info.plist" || {
+            echo "::error::Karst.app Info.plist missing"
+            ls -laR "/Applications/Karst.app" 2>&1 || true
             exit 1
           }
           test -f /Library/LaunchAgents/dev.karst.karststatus.plist || {
@@ -604,28 +604,27 @@ jobs:
             ls -la /Library/LaunchAgents/ 2>&1 || true
             exit 1
           }
-          got="$(lipo -archs "/Applications/Karst Status.app/Contents/MacOS/KarstStatus")"
+          got="$(lipo -archs "/Applications/Karst.app/Contents/MacOS/KarstStatus")"
           [ "$got" = "${{ matrix.arch }}" ] || {
             echo "::error::KarstStatus is '$got', expected ${{ matrix.arch }}"; exit 1;
           }
           plutil -extract CFBundleIdentifier raw \
-            "/Applications/Karst Status.app/Contents/Info.plist" \
+            "/Applications/Karst.app/Contents/Info.plist" \
             | tee /dev/stderr | grep -q '^dev\.karst\.karststatus$'
-          # Karst Setup rides in the same component/staging root as Karst
-          # Status (scripts/build-macos-pkg.sh's own comment says why), which
-          # is exactly the shape that let one .app silently go unplaced the
-          # first time this job caught it — see the --analyze loop's comment
-          # in that script. Checking this second bundle here is what would
-          # have caught a regression back to that bug for it specifically.
-          test -x "/Applications/Karst Setup.app/Contents/MacOS/karst-setup" || {
-            echo "::error::Karst Setup.app executable missing"
+          # Karst Setup used to be a second .app riding in the same
+          # component/staging root as Karst Status (scripts/build-macos-pkg.sh's
+          # own comment says why), which is exactly the shape that let one
+          # .app silently go unplaced the first time this job caught it — see
+          # the --analyze loop's comment in that script. Now it is a resource
+          # inside the one merged Karst.app instead, reached from its "Setup…"
+          # menu item; checking it here is what would catch a regression back
+          # to that class of bug, or a build that simply forgot to stage it.
+          test -x "/Applications/Karst.app/Contents/Resources/karst-setup" || {
+            echo "::error::karst-setup resource missing from Karst.app"
             ls -la /Applications/ 2>&1 || true
-            ls -laR "/Applications/Karst Setup.app" 2>&1 || true
+            ls -laR "/Applications/Karst.app" 2>&1 || true
             exit 1
           }
-          plutil -extract CFBundleIdentifier raw \
-            "/Applications/Karst Setup.app/Contents/Info.plist" \
-            | tee /dev/stderr | grep -q '^dev\.karst\.karstsetup$'
           # This runner has no console user, so status-scripts/postinstall's
           # best-effort `launchctl bootstrap` is expected to have found none
           # and done nothing — this only proves the app installed cleanly,
@@ -684,8 +683,8 @@ jobs:
           echo "$pubkey_out" | grep -q '^kem_public_key = "[0-9a-f]\+"$' \
             || { echo "::error::pubkey did not print a kem_public_key: $pubkey_out"; exit 1; }
           # `karst setup --resume` is new cross-platform code (bins/karstd/src/setup.rs
-          # was Linux-only) and Karst Setup.app's whole reason to exist is
-          # calling it, so it gets its own exercise here rather than trusting
+          # was Linux-only) and Karst.app's "Setup…" menu item's whole reason
+          # to exist is calling it, so it gets its own exercise here rather than trusting
           # `cargo check` alone: no config exists yet, so this must fail with
           # the specific "enroll first" message, not hang, crash, or — worse —
           # report success by accident.
@@ -704,8 +703,7 @@ jobs:
           sudo /usr/local/bin/karst-uninstall
           test ! -e /usr/local/bin/karstd
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
-          test ! -e "/Applications/Karst Status.app"
-          test ! -e "/Applications/Karst Setup.app"
+          test ! -e "/Applications/Karst.app"
           test ! -e /Library/LaunchAgents/dev.karst.karststatus.plist
 
       # `installer` reports only "a script failed," never which one or why —

@@ -71,7 +71,10 @@ fn main() -> ExitCode {
             ["--stdin"] => false,
             ["--resume"] => true,
             _ => {
+                #[cfg(target_os = "linux")]
                 eprintln!("Use Karst Setup from the applications menu.");
+                #[cfg(target_os = "macos")]
+                eprintln!("Use Setup… from Karst's menu bar item.");
                 return ExitCode::FAILURE;
             }
         };

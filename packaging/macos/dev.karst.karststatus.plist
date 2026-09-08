@@ -3,7 +3,8 @@
   SPDX-License-Identifier: MIT OR Apache-2.0
   Copyright the Karst contributors.
 
-  KarstStatus, the menu-bar status indicator, as a per-user LaunchAgent.
+  Karst.app, the menu-bar status indicator and guided-setup helper (its
+  "Setup…" menu item), as a per-user LaunchAgent.
 
   Installed by karst-status-component.pkg — the second pkg-ref in
   Distribution.xml, built alongside dev.karst.karstd's component in one
@@ -26,7 +27,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/Karst Status.app/Contents/MacOS/KarstStatus</string>
+        <string>/Applications/Karst.app/Contents/MacOS/KarstStatus</string>
     </array>
 
     <key>RunAtLoad</key>

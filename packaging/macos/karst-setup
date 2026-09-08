@@ -4,9 +4,11 @@
 #
 # The macOS counterpart of packaging/desktop/karst-setup: prompts for an
 # enrollment invitation with a native dialog and hands it to a privileged
-# `karst setup --stdin`. Ships as "Karst Setup.app"'s sole executable —
-# launched by the user from Launchpad/Spotlight/the Applications folder, the
-# same way the Linux package's desktop entry is, not auto-started at login.
+# `karst setup --stdin`. Ships as a resource inside Karst.app
+# (Contents/Resources/karst-setup), run by AppDelegate.swift's "Setup…"
+# menu item via `Process` — not auto-started at login, and not something a
+# user opens directly the way Linux's .desktop entry is; the menu bar icon
+# is the discovery path here.
 #
 # ## Why this can't just pipe stdin like the Linux script does
 #

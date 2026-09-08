@@ -891,9 +891,11 @@ Pending invitations can be revoked from the same screen; history is retained.
 
 On the Linux desktop, install the client package with the distribution's graphical
 package installer, then open **Karst Setup** from the applications menu. On macOS,
-run the signed `.pkg` installer, then open **Karst Setup** from Launchpad, Spotlight,
-or the Applications folder — it is not in the Dock and does not open automatically.
-Either way: paste the invitation and click **Connect**. Approve the operating-system
+run the signed `.pkg` installer, then open **Karst** from Launchpad, Spotlight, or
+the Applications folder and choose **Setup…** from its menu-bar item — Karst itself
+is not in the Dock and does not open a window automatically, but the menu bar icon
+is always present once installed. Either way: paste the invitation and click
+**Connect**. Approve the operating-system
 permission prompt (`pkexec` on Linux, an administrator-password prompt on macOS).
 Setup creates the local identity, verifies the server, registers the device, saves
 its configuration, and enables and starts the service automatically. The recipient
@@ -914,9 +916,11 @@ ceremony; the recipient does not visit another authentication system. Network
 policy still determines access. A running service and control connection do not
 promise that a particular resource is permitted by policy.
 
-If the network or service startup fails, reopen **Karst Setup** and choose
-**Retry**. Once registration is saved, retry uses the same local identity without
-another invitation. Private keys remain under `/var/lib/karst`, and the saved
+If the network or service startup fails, reopen **Karst Setup** (the applications
+menu on Linux; **Setup…** in Karst's menu bar on macOS) and choose **Retry**. Once
+registration is saved, retry uses the same local identity without another
+invitation. Private keys remain under `/var/lib/karst` on Linux, `/var/db/karst`
+on macOS, and the saved
 `/etc/karst/karstd.toml` contains no enrollment credential. The `.enrolled` identity
 receipt survives netmap-cache loss. Device revocation never silently triggers
 re-enrollment.

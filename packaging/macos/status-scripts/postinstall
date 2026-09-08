@@ -17,7 +17,7 @@
 # already starts it at the next real login regardless of what happens here.
 
 PLIST="/Library/LaunchAgents/dev.karst.karststatus.plist"
-APP="/Applications/Karst Status.app"
+APP="/Applications/Karst.app"
 
 # launchd refuses a plist that is group- or world-writable — the same
 # reason dev.karst.karstd's postinstall fixes its own plist's mode. Not
