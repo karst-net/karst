@@ -12,9 +12,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Karst Status</string>
+    <string>Karst</string>
     <key>CFBundleDisplayName</key>
-    <string>Karst Status</string>
+    <string>Karst</string>
+    <!--
+      Unchanged even though the app is now user-facing "Karst", not "Karst
+      Status": this identifier and the LaunchAgent label/plist filename that
+      matches it (dev.karst.karststatus.plist) are internal, never shown to
+      a user, and renaming them would be pure churn.
+    -->
     <key>CFBundleIdentifier</key>
     <string>dev.karst.karststatus</string>
     <key>CFBundleExecutable</key>

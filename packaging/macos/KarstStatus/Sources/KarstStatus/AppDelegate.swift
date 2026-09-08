@@ -134,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keyEquivalent: ""
             )
             menu.addItem(NSMenuItem.separator())
+            addSetupItem(to: menu)
+            menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return menu
         }
@@ -148,8 +150,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         }
         menu.addItem(NSMenuItem.separator())
+        addSetupItem(to: menu)
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
+    }
+
+    /// "Setup…" is always present, running or not: it is also how an
+    /// already-enrolled device recovers from a config `--resume` cannot use
+    /// (packaging/macos/karst-setup's `ask_recovery`/"Start Over"), not only
+    /// how first enrollment happens.
+    private func addSetupItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Setup…", action: #selector(runSetup), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+    }
+
+    /// Runs the guided-enrollment flow this used to be a second app for
+    /// (Karst Setup.app). Its dialogs and privileged-enrollment logic
+    /// (packaging/macos/karst-setup, bundled here as a resource rather than
+    /// reimplemented in Swift) are unchanged; only how it is reached changed,
+    /// from a separate Launchpad entry to this menu item. Launched detached
+    /// — its own `display dialog` calls are independent windows with nothing
+    /// here worth blocking the status item on while they run.
+    @objc private func runSetup() {
+        guard let script = Bundle.main.path(forResource: "karst-setup", ofType: nil) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [script]
+        try? process.run()
     }
 
     private func stateSymbol(for peer: PeerStatus) -> String {

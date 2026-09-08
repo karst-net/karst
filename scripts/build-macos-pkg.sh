@@ -140,8 +140,8 @@ status_bin="$status_bin_dir/KarstStatus"
   || { echo "error: KarstStatus build did not produce $status_bin" >&2; exit 1; }
 lipo -info "$status_bin"
 
-app="$stage_status/Applications/Karst Status.app"
-mkdir -p "$app/Contents/MacOS"
+app="$stage_status/Applications/Karst.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$status_bin" "$app/Contents/MacOS/KarstStatus"
 chmod 0755 "$app/Contents/MacOS/KarstStatus"
 cp "$root/packaging/macos/KarstStatus/Info.plist" "$app/Contents/Info.plist"
@@ -157,24 +157,15 @@ chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 
 # ── the guided-enrollment prompt (shell + osascript) ────────────────────────
 #
-# Karst Status's Linux counterpart, packaging/desktop/karst-setup, is a
-# regular file on $PATH launched by a .desktop entry; this one is instead the
-# sole executable inside its own tiny .app bundle, because macOS has no
-# not-in-a-bundle way to make a script appear in Launchpad/Spotlight/the
-# Applications folder for a user to open deliberately — see the script's own
-# header for why it is launched by hand rather than at login. Staged into the
-# *same* root as Karst Status ($stage_status) rather than a third one: it
-# needs no LaunchAgent of its own and no install script beyond what
-# status-scripts/ already does, so it rides in the same pkgbuild component
-# instead of adding a third `pkgutil` receipt for one file.
+# Karst's Linux counterpart, packaging/desktop/karst-setup, is a regular file
+# on $PATH launched by a .desktop entry; this one instead ships as a resource
+# inside Karst.app, run by AppDelegate.swift's "Setup…" menu item
+# (Process + /bin/bash) rather than opened directly — a plain resource file
+# needs no Info.plist, no CFBundleExecutable, and no second `pkgutil` receipt
+# of its own the way a standalone Karst Setup.app once did.
 echo "==> staging Karst Setup"
-setup_app="$stage_status/Applications/Karst Setup.app"
-mkdir -p "$setup_app/Contents/MacOS"
-cp "$root/packaging/macos/karst-setup" "$setup_app/Contents/MacOS/karst-setup"
-chmod 0755 "$setup_app/Contents/MacOS/karst-setup"
-cp "$root/packaging/macos/KarstSetup/Info.plist" "$setup_app/Contents/Info.plist"
-plutil -replace CFBundleShortVersionString -string "$pkg_version" "$setup_app/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$pkg_version" "$setup_app/Contents/Info.plist"
+cp "$root/packaging/macos/karst-setup" "$app/Contents/Resources/karst-setup"
+chmod 0755 "$app/Contents/Resources/karst-setup"
 
 # ── signing the binaries ────────────────────────────────────────────────────
 # The policy argument is not decoration. `-p codesigning` lists only identities
@@ -204,16 +195,16 @@ if [ -n "$codesign_identity" ]; then
       --sign "$codesign_identity" "$stage/usr/local/bin/$binary"
     codesign --verify --strict --verbose=2 "$stage/usr/local/bin/$binary"
   done
-  echo "==> codesign Karst Status.app"
+  echo "==> codesign Karst.app"
+  # Signs the whole bundle in one pass, karst-setup resource included —
+  # `codesign` seals everything under Contents/ into one bundle signature;
+  # a plain (non-executable-Mach-O) resource file needs no signature of its
+  # own to be covered by it.
   codesign --force --options runtime --timestamp \
     --sign "$codesign_identity" "$app"
   codesign --verify --strict --verbose=2 "$app"
-  echo "==> codesign Karst Setup.app"
-  codesign --force --options runtime --timestamp \
-    --sign "$codesign_identity" "$setup_app"
-  codesign --verify --strict --verbose=2 "$setup_app"
 else
-  echo "==> no Developer ID Application identity: binaries, Karst Status.app and Karst Setup.app will be UNSIGNED"
+  echo "==> no Developer ID Application identity: binaries and Karst.app will be UNSIGNED"
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 
@@ -250,7 +241,7 @@ pkgbuild \
   --ownership recommended \
   "$component"
 
-echo "==> pkgbuild (Karst Status, $arch)"
+echo "==> pkgbuild (Karst, $arch)"
 echo "==> staged tree before pkgbuild:"
 find "$stage_status" | sort
 
@@ -265,21 +256,20 @@ find "$stage_status" | sort
 # file in the payload — always placed at the literal root-relative path.
 component_plist="$component_dir/karst-status-component.plist"
 pkgbuild --analyze --root "$stage_status" "$component_plist"
-# `--analyze` emits one array entry per .app bundle it found under --root —
-# two now (Karst Status, Karst Setup), not the one this loop was written
-# against originally. Force both flags off for every entry, not just index
-# 0, or the second bundle silently keeps the relocatable/version-checked
-# defaults that caused the exact "installed successfully, no app present"
-# failure the paragraph above this describes — index 0 alone worked only by
-# coincidence while there was nothing to be index 1.
+# `--analyze` emits one array entry per .app bundle it found under --root.
+# Karst Setup used to be a second one here, which is why this loop forces
+# both flags off for every entry rather than hardcoding index 0 — kept as a
+# loop, not simplified back to a single index, so a future second bundle
+# under $stage_status does not silently reintroduce the exact "installed
+# successfully, no app present" failure the paragraph above describes.
 bundle_index=0
 while plutil -extract "$bundle_index.BundleIsRelocatable" raw "$component_plist" >/dev/null 2>&1; do
   plutil -replace "$bundle_index.BundleIsRelocatable" -bool NO "$component_plist"
   plutil -replace "$bundle_index.BundleIsVersionChecked" -bool NO "$component_plist"
   bundle_index=$((bundle_index + 1))
 done
-[ "$bundle_index" -ge 2 ] \
-  || { echo "error: pkgbuild --analyze found $bundle_index bundle component(s) under $stage_status, expected 2" >&2; exit 1; }
+[ "$bundle_index" -ge 1 ] \
+  || { echo "error: pkgbuild --analyze found no bundle components under $stage_status, expected 1 (Karst.app)" >&2; exit 1; }
 
 pkgbuild \
   --root "$stage_status" \
