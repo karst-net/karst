@@ -18,8 +18,11 @@ overrides:
       - pkexec
   rpm:
     depends:
-      - zenity
       - polkit
+    # Full desktop distributions install this automatically. Minimal UBI lacks
+    # Zenity in its repositories but must still support the headless client.
+    recommends:
+      - zenity
 contents:
   - src: packaging/desktop/karst-setup
     dst: /usr/bin/karst-setup

@@ -5,6 +5,7 @@ Type=Application
 Name=Karst Setup
 Comment=Connect this device with an enrollment invitation
 Exec=/usr/bin/karst-setup
+TryExec=/usr/bin/zenity
 Icon=network-vpn
 Terminal=false
 Categories=Network;Settings;

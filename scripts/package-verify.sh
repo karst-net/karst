@@ -124,6 +124,15 @@ if ! install_package "$old_package"; then
 fi
 pass "the package installs"
 
+# Full distributions must resolve the setup dependencies automatically. Minimal
+# UBI verifies the headless client separately because its repos omit Zenity.
+want "the setup launcher ships" test -x /usr/bin/karst-setup
+want "the desktop entry ships" test -f /usr/share/applications/karst-setup.desktop
+if [[ "${KARST_VERIFY_DESKTOP:-1}" == 1 ]]; then
+  want "the invitation dialog installs automatically" test -x /usr/bin/zenity
+  want "OS authorization installs automatically" test -x /usr/bin/pkexec
+fi
+
 want "karstd is installed"        test -x /usr/bin/karstd
 want "karst is installed"         test -x /usr/bin/karst
 want "the systemd unit ships"     test -f /usr/lib/systemd/system/karstd.service

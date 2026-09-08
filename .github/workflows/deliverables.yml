@@ -148,9 +148,9 @@ jobs:
   # the docs will claim, so they are the set that gets installed on.
   #
   # `redhat/ubi9` is the RHEL 9 userland Red Hat publishes without a
-  # subscription. It is the real thing for this purpose — same glibc, same rpm,
-  # same paths — and the alternative is claiming support for a distribution
-  # nothing ever installs on.
+  # subscription, but its minimal repositories omit desktop packages. Keep it
+  # as a headless installation gate and use Rocky 9's full repositories to
+  # verify automatic desktop dependencies on the RHEL 9 ABI as well.
   packages-verify:
     name: Install ${{ matrix.arch }} on ${{ matrix.distro }}
     needs: packages
@@ -159,7 +159,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        distro: ["debian:12", "ubuntu:24.04", "fedora:41", "redhat/ubi9"]
+        distro: ["debian:12", "ubuntu:24.04", "fedora:41", "rockylinux:9", "redhat/ubi9"]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -179,8 +179,10 @@ jobs:
       # checkout, so anything it leaves behind is inside the container it
       # installed into.
       - name: Install, upgrade, uninstall
+        env:
+          KARST_VERIFY_DESKTOP: ${{ matrix.distro != 'redhat/ubi9' && '1' || '0' }}
         run: |
-          docker run --rm -v "$PWD:/karst:ro" "${{ matrix.distro }}" \
+          docker run --rm -e KARST_VERIFY_DESKTOP -v "$PWD:/karst:ro" "${{ matrix.distro }}" \
             bash /karst/scripts/package-verify.sh \
               /karst/dist/packages/old /karst/dist/packages/new
 
