@@ -41,9 +41,15 @@ OPTIONS:
     --status-socket PATH
                         a second, unprivileged read-only socket serving
                         `status` only — for a per-user client that cannot
-                        reach the admin socket above. Absent unless given;
-                        nothing binds it by default. See
-                        `karstd::ipc::bind_unprivileged_status`.
+                        reach the admin socket above (the macOS menu-bar
+                        app, Karst Status.app, is the only such client
+                        today). Absent unless given; nothing binds it by
+                        default — this flag exists to be passed by
+                        packaging, not typed by hand. The macOS .pkg's
+                        LaunchDaemon passes
+                        /var/run/karst-status/karstd.sock, which is what
+                        Karst Status.app polls; the two must agree, so
+                        change one only alongside the other.
     -h, --help          this text
 
 Use `karst status` to inspect a running daemon.

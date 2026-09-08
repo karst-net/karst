@@ -44,7 +44,7 @@ KARST="/usr/local/bin/karst"
 # command text itself needs to be valid, and its one variable part (a
 # mktemp-generated path) is.
 run_privileged() {
-    osascript <<'APPLESCRIPT' "$1"
+    /usr/bin/osascript <<'APPLESCRIPT' "$1"
 on run argv
     try
         return do shell script (item 1 of argv) with administrator privileges
@@ -59,7 +59,7 @@ APPLESCRIPT
 # being dismissed (Escape) — the same two-outcome shape as the Linux script's
 # `zenity --question`.
 ask_retry() {
-    osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+    /usr/bin/osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
 on run argv
     display dialog (item 1 of argv) with title "Karst Setup" buttons {"Close", "Retry"} default button "Retry" cancel button "Close"
 end run
@@ -67,7 +67,7 @@ APPLESCRIPT
 }
 
 show_info() {
-    osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
+    /usr/bin/osascript <<'APPLESCRIPT' "$1" >/dev/null 2>&1
 on run argv
     display dialog (item 1 of argv) with title "Karst Setup" buttons {"OK"} default button "OK"
 end run
@@ -76,7 +76,7 @@ APPLESCRIPT
 
 # Returns the pasted text on stdout, or nothing if the dialog was cancelled.
 ask_invitation() {
-    osascript <<'APPLESCRIPT' 2>/dev/null
+    /usr/bin/osascript <<'APPLESCRIPT' 2>/dev/null
 try
     set theResult to display dialog "Paste the enrollment invitation from your administrator." default answer "" with title "Karst Setup" buttons {"Cancel", "Connect"} default button "Connect" with hidden answer
     return text returned of theResult
@@ -92,21 +92,21 @@ while true; do
     else
         invitation=$(ask_invitation)
         [[ -n "$invitation" ]] || exit 0
-        tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/karst-setup.XXXXXX") || exit 1
-        chmod 700 "$tmpdir"
+        tmpdir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/karst-setup.XXXXXX") || exit 1
+        /bin/chmod 700 "$tmpdir"
         # Belt and suspenders: removed explicitly the moment it's no longer
         # needed (every normal iteration), and by this trap if the script is
         # interrupted (e.g. Ctrl-C while the administrator prompt is up)
         # before it gets there. Re-armed each iteration, so a prior
         # iteration's directory — already removed explicitly — is never
         # double-covered by a stale trap pointing at the wrong path.
-        trap 'rm -rf "$tmpdir"' EXIT
+        trap '/bin/rm -rf "$tmpdir"' EXIT
         invite_file="$tmpdir/invitation"
-        printf '%s' "$invitation" > "$invite_file"
-        chmod 600 "$invite_file"
+        /usr/bin/printf '%s' "$invitation" > "$invite_file"
+        /bin/chmod 600 "$invite_file"
         unset invitation
         message=$(run_privileged "$KARST setup --stdin < '$invite_file'")
-        rm -rf "$tmpdir"
+        /bin/rm -rf "$tmpdir"
         trap - EXIT
     fi
     if [[ "$message" != ERROR:* ]]; then
