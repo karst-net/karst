@@ -203,6 +203,43 @@ jobs:
       - name: Start, crash, recover
         run: ./scripts/package-systemd-container.sh dist/packages
 
+  enrollment-desktop:
+    name: Packaged invitation enrollment (approval=${{ matrix.pending }})
+    needs: packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pending: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-amd64-${{ github.sha }}
+          path: dist/packages
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Build control fixture and extract packaged relay
+        run: |
+          mkdir -p target
+          (cd server && go build -o ../target/karst-testserver ./management/internals/karst/testserver)
+          dpkg-deb --extract dist/packages/karst-relay_*.deb target/packaged-relay
+      - name: Install, paste, authorize, connect, and recover
+        env:
+          KARST_ACCEPTANCE_PENDING: ${{ matrix.pending }}
+        run: |
+          ./scripts/enrollment-desktop-verify.sh dist/packages/karst-client-linux_*.deb \
+            target/karst-testserver /tmp/karst-enrollment-desktop-results \
+            target/packaged-relay/usr/bin/karst-relay
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: enrollment-desktop-${{ matrix.pending }}-${{ github.sha }}
+          path: /tmp/karst-enrollment-desktop-results
+
   # ## The artefacts a release is actually made of
   #
   # plans/phase-5/09-exit-criteria.md §5 lists checksums, a detached signature
@@ -218,7 +255,7 @@ jobs:
   # the signature is required there.
   release-artefacts:
     name: Checksums, signatures and SBOMs
-    needs: [packages, packages-verify, packages-systemd, macos-package]
+    needs: [packages, packages-verify, packages-systemd, enrollment-desktop, macos-package]
     runs-on: ubuntu-latest
     env:
       RELEASE_GPG_KEY: ${{ secrets.RELEASE_GPG_KEY }}

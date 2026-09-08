@@ -49,6 +49,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
+base64ct = { version = "1", features = ["alloc"] }
+serde_json = "1"
 thiserror = "2"
 zeroize = { version = "1", default-features = false }
 # The control channel is the only async code in the daemon: tonic is async, and
@@ -80,10 +82,8 @@ rustix = { version = "1.1", features = ["fs"] }
 # nothing had ever put it on a socket.
 karst-relay = { path = "../karst-relay" }
 karst-noise.workspace = true
-base64ct = { version = "1", features = ["alloc"] }
 # Already a dev-dependency of karst-relay, and used here for the same reason:
 # testing what a relay's certificate does needs a certificate.
 rcgen = "0.14"
-serde_json = "1"
 hickory-proto = { version = "0.26.1", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }

@@ -84,18 +84,13 @@ test("policy syntax errors surface their line number", async ({ page }) => {
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
 });
 
-test("setup waits for installation and refuses enrollment over HTTP", async ({ page }) => {
+test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
  await page.goto("/#/setup");
- await expect(page.getByRole("button", { name: "Create enrollment bundle" })).toBeDisabled();
- await page.getByRole("checkbox").check();
- await page.getByRole("button", { name: "Create enrollment bundle" }).click();
- await expect(page.getByRole("alert")).toContainText("trusted HTTPS");
-});
-
-test("quickstart documents guided enrollment", async ({ page }) => {
- await page.goto("/#/setup");
- await page.getByRole("link", { name: "installation guide" }).click();
- await expect(page.locator("body")).toContainText("karst enroll");
+ await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
+ await page.getByLabel("Device label").fill("Laptop");
+ await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+ await page.getByRole("button", { name: "Create invitation" }).click();
+ await expect(page.getByRole("alert")).toContainText("HTTPS");
 });
 
 test("auth-key creation is keyboard accessible", async ({ page }) => {
@@ -150,15 +145,12 @@ test("a machine can be renamed", async ({ page }) => {
   await expect(page.locator("tbody tr").filter({ hasText: "alice-laptop" })).toBeVisible();
 });
 
-test("adding a machine issues a key and explains where it goes", async ({ page }) => {
+test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();
-  await page.getByLabel("New machine name").fill("laptop-bob");
-  await page.getByRole("button", { name: "Issue auth key" }).click();
-  await expect(page.getByLabel("Enrollment key")).toHaveValue("setup-fixture-secret");
-  // A machine is not created by an admin; it enrolls itself. The dialog has to
-  // say what to do with the key or the flow stops here.
-  await expect(page.getByText("setup_key")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Device label")).toBeVisible();
+  await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
 });
 
 test("the machine filter narrows the list without hiding the count", async ({ page }) => {

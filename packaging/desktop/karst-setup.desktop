@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+[Desktop Entry]
+Type=Application
+Name=Karst Setup
+Comment=Connect this device with an enrollment invitation
+Exec=/usr/bin/karst-setup
+Icon=network-vpn
+Terminal=false
+Categories=Network;Settings;
+StartupNotify=true

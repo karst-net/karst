@@ -6,6 +6,25 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type DeviceInvitationDraft = {
+    name: string;
+    groups: Array<string>;
+};
+
+export type DeviceInvitation = {
+    id: string;
+    name: string;
+    groups: Array<string>;
+    state: 'pending' | 'redeemed' | 'expired' | 'revoked';
+    expires_at: string;
+    created_at: string;
+    redeemed_at?: string;
+    /**
+     * Bearer credential returned only by creation. Never included in list or revocation responses.
+     */
+    credential?: string;
+};
+
 export type Error = {
     code: string;
     message: string;
@@ -395,6 +414,83 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type ListDeviceInvitationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/invitations';
+};
+
+export type ListDeviceInvitationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListDeviceInvitationsError = ListDeviceInvitationsErrors[keyof ListDeviceInvitationsErrors];
+
+export type ListDeviceInvitationsResponses = {
+    /**
+     * Account-scoped invitation lifecycle
+     */
+    200: Array<DeviceInvitation>;
+};
+
+export type ListDeviceInvitationsResponse = ListDeviceInvitationsResponses[keyof ListDeviceInvitationsResponses];
+
+export type CreateDeviceInvitationData = {
+    body: DeviceInvitationDraft;
+    path?: never;
+    query?: never;
+    url: '/invitations';
+};
+
+export type CreateDeviceInvitationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateDeviceInvitationError = CreateDeviceInvitationErrors[keyof CreateDeviceInvitationErrors];
+
+export type CreateDeviceInvitationResponses = {
+    /**
+     * New invitation with its one-time-displayed credential
+     */
+    200: DeviceInvitation;
+};
+
+export type CreateDeviceInvitationResponse = CreateDeviceInvitationResponses[keyof CreateDeviceInvitationResponses];
+
+export type RevokeDeviceInvitationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/invitations/{id}/revoke';
+};
+
+export type RevokeDeviceInvitationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RevokeDeviceInvitationError = RevokeDeviceInvitationErrors[keyof RevokeDeviceInvitationErrors];
+
+export type RevokeDeviceInvitationResponses = {
+    /**
+     * Updated invitation state
+     */
+    200: DeviceInvitation;
+};
+
+export type RevokeDeviceInvitationResponse = RevokeDeviceInvitationResponses[keyof RevokeDeviceInvitationResponses];
 
 export type ListNodesData = {
     body?: never;

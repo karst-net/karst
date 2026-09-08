@@ -69,6 +69,12 @@ async function auditExport(format: "json" | "csv"): Promise<AuditPage["items"] |
 // policy, relays, Bedrock, posture and audit; users, groups, keys, routes and
 // nameservers are the fork's and are reused as they are (ADR-0009).
 
+export type DeviceInvitation = {
+  id: string; name: string; groups: string[];
+  state: "pending" | "redeemed" | "expired" | "revoked";
+  expires_at: string; created_at: string; redeemed_at?: string; credential?: string;
+};
+
 export type SetupKeyType = "one-off" | "reusable";
 export type SetupKey = {
   id: string;
@@ -111,6 +117,9 @@ export type BedrockBundle = { format: "bedrock-signed-bundle-v1"; payload: strin
 export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string };
 
 export const api = {
+  invitations: () => request<DeviceInvitation[]>("/invitations"),
+  createInvitation: (name: string, groups: string[]) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups }) }),
+  revokeInvitation: (id: string) => request<DeviceInvitation>(`/invitations/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
   enrollmentMetadata: () => request<EnrollmentMetadata>("/me/enrollment"),
   enroll: () => request<EnrollmentGrant>("/me/devices/enroll", { method: "POST" }),
   // ── machines ───────────────────────────────────────────────────────────────

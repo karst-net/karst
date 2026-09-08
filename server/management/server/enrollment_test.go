@@ -217,3 +217,146 @@ func TestEnrollmentPortalThroughControl(t *testing.T) {
 	_, err = nodes.Get(karstnode.Handle(second.Public()))
 	require.Error(t, err)
 }
+
+func TestDeviceInvitationNeedsNoRecipientAccount(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "invited-devices", AccountID: member.AccountID, Name: "Invited devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "Laptop", []string{group.ID})
+	require.Error(t, err, "members cannot issue administrative invitations")
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID})
+	require.NoError(t, err)
+	stored := storedEnrollment(t, am, key.Key)
+	require.Empty(t, stored.OwnerUserID, "recipient does not need an account")
+	require.Equal(t, "owner", stored.InvitationIssuerID)
+	require.NotContains(t, stored.EventMeta(), "key")
+	require.Error(t, am.DeleteSetupKey(ctx, member.AccountID, "owner", stored.Id), "history cannot be deleted to evade issuance limits")
+	require.Equal(t, 1, stored.UsageLimit)
+	require.WithinDuration(t, time.Now().Add(24*time.Hour), stored.GetExpiresAt(), time.Minute)
+	changed := stored.Copy()
+	changed.AutoGroups = nil
+	_, err = am.SaveSetupKey(ctx, member.AccountID, changed, "owner")
+	require.Error(t, err, "an issued invitation cannot change access scope")
+	device, err := enrollPeer(am, key.Key, "invited-device")
+	require.NoError(t, err)
+	require.Empty(t, device.UserID)
+	groups, err := am.Store.GetPeerGroupIDs(ctx, store.LockingStrengthNone, member.AccountID, device.ID)
+	require.NoError(t, err)
+	require.Contains(t, groups, group.ID)
+	_, err = enrollPeer(am, key.Key, "another-invited-device")
+	require.Error(t, err)
+}
+
+func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "http-invited", AccountID: member.AccountID, Name: "Invited", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
+	require.NoError(t, err)
+	router := mux.NewRouter()
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am.permissionsManager, router)
+	request := func(method, path, body, user string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	body := `{"name":"Laptop","groups":["http-invited"]}`
+	denied := request(http.MethodPost, "/karst/v1/invitations", body, member.Id)
+	require.Equal(t, http.StatusForbidden, denied.Code)
+	created := request(http.MethodPost, "/karst/v1/invitations", body, "owner")
+	require.Equal(t, http.StatusOK, created.Code, created.Body.String())
+	require.Equal(t, "no-store", created.Header().Get("Cache-Control"))
+	var grant struct {
+		ID         string `json:"id"`
+		Credential string `json:"credential"`
+		State      string `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &grant))
+	require.NotEmpty(t, grant.Credential)
+	require.Equal(t, "pending", grant.State)
+	listed := request(http.MethodGet, "/karst/v1/invitations", "", "owner")
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	require.NotContains(t, listed.Body.String(), grant.Credential)
+	require.NotContains(t, listed.Body.String(), "credential")
+	revoked := request(http.MethodPost, "/karst/v1/invitations/"+grant.ID+"/revoke", "", "owner")
+	require.Equal(t, http.StatusOK, revoked.Code, revoked.Body.String())
+	require.Contains(t, revoked.Body.String(), `"state":"revoked"`)
+	require.NotContains(t, revoked.Body.String(), grant.Credential)
+	_, err = enrollPeer(am, grant.Credential, "revoked-invited-device")
+	require.Error(t, err)
+}
+
+func TestDeviceInvitationConcurrentRedemptionAndExpiry(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "invitation-race", AccountID: member.AccountID, Name: "Invitation race", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	grant, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Concurrent device", []string{group.ID})
+	require.NoError(t, err)
+	var wait sync.WaitGroup
+	outcomes := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wait.Add(1)
+		go func(i int) {
+			defer wait.Done()
+			_, err := enrollPeer(am, grant.Key, fmt.Sprintf("invitation-race-%d", i))
+			outcomes <- err
+		}(i)
+	}
+	wait.Wait()
+	close(outcomes)
+	accepted := 0
+	for err := range outcomes {
+		if err == nil {
+			accepted++
+		}
+	}
+	require.Equal(t, 1, accepted)
+	require.Equal(t, 1, storedEnrollment(t, am, grant.Key).UsedTimes)
+	expired, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Expired device", []string{group.ID})
+	require.NoError(t, err)
+	stored := storedEnrollment(t, am, expired.Key)
+	past := time.Now().Add(-time.Minute)
+	stored.ExpiresAt = &past
+	require.NoError(t, am.Store.SaveSetupKey(ctx, stored))
+	_, err = enrollPeer(am, expired.Key, "expired-invitation-device")
+	require.Error(t, err)
+	require.Zero(t, storedEnrollment(t, am, expired.Key).UsedTimes)
+}
+
+// Revocation must not reset the persisted issuance window.
+func TestDeviceInvitationIssuanceIsBounded(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "invitation-limit", AccountID: member.AccountID, Name: "Invited", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	for i := 0; i < 20; i++ {
+		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID})
+		require.NoError(t, err)
+		key.Revoked = true
+		_, err = am.SaveSetupKey(ctx, member.AccountID, key, "owner")
+		require.NoError(t, err)
+	}
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID})
+	require.ErrorContains(t, err, "too many invitations")
+}
+
+func TestDeviceInvitationCanBeRevokedAfterGroupRemoval(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "removed-invitation-group", AccountID: member.AccountID, Name: "Invited", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Laptop", []string{group.ID})
+	require.NoError(t, err)
+	require.NoError(t, am.Store.DeleteGroup(ctx, member.AccountID, group.ID))
+	key.Revoked = true
+	_, err = am.SaveSetupKey(ctx, member.AccountID, key, "owner")
+	require.NoError(t, err)
+	_, err = enrollPeer(am, key.Key, "revoked-with-removed-group")
+	require.Error(t, err)
+	require.Zero(t, storedEnrollment(t, am, key.Key).UsedTimes)
+}

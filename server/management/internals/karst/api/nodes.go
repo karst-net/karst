@@ -195,6 +195,8 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	} else {
 		karstRouter.Use(karstAuthorization(permissionsManager))
 	}
+	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes", h.listNodes).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}", h.getNode).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}", h.updateNode).Methods(http.MethodPatch, http.MethodOptions)

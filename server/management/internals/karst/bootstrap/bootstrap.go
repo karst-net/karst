@@ -157,11 +157,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// Invalidate them on upgrade, including grants whose ownership row was
 	// deleted by the old redemption path. Newly issued grants carry ownership
 	// atomically in the setup-key row and are unaffected on later starts.
-	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (owner_user_id = ? OR owner_user_id IS NULL)", "portal device", "").Update("revoked", true).Error; err != nil {
-		return nil, fmt.Errorf("karst: invalidate legacy enrollment grants: %w", err)
-	}
-	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (expires_at IS NULL OR usage_limit = 0)", BootstrapKeyName).Update("revoked", true).Error; err != nil {
-		return nil, fmt.Errorf("karst: invalidate unbounded bootstrap grants: %w", err)
+	if err := invalidateLegacyEnrollmentGrants(db); err != nil {
+		return nil, err
 	}
 	// Sessions a previous process was serving are still open in the table: its
 	// streams' deferred closes did not run, because the process is gone. Close
@@ -537,4 +534,14 @@ func (h *handler) Handle(ctx context.Context, nodeID, identityPub, payload []byt
 	default:
 		return nil, fmt.Errorf("karst: unknown request kind %d", kind)
 	}
+}
+
+func invalidateLegacyEnrollmentGrants(db *gorm.DB) error {
+	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (owner_user_id = ? OR owner_user_id IS NULL) AND (invitation_issuer_id = ? OR invitation_issuer_id IS NULL)", "portal device", "", "").Update("revoked", true).Error; err != nil {
+		return fmt.Errorf("karst: invalidate legacy enrollment grants: %w", err)
+	}
+	if err := db.Model(&types.SetupKey{}).Where("name = ? AND (expires_at IS NULL OR usage_limit = 0)", BootstrapKeyName).Update("revoked", true).Error; err != nil {
+		return fmt.Errorf("karst: invalidate unbounded bootstrap grants: %w", err)
+	}
+	return nil
 }

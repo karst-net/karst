@@ -824,6 +824,10 @@ async fn an_uncovered_node_is_refused_a_netmap_under_enforcement() {
         .sync()
         .await
         .expect_err("an uncovered node was served a netmap");
+    assert!(
+        matches!(err, karstd::control::Error::Uncovered),
+        "setup needs a distinguishable approval-required state"
+    );
     let text = format!("{err}");
     assert!(
         text.contains("countersigned"),
@@ -911,6 +915,45 @@ async fn the_default_floor_accepts_the_shipping_suite() {
     let mut client =
         Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x72)).expect("client");
     client.sync().await.expect("the shipping suite was refused");
+}
+
+#[test]
+#[ignore = "builds and runs the Go control server"]
+fn pasted_invitation_enrolls_without_a_credential_file() {
+    use base64ct::{Base64UrlUnpadded, Encoding as _};
+    let server = start_server(1);
+    let scratch = Scratch::new("pasted-invitation");
+    std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let state = scratch.join("state");
+    let config = scratch.join("karstd.toml");
+    let payload = serde_json::json!({
+        "server": format!("http://{}", server.address),
+        "server_kem_pin": server.kem_pin,
+        "server_verify_pin": server.verify_pin,
+        "setup_key": "fixture",
+        "control_minimum_version": 1
+    });
+    let invitation = format!(
+        "karst-invite-v1:{}",
+        Base64UrlUnpadded::encode_string(payload.to_string().as_bytes())
+    );
+    karstd::enrollment::enroll_invitation(&invitation, &config, &state).expect("pasted invitation");
+    let configured = std::fs::read_to_string(&config).unwrap();
+    assert!(!configured.contains("setup_key"));
+    assert!(!configured.contains("fixture"));
+    assert!(!state.join("enrollment.toml").exists());
+    assert!(state.join("identity.key.enrolled").exists());
+    let keys = karstd::config::load_keys(&config).unwrap();
+    let value: toml::Value = toml::from_str(&configured).unwrap();
+    let section: ControlSection = value["control"].clone().try_into().unwrap();
+    let mut client = Client::new(&section, &state, &keys).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .block_on(client.sync())
+        .expect("reconnect without invitation");
 }
 
 #[test]

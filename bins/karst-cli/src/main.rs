@@ -17,6 +17,8 @@ const USAGE: &str = "\
 karst — enroll a device and control karstd
 
 USAGE:
+    karst setup --stdin        desktop setup helper (Linux; invitation on stdin)
+    karst setup --resume       retry startup using the saved device identity
     karst enroll --bundle FILE  enroll using a trusted bundle (run with sudo)
       [--config PATH] [--state-dir PATH]  absolute paths for custom installations
     karst status     peers, session state, tunnel MTU
@@ -59,6 +61,28 @@ fn main() -> ExitCode {
         print!("{USAGE}");
         return ExitCode::FAILURE;
     };
+
+    #[cfg(target_os = "linux")]
+    if *first == "setup" {
+        let resume = match rest {
+            ["--stdin"] => false,
+            ["--resume"] => true,
+            _ => {
+                eprintln!("Use Karst Setup from the applications menu.");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match karstd::setup::from_stdin(resume) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     if *first == "enroll" {
         return command_enroll(rest);

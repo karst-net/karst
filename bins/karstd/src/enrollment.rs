@@ -10,6 +10,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
+use base64ct::{Base64UrlUnpadded, Encoding as _};
 use serde::Deserialize;
 
 use crate::config::{encode_hex, ControlSection, PRIVATE_KEY_LEN};
@@ -24,6 +25,30 @@ struct Bundle {
     setup_key: String,
     #[serde(default = "minimum_version")]
     control_minimum_version: u32,
+}
+
+/// Pasted invitations use a versioned, URL-safe envelope. The payload includes
+/// the trust anchors; no unauthenticated discovery is needed before enrollment.
+const INVITATION_PREFIX: &str = "karst-invite-v1:";
+const MAX_INVITATION_BYTES: usize = 65536;
+
+fn parse_invitation(invitation: &str) -> Result<Bundle, String> {
+    let invitation = invitation.trim();
+    if invitation.len() > MAX_INVITATION_BYTES {
+        return Err("enrollment invitation is too large".to_owned());
+    }
+    let encoded = invitation.strip_prefix(INVITATION_PREFIX).ok_or(
+        "unsupported enrollment invitation; request a new invitation from your administrator",
+    )?;
+    let decoded = zeroize::Zeroizing::new(
+        Base64UrlUnpadded::decode_vec(encoded)
+            .map_err(|_| "invalid enrollment invitation".to_owned())?,
+    );
+    // Never return JSON parser diagnostics: they may echo the credential.
+    let bundle: Bundle =
+        serde_json::from_slice(&decoded).map_err(|_| "invalid enrollment invitation".to_owned())?;
+    validate_bundle(&bundle)?;
+    Ok(bundle)
 }
 
 fn hex(s: &str) -> Result<Vec<u8>, String> {
@@ -62,6 +87,11 @@ fn load_bundle(bundle_path: &Path) -> Result<Bundle, String> {
     // Parser errors can contain source lines with the bearer credential.
     let bundle: Bundle =
         toml::from_str(&raw).map_err(|_| "invalid enrollment bundle".to_owned())?;
+    validate_bundle(&bundle)?;
+    Ok(bundle)
+}
+
+fn validate_bundle(bundle: &Bundle) -> Result<(), String> {
     if !(bundle.server.starts_with("https://") || bundle.server.starts_with("http://"))
         || bundle.setup_key.is_empty()
     {
@@ -75,7 +105,7 @@ fn load_bundle(bundle_path: &Path) -> Result<Bundle, String> {
             &hex(&bundle.server_verify_pin)?,
         )
         .map_err(|e| e.to_string())?;
-    Ok(bundle)
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -144,6 +174,23 @@ fn lock_state(state_dir: &Path) -> Result<fs::File, String> {
 /// Returns invalid bundle, filesystem, credential and server-authentication errors.
 #[cfg(unix)]
 pub fn enroll(bundle_path: &Path, config_path: &Path, state_dir: &Path) -> Result<(), String> {
+    enroll_bundle(load_bundle(bundle_path)?, config_path, state_dir)
+}
+
+/// Provision directly from a pasted administrator invitation without writing
+/// its credential to a bundle file. Service startup is handled by setup.
+///
+/// # Errors
+/// Returns invitation, filesystem, credential and server-authentication errors.
+pub fn enroll_invitation(
+    invitation: &str,
+    config_path: &Path,
+    state_dir: &Path,
+) -> Result<(), String> {
+    enroll_bundle(parse_invitation(invitation)?, config_path, state_dir)
+}
+
+fn enroll_bundle(bundle: Bundle, config_path: &Path, state_dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     if !config_path.is_absolute() || !state_dir.is_absolute() {
         return Err("configuration and state paths must be absolute".to_owned());
@@ -151,7 +198,6 @@ pub fn enroll(bundle_path: &Path, config_path: &Path, state_dir: &Path) -> Resul
     if config_path.symlink_metadata().is_ok() {
         return Err("configuration already exists; use the existing daemon or explicitly remove it before re-enrollment".to_owned());
     }
-    let bundle = load_bundle(bundle_path)?;
     for dir in [
         state_dir,
         config_path
@@ -246,6 +292,46 @@ mod tests {
     use super::*;
     use crate::scratch::Scratch;
     use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+    #[test]
+    fn invitation_validation_never_echoes_credentials() {
+        let secret = "SECRET-DO-NOT-ECHO";
+        for raw in [
+            format!("{{\"setup_key\":\"{secret}\" broken"),
+            format!("{{\"setup_key\":\"{secret}\",\"server\":\"http://localhost\"}}"),
+        ] {
+            let invitation = format!(
+                "{INVITATION_PREFIX}{}",
+                Base64UrlUnpadded::encode_string(raw.as_bytes())
+            );
+            let error = parse_invitation(&invitation).err().unwrap();
+            assert!(!error.contains(secret));
+        }
+        assert!(parse_invitation("karst-invite-v2:e30").is_err());
+        assert!(parse_invitation(&"x".repeat(MAX_INVITATION_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn invitation_preserves_trust_and_requires_valid_pins() {
+        let mut payload = serde_json::json!({
+            "server": "https://control.example.test",
+            "server_kem_pin": "01".repeat(1184),
+            "server_verify_pin": "02".repeat(2592),
+            "setup_key": "fixture",
+            "control_minimum_version": 1
+        });
+        let encode = |value: &serde_json::Value| {
+            format!(
+                "{INVITATION_PREFIX}{}",
+                Base64UrlUnpadded::encode_string(value.to_string().as_bytes())
+            )
+        };
+        let parsed = parse_invitation(&format!("  {}\n", encode(&payload))).unwrap();
+        assert_eq!(parsed.server, "https://control.example.test");
+        assert_eq!(parsed.setup_key, "fixture");
+        *payload.get_mut("server_kem_pin").unwrap() = "01".into();
+        assert!(parse_invitation(&encode(&payload)).is_err());
+    }
 
     #[test]
     fn lock_excludes_concurrent_enrollment_and_is_released_on_exit() {

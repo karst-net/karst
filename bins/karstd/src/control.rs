@@ -479,6 +479,11 @@ impl Client {
         }
     }
 
+    /// Whether the last synchronization retained an authenticated connection.
+    pub(crate) fn has_live_connection(&self) -> bool {
+        self.conn.is_some()
+    }
+
     /// The netmap this client currently holds.
     #[must_use]
     pub fn netmap(&self) -> &Netmap {
@@ -940,9 +945,19 @@ impl Client {
         let mut payload = Vec::with_capacity(body.len() + 1);
         payload.push(kind);
         payload.extend_from_slice(body);
-        conn.request(&payload)
-            .await
-            .map_err(|e| Error::Server(e.to_string()))
+        conn.request(&payload).await.map_err(|e| {
+            if kind == KIND_NETMAP {
+                if let karst_control_client::transport::Error::Status(status) = &e {
+                    if status
+                        .message()
+                        .starts_with("KARST_BEDROCK_APPROVAL_REQUIRED:")
+                    {
+                        return Error::Uncovered;
+                    }
+                }
+            }
+            Error::Server(e.to_string())
+        })
     }
 
     /// Turn the held netmap into a datapath configuration.

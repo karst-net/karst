@@ -883,54 +883,48 @@ auth key) once authentication works.
 
 ### 8.3 Guided client enrollment
 
-Serve the portal at `/portal/` on the same trusted HTTPS origin as the control
-server. Register these exact redirect URIs with the identity provider:
-`https://HOST/oidc/callback`, `https://HOST/silent-renew.html`,
-`https://HOST/portal/oidc/callback`, and
-`https://HOST/portal/silent-renew.html`. Allow `/` and `/portal/` as post-logout
-redirects. Both apps read `/config.json` for `oidcAuthority` and `oidcClientId`.
-Configure Authorization Code with PKCE. The portal sends bearer tokens from
-memory and derives device ownership from the authenticated user on the server.
+In the administrative console, open **Machines → Add machine** or **First-run
+setup**. Enter a device label, select its access groups, and click **Create
+invitation**. Copy the invitation and give it privately to the intended recipient.
+It authorizes one device, expires in 24 hours, and is displayed only on creation.
+Pending invitations can be revoked from the same screen; history is retained.
 
-Install the Linux client package first. Sign into the portal as the device's
-owner, confirm installation, and create an enrollment bundle. The bundle
-contains both control pins obtained through the authenticated HTTPS API and a
-one-use, fifteen-minute credential. This is explicitly Web-PKI bootstrap trust;
-operators requiring independently provisioned pins should distribute their own
-bundle instead. Never transfer a bundle through an untrusted channel.
+On the Linux desktop, install the client package with the distribution's graphical
+package installer, then open **Karst Setup** from the applications menu. Paste the
+invitation and click **Connect**. Approve the operating-system permission prompt.
+Setup creates the local identity, verifies the server, registers the device, saves
+its configuration, and enables and starts the service automatically. The recipient
+needs no portal account or identity-provider login, and does not edit configuration,
+manage a bundle file, or run a service command.
 
-Run each command after the previous one succeeds:
+The invitation includes the control address, both public server pins, and a
+single-use bearer credential. The administrative console must be served over
+trusted HTTPS. Delivery of the invitation establishes the recipient's initial
+trust: never transfer it through an untrusted channel. Possession authorizes a
+device; it does not prove the recipient's human identity. Access groups are fixed
+when the invitation is issued; revoke and reissue to change an unused invitation's
+scope. Administrators can issue at most twenty invitations per fifteen minutes.
 
-```sh walkthrough=none reason="guided enrollment requires a signed-in portal and downloaded bundle"
-chmod 600 karst-enrollment.toml
-sudo karst enroll --bundle karst-enrollment.toml
-rm karst-enrollment.toml
-sudo systemctl enable --now karstd
-sudo karst status
-```
+Setup reports **Waiting for administrator approval** when Bedrock requires the
+new device to be countersigned. The administrator completes the existing offline
+ceremony; the recipient does not visit another authentication system. Network
+policy still determines access. A running service and control connection do not
+promise that a particular resource is permitted by policy.
 
-`karst enroll` creates data-plane and control keys locally under
-`/var/lib/karst`, authenticates the pinned server, and publishes
-`/etc/karst/karstd.toml` without a setup key. The identity's `.enrolled` receipt
-survives netmap-cache loss. Failed attempts retain the same local identity for
-retry; existing configurations are refused rather than overwritten. Custom
-installations can pass absolute `--config` and `--state-dir` paths and must
-configure their service to use those paths. Guided installation currently
-supports Unix; the portal instructions target the Linux package.
+If the network or service startup fails, reopen **Karst Setup** and choose
+**Retry**. Once registration is saved, retry uses the same local identity without
+another invitation. Private keys remain under `/var/lib/karst`, and the saved
+`/etc/karst/karstd.toml` contains no enrollment credential. The `.enrolled` identity
+receipt survives netmap-cache loss. Device revocation never silently triggers
+re-enrollment.
 
-A member can issue at most five credentials per fifteen minutes. Expired,
-revoked, consumed, blocked-owner and pending-owner grants are rejected. The
-server also bounds login-handler work per replica (10 attempts per second,
-burst 100); deployments should retain ingress abuse controls across replicas.
+The desktop flow currently targets the Linux systemd package and requires a
+normal desktop session with an OS authorization agent. Administrative console
+sign-in remains configured by the deployment; this does not create an IdP step
+for the recipient. The existing `karst enroll --bundle FILE` interface remains
+available for administrators provisioning custom Unix installations. It is not
+required for the desktop invitation flow.
 
-Enrollment does not imply traffic authorization. Bedrock remains an offline
-ceremony: export node-sign requests and import verified responses, then confirm
-the required ACL and `karst status`. The console never receives an authority
-private key. A device with a saved enrollment receipt cannot silently enroll
-again after revocation. To deliberately enroll a revoked device again, stop
-its service, archive the old configuration, and use a newly issued bundle with
-a fresh `--state-dir`. Do not remove only the netmap cache or reuse a revoked
-identity expecting the setup key to override revocation.
 
 ---
 

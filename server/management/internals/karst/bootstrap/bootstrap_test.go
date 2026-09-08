@@ -8,6 +8,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/netbirdio/netbird/management/server/types"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -167,4 +170,34 @@ func allZero(b []byte) bool {
 		}
 	}
 	return true
+}
+
+func TestLegacyCleanupPreservesAdministratorInvitations(t *testing.T) {
+	db := newDB(t)
+	if err := db.AutoMigrate(&types.SetupKey{}); err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(time.Hour)
+	keys := []types.SetupKey{
+		{Id: "legacy", Name: "portal device"},
+		{Id: "member", Name: "portal device", OwnerUserID: "member"},
+		{Id: "invitation", Name: "portal device", InvitationIssuerID: "admin", ExpiresAt: &expiry, UsageLimit: 1},
+	}
+	for i := range keys {
+		if err := db.Create(&keys[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := invalidateLegacyEnrollmentGrants(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys {
+		var stored types.SetupKey
+		if err := db.Where("id = ?", key.Id).First(&stored).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Revoked != (key.Id == "legacy") {
+			t.Fatalf("wrong revocation state for %s: %v", key.Id, stored.Revoked)
+		}
+	}
 }

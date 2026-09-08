@@ -19,10 +19,8 @@
 # a higher version than OLD. Run it as root, in a throwaway machine or
 # container: it installs packages and writes under /etc and /var.
 #
-# Deliberately driven by `dpkg`/`rpm` and not by `apt`/`dnf`. The packages
-# declare no dependencies, so a local install needs no repository, and reaching
-# for a package manager that wants the network turns a packaging test into a
-# mirror-availability test.
+# Use the distribution package manager for installation so the desktop setup
+# dependencies are resolved exactly as they are for a fresh client machine.
 
 set -euo pipefail
 
@@ -92,10 +90,10 @@ new_package=$(find_package "$new_dir")
 
 install_package() {
   case $family in
-    deb) dpkg --install "$1" ;;
+    deb) apt-get update && apt-get install -y --no-install-recommends "$1" ;;
     # -U rather than -i so the same call serves install and upgrade, which is
     # what an operator following the docs would run either way.
-    rpm) rpm --upgrade --verbose "$1" ;;
+    rpm) dnf install -y "$1" ;;
   esac
 }
 
