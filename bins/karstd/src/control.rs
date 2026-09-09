@@ -355,6 +355,35 @@ impl Client {
             &section.identity_key_file,
             config_dir,
         ))?);
+        let control_minimum = section.control_minimum_version.unwrap_or(1);
+        let pins = ServerPins {
+            static_kem: decode_hex_any(&section.server_kem_pin, "server_kem_pin")?,
+            verify_key: decode_hex_any(&section.server_verify_pin, "server_verify_pin")?,
+            minimum_version: control_minimum,
+        };
+        // `control_minimum` above is a floor, not a selection: the server
+        // states its version and the node refuses anything below it, so a
+        // compromised or misconfigured server cannot serve a weaker suite than
+        // the operator asked for. Default 1, the only implemented suite;
+        // setting 2 today refuses every server, honestly, because the CNSA
+        // profile does not exist yet.
+        //
+        // Checked here — and before the enrollment receipt below — rather than
+        // at the first handshake: a mistyped pin should stop the daemon at
+        // startup with the field name in the message, not surface later as an
+        // authentication failure against a server that is behaving perfectly,
+        // and not be masked by a receipt mismatch that the same bad pin would
+        // also trigger.
+        //
+        // Checked against the *suite* rather than against constants, because a
+        // pin's length is its algorithm — so this also catches pins and a
+        // configured version that disagree, which the constants could not.
+        let suite = karst_control_client::suite::suite_for(control_minimum)
+            .map_err(|e| Error::Key(e.to_string()))?;
+        suite
+            .check_pins(&pins.static_kem, &pins.verify_key)
+            .map_err(|e| Error::Key(e.to_string()))?;
+
         let mut enrollment_file = resolve(&section.identity_key_file, config_dir).into_os_string();
         enrollment_file.push(".enrolled");
         let enrollment_file = PathBuf::from(enrollment_file);
@@ -384,32 +413,6 @@ impl Client {
                 })
             }
         };
-        let control_minimum = section.control_minimum_version.unwrap_or(1);
-        let pins = ServerPins {
-            static_kem: decode_hex_any(&section.server_kem_pin, "server_kem_pin")?,
-            verify_key: decode_hex_any(&section.server_verify_pin, "server_verify_pin")?,
-            minimum_version: control_minimum,
-        };
-        // `control_minimum` above is a floor, not a selection: the server
-        // states its version and the node refuses anything below it, so a
-        // compromised or misconfigured server cannot serve a weaker suite than
-        // the operator asked for. Default 1, the only implemented suite;
-        // setting 2 today refuses every server, honestly, because the CNSA
-        // profile does not exist yet.
-        //
-        // Checked here rather than at the first handshake: a mistyped pin
-        // should stop the daemon at startup with the field name in the message,
-        // not surface later as an authentication failure against a server that
-        // is behaving perfectly.
-        //
-        // Checked against the *suite* rather than against constants, because a
-        // pin's length is its algorithm — so this also catches pins and a
-        // configured version that disagree, which the constants could not.
-        let suite = karst_control_client::suite::suite_for(control_minimum)
-            .map_err(|e| Error::Key(e.to_string()))?;
-        suite
-            .check_pins(&pins.static_kem, &pins.verify_key)
-            .map_err(|e| Error::Key(e.to_string()))?;
 
         // The cache key. Derived from the node's own identity seed for now,
         // which ties it to a file already protected as a secret; PLAN.md §2.6
@@ -1546,6 +1549,40 @@ mod tests {
         match Client::new(&short, dir.path(), &keys()) {
             Err(Error::Key(m)) => assert!(m.contains("server_kem_pin"), "{m}"),
             other => panic!("expected a key error, got {other:?}"),
+        }
+    }
+
+    /// Regression: the enrollment receipt binds server, pins, and identity
+    /// together, and a bad pin changes that binding too — so a naive ordering
+    /// hits the receipt mismatch before it ever validates the pin's shape, and
+    /// an operator who mistyped a pin sees "re-enrollment required" instead of
+    /// which field they typo'd. The pin must be validated first regardless of
+    /// what receipt, if any, is already on disk.
+    #[test]
+    fn a_bad_pin_is_named_even_with_a_receipt_on_disk() {
+        use sha2::{Digest as _, Sha384};
+
+        let dir = Scratch::new("bad-pin-with-receipt");
+        let _ = std::fs::remove_file(dir.join("id.key"));
+        let _ = std::fs::remove_file(dir.join("id.key.enrolled"));
+
+        let good = section(dir.path(), None);
+        let identity = Identity::load_or_create(&dir.join("id.key")).expect("identity");
+        let binding = format!(
+            "{}\n{}\n{}\n{}",
+            good.server,
+            good.server_kem_pin,
+            good.server_verify_pin,
+            identity.handle()
+        );
+        let enrollment_binding = encode_hex(&Sha384::digest(binding.as_bytes()));
+        write_secret(&dir.join("id.key.enrolled"), &enrollment_binding).expect("seed receipt");
+
+        let mut bad = section(dir.path(), None);
+        bad.server_kem_pin = encode_hex(&[0x01; 32]);
+        match Client::new(&bad, dir.path(), &keys()) {
+            Err(Error::Key(m)) => assert!(m.contains("server_kem_pin"), "{m}"),
+            other => panic!("expected a key error naming server_kem_pin, got {other:?}"),
         }
     }
 
