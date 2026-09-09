@@ -34,6 +34,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/proto"
+	nbstatus "github.com/netbirdio/netbird/shared/management/status"
 )
 
 // tracer names every span this package creates — plans/phase-6
@@ -92,6 +93,39 @@ type HandlerFunc func(ctx context.Context, nodeID, identity, payload []byte) ([]
 
 func (f HandlerFunc) Handle(ctx context.Context, nodeID, identity, payload []byte) ([]byte, error) {
 	return f(ctx, nodeID, identity, payload)
+}
+
+// nbStatusCode maps the business layer's own error type (github.com/netbirdio
+// /netbird/shared/management/status, used throughout peer.go and friends —
+// see this package's doc comment on why that layer is reusable as-is) to a
+// gRPC code. It does not implement gRPC's status.Status interface, so
+// status.FromError never recognizes it and every one of these errors —
+// "setup key is invalid", "setup key expired", DNS-label conflicts, and so
+// on — was being reported to the node as a bare codes.Internal "request
+// failed", indistinguishable from an actual server bug. These messages are
+// already client-facing: the console's own REST/gRPC API returns the same
+// text for the same failures (e.g. internals/shared/grpc/proxy.go's
+// nbstatus.FromError use), so passing them through here discloses nothing
+// new.
+func nbStatusCode(t nbstatus.Type) codes.Code {
+	switch t {
+	case nbstatus.NotFound:
+		return codes.NotFound
+	case nbstatus.PreconditionFailed:
+		return codes.FailedPrecondition
+	case nbstatus.PermissionDenied:
+		return codes.PermissionDenied
+	case nbstatus.InvalidArgument, nbstatus.BadRequest:
+		return codes.InvalidArgument
+	case nbstatus.AlreadyExists, nbstatus.UserAlreadyExists:
+		return codes.AlreadyExists
+	case nbstatus.Unauthorized, nbstatus.Unauthenticated:
+		return codes.Unauthenticated
+	case nbstatus.TooManyRequests:
+		return codes.ResourceExhausted
+	default:
+		return codes.Internal
+	}
 }
 
 // SessionRecorder is told when an authenticated node's stream opens, makes
@@ -481,6 +515,9 @@ func (s *Service) Session(stream proto.KarstControlService_SessionServer) error 
 			if err != nil {
 				if st, ok := status.FromError(err); ok {
 					return st.Err()
+				}
+				if nbErr, ok := nbstatus.FromError(err); ok {
+					return status.Error(nbStatusCode(nbErr.Type()), nbErr.Error())
 				}
 				log.WithContext(ctx).Errorf("karst: handler: %v", err)
 				return status.Error(codes.Internal, "request failed")
