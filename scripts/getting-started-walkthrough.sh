@@ -158,7 +158,13 @@ wait_for() {
 			ok "$what (after $((limit - (deadline - SECONDS)))s)"
 			return 0
 		fi
-		sleep 2
+		# Not 2s: c_exec_stop_post's karstd SIGKILL check has a down window
+		# the same width as the unit's RestartSec=2, and a 2s poll aliases
+		# against it -- on an unlucky phase every single poll can land after
+		# the restart instead of during the gap, missing a window that is
+		# always there for the full 60s timeout. A sub-second poll samples
+		# the gap several times regardless of phase.
+		sleep 0.5
 	done
 	die "timed out after ${limit}s waiting for: $what"
 }
