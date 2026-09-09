@@ -155,6 +155,26 @@ plutil -replace CFBundleVersion -string "$pkg_version" "$app/Contents/Info.plist
 cp "$root/packaging/macos/dev.karst.karststatus.plist" "$stage_status/Library/LaunchAgents/"
 chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 
+# ── the app icon ─────────────────────────────────────────────────────────
+#
+# `sips` and `iconutil` are macOS-only (no Linux equivalent, hence this
+# runs here rather than at asset-creation time) — every size an .icns can
+# hold, generated from the one 1024x1024 master rather than committing all
+# ten as separate files. `CFBundleIconFile` (Info.plist) names the result
+# without its extension; Launch Services appends .icns itself.
+echo "==> building AppIcon.icns"
+iconset="$dist/AppIcon-$arch.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+icon_src="$root/packaging/macos/KarstStatus/Resources/AppIcon.png"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$icon_src" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  double=$((size * 2))
+  sips -z "$double" "$double" "$icon_src" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+rm -rf "$iconset"
+
 # ── the guided-enrollment prompt (shell + osascript) ────────────────────────
 #
 # Karst's Linux counterpart, packaging/desktop/karst-setup, is a regular file
@@ -166,6 +186,14 @@ chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 echo "==> staging Karst Setup"
 cp "$root/packaging/macos/karst-setup" "$app/Contents/Resources/karst-setup"
 chmod 0755 "$app/Contents/Resources/karst-setup"
+
+# The menu-bar brand mark AppDelegate.swift composites the state badge onto
+# (Bundle.main.path(forResource: "karst-menu", ofType: "png")) — a plain
+# bundled resource, the same as karst-setup above, not a SwiftPM `resources:`
+# entry: Bundle.module's lookup differs depending on whether it is running
+# from inside an .app bundle or a bare `swift build` binary, and this way
+# sidesteps that entirely.
+cp "$root/packaging/macos/KarstStatus/Resources/karst-menu.png" "$app/Contents/Resources/karst-menu.png"
 
 # ── signing the binaries ────────────────────────────────────────────────────
 # The policy argument is not decoration. `-p codesigning` lists only identities

@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var previous: [String: (txBytes: UInt64, rxBytes: UInt64, at: Date)] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem.button?.imagePosition = .imageLeft
+        statusItem.button?.image = Self.brandedIcon(badge: "ellipsis.circle", accessibilityDescription: "karst: loading")
         statusItem.button?.title = "karst: …"
         statusItem.menu = menu(for: nil)
         refresh()
@@ -59,20 +61,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// **No state here is color-only** —
     /// plans/phase-6/13-macos-status-indicators.md §2 item 4, applying
     /// PLAN.md §8.3's console rule to this client. Each state pairs a
-    /// distinct glyph with distinct text; a colorblind user reads the glyph
-    /// and the words, never a dot's hue alone.
+    /// distinct icon shape with distinct text; a colorblind user reads the
+    /// icon and the words, never a dot's hue alone. SF Symbols render as
+    /// template images (`isTemplate = true`, set in `symbolImage`), so
+    /// AppKit — not this code — handles light/dark menu bar and the
+    /// selected-item tint.
     private func render(_ status: DaemonStatus?) {
         guard let status, !status.interface.isEmpty else {
-            statusItem.button?.title = "⛔ karst: not running"
+            statusItem.button?.image = Self.brandedIcon(badge: "xmark.circle.fill", accessibilityDescription: "karst: not running")
+            statusItem.button?.title = "karst: not running"
             statusItem.menu = menu(for: nil)
             return
         }
 
         let established = status.peers.filter { $0.state.hasPrefix("established") }
-        let glyph: String
+        let symbolName: String
         let label: String
         if established.isEmpty {
-            glyph = "○"
+            symbolName = "circle"
             label = "no peers"
         } else if established.contains(where: { $0.transport == "relay" || $0.transport == "turn" }) {
             // A mix of direct and relayed peers still reports the relayed
@@ -80,16 +86,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // bool (`engine.rs`'s doc comment on it) is that "slower and
             // through a third party" must stay visible, not be averaged
             // away by a healthier peer sitting next to it.
-            glyph = "◐"
+            symbolName = "circle.lefthalf.filled"
             label = "\(established.count) via relay/TURN"
         } else {
-            glyph = "●"
+            symbolName = "circle.fill"
             label = "\(established.count) direct"
         }
 
         let rate = throughputRate(for: status.peers)
-        statusItem.button?.title = "\(glyph) karst: \(label)\(rate)"
+        statusItem.button?.image = Self.brandedIcon(badge: symbolName, accessibilityDescription: label)
+        statusItem.button?.title = "karst: \(label)\(rate)"
         statusItem.menu = menu(for: status)
+    }
+
+    /// Template images so AppKit re-tints them for light/dark menu bars and
+    /// the highlighted state, rather than this code tracking appearance
+    /// itself. `nil` only if `name` is not a real SF Symbol — a programmer
+    /// error, not a runtime condition, so callers pass string literals.
+    private static func symbolImage(_ name: String, accessibilityDescription: String) -> NSImage? {
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: accessibilityDescription)
+        image?.isTemplate = true
+        return image
+    }
+
+    /// The Karst mountain mark, bundled at `Contents/Resources/karst-menu.png`
+    /// by `scripts/build-macos-pkg.sh` (not a SwiftPM `resources:` entry —
+    /// see that script's comment on why). Template so it tints like the SF
+    /// Symbol badges it sits next to. Loaded once: the file never changes at
+    /// runtime, only the badge composited onto it does.
+    private static let brandMark: NSImage? = {
+        guard let path = Bundle.main.path(forResource: "karst-menu", ofType: "png"),
+              let image = NSImage(contentsOfFile: path)
+        else { return nil }
+        image.isTemplate = true
+        return image
+    }()
+
+    /// Brand mark + a small state badge, composited into one image —
+    /// `NSStatusBarButton` tints and highlights whatever single image it's
+    /// given, so the badge has to be baked in rather than laid over the mark
+    /// as a second view. Side-by-side, not corner-overlaid: the mark's
+    /// silhouette runs edge-to-edge (see `karst-menu.png`'s crop), so a
+    /// badge stamped over a corner would sit on top of the mountain shape
+    /// rather than beside it.
+    private static func brandedIcon(badge symbolName: String, accessibilityDescription: String) -> NSImage? {
+        let badge = symbolImage(symbolName, accessibilityDescription: accessibilityDescription)
+        guard let brand = brandMark, let badge else { return badge }
+        let height: CGFloat = 16
+        let gap: CGFloat = 3
+        let badgeSize: CGFloat = 10
+        let brandWidth = height * (brand.size.width / brand.size.height)
+        let canvas = NSSize(width: brandWidth + gap + badgeSize, height: height)
+        let composite = NSImage(size: canvas, flipped: false) { rect in
+            brand.draw(in: NSRect(x: 0, y: 0, width: brandWidth, height: height))
+            badge.draw(in: NSRect(x: brandWidth + gap, y: (height - badgeSize) / 2, width: badgeSize, height: badgeSize))
+            return true
+        }
+        composite.isTemplate = true
+        return composite
     }
 
     private func throughputRate(for peers: [PeerStatus]) -> String {
@@ -146,8 +200,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(withTitle: "No peers configured", action: nil, keyEquivalent: "")
         }
         for peer in status.peers {
-            let title = "\(stateSymbol(for: peer)) \(peer.name) — \(peer.state), \(peer.transport)"
-            menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+            let title = "\(peer.name) — \(peer.state), \(peer.transport)"
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.image = Self.symbolImage(stateSymbolName(for: peer), accessibilityDescription: peer.state)
+            menu.addItem(item)
         }
         menu.addItem(NSMenuItem.separator())
         addSetupItem(to: menu)
@@ -181,12 +237,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? process.run()
     }
 
-    private func stateSymbol(for peer: PeerStatus) -> String {
-        guard peer.state.hasPrefix("established") else { return "○" }
+    private func stateSymbolName(for peer: PeerStatus) -> String {
+        guard peer.state.hasPrefix("established") else { return "circle" }
         switch peer.transport {
-        case "direct": return "●"
-        case "relay", "turn": return "◐"
-        default: return "△"
+        case "direct": return "circle.fill"
+        case "relay", "turn": return "circle.lefthalf.filled"
+        default: return "triangle"
         }
     }
 }

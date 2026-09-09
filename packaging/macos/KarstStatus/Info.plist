@@ -25,6 +25,14 @@
     <string>dev.karst.karststatus</string>
     <key>CFBundleExecutable</key>
     <string>KarstStatus</string>
+    <!--
+      No extension: Launch Services appends .icns itself. The file this
+      names is generated at build time from Resources/AppIcon.png by
+      scripts/build-macos-pkg.sh (sips + iconutil, both macOS-only — see
+      that script's icon-building block for why it can't happen here).
+    -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
