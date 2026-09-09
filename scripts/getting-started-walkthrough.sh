@@ -523,7 +523,7 @@ path_b() {
 	# even begun.
 	docker compose restart control >/dev/null
 	wait_for 180 "the restarted server found the key already there and kept it" -- \
-		bash -c "docker compose logs control 2>&1 | grep -q 'an enrollment key is already in'"
+		bash -c "docker compose logs control 2>&1 | grep -q 'bootstrap key file .* already exists'"
 	[ "$(tr -d '\r\n' <"$COMPOSE_DIR/state/bootstrap.key")" = "$setup_key" ] \
 		|| die "the enrollment key changed across a restart; the first one is now unrevocable"
 	ok "the enrollment key survived a restart unchanged"
