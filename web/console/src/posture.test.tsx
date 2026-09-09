@@ -14,9 +14,23 @@ test("status communicates its state with a shape and text", () => {
 });
 
 test("observations retain machine-readable time and a human-readable age", () => {
-  const markup = renderToStaticMarkup(<Observed at="2026-08-22T20:32:00Z" />);
-  expect(markup).toContain('dateTime="2026-08-22T20:32:00Z"');
+  const at = new Date(Date.now() - 5 * 60_000).toISOString();
+  const markup = renderToStaticMarkup(<Observed at={at} />);
+  expect(markup).toContain(`dateTime="${at}"`);
   expect(markup).toContain("ago");
+});
+
+test("an age past a week rolls up to a date instead of a raw unit count", () => {
+  const at = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const markup = renderToStaticMarkup(<Observed at={at} />);
+  expect(markup).not.toContain("ago");
+  expect(markup).not.toMatch(/\d{3,} min/);
+});
+
+test("a timestamp that hasn't happened yet reads as 'in', not 'just now'", () => {
+  const at = new Date(Date.now() + 60 * 60_000).toISOString();
+  const markup = renderToStaticMarkup(<Observed at={at} />);
+  expect(markup).toContain("in 1 hr");
 });
 
 const rows: SessionPosture[] = [

@@ -11,12 +11,31 @@ export function Status({ state, label }: { state: StatusState; label?: string })
   return <span className={`status status-${state}`}><span aria-hidden="true" className="status-shape">{state === "healthy" ? "●" : state === "warning" ? "▲" : state === "danger" ? "■" : "?"}</span>{label ?? statusText[state]}</span>;
 }
 
+// Rolls a timestamp up to the coarsest useful unit — "6589 min ago" tells an
+// admin nothing that "4d ago" doesn't say better — and handles a timestamp
+// that hasn't happened yet (a setup key's `expires`, say) as "in N unit"
+// rather than clamping it to "just now". Beyond a week neither direction of
+// relative count is worth reading, so this falls back to a plain date; the
+// exact instant is always one hover away via Observed's `title` tooltip.
+function relativeLabel(date: Date, now = Date.now()): string {
+  const diffMs = date.getTime() - now;
+  const future = diffMs > 0;
+  const seconds = Math.abs(diffMs) / 1000;
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return future ? `in ${minutes} min` : `${minutes} min ago`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 24) return future ? `in ${hours} hr` : `${hours} hr ago`;
+  const days = Math.round(seconds / 86_400);
+  if (days < 7) return future ? `in ${days} d` : `${days} d ago`;
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return date.toLocaleDateString([], sameYear ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
+}
+
 export function Observed({ at }: { at?: string | null }) {
   if (!at) return <span>Not observed</span>;
   const date = new Date(at);
-  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60_000));
-  const age = minutes < 1 ? "just now" : minutes === 1 ? "1 min ago" : `${minutes} min ago`;
-  return <time dateTime={at} title={date.toLocaleString()}>{date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ({age})</time>;
+  return <time dateTime={at} title={date.toLocaleString()}>{relativeLabel(date)}</time>;
 }
 
 export function EmptyState({ title, children }: { title: string; children: ReactNode }) {
