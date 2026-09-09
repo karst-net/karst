@@ -1,10 +1,11 @@
-# Downloaded release artifacts (packages, checksums, SBOMs) used as the
-# pentest target — reproducible from the CI run that produced them
-# (plans/phase-6/04-pentest.md §1), and too large to be worth tracking.
+# Downloaded release artifacts (packages, checksums, SBOMs) used by this
+# deployment — reproducible from the CI run that produced them
+# (plans/phase-6/04-pentest.md §1, this directory's original build), and too
+# large to be worth tracking.
 release/
 
 # Deployment-specific, like ../.env: overrides docker-compose.yml's image
-# pins for a host tracking a newer release than the documented pentest
+# pins for a host tracking a newer release than the documented validation
 # target, without disturbing that documented pin.
 docker-compose.override.yml
 

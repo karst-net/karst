@@ -1,6 +1,5 @@
-# Phase 6 workstream 4 (internal penetration test) target: the same
-# co-located deployment ../docker-compose.yml documents, fronted by Caddy so
-# the console and Keycloak can share the one host port (33073) this
+# Caddy + Keycloak variant of the co-located deployment ../docker-compose.yml
+# documents: the console and Keycloak share the one host port (33073) this
 # deployment has externally — karst-control's own :33073 is no longer
 # published to the host at all, only reachable from Caddy over the compose
 # network. ../docker-compose.yml stays the documented self-hoster default;
@@ -8,8 +7,14 @@
 # compose's override merge concatenates `ports:` instead of replacing it and
 # that is exactly the host publish this stack needs to remove.
 #
-#   cd ..    && docker compose down          # stop the plain default, if up
-#   cd pentest && docker compose up -d
+# Originally built as the Phase 6 workstream 4 (internal penetration test)
+# target (plans/phase-6/04-pentest.md) — this directory was named `pentest`
+# until 2026-09-09. It is a real production deployment shape (TLS
+# termination up front, real OIDC via Keycloak), not disposable test
+# infrastructure; treat it accordingly.
+#
+#   cd ..   && docker compose down          # stop the plain default, if up
+#   cd prod && docker compose up -d
 name: karst
 
 services:

@@ -790,8 +790,8 @@ node traffic) without a second listener. Point `[control] server` at that
 origin with `https://`.
 
 The LAN-only, unproxied second port
-([`deploy/compose/pentest/docker-compose.yml`](../deploy/compose/pentest/docker-compose.yml),
-its [`Caddyfile`](../deploy/compose/pentest/Caddyfile)) predates this and is no
+([`deploy/compose/prod/docker-compose.yml`](../deploy/compose/prod/docker-compose.yml),
+its [`Caddyfile`](../deploy/compose/prod/Caddyfile)) predates this and is no
 longer required — it was a workaround for a real gap found during the
 Phase 6 pentest (`plans/phase-6/04-pentest.md` §8), fixed once
 `karst-control-client` gained TLS support. It is still a legitimate choice if
