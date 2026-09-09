@@ -94,7 +94,6 @@ export type SetupKey = {
 export type SetupKeyDraft = { name: string; type: SetupKeyType; expires_in: number; usage_limit: number; auto_groups: string[]; ephemeral: boolean };
 
 export type AccountUser = { id: string; name: string; email: string; role: string; status: string; is_current?: boolean; is_blocked: boolean; auto_groups?: string[]; issued?: string; last_login?: string | null };
-export type UserDraft = { name: string; email: string; role: string; auto_groups: string[]; is_service_user: boolean };
 
 export type Group = { id: string; name: string; peers_count: number; resources_count: number; issued?: string };
 
@@ -187,9 +186,7 @@ export const api = {
   // ── users ──────────────────────────────────────────────────────────────────
   users: () => management<AccountUser[]>("/users"),
   currentUser: () => management<AccountUser>("/users/current"),
-  createUser: (draft: UserDraft) => management<AccountUser>("/users", { method: "POST", body: body({ name: draft.name, email: draft.email, role: draft.role, auto_groups: draft.auto_groups, is_service_user: draft.is_service_user }) }),
   updateUser: (id: string, changes: { role: string; is_blocked: boolean; auto_groups: string[] }) => management<AccountUser>(`/users/${encodeURIComponent(id)}`, { method: "PUT", body: body(changes) }),
-  inviteUser: (id: string) => management<void>(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" }),
   deprovisionUser: (id: string) => management<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── groups ─────────────────────────────────────────────────────────────────
