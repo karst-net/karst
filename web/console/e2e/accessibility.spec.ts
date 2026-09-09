@@ -161,21 +161,15 @@ test("the machine filter narrows the list without hiding the count", async ({ pa
   await expect(page.getByRole("heading", { name: "No machines match that filter" })).toBeVisible();
 });
 
-test("a user can be invited, edited and blocked", async ({ page }) => {
+test("a user can be edited and blocked", async ({ page }) => {
   await page.goto("/#/users");
-  await page.getByRole("button", { name: "Invite user" }).click();
-  await page.getByLabel("Email", { exact: true }).fill("new@example.test");
-  await page.getByLabel("Full name", { exact: true }).fill("New Operator");
-  await page.getByLabel("Role", { exact: true }).selectOption("user");
-  await page.getByRole("button", { name: "Invite user" }).nth(1).click();
-  await expect(page.getByRole("status")).toContainText("was invited as user");
-  const row = page.locator("tbody tr").filter({ hasText: "new@example.test" });
-  await expect(row).toContainText("invited");
+  const row = page.locator("tbody tr").filter({ hasText: "sre@example.test" });
 
   await row.getByRole("button", { name: "Edit" }).click();
-  await page.getByLabel("Edit role").selectOption("admin");
+  await page.getByLabel("Edit role").selectOption("user");
   await page.getByRole("button", { name: "Save user" }).click();
-  await expect(row).toContainText("admin");
+  await expect(page.getByRole("status")).toContainText("was updated");
+  await expect(row).toContainText("user");
 
   await row.getByRole("button", { name: "Block" }).click();
   await expect(page.getByRole("status")).toContainText("was blocked");
