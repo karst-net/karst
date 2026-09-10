@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: CC-BY-4.0
+# Copyright the Karst contributors.
+#
+# The Windows counterpart of docs/karstd-example.toml — same fields, same
+# warnings, adapted for Windows paths and the Windows service instead of
+# repeating "see the Unix version for the commands" everywhere. Do not copy
+# this file to karstd.toml verbatim: every placeholder below, the peer keys
+# especially, is invalid on purpose, and karstd refuses to start on it. If
+# you have an enrollment invitation from an administrator, use
+# `karst enroll --bundle FILE` instead; this file is for the peer-to-peer
+# path below, with no coordination server at all.
+#
+# The MSI installs this file to %ProgramData%\Karst\karstd.toml.example and
+# never touches %ProgramData%\Karst\karstd.toml itself — that one is yours
+# to create, from this template or from `karst enroll`.
+#
+# Setting up two nodes, from an elevated PowerShell prompt (the Karst
+# service and the private key file both need Administrator to create):
+#
+#   karstd genkey | Out-File -Encoding ascii C:\ProgramData\Karst\node.key
+#   karstd pubkey --config C:\ProgramData\Karst\karstd.toml   # paste into the other node
+#   karstd check  --config C:\ProgramData\Karst\karstd.toml   # validate before running
+#   Start-Service karstd
+#
+# `karstd pubkey` deliberately works before any peer is configured — a new
+# node needs to publish its key precisely in order to be added elsewhere.
+#
+# Windows does not yet enforce the "file must not be readable by other
+# accounts" check this key relies on elsewhere (Linux and macOS refuse a
+# world-readable key file at startup; the Windows ACL equivalent is
+# unimplemented — see issue #110). Until it lands, treat this file's
+# permissions as your own responsibility: it lives under %ProgramData%,
+# which ordinary user accounts can read from by default.
+
+[node]
+# UDP socket for PHREATIC traffic. 0.0.0.0 accepts on every interface; pin it
+# to one address if the host is multi-homed and only one path should be used.
+# The MSI's firewall exception follows karstd.exe itself, not this port
+# number, so changing it here needs no reinstall.
+listen = "0.0.0.0:51820"
+
+# TUN interface name. Karst's Windows port uses the Wintun adapter when the
+# driver is present (see ADR-0017 — not yet bundled by the MSI, pending
+# distribution review) and the pure-Rust userspace stack otherwise; either
+# way this is a preference for the adapter's display name, not a guarantee.
+# `karst status` reports the name it actually got.
+interface = "karst0"
+
+# Addresses assigned to the interface. These are HOST addresses with the
+# length of the on-link prefix: `10.77.0.1/24` means "I am .1, the /24 is
+# on-link". It does not mean the network 10.77.0.0/24.
+addresses = ["10.77.0.1/24", "fd7a:5ea5::1/64"]
+
+# 64 bytes of hex seed for the ML-KEM-1024 key. Generate with `karstd genkey`.
+private_key_file = "C:\\ProgramData\\Karst\\node.key"
+
+# Which PSK epoch the psk values below belong to (§2.6). Rotation arrives with
+# the control plane; until then this stays put.
+psk_epoch = 1
+
+# ── peers ────────────────────────────────────────────────────────────────────
+#
+# One [[peer]] block each. Order does not matter: routing is by longest
+# prefix, not by position, and two peers claiming an identical range is a
+# hard error rather than a silent last-one-wins.
+
+[[peer]]
+# Used in logs and `karstd check`. Must be unique.
+name = "bob"
+
+# From `karstd pubkey` on the peer: 1568 bytes, encoded as 3136 hex characters.
+kem_public_key = "…3136 hex characters…"
+
+# Per-pair pre-shared key, 32 bytes of hex. OPTIONAL, and its absence is
+# reported at startup rather than assumed: without it the handshake still has
+# ML-KEM, but loses the shared secret that would survive a KEM break
+# (spec §7.3).
+# psk = "…64 hex characters…"
+
+# Where to reach this peer. OPTIONAL: a peer with no endpoint is never
+# contacted — there is nowhere to send — but can still connect to us, and its
+# address is learned from the handshake that arrives. That is the arrangement
+# for a peer behind NAT. At least one side of every pair needs an endpoint.
+endpoint = "192.0.2.20:51820"
+
+# Addresses this peer owns. This is cryptokey routing and it cuts both ways:
+# outbound, it decides which peer carries a packet; inbound, a packet from
+# bob whose source is outside these ranges is DROPPED.
+#
+# Keep these as tight as the network allows. `0.0.0.0/0` is legitimate for an
+# exit node and means exactly what it says.
+allowed_ips = ["10.77.0.2/32", "fd7a:5ea5::2/128"]
+
+[[peer]]
+name = "carol"
+kem_public_key = "…"
+allowed_ips = ["10.77.0.3/32"]
+# No endpoint: carol is behind NAT and will connect to us.
+
+# ── enrolling into a coordination server instead ────────────────────────────
+#
+# Everything above is Path A: two nodes and a hand-written roster, no
+# coordination server. If you are instead joining a server (a "control
+# plane"), delete the [[peer]] blocks above and add a [control] table — the
+# netmap it fetches replaces the roster. Full walkthrough: GETTING-STARTED.md
+# §6.3 and §8.
+#
+# Every value below is a TOML string: it MUST be in quotes, even the ones
+# that look like a bare number or an address.
+#
+# [control]
+# server = "http://karst.example.com:33073"
+# server_kem_pin = "…2368 hex characters…"
+# server_verify_pin = "…hex…"
+# identity_key_file = "C:\\ProgramData\\Karst\\identity.key"
+# setup_key = "…"

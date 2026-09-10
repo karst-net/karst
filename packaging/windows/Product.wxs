@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  The Karst client MSI — plans/phase-5/07-windows-client.md §7, issue #110
+  criterion 4. WiX v5 (`wix build`); see scripts/build-windows-msi.ps1 for
+  the invocation, and CI's `windows-package` job in
+  .github/workflows/deliverables.yml for how it is built, installed and
+  uninstalled on a real Windows runner.
+
+  Two things this file relies on that live elsewhere, so a change to either
+  needs a matching change here:
+
+  - `bins/karstd/src/service_windows.rs`'s `SERVICE_NAME` ("karstd") is the
+    literal `ServiceInstall`/`ServiceControl` `Name` below.
+  - `bins/karstd/src/config.rs`'s Windows `DEFAULT_CONFIG_PATH`
+    (`C:\ProgramData\Karst\karstd.toml`) is `[DATAFOLDER]karstd.toml` below
+    by construction (`DATAFOLDER` is `CommonAppDataFolder\Karst`) — the
+    ServiceInstall's `Arguments` still passes `--config` explicitly rather
+    than relying on the default, so the two can never quietly drift apart.
+
+  What is deliberately not here yet:
+
+  - `wintun.dll`. ADR-0017's distribution review is still pending
+    (plans/phase-6/10-windows-client.md §4) — bundling the driver before
+    that review completes would be exactly the "shipped, decide later"
+    mistake ADR-0007's `deny.toml` gate exists to prevent for Cargo
+    dependencies, applied here to a vendored binary instead. Until it lands,
+    this package installs `karstd`/`karst` only; ADR-0012's userspace mode
+    (`network_mode = "userspace"` in `karstd.toml`) is what actually runs on
+    a machine with no Wintun adapter, per the plan's own "honest fallback."
+  - Per-interface DNS (`SetInterfaceDnsSettings`) — `karst_dns::host::Nrpt`'s
+    own module docs track this as the remaining piece of plan §6; nothing
+    about packaging changes when it lands.
+  - Everything ARM64. Phase 5 is explicitly x64-only; `Platform="x64"` below
+    is that decision, not an oversight, and `scripts/build-windows-msi.ps1`
+    never invokes this file for any other platform.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="Karst"
+           Manufacturer="Karst"
+           Version="$(var.KarstVersion)"
+           UpgradeCode="08C4DC64-5FCA-4C1C-993D-98EAEEFD2A3B"
+           Language="1033"
+           Platform="x64">
+
+    <!--
+      Criterion 6: upgrading replaces rather than duplicates. The
+      UpgradeCode above is what ties every version together into one
+      upgrade chain — it must never change — and this element is what makes
+      a newer ProductVersion silently remove the older MSI's install before
+      its own files land, rather than the two coexisting side by side the
+      way two differently-versioned files in the same folder normally
+      would.
+    -->
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Karst is already installed. Uninstall it first to install this version." />
+
+    <Feature Id="Main" Title="Karst" Level="1">
+      <ComponentGroupRef Id="KarstProgramFiles" />
+      <ComponentGroupRef Id="KarstDataFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Karst" />
+    </StandardDirectory>
+    <!--
+      %ProgramData%\Karst — plan §5's ACL'd state directory, and where
+      `karst_dns::host::Nrpt`'s own revert record
+      (`crates/karst-dns/src/host/windows.rs`'s `REVERT_STATE`) already
+      lives. `karstd.toml.example` below is the only file this installer
+      ever puts here: `karstd.toml` itself (an operator's real
+      configuration) and `state\` (the node's private key, created at
+      first run by `karst-secure-storage`) are both left for the daemon and
+      the operator to manage, per this file's own "do not delete state\
+      without asking" requirement — the installer satisfies that simply by
+      never authoring a component for either, so neither is ever part of
+      what an uninstall considers removing.
+    -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="Karst" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="KarstProgramFiles" Directory="INSTALLFOLDER">
+      <Component Id="CmpKarstd" Guid="*">
+        <File Id="KarstdExe" Source="$(var.KarstSourceDir)\karstd.exe" KeyPath="yes">
+          <!--
+            Program-based, not port-based, despite the plan's own example
+            naming "the UDP port": `[node] listen` in karstd.toml is an
+            operator-configurable port (docs/karstd-example.toml defaults it
+            to 51820), and a port-scoped rule would either need a second
+            custom action to keep in sync with that setting or go stale the
+            moment someone changes it. A program exception instead follows
+            whatever port karstd.exe is actually bound to, which is the same
+            choice WireGuard's own Windows client makes for the identical
+            reason. `Scope="any"` because PHREATIC peers and relays are
+            arbitrary internet addresses, not a local subnet.
+          -->
+          <fw:FirewallException
+            Id="KarstdFirewall"
+            Name="Karst node agent"
+            Description="Inbound PHREATIC traffic for the Karst node agent"
+            Scope="any"
+            IgnoreFailure="yes" />
+        </File>
+        <!--
+          LocalSystem per plan §5. `Start="auto"` is the SCM start type
+          (criterion 1: "the service starts on boot") — it is not the same
+          thing as starting the service *now*, which `ServiceControl` below
+          deliberately does not do on install: a freshly installed machine
+          has no `karstd.toml` yet (`karst setup` / `karst enroll` still
+          need to run), and forcing a start against a missing config would
+          just log a config-load failure for no benefit. The same posture
+          `scripts/build-macos-pkg.sh`'s postinstall takes for the
+          LaunchDaemon, reached by a different mechanism.
+        -->
+        <ServiceInstall
+          Id="KarstdServiceInstall"
+          Name="karstd"
+          DisplayName="Karst"
+          Description="Karst node agent — post-quantum mesh VPN datapath and control-plane client."
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="--config &quot;[DATAFOLDER]karstd.toml&quot;" />
+        <!--
+          Stopped on both install (a previous version's running service,
+          ahead of MajorUpgrade replacing its files) and uninstall, and
+          removed only on uninstall. The stop itself is what satisfies
+          criterion 4's "removes ... every NRPT rule, and leaves DNS
+          working": `bins/karstd/src/run.rs`'s shutdown path calls
+          `HostRuntime::shutdown()` unconditionally before the process
+          exits, the same cleanup `SERVICE_CONTROL_STOP` triggers whenever
+          the service stops — no separate custom action needed here to
+          revert DNS or tear down the adapter, both of which already happen
+          on ordinary graceful shutdown.
+        -->
+        <ServiceControl
+          Id="KarstdServiceControl"
+          Name="karstd"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+      <Component Id="CmpKarst" Guid="*">
+        <File Id="KarstExe" Source="$(var.KarstSourceDir)\karst.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="KarstDataFiles" Directory="DATAFOLDER">
+      <Component Id="CmpKarstConfigExample" Guid="*">
+        <File Id="KarstConfigExample"
+              Source="$(var.KarstConfigExample)"
+              Name="karstd.toml.example"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

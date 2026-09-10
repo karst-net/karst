@@ -43,7 +43,16 @@ use crate::routing::{AllowedIps, InterfaceAddress, Prefix};
 pub const PRIVATE_KEY_LEN: usize = 64;
 
 /// Where `karstd` looks for its configuration unless told otherwise.
+#[cfg(not(windows))]
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/karst/karstd.toml";
+/// As above, for Windows: `%ProgramData%\Karst\karstd.toml` — the directory
+/// `packaging/windows/Product.wxs` installs `karstd.toml.example` into
+/// (`DATAFOLDER` there) and `karst_dns::host::Nrpt`'s own revert record
+/// already lives under. The MSI's `ServiceInstall` still passes `--config`
+/// explicitly rather than relying on this default, so the two cannot
+/// quietly drift apart; this exists for a `karstd.exe` invoked by hand.
+#[cfg(windows)]
+pub const DEFAULT_CONFIG_PATH: &str = r"C:\ProgramData\Karst\karstd.toml";
 
 /// Where `karstd` obtains and delivers bare IP packets.
 ///

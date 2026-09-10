@@ -727,6 +727,222 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/karst-signing.keychain-db" 2>/dev/null || true
 
+  # The Windows client MSI — plans/phase-5/07-windows-client.md §7, issue
+  # #110 criterion 4. Unsigned: Phase 6 permits it
+  # (plans/phase-6/10-windows-client.md §2.3's signing deferral), the same
+  # posture the Linux/macOS packages take until a signing certificate
+  # exists. `windows-latest` runners are administrators, which is what
+  # makes installing and uninstalling the real MSI here possible at all —
+  # the same property `windows-core` in ci.yml relies on for
+  # `karst-secure-storage`'s ACL tests.
+  #
+  # Deliberately not yet in `release-artefacts`' `needs:` — unlike the
+  # Linux and macOS jobs, this is the first real run of a WiX package this
+  # project has ever built, and gating the whole release pipeline on it
+  # before it has proven green even once would be the wrong order to learn
+  # that. Add it there once this has run clean.
+  windows-package:
+    name: Windows client MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # bash, not the job's default pwsh: this is the same script the Linux
+      # and macOS jobs use unmodified, and it is plain POSIX shell with
+      # nothing Linux-specific in it — Git for Windows' bash (present on
+      # every windows-latest runner) runs it exactly as written.
+      - name: Compute release version
+        shell: bash
+        run: |
+          out="$(./scripts/release-version.sh)"
+          echo "$out" >> "$GITHUB_ENV"
+          # FIXTURE_VERSION: the same x.y.z build-windows-msi.ps1 itself
+          # would reduce VERSION to, with the patch field bumped by one.
+          # Computed here in bash rather than left to PowerShell's
+          # `[version]` cast later, which throws outright on the
+          # "0.0.0+git.<sha>" a push build's VERSION actually is — this
+          # mirrors the same "strip to a plain x.y.z" rule the script
+          # applies, so the two can never compute it differently.
+          version="$(sed -n 's/^VERSION=//p' <<<"$out")"
+          base="${version%%[-+]*}"
+          IFS='.' read -r major minor patch <<<"$base"
+          echo "FIXTURE_VERSION=$major.$minor.$((patch + 1))" >> "$GITHUB_ENV"
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the MSI
+        run: ./scripts/build-windows-msi.ps1
+
+      # The upgrade fixture, built alongside the real MSI rather than as a
+      # separate job: `scripts/build-windows-msi.ps1` needs the same cargo
+      # build either way, and criterion 6 ("upgrading ... replaces rather
+      # than duplicates") can only be checked by actually installing one
+      # version over another — a fixture one patch level higher than the
+      # real build, for the identical reason the Linux packages' own
+      # upgrade fixture is (see that job's comment): a fixture fixed at a
+      # hardcoded version could sort *below* a real tag's VERSION and make
+      # MajorUpgrade correctly refuse to install it, which is this test
+      # failing for a reason that has nothing to do with packaging.
+      - name: Build the upgrade fixture
+        run: ./scripts/build-windows-msi.ps1 -Version "$env:FIXTURE_VERSION" -OutputDir dist/windows-upgrade-fixture
+
+      - name: Install, verify layout and service, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $msi = (Get-ChildItem "dist/windows/karst-*-x64.msi" | Select-Object -First 1).FullName
+          Write-Host "installing $msi"
+          $proc = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/quiet", "/norestart", "/l*v", "install.log" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Get-Content install.log -Tail 200
+            throw "msiexec /i exited $($proc.ExitCode)"
+          }
+
+          $installDir = Join-Path $env:ProgramFiles "Karst"
+          $dataDir = Join-Path $env:ProgramData "Karst"
+          foreach ($exe in @("karstd.exe", "karst.exe")) {
+            if (-not (Test-Path (Join-Path $installDir $exe))) {
+              throw "$exe missing from $installDir"
+            }
+          }
+          if (-not (Test-Path (Join-Path $dataDir "karstd.toml.example"))) {
+            throw "karstd.toml.example missing from $dataDir"
+          }
+          # Never written by the installer, so a fresh install must not
+          # have created it either — see Product.wxs's own comment on why
+          # this is the mechanism, not a rule, that keeps an uninstall from
+          # ever touching a real node's key.
+          if (Test-Path (Join-Path $dataDir "karstd.toml")) {
+            throw "karstd.toml exists after a fresh install; nothing should have written it"
+          }
+
+          $service = Get-Service -Name karstd -ErrorAction Stop
+          if ($service.StartType -ne "Automatic") {
+            throw "karstd service StartType is $($service.StartType), expected Automatic"
+          }
+          # Criterion 1 is the SCM registration (checked above), not a
+          # running process: this machine has no karstd.toml yet, and
+          # Product.wxs's own comment explains why `ServiceControl` does
+          # not force-start it. `Status` here is a sanity check on that
+          # choice, not the criterion itself.
+          if ($service.Status -eq "Running") {
+            throw "karstd started with no configuration present"
+          }
+
+          $rule = Get-NetFirewallRule -DisplayName "Karst node agent" -ErrorAction SilentlyContinue
+          if ($null -eq $rule) { throw "firewall exception for Karst node agent was not created" }
+
+          $got = & "$installDir\karstd.exe" --version
+          if ($got -ne "karstd $env:KARST_VERSION") {
+            throw "karstd --version printed '$got', expected 'karstd $env:KARST_VERSION'"
+          }
+          $got = & "$installDir\karst.exe" --version
+          if ($got -ne "karst $env:KARST_VERSION") {
+            throw "karst --version printed '$got', expected 'karst $env:KARST_VERSION'"
+          }
+
+          # genkey/pubkey, the same crypto round trip the macOS job's
+          # equivalent step runs: the one command here that exercises the
+          # installed binary's actual cryptography rather than just its
+          # argument parser.
+          $key = & "$installDir\karstd.exe" genkey
+          if ([string]::IsNullOrWhiteSpace($key)) { throw "genkey produced no key" }
+          $keyDir = Join-Path $env:RUNNER_TEMP "karst-msi-key"
+          New-Item -ItemType Directory -Force -Path $keyDir | Out-Null
+          Set-Content -Path (Join-Path $keyDir "node.key") -Value $key -NoNewline
+          # Forward slashes rather than escaping backslashes for TOML: Rust's
+          # `Path` accepts either separator on Windows, and a slash needs no
+          # escaping at all inside a TOML basic string.
+          $keyPath = (Join-Path $keyDir "node.key") -replace '\\', '/'
+          Set-Content -Path (Join-Path $keyDir "karstd.toml") -Value "[node]`nprivate_key_file = `"$keyPath`"`n"
+          $pubkeyOut = & "$installDir\karstd.exe" pubkey --config (Join-Path $keyDir "karstd.toml") 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "pubkey rejected the key genkey produced: $pubkeyOut" }
+          if ($pubkeyOut -notmatch '^kem_public_key = "[0-9a-f]+"$') {
+            throw "pubkey did not print a kem_public_key: $pubkeyOut"
+          }
+
+          Write-Host "uninstalling $msi"
+          $proc = Start-Process msiexec.exe -ArgumentList "/x", $msi, "/quiet", "/norestart", "/l*v", "uninstall.log" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Get-Content uninstall.log -Tail 200
+            throw "msiexec /x exited $($proc.ExitCode)"
+          }
+
+          # Criterion 4: the service, the firewall rule, and the files —
+          # everything the installer created. `karstd.toml.example` is part
+          # of that (the installer put it there); `state\` and a real
+          # `karstd.toml` would not be, and this machine never had either.
+          if (Test-Path $installDir) { throw "$installDir survived uninstall" }
+          if (Test-Path (Join-Path $dataDir "karstd.toml.example")) {
+            throw "karstd.toml.example survived uninstall"
+          }
+          if (Get-Service -Name karstd -ErrorAction SilentlyContinue) {
+            throw "karstd service survived uninstall"
+          }
+          if (Get-NetFirewallRule -DisplayName "Karst node agent" -ErrorAction SilentlyContinue) {
+            throw "firewall exception survived uninstall"
+          }
+
+      - name: Show install/uninstall log on failure
+        if: failure()
+        run: |
+          if (Test-Path install.log) { Get-Content install.log -Tail 300 }
+          if (Test-Path uninstall.log) { Get-Content uninstall.log -Tail 300 }
+
+      # Criterion 6. Installs the real build (still present from the step
+      # above having reinstalled nothing — this is the *first* install on
+      # this runner in this job) is wrong: the previous step already
+      # uninstalled it. So this reinstalls it, then installs the fixture
+      # over it, and checks the fixture replaced it rather than the two
+      # coexisting — which is exactly what a duplicate, unremoved older
+      # entry in "Installed Apps" would mean.
+      - name: Upgrade replaces rather than duplicates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $old = (Get-ChildItem "dist/windows/karst-*-x64.msi" | Select-Object -First 1).FullName
+          $new = (Get-ChildItem "dist/windows-upgrade-fixture/karst-*-x64.msi" | Select-Object -First 1).FullName
+          $installDir = Join-Path $env:ProgramFiles "Karst"
+
+          foreach ($pair in @(@{msi=$old; log="upgrade-install-old.log"}, @{msi=$new; log="upgrade-install-new.log"})) {
+            Write-Host "installing $($pair.msi)"
+            $proc = Start-Process msiexec.exe -ArgumentList "/i", $pair.msi, "/quiet", "/norestart", "/l*v", $pair.log -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+              Get-Content $pair.log -Tail 200
+              throw "msiexec /i $($pair.msi) exited $($proc.ExitCode)"
+            }
+          }
+
+          $installed = Get-CimInstance Win32_Product -Filter "Name = 'Karst'"
+          $count = @($installed).Count
+          if ($count -ne 1) {
+            throw "expected exactly one installed 'Karst' product after upgrading, found $count"
+          }
+          if ($installed.Version -ne $env:FIXTURE_VERSION) {
+            throw "installed Karst is version $($installed.Version), expected $env:FIXTURE_VERSION (the upgrade did not take)"
+          }
+          if (-not (Test-Path (Join-Path $installDir "karstd.exe"))) {
+            throw "karstd.exe missing after upgrade"
+          }
+
+          Start-Process msiexec.exe -ArgumentList "/x", $new, "/quiet", "/norestart" -Wait | Out-Null
+
+      - name: Show upgrade log on failure
+        if: failure()
+        run: |
+          foreach ($log in "upgrade-install-old.log", "upgrade-install-new.log") {
+            if (Test-Path $log) { Get-Content $log -Tail 300 }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package-${{ github.sha }}
+          path: |
+            dist/windows/*.msi
+            dist/windows/*.sha256
+          if-no-files-found: error
+
   # Mac App Store submission — wired up, and stubbed.
   #
   # The package `macos-package` builds installs a root LaunchDaemon, and the

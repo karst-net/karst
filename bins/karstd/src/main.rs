@@ -25,7 +25,15 @@ use karstd::run::Shutdown;
 
 const DEFAULT_CONFIG: &str = karstd::config::DEFAULT_CONFIG_PATH;
 
-const USAGE: &str = "\
+/// Built rather than a `const &str`, so the config and socket defaults it
+/// prints are always [`DEFAULT_CONFIG`] and [`karstd::ipc::DEFAULT_SOCKET`]
+/// themselves — a `windows-latest` runner's `-h` output is otherwise the
+/// kind of thing nobody thinks to update alongside a new platform's `#[cfg]`
+/// branch, and it is exactly what `packaging/windows/Product.wxs`'s own
+/// operators would read first.
+fn usage() -> String {
+    format!(
+        "\
 karstd — the Karst node agent
 
 USAGE:
@@ -35,9 +43,8 @@ USAGE:
     karstd pubkey [--config PATH]  print this node's public keys
 
 OPTIONS:
-    -c, --config PATH   configuration file (default: /etc/karst/karstd.toml)
-    -s, --socket PATH   control socket (default: /run/karst/karstd.sock on
-                         Linux, /var/run/karst/karstd.sock on macOS)
+    -c, --config PATH   configuration file (default: {DEFAULT_CONFIG})
+    -s, --socket PATH   control socket (default: {})
     --status-socket PATH
                         a second, unprivileged read-only socket serving
                         `status` only — for a per-user client that cannot
@@ -54,7 +61,10 @@ OPTIONS:
     -h, --help          this text
 
 Use `karst status` to inspect a running daemon.
-";
+",
+        karstd::ipc::DEFAULT_SOCKET
+    )
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -63,7 +73,7 @@ fn main() -> ExitCode {
     match refs.split_first() {
         None => command_run(&[]),
         Some((&"-h" | &"--help", _)) => {
-            print!("{USAGE}");
+            print!("{}", usage());
             ExitCode::SUCCESS
         }
         // Ahead of the generic `starts_with('-')` run-with-options case
@@ -80,7 +90,7 @@ fn main() -> ExitCode {
         // Options with no subcommand means "run".
         Some((first, _)) if first.starts_with('-') => command_run(&refs),
         Some((other, _)) => {
-            eprintln!("karstd: unknown command {other:?}\n\n{USAGE}");
+            eprintln!("karstd: unknown command {other:?}\n\n{}", usage());
             ExitCode::FAILURE
         }
     }
