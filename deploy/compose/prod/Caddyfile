@@ -71,6 +71,21 @@
 		file_server
 	}
 
+	# The console reads this once at boot to decide whether OIDC is configured
+	# at all (main.tsx's bootstrap()); an empty vs. real oidcAuthority changes
+	# whether the login gate renders. It carries no Cache-Control of its own,
+	# so with only a Last-Modified header, browsers apply heuristic caching
+	# (RFC 7234 §4.2.2) and can keep serving a stale copy from disk cache for
+	# hours without even revalidating — which is exactly what made a fixed
+	# deployment look broken after this file's mount was repaired underneath
+	# it. Force revalidation so a redeploy is visible on the next load.
+	@config path /config.json
+	handle @config {
+		header Cache-Control "no-cache"
+		root * /srv/console
+		file_server
+	}
+
 	handle {
 		root * /srv/console
 		try_files {path} /index.html
