@@ -170,6 +170,26 @@ fn command_run(args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // The MSI's `ServiceInstall` points `ImagePath` straight at this binary
+    // with no distinguishing flag — `try_run` itself tells "the SCM started
+    // this process" apart from "an operator ran `karstd.exe` at a console",
+    // and blocks for the service's whole lifetime in the former case. `None`
+    // means the latter, so every other platform's foreground path below runs
+    // unchanged, and so does an interactive `karstd.exe` on Windows itself.
+    #[cfg(windows)]
+    if let Some(result) =
+        karstd::service_windows::try_run(&config_path, &socket, status_socket.as_deref())
+    {
+        return match result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("karstd: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let (config, source, client) = match karstd::control::load_config(&config_path) {
         Ok(c) => c,
         Err(e) => {

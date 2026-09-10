@@ -137,9 +137,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage --all-targets -- -D warnings
+      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog --all-targets -- -D warnings
       - run: cargo clippy --locked -p karstd --lib --bin karstd -- -D warnings
-      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage --lib --tests
+      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog --lib --tests
+      # `karstd`'s own `tests/*.rs` integration suite (not `--lib`) still
+      # doesn't build for Windows — it is Unix-fixture-heavy
+      # (`PermissionsExt`, `enrollment`, `Scratch`-based sockets) in a way
+      # that is a separate, much larger port than this job's scope. Its
+      # library unit tests do build and run here now, including
+      # `service_windows`'s SCM control-code mapping.
+      - run: cargo test --locked -p karstd --lib
       - run: cargo build --locked -p karstd --bin karstd
 
   # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the

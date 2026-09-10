@@ -1426,12 +1426,24 @@ mod tests {
 
     use super::*;
 
+    /// `mode` is applied on Unix only — Windows has no mode bitmask, and the
+    /// handful of tests that need the file to actually be *rejected* for
+    /// being too permissive are themselves `#[cfg(unix)]` (see
+    /// `refuses_a_key_file_others_can_read` and
+    /// `refuses_a_readable_config_when_it_carries_psks`), so an ordinary
+    /// fixture write here on Windows is never mistaken for asserting
+    /// anything about permissions.
     pub(super) fn write(dir: &Path, name: &str, contents: &str, mode: u32) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join(name);
         std::fs::write(&path, contents).expect("write test file");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
-            .expect("set test mode");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .expect("set test mode");
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
         path
     }
 
@@ -1731,6 +1743,13 @@ host_integration = "resolvconf"
 
     /// A world-readable key file is refused. This is the check that stops a
     /// `chmod 644` from quietly publishing the node's identity.
+    ///
+    /// Unix only: `check_permissions` is a no-op on Windows (see its own
+    /// `#[cfg(not(unix))]` arm) — access control there is a security
+    /// descriptor set at creation, not a mode checked after the fact, and
+    /// there is nothing package-time creation applies here for this test to
+    /// exercise.
+    #[cfg(unix)]
     #[test]
     fn refuses_a_key_file_others_can_read() {
         let dir = Scratch::new("cfg");
@@ -1743,6 +1762,9 @@ host_integration = "resolvconf"
     }
 
     /// A config carrying PSKs is as sensitive as the key file itself.
+    ///
+    /// Unix only — see `refuses_a_key_file_others_can_read`.
+    #[cfg(unix)]
     #[test]
     fn refuses_a_readable_config_when_it_carries_psks() {
         let dir = Scratch::new("cfg");

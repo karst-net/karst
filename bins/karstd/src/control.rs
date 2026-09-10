@@ -1402,6 +1402,11 @@ mod tests {
     }
 
     /// And it is created unreadable by anyone else, from the moment it exists.
+    ///
+    /// Unix only — Windows has no mode bitmask to inspect; see
+    /// `bins/karstd/src/exit_node.rs`'s module docs for the Windows
+    /// counterpart's own, separately-tested ACL enforcement.
+    #[cfg(unix)]
     #[test]
     fn a_created_identity_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -1430,6 +1435,9 @@ mod tests {
     /// An existing key file others can read is refused, for the same reason the
     /// roster's is: a permissive mode is the difference between a secret and a
     /// published file.
+    ///
+    /// Unix only — see `a_created_identity_is_not_world_readable`.
+    #[cfg(unix)]
     #[test]
     fn a_readable_identity_file_is_refused() {
         use std::os::unix::fs::PermissionsExt as _;

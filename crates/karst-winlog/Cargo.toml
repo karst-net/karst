@@ -1,0 +1,19 @@
+[package]
+name = "karst-winlog"
+description = "Windows Event Log reporting for karstd's service lifecycle (start, stop, fatal errors)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_EventLog",
+] }

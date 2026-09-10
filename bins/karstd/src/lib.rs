@@ -42,6 +42,7 @@ pub mod routing;
 pub mod run;
 #[cfg(test)]
 mod scratch;
+pub mod service_windows;
 pub mod setup;
 mod socks5;
 pub mod turn;
