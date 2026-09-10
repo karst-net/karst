@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	pb "google.golang.org/protobuf/proto"
@@ -406,5 +407,33 @@ func TestMalformedPayloadRejected(t *testing.T) {
 	}
 	if accounts.calls != 0 {
 		t.Fatal("malformed payload reached the business layer")
+	}
+}
+
+// Invalid setup keys must not permit an attacker to use the enrollment path
+// as an unbounded source of database work or rejection logs. The limiter is
+// deliberately keyed by source so one noisy network does not lock out another.
+func TestEnrollmentAttemptsAreRateLimitedPerSource(t *testing.T) {
+	h := &control.LoginHandler{}
+	from := func(ip string) context.Context {
+		return peer.NewContext(context.Background(), &peer.Peer{
+			Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 12345},
+		})
+	}
+
+	for range 10 {
+		_, err := h.Handle(from("192.0.2.10"), nil, nil, []byte{0xff, 0xff, 0xff, 0xff})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("within limit: got %v, want InvalidArgument", err)
+		}
+	}
+	_, err := h.Handle(from("192.0.2.10"), nil, nil, []byte{0xff, 0xff, 0xff, 0xff})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("exhausted source: got %v, want ResourceExhausted", err)
+	}
+
+	_, err = h.Handle(from("192.0.2.11"), nil, nil, []byte{0xff, 0xff, 0xff, 0xff})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("independent source: got %v, want InvalidArgument", err)
 	}
 }

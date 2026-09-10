@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/realip"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	pb "google.golang.org/protobuf/proto"
 
@@ -43,14 +45,31 @@ type PeerLoginer interface {
 // the same 44 characters a WireGuard key occupies (see package node). The
 // business layer never inspects it, so it does not care what produced it.
 type LoginHandler struct {
-	limitOnce sync.Once
-	attempts  *rate.Limiter
-	Nodes     *node.Store
-	Accounts  PeerLoginer
+	attemptsMu       sync.Mutex
+	attempts         map[string]*enrollmentAttemptLimiter
+	lastAttemptPrune time.Time
+	Nodes            *node.Store
+	Accounts         PeerLoginer
 	// OIDC enables interactive registration. Nil means the server accepts
 	// setup keys only, and a node presenting a token is refused rather than
 	// quietly falling back to one.
 	OIDC *OIDC
+}
+
+const (
+	// enrollmentAttemptRate deliberately leaves room for a user correcting a
+	// typo or a client retrying a transient failure, while making a sustained
+	// invalid-key flood expensive. This limit is per source, per replica.
+	enrollmentAttemptRate    = rate.Limit(1) / 6
+	enrollmentAttemptSources = 10_000
+	enrollmentAttemptBurst   = 10
+	enrollmentAttemptTTL     = 15 * time.Minute
+	enrollmentPruneEvery     = time.Minute
+)
+
+type enrollmentAttemptLimiter struct {
+	limiter    *rate.Limiter
+	lastAccess time.Time
 }
 
 // Handle implements Handler.
@@ -60,14 +79,11 @@ type LoginHandler struct {
 // the peer handle from that key rather than from anything the request says,
 // so a request cannot ask to be someone else.
 func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) ([]byte, error) {
-	// Bound the unauthenticated enrollment work per replica. Reconnecting
-	// enrolled clients authenticate by identity without invoking this handler.
-	h.limitOnce.Do(func() {
-		if h.attempts == nil {
-			h.attempts = rate.NewLimiter(10, 100)
-		}
-	})
-	if !h.attempts.Allow() {
+	// Bound unauthenticated enrollment work per source, per replica.
+	// Reconnecting enrolled clients authenticate by identity without invoking
+	// this handler. In particular, do this before parsing or logging a request
+	// so an invalid-key flood cannot turn into a log or CPU flood.
+	if !h.allowEnrollmentAttempt(ctx) {
 		return nil, status.Error(codes.ResourceExhausted, "too many enrollment attempts; retry later")
 	}
 	req := &proto.KarstLoginRequest{}
@@ -156,6 +172,61 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 		return nil, fmt.Errorf("marshal login response: %w", err)
 	}
 	return out, nil
+}
+
+func (h *LoginHandler) allowEnrollmentAttempt(ctx context.Context) bool {
+	now := time.Now()
+	source := enrollmentAttemptSource(ctx)
+
+	h.attemptsMu.Lock()
+	defer h.attemptsMu.Unlock()
+
+	if h.attempts == nil {
+		h.attempts = make(map[string]*enrollmentAttemptLimiter)
+	}
+	if h.lastAttemptPrune.IsZero() || now.Sub(h.lastAttemptPrune) >= enrollmentPruneEvery {
+		for key, entry := range h.attempts {
+			if now.Sub(entry.lastAccess) >= enrollmentAttemptTTL {
+				delete(h.attempts, key)
+			}
+		}
+		h.lastAttemptPrune = now
+	}
+
+	entry := h.attempts[source]
+	if entry == nil && len(h.attempts) >= enrollmentAttemptSources {
+		// An attacker should not be able to turn distinct source addresses into
+		// unbounded process memory. Overflow shares the conservative fallback
+		// bucket; legitimate known sources retain their own entries.
+		source = "unknown"
+		entry = h.attempts[source]
+	}
+	if entry == nil {
+		entry = &enrollmentAttemptLimiter{
+			limiter: rate.NewLimiter(enrollmentAttemptRate, enrollmentAttemptBurst),
+		}
+		h.attempts[source] = entry
+	}
+	entry.lastAccess = now
+	return entry.limiter.AllowN(now, 1)
+}
+
+// enrollmentAttemptSource uses the trusted real-IP interceptor's value when
+// available, falling back to the transport peer for deployments without a
+// reverse proxy. A missing address shares a conservative bucket instead of
+// silently disabling the limit.
+func enrollmentAttemptSource(ctx context.Context) string {
+	if addr, ok := realip.FromContext(ctx); ok {
+		return addr.String()
+	}
+	if p, ok := peer.FromContext(ctx); ok {
+		host, _, err := net.SplitHostPort(p.Addr.String())
+		if err == nil {
+			return host
+		}
+		return p.Addr.String()
+	}
+	return "unknown"
 }
 
 // extractMeta converts the wire message into the business layer's struct.
