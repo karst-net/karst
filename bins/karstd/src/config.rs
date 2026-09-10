@@ -1344,7 +1344,12 @@ fn check_permissions(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+// Always succeeds: file permissions are a Unix-only check here (Windows
+// access control is a different model entirely, not yet implemented for
+// this path). The `Result` return stays so callers do not need a second
+// `#[cfg]` of their own around every `check_permissions(path)?`.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn check_permissions(_path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }

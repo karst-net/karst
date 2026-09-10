@@ -103,18 +103,25 @@ jobs:
       - run: cargo test --workspace --all-features
 
   # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
-  # Wintun adapter/session/IP-Helper code in karst-tun, and karst-ipc's named
-  # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport) — all
+  # Wintun adapter/session/IP-Helper code in karst-tun, karst-ipc's named
+  # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport), and
+  # karst-secure-storage's ACL'd files/directories
+  # (bins/karstd/src/exit_node.rs's protected exit-route state) — all
   # compiled and clippy-clean on a real windows-latest runner via
-  # --all-targets, with karst-ipc/tests/pipe.rs exercising real named-pipe
-  # bind/accept/connect/read/write and EOF-on-drop, no Administrator needed.
+  # --all-targets, with karst-ipc/tests/pipe.rs and
+  # karst-secure-storage/tests/storage.rs exercising the real thing (named
+  # pipes; ACL'd file/directory creation), no Administrator needed for
+  # either. karstd itself now builds as a binary for Windows too — its own
+  # unit tests and bins/karstd/tests/*.rs integration suite do not yet
+  # (unrelated pre-existing Unix-only test code: enrollment.rs is
+  # #![cfg(unix)] outright, and much of the test suite still shells out to
+  # PermissionsExt for setup) — so this only builds it, rather than testing
+  # it, until that separate port lands.
+  #
   # A real Wintun adapter test needs Administrator and wintun.dll, neither
   # provisioned yet — that lands alongside the MSI packaging work that
   # acquires the DLL (plan §7), same split Linux's `tun` job below draws for
-  # CAP_NET_ADMIN. karstd itself is not built here yet: ipc.rs now has a
-  # Windows arm, but bins/karstd/src/exit_node.rs (protected exit-route
-  # state) still uses std::os::unix::fs::PermissionsExt unconditionally,
-  # with no Windows ACL counterpart written — expand once that lands.
+  # CAP_NET_ADMIN.
   windows-core:
     name: Windows portable networking
     runs-on: windows-latest
@@ -124,8 +131,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc --all-targets -- -D warnings
-      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc --lib --tests
+      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage --all-targets -- -D warnings
+      - run: cargo clippy --locked -p karstd --lib --bin karstd -- -D warnings
+      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage --lib --tests
+      - run: cargo build --locked -p karstd --bin karstd
 
   # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the
   # job above. Without this job the entire kernel-facing surface — interface

@@ -2,9 +2,22 @@
 // Copyright the Karst contributors.
 
 //! Durable, local consent for one advertised exit route.
+//!
+//! # Windows
+//!
+//! `PermissionsExt`/`OpenOptionsExt` have no Windows equivalent — access
+//! control there is a security descriptor set at creation, not a mode
+//! bitmask set after — so the locked-down directory and exclusively-created
+//! file below come from [`karst_secure_storage`] instead, restricted to
+//! Administrators and `LocalSystem` (plan §5's "Administrators and SYSTEM
+//! only"). See that crate for why the Win32 FFI lives there rather than
+//! here (`karstd` `#![forbid(unsafe_code)]`).
 
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::io::{self, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -15,6 +28,62 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_STATE_FILE: &str = "/var/lib/karst/exit-route";
 #[cfg(target_os = "macos")]
 pub const DEFAULT_STATE_FILE: &str = "/var/db/karst/exit-route";
+/// `%ProgramData%\Karst\state\` is the plan §5 convention for protected
+/// per-node state; `exit-route` is this module's file within it, same as
+/// the Unix paths above name a file directly rather than a directory.
+#[cfg(windows)]
+pub const DEFAULT_STATE_FILE: &str = r"C:\ProgramData\Karst\state\exit-route";
+
+/// The temporary-then-rename file this module creates, restricted the same
+/// way the final file is — see [`create_temp_file`].
+#[cfg(unix)]
+type TempFile = std::fs::File;
+#[cfg(windows)]
+type TempFile = karst_secure_storage::SecureFile;
+
+/// Lock down `parent` so only Administrators and `LocalSystem` can enter it
+/// — the Unix `0700` directory's counterpart.
+///
+/// # Errors
+/// Any failure creating or securing the directory.
+#[cfg(unix)]
+fn secure_parent(parent: &Path) -> io::Result<()> {
+    fs::create_dir_all(parent)?;
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+}
+
+/// As above, on Windows. Only `parent` itself is restricted — its ancestors
+/// (`%ProgramData%\Karst`) are created with ordinary, unrestricted
+/// `create_dir_all` first, matching [`create_secure_dir`](karst_secure_storage::create_secure_dir)'s
+/// documented split between "the one directory this guards" and everything
+/// above it.
+#[cfg(windows)]
+fn secure_parent(parent: &Path) -> io::Result<()> {
+    if let Some(grandparent) = parent.parent() {
+        fs::create_dir_all(grandparent)?;
+    }
+    karst_secure_storage::create_secure_dir(parent)
+}
+
+/// Create `path` exclusively, restricted the same way the final file is —
+/// the Unix `0600`, `O_EXCL` file's counterpart.
+///
+/// # Errors
+/// Any failure creating the file, including it already existing.
+#[cfg(unix)]
+fn create_temp_file(path: &Path) -> io::Result<TempFile> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+/// As above, on Windows.
+#[cfg(windows)]
+fn create_temp_file(path: &Path) -> io::Result<TempFile> {
+    karst_secure_storage::SecureFile::create_new(path)
+}
 
 #[derive(Debug)]
 pub struct Selection {
@@ -54,16 +123,11 @@ impl Selection {
                 "exit-route state has no parent",
             )
         })?;
-        fs::create_dir_all(parent)?;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        secure_parent(parent)?;
 
         let temporary = temporary_path(&self.path);
         let result: io::Result<()> = (|| {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)?;
+            let mut file = create_temp_file(&temporary)?;
             writeln!(file, "{route_id}")?;
             file.sync_all()?;
             fs::rename(&temporary, &self.path)?;
@@ -129,8 +193,17 @@ mod tests {
 
         selection.select("exit-eu").unwrap();
         assert_eq!(Selection::load(&path).unwrap().active(), Some("exit-eu"));
-        let mode = fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o077, 0);
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0);
+        }
+        // The Windows counterpart — the file's security descriptor grants
+        // only Administrators/LocalSystem — is asserted in
+        // `karst_secure_storage`'s own tests, run on real `windows-latest`
+        // CI where it can actually be checked; there is no mode bitmask
+        // here to inspect on that platform the way `PermissionsExt` gives
+        // on Unix.
 
         selection.disable().unwrap();
         assert_eq!(Selection::load(&path).unwrap().active(), None);

@@ -673,6 +673,11 @@ pub fn run_with_control(
         let relay_dropped_status = Arc::clone(&relay_dropped);
         scope.spawn(move || {
             while !shutdown.requested() {
+                // `_`, not `()`: the second tuple element is a real
+                // `SocketAddr` on Unix and only `()` on Windows
+                // (`karst_ipc::Listener::accept` has no peer address to
+                // give), so `_` is the one pattern valid on both.
+                #[allow(clippy::ignored_unit_patterns)]
                 match control.accept() {
                     Ok((mut stream, _)) => {
                         // Back to blocking for the conversation itself: the
@@ -859,6 +864,9 @@ pub fn run_with_control(
         if let Some(status_listener) = &status_control {
             scope.spawn(move || {
                 while !shutdown.requested() {
+                    // See the admin-socket accept loop above for why `_`
+                    // rather than `()`.
+                    #[allow(clippy::ignored_unit_patterns)]
                     match status_listener.accept() {
                         Ok((mut stream, _)) => {
                             let _ = stream.set_nonblocking(false);

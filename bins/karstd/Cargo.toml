@@ -78,6 +78,7 @@ rustix = { version = "1.1", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 karst-ipc.workspace = true
+karst-secure-storage.workspace = true
 
 [dev-dependencies]
 # The relay, as a library, so `tests/relay_live.rs` can run a real one in

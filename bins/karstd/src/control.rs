@@ -1342,7 +1342,11 @@ fn check_permissions(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+// As `config::check_permissions`'s Windows stub: always succeeds, and the
+// `Result` return stays so callers do not need a second `#[cfg]` around
+// every `check_permissions(path)?`.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn check_permissions(_path: &Path) -> Result<(), Error> {
     Ok(())
 }

@@ -225,6 +225,9 @@ pub fn bind(path: &Path) -> std::io::Result<Listener> {
 
 /// As above, on Windows: the pipe's own security descriptor is the access
 /// control — see the module's Windows section.
+///
+/// # Errors
+/// Any failure binding the pipe — see [`karst_ipc::Listener::bind`].
 #[cfg(windows)]
 pub fn bind(path: &Path) -> std::io::Result<Listener> {
     karst_ipc::Listener::bind(path)
@@ -250,6 +253,9 @@ pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<Listener> {
 }
 
 /// As above, on Windows — see [`bind`]'s Windows arm.
+///
+/// # Errors
+/// Any failure binding the pipe — see [`karst_ipc::Listener::bind_unprivileged`].
 #[cfg(windows)]
 pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<Listener> {
     karst_ipc::Listener::bind_unprivileged(path)
@@ -335,8 +341,11 @@ fn shutdown_write(stream: &UnixStream) -> std::io::Result<()> {
     stream.shutdown(std::net::Shutdown::Write)
 }
 
-/// As above — a no-op on Windows, per the module's Windows section.
+/// As above — a no-op on Windows, per the module's Windows section. The
+/// `Result` return stays so [`request`]'s `shutdown_write(&stream)?` reads
+/// the same on both platforms.
 #[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)]
 fn shutdown_write(_stream: &Stream) -> std::io::Result<()> {
     Ok(())
 }
