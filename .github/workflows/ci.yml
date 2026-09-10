@@ -128,6 +128,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # karstd now builds on Windows, and pulls in karst-control-client,
+      # whose build script compiles the .proto files — the same requirement
+      # the `tun` job above documents. This job never needed it before
+      # karstd itself was buildable here.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
