@@ -561,6 +561,13 @@ key on first boot and writes it back into this file. `AuthIssuer`,
 `AuthAudience` and `AuthKeysLocation` are your OIDC provider, and are what the
 console and the setup-key API need (§7, §8).
 
+The API is same-origin by default. If the console is deliberately served from a
+different origin, add that exact origin to `HttpConfig` — for example,
+`"CORSAllowedOrigins": ["https://console.karst.example"]`. Do not use `*`:
+the setting is an exact allow-list, and wildcard entries are rejected. The
+recommended deployment proxies `/api/` and the console from the same origin,
+so it needs no CORS setting.
+
 `/etc/karst/control.env`, read by the unit's `EnvironmentFile=`:
 
 ```sh walkthrough=C step=control-env file=/etc/karst/control.env

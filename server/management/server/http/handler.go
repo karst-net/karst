@@ -61,7 +61,7 @@ import (
 )
 
 // NewAPIHandler creates the Management service HTTP API handler registering all the available endpoints.
-func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager account.Manager, networksManager nbnetworks.Manager, resourceManager resources.Manager, routerManager routers.Manager, groupsManager nbgroups.Manager, LocationManager geolocation.Geolocation, authManager auth.Manager, appMetrics telemetry.AppMetrics, permissionsManager permissions.Manager, settingsManager settings.Manager, zManager zones.Manager, rManager records.Manager, networkMapController network_map.Controller, idpManager idpmanager.Manager, serviceManager service.Manager, reverseProxyDomainManager *manager.Manager, reverseProxyAccessLogsManager accesslogs.Manager, proxyGRPCServer *nbgrpc.ProxyServiceServer, trustedHTTPProxies []netip.Prefix, rateLimiter *middleware.APIRateLimiter, isValidChildAccount middleware.IsValidChildAccountFunc, agentNetworkManager agentnetwork.Manager) (http.Handler, error) {
+func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager account.Manager, networksManager nbnetworks.Manager, resourceManager resources.Manager, routerManager routers.Manager, groupsManager nbgroups.Manager, LocationManager geolocation.Geolocation, authManager auth.Manager, appMetrics telemetry.AppMetrics, permissionsManager permissions.Manager, settingsManager settings.Manager, zManager zones.Manager, rManager records.Manager, networkMapController network_map.Controller, idpManager idpmanager.Manager, serviceManager service.Manager, reverseProxyDomainManager *manager.Manager, reverseProxyAccessLogsManager accesslogs.Manager, proxyGRPCServer *nbgrpc.ProxyServiceServer, trustedHTTPProxies []netip.Prefix, corsAllowedOrigins []string, rateLimiter *middleware.APIRateLimiter, isValidChildAccount middleware.IsValidChildAccountFunc, agentNetworkManager agentnetwork.Manager) (http.Handler, error) {
 
 	// Register bypass paths for unauthenticated endpoints
 	if err := bypass.AddBypassPath("/api/instance"); err != nil {
@@ -91,7 +91,7 @@ func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager accou
 		isValidChildAccount,
 	)
 
-	corsMiddleware := cors.AllowAll()
+	corsMiddleware := newCORSMiddleware(corsAllowedOrigins)
 
 	metricsMiddleware := appMetrics.HTTPMiddleware()
 
@@ -135,4 +135,37 @@ func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager accou
 	}
 
 	return router, nil
+}
+
+// newCORSMiddleware limits cross-origin API access to explicitly configured
+// origins. Same-origin requests require no CORS response headers and continue
+// to work when the allow-list is empty.
+func newCORSMiddleware(allowedOrigins []string) *cors.Cors {
+	allowedOriginSet := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		allowedOriginSet[origin] = struct{}{}
+	}
+
+	return cors.New(cors.Options{
+		// rs/cors treats an empty AllowedOrigins slice as "*". Use its callback
+		// instead so an omitted setting denies every cross-origin request.
+		// Matching exact origin strings also keeps this setting an allow-list:
+		// wildcards, including "*", are never implicitly accepted.
+		AllowOriginFunc: func(origin string) bool {
+			_, ok := allowedOriginSet[origin]
+			return ok
+		},
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodHead,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+		},
+		AllowedHeaders: []string{
+			"Authorization",
+			"Content-Type",
+		},
+	})
 }

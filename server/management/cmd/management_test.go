@@ -22,7 +22,8 @@ const (
 	  "HttpConfig": {
 		"AuthAudience": "https://stageapp/",
 		"AuthIssuer": "https://something.eu.auth0.com/",
-		"OIDCConfigEndpoint": "https://something.eu.auth0.com/.well-known/openid-configuration"
+		"OIDCConfigEndpoint": "https://something.eu.auth0.com/.well-known/openid-configuration",
+		"CORSAllowedOrigins": ["https://console.example.test"]
 	  },
 	  "HighestSupportedSyncMessageVersion": 1,
 	  "PerAccountHighestSupportedSyncMessageVersion": {
@@ -42,6 +43,7 @@ func Test_LoadMgmtConfig(t *testing.T) {
 	assert.NotEmpty(t, cfg.Relay.Addresses)
 	assert.Equal(t, int(grpc.ComponentNetworkMap), *cfg.HighestSupportedSyncMessageVersion)
 	assert.Equal(t, map[string]int{"1": int(grpc.Base), "2": int(grpc.ComponentNetworkMap)}, cfg.PerAccountHighestSupportedSyncMessageVersion)
+	assert.Equal(t, []string{"https://console.example.test"}, cfg.HttpConfig.CORSAllowedOrigins)
 }
 
 func Test_LoadMgmtConfig_Empty(t *testing.T) {

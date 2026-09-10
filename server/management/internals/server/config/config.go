@@ -101,7 +101,11 @@ type Relay struct {
 
 // HttpServerConfig is a config of the HTTP Management service server
 type HttpServerConfig struct {
-	LetsEncryptDomain string
+	// CORSAllowedOrigins is the list of browser origins permitted to make
+	// cross-origin requests to the management API. An empty list is secure by
+	// default: browsers may only use the API from its own origin.
+	CORSAllowedOrigins []string
+	LetsEncryptDomain  string
 	// CertFile is the location of the certificate
 	CertFile string
 	// CertKey is the location of the certificate private key
