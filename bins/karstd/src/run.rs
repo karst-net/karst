@@ -3134,6 +3134,36 @@ fn kernel_release() -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+/// Create the kernel TUN device, hiding the one signature difference Windows
+/// has from Linux and macOS: `karst_tun::windows::Tun::create` also takes the
+/// path to `wintun.dll`, which the other two platforms have no counterpart
+/// to.
+#[cfg(not(target_os = "windows"))]
+fn create_tun(cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
+    Tun::create(cfg)
+}
+
+/// As above, on Windows: locate `wintun.dll` and create the adapter.
+///
+/// Fixed at `%ProgramFiles%\Karst\wintun.dll` — the MSI's install layout
+/// (`plans/phase-6/10-windows-client.md` §7, ADR-0017) — with no
+/// configuration knob to override it. There is nothing yet to point at
+/// besides that path: no MSI exists to install anywhere else, and a future
+/// privileged CI job can place `wintun.dll` at this well-known location
+/// itself rather than this daemon needing to be told where to look.
+#[cfg(target_os = "windows")]
+fn create_tun(cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
+    let program_files = std::env::var_os("ProgramFiles").ok_or_else(|| {
+        karst_tun::TunError::OpenDevice(io::Error::other(
+            "%ProgramFiles% is not set; cannot locate wintun.dll",
+        ))
+    })?;
+    let dll_path = std::path::Path::new(&program_files)
+        .join("Karst")
+        .join("wintun.dll");
+    Tun::create(cfg, &dll_path)
+}
+
 fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
     let attachment = TunConfig {
         name: config.interface.clone(),
@@ -3144,7 +3174,7 @@ fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
         ..TunConfig::default()
     };
     let tun = match config.network_mode {
-        crate::config::NetworkMode::Tun => Tun::create(&attachment)
+        crate::config::NetworkMode::Tun => create_tun(&attachment)
             .map(NetworkDevice::Tun)
             .map_err(|e| io::Error::other(e.to_string()))?,
         crate::config::NetworkMode::Userspace => Userspace::create(&attachment)

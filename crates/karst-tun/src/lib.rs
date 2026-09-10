@@ -359,6 +359,39 @@ pub fn default_gateway() -> Result<Option<std::net::IpAddr>, TunError> {
     })
 }
 
+/// Every global-scope unicast address this host currently holds.
+///
+/// As the other platforms, through IP Helper's `GetUnicastIpAddressTable`
+/// rather than `GetAdaptersAddresses` — see [`sys_windows::local_addresses`]
+/// for why.
+///
+/// # Errors
+/// [`TunError::Netlink`] if the table cannot be read. The variant is shared
+/// with the other platforms rather than duplicated: it means "the host's own
+/// network configuration could not be read", which is the same fact on all
+/// three.
+#[cfg(target_os = "windows")]
+pub fn local_addresses() -> Result<Vec<std::net::IpAddr>, TunError> {
+    sys_windows::local_addresses().map_err(|source| TunError::Netlink {
+        op: "GetUnicastIpAddressTable",
+        source,
+    })
+}
+
+/// The next hop of the default route, if this host has one.
+///
+/// As the other platforms, through IP Helper's `GetIpForwardTable2`.
+///
+/// # Errors
+/// [`TunError::Netlink`] if the forwarding table cannot be read.
+#[cfg(target_os = "windows")]
+pub fn default_gateway() -> Result<Option<std::net::IpAddr>, TunError> {
+    sys_windows::default_gateway().map_err(|source| TunError::Netlink {
+        op: "GetIpForwardTable2",
+        source,
+    })
+}
+
 /// Check a requested MTU against what the protocol permits.
 ///
 /// # Errors

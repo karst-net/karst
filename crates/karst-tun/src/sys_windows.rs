@@ -34,13 +34,14 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     ConvertInterfaceLuidToIndex, CreateIpForwardEntry2, CreateUnicastIpAddressEntry,
-    DeleteIpForwardEntry2, InitializeIpForwardEntry, InitializeUnicastIpAddressEntry,
-    MIB_IPFORWARD_ROW2, MIB_UNICASTIPADDRESS_ROW,
+    DeleteIpForwardEntry2, FreeMibTable, GetIpForwardTable2, GetUnicastIpAddressTable,
+    InitializeIpForwardEntry, InitializeUnicastIpAddressEntry, MIB_IPFORWARD_ROW2,
+    MIB_IPFORWARD_TABLE2, MIB_UNICASTIPADDRESS_ROW, MIB_UNICASTIPADDRESS_TABLE,
 };
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{
-    AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, SOCKADDR_IN, SOCKADDR_IN6,
-    SOCKADDR_INET,
+    IpDadStatePreferred, AF_INET, AF_INET6, AF_UNSPEC, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0,
+    SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_INET,
 };
 use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
@@ -400,6 +401,18 @@ impl Drop for Adapter {
     }
 }
 
+// SAFETY: `handle` is an opaque Wintun adapter handle, not a pointer this
+// process dereferences — every operation performed on it goes through
+// `Wintun`'s methods, whose own `Send`/`Sync` impls above give the thread-
+// safety argument. `Adapter` has no `Clone`, so at most one `close_adapter_raw`
+// call can ever happen for a given handle, which Rust's ordinary ownership
+// rules already guarantee regardless of which thread runs `Drop`.
+unsafe impl Send for Adapter {}
+// SAFETY: as above — nothing here reads or writes through `handle` directly;
+// it is only ever passed back to `Wintun`, which documents its own
+// thread-safety per function.
+unsafe impl Sync for Adapter {}
+
 /// A running Wintun session: the ring buffers `karst-tun` reads and writes.
 #[derive(Debug)]
 pub(crate) struct Session {
@@ -407,6 +420,18 @@ pub(crate) struct Session {
     handle: *mut c_void,
     read_event: HANDLE,
 }
+
+// SAFETY: as `Adapter` — `handle` is an opaque session handle, and every
+// operation on it (`receive_packet`, `send_packet`, `end_session_raw`) goes
+// through `Wintun`, whose methods are individually documented thread-safe by
+// `wintun.h` (`WintunReceivePacket`, `WintunSendPacket`, etc.) or guarded by
+// Rust ownership (`end_session_raw`, reachable only from `Drop`, which runs
+// once). `Tun` shares `&Session` across the daemon's reader and writer
+// paths — see `bins/karstd/src/run.rs`'s `NetworkDevice` — which is exactly
+// the concurrent use the header states is safe.
+unsafe impl Send for Session {}
+// SAFETY: as above.
+unsafe impl Sync for Session {}
 
 impl Session {
     /// The event Wintun signals when a packet becomes available. **Not
@@ -768,4 +793,135 @@ fn ok_or_last_error(status: u32) -> io::Result<()> {
             i32::try_from(status).unwrap_or(i32::MAX),
         ))
     }
+}
+
+// ── Host address and route enumeration ──────────────────────────────────────
+//
+// The `karst-tun` crate-level counterparts to `sys_macos::local_addresses`
+// and `sys_macos::default_gateway` (`lib.rs` exposes both per platform).
+// `GetUnicastIpAddressTable`/`GetIpForwardTable2` rather than
+// `GetAdaptersAddresses`: both return a flat array of the same row types
+// addressing above already uses, with no linked-list traversal or
+// wide-string adapter-name handling to get wrong — plan §4's preference for
+// IP Helper's directly callable, non-locale-dependent shape applies here too.
+
+/// Read an `IpAddr` out of a `SOCKADDR_INET`, the inverse of
+/// [`sockaddr_inet`]. `None` for a family this crate never constructs
+/// (`AF_UNSPEC`, an unset `NextHop`).
+fn sockaddr_to_ip(addr: &SOCKADDR_INET) -> Option<IpAddr> {
+    match family_of(addr) {
+        AF_INET => {
+            // SAFETY: `family_of` just confirmed `AF_INET`, so `Ipv4` is the
+            // arm the kernel or this crate wrote.
+            let sin = unsafe { addr.Ipv4 };
+            // SAFETY: `S_addr` is `IN_ADDR_0`'s plain `u32` arm, valid for any
+            // bits the union holds — this crate never writes the byte/word
+            // arms.
+            let bits = unsafe { sin.sin_addr.S_un.S_addr };
+            Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(bits))))
+        }
+        AF_INET6 => {
+            // SAFETY: `family_of` just confirmed `AF_INET6`.
+            let sin6 = unsafe { addr.Ipv6 };
+            // SAFETY: `Byte` is `IN6_ADDR_0`'s plain 16-byte arm.
+            let bytes = unsafe { sin6.sin6_addr.u.Byte };
+            Some(IpAddr::V6(Ipv6Addr::from(bytes)))
+        }
+        _ => None,
+    }
+}
+
+/// Whether a peer could plausibly reach this host at `addr` — the same rule
+/// `sys_macos::is_reachable` applies through `getifaddrs` flags and `sys`
+/// applies through netlink scopes, restated for what this table carries (the
+/// two are platform-gated out of this build, so this cannot be a doc link).
+/// The caller still has to exclude its own overlay addresses.
+fn is_reachable(addr: &IpAddr) -> bool {
+    !(addr.is_loopback() || addr.is_unspecified() || addr.is_multicast())
+        && match addr {
+            IpAddr::V4(a) => !a.is_link_local() && !a.is_broadcast(),
+            // `is_unicast_link_local` is unstable; the prefix is fe80::/10.
+            IpAddr::V6(a) => a.segments().first().is_none_or(|s| s & 0xffc0 != 0xfe80),
+        }
+}
+
+/// Every global-scope unicast address this host currently holds.
+///
+/// `DadState` is this table's counterpart to the "is this address actually
+/// usable" flags the other platforms filter on: excluding everything but
+/// `IpDadStatePreferred` is the same exclusion of tentative and deprecated
+/// addresses `sys_macos::local_addresses` documents doing through
+/// `getifaddrs` flags it does not have.
+///
+/// # Errors
+/// An [`io::Error`] from the last Win32 error if the table cannot be read.
+pub(crate) fn local_addresses() -> io::Result<Vec<IpAddr>> {
+    let mut table: *mut MIB_UNICASTIPADDRESS_TABLE = std::ptr::null_mut();
+    // SAFETY: `table` is a live, uniquely borrowed pointer slot for the
+    // duration of the call; `AF_UNSPEC` asks for both families in one table,
+    // matching the combined dump the other platforms' paths use.
+    let status = unsafe { GetUnicastIpAddressTable(AF_UNSPEC, &raw mut table) };
+    ok_or_last_error(status)?;
+
+    // SAFETY: `status == 0` means `table` now points at a live
+    // `MIB_UNICASTIPADDRESS_TABLE` the API allocated, whose `Table` field is
+    // the first of `NumEntries` contiguous rows — the classic C
+    // variable-length-array-at-the-end layout `windows-sys` can only declare
+    // as `[Row; 1]`. Valid until `FreeMibTable`, called unconditionally below
+    // on every path out of this function.
+    let rows = unsafe {
+        std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize)
+    };
+    let mut out = Vec::new();
+    for row in rows {
+        if row.DadState == IpDadStatePreferred {
+            if let Some(addr) = sockaddr_to_ip(&row.Address).filter(is_reachable) {
+                out.push(addr);
+            }
+        }
+    }
+    // SAFETY: `table` is the pointer `GetUnicastIpAddressTable` allocated
+    // above and has not been freed on any earlier path out of this function.
+    unsafe { FreeMibTable(table.cast()) };
+    Ok(out)
+}
+
+/// The next hop of the default route, if this host has one.
+///
+/// Ties broken by lowest `Metric`, the same "which route the kernel would
+/// actually use" tiebreak `sys_macos::default_gateway`'s route dump takes
+/// (there, implicitly, by scanning the first match — here explicitly, since
+/// `GetIpForwardTable2` does not return rows pre-sorted by preference).
+///
+/// # Errors
+/// An [`io::Error`] from the last Win32 error if the table cannot be read.
+pub(crate) fn default_gateway() -> io::Result<Option<IpAddr>> {
+    let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+    // SAFETY: as `local_addresses`, for the forwarding table.
+    let status = unsafe { GetIpForwardTable2(AF_UNSPEC, &raw mut table) };
+    ok_or_last_error(status)?;
+
+    // SAFETY: as `local_addresses`, for `MIB_IPFORWARD_TABLE2`'s identical
+    // variable-length layout.
+    let rows = unsafe {
+        std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize)
+    };
+    let mut best: Option<(u32, IpAddr)> = None;
+    for row in rows {
+        if row.DestinationPrefix.PrefixLength != 0 {
+            continue;
+        }
+        let Some(next_hop) = sockaddr_to_ip(&row.NextHop) else {
+            continue;
+        };
+        if next_hop.is_unspecified() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(metric, _)| row.Metric < *metric) {
+            best = Some((row.Metric, next_hop));
+        }
+    }
+    // SAFETY: as `local_addresses`.
+    unsafe { FreeMibTable(table.cast()) };
+    Ok(best.map(|(_, addr)| addr))
 }
