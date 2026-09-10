@@ -27,12 +27,21 @@ use karst_tun::{Tun, TunConfig, TunError};
 /// ADR-0017: the DLL is loaded by absolute path, never searched for. A path
 /// that does not exist must fail as a named, clean `OpenDevice` error — not a
 /// panic, and not a silent fallback to some other location.
+///
+/// **The parent directory must exist.** `LoadLibraryExW` on a path whose
+/// *directory* is also missing returns `ERROR_PATH_NOT_FOUND`, which this
+/// Rust toolchain's `io::ErrorKind` mapping does not recognize as `NotFound`
+/// — discovered by this test failing on the real `windows-latest` CI runner,
+/// which is exactly the gap portable/cross-compiled checking cannot see.
+/// `%SystemRoot%` always exists, so a missing file inside it isolates
+/// `ERROR_FILE_NOT_FOUND`, which is mapped.
 #[test]
 fn create_fails_cleanly_without_the_dll() {
-    let missing = Path::new(r"C:\this\path\does\not\exist\wintun.dll");
-    match Tun::create(&TunConfig::default(), missing) {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+    let missing = std::path::PathBuf::from(system_root).join("karst-test-missing-wintun.dll");
+    match Tun::create(&TunConfig::default(), &missing) {
         Err(TunError::OpenDevice(e)) => {
-            assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+            assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "got {e:?}");
         }
         other => panic!("expected TunError::OpenDevice(NotFound), got {other:?}"),
     }
