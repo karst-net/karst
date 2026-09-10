@@ -102,8 +102,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
 
-  # First Windows port gate: portable packet codecs and userspace TCP/UDP.
-  # Expand to karstd and privileged adapter tests as the native port lands.
+  # Windows port gate: portable packet codecs, userspace TCP/UDP, and now the
+  # native Wintun adapter/session/IP-Helper code in karst-tun (compiled and
+  # clippy-clean on a real windows-latest runner via --all-targets; the
+  # unprivileged tests in tests/windows_adapter.rs run here too). A real
+  # adapter needs Administrator and wintun.dll, neither provisioned yet —
+  # that privileged test lands alongside the MSI packaging work that acquires
+  # the DLL (plan §7), same split Linux's `tun` job below draws for
+  # CAP_NET_ADMIN. Expand to karstd once the daemon itself builds for Windows.
   windows-core:
     name: Windows portable networking
     runs-on: windows-latest

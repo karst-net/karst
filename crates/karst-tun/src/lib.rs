@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-// ADR-0003 permits `unsafe` in this crate. It is confined to `sys`, which
-// carries the sole `allow(unsafe_code)` and whose every block states its
-// argument; the rest of the crate — including the packet parser that reads
-// bytes decrypted from a peer — cannot contain any.
+// ADR-0003 permits `unsafe` in this crate. It is confined to the per-platform
+// `sys`/`sys_macos`/`sys_windows` modules, each carrying its own
+// `allow(unsafe_code)` and each block stating its argument; the rest of the
+// crate — including the packet parser that reads bytes decrypted from a peer
+// — cannot contain any.
 #![deny(unsafe_code)]
 
 //! Platform TUN device: where Karst meets the host's network stack.
@@ -69,11 +70,18 @@ mod sys_macos;
 // job as the rest of the suite rather than only on a Mac. See the module.
 mod macos_wire;
 
+#[cfg(target_os = "windows")]
+mod sys_windows;
+#[cfg(target_os = "windows")]
+mod windows;
+
 #[cfg(target_os = "linux")]
 pub use linux::Tun;
 #[cfg(target_os = "macos")]
 pub use macos::Tun;
 pub use userspace::{TcpHandle, UdpHandle, Userspace};
+#[cfg(target_os = "windows")]
+pub use windows::Tun;
 
 use std::fmt;
 use std::io;
@@ -120,8 +128,10 @@ impl Default for TunConfig {
 /// Why a TUN operation failed.
 #[derive(Debug)]
 pub enum TunError {
-    /// `/dev/net/tun` could not be opened. Usually the `tun` module is not
-    /// loaded, or a container lacks the device node.
+    /// The platform TUN facility could not be opened: `/dev/net/tun` on
+    /// Linux (usually the `tun` module is not loaded, or a container lacks
+    /// the device node), the `PF_SYSTEM` control socket on macOS, or
+    /// `wintun.dll` and its expected exports on Windows.
     OpenDevice(io::Error),
     /// An `ioctl` failed. `op` names it, because `EPERM` alone says nothing
     /// about which privilege was missing.
@@ -186,7 +196,7 @@ pub enum TunError {
 impl fmt::Display for TunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OpenDevice(e) => write!(f, "opening /dev/net/tun: {e}"),
+            Self::OpenDevice(e) => write!(f, "opening the TUN device: {e}"),
             Self::Ioctl { op, source } | Self::Netlink { op, source } => {
                 write!(f, "{op}: {source}")
             }
