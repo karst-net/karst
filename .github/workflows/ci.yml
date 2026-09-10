@@ -102,14 +102,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
 
-  # Windows port gate: portable packet codecs, userspace TCP/UDP, and now the
-  # native Wintun adapter/session/IP-Helper code in karst-tun (compiled and
-  # clippy-clean on a real windows-latest runner via --all-targets; the
-  # unprivileged tests in tests/windows_adapter.rs run here too). A real
-  # adapter needs Administrator and wintun.dll, neither provisioned yet —
-  # that privileged test lands alongside the MSI packaging work that acquires
-  # the DLL (plan §7), same split Linux's `tun` job below draws for
-  # CAP_NET_ADMIN. Expand to karstd once the daemon itself builds for Windows.
+  # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
+  # Wintun adapter/session/IP-Helper code in karst-tun, and karst-ipc's named
+  # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport) — all
+  # compiled and clippy-clean on a real windows-latest runner via
+  # --all-targets, with karst-ipc/tests/pipe.rs exercising real named-pipe
+  # bind/accept/connect/read/write and EOF-on-drop, no Administrator needed.
+  # A real Wintun adapter test needs Administrator and wintun.dll, neither
+  # provisioned yet — that lands alongside the MSI packaging work that
+  # acquires the DLL (plan §7), same split Linux's `tun` job below draws for
+  # CAP_NET_ADMIN. karstd itself is not built here yet: ipc.rs now has a
+  # Windows arm, but bins/karstd/src/exit_node.rs (protected exit-route
+  # state) still uses std::os::unix::fs::PermissionsExt unconditionally,
+  # with no Windows ACL counterpart written — expand once that lands.
   windows-core:
     name: Windows portable networking
     runs-on: windows-latest
@@ -119,8 +124,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked -p karst-proto -p karst-tun --all-targets -- -D warnings
-      - run: cargo test --locked -p karst-proto -p karst-tun --lib --tests
+      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc --all-targets -- -D warnings
+      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc --lib --tests
 
   # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the
   # job above. Without this job the entire kernel-facing surface — interface

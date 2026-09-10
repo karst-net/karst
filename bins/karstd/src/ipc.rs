@@ -43,12 +43,43 @@
 //! including `Down`, no matter what it is asked. It exists only when
 //! `karstd` is started with `--status-socket PATH`; nothing binds it by
 //! default, on any platform.
+//!
+//! # Windows
+//!
+//! There is no Unix domain socket, so [`Listener`]/[`Stream`] are
+//! [`karst_ipc`]'s named pipes there instead — see that crate for why the
+//! Win32 FFI lives in its own crate rather than here (`karstd`
+//! `#![forbid(unsafe_code)]`). The directory-then-socket permission dance
+//! above has no Windows counterpart: a named pipe is identified by a kernel
+//! namespace entry, not a filesystem path, so there is no directory to lock
+//! down, and access is instead the security descriptor `karst_ipc::Listener`
+//! bakes into the pipe itself at creation. There is also no stale-pipe
+//! cleanup to do — unlike a Unix socket file, a named pipe simply ceases to
+//! exist once its owning process's last handle to it closes, so
+//! [`bind`]/[`bind_unprivileged_status`] need no counterpart to
+//! [`bind_at`]'s stale-file check on that platform.
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+
+/// The listener type this platform binds — a thin alias so [`bind`] and
+/// friends read the same on every platform. See the module's Windows
+/// section for what differs underneath it.
+#[cfg(unix)]
+type Listener = UnixListener;
+#[cfg(windows)]
+type Listener = karst_ipc::Listener;
+
+/// The connected-stream type [`serve`] and [`request`] read and write.
+#[cfg(unix)]
+type Stream = UnixStream;
+#[cfg(windows)]
+type Stream = karst_ipc::Stream;
 
 /// Where the socket lives unless told otherwise.
 ///
@@ -67,6 +98,12 @@ use std::os::unix::net::{UnixListener, UnixStream};
 pub const DEFAULT_SOCKET: &str = "/run/karst/karstd.sock";
 #[cfg(target_os = "macos")]
 pub const DEFAULT_SOCKET: &str = "/var/run/karst/karstd.sock";
+/// A pipe name, not a filesystem path — see the module's Windows section.
+/// `\\.\pipe\` is the fixed namespace prefix every named pipe lives under;
+/// nothing else on the host can collide with it by using a real path that
+/// happens to look like this one.
+#[cfg(windows)]
+pub const DEFAULT_SOCKET: &str = r"\\.\pipe\karst\karstd";
 
 /// Where a `--status-socket`-equipped packaging (the macOS `.pkg`, currently
 /// the only one) points both `karstd` and its status client at. Not a
@@ -82,6 +119,10 @@ pub const DEFAULT_SOCKET: &str = "/var/run/karst/karstd.sock";
 pub const DEFAULT_STATUS_SOCKET: &str = "/run/karst-status/karstd.sock";
 #[cfg(target_os = "macos")]
 pub const DEFAULT_STATUS_SOCKET: &str = "/var/run/karst-status/karstd.sock";
+/// As [`DEFAULT_SOCKET`]'s Windows form: a distinct pipe name, not a path
+/// inside anything — there is no containing directory for it to be inside.
+#[cfg(windows)]
+pub const DEFAULT_STATUS_SOCKET: &str = r"\\.\pipe\karst-status\karstd";
 
 /// Commands the CLI may send. Deliberately tiny and text-based: this is a
 /// local administrative interface, not a protocol to grow features into.
@@ -164,11 +205,15 @@ impl Command {
 ///
 /// Removes a stale socket left by a previous run: a Unix socket file outlives
 /// the process that made it, and refusing to start because of one would mean a
-/// crash requires manual cleanup before the tunnel can come back.
+/// crash requires manual cleanup before the tunnel can come back. Nothing
+/// stale survives a crash on Windows — see the module's Windows section —
+/// so [`karst_ipc::Listener::bind`] alone is the whole story there.
 ///
 /// # Errors
-/// Any failure creating the directory or binding.
-pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
+/// Any failure creating the directory or binding (Unix); any failure
+/// binding the pipe (Windows) — see [`karst_ipc::Listener::bind`].
+#[cfg(unix)]
+pub fn bind(path: &Path) -> std::io::Result<Listener> {
     // The directory must be locked down *before* the socket exists inside it —
     // see the module note. This is the security boundary.
     if let Some(dir) = path.parent() {
@@ -176,6 +221,13 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     bind_at(path, 0o600)
+}
+
+/// As above, on Windows: the pipe's own security descriptor is the access
+/// control — see the module's Windows section.
+#[cfg(windows)]
+pub fn bind(path: &Path) -> std::io::Result<Listener> {
+    karst_ipc::Listener::bind(path)
 }
 
 /// As [`bind`], but reachable by any local user — see the module note on the
@@ -188,7 +240,8 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
 ///
 /// # Errors
 /// Any failure creating the directory or binding.
-pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<UnixListener> {
+#[cfg(unix)]
+pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<Listener> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
@@ -196,12 +249,19 @@ pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<UnixListener> {
     bind_at(path, 0o666)
 }
 
+/// As above, on Windows — see [`bind`]'s Windows arm.
+#[cfg(windows)]
+pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<Listener> {
+    karst_ipc::Listener::bind_unprivileged(path)
+}
+
 /// Remove a stale socket left by a previous run, then bind fresh at `mode`.
 ///
 /// A stale socket is a leftover file, not a running daemon: a failing
 /// `connect` is what distinguishes them. Unlinking one that *is* live would
 /// silently steal the control interface from a running node.
-fn bind_at(path: &Path, mode: u32) -> std::io::Result<UnixListener> {
+#[cfg(unix)]
+fn bind_at(path: &Path, mode: u32) -> std::io::Result<Listener> {
     if path.exists() && UnixStream::connect(path).is_err() {
         std::fs::remove_file(path)?;
     }
@@ -220,11 +280,17 @@ fn bind_at(path: &Path, mode: u32) -> std::io::Result<UnixListener> {
 /// an error line rather than closing silently: this is an interactive tool, and
 /// a blank response is indistinguishable from a hung daemon.
 pub fn serve(
-    stream: &mut UnixStream,
+    stream: &mut Stream,
     reply: impl FnOnce(Command) -> String,
 ) -> std::io::Result<Option<Command>> {
     let mut line = String::new();
-    BufReader::new(&*stream).read_line(&mut line)?;
+    // `&mut *stream`, not `&*stream`: `karst_ipc::Stream::read` takes
+    // `&mut self`, so only `&mut Stream` implements `Read` (via the standard
+    // blanket impl) — unlike `UnixStream`, which also implements it for a
+    // shared reference. Working through `&mut` here costs the Unix path
+    // nothing and is what keeps this function itself unduplicated across
+    // platforms.
+    BufReader::new(&mut *stream).read_line(&mut line)?;
 
     let Some(command) = Command::parse(&line) else {
         writeln!(stream, "error = \"unknown command\"")?;
@@ -243,14 +309,36 @@ pub fn serve(
 /// Any failure connecting or reading. `ConnectionRefused` or `NotFound` means
 /// the daemon is not running, which the CLI reports as such.
 pub fn request(path: &Path, command: &Command) -> std::io::Result<String> {
-    let mut stream = UnixStream::connect(path)?;
+    let mut stream = Stream::connect(path)?;
     writeln!(stream, "{}", command.as_str())?;
-    // Shutting down the write half is the frame: the daemon reads to end of
-    // line, and this guarantees it is not waiting for more.
-    stream.shutdown(std::net::Shutdown::Write)?;
+    shutdown_write(&stream)?;
     let mut out = String::new();
-    std::io::Read::read_to_string(&mut stream, &mut out)?;
+    stream.read_to_string(&mut out)?;
     Ok(out)
+}
+
+/// Signal that no more will be written, so the daemon's `read_line` is not
+/// left waiting for more after the one line it wants.
+///
+/// A real half-close on Unix. A named pipe has none — see the module's
+/// Windows section — so this is a no-op there; it does not need to be
+/// anything else, because [`request`]'s own read-to-EOF (for the *reply*, in
+/// the other direction) is satisfied differently on each platform too: on
+/// Unix, the daemon's `serve` returning drops its `UnixStream`, closing the
+/// socket and delivering EOF; on Windows, that same drop runs
+/// `DisconnectNamedPipe` on the server's instance
+/// (`karst_ipc::Stream::drop`), which is what turns this function's caller's
+/// blocked read into `ERROR_BROKEN_PIPE` —
+/// `karst_ipc::sys_windows::read`'s `Ok(0)` mapping for it.
+#[cfg(unix)]
+fn shutdown_write(stream: &UnixStream) -> std::io::Result<()> {
+    stream.shutdown(std::net::Shutdown::Write)
+}
+
+/// As above — a no-op on Windows, per the module's Windows section.
+#[cfg(windows)]
+fn shutdown_write(_stream: &Stream) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// The socket path to use, honoring an explicit override.
@@ -308,7 +396,12 @@ mod tests {
     }
 
     /// The socket carries administrative access, so it must not be reachable by
-    /// other users.
+    /// other users. Unix mode bits only; the Windows equivalent is
+    /// `karst_ipc`'s own security-descriptor construction, which cannot be
+    /// asserted on from here without a Windows machine to run it on — see
+    /// this crate's `tests/` for what did get validated on
+    /// `windows-latest` CI.
+    #[cfg(unix)]
     #[test]
     fn the_socket_is_not_readable_by_others() {
         let dir = Scratch::new("perm");
@@ -325,7 +418,9 @@ mod tests {
     /// The unprivileged listener exists so a per-user client can reach it
     /// without `sudo` — so it must actually grant that, on both the
     /// directory and the socket, or a menu-bar app is back to `sudo karst
-    /// status` with extra steps.
+    /// status` with extra steps. Unix mode bits only — see the note on
+    /// [`the_socket_is_not_readable_by_others`].
+    #[cfg(unix)]
     #[test]
     fn the_unprivileged_status_socket_is_reachable_by_any_local_user() {
         let dir = Scratch::new("status-perm");
@@ -351,6 +446,9 @@ mod tests {
 
     /// A socket file outlives its process. Refusing to start because of one
     /// would mean a crash requires manual cleanup before the tunnel returns.
+    /// Unix-specific premise — see the module's Windows section on why a
+    /// named pipe has no stale-file counterpart to test.
+    #[cfg(unix)]
     #[test]
     fn a_stale_socket_is_replaced_rather_than_fatal() {
         let dir = Scratch::new("stale");
@@ -385,13 +483,11 @@ mod tests {
             serve(&mut stream, |_| String::new()).expect("serve")
         });
 
-        let mut stream = UnixStream::connect(&path).expect("connect");
+        let mut stream = Stream::connect(&path).expect("connect");
         writeln!(stream, "nonsense").expect("write");
-        stream
-            .shutdown(std::net::Shutdown::Write)
-            .expect("shutdown");
+        shutdown_write(&stream).expect("shutdown");
         let mut out = String::new();
-        std::io::Read::read_to_string(&mut stream, &mut out).expect("read");
+        stream.read_to_string(&mut out).expect("read");
 
         assert!(out.contains("error"), "got {out:?}");
         assert_eq!(server.join().expect("join"), None);

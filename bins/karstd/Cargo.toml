@@ -76,6 +76,9 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs"] }
 
+[target.'cfg(windows)'.dependencies]
+karst-ipc.workspace = true
+
 [dev-dependencies]
 # The relay, as a library, so `tests/relay_live.rs` can run a real one in
 # process. The node's Ponor client had only stub-signer unit tests before that;

@@ -20,6 +20,7 @@ karst-control-client = { path = "crates/karst-control-client", version = "0.0.0"
 karst-crypto = { path = "crates/karst-crypto", version = "0.0.0" }
 karst-disco = { path = "crates/karst-disco", version = "0.0.0" }
 karst-dns = { path = "crates/karst-dns", version = "0.0.0" }
+karst-ipc = { path = "crates/karst-ipc", version = "0.0.0" }
 karst-node = { path = "crates/karst-node", version = "0.0.0" }
 karst-noise = { path = "crates/karst-noise", version = "0.0.0" }
 karst-portmap = { path = "crates/karst-portmap", version = "0.0.0" }
