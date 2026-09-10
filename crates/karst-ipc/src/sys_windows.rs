@@ -33,7 +33,8 @@ use std::mem;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING,
-    ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -349,19 +350,26 @@ pub(crate) fn connect_client(name: &[u16]) -> io::Result<OwnedHandle> {
 /// caller sees ordinary blocking read semantics despite the handle being
 /// overlapped — see the module documentation.
 ///
-/// **`ERROR_BROKEN_PIPE` is `Ok(0)`, not an error.** `bins/karstd/src/ipc.rs`'s
-/// `request` reads the reply to EOF — the Unix path gets that from the
-/// server's `shutdown(Shutdown::Write)`-then-drop; a named pipe has no
-/// half-close, so [`crate::Stream::drop`]'s `DisconnectNamedPipe` on the
-/// server side is what the client's blocked read sees as the pipe breaking.
+/// **`ERROR_BROKEN_PIPE`/`ERROR_PIPE_NOT_CONNECTED` are `Ok(0)`, not an
+/// error.** `bins/karstd/src/ipc.rs`'s `request` reads the reply to EOF —
+/// the Unix path gets that from the server's `shutdown(Shutdown::Write)`-
+/// then-drop; a named pipe has no half-close, so
+/// [`crate::Stream::drop`]'s `DisconnectNamedPipe` on the server side is
+/// what the client's blocked read sees as the connection ending.
 /// `Read::read`'s contract is that end-of-stream is a `0` return, not an
 /// `Err`, and callers like `read_to_string` treat the two very differently
-/// (`Ok(0)` stops cleanly; `Err` propagates as failure) — mapping this one
-/// code is what makes that framing work at all on this platform.
+/// (`Ok(0)` stops cleanly; `Err` propagates as failure) — mapping these two
+/// codes is what makes that framing work at all on this platform.
+///
+/// Both codes, not one: which one Windows reports depends on the exact
+/// timing of the disconnect relative to this read (`ERROR_BROKEN_PIPE` for
+/// one already in flight, `ERROR_PIPE_NOT_CONNECTED` — confirmed on real
+/// `windows-latest` CI, not assumed — when the disconnect had already
+/// finished before this call started).
 ///
 /// # Errors
 /// An [`io::Error`] from the last Win32 error, for any failure other than
-/// the broken-pipe case above.
+/// the two end-of-stream cases above.
 pub(crate) fn read(handle: &OwnedHandle, buf: &mut [u8]) -> io::Result<usize> {
     #[allow(clippy::cast_possible_truncation)]
     let len = buf.len() as u32;
@@ -387,7 +395,7 @@ pub(crate) fn read(handle: &OwnedHandle, buf: &mut [u8]) -> io::Result<usize> {
     }
     // SAFETY: as `begin_connect`.
     match unsafe { GetLastError() } {
-        ERROR_BROKEN_PIPE => return Ok(0),
+        ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED => return Ok(0),
         ERROR_IO_PENDING => {}
         _ => return Err(io::Error::last_os_error()),
     }
@@ -401,7 +409,7 @@ pub(crate) fn read(handle: &OwnedHandle, buf: &mut [u8]) -> io::Result<usize> {
     }
     // SAFETY: as `begin_connect`.
     match unsafe { GetLastError() } {
-        ERROR_BROKEN_PIPE => Ok(0),
+        ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED => Ok(0),
         _ => Err(io::Error::last_os_error()),
     }
 }
