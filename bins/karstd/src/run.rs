@@ -26,7 +26,7 @@ use karst_control_client::transport::pb;
 use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
-use karst_transport::{BATCH, MAX_DATAGRAM, Received, UdpTransport};
+use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
 use karst_tun::{Tun, TunConfig, Userspace};
 
 use crate::config::Config;
@@ -4466,7 +4466,7 @@ mod route_tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::{
-        Routes, dns_query_report, dns_report, routing_report, underlay_addresses, url_authority,
+        dns_query_report, dns_report, routing_report, underlay_addresses, url_authority, Routes,
     };
     use crate::config::Config;
     use std::net::IpAddr;
@@ -4487,7 +4487,7 @@ mod route_tests {
                 node_id: Vec::new(),
                 public: std::sync::Arc::new(karst_noise::handshake::PeerPublic {
                     kem_pk: {
-                        use karst_crypto::kem::{KemKind, keypair_from_seed};
+                        use karst_crypto::kem::{keypair_from_seed, KemKind};
                         let seed = u8::try_from(index).unwrap_or(0).wrapping_add(0x22);
                         let (_, pk) = keypair_from_seed(KemKind::MlKem1024, &[seed; 64]);
                         pk

@@ -439,13 +439,11 @@ mod tests {
         assert!(state.activate("karst0", Family::V4, escapes).is_err());
         assert!(state.undo.is_empty());
         assert_eq!(state.active, None);
-        assert!(
-            state
-                .backend
-                .commands
-                .iter()
-                .any(|command| command.get(2).is_some_and(|v| v == "del"))
-        );
+        assert!(state
+            .backend
+            .commands
+            .iter()
+            .any(|command| command.get(2).is_some_and(|v| v == "del")));
     }
 
     /// **The crash-recovery fix.** A prior instance's route and every rule

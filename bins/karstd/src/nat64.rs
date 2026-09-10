@@ -196,18 +196,19 @@ fn auto(listen: SocketAddr) -> Option<Nat64Prefix> {
         return Some(p);
     }
     let prefix = discover();
-    match prefix {
-        Some(p) => tracing::warn!(
+    if let Some(p) = prefix {
+        tracing::warn!(
             "karstd: this host has no IPv4 address; reaching IPv4 through the \
              NAT64 prefix {p}, discovered from {IPV4ONLY_ARPA} (RFC 7050)"
-        ),
-        None => tracing::warn!(
+        );
+    } else {
+        tracing::warn!(
             "karstd: this host has no IPv4 address and no NAT64 prefix could be \
              discovered — no router advertised a PREF64 option (RFC 8781) and \
              {IPV4ONLY_ARPA} yielded nothing (RFC 7050). Every IPv4 relay, \
              server or peer will be unreachable. Set node.nat64 to this \
              network's prefix."
-        ),
+        );
     }
     prefix
 }

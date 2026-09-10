@@ -520,7 +520,10 @@ mod tests {
         let mut now = 0;
         for _ in 0..10 {
             now += IDLE_MS - 1;
-            assert!(admissions.is_admitted(Direction::In, &flow, now), "cut off at {now}");
+            assert!(
+                admissions.is_admitted(Direction::In, &flow, now),
+                "cut off at {now}"
+            );
         }
     }
 

@@ -945,7 +945,8 @@ impl Config {
         let filter = PacketFilter::compile(&netmap.packet_filter, &netmap.egress_filter, &handles);
         // The independent SSH gate, compiled the same way and against the same
         // peer order, but never merged into `filter` (§3.1).
-        let ssh_filter = SshFilter::compile(&netmap.ssh_filter, netmap.ssh_filter_present, &handles);
+        let ssh_filter =
+            SshFilter::compile(&netmap.ssh_filter, netmap.ssh_filter_present, &handles);
 
         Ok(Self {
             keys: local.keys,
