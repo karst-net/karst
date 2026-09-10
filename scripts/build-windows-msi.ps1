@@ -66,7 +66,15 @@ foreach ($exe in @("karstd.exe", "karst.exe")) {
 # extension add` resolves whatever is newest at the moment CI happens to
 # run, and a wix/extension version mismatch fails at `wix build` with an
 # error that names neither this script nor Product.wxs.
-$wixVersion = "7.0.0"
+#
+# 6.0.2, not the newer 7.x: WiX Toolset v7 requires accepting FireGiant's
+# paid Open Source Maintenance Fee EULA before `wix build` will even run
+# ("WIX7015" — found the hard way, failing this exact step on real CI).
+# 6.0.2 is the last release under WiX's original open-source licensing and
+# has every feature this package uses (`StandardDirectory`, the unified
+# `<Package>` element, `WixToolset.Firewall.wixext`) — nothing here is
+# lost by staying on it.
+$wixVersion = "6.0.2"
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "==> installing wix $wixVersion"
