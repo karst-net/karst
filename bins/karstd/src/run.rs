@@ -3700,6 +3700,31 @@ fn report(
                 }
             }
 
+            // The independent SSH admission gate (plans/phase-6/
+            // 07-acl-gated-ssh.md §3.1), reported as its own section rather
+            // than folded into [policy] above: an operator must be able to
+            // tell "no ssh block at all" from "an ssh block enforcing
+            // deny-all" from "N ssh rules", the same three-way distinction
+            // [policy] makes for the general filter, and via the identical
+            // is_enforcing/rule_count shape.
+            let _ = writeln!(out, "\n[ssh_policy]");
+            match config.ssh_filter.rule_count() {
+                None => {
+                    let _ = writeln!(out, "enforcing = false");
+                    let _ = writeln!(out, "source = \"none (no ssh block in policy)\"");
+                }
+                Some(rules) => {
+                    let _ = writeln!(out, "enforcing = true");
+                    let _ = writeln!(out, "rules = {rules}");
+                    if rules == 0 {
+                        let _ = writeln!(
+                            out,
+                            "note = \"no rules: this denies all ssh beyond the general policy\""
+                        );
+                    }
+                }
+            }
+
             for p in peers {
                 let _ = writeln!(out, "\n[[peer]]");
                 let _ = writeln!(out, "name = \"{}\"", p.name);
@@ -4328,6 +4353,26 @@ fn bug_report(
         }
     }
 
+    // The independent SSH admission gate — see the identical section in the
+    // `Status` arm above for why it is reported separately from [policy].
+    let _ = writeln!(out, "\n[ssh_policy]");
+    match config.ssh_filter.rule_count() {
+        None => {
+            let _ = writeln!(out, "enforcing = false");
+            let _ = writeln!(out, "source = \"none (no ssh block in policy)\"");
+        }
+        Some(rules) => {
+            let _ = writeln!(out, "enforcing = true");
+            let _ = writeln!(out, "rules = {rules}");
+            if rules == 0 {
+                let _ = writeln!(
+                    out,
+                    "note = \"no rules: this denies all ssh beyond the general policy\""
+                );
+            }
+        }
+    }
+
     // Peers the netmap carried and this node could not use. From the outside
     // these are indistinguishable from peers the server was never told about,
     // which is a completely different problem — so they are named.
@@ -4901,6 +4946,64 @@ mod route_tests {
             report.contains("uri = \"turn:turn.example:3478\""),
             "{report}"
         );
+    }
+
+    /// The three states `[ssh_policy]` must distinguish, mirroring the
+    /// `[policy]` section's own `is_enforcing`/`rule_count` shape
+    /// (plans/phase-6/07-acl-gated-ssh.md §3.2): absent, present-and-empty,
+    /// and present-with-rules must each read differently to an operator.
+    #[test]
+    fn bug_report_states_the_ssh_gate_as_its_own_three_way_section() {
+        use karst_control_client::transport::pb;
+
+        let engine = one_peer_engine(None);
+        let device = super::Attachment {
+            name: "karst0",
+            mtu: 1420,
+            sockets: None,
+            unreachable_family: None,
+        };
+        let report_for = |ssh_filter: crate::filter::SshFilter| {
+            let mut cfg = config(&["100.64.0.1/16"], &[]);
+            cfg.ssh_filter = ssh_filter;
+            super::bug_report(
+                &cfg,
+                &engine,
+                device,
+                std::time::Instant::now(),
+                &std::sync::atomic::AtomicU64::new(0),
+                super::BugReportExtras::default(),
+            )
+        };
+
+        let absent = report_for(crate::filter::SshFilter::absent());
+        assert!(absent.contains("[ssh_policy]"), "{absent}");
+        assert!(absent.contains("enforcing = false"), "{absent}");
+        assert!(
+            absent.contains("none (no ssh block in policy)"),
+            "{absent}"
+        );
+
+        let deny_all = report_for(crate::filter::SshFilter::compile(&[], true, &[]));
+        assert!(deny_all.contains("enforcing = true"), "{deny_all}");
+        assert!(deny_all.contains("rules = 0"), "{deny_all}");
+        assert!(
+            deny_all.contains("denies all ssh beyond the general policy"),
+            "{deny_all}"
+        );
+
+        let granting = report_for(crate::filter::SshFilter::compile(
+            &[pb::KarstFilterRule {
+                srcs: vec!["*".to_owned()],
+                ports: vec![pb::KarstPortRange {
+                    first: 22,
+                    last: 22,
+                }],
+            }],
+            true,
+            &[],
+        ));
+        assert!(granting.contains("rules = 1"), "{granting}");
     }
 }
 
