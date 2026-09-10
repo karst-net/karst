@@ -111,15 +111,47 @@ APPLESCRIPT
 }
 
 # Returns the pasted text on stdout, or nothing if the dialog was cancelled.
+#
+# `display dialog` only offers a narrow, single-line answer field. Enrollment
+# invitations are deliberately long enough that it makes a paste hard to
+# inspect, so use an AppKit alert with a roomy, ordinary text view instead.
+# Invitations are enrollment credentials, but they are not secrets: the
+# invitation format is designed to be shared by an administrator, and masking
+# it makes correcting a pasted value needlessly difficult.
 ask_invitation() {
-    /usr/bin/osascript <<'APPLESCRIPT' 2>/dev/null
-try
-    set theResult to display dialog "Paste the enrollment invitation from your administrator." default answer "" with title "Karst Setup" buttons {"Cancel", "Connect"} default button "Connect" with hidden answer
-    return text returned of theResult
-on error
-    return ""
-end try
-APPLESCRIPT
+    /usr/bin/osascript -l JavaScript <<'JAVASCRIPT' 2>/dev/null
+ObjC.import('Cocoa');
+
+function run() {
+    const application = $.NSApplication.sharedApplication;
+    application.activateIgnoringOtherApps(true);
+
+    const alert = $.NSAlert.alloc.init;
+    alert.messageText = 'Paste the enrollment invitation from your administrator.';
+    alert.addButtonWithTitle('Connect');
+    alert.addButtonWithTitle('Cancel');
+
+    const textView = $.NSTextView.alloc.initWithFrame($.NSMakeRect(0, 0, 560, 140));
+    textView.font = $.NSFont.systemFontOfSize(13);
+    textView.verticallyResizable = true;
+    textView.horizontallyResizable = false;
+    textView.autoresizingMask = $.NSViewWidthSizable;
+    textView.textContainer.containerSize = $.NSMakeSize(560, Number.MAX_VALUE);
+    textView.textContainer.widthTracksTextView = true;
+
+    const scrollView = $.NSScrollView.alloc.initWithFrame($.NSMakeRect(0, 0, 560, 140));
+    scrollView.borderType = $.NSBezelBorder;
+    scrollView.hasVerticalScroller = true;
+    scrollView.autohidesScrollers = true;
+    scrollView.documentView = textView;
+    alert.accessoryView = scrollView;
+
+    if (alert.runModal() === $.NSAlertFirstButtonReturn) {
+        return ObjC.unwrap(textView.string);
+    }
+    return '';
+}
+JAVASCRIPT
 }
 
 while true; do
