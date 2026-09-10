@@ -205,6 +205,10 @@ pub enum HostIntegration {
     /// configuration is portable and a mistake is diagnosable, and refused at
     /// startup off macOS, where the files it writes would change nothing.
     Macos,
+    /// Windows's Name Resolution Policy Table. Same portability-by-name
+    /// posture as `Macos` above, and refused at startup off Windows for the
+    /// identical reason: the registry keys it writes would change nothing.
+    Nrpt,
     None,
 }
 

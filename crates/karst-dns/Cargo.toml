@@ -15,3 +15,21 @@ workspace = true
 hickory-proto = { version = "0.26.1", default-features = false }
 thiserror = "2"
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(windows)'.dependencies]
+# A fully safe wrapper (part of the microsoft/windows-rs project) over the
+# registry APIs the Name Resolution Policy Table lives in. Its own unsafe FFI
+# stays inside that crate, which is why `karst-dns`'s crate-wide
+# `#![forbid(unsafe_code)]` can depend on it directly rather than needing a
+# `sys_windows`-pattern wrapper — the same reasoning `bins/karstd`'s
+# `Cargo.toml` gives for `windows-service`.
+# Pinned below the newest release (0.100, which requires Rust 1.95): the
+# workspace MSRV is 1.88 (`rust-toolchain.toml`), and 0.6 is the newest
+# series whose own `rust-version` (1.82) fits under it. Its `Key` API is
+# identical to 0.100's for everything this module calls.
+windows-registry = "0.6"
+# `windows-registry`'s own `Result<T>` alias points at this crate's `Error`,
+# but does not re-export the type itself under a public path shorter than
+# `windows_result::error::Error` — named directly here only so
+# `NrptError::Registry`'s `#[source]` has a concrete type to hold.
+windows-result = "0.4"

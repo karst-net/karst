@@ -11,6 +11,13 @@ mod macos;
 mod networkmanager;
 mod resolvconf;
 mod resolved;
+// Unlike `macos`, this is not compiled on every platform: it depends on
+// `windows-registry`, which only builds against a Windows target. Off
+// Windows there is nothing this module could type-check against, so it is
+// `cfg`-gated at the `mod` boundary instead of compiled-everywhere-but-
+// unused the way `macos` is.
+#[cfg(windows)]
+mod windows;
 
 pub use macos::{Macos, MacosError, RESOLVER_DIRECTORY, REVERT_STATE};
 pub use networkmanager::{NetworkManager, NetworkManagerError};
@@ -21,3 +28,5 @@ pub use resolvconf::{
     RESOLV_CONF, REVERT_STATE as RESOLVCONF_REVERT_STATE,
 };
 pub use resolved::{Resolved, ResolvedError};
+#[cfg(windows)]
+pub use windows::{Nrpt, NrptError, POLICY_ROOT, REVERT_STATE as NRPT_REVERT_STATE};

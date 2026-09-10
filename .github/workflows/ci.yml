@@ -104,19 +104,27 @@ jobs:
 
   # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
   # Wintun adapter/session/IP-Helper code in karst-tun, karst-ipc's named
-  # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport), and
+  # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport),
   # karst-secure-storage's ACL'd files/directories
-  # (bins/karstd/src/exit_node.rs's protected exit-route state) — all
-  # compiled and clippy-clean on a real windows-latest runner via
-  # --all-targets, with karst-ipc/tests/pipe.rs and
-  # karst-secure-storage/tests/storage.rs exercising the real thing (named
-  # pipes; ACL'd file/directory creation), no Administrator needed for
-  # either. karstd itself now builds as a binary for Windows too — its own
-  # unit tests and bins/karstd/tests/*.rs integration suite do not yet
-  # (unrelated pre-existing Unix-only test code: enrollment.rs is
-  # #![cfg(unix)] outright, and much of the test suite still shells out to
-  # PermissionsExt for setup) — so this only builds it, rather than testing
-  # it, until that separate port lands.
+  # (bins/karstd/src/exit_node.rs's protected exit-route state), karst-winlog's
+  # Event Log source, and karst-dns's NRPT host integration
+  # (crates/karst-dns/src/host/windows.rs, plan §6) — all compiled and
+  # clippy-clean on a real windows-latest runner via --all-targets, with
+  # karst-ipc/tests/pipe.rs and karst-secure-storage/tests/storage.rs
+  # exercising the real thing (named pipes; ACL'd file/directory creation),
+  # no Administrator needed for either. karst-dns's NRPT tests do need it —
+  # runners are administrators, so registry writes under `HKLM\SOFTWARE`
+  # work the same way a real Wintun adapter test would (see below) — but
+  # they write only under a disposable `SOFTWARE\Karst\test\...` root, never
+  # the real `DnsPolicyConfig` a live rule there would actually be
+  # interpreted from. `karstd` itself builds as a binary for Windows too,
+  # and its own `--lib` unit tests run here, including `service_windows`'s
+  # SCM control-code mapping and `dns.rs`'s `HostRuntime::Nrpt` dispatch.
+  #
+  # `karstd`'s own `tests/*.rs` integration suite (not `--lib`) still
+  # doesn't build for Windows — it is Unix-fixture-heavy (`PermissionsExt`,
+  # `enrollment`, `Scratch`-based sockets) in a way that is a separate, much
+  # larger port than this job's scope.
   #
   # A real Wintun adapter test needs Administrator and wintun.dll, neither
   # provisioned yet — that lands alongside the MSI packaging work that
@@ -137,15 +145,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog --all-targets -- -D warnings
+      - run: cargo clippy --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog -p karst-dns --all-targets -- -D warnings
       - run: cargo clippy --locked -p karstd --lib --bin karstd -- -D warnings
-      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog --lib --tests
-      # `karstd`'s own `tests/*.rs` integration suite (not `--lib`) still
-      # doesn't build for Windows — it is Unix-fixture-heavy
-      # (`PermissionsExt`, `enrollment`, `Scratch`-based sockets) in a way
-      # that is a separate, much larger port than this job's scope. Its
-      # library unit tests do build and run here now, including
-      # `service_windows`'s SCM control-code mapping.
+      - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog -p karst-dns --lib --tests
       - run: cargo test --locked -p karstd --lib
       - run: cargo build --locked -p karstd --bin karstd
 

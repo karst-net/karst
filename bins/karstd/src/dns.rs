@@ -39,6 +39,21 @@ pub enum HostRuntime {
         /// warning nobody reads.
         announced_search_gap: bool,
     },
+    /// Windows's Name Resolution Policy Table. Unlike [`Self::Macos`], the
+    /// underlying `karst_dns::host::Nrpt` type is `cfg(windows)`-gated at
+    /// its own source (it depends on `windows-registry`, which does not
+    /// build off Windows), so this variant — and every match arm below that
+    /// touches it — is gated the same way, rather than compiled everywhere
+    /// and merely unreachable off Windows.
+    #[cfg(windows)]
+    Nrpt {
+        host: karst_dns::host::Nrpt,
+        /// Same purpose as [`Self::Macos`]'s field of the same name: the
+        /// NRPT has no key for a resolver search list either (it only
+        /// routes names that arrive already qualified), so the same
+        /// once-per-daemon warning applies here.
+        announced_search_gap: bool,
+    },
 }
 
 /// What a mechanism does with the netmap's search domains.
@@ -114,6 +129,19 @@ impl HostRuntime {
                 announced_search_gap: false,
             })
         };
+        // Unlike `macos` above, `karst_dns::host::Nrpt` does not exist as a
+        // type off Windows at all (see the `#[cfg(windows)]` on
+        // `Self::Nrpt`), so this closure cannot be written unconditionally
+        // the same way — there is nothing to name off-target.
+        #[cfg(windows)]
+        let nrpt = || {
+            let mut host = karst_dns::host::Nrpt::system();
+            host.recover().map_err(|error| error.to_string())?;
+            Ok::<_, String>(Self::Nrpt {
+                host,
+                announced_search_gap: false,
+            })
+        };
         match settings.host_integration {
             HostIntegration::None => Ok(Self::None),
             HostIntegration::Resolved => resolved().map(Self::Resolved),
@@ -130,6 +158,16 @@ impl HostRuntime {
                  and only macOS reads that directory"
                     .to_owned(),
             ),
+            #[cfg(target_os = "windows")]
+            HostIntegration::Nrpt => nrpt(),
+            // Same posture as `Macos` above, mirrored for the platform that
+            // actually reads the NRPT.
+            #[cfg(not(target_os = "windows"))]
+            HostIntegration::Nrpt => Err(
+                "dns.host_integration = \"nrpt\" is the Windows NRPT (Name \
+                 Resolution Policy Table) mechanism and only Windows reads it"
+                    .to_owned(),
+            ),
             // macOS: `/etc/resolver` files, which make every mesh name resolve
             // system-wide. The resolver search list is not part of this and is
             // not implemented — see `karst_dns::host::Macos` for why a `scutil`
@@ -137,16 +175,19 @@ impl HostRuntime {
             // its domain. `karst status` reports the mechanism either way.
             #[cfg(target_os = "macos")]
             HostIntegration::Auto => macos(),
-            // Neither Linux nor macOS. Every mechanism Karst implements belongs
-            // to one of those two, so `Auto` selects nothing rather than
-            // falling through to `resolvconf`.
+            // Windows: the NRPT, the only mechanism this platform implements.
+            #[cfg(target_os = "windows")]
+            HostIntegration::Auto => nrpt(),
+            // None of Linux, macOS or Windows. Every mechanism Karst
+            // implements belongs to one of those three, so `Auto` selects
+            // nothing rather than falling through to `resolvconf`.
             //
             // **That fall-through would be worse than doing nothing.** It would
             // leave a modified system file, and a revert file for it, on a
             // machine whose resolver may never consult either. Announcing the
             // gap is the honest outcome, and the daemon's DNS resolver still
             // listens for anything pointed at it explicitly.
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             HostIntegration::Auto => {
                 tracing::warn!(
                     "karstd: host DNS integration is not implemented on this \
@@ -221,35 +262,37 @@ impl HostRuntime {
                     host.revert()
                 }
                 .map_err(|error| error.to_string())?;
-                // The netmap asked for a search list and this mechanism has no
-                // key for one. Said once, at the moment it first matters,
-                // because the alternative is an operator who reads
-                // `search_domains` in `karst dns status` and concludes that
-                // bare names work. `plans/phase-5/06-macos-client.md` §0 has
-                // what supplying one would cost.
-                if enabled && !*announced_search_gap && !config.netmap_dns.search_domains.is_empty()
-                {
-                    *announced_search_gap = true;
-                    tracing::warn!(
-                        "karstd: the netmap supplies search domains {:?}, and the \
-                         /etc/resolver mechanism has no search list — names below \
-                         them resolve when fully qualified, but a bare hostname \
-                         still needs its domain",
-                        config.netmap_dns.search_domains
-                    );
+                warn_search_gap(
+                    "/etc/resolver",
+                    announced_search_gap,
+                    enabled,
+                    &config.netmap_dns.search_domains,
+                );
+                warn_flush_error("resolver files", host.flush_error());
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Nrpt {
+                host,
+                announced_search_gap,
+            } => {
+                if enabled {
+                    host.apply(
+                        config.dns.stub_address,
+                        &config.netmap_dns.zone,
+                        &config.netmap_dns.search_domains,
+                    )
+                } else {
+                    host.revert()
                 }
-                // The resolver files are already correct when this is set; the
-                // flush that follows them is what stops `mDNSResponder` serving
-                // the answers it cached before the change. Reporting it as an
-                // apply failure would say the opposite of what happened, so it
-                // is a warning on its own.
-                if let Some(detail) = host.flush_error() {
-                    tracing::warn!(
-                        "karstd: resolver files applied, but the DNS cache was \
-                         not flushed ({detail}); names may resolve to their \
-                         previous answers until the cache expires"
-                    );
-                }
+                .map_err(|error| error.to_string())?;
+                warn_search_gap(
+                    "NRPT",
+                    announced_search_gap,
+                    enabled,
+                    &config.netmap_dns.search_domains,
+                );
+                warn_flush_error("NRPT rules", host.flush_error());
                 Ok(())
             }
         }
@@ -266,6 +309,8 @@ impl HostRuntime {
                 controller.shutdown().map_err(|error| error.to_string())
             }
             Self::Macos { host, .. } => host.revert().map_err(|error| error.to_string()),
+            #[cfg(windows)]
+            Self::Nrpt { host, .. } => host.revert().map_err(|error| error.to_string()),
         }
     }
 
@@ -313,6 +358,17 @@ impl HostRuntime {
                     }
                 })
                 .map_err(|error| error.to_string()),
+            #[cfg(windows)]
+            Self::Nrpt { host, .. } => host
+                .observe()
+                .map(|applied| {
+                    if applied {
+                        "configured"
+                    } else {
+                        "not configured"
+                    }
+                })
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -324,6 +380,8 @@ impl HostRuntime {
             Self::NetworkManager(_) => "networkmanager",
             Self::ResolvConf(_) => "resolv.conf",
             Self::Macos { .. } => "/etc/resolver",
+            #[cfg(windows)]
+            Self::Nrpt { .. } => "NRPT",
         }
     }
 
@@ -338,10 +396,52 @@ impl HostRuntime {
             Self::Resolved(_) | Self::NetworkManager(_) | Self::ResolvConf(_) => {
                 SearchList::Applied
             }
-            // No host integration at all, and the one mechanism that has files
-            // per domain and no key for a search list.
+            // No host integration at all, and the two mechanisms that route
+            // per-domain with no key for a search list.
+            #[cfg(windows)]
+            Self::Nrpt { .. } => SearchList::NotApplied,
             Self::None | Self::Macos { .. } => SearchList::NotApplied,
         }
+    }
+}
+
+/// The netmap asked for a search list and `mechanism` has no key for one.
+/// Said once per daemon, not once per netmap poll, because the alternative
+/// is an operator who reads `search_domains` in `karst dns status` and
+/// concludes that bare names work — see `plans/phase-5/06-macos-client.md`
+/// §0 for what actually supplying one would cost on the mechanism that
+/// first needed this warning. Shared between [`HostRuntime::Macos`] and
+/// [`HostRuntime::Nrpt`], the two mechanisms with this gap.
+fn warn_search_gap(
+    mechanism: &str,
+    announced: &mut bool,
+    enabled: bool,
+    search_domains: &[String],
+) {
+    if enabled && !*announced && !search_domains.is_empty() {
+        *announced = true;
+        tracing::warn!(
+            "karstd: the netmap supplies search domains {search_domains:?}, and \
+             the {mechanism} mechanism has no search list — names below them \
+             resolve when fully qualified, but a bare hostname still needs its \
+             domain"
+        );
+    }
+}
+
+/// `what` (e.g. "resolver files", "NRPT rules") is already correct on the
+/// host by the time this is called; the flush that follows is only what
+/// stops the host's own resolver cache serving answers from before the
+/// change. Reporting a flush failure as an apply failure would say the
+/// opposite of what happened, so it is a warning on its own — shared for the
+/// same reason [`warn_search_gap`] is.
+fn warn_flush_error(what: &str, detail: Option<&str>) {
+    if let Some(detail) = detail {
+        tracing::warn!(
+            "karstd: {what} applied, but the DNS cache was not flushed \
+             ({detail}); names may resolve to their previous answers until the \
+             cache expires"
+        );
     }
 }
 
@@ -373,6 +473,9 @@ pub fn revert_host(settings: &crate::config::DnsSettings, interface: &str) -> Re
         // must be reverted when the TUN is already gone. Constructing the
         // runtime is what recovers a record a killed daemon left behind.
         HostIntegration::Macos => HostRuntime::new(settings, None, interface)?.shutdown(),
+        // Same reasoning as `Macos` immediately above: NRPT rules are
+        // registry state, not attached to the interface either.
+        HostIntegration::Nrpt => HostRuntime::new(settings, None, interface)?.shutdown(),
         // A mechanism pinned to a link-scoped backend never touched
         // `resolv.conf`, and the link's own DNS state disappears with it —
         // there is nothing left for either to revert.
@@ -862,6 +965,36 @@ mod tests {
         assert_eq!(host.observe().expect("observe"), "not configured");
     }
 
+    /// The Windows counterpart of `auto_selects_the_resolver_directory_on_macos`
+    /// above — `Auto` has exactly one mechanism to choose on this platform too.
+    #[cfg(windows)]
+    #[test]
+    fn auto_selects_the_nrpt_on_windows() {
+        let settings = crate::config::DnsSettings::default();
+        let host = HostRuntime::new(&settings, None, "karst0").expect("auto-selected mechanism");
+        assert_eq!(host.mechanism(), "NRPT");
+        assert_eq!(host.observe().expect("observe"), "not configured");
+    }
+
+    /// The Windows counterpart of `the_resolver_directory_mechanism_is_refused_off_macos`
+    /// below — selectable by name on any host, refused at startup off the one
+    /// platform that reads it.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_nrpt_mechanism_is_refused_off_windows() {
+        let settings = crate::config::DnsSettings {
+            host_integration: crate::config::HostIntegration::Nrpt,
+            ..crate::config::DnsSettings::default()
+        };
+        let error = HostRuntime::new(&settings, None, "karst0")
+            .expect_err("NRPT is not a mechanism on this platform");
+        assert!(error.contains("NRPT"), "{error}");
+        assert!(
+            revert_host(&settings, "karst0").is_err(),
+            "and reverting it must not silently report success either"
+        );
+    }
+
     /// `karst status` prints this, and the walkthrough in
     /// `plans/phase-5/06-macos-client.md` §10 reads it to tell a machine with
     /// host DNS integration from one without.
@@ -876,15 +1009,34 @@ mod tests {
             .mechanism(),
             "/etc/resolver"
         );
+        #[cfg(windows)]
+        assert_eq!(
+            HostRuntime::Nrpt {
+                host: karst_dns::host::Nrpt::system(),
+                announced_search_gap: false,
+            }
+            .mechanism(),
+            "NRPT"
+        );
     }
 
-    /// The macOS mechanism is the only one that prints a search domain it will
-    /// not act on, and `karst dns status` has to say so — see [`SearchList`].
+    /// macOS's `/etc/resolver` and Windows's NRPT are the two mechanisms that
+    /// print a search domain they will not act on, and `karst dns status` has
+    /// to say so — see [`SearchList`].
     #[test]
-    fn only_the_resolver_directory_reports_no_search_list() {
+    fn only_the_per_domain_mechanisms_report_no_search_list() {
         assert_eq!(
             HostRuntime::Macos {
                 host: karst_dns::host::Macos::system(),
+                announced_search_gap: false,
+            }
+            .search_list(),
+            SearchList::NotApplied
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            HostRuntime::Nrpt {
+                host: karst_dns::host::Nrpt::system(),
                 announced_search_gap: false,
             }
             .search_list(),
