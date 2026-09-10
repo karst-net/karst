@@ -2,7 +2,7 @@
 # Copyright the Karst contributors.
 #
 # Build the Karst client MSI: cargo builds karstd.exe/karst.exe natively,
-# then WiX v5+ (`wix build`, a .NET global tool) packages them with
+# then WiX v6 (`wix build`, a .NET global tool) packages them with
 # packaging/windows/Product.wxs — see that file's own header for what is
 # and is not in the package. Needs a real Windows machine: the .NET tool
 # itself is cross-platform, but karstd.exe is not, and the CI job that
@@ -98,7 +98,14 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $msiPath = Join-Path $OutputDir "karst-$Version-x64.msi"
 
 Write-Host "==> wix build -> $msiPath (ProductVersion $msiVersion)"
+# `-arch x64`: Product.wxs itself carries no architecture attribute (WiX
+# v6's `Package` element has none — see that file's own comment) — this
+# flag is what makes every Component/File default to a 64-bit component
+# and stamps the MSI's template summary "x64" rather than WiX's x86
+# default when the flag is omitted. Phase 5 is x64-only, so this is the
+# one and only architecture this script ever builds.
 wix build "packaging/windows/Product.wxs" `
+    -arch x64 `
     -d "KarstVersion=$msiVersion" `
     -d "KarstSourceDir=$sourceDir" `
     -d "KarstConfigExample=$(Join-Path $root 'docs/karstd-example-windows.toml')" `

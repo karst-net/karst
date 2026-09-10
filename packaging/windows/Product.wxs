@@ -4,7 +4,8 @@
   Copyright the Karst contributors.
 
   The Karst client MSI — plans/phase-5/07-windows-client.md §7, issue #110
-  criterion 4. WiX v5 (`wix build`); see scripts/build-windows-msi.ps1 for
+  criterion 4. WiX v6 (`wix build`; see scripts/build-windows-msi.ps1's own
+  comment for why 6.0.2 rather than the newer 7.x); see that script for
   the invocation, and CI's `windows-package` job in
   .github/workflows/deliverables.yml for how it is built, installed and
   uninstalled on a real Windows runner.
@@ -34,18 +35,28 @@
   - Per-interface DNS (`SetInterfaceDnsSettings`) — `karst_dns::host::Nrpt`'s
     own module docs track this as the remaining piece of plan §6; nothing
     about packaging changes when it lands.
-  - Everything ARM64. Phase 5 is explicitly x64-only; `Platform="x64"` below
-    is that decision, not an oversight, and `scripts/build-windows-msi.ps1`
-    never invokes this file for any other platform.
+  - Everything ARM64. Phase 5 is explicitly x64-only; the `-arch x64` flag
+    `scripts/build-windows-msi.ps1` passes to `wix build` is that decision,
+    not an oversight, and nothing here invokes this file for any other
+    architecture.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <!--
+    x64, not a `Platform` attribute here: WiX v6's `Package` element has no
+    such attribute (confirmed against its schema after real CI's WIX0004 —
+    the WiX v4/v5 docs this was drafted against described a later, still
+    unreleased-at-6.0.2 schema addition). Architecture is instead the
+    `-arch x64` flag `scripts/build-windows-msi.ps1` passes to `wix build`,
+    which is what makes every `Component`/`File` below default to a 64-bit
+    component and stamps the MSI's own template summary "x64" rather than
+    the x86 WiX defaults to when `-arch` is omitted.
+  -->
   <Package Name="Karst"
            Manufacturer="Karst"
            Version="$(var.KarstVersion)"
            UpgradeCode="08C4DC64-5FCA-4C1C-993D-98EAEEFD2A3B"
-           Language="1033"
-           Platform="x64">
+           Language="1033">
 
     <!--
       Criterion 6: upgrading replaces rather than duplicates. The
