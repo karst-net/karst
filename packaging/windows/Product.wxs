@@ -17,8 +17,9 @@
   - `bins/karstd/src/config.rs`'s Windows `DEFAULT_CONFIG_PATH`
     (`C:\ProgramData\Karst\karstd.toml`) is `[DATAFOLDER]karstd.toml` below
     by construction (`DATAFOLDER` is `CommonAppDataFolder\Karst`) — the
-    ServiceInstall's `Arguments` still passes `--config` explicitly rather
-    than relying on the default, so the two can never quietly drift apart.
+    ServiceInstall's `Arguments` still passes the config path explicitly
+    rather than relying on the default, so the two can never quietly drift
+    apart.
 
   What is deliberately not here yet:
 
