@@ -243,10 +243,6 @@ const (
 	EventActivityCodeUserGroupAdd                                  EventActivityCode = "user.group.add"
 	EventActivityCodeUserGroupDelete                               EventActivityCode = "user.group.delete"
 	EventActivityCodeUserInvite                                    EventActivityCode = "user.invite"
-	EventActivityCodeUserInviteLinkAccept                          EventActivityCode = "user.invite.link.accept"
-	EventActivityCodeUserInviteLinkCreate                          EventActivityCode = "user.invite.link.create"
-	EventActivityCodeUserInviteLinkDelete                          EventActivityCode = "user.invite.link.delete"
-	EventActivityCodeUserInviteLinkRegenerate                      EventActivityCode = "user.invite.link.regenerate"
 	EventActivityCodeUserJoin                                      EventActivityCode = "user.join"
 	EventActivityCodeUserPasswordChange                            EventActivityCode = "user.password.change"
 	EventActivityCodeUserPeerDelete                                EventActivityCode = "user.peer.delete"
@@ -460,14 +456,6 @@ func (e EventActivityCode) Valid() bool {
 	case EventActivityCodeUserGroupDelete:
 		return true
 	case EventActivityCodeUserInvite:
-		return true
-	case EventActivityCodeUserInviteLinkAccept:
-		return true
-	case EventActivityCodeUserInviteLinkCreate:
-		return true
-	case EventActivityCodeUserInviteLinkDelete:
-		return true
-	case EventActivityCodeUserInviteLinkRegenerate:
 		return true
 	case EventActivityCodeUserJoin:
 		return true
@@ -5629,99 +5617,6 @@ type UserCreateRequest struct {
 	Role string `json:"role"`
 }
 
-// UserInvite A user invite
-type UserInvite struct {
-	// AutoGroups Group IDs to auto-assign to peers registered by this user
-	AutoGroups []string `json:"auto_groups"`
-
-	// CreatedAt Invite creation time
-	CreatedAt time.Time `json:"created_at"`
-
-	// Email User's email address
-	Email string `json:"email"`
-
-	// Expired Whether the invite has expired
-	Expired bool `json:"expired"`
-
-	// ExpiresAt Invite expiration time
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// Id Invite ID
-	Id string `json:"id"`
-
-	// InviteToken The invite link to be shared with the user. Only returned when the invite is created or regenerated.
-	InviteToken *string `json:"invite_token,omitempty"`
-
-	// Name User's full name
-	Name string `json:"name"`
-
-	// Role User's NetBird account role
-	Role string `json:"role"`
-}
-
-// UserInviteAcceptRequest Request to accept an invite and set password
-type UserInviteAcceptRequest struct {
-	// Password The password the user wants to set. Must be at least 8 characters long and contain at least one uppercase letter, one digit, and one special character (any character that is not a letter or digit, including spaces).
-	Password string `json:"password"`
-}
-
-// UserInviteAcceptResponse Response after accepting an invite
-type UserInviteAcceptResponse struct {
-	// Success Whether the invite was accepted successfully
-	Success bool `json:"success"`
-}
-
-// UserInviteCreateRequest Request to create a user invite link
-type UserInviteCreateRequest struct {
-	// AutoGroups Group IDs to auto-assign to peers registered by this user
-	AutoGroups []string `json:"auto_groups"`
-
-	// Email User's email address
-	Email string `json:"email"`
-
-	// ExpiresIn Invite expiration time in seconds (default 72 hours)
-	ExpiresIn *int `json:"expires_in,omitempty"`
-
-	// Name User's full name
-	Name string `json:"name"`
-
-	// Role User's NetBird account role
-	Role string `json:"role"`
-}
-
-// UserInviteInfo Public information about an invite
-type UserInviteInfo struct {
-	// Email User's email address
-	Email string `json:"email"`
-
-	// ExpiresAt Invite expiration time
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// InvitedBy Name of the user who sent the invite
-	InvitedBy string `json:"invited_by"`
-
-	// Name User's full name
-	Name string `json:"name"`
-
-	// Valid Whether the invite is still valid (not expired)
-	Valid bool `json:"valid"`
-}
-
-// UserInviteRegenerateRequest Request to regenerate an invite link
-type UserInviteRegenerateRequest struct {
-	// ExpiresIn Invite expiration time in seconds (default 72 hours)
-	ExpiresIn *int `json:"expires_in,omitempty"`
-}
-
-// UserInviteRegenerateResponse Response after regenerating an invite
-type UserInviteRegenerateResponse struct {
-	// InviteExpiresAt New invite expiration time
-	InviteExpiresAt time.Time `json:"invite_expires_at"`
-
-	// InviteToken The new invite token
-	InviteToken string `json:"invite_token"`
-}
-
 // UserPermissions defines model for UserPermissions.
 type UserPermissions struct {
 	// IsRestricted Indicates whether this User's Peers view is restricted
@@ -6385,15 +6280,6 @@ type PutApiSetupKeysKeyIdJSONRequestBody = SetupKeyRequest
 
 // PostApiUsersJSONRequestBody defines body for PostApiUsers for application/json ContentType.
 type PostApiUsersJSONRequestBody = UserCreateRequest
-
-// PostApiUsersInvitesJSONRequestBody defines body for PostApiUsersInvites for application/json ContentType.
-type PostApiUsersInvitesJSONRequestBody = UserInviteCreateRequest
-
-// PostApiUsersInvitesInviteIdRegenerateJSONRequestBody defines body for PostApiUsersInvitesInviteIdRegenerate for application/json ContentType.
-type PostApiUsersInvitesInviteIdRegenerateJSONRequestBody = UserInviteRegenerateRequest
-
-// PostApiUsersInvitesTokenAcceptJSONRequestBody defines body for PostApiUsersInvitesTokenAccept for application/json ContentType.
-type PostApiUsersInvitesTokenAcceptJSONRequestBody = UserInviteAcceptRequest
 
 // PutApiUsersUserIdJSONRequestBody defines body for PutApiUsersUserId for application/json ContentType.
 type PutApiUsersUserIdJSONRequestBody = UserRequest

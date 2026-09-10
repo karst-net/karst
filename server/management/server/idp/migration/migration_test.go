@@ -769,7 +769,6 @@ func TestRequiredSchema(t *testing.T) {
 		"personal_access_tokens",
 		"peers",
 		"accounts",
-		"user_invites",
 		"proxy_access_tokens",
 		"jobs",
 	}

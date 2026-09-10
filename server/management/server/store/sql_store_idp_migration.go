@@ -131,7 +131,6 @@ func (s *SqlStore) UpdateUserID(ctx context.Context, accountID, oldUserID, newUs
 		{&types.PersonalAccessToken{}, "user_id", "user_id = ?"},
 		{&types.PersonalAccessToken{}, "created_by", "created_by = ?"},
 		{&nbpeer.Peer{}, "user_id", "user_id = ?"},
-		{&types.UserInviteRecord{}, "created_by", "created_by = ?"},
 		{&types.Account{}, "created_by", "created_by = ?"},
 		{&types.ProxyAccessToken{}, "created_by", "created_by = ?"},
 		{&types.Job{}, "triggered_by", "triggered_by = ?"},

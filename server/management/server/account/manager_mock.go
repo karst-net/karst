@@ -50,20 +50,6 @@ func (m *MockManager) EXPECT() *MockManagerMockRecorder {
 	return m.recorder
 }
 
-// AcceptUserInvite mocks base method.
-func (m *MockManager) AcceptUserInvite(ctx context.Context, token, password string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AcceptUserInvite", ctx, token, password)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// AcceptUserInvite indicates an expected call of AcceptUserInvite.
-func (mr *MockManagerMockRecorder) AcceptUserInvite(ctx, token, password interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptUserInvite", reflect.TypeOf((*MockManager)(nil).AcceptUserInvite), ctx, token, password)
-}
-
 // AccountExists mocks base method.
 func (m *MockManager) AccountExists(ctx context.Context, accountID string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -271,21 +257,6 @@ func (mr *MockManagerMockRecorder) CreateUser(ctx, accountID, initiatorUserID, k
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUser", reflect.TypeOf((*MockManager)(nil).CreateUser), ctx, accountID, initiatorUserID, key)
 }
 
-// CreateUserInvite mocks base method.
-func (m *MockManager) CreateUserInvite(ctx context.Context, accountID, initiatorUserID string, invite *types.UserInfo, expiresIn int) (*types.UserInvite, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateUserInvite", ctx, accountID, initiatorUserID, invite, expiresIn)
-	ret0, _ := ret[0].(*types.UserInvite)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateUserInvite indicates an expected call of CreateUserInvite.
-func (mr *MockManagerMockRecorder) CreateUserInvite(ctx, accountID, initiatorUserID, invite, expiresIn interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUserInvite", reflect.TypeOf((*MockManager)(nil).CreateUserInvite), ctx, accountID, initiatorUserID, invite, expiresIn)
-}
-
 // DeleteAccount mocks base method.
 func (m *MockManager) DeleteAccount(ctx context.Context, accountID, userID string) error {
 	m.ctrl.T.Helper()
@@ -468,18 +439,31 @@ func (mr *MockManagerMockRecorder) DeleteUser(ctx, accountID, initiatorUserID, t
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUser", reflect.TypeOf((*MockManager)(nil).DeleteUser), ctx, accountID, initiatorUserID, targetUserID)
 }
 
-// DeleteUserInvite mocks base method.
-func (m *MockManager) DeleteUserInvite(ctx context.Context, accountID, initiatorUserID, inviteID string) error {
+// ExpandAndUpdateAffected mocks base method.
+func (m *MockManager) ExpandAndUpdateAffected(ctx context.Context, accountID string, snap *affectedpeers.Snapshot, change affectedpeers.Change) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteUserInvite", ctx, accountID, initiatorUserID, inviteID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ExpandAndUpdateAffected", ctx, accountID, snap, change)
 }
 
-// DeleteUserInvite indicates an expected call of DeleteUserInvite.
-func (mr *MockManagerMockRecorder) DeleteUserInvite(ctx, accountID, initiatorUserID, inviteID interface{}) *gomock.Call {
+// ExpandAndUpdateAffected indicates an expected call of ExpandAndUpdateAffected.
+func (mr *MockManagerMockRecorder) ExpandAndUpdateAffected(ctx, accountID, snap, change interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUserInvite", reflect.TypeOf((*MockManager)(nil).DeleteUserInvite), ctx, accountID, initiatorUserID, inviteID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpandAndUpdateAffected", reflect.TypeOf((*MockManager)(nil).ExpandAndUpdateAffected), ctx, accountID, snap, change)
+}
+
+// ExtendPeerSession mocks base method.
+func (m *MockManager) ExtendPeerSession(ctx context.Context, peerPubKey, userID string) (time.Time, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExtendPeerSession", ctx, peerPubKey, userID)
+	ret0, _ := ret[0].(time.Time)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExtendPeerSession indicates an expected call of ExtendPeerSession.
+func (mr *MockManagerMockRecorder) ExtendPeerSession(ctx, peerPubKey, userID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtendPeerSession", reflect.TypeOf((*MockManager)(nil).ExtendPeerSession), ctx, peerPubKey, userID)
 }
 
 // FindExistingPostureCheck mocks base method.
@@ -1081,21 +1065,6 @@ func (mr *MockManagerMockRecorder) GetUserIDByPeerKey(ctx, peerKey interface{}) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserIDByPeerKey", reflect.TypeOf((*MockManager)(nil).GetUserIDByPeerKey), ctx, peerKey)
 }
 
-// GetUserInviteInfo mocks base method.
-func (m *MockManager) GetUserInviteInfo(ctx context.Context, token string) (*types.UserInviteInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserInviteInfo", ctx, token)
-	ret0, _ := ret[0].(*types.UserInviteInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserInviteInfo indicates an expected call of GetUserInviteInfo.
-func (mr *MockManagerMockRecorder) GetUserInviteInfo(ctx, token interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserInviteInfo", reflect.TypeOf((*MockManager)(nil).GetUserInviteInfo), ctx, token)
-}
-
 // GetUsersFromAccount mocks base method.
 func (m *MockManager) GetUsersFromAccount(ctx context.Context, accountID, userID string) (map[string]*types.UserInfo, error) {
 	m.ctrl.T.Helper()
@@ -1259,21 +1228,6 @@ func (mr *MockManagerMockRecorder) ListSetupKeys(ctx, accountID, userID interfac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListSetupKeys", reflect.TypeOf((*MockManager)(nil).ListSetupKeys), ctx, accountID, userID)
 }
 
-// ListUserInvites mocks base method.
-func (m *MockManager) ListUserInvites(ctx context.Context, accountID, initiatorUserID string) ([]*types.UserInvite, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUserInvites", ctx, accountID, initiatorUserID)
-	ret0, _ := ret[0].([]*types.UserInvite)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListUserInvites indicates an expected call of ListUserInvites.
-func (mr *MockManagerMockRecorder) ListUserInvites(ctx, accountID, initiatorUserID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUserInvites", reflect.TypeOf((*MockManager)(nil).ListUserInvites), ctx, accountID, initiatorUserID)
-}
-
 // ListUsers mocks base method.
 func (m *MockManager) ListUsers(ctx context.Context, accountID string) ([]*types.User, error) {
 	m.ctrl.T.Helper()
@@ -1307,23 +1261,8 @@ func (mr *MockManagerMockRecorder) LoginPeer(ctx, login interface{}) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoginPeer", reflect.TypeOf((*MockManager)(nil).LoginPeer), ctx, login)
 }
 
-// ExtendPeerSession mocks base method.
-func (m *MockManager) ExtendPeerSession(ctx context.Context, peerPubKey, userID string) (time.Time, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtendPeerSession", ctx, peerPubKey, userID)
-	ret0, _ := ret[0].(time.Time)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ExtendPeerSession indicates an expected call of ExtendPeerSession.
-func (mr *MockManagerMockRecorder) ExtendPeerSession(ctx, peerPubKey, userID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtendPeerSession", reflect.TypeOf((*MockManager)(nil).ExtendPeerSession), ctx, peerPubKey, userID)
-}
-
 // MarkPeerConnected mocks base method.
-func (m *MockManager) MarkPeerConnected(ctx context.Context, peerKey string, accountID string, sessionStartedAt int64, nmap *types.NetworkMap) error {
+func (m *MockManager) MarkPeerConnected(ctx context.Context, peerKey, accountID string, sessionStartedAt int64, nmap *types.NetworkMap) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "MarkPeerConnected", ctx, peerKey, accountID, sessionStartedAt, nmap)
 	ret0, _ := ret[0].(error)
@@ -1337,7 +1276,7 @@ func (mr *MockManagerMockRecorder) MarkPeerConnected(ctx, peerKey, accountID, se
 }
 
 // MarkPeerDisconnected mocks base method.
-func (m *MockManager) MarkPeerDisconnected(ctx context.Context, peerKey string, accountID string, sessionStartedAt int64) error {
+func (m *MockManager) MarkPeerDisconnected(ctx context.Context, peerKey, accountID string, sessionStartedAt int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "MarkPeerDisconnected", ctx, peerKey, accountID, sessionStartedAt)
 	ret0, _ := ret[0].(error)
@@ -1362,21 +1301,6 @@ func (m *MockManager) OnPeerDisconnected(ctx context.Context, accountID, peerPub
 func (mr *MockManagerMockRecorder) OnPeerDisconnected(ctx, accountID, peerPubKey, streamStartTime interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnPeerDisconnected", reflect.TypeOf((*MockManager)(nil).OnPeerDisconnected), ctx, accountID, peerPubKey, streamStartTime)
-}
-
-// RegenerateUserInvite mocks base method.
-func (m *MockManager) RegenerateUserInvite(ctx context.Context, accountID, initiatorUserID, inviteID string, expiresIn int) (*types.UserInvite, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RegenerateUserInvite", ctx, accountID, initiatorUserID, inviteID, expiresIn)
-	ret0, _ := ret[0].(*types.UserInvite)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// RegenerateUserInvite indicates an expected call of RegenerateUserInvite.
-func (mr *MockManagerMockRecorder) RegenerateUserInvite(ctx, accountID, initiatorUserID, inviteID, expiresIn interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegenerateUserInvite", reflect.TypeOf((*MockManager)(nil).RegenerateUserInvite), ctx, accountID, initiatorUserID, inviteID, expiresIn)
 }
 
 // RejectUser mocks base method.
@@ -1640,18 +1564,6 @@ func (mr *MockManagerMockRecorder) UpdateAccountPeers(ctx, accountID, reason int
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAccountPeers", reflect.TypeOf((*MockManager)(nil).UpdateAccountPeers), ctx, accountID, reason)
 }
 
-// ExpandAndUpdateAffected mocks base method.
-func (m *MockManager) ExpandAndUpdateAffected(ctx context.Context, accountID string, snap *affectedpeers.Snapshot, change affectedpeers.Change) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ExpandAndUpdateAffected", ctx, accountID, snap, change)
-}
-
-// ExpandAndUpdateAffected indicates an expected call of ExpandAndUpdateAffected.
-func (mr *MockManagerMockRecorder) ExpandAndUpdateAffected(ctx, accountID, snap, change interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpandAndUpdateAffected", reflect.TypeOf((*MockManager)(nil).ExpandAndUpdateAffected), ctx, accountID, snap, change)
-}
-
 // UpdateAccountSettings mocks base method.
 func (m *MockManager) UpdateAccountSettings(ctx context.Context, accountID, userID string, newSettings *types.Settings) (*types.Settings, error) {
 	m.ctrl.T.Helper()
@@ -1753,6 +1665,7 @@ func (mr *MockManagerMockRecorder) UpdatePeerIP(ctx, accountID, userID, peerID, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdatePeerIP", reflect.TypeOf((*MockManager)(nil).UpdatePeerIP), ctx, accountID, userID, peerID, newIP)
 }
 
+// UpdatePeerIPv6 mocks base method.
 func (m *MockManager) UpdatePeerIPv6(ctx context.Context, accountID, userID, peerID string, newIPv6 netip.Addr) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdatePeerIPv6", ctx, accountID, userID, peerID, newIPv6)
@@ -1760,6 +1673,7 @@ func (m *MockManager) UpdatePeerIPv6(ctx context.Context, accountID, userID, pee
 	return ret0
 }
 
+// UpdatePeerIPv6 indicates an expected call of UpdatePeerIPv6.
 func (mr *MockManagerMockRecorder) UpdatePeerIPv6(ctx, accountID, userID, peerID, newIPv6 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdatePeerIPv6", reflect.TypeOf((*MockManager)(nil).UpdatePeerIPv6), ctx, accountID, userID, peerID, newIPv6)

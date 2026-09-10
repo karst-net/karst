@@ -21,7 +21,6 @@ var RequiredSchema = []SchemaCheck{
 	{Table: "personal_access_tokens", Columns: []string{"user_id", "created_by"}},
 	{Table: "peers", Columns: []string{"user_id"}},
 	{Table: "accounts", Columns: []string{"created_by"}},
-	{Table: "user_invites", Columns: []string{"created_by"}},
 	{Table: "proxy_access_tokens", Columns: []string{"created_by"}},
 	{Table: "jobs", Columns: []string{"triggered_by"}},
 }

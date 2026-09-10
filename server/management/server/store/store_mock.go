@@ -803,20 +803,6 @@ func (mr *MockStoreMockRecorder) DeleteUser(ctx, accountID, userID interface{}) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUser", reflect.TypeOf((*MockStore)(nil).DeleteUser), ctx, accountID, userID)
 }
 
-// DeleteUserInvite mocks base method.
-func (m *MockStore) DeleteUserInvite(ctx context.Context, inviteID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteUserInvite", ctx, inviteID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeleteUserInvite indicates an expected call of DeleteUserInvite.
-func (mr *MockStoreMockRecorder) DeleteUserInvite(ctx, inviteID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUserInvite", reflect.TypeOf((*MockStore)(nil).DeleteUserInvite), ctx, inviteID)
-}
-
 // DeleteZone mocks base method.
 func (m *MockStore) DeleteZone(ctx context.Context, accountID, zoneID string) error {
 	m.ctrl.T.Helper()
@@ -1443,21 +1429,6 @@ func (m *MockStore) GetAccountSetupKeys(ctx context.Context, lockStrength Lockin
 func (mr *MockStoreMockRecorder) GetAccountSetupKeys(ctx, lockStrength, accountID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountSetupKeys", reflect.TypeOf((*MockStore)(nil).GetAccountSetupKeys), ctx, lockStrength, accountID)
-}
-
-// GetAccountUserInvites mocks base method.
-func (m *MockStore) GetAccountUserInvites(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*types3.UserInviteRecord, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAccountUserInvites", ctx, lockStrength, accountID)
-	ret0, _ := ret[0].([]*types3.UserInviteRecord)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetAccountUserInvites indicates an expected call of GetAccountUserInvites.
-func (mr *MockStoreMockRecorder) GetAccountUserInvites(ctx, lockStrength, accountID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountUserInvites", reflect.TypeOf((*MockStore)(nil).GetAccountUserInvites), ctx, lockStrength, accountID)
 }
 
 // GetAccountUsers mocks base method.
@@ -2821,51 +2792,6 @@ func (mr *MockStoreMockRecorder) GetUserIDByPeerKey(ctx, lockStrength, peerKey i
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserIDByPeerKey", reflect.TypeOf((*MockStore)(nil).GetUserIDByPeerKey), ctx, lockStrength, peerKey)
 }
 
-// GetUserInviteByEmail mocks base method.
-func (m *MockStore) GetUserInviteByEmail(ctx context.Context, lockStrength LockingStrength, accountID, email string) (*types3.UserInviteRecord, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserInviteByEmail", ctx, lockStrength, accountID, email)
-	ret0, _ := ret[0].(*types3.UserInviteRecord)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserInviteByEmail indicates an expected call of GetUserInviteByEmail.
-func (mr *MockStoreMockRecorder) GetUserInviteByEmail(ctx, lockStrength, accountID, email interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserInviteByEmail", reflect.TypeOf((*MockStore)(nil).GetUserInviteByEmail), ctx, lockStrength, accountID, email)
-}
-
-// GetUserInviteByHashedToken mocks base method.
-func (m *MockStore) GetUserInviteByHashedToken(ctx context.Context, lockStrength LockingStrength, hashedToken string) (*types3.UserInviteRecord, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserInviteByHashedToken", ctx, lockStrength, hashedToken)
-	ret0, _ := ret[0].(*types3.UserInviteRecord)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserInviteByHashedToken indicates an expected call of GetUserInviteByHashedToken.
-func (mr *MockStoreMockRecorder) GetUserInviteByHashedToken(ctx, lockStrength, hashedToken interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserInviteByHashedToken", reflect.TypeOf((*MockStore)(nil).GetUserInviteByHashedToken), ctx, lockStrength, hashedToken)
-}
-
-// GetUserInviteByID mocks base method.
-func (m *MockStore) GetUserInviteByID(ctx context.Context, lockStrength LockingStrength, accountID, inviteID string) (*types3.UserInviteRecord, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserInviteByID", ctx, lockStrength, accountID, inviteID)
-	ret0, _ := ret[0].(*types3.UserInviteRecord)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserInviteByID indicates an expected call of GetUserInviteByID.
-func (mr *MockStoreMockRecorder) GetUserInviteByID(ctx, lockStrength, accountID, inviteID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserInviteByID", reflect.TypeOf((*MockStore)(nil).GetUserInviteByID), ctx, lockStrength, accountID, inviteID)
-}
-
 // GetUserPATs mocks base method.
 func (m *MockStore) GetUserPATs(ctx context.Context, lockStrength LockingStrength, userID string) ([]*types3.PersonalAccessToken, error) {
 	m.ctrl.T.Helper()
@@ -3593,20 +3519,6 @@ func (m *MockStore) SaveUser(ctx context.Context, user *types3.User) error {
 func (mr *MockStoreMockRecorder) SaveUser(ctx, user interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveUser", reflect.TypeOf((*MockStore)(nil).SaveUser), ctx, user)
-}
-
-// SaveUserInvite mocks base method.
-func (m *MockStore) SaveUserInvite(ctx context.Context, invite *types3.UserInviteRecord) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SaveUserInvite", ctx, invite)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SaveUserInvite indicates an expected call of SaveUserInvite.
-func (mr *MockStoreMockRecorder) SaveUserInvite(ctx, invite interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveUserInvite", reflect.TypeOf((*MockStore)(nil).SaveUserInvite), ctx, invite)
 }
 
 // SaveUserLastLogin mocks base method.

@@ -70,13 +70,6 @@ func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager accou
 	if err := bypass.AddBypassPath("/api/setup"); err != nil {
 		return nil, fmt.Errorf("failed to add bypass path: %w", err)
 	}
-	// Public invite endpoints (tokens start with nbi_)
-	if err := bypass.AddBypassPath("/api/users/invites/nbi_*"); err != nil {
-		return nil, fmt.Errorf("failed to add bypass path: %w", err)
-	}
-	if err := bypass.AddBypassPath("/api/users/invites/nbi_*/accept"); err != nil {
-		return nil, fmt.Errorf("failed to add bypass path: %w", err)
-	}
 	// OAuth callback for proxy authentication
 	if err := bypass.AddBypassPath(types.ProxyCallbackEndpointFull); err != nil {
 		return nil, fmt.Errorf("failed to add bypass path: %w", err)
@@ -112,8 +105,6 @@ func NewAPIHandler(ctx context.Context, router *mux.Router, accountManager accou
 	accounts.AddEndpoints(accountManager, settingsManager, router)
 	peers.AddEndpoints(accountManager, router, networkMapController, permissionsManager)
 	users.AddEndpoints(accountManager, router)
-	users.AddInvitesEndpoints(accountManager, router)
-	users.AddPublicInvitesEndpoints(accountManager, router)
 	setup_keys.AddEndpoints(accountManager, router)
 	policies.AddEndpoints(accountManager, LocationManager, router)
 	policies.AddPostureCheckEndpoints(accountManager, LocationManager, router)
