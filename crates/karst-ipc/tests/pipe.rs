@@ -121,6 +121,42 @@ fn dropping_the_server_stream_reports_eof_to_the_client() {
     server.join().expect("server thread");
 }
 
+/// `DisconnectNamedPipe` documents silently discarding any data written but
+/// not yet read by the other side — so a writer that drops (and so
+/// disconnects) immediately after `write_all` races its own reply against
+/// itself. This is exactly what truncated a real `karstd` metrics reply
+/// after 79 of 79 bytes were written but before the client thread had
+/// gotten to reading them, on real `windows-latest` CI — see `disconnect`'s
+/// module docs in `sys_windows.rs` for the fix (`FlushFileBuffers` before
+/// `DisconnectNamedPipe`). The client here deliberately sleeps before
+/// reading, so the server's write-then-drop has already happened by the
+/// time it starts — the disconnect must win that race without losing data,
+/// not the read.
+#[test]
+fn a_reply_survives_the_writer_disconnecting_immediately_after_writing() {
+    let path = pipe_name("no-truncate");
+    let listener = Listener::bind(&path).expect("bind");
+    // Larger than one `ReadFile` call is likely to consume in one go, so a
+    // truncation shows up as a length mismatch even if the race only drops
+    // the tail.
+    let payload = vec![b'x'; 64 * 1024];
+    let payload_for_server = payload.clone();
+
+    let server = std::thread::spawn(move || {
+        let (mut stream, ()) = accept_within(&listener, Duration::from_secs(5)).expect("accept");
+        stream.write_all(&payload_for_server).expect("server write");
+        // Dropped here, immediately — the race this test targets.
+    });
+
+    let mut client = connect_retrying(&path, Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(50));
+    let mut got = Vec::new();
+    client.read_to_end(&mut got).expect("read to EOF");
+    assert_eq!(got, payload, "reply was truncated by an early disconnect");
+
+    server.join().expect("server thread");
+}
+
 /// A pipe name already bound by a live listener must refuse a second bind —
 /// the named-pipe counterpart to `bins/karstd/src/ipc.rs`'s
 /// `a_live_socket_is_not_stolen`, so a second `karstd` cannot silently steal

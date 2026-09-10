@@ -41,8 +41,8 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
-    OPEN_EXISTING,
+    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE,
+    FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
@@ -306,9 +306,24 @@ pub(crate) fn poll_connect(
 /// there is nothing a caller could do about a failure and nothing left to
 /// clean up regardless.
 pub(crate) fn disconnect(handle: &OwnedHandle) {
-    // SAFETY: `handle` is live for the duration of the call, which is
-    // `DisconnectNamedPipe`'s only requirement.
+    // `DisconnectNamedPipe` documents that any data written but not yet read
+    // by the other side is discarded — silently, and with no error to catch.
+    // `bins/karstd/src/ipc.rs::serve` writes its reply and returns; the
+    // caller's `Stream` (and this `disconnect`) then drops essentially
+    // immediately after, on its own thread, with no guarantee the client on
+    // the *other* thread has read any of it yet. `FlushFileBuffers` on a
+    // named pipe's server end blocks until the client has read everything
+    // outstanding (or disconnected) before returning, closing exactly that
+    // race — a real, non-hypothetical one: it truncated a reply after 79 of
+    // 79 bytes were written but before all of them were read, on real
+    // `windows-latest` CI, the first time an end-to-end request actually
+    // completed successfully there. Never blocks when there is nothing
+    // unread, which is the disconnect-with-no-prior-write case
+    // `dropping_the_server_stream_reports_eof_to_the_client` exercises.
+    // SAFETY: `handle` is live for the duration of each call, which is both
+    // functions' only requirement.
     unsafe {
+        let _ = FlushFileBuffers(handle.raw());
         let _ = DisconnectNamedPipe(handle.raw());
     }
 }
