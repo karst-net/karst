@@ -1370,7 +1370,19 @@ func (am *DefaultAccountManager) addNewUserToDomainAccount(ctx context.Context, 
 		return "", err
 	}
 
-	if settings != nil && settings.Extra != nil && settings.Extra.UserApprovalRequired {
+	bootstrapOnly, err := am.accountHasOnlyBootstrapOwner(ctx, domainAccountID)
+	if err != nil {
+		return "", err
+	}
+	if bootstrapOnly {
+		// KARST_BOOTSTRAP_SETUP_KEY_FILE creates an account before an IdP exists.
+		// Its synthetic owner can mint that bounded enrollment key, but cannot
+		// ever operate the console. The first authenticated person must therefore
+		// become the owner; applying domain-join approval here would leave nobody
+		// able to approve them.
+		newUser = types.NewOwnerUser(userAuth.UserId, userAuth.Email, userAuth.Name)
+		newUser.AccountID = domainAccountID
+	} else if settings != nil && settings.Extra != nil && settings.Extra.UserApprovalRequired {
 		newUser.Blocked = true
 		newUser.PendingApproval = true
 	}
@@ -1392,6 +1404,23 @@ func (am *DefaultAccountManager) addNewUserToDomainAccount(ctx context.Context, 
 	}
 
 	return domainAccountID, nil
+}
+
+// bootstrapUserID is the reserved local owner created by
+// KARST_BOOTSTRAP_SETUP_KEY_FILE. It is duplicated here rather than imported
+// from internals/karst/bootstrap because that package already depends on the
+// account manager. Keep it in sync with bootstrap.BootstrapUserID.
+const bootstrapUserID = "karst-bootstrap"
+
+// accountHasOnlyBootstrapOwner reports whether the account was created solely
+// to mint the pre-IdP enrollment key and has not yet received a real operator.
+func (am *DefaultAccountManager) accountHasOnlyBootstrapOwner(ctx context.Context, accountID string) (bool, error) {
+	users, err := am.Store.GetAccountUsers(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return false, err
+	}
+
+	return len(users) == 1 && users[0].Id == bootstrapUserID && users[0].Role == types.UserRoleOwner, nil
 }
 
 // redeemInvite checks whether user has been invited and redeems the invite

@@ -212,6 +212,15 @@ func TestAnIdPUserLandsInTheBootstrapAccount(t *testing.T) {
 			"every node enrolled with the bootstrap key would be invisible to them",
 			operatorAccount, bootstrapAccount)
 	}
+
+	operator, err := am.Store.GetUserByUserID(ctx, store.LockingStrengthNone, "auth0|63bcd0a1")
+	if err != nil {
+		t.Fatalf("look up first IdP user: %v", err)
+	}
+	if operator.Role != types.UserRoleOwner || operator.Blocked || operator.PendingApproval {
+		t.Fatalf("first IdP user must become the active bootstrap-account owner; got role=%q blocked=%t pending_approval=%t",
+			operator.Role, operator.Blocked, operator.PendingApproval)
+	}
 }
 
 func TestMintBootstrapKeyWithoutAnAccountManager(t *testing.T) {
