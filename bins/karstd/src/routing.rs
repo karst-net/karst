@@ -288,7 +288,7 @@ impl AllowedIps {
         }
         // Longest prefix first. `sort_by` is stable, so equal-length entries
         // keep configuration order and lookups stay deterministic.
-        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
         Ok(Self { entries })
     }
 

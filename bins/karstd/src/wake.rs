@@ -225,7 +225,9 @@ mod tests {
             Some(GAP),
             "a gap of exactly the threshold is a resume"
         );
-        let just_under = GAP - Duration::from_millis(1);
+        let just_under = GAP
+            .checked_sub(Duration::from_millis(1))
+            .expect("GAP is well above 1ms");
         assert_eq!(
             detector.observe(monotonic + GAP + just_under, wall + GAP + just_under),
             None

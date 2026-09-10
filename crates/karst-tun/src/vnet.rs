@@ -99,14 +99,12 @@ impl VnetHdr {
 /// Returned unfolded so callers can accumulate across regions.
 fn sum16(bytes: &[u8]) -> u32 {
     let mut sum = 0u32;
-    let mut chunks = bytes.chunks_exact(2);
-    for c in &mut chunks {
-        if let [hi, lo] = *c {
-            sum = sum.wrapping_add(u32::from(u16::from_be_bytes([hi, lo])));
-        }
+    let (chunks, remainder) = bytes.as_chunks::<2>();
+    for &[hi, lo] in chunks {
+        sum = sum.wrapping_add(u32::from(u16::from_be_bytes([hi, lo])));
     }
     // An odd trailing byte is the high half of a zero-padded word.
-    if let Some(&last) = chunks.remainder().first() {
+    if let Some(&last) = remainder.first() {
         sum = sum.wrapping_add(u32::from(u16::from_be_bytes([last, 0])));
     }
     sum
@@ -125,14 +123,12 @@ fn fold(mut sum: u32) -> u16 {
 /// IPv4 header checksum, computed with the field itself treated as zero.
 fn ipv4_header_checksum(header: &[u8]) -> u16 {
     let mut sum = 0u32;
-    for (i, c) in header.chunks_exact(2).enumerate() {
+    for (i, &[hi, lo]) in header.as_chunks::<2>().0.iter().enumerate() {
         // Bytes 10..12 are the checksum field.
         if i == 5 {
             continue;
         }
-        if let [hi, lo] = *c {
-            sum = sum.wrapping_add(u32::from(u16::from_be_bytes([hi, lo])));
-        }
+        sum = sum.wrapping_add(u32::from(u16::from_be_bytes([hi, lo])));
     }
     fold(sum)
 }
@@ -548,8 +544,8 @@ mod tests {
         let out = split_gso(&p, &gso(1000, GSO_TCPV4), 64).unwrap();
         for (i, seg) in out.iter().enumerate() {
             let mut sum = 0u32;
-            for c in seg[..20].chunks_exact(2) {
-                sum = sum.wrapping_add(u32::from(u16::from_be_bytes([c[0], c[1]])));
+            for &[hi, lo] in seg[..20].as_chunks::<2>().0 {
+                sum = sum.wrapping_add(u32::from(u16::from_be_bytes([hi, lo])));
             }
             assert_eq!(fold(sum), 0, "segment {i} has a bad IPv4 checksum");
         }

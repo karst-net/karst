@@ -1361,7 +1361,7 @@ fn decode_hex(s: &str, expect: usize) -> Result<Vec<u8>, Error> {
 /// caller's, so its error can name the algorithm.
 fn decode_hex_any(s: &str, field: &str) -> Result<Vec<u8>, Error> {
     let s = s.trim();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(Error::Key(format!(
             "{field} has an odd number of hex digits"
         )));

@@ -416,7 +416,7 @@ mod tests {
             let p = Nat64Prefix::new(Ipv6Addr::from_str("2001:db8::").unwrap(), len)
                 .or_else(|_| Nat64Prefix::new(Ipv6Addr::UNSPECIFIED, len))
                 .unwrap();
-            let got = p.synthesise(Ipv4Addr::new(255, 255, 255, 255));
+            let got = p.synthesise(Ipv4Addr::BROADCAST);
             assert_eq!(
                 got.octets().get(8),
                 Some(&0u8),

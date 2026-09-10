@@ -2401,8 +2401,8 @@ mod tests {
         // likely to collide: IPv4-mapped (leading zeros) and a v6 address
         // chosen to start as high as a unicast address can.
         let sources = [
-            SocketAddr::from((Ipv4Addr::new(255, 255, 255, 255), 65535)),
-            SocketAddr::from((Ipv4Addr::new(0, 0, 0, 0), 0)),
+            SocketAddr::from((Ipv4Addr::BROADCAST, 65535)),
+            SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
             SocketAddr::from((Ipv6Addr::from([0xFE; 16]), 51820)),
             SocketAddr::from((Ipv6Addr::from([0xFF; 16]), 51820)),
         ];

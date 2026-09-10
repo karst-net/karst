@@ -4091,8 +4091,7 @@ fn gateway_forwarding_survives_a_daemon_crash_and_restart() {
         Command::new("ip")
             .args(["netns", "exec", NS_B, "python3", "-c", &script])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     };
     assert!(
         probe(),
@@ -4162,8 +4161,7 @@ fn dest_reachable() -> bool {
     Command::new("ip")
         .args(["netns", "exec", NS_B, "python3", "-c", &probe])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// The `POST /routes` body — see `karst-testserver`'s `routeOfferRequest`.
@@ -4215,8 +4213,7 @@ fn fixture_create_route(body: &RouteOfferBody<'_>) -> bool {
             &format!("http://{IP_PUB}:{CONTROL_PORT}/routes"),
         ])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
-        .unwrap_or(false)
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
 }
 
 /// `DELETE /routes?id=<route_id>` — [`fixture_remove`]'s pattern, for a route
@@ -4238,8 +4235,7 @@ fn fixture_delete_route(route_id: &str) -> bool {
             &format!("http://{IP_PUB}:{CONTROL_PORT}/routes?id={route_id}"),
         ])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
-        .unwrap_or(false)
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
 }
 
 /// **W7's second row**: the same masquerade-based reachability as the
@@ -4422,8 +4418,7 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
         Command::new("ip")
             .args(["netns", "exec", NS_B, "python3", "-c", &script])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     };
 
     let sock = net.dir.join("b.sock");
@@ -4570,8 +4565,7 @@ fn selecting_one_ip_familys_exit_route_does_not_activate_the_other() {
         Command::new("ip")
             .args(["netns", "exec", NS_B, "ip", family, "rule", "show"])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("lookup 51888"))
-            .unwrap_or(false)
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("lookup 51888"))
     };
 
     use_route("internet-v4");
@@ -4889,8 +4883,7 @@ fn route_changes_converge_through_push_not_restart() {
         Command::new("ip")
             .args(["netns", "exec", NS_B, "python3", "-c", &script])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     };
 
     // Create.
@@ -5049,8 +5042,7 @@ fn overlay_reachable(peer_ip: &str) -> bool {
     Command::new("ip")
         .args(["netns", "exec", NS_A, "python3", "-c", &probe])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 fn fixture_peers() -> String {
@@ -5099,6 +5091,5 @@ fn fixture_remove(handle: &str) -> bool {
             &format!("http://{IP_PUB}:{CONTROL_PORT}/remove?handle={handle}"),
         ])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
-        .unwrap_or(false)
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
 }

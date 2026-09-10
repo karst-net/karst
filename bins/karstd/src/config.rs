@@ -49,19 +49,14 @@ pub const DEFAULT_CONFIG_PATH: &str = "/etc/karst/karstd.toml";
 ///
 /// TUN remains the default so existing services and host routing are unchanged.
 /// Userspace mode is for an explicitly configured unprivileged sidecar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NetworkMode {
     /// A Linux TUN device and host routes; requires `CAP_NET_ADMIN`.
+    #[default]
     Tun,
     /// The pure-Rust IP stack; no host network configuration is attempted.
     Userspace,
-}
-
-impl Default for NetworkMode {
-    fn default() -> Self {
-        Self::Tun
-    }
 }
 
 /// Anything that stopped a configuration from loading.
@@ -194,9 +189,10 @@ pub struct MetricsSection {
 }
 
 /// How `KarstDNS` changes host resolver configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HostIntegration {
+    #[default]
     Auto,
     Resolved,
     Resolvconf,
@@ -210,12 +206,6 @@ pub enum HostIntegration {
     /// identical reason: the registry keys it writes would change nothing.
     Nrpt,
     None,
-}
-
-impl Default for HostIntegration {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// The `[dns]` TOML table.
@@ -1382,11 +1372,8 @@ fn decode_hex(s: &str, expect_len: usize, field: &str) -> Result<Vec<u8>, Config
     }
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(expect_len);
-    for pair in bytes.chunks_exact(2) {
-        let (hi, lo) = match pair {
-            [hi, lo] => (nibble(*hi), nibble(*lo)),
-            _ => return Err(bad("odd length".to_owned())),
-        };
+    for &[hi, lo] in bytes.as_chunks::<2>().0 {
+        let (hi, lo) = (nibble(hi), nibble(lo));
         match (hi, lo) {
             (Some(h), Some(l)) => out.push((h << 4) | l),
             _ => return Err(bad("contains a non-hexadecimal character".to_owned())),

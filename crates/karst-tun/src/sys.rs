@@ -971,7 +971,7 @@ fn parse_route(msg: &[u8]) -> Option<IpAddr> {
 pub(crate) fn parse_route_dump(buf: &[u8]) -> RouteBatch {
     let mut at = 0usize;
     let mut out = RouteBatch::default();
-    while let Some(hdr) = buf.get(at..at.checked_add(NLMSG_HDR_LEN).unwrap_or(usize::MAX)) {
+    while let Some(hdr) = buf.get(at..at.saturating_add(NLMSG_HDR_LEN)) {
         let len = hdr
             .get(..4)
             .and_then(<[u8]>::first_chunk::<4>)

@@ -152,7 +152,7 @@ const _: () = assert!(consts::TRANSPORT_PAYLOAD_MAX <= consts::TRANSPORT_DATAGRA
 
 /// Padding never pushes a full-size packet over budget: the tunnel MTU is
 /// already a multiple of the pad quantum, so the worst case adds nothing.
-const _: () = assert!(consts::TUNNEL_MTU % consts::TRANSPORT_PAD == 0);
+const _: () = assert!(consts::TUNNEL_MTU.is_multiple_of(consts::TRANSPORT_PAD));
 
 /// The reassembler's budget analysis (§9.1) assumes no fragment exceeds
 /// `FRAGMENT_PAYLOAD_MAX`. Oversize datagrams are legal only when unfragmented,

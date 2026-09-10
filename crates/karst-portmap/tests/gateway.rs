@@ -295,7 +295,10 @@ fn hex_encode(b: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Vec<u8> {
-    assert!(s.len() % 2 == 0, "odd-length hex from pmprobe: {s:?}");
+    assert!(
+        s.len().is_multiple_of(2),
+        "odd-length hex from pmprobe: {s:?}"
+    );
     (0..s.len() / 2)
         .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex digit"))
         .collect()

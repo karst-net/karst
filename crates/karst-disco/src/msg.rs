@@ -374,11 +374,8 @@ fn decode_body(header: &Header, body: &[u8], total: usize) -> Result<Message, Er
             // allocation is sized by the datagram rather than by a field in
             // it.
             let mut candidates = Vec::with_capacity(count);
-            for chunk in rest.chunks_exact(ENDPOINT_LEN) {
-                let ep = chunk
-                    .first_chunk::<ENDPOINT_LEN>()
-                    .ok_or(Error::Malformed)?;
-                candidates.push(Endpoint::decode(ep)?);
+            for chunk in rest.as_chunks::<ENDPOINT_LEN>().0 {
+                candidates.push(Endpoint::decode(chunk)?);
             }
             Ok(Message::CallMeMaybe { candidates })
         }

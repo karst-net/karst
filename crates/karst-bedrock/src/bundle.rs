@@ -370,14 +370,14 @@ fn nibble(v: u8) -> char {
 }
 
 fn from_hex(s: &str) -> Result<Vec<u8>, Error> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(Error::Malformed);
     }
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(s.len() / 2);
-    for pair in bytes.chunks_exact(2) {
-        let hi = unnibble(*pair.first().ok_or(Error::Malformed)?)?;
-        let lo = unnibble(*pair.get(1).ok_or(Error::Malformed)?)?;
+    for &[hi, lo] in bytes.as_chunks::<2>().0 {
+        let hi = unnibble(hi)?;
+        let lo = unnibble(lo)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)

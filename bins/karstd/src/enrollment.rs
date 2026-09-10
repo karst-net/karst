@@ -52,7 +52,7 @@ fn parse_invitation(invitation: &str) -> Result<Bundle, String> {
 }
 
 fn hex(s: &str) -> Result<Vec<u8>, String> {
-    if !s.is_ascii() || s.len() % 2 != 0 {
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
         return Err("invalid server pin".to_owned());
     }
     (0..s.len())

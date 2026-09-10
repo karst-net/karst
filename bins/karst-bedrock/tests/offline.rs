@@ -201,7 +201,9 @@ fn root_quorum_genesis_request_sign_and_combine() {
     // A `Vec`, not a `[RootKey; 3]`. An ML-DSA-87 private key is large enough
     // that three of them on the stack trip `large_stack_arrays`, and the
     // lint has a point: a test that overflows the stack fails in a way that
-    // takes an afternoon to attribute.
+    // takes an afternoon to attribute. `useless_vec` disagrees but does not
+    // know that, so it is overridden rather than followed here.
+    #[allow(clippy::useless_vec)]
     let roots = vec![root(0x10), root(0x20), root(0x30)];
     let authority = authority(0x40);
     let root_pubs: Vec<_> = roots
@@ -280,6 +282,9 @@ fn root_quorum_genesis_request_sign_and_combine() {
 #[test]
 #[allow(clippy::too_many_lines)] // one linear flow: genesis, combine, then the anchor entry
 fn an_anchor_key_enabled_from_genesis_signs_an_anchor_entry() {
+    // See `root_quorum_genesis_request_sign_and_combine`'s identical `vec!`
+    // above for why this stays heap-allocated rather than an array.
+    #[allow(clippy::useless_vec)]
     let roots = vec![root(0x11), root(0x21), root(0x31)];
     let authority = authority(0x41);
     let anchor = AnchorKey::from_seed(&[0x51u8; ANCHOR_SEED]).expect("anchor");

@@ -242,12 +242,12 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn unhex(text: &str) -> Result<Vec<u8>, Error> {
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return Err(Error::Malformed("odd number of hex digits".to_owned()));
     }
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         let s = std::str::from_utf8(pair).map_err(|_| Error::Malformed("not hex".to_owned()))?;
         out.push(u8::from_str_radix(s, 16).map_err(|_| Error::Malformed("not hex".to_owned()))?);
     }

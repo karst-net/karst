@@ -951,11 +951,13 @@ fn short(b: &[u8]) -> String {
 }
 
 fn unhex(s: &str) -> Result<Vec<u8>, String> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err("hex input has an odd length".into());
     }
     s.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = core::str::from_utf8(pair).map_err(|_| "non-hex input".to_owned())?;
             u8::from_str_radix(text, 16).map_err(|_| "non-hex input".to_owned())

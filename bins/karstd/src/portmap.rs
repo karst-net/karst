@@ -783,7 +783,7 @@ mod backoff_tests {
             let got = b.next(jitter);
             let tenth = base / 10;
             assert!(
-                got >= base - tenth && got <= base + tenth,
+                got >= base.checked_sub(tenth).unwrap() && got <= base + tenth,
                 "jitter {jitter} put the wait at {got:?}, outside {base:?} ±10%"
             );
         }
