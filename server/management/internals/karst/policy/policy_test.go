@@ -331,6 +331,11 @@ func TestValidationRejects(t *testing.T) {
 		{"undefined group in src", `{"acls":[{"action":"accept","src":["group:ghost"],"dst":["*:22"]}]}`, "undefined"},
 		{"unknown field", `{"nonsense": 1}`, "cannot parse"},
 		{"not json", `not json at all`, "cannot parse"},
+		{"ssh deny action", `{"ssh":[{"action":"deny","src":["*"],"dst":["tag:prod"]}]}`, "only \"accept\""},
+		{"ssh empty src", `{"ssh":[{"action":"accept","src":[],"dst":["tag:prod"]}]}`, "empty src"},
+		{"ssh empty dst", `{"ssh":[{"action":"accept","src":["*"],"dst":[]}]}`, "empty src"},
+		{"ssh dst with a port suffix", `{"ssh":[{"action":"accept","src":["*"],"dst":["tag:prod:22"]}]}`, "must not specify a port"},
+		{"ssh undefined group in src", `{"ssh":[{"action":"accept","src":["group:ghost"],"dst":["tag:prod"]}]}`, "undefined"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,6 +502,127 @@ func TestEgressCompilationIsDeterministic(t *testing.T) {
 		for j := range again.Rules {
 			if strings.Join(again.Rules[j].Dsts, ",") != strings.Join(first.Rules[j].Dsts, ",") {
 				t.Fatalf("compilation %d differs from the first", i)
+			}
+		}
+	}
+}
+
+// ── the ssh gate ────────────────────────────────────────────────────────────
+
+func compileSSH(t *testing.T, d *policy.Document, target string) *policy.Filter {
+	t.Helper()
+	f, err := d.CompileSSH(nodeByHandle(t, target), nodes)
+	if err != nil {
+		t.Fatalf("compile ssh: %v", err)
+	}
+	return f
+}
+
+const srePolicyWithSsh = `{
+  "groups": { "group:sre": ["alice@example.com", "bob@example.com"] },
+  "tagOwners": { "tag:prod": ["group:sre"], "tag:dev": ["group:sre"] },
+  "acls": [
+    { "action": "accept", "src": ["group:sre"], "dst": ["tag:prod:22,443"] }
+  ],
+  "ssh": [
+    { "action": "accept", "src": ["hA"], "dst": ["tag:prod"] }
+  ]
+}`
+
+// Absent "ssh" must compile to a nil *Filter — "no additional gate" — leaving
+// SSH reachability governed by ACLs alone, unaffected by this workstream.
+func TestSshAbsentCompilesToNil(t *testing.T) {
+	d := mustParse(t, srePolicy) // no "ssh" key at all
+	f, err := d.CompileSSH(nodeByHandle(t, "hProd"), nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f != nil {
+		t.Fatalf("absent ssh compiled to %#v, want nil", f)
+	}
+}
+
+// "ssh": [] must compile to a non-nil, empty Filter — deny all SSH beyond
+// ACLs — observably different from the key being absent entirely. A typo
+// that empties the block must not silently become "I haven't adopted this".
+func TestSshEmptyDeniesEverything(t *testing.T) {
+	d := mustParse(t, `{"ssh": []}`)
+	f, err := d.CompileSSH(nodeByHandle(t, "hProd"), nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f == nil {
+		t.Fatal("empty ssh compiled to nil, want a non-nil empty filter")
+	}
+	if len(f.Rules) != 0 {
+		t.Fatalf("empty ssh compiled to %d rules", len(f.Rules))
+	}
+	if f.Permits("hA", 22) {
+		t.Fatal("empty ssh permitted a connection")
+	}
+}
+
+func TestSshPermitMatrix(t *testing.T) {
+	d := mustParse(t, srePolicyWithSsh)
+
+	cases := []struct {
+		name   string
+		target string
+		src    string
+		want   bool
+	}{
+		{"granted principal to prod", "hProd", "hA", true},
+		{"ungranted principal to prod", "hProd", "hB", false},
+		{"granted principal to a dev node", "hDev", "hA", false},
+		{"unknown source", "hProd", "nobody", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := compileSSH(t, d, tc.target)
+			if got := f.Permits(tc.src, 22); got != tc.want {
+				t.Fatalf("Permits(%q, 22) = %v, want %v", tc.src, got, tc.want)
+			}
+			// SSH gating is always port 22, regardless of what a rule's ACL
+			// counterpart might have granted on other ports.
+			if f.Permits(tc.src, 443) {
+				t.Fatal("ssh filter permitted a non-22 port")
+			}
+		})
+	}
+}
+
+// The two gates are independent: an ssh rule must not leak into the general
+// ACL filter, and an acl rule must not satisfy the ssh gate on its own (§3.1).
+func TestSshIsNotFoldedIntoAcls(t *testing.T) {
+	d := mustParse(t, srePolicyWithSsh)
+
+	acl := compile(t, d, "hProd")
+	if !acl.Permits("hB", 22) {
+		t.Fatal("hB should reach prod on 22 via the acl rule alone")
+	}
+
+	ssh := compileSSH(t, d, "hProd")
+	if ssh.Permits("hB", 22) {
+		t.Fatal("the acl grant for hB leaked into the ssh gate")
+	}
+	if !ssh.Permits("hA", 22) {
+		t.Fatal("hA's ssh grant did not compile")
+	}
+}
+
+// Without a stable order, map iteration would make every recompilation look
+// like a change and defeat the netmap's version hash.
+func TestSshCompilationIsDeterministic(t *testing.T) {
+	d := mustParse(t, srePolicyWithSsh)
+	first := compileSSH(t, d, "hProd")
+	for i := 0; i < 20; i++ {
+		next := compileSSH(t, d, "hProd")
+		if len(first.Rules) != len(next.Rules) {
+			t.Fatal("rule count changed between identical compilations")
+		}
+		for j := range first.Rules {
+			if strings.Join(first.Rules[j].Srcs, ",") != strings.Join(next.Rules[j].Srcs, ",") {
+				t.Fatal("source order changed between identical compilations")
 			}
 		}
 	}

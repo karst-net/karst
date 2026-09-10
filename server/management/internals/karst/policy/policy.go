@@ -54,10 +54,28 @@ type Document struct {
 	// union. A deny form would make ordering significant and is deliberately
 	// absent until someone needs it.
 	ACLs []Rule `json:"acls,omitempty"`
+	// Ssh is a second, independent admission gate for interactive SSH access
+	// (TCP/22): a connection must be permitted by both ACLs and Ssh to reach
+	// port 22 on a node (plans/phase-6/07-acl-gated-ssh.md §3.1). Nil (the
+	// "ssh" key absent) leaves SSH reachability governed by ACLs alone,
+	// unaffected by this gate — the pre-existing behavior exactly. A non-nil
+	// but empty Ssh denies all SSH beyond what ACLs grant. Like ACLs, only
+	// "accept" rules exist.
+	Ssh []SshRule `json:"ssh,omitempty"`
 }
 
 // Rule is one accept entry.
 type Rule struct {
+	Action string   `json:"action"`
+	Src    []string `json:"src"`
+	Dst    []string `json:"dst"`
+}
+
+// SshRule is one accept entry gating interactive SSH access to a
+// destination, independent of ACLs' general reachability grants. Dst
+// selectors name nodes/tags/groups the same way ACLs' selectors do, but
+// carry no port: SSH gating is always port 22 (§3.3).
+type SshRule struct {
 	Action string   `json:"action"`
 	Src    []string `json:"src"`
 	Dst    []string `json:"dst"`
@@ -157,6 +175,40 @@ func (d *Document) Validate() error {
 				}
 			}
 		}
+	}
+	for i, r := range d.Ssh {
+		if r.Action != "accept" {
+			return fmt.Errorf("%w: ssh %d has action %q; only \"accept\" exists",
+				ErrInvalid, i, r.Action)
+		}
+		if len(r.Src) == 0 || len(r.Dst) == 0 {
+			return fmt.Errorf("%w: ssh %d has an empty src or dst", ErrInvalid, i)
+		}
+		for _, dst := range r.Dst {
+			if err := validateSshDst(dst); err != nil {
+				return fmt.Errorf("%w: ssh %d: %v", ErrInvalid, i, err)
+			}
+		}
+		for _, src := range r.Src {
+			if strings.HasPrefix(src, "group:") {
+				if _, ok := d.Groups[src]; !ok {
+					return fmt.Errorf("%w: ssh %d references undefined %s", ErrInvalid, i, src)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateSshDst rejects an "ssh" destination that carries a trailing port
+// specification, e.g. "tag:prod:22" copied from an "acls" entry. SSH gating
+// is always port 22 (§3.3), so a port suffix here is almost certainly a
+// mistake, and it gets a precise rejection naming that design rather than a
+// confusing "selector not found" once compiled.
+func validateSshDst(dst string) error {
+	if i := strings.LastIndex(dst, ":"); i >= 0 && looksLikePortSpec(dst[i+1:]) {
+		return fmt.Errorf("destination %q must not specify a port; ssh rules are "+
+			"always port 22 and never take a port suffix", dst)
 	}
 	return nil
 }
@@ -300,6 +352,45 @@ func (d *Document) Compile(target Node, all []Node) (*Filter, error) {
 				continue
 			}
 			f.Rules = append(f.Rules, FilterRule{Srcs: srcs, Ports: ports, Provenance: Provenance{Rule: i + 1, SourceTerm: strings.Join(rule.Src, ","), DestinationTerm: selector}})
+		}
+	}
+
+	f.Rules = normalize(f.Rules)
+	return f, nil
+}
+
+// CompileSSH produces the SSH-gate filter for one node: an independent,
+// second admission check for TCP/22, never merged with the general ingress
+// Filter (§3.1). A nil Ssh (the "ssh" key absent from the document) compiles
+// to a nil *Filter — "no additional gate", SSH governed by ACLs alone. A
+// non-nil but empty Ssh compiles to a non-nil, empty *Filter — deny all SSH
+// beyond ACLs. This mirrors the nil-vs-empty distinction compileFilter
+// already threads for "no policy loaded at all".
+func (d *Document) CompileSSH(target Node, all []Node) (*Filter, error) {
+	if d.Ssh == nil {
+		return nil, nil
+	}
+
+	f := &Filter{Node: target.Handle}
+	for i, rule := range d.Ssh {
+		for _, dst := range rule.Dst {
+			if !d.matches(dst, target) {
+				continue // this rule does not grant ssh access to this node
+			}
+
+			srcs := d.resolveSources(rule.Src, all)
+			if len(srcs) == 0 {
+				continue // resolves to nobody, grants nothing
+			}
+			f.Rules = append(f.Rules, FilterRule{
+				Srcs:  srcs,
+				Ports: []PortRange{{First: 22, Last: 22}},
+				Provenance: Provenance{
+					Rule:            i + 1,
+					SourceTerm:      strings.Join(rule.Src, ","),
+					DestinationTerm: dst,
+				},
+			})
 		}
 	}
 
