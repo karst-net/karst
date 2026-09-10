@@ -67,6 +67,31 @@ fn a_secure_file_round_trips_its_content() {
     assert_eq!(got, "exit-eu\n");
 }
 
+/// `bins/karstd/src/exit_node.rs::Selection::select` renames its temporary
+/// file into place *before* dropping the `SecureFile` handle it wrote
+/// through (the handle only goes out of scope when the enclosing closure
+/// returns, after the rename). On Unix that is unremarkable; on Windows it
+/// needs `FILE_SHARE_DELETE` in `create_file_exclusive`'s share mode, or the
+/// rename's own internal open fails with `ERROR_SHARING_VIOLATION` — a real
+/// failure only real `windows-latest` CI caught, the first time
+/// `exit_node`'s own test ran there.
+#[test]
+fn a_secure_file_can_be_renamed_while_still_open() {
+    let dir = scratch_dir("rename-open");
+    create_secure_dir(&dir).expect("create dir");
+    let temporary = dir.join("state.tmp");
+    let target = dir.join("state");
+
+    let mut file = SecureFile::create_new(&temporary).expect("create");
+    file.write_all(b"exit-eu\n").expect("write");
+    file.sync_all().expect("sync");
+    std::fs::rename(&temporary, &target).expect("rename while still open");
+    drop(file);
+
+    let got = std::fs::read_to_string(&target).expect("read back");
+    assert_eq!(got, "exit-eu\n");
+}
+
 /// `CREATE_NEW`'s whole point: `bins/karstd/src/exit_node.rs::Selection::select`
 /// relies on this failing so its temporary-file-then-rename pattern can
 /// never silently overwrite a file it didn't create itself.

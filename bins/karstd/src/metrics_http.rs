@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn the_http_listener_and_the_ipc_verb_return_the_same_bytes() {
         let dir = Scratch::new("metrics_http");
-        let socket_path = dir.join("karstd.sock");
+        let socket_path = dir.socket("karstd.sock");
         let control = ipc::bind(&socket_path).expect("bind control socket");
         let shutdown = Shutdown::default();
 
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn an_unknown_path_gets_a_404() {
         let dir = Scratch::new("metrics_http_404");
-        let socket_path = dir.join("karstd.sock");
+        let socket_path = dir.socket("karstd.sock");
         let _control = ipc::bind(&socket_path).expect("bind control socket");
         let shutdown = Shutdown::default();
 

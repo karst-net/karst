@@ -21,7 +21,8 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateDirectoryW, CreateFileW, FlushFileBuffers, WriteFile, CREATE_NEW, FILE_SHARE_READ,
+    CreateDirectoryW, CreateFileW, FlushFileBuffers, WriteFile, CREATE_NEW, FILE_SHARE_DELETE,
+    FILE_SHARE_READ,
 };
 
 /// An owned Win32 handle, closed on drop.
@@ -132,6 +133,15 @@ pub(crate) fn create_directory(name: &[u16], security: &SecurityDescriptor) -> i
 /// `O_EXCL` semantics), with `security` as its ACL from the moment it
 /// exists.
 ///
+/// `FILE_SHARE_DELETE` is part of the share mode even though nothing here
+/// deletes the file directly: Windows also requires it of the *renamer's*
+/// own internal open when a caller (`bins/karstd/src/exit_node.rs`'s
+/// write-then-`fs::rename` pattern) renames this file while this handle is
+/// still open on it — without it, `fs::rename` fails with
+/// `ERROR_SHARING_VIOLATION` the moment a second `karstd` start ever
+/// exercised the path, which no test caught until real `windows-latest` CI
+/// ran `exit_node`'s own suite for the first time.
+///
 /// # Errors
 /// An [`io::Error`] from the last Win32 error, `ERROR_FILE_EXISTS` included.
 pub(crate) fn create_file_exclusive(
@@ -141,15 +151,16 @@ pub(crate) fn create_file_exclusive(
     let attrs = security.attributes();
     // SAFETY: `name` is a live, NUL-terminated UTF-16 buffer for the
     // duration of the call. `attrs` borrows `security` for the same
-    // duration and is passed by `*const`. No sharing is requested
-    // (`dwShareMode = FILE_SHARE_READ` only, not `_WRITE`/`_DELETE`), and
+    // duration and is passed by `*const`. Sharing permits a concurrent
+    // reader and a concurrent rename/delete of this same path
+    // (`FILE_SHARE_READ | FILE_SHARE_DELETE`), not a concurrent writer, and
     // the template-file handle is null, which the API documents as valid
     // when `dwCreationDisposition` does not copy attributes from a template.
     let handle = unsafe {
         CreateFileW(
             name.as_ptr(),
             GENERIC_WRITE,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
             &raw const attrs,
             CREATE_NEW,
             0,
