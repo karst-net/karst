@@ -540,6 +540,36 @@ starting point, not a destination:
 The format rejects unknown fields, so a comment smuggled in as a key stops the
 server booting. The full grammar is PLAN.md §4.3.
 
+An optional `"ssh"` block adds a second, independent gate on top of `"acls"`,
+scoped to interactive SSH access:
+
+```json walkthrough=none reason="illustrative; the walkthrough's own policy.json stays allow-all"
+{
+  "acls": [ { "action": "accept", "src": ["*"], "dst": ["tag:prod:22"] } ],
+  "ssh":  [ { "action": "accept", "src": ["group:sre"], "dst": ["tag:prod"] } ]
+}
+```
+
+A connection reaches port 22 only if **both** blocks permit it — `"acls"`
+governs whether the packet may reach the node at all, `"ssh"` governs whether
+it may open a shell once it gets there. Neither replaces the other, so a rule
+in one block does not need repeating in the other for a source that is
+already covered by it. **Absent and empty behave differently: leaving out
+`"ssh"` entirely means SSH is governed by `"acls"` alone, exactly as it was
+before this block existed; writing `"ssh": []` denies every SSH connection
+regardless of what `"acls"` grants.** A typo that empties the block is a
+lockout, not a no-op — check `karst status`, which reports which of the two
+states applies and how many `"ssh"` rules are loaded.
+
+`"ssh"` selectors use the same `group:`/`tag:`/handle vocabulary as `"acls"`,
+but a destination never takes a port suffix — every rule is port 22, and a
+copied-over `"tag:prod:22"` is rejected rather than silently matching
+nothing. There is no `"check"` action (no periodic re-authentication) and no
+way to restrict which local Unix account a session may authenticate as; that
+remains `sshd`'s own `AllowUsers`/PAM configuration on the destination host,
+untouched by this block. A policy change reaches the *next* SSH connection
+attempt, not one already open and carrying traffic.
+
 `/etc/netbird/management.json` — the minimum SQLite-backed configuration.
 Generate `DataStoreEncryptionKey` with `openssl rand -base64 32` and the TURN
 secret with `openssl rand -hex 16`:
@@ -679,6 +709,10 @@ A node that has enrolled reports its overlay `addresses` and `enforcing =
 true` under `[policy]`. Both are worth knowing by sight: an empty address list
 means the netmap never arrived, and `enforcing = false` on a node in control
 mode means it is running with no packet filter rather than with the server's.
+`[ssh_policy]` reports the same shape for the `"ssh"` gate above: `enforcing =
+false` means no `"ssh"` block in policy at all (unaffected by it), `enforcing
+= true` with `rules = 0` means it is present and denying every SSH connection,
+and `rules` above zero is how many grants are loaded.
 
 **`ExecStopPost=` in that unit is not decoration.** `karstd` can be told to
 configure the host's DNS resolver, and that configuration must not survive the

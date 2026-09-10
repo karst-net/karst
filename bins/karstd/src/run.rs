@@ -3665,6 +3665,7 @@ fn report(
             let _ = writeln!(out, "acl_denied_in = {}", stats.acl_denied_in);
             let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
             let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
+            let _ = writeln!(out, "ssh_denied = {}", stats.ssh_denied);
             // **Silent loss is the failure this line exists to prevent.** The
             // queue to the relay worker is bounded and drops rather than
             // blocking, which is the right trade — but a node quietly shedding
@@ -4406,6 +4407,7 @@ fn bug_report(
     let _ = writeln!(out, "acl_denied_in = {}", stats.acl_denied_in);
     let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
     let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
+    let _ = writeln!(out, "ssh_denied = {}", stats.ssh_denied);
     let _ = writeln!(
         out,
         "relay_dropped = {}",

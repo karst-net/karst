@@ -3348,6 +3348,140 @@ fn assert_double_nat(net: &Aquifer) {
     );
 }
 
+/// **The independent SSH gate, over the real wire and datapath** —
+/// `plans/phase-6/07-acl-gated-ssh.md`'s exit demonstration (§7), scoped to
+/// what a fixed test-server fixture can express without knowing either
+/// node's per-run, seed-derived handle ahead of time. §7's full walkthrough
+/// (grant one client, deny the other, then swap which is which after a
+/// policy edit) needs a policy naming specific handles, which
+/// `karst-testserver`'s document cannot do; the revocation half of that
+/// (§3.4 — an already-admitted flow survives a policy change) is proven at
+/// the engine level instead, by
+/// `ssh_gate.rs::a_revocation_does_not_tear_down_an_already_admitted_flow`.
+///
+/// What this row *can* prove without a named principal: `karst-testserver`'s
+/// fixed `"acls"` block already grants `*:22` to every row in this file. This
+/// one starts the server with `--ssh-policy deny`, adding a present-but-empty
+/// `"ssh"` block on top of that unchanged grant — §3.2's "empty is not
+/// absent" distinction, carried over the real netmap wire
+/// (`ssh_filter`/`ssh_filter_present`) and enforced by the real `karstd`
+/// datapath, not asserted against a value the test itself constructed.
+///
+/// The client's connection attempt must time out, not merely be refused: §7
+/// step 3 draws exactly that distinction — no RST, no application-layer
+/// rejection, because the flow is never admitted to reach the tunnel's IP
+/// stack at all.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn an_ssh_policy_denies_what_the_acl_alone_would_permit() {
+    if !have_prerequisites() {
+        return;
+    }
+    let mut net = Aquifer {
+        dir: std::env::temp_dir().join(format!("karst-aquifer-ssh-gate-{}", std::process::id())),
+        services: Vec::new(),
+        nodes: Vec::new(),
+    };
+    let _ = std::fs::remove_dir_all(&net.dir);
+    std::fs::create_dir_all(&net.dir).expect("temp dir");
+    let ips = build_topology(&mut net, Shape::Flat);
+    let (ca, relay_pk) = start_relay(&mut net);
+    let pins = start_server_with_options(
+        &mut net,
+        &[(format!("{IP_PUB}:{RELAY_PORT}"), relay_pk)],
+        "",
+        0,
+        &["--ssh-policy".to_owned(), "deny".to_owned()],
+    );
+    write_node_configs(&net, &pins, &ca, ips);
+
+    // Same enroll-then-restart choreography as `run`: a node's netmap is a
+    // snapshot taken when it asks, and the server has no way to push, so A
+    // must come up again after B exists to learn about it.
+    start_node(&mut net, "a", NS_A);
+    wait_for(&net, "node A to come up", Duration::from_secs(30), || {
+        net.log("a.log").contains("up, mtu")
+    });
+    start_node(&mut net, "b", NS_B);
+    wait_for(
+        &net,
+        "node B to see its peer",
+        Duration::from_secs(30),
+        || field(&status(&net, "b", NS_B), "name").is_some(),
+    );
+    net.stop_node("a", NS_A);
+    start_node(&mut net, "a", NS_A);
+
+    converge(&net, Shape::Flat);
+    assert_endpoints(&net, Shape::Flat);
+
+    let ranges = field(&status(&net, "a", NS_A), "allowed_ips").expect("the peer's ranges");
+    let peer_ip = ranges
+        .trim_matches(|c: char| !c.is_ascii_digit())
+        .split('/')
+        .next()
+        .expect("an address")
+        .to_owned();
+    assert!(
+        peer_ip.parse::<std::net::Ipv4Addr>().is_ok(),
+        "could not read the peer's overlay address out of {ranges:?}"
+    );
+
+    // A listener really does run — if the gate silently failed open, this is
+    // what proves it, rather than a pass that only shows nothing was
+    // listening at all.
+    let listener = format!(
+        "import socket\n\
+         s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
+         s.bind(('{peer_ip}',22)); s.listen(1)\n\
+         c,_=s.accept(); c.sendall(b'should never be sent'); c.close()\n"
+    );
+    net.spawn_service(NS_B, "python3", &["-c", &listener], "listener.log");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let client = format!(
+        "import socket\n\
+         try:\n\
+         \x20   socket.create_connection(('{peer_ip}',22), timeout=5)\n\
+         \x20   print('CONNECTED')\n\
+         except (socket.timeout, TimeoutError):\n\
+         \x20   print('TIMED_OUT')\n\
+         except Exception as e:\n\
+         \x20   print(f'OTHER:{{e}}')\n"
+    );
+    let out = Command::new("ip")
+        .args(["netns", "exec", NS_A, "python3", "-c", &client])
+        .output()
+        .expect("run the client");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("TIMED_OUT"),
+        "the ssh gate did not block a connection the acl alone would have \
+         permitted: {stdout} {}\n── node A ──\n{}\n── node B ──\n{}\n\
+         ── a.log ──\n{}\n── b.log ──\n{}",
+        String::from_utf8_lossy(&out.stderr),
+        status(&net, "a", NS_A),
+        status(&net, "b", NS_B),
+        net.log("a.log"),
+        net.log("b.log"),
+    );
+
+    // The general ACL still permits the packet — this is the ssh gate
+    // refusing it, not the acl. If acl_denied_in on B ever moved, the test
+    // would be exercising the wrong mechanism entirely.
+    let b_status = status(&net, "b", NS_B);
+    assert_eq!(
+        field(&b_status, "acl_denied_in").as_deref(),
+        Some("0"),
+        "the acl denied the packet itself, so this did not test the ssh gate:\n{b_status}"
+    );
+    assert_ne!(
+        field(&b_status, "ssh_denied").as_deref(),
+        Some("0"),
+        "the ssh gate's own counter never moved:\n{b_status}"
+    );
+}
+
 /// A request **and its reply**, under a policy that permits `*:22` and nothing
 /// else.
 ///

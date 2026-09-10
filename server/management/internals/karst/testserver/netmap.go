@@ -380,7 +380,7 @@ func relayRow(address string, key []byte) *proto.KarstRelay {
 	}
 }
 
-func buildNetmapServer(preload int, dnsZone string) (*router, error) {
+func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, error) {
 	db, err := gorm.Open(sqlite.Open("file:karst-testserver?mode=memory&cache=shared"),
 		&gorm.Config{Logger: logger.Discard})
 	if err != nil {
@@ -404,8 +404,23 @@ func buildNetmapServer(preload int, dnsZone string) (*router, error) {
 
 	// A policy the Rust side can check it received: the preloaded peers may
 	// reach this node on 22, and nothing else may reach it at all.
+	//
+	// sshPolicy layers the independent SSH gate on top, for the aquifer row
+	// exercising plans/phase-6/07-acl-gated-ssh.md end to end over the real
+	// wire: "grant" adds an "ssh" block naming "*" (both gates then permit
+	// the same traffic the "acls" block alone already did); "deny" adds a
+	// present-but-empty one (§3.2 — the acls grant is no longer enough on
+	// its own); anything else (including the empty default) omits the "ssh"
+	// key entirely, the fixed pre-existing document every other row expects.
+	var sshBlock string
+	switch sshPolicy {
+	case "grant":
+		sshBlock = `, "ssh": [ { "action": "accept", "src": ["*"], "dst": ["*"] } ]`
+	case "deny":
+		sshBlock = `, "ssh": []`
+	}
 	doc, err := policy.Parse([]byte(`{
-	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22"] } ]
+	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22"] } ]` + sshBlock + `
 	}`))
 	if err != nil {
 		return nil, fmt.Errorf("policy: %w", err)

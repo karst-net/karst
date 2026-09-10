@@ -72,7 +72,7 @@ func main() {
 
 	var netmapRouter *router
 	if n, ok := netmapMode(); ok {
-		r, err := buildNetmapServer(n, dnsZone())
+		r, err := buildNetmapServer(n, dnsZone(), sshPolicyMode())
 		if err != nil {
 			fail("netmap fixture: %v", err)
 		}
@@ -317,6 +317,26 @@ func dnsZone() string {
 	args := os.Args[1:]
 	for i, a := range args {
 		if a == "--dns-zone" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// sshPolicyMode reads `--ssh-policy MODE` — one of "grant" (an "ssh" block
+// naming "*" as both src and dst), "deny" (a present-but-empty "ssh" block),
+// or absent (the flag omitted entirely, the fixed "acls"-only document with
+// no "ssh" key at all — today's behavior, unaffected by this workstream).
+//
+// Test-server fixture handles are derived from per-run identity seeds
+// (plans/phase-6/07-acl-gated-ssh.md's aquifer row), so a policy naming a
+// *specific* enrolled node cannot be written into this fixed document ahead
+// of time; "grant"/"deny" exercise the wire delivery and the "absent versus
+// present-empty" distinction (§3.2) without needing one.
+func sshPolicyMode() string {
+	args := os.Args[1:]
+	for i, a := range args {
+		if a == "--ssh-policy" && i+1 < len(args) {
 			return args[i+1]
 		}
 	}
