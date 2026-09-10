@@ -248,6 +248,86 @@ impl PacketFilter {
     }
 }
 
+/// The independent SSH admission gate for TCP/22
+/// (`plans/phase-6/07-acl-gated-ssh.md` §3.1) — a second, separately
+/// evaluated check `AND`ed with, and never merged into, the general ingress
+/// `PacketFilter`. Reuses [`Rule`]; every rule this compiles from carries
+/// ports `{22, 22}`, since gating an SSH connection has no port of its own.
+///
+/// Shares `PacketFilter::ingress`'s "empty is deny" discipline, with one more
+/// state on top of it: `None` here means "no `ssh` block in policy at all" —
+/// SSH reachability governed by the general filter alone, today's behavior
+/// unaffected by this gate (§3.2) — which is a *third* state alongside
+/// `PacketFilter::unrestricted`'s `None` and a present, empty rule list.
+pub struct SshFilter(Option<Vec<Rule>>);
+
+impl std::fmt::Debug for SshFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match &self.0 {
+            None => "absent".to_owned(),
+            Some(rules) if rules.is_empty() => "deny-all".to_owned(),
+            Some(rules) => format!("{} rule(s)", rules.len()),
+        };
+        f.debug_tuple("SshFilter").field(&state).finish()
+    }
+}
+
+impl SshFilter {
+    /// No `ssh` block in policy: this gate does not apply, and SSH
+    /// reachability is governed by the general ingress filter alone (§3.2).
+    #[must_use]
+    pub fn absent() -> Self {
+        Self(None)
+    }
+
+    /// Compile a netmap's `ssh_filter` rules.
+    ///
+    /// `present` carries the wire's `ssh_filter_present` flag (§3.2):
+    /// `false` means no `ssh` block at all — [`Self::absent`], regardless of
+    /// `rules` — and `true` with an empty `rules` means the block is present
+    /// but grants nothing, i.e. deny all SSH beyond the general filter.
+    #[must_use]
+    pub fn compile(rules: &[pb::KarstFilterRule], present: bool, handles: &[Vec<u8>]) -> Self {
+        if !present {
+            return Self::absent();
+        }
+        let compiled = rules
+            .iter()
+            .filter_map(|r| compile_rule(&r.srcs, &r.ports, handles))
+            .collect();
+        Self(Some(compiled))
+    }
+
+    /// May `from` open an SSH connection to this node?
+    ///
+    /// Called once per new flow to local port 22 (§3.4), never per packet —
+    /// see `crate::flow::SshAdmissions`, the cache that makes that true by
+    /// remembering a flow's admission decision across the rest of its life.
+    #[must_use]
+    pub fn admit(&self, from: PeerIndex) -> Verdict {
+        let Some(rules) = self.0.as_deref() else {
+            return Verdict::Permit; // no "ssh" block: this gate does not apply
+        };
+        if rules.iter().any(|r| r.permits(from, 22)) {
+            Verdict::Permit
+        } else {
+            Verdict::Denied
+        }
+    }
+
+    /// Whether the ssh gate is enforcing at all, for `karst status`.
+    #[must_use]
+    pub fn is_enforcing(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// How many rules the gate carries, for `karst status`.
+    #[must_use]
+    pub fn rule_count(&self) -> Option<usize> {
+        Some(self.0.as_ref()?.len())
+    }
+}
+
 /// Compile one rule, or `None` if it grants nothing.
 fn compile_rule(
     nodes: &[String],
@@ -579,5 +659,83 @@ mod tests {
 
         let any = PacketFilter::compile(&[rule(&["*"], vec![port(22, 22)])], &[], &handles());
         assert_eq!(any.ingress(99, &tcp(22)), Verdict::Permit);
+    }
+
+    // ── the ssh gate ────────────────────────────────────────────────────────
+
+    /// The state nothing else has: no `ssh` block at all, distinct from both
+    /// `PacketFilter::unrestricted` and an empty, enforcing `ssh` block.
+    #[test]
+    fn an_absent_ssh_block_permits_everything() {
+        let f = SshFilter::absent();
+        assert_eq!(f.admit(0), Verdict::Permit);
+        assert!(!f.is_enforcing());
+        assert_eq!(f.rule_count(), None);
+    }
+
+    /// `"ssh": []` denies every connection, the same "empty is deny"
+    /// discipline `PacketFilter` uses — and observably different from absent.
+    #[test]
+    fn an_empty_ssh_rule_set_denies_everything() {
+        let f = SshFilter::compile(&[], true, &handles());
+        assert_eq!(f.admit(0), Verdict::Denied);
+        assert!(f.is_enforcing());
+        assert_eq!(f.rule_count(), Some(0));
+    }
+
+    /// `present: false` means absent regardless of what `rules` says — the
+    /// wire's `ssh_filter_present` flag is authoritative, not emptiness.
+    #[test]
+    fn present_false_is_absent_even_with_rules() {
+        let f = SshFilter::compile(&[rule(&["alice"], vec![port(22, 22)])], false, &handles());
+        assert_eq!(f.admit(0), Verdict::Permit);
+        assert!(!f.is_enforcing());
+    }
+
+    /// The three states must be distinguishable in a log line, for the same
+    /// reason `PacketFilter`'s two states must be.
+    #[test]
+    fn the_three_states_are_distinguishable_in_debug_output() {
+        let absent = format!("{:?}", SshFilter::absent());
+        let deny_all = format!("{:?}", SshFilter::compile(&[], true, &handles()));
+        let granting = format!(
+            "{:?}",
+            SshFilter::compile(&[rule(&["alice"], vec![port(22, 22)])], true, &handles())
+        );
+        assert!(absent.contains("absent"), "{absent}");
+        assert!(deny_all.contains("deny-all"), "{deny_all}");
+        assert!(granting.contains("1 rule"), "{granting}");
+        assert_ne!(absent, deny_all);
+        assert_ne!(deny_all, granting);
+    }
+
+    #[test]
+    fn an_ssh_rule_permits_only_its_own_peer() {
+        let f = SshFilter::compile(&[rule(&["alice"], vec![port(22, 22)])], true, &handles());
+        assert_eq!(f.admit(0), Verdict::Permit);
+        assert_eq!(f.admit(1), Verdict::Denied);
+    }
+
+    /// The general filter and the ssh gate are separate checks: this module
+    /// makes no attempt to AND them together — that is `Engine::permit`'s job
+    /// — so an ssh-only test must not assume anything about `PacketFilter`.
+    #[test]
+    fn an_ssh_wildcard_matches_any_peer() {
+        let f = SshFilter::compile(&[rule(&["*"], vec![port(22, 22)])], true, &handles());
+        assert_eq!(f.admit(0), Verdict::Permit);
+        assert_eq!(f.admit(1), Verdict::Permit);
+    }
+
+    /// A peer named in an ssh rule but unknown to this node grants nothing,
+    /// the same widening trap `PacketFilter::compile` guards against.
+    #[test]
+    fn an_ssh_rule_naming_only_unknown_peers_is_discarded_not_widened() {
+        let f = SshFilter::compile(
+            &[rule(&["nobody", "stranger"], vec![port(22, 22)])],
+            true,
+            &handles(),
+        );
+        assert_eq!(f.rule_count(), Some(0));
+        assert_eq!(f.admit(0), Verdict::Denied);
     }
 }
