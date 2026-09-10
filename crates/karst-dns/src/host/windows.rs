@@ -774,7 +774,16 @@ mod tests {
         assert_eq!(zone.config_options, 0x8);
         assert_eq!(zone.version, 1);
         assert_eq!(zone.comment, MARKER);
-        assert_eq!(fixture.rule("corp.example").expect("split rule"), zone);
+
+        // The search domain's rule shares every domain-independent value
+        // with the zone's — but not `name`, which *is* the domain, and so is
+        // the one field where every rule must differ from every other.
+        let split = fixture.rule("corp.example").expect("split rule");
+        assert_eq!(split.name, vec![".corp.example.".to_owned()]);
+        assert_eq!(split.dns_servers, zone.dns_servers);
+        assert_eq!(split.config_options, zone.config_options);
+        assert_eq!(split.version, zone.version);
+        assert_eq!(split.comment, zone.comment);
         assert!(fixture.host.observe().expect("observe"));
         assert_eq!(fixture.flushes(), 1, "apply must flush the resolver cache");
     }
@@ -934,8 +943,11 @@ mod tests {
             .apply(stub(), "aquifer.karst.", &[])
             .expect("apply");
         assert!(fixture.host.observe().expect("Karst owns the rule"));
+        // `create`, not `open`: `Key::open` hands back a read-only handle,
+        // and this needs to write — the same reason every real write path
+        // in `Nrpt` itself uses `create` rather than `open`.
         let root = LOCAL_MACHINE.open(&fixture.root).expect("root");
-        let key = root.open("aquifer.karst").expect("rule key");
+        let key = root.create("aquifer.karst").expect("rule key");
         key.set_string("GenericDNSServers", "10.0.0.53")
             .expect("external edit");
         assert!(!fixture.host.observe().expect("external ownership"));
