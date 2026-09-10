@@ -405,6 +405,7 @@ mod tests {
                 .expect("empty routes"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
+            ssh_filter: crate::filter::SshFilter::absent(),
         }
     }
 

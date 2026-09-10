@@ -103,6 +103,10 @@ fn config_for(
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),
         filter,
+        // Absent, not deny-all: these tests are about the general ACL/flow
+        // mechanism, unaffected by the independent SSH gate covered in
+        // tests/ssh_gate.rs.
+        ssh_filter: karstd::filter::SshFilter::absent(),
     };
     Arc::new(config)
 }

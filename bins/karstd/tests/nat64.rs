@@ -265,5 +265,6 @@ fn config() -> karstd::config::Config {
         routes: karstd::routing::AllowedIps::build(Vec::new()).expect("routes"),
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
+        ssh_filter: karstd::filter::SshFilter::absent(),
     }
 }

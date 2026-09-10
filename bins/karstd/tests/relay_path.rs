@@ -175,6 +175,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         routes: AllowedIps::build(pairs).expect("no conflicts"),
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
+        ssh_filter: karstd::filter::SshFilter::absent(),
     };
 
     let config = Arc::new(config);

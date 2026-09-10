@@ -35,7 +35,7 @@ use std::sync::Arc;
 use karst_crypto::kem::{KemKind, KemPublicKey};
 use karst_noise::handshake::{PeerPublic, StaticKeys};
 
-use crate::filter::PacketFilter;
+use crate::filter::{PacketFilter, SshFilter};
 use crate::netmap::Netmap;
 use crate::routing::{AllowedIps, InterfaceAddress, Prefix};
 
@@ -665,6 +665,12 @@ pub struct Config {
     /// which would be default deny and would break a working roster on
     /// upgrade. A netmap-sourced configuration compiles the real thing.
     pub filter: PacketFilter,
+    /// The independent SSH admission gate for TCP/22
+    /// (`plans/phase-6/07-acl-gated-ssh.md` §3.1), `AND`ed with `filter` at
+    /// admission time, never merged into it. `SshFilter::absent()` on the
+    /// same TOML-roster path that gives `filter` its unrestricted state —
+    /// there is no ACL notion on that path, so there is no SSH gate either.
+    pub ssh_filter: SshFilter,
 }
 
 impl fmt::Debug for Config {
@@ -793,6 +799,7 @@ impl Config {
             routes,
             skipped: Vec::new(),
             filter: PacketFilter::unrestricted(),
+            ssh_filter: SshFilter::absent(),
         })
     }
 
@@ -936,6 +943,9 @@ impl Config {
         // Compiled against the same peer order the datapath indexes by, since a
         // rule names peers by handle and the engine knows them by position.
         let filter = PacketFilter::compile(&netmap.packet_filter, &netmap.egress_filter, &handles);
+        // The independent SSH gate, compiled the same way and against the same
+        // peer order, but never merged into `filter` (§3.1).
+        let ssh_filter = SshFilter::compile(&netmap.ssh_filter, netmap.ssh_filter_present, &handles);
 
         Ok(Self {
             keys: local.keys,
@@ -984,6 +994,7 @@ impl Config {
             routes,
             skipped,
             filter,
+            ssh_filter,
         })
     }
 }

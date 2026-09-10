@@ -180,25 +180,112 @@ impl Flows {
     }
 
     /// Drop expired flows, then the least recently used, until there is room.
-    ///
-    /// Expired first because those are free — nothing is lost by forgetting a
-    /// permission that had already lapsed. Only when none has expired does this
-    /// evict a live flow, and then the one that has gone longest without a
-    /// packet, which is the one least likely to still be carrying anything.
     fn make_room(&mut self, now_ms: u64) {
-        self.seen
-            .retain(|_, last| now_ms.saturating_sub(*last) <= IDLE_MS);
-        while self.seen.len() >= MAX_FLOWS {
-            let Some(oldest) = self
-                .seen
-                .iter()
-                .min_by_key(|(_, last)| **last)
-                .map(|(key, _)| *key)
-            else {
-                return;
-            };
-            self.seen.remove(&oldest);
+        evict_to_capacity(&mut self.seen, now_ms);
+    }
+}
+
+/// Drop expired entries, then the least recently used, until `map` is under
+/// [`MAX_FLOWS`]. Shared by [`Flows`] and [`SshAdmissions`], which have
+/// identical bounding logic over otherwise-independent state.
+///
+/// Expired first because those are free — nothing is lost by forgetting a
+/// permission that had already lapsed. Only when none has expired does this
+/// evict a live entry, and then the one that has gone longest without a
+/// packet, which is the one least likely to still be carrying anything.
+fn evict_to_capacity(map: &mut HashMap<Key, u64>, now_ms: u64) {
+    map.retain(|_, last| now_ms.saturating_sub(*last) <= IDLE_MS);
+    while map.len() >= MAX_FLOWS {
+        let Some(oldest) = map.iter().min_by_key(|(_, last)| **last).map(|(k, _)| *k) else {
+            return;
+        };
+        map.remove(&oldest);
+    }
+}
+
+/// A cache of flows the SSH gate ([`crate::filter::SshFilter`]) has already
+/// admitted, so its rule match runs once per flow rather than once per packet
+/// (`plans/phase-6/07-acl-gated-ssh.md` §3.4).
+///
+/// Distinct from [`Flows`] and not an alias for it: `Flows` remembers *that a
+/// rule permitted a packet*, so its reverse direction may reply; this
+/// remembers *that the SSH gate specifically admitted this flow*, so a policy
+/// change is not re-evaluated against a connection already carrying traffic.
+/// The two would answer different questions even if their shapes are
+/// identical, so they get separate types rather than one reused for both.
+///
+/// Shares `Flows`'s core invariant: an entry exists **only because
+/// [`crate::filter::SshFilter::admit`] permitted the flow it names**. Nothing
+/// an attacker sends can create one on its own, and a flow the gate denied is
+/// never recorded — the next packet of that same denied attempt is checked
+/// again, not remembered as a standing refusal.
+#[derive(Debug, Default)]
+pub struct SshAdmissions {
+    seen: HashMap<Key, u64>,
+}
+
+impl SshAdmissions {
+    /// An empty cache: every flow still needs its first admission check.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether this flow was already admitted by the SSH gate, refreshing it
+    /// if so.
+    ///
+    /// `false` means [`crate::filter::SshFilter::admit`] must be consulted:
+    /// either this is genuinely the first packet of a new flow, or the
+    /// previous admission went idle long enough to expire (`IDLE_MS`, the
+    /// same window `Flows` uses) — in either case, a policy revocation since
+    /// the last check is only observed here, never mid-flow (§3.4).
+    pub fn is_admitted(&mut self, direction: Direction, packet: &[u8], now_ms: u64) -> bool {
+        let Some(key) = Key::of(direction, packet) else {
+            return false;
+        };
+        let Some(last) = self.seen.get_mut(&key) else {
+            return false;
+        };
+        if now_ms.saturating_sub(*last) > IDLE_MS {
+            self.seen.remove(&key);
+            return false;
         }
+        *last = now_ms;
+        true
+    }
+
+    /// Record that the SSH gate admitted this flow.
+    ///
+    /// Only ever called right after [`crate::filter::SshFilter::admit`]
+    /// returned a permit — the same "recorded only on permit" discipline
+    /// [`Flows::record`] documents, and for the identical reason.
+    pub fn admit(&mut self, direction: Direction, packet: &[u8], now_ms: u64) {
+        let Some(key) = Key::of(direction, packet) else {
+            return;
+        };
+        if self.seen.len() >= MAX_FLOWS && !self.seen.contains_key(&key) {
+            evict_to_capacity(&mut self.seen, now_ms);
+        }
+        self.seen.insert(key, now_ms);
+    }
+
+    /// Forget every admission. Called alongside [`Flows::clear`] whenever
+    /// policy is reconfigured, so a stale admission cannot outlive the "ssh"
+    /// block that granted it.
+    pub fn clear(&mut self) {
+        self.seen.clear();
+    }
+
+    /// Admissions currently held, for diagnostics and tests.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    /// Whether nothing is tracked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
     }
 }
 
@@ -374,5 +461,92 @@ mod tests {
         flows.record(Direction::Out, &fragment, 0);
         assert!(flows.is_empty(), "a fragment opened a flow");
         assert!(!flows.permits(Direction::Out, &fragment, 0));
+    }
+
+    // ── the ssh admission cache ─────────────────────────────────────────────
+
+    /// A flow with no admission entry must be reported as needing one — the
+    /// signal `Engine::permit` uses to decide whether `SshFilter::admit` has
+    /// to run at all.
+    #[test]
+    fn an_unadmitted_flow_is_reported_as_such() {
+        let mut admissions = SshAdmissions::new();
+        let flow = tcp(THEM, 54321, US, 22);
+        assert!(!admissions.is_admitted(Direction::In, &flow, 0));
+    }
+
+    /// Once admitted, the same flow is reported as such — the property that
+    /// makes the gate run once per flow rather than once per packet.
+    #[test]
+    fn admitting_a_flow_makes_it_report_as_admitted() {
+        let mut admissions = SshAdmissions::new();
+        let flow = tcp(THEM, 54321, US, 22);
+        admissions.admit(Direction::In, &flow, 0);
+        assert!(admissions.is_admitted(Direction::In, &flow, 1));
+    }
+
+    /// An admission is scoped to its own five-tuple, the same as `Flows` — a
+    /// grant for one client's connection must not cover a different one.
+    #[test]
+    fn an_admission_covers_only_its_own_flow() {
+        let mut admissions = SshAdmissions::new();
+        admissions.admit(Direction::In, &tcp(THEM, 54321, US, 22), 0);
+        assert!(!admissions.is_admitted(Direction::In, &tcp(THEM, 54322, US, 22), 1));
+    }
+
+    /// An admission that goes idle expires, so a policy revocation reaches a
+    /// connection that has gone quiet long enough — the same window `Flows`
+    /// uses, applied to the same underlying question: is this still the
+    /// connection that was checked, or has enough time passed that it should
+    /// be treated as new.
+    #[test]
+    fn an_admission_expires_when_it_goes_quiet() {
+        let mut admissions = SshAdmissions::new();
+        let flow = tcp(THEM, 54321, US, 22);
+        admissions.admit(Direction::In, &flow, 0);
+        assert!(admissions.is_admitted(Direction::In, &flow, IDLE_MS));
+        assert!(!admissions.is_admitted(Direction::In, &flow, IDLE_MS * 2 + 1));
+    }
+
+    /// Ongoing traffic keeps an admission alive, or an interactive SSH session
+    /// would be forced back through the gate every two minutes regardless of
+    /// whether it was still carrying data.
+    #[test]
+    fn traffic_refreshes_an_admission() {
+        let mut admissions = SshAdmissions::new();
+        let flow = tcp(THEM, 54321, US, 22);
+        admissions.admit(Direction::In, &flow, 0);
+
+        let mut now = 0;
+        for _ in 0..10 {
+            now += IDLE_MS - 1;
+            assert!(admissions.is_admitted(Direction::In, &flow, now), "cut off at {now}");
+        }
+    }
+
+    /// Reconfiguration must clear admissions the same way it clears `Flows`,
+    /// or a revoked "ssh" rule would leave every already-open connection
+    /// permanently grandfathered in.
+    #[test]
+    fn clearing_revokes_every_admission() {
+        let mut admissions = SshAdmissions::new();
+        let flow = tcp(THEM, 54321, US, 22);
+        admissions.admit(Direction::In, &flow, 0);
+        admissions.clear();
+        assert!(admissions.is_empty());
+        assert!(!admissions.is_admitted(Direction::In, &flow, 1));
+    }
+
+    /// A packet whose ports cannot be read neither creates an admission nor
+    /// matches one, the same discipline `Flows` applies to a fragment.
+    #[test]
+    fn an_unclassifiable_packet_does_not_create_an_admission() {
+        let mut admissions = SshAdmissions::new();
+        let mut fragment = tcp(THEM, 54321, US, 22);
+        fragment[6] = 0x00;
+        fragment[7] = 0x10; // non-zero fragment offset
+
+        admissions.admit(Direction::In, &fragment, 0);
+        assert!(admissions.is_empty(), "a fragment created an admission");
     }
 }

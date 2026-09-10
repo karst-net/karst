@@ -31,6 +31,7 @@ use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, Fra
 use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, Reject};
 use karst_proto::{fragment, split_datagram, FragmentHeader, MessageType};
 use karst_transport::source_key;
+use karst_tun::ip;
 
 use crate::config::Config;
 use crate::filter::{Direction, Verdict};
@@ -223,6 +224,11 @@ pub struct Stats {
     /// was evaluated, because none could be. A sustained rate means something
     /// is fragmenting or tunnelling, not that a policy is wrong.
     pub acl_unclassifiable: u64,
+    /// New TCP/22 flows the independent SSH gate refused, having already
+    /// passed the general ingress ACL (`plans/phase-6/07-acl-gated-ssh.md`
+    /// §3.1). Counted apart from `acl_denied_in`: this is a second, distinct
+    /// gate saying no, not the general ACL denying reachability.
+    pub ssh_denied: u64,
 }
 
 /// Live counters. Separate from [`Stats`], which is the snapshot type.
@@ -245,6 +251,7 @@ struct Counters {
     acl_denied_in: AtomicU64,
     acl_denied_out: AtomicU64,
     acl_unclassifiable: AtomicU64,
+    ssh_denied: AtomicU64,
     bedrock_head_agreed: AtomicU64,
     bedrock_equivocation: AtomicU64,
 }
@@ -264,6 +271,7 @@ impl Counters {
             acl_denied_in: self.acl_denied_in.load(Ordering::Relaxed),
             acl_denied_out: self.acl_denied_out.load(Ordering::Relaxed),
             acl_unclassifiable: self.acl_unclassifiable.load(Ordering::Relaxed),
+            ssh_denied: self.ssh_denied.load(Ordering::Relaxed),
             bedrock_head_agreed: self.bedrock_head_agreed.load(Ordering::Relaxed),
             bedrock_equivocation: self.bedrock_equivocation.load(Ordering::Relaxed),
         }
@@ -297,6 +305,12 @@ struct PeerSlot {
     /// a hash lookup and is taken alongside the session lock this path already
     /// takes, rather than being a new kind of contention.
     flows: Mutex<crate::flow::Flows>,
+    /// Flows the independent SSH gate has already admitted — see
+    /// [`crate::flow::SshAdmissions`]. A separate cache from `flows` above:
+    /// that one remembers a rule permitted a packet, this one remembers the
+    /// SSH gate specifically admitted the flow, so its check runs once per
+    /// flow rather than once per packet (§3.4).
+    ssh_admissions: Mutex<crate::flow::SshAdmissions>,
     /// When this node's own relay last said it could not reach this peer, in
     /// engine milliseconds. Zero means it has not — §9.1's first rule still
     /// applies.
@@ -699,6 +713,24 @@ impl Engine {
         for slot in &next.peers {
             Self::lock(&slot.flows).clear();
         }
+
+        // **`ssh_admissions` is deliberately NOT cleared here, unlike `flows`
+        // above.** The two look like the same kind of cached permission but
+        // are not: `flows` only ever widens what a *stateless*, per-packet
+        // filter already re-evaluates on every packet regardless, so clearing
+        // it merely stops stale replies — an in-progress connection's forward
+        // packets were already being checked against the live policy the
+        // whole time. The SSH gate is checked once per flow specifically so
+        // that is not true of it (§3.4): "a flow admitted at open time is not
+        // re-checked mid-stream; a policy change ... takes effect on the next
+        // connection attempt, not by tearing down one already open." Clearing
+        // `ssh_admissions` on every reconfiguration — including ones with
+        // nothing to do with the "ssh" block — would re-run `SshFilter::admit`
+        // on the very next packet of every open SSH session, which is exactly
+        // the mid-stream re-check this gate exists to avoid. Persisting it
+        // across a reconfiguration, on the `Arc<PeerSlot>` a kept peer already
+        // carries forward, is what makes "next connection attempt" mean what
+        // it says.
 
         *self
             .roster
@@ -1959,10 +1991,23 @@ impl Engine {
         };
         match verdict {
             Verdict::Permit => {
-                // **Recorded only here**, where a *rule* said yes. That is what
-                // makes a flow un-forgeable: a packet no rule permits never
-                // reaches this arm, so nothing an attacker sends can open one.
                 if let Some(slot) = roster.peers.get(peer) {
+                    // The independent SSH gate (§3.1): a second, separately
+                    // evaluated check for a new inbound flow to port 22, on
+                    // top of the general ingress filter's permit above —
+                    // never instead of it. Checked before the flow is
+                    // recorded, so a gate denial leaves no trace an attacker
+                    // could reuse.
+                    if dir == Direction::In
+                        && ip::ports(packet).is_some_and(|p| p.destination == 22)
+                        && !self.ssh_gate_permits(roster, slot, peer, packet, now_ms)
+                    {
+                        return false;
+                    }
+                    // **Recorded only here**, where a *rule* said yes. That is
+                    // what makes a flow un-forgeable: a packet no rule
+                    // permits never reaches this arm, so nothing an attacker
+                    // sends can open one.
                     Self::lock(&slot.flows).record(dir, packet, now_ms);
                 }
                 return true;
@@ -1994,6 +2039,34 @@ impl Engine {
             }
         }
         false
+    }
+
+    /// Whether `peer` may open this new flow to port 22, consulting the
+    /// independent SSH gate at most once per flow.
+    ///
+    /// If `slot.ssh_admissions` already has this flow, the gate already ran
+    /// for it and is not run again — a policy revocation since then applies
+    /// to the *next* connection attempt, not to one already carrying traffic
+    /// (§3.4). Only a genuinely new (or previously-expired) flow reaches
+    /// [`crate::filter::SshFilter::admit`].
+    fn ssh_gate_permits(
+        &self,
+        roster: &Roster,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        packet: &[u8],
+        now_ms: u64,
+    ) -> bool {
+        if Self::lock(&slot.ssh_admissions).is_admitted(Direction::In, packet, now_ms) {
+            return true;
+        }
+        if roster.config.ssh_filter.admit(peer).permitted() {
+            Self::lock(&slot.ssh_admissions).admit(Direction::In, packet, now_ms);
+            true
+        } else {
+            self.stats.ssh_denied.fetch_add(1, Ordering::Relaxed);
+            false
+        }
     }
 
     fn peer_at(&self, addr: SocketAddr) -> Option<PeerIndex> {
@@ -2146,6 +2219,7 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
                 endpoint: RwLock::new(peer.endpoint),
                 claimed_head: Mutex::new(Vec::new()),
                 flows: Mutex::new(crate::flow::Flows::new()),
+                ssh_admissions: Mutex::new(crate::flow::SshAdmissions::new()),
                 off_home: AtomicU64::new(0),
                 tx_bytes: AtomicU64::new(0),
                 rx_bytes: AtomicU64::new(0),

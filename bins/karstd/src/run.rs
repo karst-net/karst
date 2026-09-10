@@ -4481,6 +4481,7 @@ mod route_tests {
             routes: crate::routing::AllowedIps::build(pairs).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
+            ssh_filter: crate::filter::SshFilter::absent(),
         }
     }
 
@@ -5023,6 +5024,7 @@ mod probe_tests {
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
+            ssh_filter: crate::filter::SshFilter::absent(),
         });
         Engine::new(&config)
     }
@@ -5534,6 +5536,7 @@ mod probe_tests {
             routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
+            ssh_filter: crate::filter::SshFilter::absent(),
         }
     }
 }

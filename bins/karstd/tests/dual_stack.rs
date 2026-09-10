@@ -146,6 +146,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         routes: AllowedIps::build(vec![(prefix, 0)]).expect("no conflicts"),
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
+        ssh_filter: karstd::filter::SshFilter::absent(),
     });
 
     Node {
