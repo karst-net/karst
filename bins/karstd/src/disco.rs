@@ -616,7 +616,7 @@ impl Disco {
                 .ok()
                 .and_then(karst_control_client::handle_bytes)
             else {
-                eprintln!(
+                tracing::warn!(
                     "karstd: AVEN peer {} has an invalid control handle; discovery disabled",
                     peer.name
                 );
@@ -624,7 +624,7 @@ impl Disco {
             };
             let key = DiscoKey::new(raw_key);
             if !self.add_peer_at(key, &our_id, &their_id, route_index, peer.endpoint) {
-                eprintln!(
+                tracing::warn!(
                     "karstd: AVEN tag collision for peer {}; discovery disabled",
                     peer.name
                 );
@@ -816,7 +816,7 @@ impl Disco {
         // On change only, so this is silent on the thirty-second refresh of a
         // stable mapping and loud on a NAT that has rebound. §10's ban is on a
         // line per *datagram*; this is a line per address.
-        eprintln!("karstd: reflector reports this node at {}", observed.0);
+        tracing::warn!("karstd: reflector reports this node at {}", observed.0);
         // A new mapped address is news for every peer, not just this relay.
         self.republish();
         Verdict::Handled(Vec::new())
@@ -882,7 +882,7 @@ impl Disco {
             // provenance distinction this method exists to preserve.
             return false;
         };
-        eprintln!(
+        tracing::warn!(
             "karstd: aven received candidates from peer {}: {:?}",
             peer.route_index,
             candidates.iter().map(|c| c.0).collect::<Vec<_>>()
@@ -973,7 +973,7 @@ impl Disco {
                         if candidates.is_empty() {
                             continue;
                         }
-                        eprintln!(
+                        tracing::warn!(
                             "karstd: aven advertising to peer {}: {:?}",
                             peer.route_index,
                             candidates.iter().map(|c| c.0).collect::<Vec<_>>()

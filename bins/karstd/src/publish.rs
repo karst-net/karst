@@ -61,7 +61,7 @@ pub(crate) fn serve(stack: &Userspace, port: u16, to: SocketAddr, shutdown: &Shu
                 if !announced_busy {
                     // Once per busy episode, not once per refusal: a peer that
                     // keeps trying must not be able to write the log.
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: overlay port {port} is at its {MAX_CONNECTIONS}-connection \
                          limit; further connections wait"
                     );
@@ -75,7 +75,7 @@ pub(crate) fn serve(stack: &Userspace, port: u16, to: SocketAddr, shutdown: &Shu
             let listener = match stack.listen_tcp(port) {
                 Ok(handle) => handle,
                 Err(e) => {
-                    eprintln!("karstd: cannot listen on overlay port {port}: {e}");
+                    tracing::warn!(overlay_port = port, error = %e, "cannot listen on overlay port");
                     return;
                 }
             };
@@ -130,7 +130,7 @@ pub(crate) fn serve(stack: &Userspace, port: u16, to: SocketAddr, shutdown: &Shu
             connections.spawn(move || {
                 if let Err(e) = forward(&stack, listener, to, shutdown) {
                     let from = from.map_or_else(|| "an overlay peer".to_owned(), |a| a.to_string());
-                    eprintln!("karstd: overlay port {port} from {from}: {e}");
+                    tracing::warn!("karstd: overlay port {port} from {from}: {e}");
                 }
                 in_flight.fetch_sub(1, Ordering::Relaxed);
             });

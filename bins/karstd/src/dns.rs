@@ -11,8 +11,8 @@
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -148,7 +148,7 @@ impl HostRuntime {
             // listens for anything pointed at it explicitly.
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             HostIntegration::Auto => {
-                eprintln!(
+                tracing::warn!(
                     "karstd: host DNS integration is not implemented on this \
                      platform; mesh names will not resolve system-wide. Set \
                      dns.host_integration explicitly to override."
@@ -230,7 +230,7 @@ impl HostRuntime {
                 if enabled && !*announced_search_gap && !config.netmap_dns.search_domains.is_empty()
                 {
                     *announced_search_gap = true;
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: the netmap supplies search domains {:?}, and the \
                          /etc/resolver mechanism has no search list — names below \
                          them resolve when fully qualified, but a bare hostname \
@@ -244,7 +244,7 @@ impl HostRuntime {
                 // apply failure would say the opposite of what happened, so it
                 // is a warning on its own.
                 if let Some(detail) = host.flush_error() {
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: resolver files applied, but the DNS cache was \
                          not flushed ({detail}); names may resolve to their \
                          previous answers until the cache expires"

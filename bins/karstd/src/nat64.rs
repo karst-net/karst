@@ -114,7 +114,7 @@ pub fn resolve(mode: Mode, listen: SocketAddr) -> Option<Nat64Prefix> {
         Mode::Off => None,
         Mode::Fixed(prefix) => {
             if !listen.is_ipv6() {
-                eprintln!(
+                tracing::warn!(
                     "karstd: nat64 = \"{prefix}\" is configured but the datapath \
                      listens on {listen}, which is IPv4 — an AF_INET socket \
                      cannot send to an IPv6 address, so the prefix is ignored. \
@@ -122,7 +122,7 @@ pub fn resolve(mode: Mode, listen: SocketAddr) -> Option<Nat64Prefix> {
                 );
                 return None;
             }
-            eprintln!("karstd: reaching IPv4 through the configured NAT64 prefix {prefix}");
+            tracing::warn!("karstd: reaching IPv4 through the configured NAT64 prefix {prefix}");
             Some(prefix)
         }
         Mode::Auto => auto(listen),
@@ -189,7 +189,7 @@ fn auto(listen: SocketAddr) -> Option<Nat64Prefix> {
     // that an off-link attacker cannot reach, and needs no DNS64 deployed at
     // all. RFC 7050 asks a resolver instead, and believes it.
     if let Some(p) = discover_pref64() {
-        eprintln!(
+        tracing::warn!(
             "karstd: this host has no IPv4 address; reaching IPv4 through the \
              NAT64 prefix {p}, from a router advertisement (RFC 8781)"
         );
@@ -197,11 +197,11 @@ fn auto(listen: SocketAddr) -> Option<Nat64Prefix> {
     }
     let prefix = discover();
     match prefix {
-        Some(p) => eprintln!(
+        Some(p) => tracing::warn!(
             "karstd: this host has no IPv4 address; reaching IPv4 through the \
              NAT64 prefix {p}, discovered from {IPV4ONLY_ARPA} (RFC 7050)"
         ),
-        None => eprintln!(
+        None => tracing::warn!(
             "karstd: this host has no IPv4 address and no NAT64 prefix could be \
              discovered — no router advertised a PREF64 option (RFC 8781) and \
              {IPV4ONLY_ARPA} yielded nothing (RFC 7050). Every IPv4 relay, \
@@ -235,7 +235,7 @@ fn discover_pref64() -> Option<Nat64Prefix> {
             return None;
         }
         Err(e) => {
-            eprintln!("karstd: cannot open an ICMPv6 socket for PREF64 discovery: {e}");
+            tracing::warn!("karstd: cannot open an ICMPv6 socket for PREF64 discovery: {e}");
             return None;
         }
     };
@@ -347,7 +347,7 @@ fn discover() -> Option<Nat64Prefix> {
                     return Some(prefix);
                 }
             }
-            Err(e) => eprintln!("karstd: {IPV4ONLY_ARPA} lookup via {server} failed: {e}"),
+            Err(e) => tracing::warn!("karstd: {IPV4ONLY_ARPA} lookup via {server} failed: {e}"),
         }
     }
     None

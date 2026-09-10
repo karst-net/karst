@@ -52,7 +52,7 @@ pub(crate) fn serve(stack: &Userspace, listen: SocketAddr, shutdown: &Shutdown) 
                         // has this log and the client's silence, so the log has
                         // to carry the reason.
                         if let Err(error) = proxy(stream, &stack, shutdown) {
-                            eprintln!("karstd: socks5 connection failed: {error}");
+                            tracing::warn!(error = %error, "SOCKS5 connection failed");
                         }
                     });
                 }
@@ -173,7 +173,7 @@ fn negotiate(client: &mut TcpStream) -> io::Result<SocketAddr> {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unknown SOCKS address type",
-            ))
+            ));
         }
     };
     let mut port = [0u8; 2];

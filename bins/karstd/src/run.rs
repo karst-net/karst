@@ -26,7 +26,7 @@ use karst_control_client::transport::pb;
 use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
-use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
+use karst_transport::{BATCH, MAX_DATAGRAM, Received, UdpTransport};
 use karst_tun::{Tun, TunConfig, Userspace};
 
 use crate::config::Config;
@@ -240,13 +240,13 @@ pub fn run_with_control(
         } {
             Ok(runtime) => Some(runtime),
             Err(error) => {
-                eprintln!("karstd: DNS listener did not start: {error}");
+                tracing::warn!(error = %error, "DNS listener did not start");
                 None
             }
         },
         Ok(None) => None,
         Err(error) => {
-            eprintln!("karstd: DNS config rejected: {error}");
+            tracing::warn!(error = %error, "DNS config rejected");
             None
         }
     };
@@ -269,7 +269,7 @@ pub fn run_with_control(
         ) {
             Ok(host) => host,
             Err(error) => {
-                eprintln!("karstd: DNS host integration unavailable: {error}");
+                tracing::warn!(error = %error, "DNS host integration unavailable");
                 crate::dns::HostRuntime::None
             }
         }
@@ -280,7 +280,7 @@ pub fn run_with_control(
         .is_some()
     {
         if let Err(error) = dns_host.update(config) {
-            eprintln!("karstd: DNS host integration was not applied: {error}");
+            tracing::warn!(error = %error, "DNS host integration was not applied");
         }
     }
     let dns_host = Mutex::new(dns_host);
@@ -332,7 +332,7 @@ pub fn run_with_control(
         control_endpoint.as_deref(),
         selected_exit.as_deref(),
     ) {
-        eprintln!("karstd: persisted exit selection is dormant: {error}");
+        tracing::warn!("karstd: persisted exit selection is dormant: {error}");
     }
 
     announce(config, &tun, &socket)?;
@@ -546,7 +546,7 @@ pub fn run_with_control(
             if let Some(stack) = tun.userspace() {
                 scope.spawn(move || {
                     if let Err(e) = crate::socks5::serve(&stack, listen, shutdown) {
-                        eprintln!("karstd: userspace SOCKS5 listener {listen} stopped: {e}");
+                        tracing::warn!("karstd: userspace SOCKS5 listener {listen} stopped: {e}");
                     }
                 });
             }
@@ -560,7 +560,7 @@ pub fn run_with_control(
                 // Named at startup, because a node's inbound surface is
                 // something an operator should be able to read out of the log
                 // rather than reconstruct from the configuration file.
-                println!("karstd: publishing overlay port {port} to {to}");
+                tracing::info!(overlay_port = port, destination = %to, "publishing overlay port");
                 scope.spawn(move || crate::publish::serve(&stack, port, to, shutdown));
             }
         }
@@ -989,7 +989,7 @@ pub fn run_with_control(
             // first thing a resumed machine needs: the addresses discovery is
             // about to advertise are the ones it has now.
             if let Some(gap) = wake.tick() {
-                eprintln!(
+                tracing::warn!(
                     "karstd: this machine did not run for {} s — re-enumerating \
                      interfaces and rediscovering every peer path",
                     gap.as_secs()
@@ -1061,7 +1061,7 @@ pub fn run_with_control(
                     control_endpoint.as_deref(),
                     selected.as_deref(),
                 ) {
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: exit selection is dormant after an endpoint change: {error}"
                     );
                 }
@@ -1094,7 +1094,7 @@ pub fn run_with_control(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .shutdown()
     {
-        eprintln!("karstd: DNS host cleanup failed: {error}");
+        tracing::warn!(error = %error, "DNS host cleanup failed");
     }
     Ok(())
 }
@@ -1211,7 +1211,7 @@ fn probe_relays(
         home.select()
     };
     if changed {
-        eprintln!(
+        tracing::warn!(
             "karstd: home relay is now {}",
             chosen.map_or_else(|| "none".to_owned(), |id| hex_short(&id))
         );
@@ -1318,7 +1318,7 @@ fn gather_interfaces(config: &Config) -> Vec<std::net::IpAddr> {
     let addresses = match karst_tun::local_addresses() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!(
+            tracing::warn!(
                 "karstd: cannot enumerate local addresses ({e}); discovery will rely on \
                        what peers report seeing"
             );
@@ -1688,9 +1688,10 @@ fn abandon_relay(context: &mut RelayContext<'_>) {
     let Some(next) = next_relay(context.relay.relay_id, &context.common.engine.relays()) else {
         return;
     };
-    eprintln!(
+    tracing::warn!(
         "karstd: giving up on relay {} for now; trying {}",
-        context.relay.address, next.address
+        context.relay.address,
+        next.address
     );
     // The selector is told as well, or it would go on naming the relay just
     // abandoned and the next pass would move straight back to it. The abandoned
@@ -1721,9 +1722,10 @@ fn handover(
     old: &crate::netmap::Relay,
     new: &crate::netmap::Relay,
 ) {
-    eprintln!(
+    tracing::warn!(
         "karstd: moving home relay from {} to {}",
-        old.address, new.address
+        old.address,
+        new.address
     );
     engine.set_home_relay(Some(new.relay_id));
     relayed.hold(old.relay_id);
@@ -1748,7 +1750,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         .enable_all()
         .build()
     else {
-        eprintln!("karstd: cannot start relay runtime; the relay path is disabled");
+        tracing::warn!("karstd: cannot start relay runtime; the relay path is disabled");
         return;
     };
     let tls = match crate::relay_tls::client_config(context.common.relay_ca_file.as_deref()) {
@@ -1757,7 +1759,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         // unreadable `relay_ca_file`, and "the relay path is disabled" without
         // the reason is the kind of message that costs an afternoon.
         Err(e) => {
-            eprintln!("karstd: {e}; the relay path is disabled");
+            tracing::warn!("karstd: {e}; the relay path is disabled");
             return;
         }
     };
@@ -1794,7 +1796,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             random_seed(),
         );
         let Some(session) = session else {
-            eprintln!("karstd: invalid node handle; the relay path is disabled");
+            tracing::warn!("karstd: invalid node handle; the relay path is disabled");
             return;
         };
         let connected = runtime.block_on(crate::relay::Connection::connect(
@@ -1815,7 +1817,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             Err(e) => {
                 Reachability::record(context.common.relay_health, &context.relay.address, false);
                 if backoff == RELAY_BACKOFF_MIN {
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: cannot reach relay {} ({e}); retrying",
                         context.relay.address
                     );
@@ -1848,7 +1850,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         // most likely to keep it down.
         Reachability::record(context.common.relay_health, &context.relay.address, true);
         if backoff != RELAY_BACKOFF_MIN {
-            eprintln!("karstd: relay {} reachable again", context.relay.address);
+            tracing::info!(relay = %context.relay.address, "relay reachable again");
         }
         backoff = RELAY_BACKOFF_MIN;
         failures = 0;
@@ -1988,7 +1990,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
                 .engine
                 .relay_unreachable(peer_id, now_ms(context.common.started))
         {
-            eprintln!(
+            tracing::warn!(
                 "karstd: relay {} cannot reach {} ({reason:?}); using the relay it \
                      published",
                 context.relay.address,
@@ -2029,7 +2031,7 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
         // answered" are different problems that look identical from
         // `karst status` — which is finding 18's lesson applied one
         // subsystem over.
-        eprintln!(
+        tracing::warn!(
             "karstd: relay {} offers a reflector at {} ({})",
             context.relay.address,
             endpoint.0,
@@ -2144,7 +2146,7 @@ fn on_demand_hub<'scope>(
         .enable_all()
         .build()
     else {
-        eprintln!(
+        tracing::warn!(
             "karstd: cannot start the on-demand relay runtime; peers on other relays will \
                    be unreachable"
         );
@@ -2171,7 +2173,7 @@ fn on_demand_hub<'scope>(
             // data.
             if let Some(home) = common.engine.home_relay() {
                 if open.close(home) {
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: letting go of the on-demand connection to the relay this \
                          node now holds"
                     );
@@ -2179,7 +2181,7 @@ fn on_demand_hub<'scope>(
             }
             let closed = open.expire(now_ms(common.started));
             if closed > 0 {
-                eprintln!("karstd: closed {closed} idle on-demand relay connection(s)");
+                tracing::warn!("karstd: closed {closed} idle on-demand relay connection(s)");
             }
         }
         // **The timeout is built inside the runtime, not passed into it.**
@@ -2229,7 +2231,7 @@ fn on_demand_hub<'scope>(
             // the kind of line that looks like an explanation and answers
             // nothing — an operator reading it cannot tell a peer being
             // reached from a relay being measured.
-            eprintln!(
+            tracing::warn!(
                 "karstd: dialling {} {}",
                 relay.address,
                 match item {
@@ -2409,7 +2411,7 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
         .enable_all()
         .build()
     else {
-        eprintln!("karstd: cannot start the turn runtime; the turn fallback is disabled");
+        tracing::warn!("karstd: cannot start the turn runtime; the turn fallback is disabled");
         return;
     };
     let mut backoff = TURN_BACKOFF_MIN;
@@ -2431,7 +2433,7 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
                 // Once per outage, not once per attempt — `relay_worker`'s own
                 // argument for the identical line.
                 if backoff == TURN_BACKOFF_MIN {
-                    eprintln!(
+                    tracing::warn!(
                         "karstd: cannot reach turn server {} ({e}); retrying",
                         server.uri
                     );
@@ -2442,12 +2444,12 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
         };
         Reachability::record(common.turn_health, &server.uri, true);
         if backoff != TURN_BACKOFF_MIN {
-            eprintln!("karstd: turn server {} reachable again", server.uri);
+            tracing::info!(server = %server.uri, "TURN server reachable again");
         }
         backoff = TURN_BACKOFF_MIN;
 
         let relayed_addr = allocation.relayed_addr();
-        eprintln!(
+        tracing::warn!(
             "karstd: turn allocation on {} is {relayed_addr}",
             server.uri
         );
@@ -2515,7 +2517,7 @@ async fn turn_session(
                 match op {
                     TurnOp::Send { to, payload } => {
                         if let Err(e) = allocation.send_to(&payload, to).await {
-                            eprintln!(
+                            tracing::warn!(
                                 "karstd: turn send to {to} failed ({e}); rebuilding the allocation"
                             );
                             return;
@@ -2574,7 +2576,7 @@ async fn turn_session(
                 );
             }
             Err(Err(e)) => {
-                eprintln!("karstd: turn allocation on this node failed ({e}); rebuilding it");
+                tracing::warn!("karstd: turn allocation on this node failed ({e}); rebuilding it");
                 return;
             }
         }
@@ -4134,7 +4136,7 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Err(error) = crate::dns::reconcile(&mut listener, &updated, tun.userspace()) {
-                eprintln!("karstd: DNS listener update failed: {error}");
+                tracing::warn!("karstd: DNS listener update failed: {error}");
             }
             let listener_live = listener.is_some();
             if !updated.netmap_dns.magic_dns || listener_live {
@@ -4143,7 +4145,7 @@ fn refresh_netmap(
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .update(&updated)
                 {
-                    eprintln!("karstd: DNS host update failed: {error}");
+                    tracing::warn!("karstd: DNS host update failed: {error}");
                 }
             }
         }
@@ -4166,7 +4168,7 @@ fn refresh_netmap(
             control_endpoint,
             selected_exit.as_deref(),
         ) {
-            eprintln!("karstd: exit selection is dormant after netmap refresh: {error}");
+            tracing::warn!("karstd: exit selection is dormant after netmap refresh: {error}");
         }
 
         // Gateway grants are derived from the same verified snapshot. A failed
@@ -4196,7 +4198,7 @@ fn refresh_netmap(
             "netmap updated"
         );
         if let Err(e) = client.save_cache() {
-            eprintln!("karstd: could not write the netmap cache ({e})");
+            tracing::warn!(error = %e, "could not write netmap cache");
         }
         // Dial anyone new. A peer added while the daemon runs would otherwise
         // wait for the next timer sweep.
@@ -4219,7 +4221,7 @@ fn refresh_netmap(
 /// from a peer the server was never told about, which is a completely different
 /// problem.
 fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::Result<()> {
-    eprintln!(
+    tracing::warn!(
         "karstd: {} up, mtu {}, listening on {}, {} peer(s){}",
         tun.name(),
         tun.mtu(),
@@ -4231,14 +4233,14 @@ fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::
     // startup, because from the outside it is indistinguishable from a peer the
     // server was never told about — a completely different problem.
     for skipped in &config.skipped {
-        eprintln!("karstd: skipping unusable peer from the netmap — {skipped}");
+        tracing::warn!("karstd: skipping unusable peer from the netmap — {skipped}");
     }
     for peer in &config.peers {
         if peer.psk_is_fallback {
             // §7.3 requires this be surfaced, not assumed. Without a PSK the
             // handshake still has both key families, but loses the pre-shared
             // secret that would survive a break of both.
-            eprintln!(
+            tracing::warn!(
                 "karstd: peer {} has no PSK — using the zero-PSK fallback (spec §7.3)",
                 peer.name
             );
@@ -4464,7 +4466,7 @@ mod route_tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::{
-        dns_query_report, dns_report, routing_report, underlay_addresses, url_authority, Routes,
+        Routes, dns_query_report, dns_report, routing_report, underlay_addresses, url_authority,
     };
     use crate::config::Config;
     use std::net::IpAddr;
@@ -4485,7 +4487,7 @@ mod route_tests {
                 node_id: Vec::new(),
                 public: std::sync::Arc::new(karst_noise::handshake::PeerPublic {
                     kem_pk: {
-                        use karst_crypto::kem::{keypair_from_seed, KemKind};
+                        use karst_crypto::kem::{KemKind, keypair_from_seed};
                         let seed = u8::try_from(index).unwrap_or(0).wrapping_add(0x22);
                         let (_, pk) = keypair_from_seed(KemKind::MlKem1024, &[seed; 64]);
                         pk
@@ -4981,10 +4983,7 @@ mod route_tests {
         let absent = report_for(crate::filter::SshFilter::absent());
         assert!(absent.contains("[ssh_policy]"), "{absent}");
         assert!(absent.contains("enforcing = false"), "{absent}");
-        assert!(
-            absent.contains("none (no ssh block in policy)"),
-            "{absent}"
-        );
+        assert!(absent.contains("none (no ssh block in policy)"), "{absent}");
 
         let deny_all = report_for(crate::filter::SshFilter::compile(&[], true, &[]));
         assert!(deny_all.contains("enforcing = true"), "{deny_all}");

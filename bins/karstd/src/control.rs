@@ -410,7 +410,7 @@ impl Client {
                 return Err(Error::Io {
                     path: enrollment_file.clone(),
                     source,
-                })
+                });
             }
         };
 
@@ -473,7 +473,7 @@ impl Client {
     pub fn reach_via_nat64(&mut self, prefix: Option<karst_transport::Nat64Prefix>) {
         let reachable = crate::nat64::rewrite_url(prefix, &self.endpoint);
         if reachable != self.endpoint {
-            eprintln!(
+            tracing::warn!(
                 "karstd: reaching the coordination server at {reachable} — \
                  {} is IPv4 and this node has none",
                 self.endpoint
@@ -803,7 +803,7 @@ impl Client {
                 return Some(Err(Error::Io {
                     path: path.clone(),
                     source,
-                }))
+                }));
             }
         };
         Some(match crate::bedrock::Log::decode(&raw) {
@@ -1136,7 +1136,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
     if let Some(Err(e)) = &cached {
         // A cache that exists and will not open is worth saying loudly: the
         // sealing key changed, and every subsequent start will do the same.
-        eprintln!("karstd: the netmap cache could not be opened ({e}); ignoring it");
+        tracing::warn!(error = %e, "netmap cache could not be opened; ignoring it");
     }
     let had_cache = matches!(cached, Some(Ok(_)));
 
@@ -1145,12 +1145,12 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
             if let Err(e) = client.save_cache() {
                 // Not fatal. The node has a netmap and can carry traffic; it
                 // will simply have to refetch on the next start.
-                eprintln!("karstd: could not write the netmap cache ({e})");
+                tracing::warn!(error = %e, "could not write netmap cache");
             }
             Origin::Server
         }
         Err(e) if had_cache => {
-            eprintln!(
+            tracing::warn!(
                 "karstd: the coordination server is unreachable ({e}); \
                  coming up on the cached netmap, which may be stale"
             );
