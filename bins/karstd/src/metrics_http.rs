@@ -151,7 +151,7 @@ mod tests {
 
         std::thread::scope(|scope| {
             let control_thread = scope.spawn(|| {
-                let (mut stream, _) = control.accept().expect("accept");
+                let mut stream = ipc::accept_blocking(&control).expect("accept");
                 ipc::serve(&mut stream, |_| reply_body.to_owned()).expect("serve")
             });
             let http_thread = scope.spawn(|| serve(bound, &socket_path, &shutdown));

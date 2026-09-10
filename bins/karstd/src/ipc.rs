@@ -356,6 +356,46 @@ pub fn socket_path(explicit: Option<&str>) -> PathBuf {
     explicit.map_or_else(|| PathBuf::from(DEFAULT_SOCKET), PathBuf::from)
 }
 
+/// Accept one connection, tolerating `WouldBlock` — for tests only, which
+/// this crate's production accept loops never need: `run.rs`'s own already
+/// polls with its own timeout, for the same reason.
+///
+/// `karst_ipc::Listener::accept` "never blocks by construction" (its own
+/// docs) — a named pipe's overlapped connect is polled, not waited on — where
+/// `UnixListener::accept` genuinely blocks in the kernel until a client
+/// arrives. A test that spawns a thread doing `listener.accept().expect(...)`
+/// and then dials in from elsewhere is relying on the Unix behavior alone;
+/// on Windows the lone `accept()` call almost always runs (and fails with
+/// `WouldBlock`) before the dialing side has even started, since nothing
+/// after it retries. `bins/karstd/src/metrics_http.rs`'s
+/// `the_http_listener_and_the_ipc_verb_return_the_same_bytes` hung for the
+/// entire twenty-minute CI job timeout this way — on the *client* side, left
+/// waiting for a server that already gave up — before this existed.
+///
+/// Bounded at five seconds rather than unbounded for the same reason: a real
+/// regression here should fail loudly in seconds, not eat a CI job's whole
+/// timeout finding out.
+/// Every caller immediately discards `accept`'s second tuple element (a
+/// peer address on Unix, `()` on Windows — see the module's Windows
+/// section), so this returns the stream alone rather than reproducing a
+/// type that differs by platform for no caller's benefit.
+#[cfg(test)]
+pub(crate) fn accept_blocking(listener: &Listener) -> std::io::Result<Stream> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
@@ -395,7 +435,7 @@ mod tests {
         let listener = bind(&path).expect("bind");
 
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
+            let mut stream = accept_blocking(&listener).expect("accept");
             serve(&mut stream, |c| format!("command = \"{}\"\n", c.as_str())).expect("serve")
         });
 
@@ -488,7 +528,7 @@ mod tests {
         let path = dir.socket("karstd.sock");
         let listener = bind(&path).expect("bind");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
+            let mut stream = accept_blocking(&listener).expect("accept");
             serve(&mut stream, |_| String::new()).expect("serve")
         });
 
