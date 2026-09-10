@@ -6,11 +6,33 @@ package relayreg
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// StoredRelay is returned by the management API. Keep its direct encoding in
+// lockstep with the OpenAPI field names.
+func TestStoredRelayMarshalsContractFields(t *testing.T) {
+	record := StoredRelay{
+		AccountID:     "account-a",
+		ID:            "relay-id",
+		Address:       "203.0.113.7:443",
+		TLSServerName: "relay.example.test",
+		IdentityKey:   "identity-key",
+		Region:        "eu",
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"id":"relay-id","address":"203.0.113.7:443","tls_server_name":"relay.example.test","identity_key":"identity-key","region":"eu"}`
+	if string(raw) != want {
+		t.Fatalf("stored relay JSON = %s, want %s", raw, want)
+	}
+}
 
 func key(seed byte) []byte {
 	out := make([]byte, IdentityKeySize)

@@ -40,12 +40,12 @@ func accountFromContext(ctx context.Context) (string, error) {
 // StoredRelay is the database form of a validated registry entry. The ID is
 // derived from the pinned identity key and is never accepted independently.
 type StoredRelay struct {
-	AccountID     string `gorm:"primaryKey;size:64"`
-	ID            string `gorm:"primaryKey"`
-	Address       string `gorm:"not null"`
-	TLSServerName string `gorm:"not null"`
-	IdentityKey   string `gorm:"not null"`
-	Region        string `gorm:"not null"`
+	AccountID     string `gorm:"primaryKey;size:64" json:"-"`
+	ID            string `gorm:"primaryKey" json:"id"`
+	Address       string `gorm:"not null" json:"address"`
+	TLSServerName string `gorm:"not null" json:"tls_server_name"`
+	IdentityKey   string `gorm:"not null" json:"identity_key"`
+	Region        string `gorm:"not null" json:"region"`
 }
 
 func (StoredRelay) TableName() string { return "karst_relays" }

@@ -89,6 +89,32 @@ type handler struct {
 	peerWriter peerWriter
 }
 
+// relayHealth is deliberately separate from relayreg.StoredRelay. Registry
+// records describe what nodes may dial; admission telemetry belongs to a
+// relay. Until a relay reports per-relay telemetry, a shared roster file
+// cannot be attributed safely to an arbitrary registry entry, so unknown is
+// the only truthful value for this API.
+type relayHealth struct {
+	Source          string     `json:"source"`
+	LastConfirmedAt *time.Time `json:"last_confirmed_at"`
+	Sessions        *int       `json:"sessions"`
+	Bytes           *int       `json:"bytes"`
+	AdmissionState  string     `json:"admission_state"`
+}
+
+type relayResponse struct {
+	relayreg.StoredRelay
+	Health relayHealth `json:"health"`
+}
+
+func unknownRelayHealth() relayHealth {
+	return relayHealth{Source: "roster_mtime", AdmissionState: "unknown"}
+}
+
+func relayResponseFor(relay relayreg.StoredRelay) relayResponse {
+	return relayResponse{StoredRelay: relay, Health: unknownRelayHealth()}
+}
+
 type peerWriter interface {
 	UpdatePeer(context.Context, string, string, *peer.Peer) (*peer.Peer, error)
 	DeletePeer(context.Context, string, string, string) error
@@ -1089,7 +1115,7 @@ func (h *handler) relayHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, relay := range relays {
 		if relay.ID == mux.Vars(r)["relayId"] {
-			util.WriteJSONObject(r.Context(), w, map[string]any{"source": "roster_mtime", "last_confirmed_at": nil, "sessions": nil, "bytes": nil, "admission_state": "unknown"})
+			util.WriteJSONObject(r.Context(), w, unknownRelayHealth())
 			return
 		}
 	}
@@ -1240,7 +1266,11 @@ func (h *handler) relaysList(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	util.WriteJSONObject(r.Context(), w, relays)
+	result := make([]relayResponse, 0, len(relays))
+	for _, relay := range relays {
+		result = append(result, relayResponseFor(relay))
+	}
+	util.WriteJSONObject(r.Context(), w, result)
 }
 func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
@@ -1267,7 +1297,7 @@ func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(relay); err != nil {
+	if err := json.NewEncoder(w).Encode(relayResponseFor(*relay)); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }

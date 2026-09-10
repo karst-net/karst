@@ -292,6 +292,14 @@ func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay
 }
 func (scanRelays) Delete(context.Context, string) error { return nil }
 
+type fixedRelays []relayreg.StoredRelay
+
+func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return f, nil }
+func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
+	return &f[0], nil
+}
+func (fixedRelays) Delete(context.Context, string) error { return nil }
+
 type scanTurns struct{}
 
 func (scanTurns) List(context.Context) ([]turncred.StoredTurnServer, error) { return nil, nil }
@@ -963,6 +971,28 @@ func TestRoleMatrixCoversEveryKarstRoute(t *testing.T) {
 			require.Equalf(t, want, allowed, "%s %s permission", role, route.method)
 		}
 	}
+}
+
+// Relay responses are a public contract, not a direct dump of database fields.
+// Test the served route so tags, the response adapter, and its health field
+// cannot drift independently.
+func TestRelayResponsesUseContractFieldsAndHealth(t *testing.T) {
+	relays := fixedRelays{{
+		AccountID:     "account-a",
+		ID:            "relay-id",
+		Address:       "203.0.113.7:443",
+		TLSServerName: "relay.example.test",
+		IdentityKey:   "identity-key",
+		Region:        "eu",
+	}}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, router)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.JSONEq(t, `[{"id":"relay-id","address":"203.0.113.7:443","tls_server_name":"relay.example.test","identity_key":"identity-key","region":"eu","health":{"source":"roster_mtime","last_confirmed_at":null,"sessions":null,"bytes":null,"admission_state":"unknown"}}]`, response.Body.String())
 }
 
 // The DB-backed TURN registry's CRUD surface, driven against a real
