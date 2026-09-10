@@ -163,11 +163,11 @@ impl HostRuntime {
             // Same posture as `Macos` above, mirrored for the platform that
             // actually reads the NRPT.
             #[cfg(not(target_os = "windows"))]
-            HostIntegration::Nrpt => Err(
-                "dns.host_integration = \"nrpt\" is the Windows NRPT (Name \
-                 Resolution Policy Table) mechanism and only Windows reads it"
-                    .to_owned(),
-            ),
+            HostIntegration::Nrpt => {
+                Err("dns.host_integration = \"nrpt\" is the Windows NRPT (Name \
+                     Resolution Policy Table) mechanism and only Windows reads it"
+                    .to_owned())
+            }
             // macOS: `/etc/resolver` files, which make every mesh name resolve
             // system-wide. The resolver search list is not part of this and is
             // not implemented — see `karst_dns::host::Macos` for why a `scutil`
@@ -468,14 +468,14 @@ pub fn revert_host(settings: &crate::config::DnsSettings, interface: &str) -> Re
     match settings.host_integration {
         HostIntegration::None => Ok(()),
         // The opposite case to the link-scoped one below, and the reason it is
-        // named rather than left to fall through: `/etc/resolver` files are not
-        // attached to the interface and outlive it, which is precisely why they
-        // must be reverted when the TUN is already gone. Constructing the
-        // runtime is what recovers a record a killed daemon left behind.
-        HostIntegration::Macos => HostRuntime::new(settings, None, interface)?.shutdown(),
-        // Same reasoning as `Macos` immediately above: NRPT rules are
-        // registry state, not attached to the interface either.
-        HostIntegration::Nrpt => HostRuntime::new(settings, None, interface)?.shutdown(),
+        // named rather than left to fall through: `/etc/resolver` files and
+        // NRPT rules are not attached to the interface and outlive it, which
+        // is precisely why they must be reverted when the TUN is already
+        // gone. Constructing the runtime is what recovers a record a killed
+        // daemon left behind.
+        HostIntegration::Macos | HostIntegration::Nrpt => {
+            HostRuntime::new(settings, None, interface)?.shutdown()
+        }
         // A mechanism pinned to a link-scoped backend never touched
         // `resolv.conf`, and the link's own DNS state disappears with it —
         // there is nothing left for either to revert.

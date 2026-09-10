@@ -95,10 +95,12 @@ pub enum NrptError {
     Domain { domain: String },
     #[error("KarstDNS DNS revert state at {path} is {detail}")]
     State { path: String, detail: &'static str },
-    /// A subkey already exists at the name Karst would use, and its values
-    /// do not read back as a rule Karst understands. Refused rather than
-    /// overwritten — the same "leave host DNS alone rather than half-
-    /// configured" posture the macOS mechanism takes for a domain it will not
+    /// A subkey already exists at the name Karst would use, and it is not
+    /// one of Karst's own rules left behind by a prior instance (its
+    /// `Comment` value is missing, unreadable, or not [`MARKER`] — see the
+    /// module docs' Crash recovery section). Refused rather than overwritten
+    /// — the same "leave host DNS alone rather than half-configured"
+    /// posture the macOS mechanism takes for a domain it will not
     /// canonicalize, applied here to a registry key it cannot safely adopt.
     #[error(
         "registry key {path} already exists and is not one of KarstDNS's own NRPT rules; \
@@ -158,7 +160,19 @@ impl RuleValues {
     /// something to partially adopt.
     fn read(key: &Key) -> Option<Self> {
         Some(Self {
-            name: key.get_multi_string("Name").ok()?,
+            // `REG_MULTI_SZ` is doubly null-terminated, and `windows-registry`
+            // (confirmed on real `windows-latest` CI, not assumed) turns that
+            // trailing pair of NULs into one or two extra empty strings on
+            // read even though `set_multi_string` was given none — a
+            // round-trip quirk of the encoding, not a value Karst ever wrote.
+            // Every real entry here is a non-empty `.domain.` string, so
+            // dropping empties is exact, not a heuristic.
+            name: key
+                .get_multi_string("Name")
+                .ok()?
+                .into_iter()
+                .filter(|label| !label.is_empty())
+                .collect(),
             dns_servers: key.get_string("GenericDNSServers").ok()?,
             config_options: key.get_u32("ConfigOptions").ok()?,
             version: key.get_u32("Version").ok()?,
@@ -277,11 +291,19 @@ impl Nrpt {
         let mut rules = Vec::with_capacity(names.len());
         for name in names {
             let path = format!(r"{}\{name}", self.root);
+            // A key already at this name is either one of Karst's own — left
+            // behind by an instance that crashed before recovering it, safe
+            // to overwrite with nothing worth preserving — or genuinely
+            // foreign, which is refused per [`NrptError::Occupied`]'s docs
+            // rather than adopted.
             let original = match root.open(&name) {
-                Ok(existing) => Some(
-                    RuleValues::read(&existing)
-                        .ok_or_else(|| NrptError::Occupied { path: path.clone() })?,
-                ),
+                Ok(existing)
+                    if RuleValues::read(&existing)
+                        .is_some_and(|values| values.comment == MARKER) =>
+                {
+                    None
+                }
+                Ok(_) => return Err(NrptError::Occupied { path }),
                 Err(_) => None,
             };
             let mut applied = RuleValues::for_stub(stub);
@@ -809,6 +831,29 @@ mod tests {
             theirs,
             "a refused rule must leave the foreign key exactly as found"
         );
+    }
+
+    /// The complement of the refusal above: a rule left behind by a *prior
+    /// Karst instance* (its `Comment` carries [`MARKER`]) is safe to adopt
+    /// silently — nothing about it needs preserving, since the value Karst
+    /// is about to write is exactly what a healthy apply would already have
+    /// produced. This is the case `recover()` normally handles first; this
+    /// test is what happens if `apply()` is reached without it, e.g. a
+    /// second instance racing the first.
+    #[test]
+    fn a_stale_rule_of_its_own_is_adopted_without_refusal() {
+        let fixture = Fixture::new("stale-own");
+        let root = LOCAL_MACHINE.create(&fixture.root).expect("create root");
+        let mut stale = RuleValues::for_stub(stub());
+        stale.name = vec![".corp.example.".to_owned()];
+        let key = root.create("corp.example").expect("their key");
+        stale.write(&key).expect("stale values");
+
+        let mut host = Nrpt::new(fixture.root.clone(), fixture.state_path.clone());
+        host.flush = Flush::Counted(AtomicU32::new(0));
+        host.apply(stub(), "aquifer.karst.", &["corp.example".to_owned()])
+            .expect("a stale rule of Karst's own must not be refused");
+        assert!(fixture.rule("corp.example").is_some());
     }
 
     /// The `taskkill /F` case (plan §11 exit criterion 5): the process that

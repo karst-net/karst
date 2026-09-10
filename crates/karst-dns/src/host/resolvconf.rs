@@ -520,6 +520,15 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// This mechanism (`/etc/resolv.conf`) is Linux-only, but the module is
+    /// compiled everywhere so a non-Linux build still type-checks it — same
+    /// posture as [`super::macos`]. This one test is Unix-only regardless:
+    /// off Unix there is no `std::os::unix::fs::symlink` to create the
+    /// fixture with, so `resolv` would just be a path nothing ever wrote,
+    /// and `apply` fails on a file that was never there rather than testing
+    /// the symlink-preservation behavior. Caught on real `windows-latest`
+    /// CI the first time `-p karst-dns --lib` ran there.
+    #[cfg(unix)]
     #[test]
     fn apply_preserves_a_resolv_conf_symlink() {
         let root = std::env::temp_dir().join(format!("karst-dns-link-{}", std::process::id()));
@@ -528,7 +537,6 @@ mod tests {
         let resolv = root.join("resolv.conf");
         let state = root.join("dns-revert");
         fs::write(&managed, b"nameserver 9.9.9.9\n").expect("managed config");
-        #[cfg(unix)]
         std::os::unix::fs::symlink("managed.conf", &resolv).expect("resolv symlink");
         let host = ResolvConf::new(&resolv, &state);
         host.apply("100.100.100.100", &[]).expect("apply");
