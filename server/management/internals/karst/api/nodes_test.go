@@ -545,6 +545,40 @@ func TestPolicyPreviewCompilesFiftyNodesUnderOneSecond(t *testing.T) {
 	require.Len(t, result.Added, 50)
 }
 
+// The preview endpoint describes an "ssh" rule's effect as a principal/target
+// grant rather than folding it into the acls flow list (plans/phase-6/
+// 07-acl-gated-ssh.md §3.5): an operator reviewing a policy edit must see SSH
+// access named by what it is, not lumped in with — or absent from — the
+// generic reachability diff.
+func TestPolicyPreviewDescribesSshGrantsSeparately(t *testing.T) {
+	nodes := fakeNodes{
+		"prod": {Handle: "prod"},
+		"jump": {Handle: "jump"},
+	}
+	peers := fakePeers{
+		{Key: "prod", UserID: "user-a"},
+		{Key: "jump", UserID: "user-a"},
+	}
+	router := mux.NewRouter()
+	RegisterEndpoints(nodes, peers, nil, nil, scanPolicy{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, router)
+	body := `{"document":"{\"ssh\":[{\"action\":\"accept\",\"src\":[\"jump\"],\"dst\":[\"prod\"]}]}"}`
+	req := httptest.NewRequest(http.MethodPost, "/karst/v1/policy/preview", strings.NewReader(body))
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var result struct {
+		Added      []policyFlow `json:"added"`
+		SSHAdded   []sshGrant   `json:"ssh_added"`
+		SSHRemoved []sshGrant   `json:"ssh_removed"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Empty(t, result.Added, "an ssh-only policy must not appear in the acls flow diff")
+	require.Equal(t, []sshGrant{{Principal: "jump", Target: "prod"}}, result.SSHAdded)
+	require.Empty(t, result.SSHRemoved)
+}
+
 func TestBedrockEnforcingStaleacknowledgmentReturnsConflict(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:api-bedrock-409?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)

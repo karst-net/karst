@@ -525,11 +525,16 @@ components:
     PolicyPreview:
       type: object
       required: [added, removed]
-      properties: {added: {type: array, items: {$ref: '#/components/schemas/Flow'}}, removed: {type: array, items: {$ref: '#/components/schemas/Flow'}}}
+      properties: {added: {type: array, items: {$ref: '#/components/schemas/Flow'}}, removed: {type: array, items: {$ref: '#/components/schemas/Flow'}}, ssh_added: {type: array, items: {$ref: '#/components/schemas/SshGrant'}}, ssh_removed: {type: array, items: {$ref: '#/components/schemas/SshGrant'}}}
     Flow:
       type: object
       required: [source, destination, protocol, ports]
       properties: {source: {type: string}, destination: {type: string}, protocol: {type: string}, ports: {type: string}}
+    SshGrant:
+      type: object
+      description: 'An "ssh" rule''s effect, described the way the console renders it — "SSH access granted: principal → target" — rather than as a host:port flow, since ssh gating has no ports or protocol of its own (plans/phase-6/07-acl-gated-ssh.md §3.1).'
+      required: [principal, target]
+      properties: {principal: {type: string}, target: {type: string}}
     PolicyTestResult:
       type: object
       required: [passed, results]

@@ -722,8 +722,10 @@ type PathObservationKind string
 
 // PolicyPreview defines model for PolicyPreview.
 type PolicyPreview struct {
-	Added   []Flow `json:"added"`
-	Removed []Flow `json:"removed"`
+	Added      []Flow      `json:"added"`
+	Removed    []Flow      `json:"removed"`
+	SshAdded   *[]SshGrant `json:"ssh_added,omitempty"`
+	SshRemoved *[]SshGrant `json:"ssh_removed,omitempty"`
 }
 
 // PolicyTestResult defines model for PolicyTestResult.
@@ -840,6 +842,12 @@ type SigningRequest struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Id          string    `json:"id"`
 	PayloadHash string    `json:"payload_hash"`
+}
+
+// SshGrant An "ssh" rule's effect, described the way the console renders it — "SSH access granted: principal → target" — rather than as a host:port flow, since ssh gating has no ports or protocol of its own (plans/phase-6/07-acl-gated-ssh.md §3.1).
+type SshGrant struct {
+	Principal string `json:"principal"`
+	Target    string `json:"target"`
 }
 
 // TurnServer defines model for TurnServer.

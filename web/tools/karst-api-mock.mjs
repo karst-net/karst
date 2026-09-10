@@ -328,7 +328,7 @@ const server = http.createServer((request, response) => {
     return policy ? json(response, 200, policy) : error(response, 404, "not_found", "policy version not found");
   }
   if (method === "POST" && karst === "/policy/validate") return readBody(request).then((body) => json(response, 200, policyValidation(body.document ?? "")));
-  if (method === "POST" && karst === "/policy/preview") return json(response, 200, { added: [{ source: "group:sre", destination: "tag:prod", protocol: "tcp", ports: "22" }], removed: [{ source: "group:contractors", destination: "tag:prod", protocol: "tcp", ports: "22" }] });
+  if (method === "POST" && karst === "/policy/preview") return json(response, 200, { added: [{ source: "group:sre", destination: "tag:prod", protocol: "tcp", ports: "22" }], removed: [{ source: "group:contractors", destination: "tag:prod", protocol: "tcp", ports: "22" }], ssh_added: [{ principal: "group:sre", target: "tag:prod" }], ssh_removed: [{ principal: "group:contractors", target: "tag:prod" }] });
   if ((method === "PUT" && karst === "/policy") || (method === "POST" && /^\/policy\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.policy);
   if (method === "POST" && karst === "/policy/test") return json(response, 200, { passed: false, results: [{ name: "SRE SSH access", passed: true, message: "allowed" }, { name: "contractor production SSH", passed: false, message: "expected deny, got allow" }] });
 

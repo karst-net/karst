@@ -7,6 +7,11 @@ import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useResource } from "../common";
 
 type Flow = { source: string; destination: string; protocol: string; ports: string };
+// An "ssh" rule's effect, described by principal/target rather than as a
+// host:port flow — SSH gating has no ports or protocol of its own
+// (plans/phase-6/07-acl-gated-ssh.md §3.1), so it gets its own preview list
+// rather than being folded into FlowList's acls-shaped rendering.
+type SshGrant = { principal: string; target: string };
 type TestResults = Awaited<ReturnType<typeof api.testPolicy>>;
 
 export function Access() {
@@ -14,7 +19,7 @@ export function Access() {
   const history = useResource(api.policyVersions);
   const [document, setDocument] = useState("");
   const [diagnostics, setDiagnostics] = useState<Array<{ severity: string; message: string; line: number; column: number }>>([]);
-  const [preview, setPreview] = useState<{ added: Flow[]; removed: Flow[] }>();
+  const [preview, setPreview] = useState<{ added: Flow[]; removed: Flow[]; ssh_added?: SshGrant[]; ssh_removed?: SshGrant[] }>();
   const [tests, setTests] = useState<TestResults>();
   const [notice, setNotice] = useState<string>();
   const [conflicted, setConflicted] = useState(false);
@@ -81,6 +86,7 @@ export function Access() {
       <ul>{tests.results.map((result, index) => <li key={index}><Status state={result.passed ? "healthy" : "danger"} label={result.name} /> — {result.message}</li>)}</ul>
     </section>}
     {preview && <section><h3>Preview</h3><div className="two-col"><FlowList title="Added" rows={preview.added} /><FlowList title="Removed" rows={preview.removed} /></div></section>}
+    {preview && (preview.ssh_added?.length || preview.ssh_removed?.length) ? <section><h3>SSH access preview</h3><div className="two-col"><SshGrantList title="Added" rows={preview.ssh_added ?? []} /><SshGrantList title="Removed" rows={preview.ssh_removed ?? []} /></div></section> : null}
     <section aria-label="Policy version history">
       <h3>Version history</h3>
       {history.loading ? <p>Loading policy history…</p> : history.error ? <Failure message={history.error} retry={history.reload} />
@@ -101,4 +107,8 @@ export function Access() {
 
 function FlowList({ title, rows }: { title: string; rows: Flow[] }) {
   return <div><h4>{title}</h4>{rows.length === 0 ? <p>None</p> : <ul>{rows.map((row, index) => <li key={index}><code>{row.source}</code> → <code>{row.destination}:{row.ports}</code> ({row.protocol})</li>)}</ul>}</div>;
+}
+
+function SshGrantList({ title, rows }: { title: string; rows: SshGrant[] }) {
+  return <div><h4>{title}</h4>{rows.length === 0 ? <p>None</p> : <ul>{rows.map((row, index) => <li key={index}>SSH access granted: <code>{row.principal}</code> → <code>{row.target}</code></li>)}</ul>}</div>;
 }

@@ -166,6 +166,8 @@ export type Diagnostic = {
 export type PolicyPreview = {
     added: Array<Flow>;
     removed: Array<Flow>;
+    ssh_added?: Array<SshGrant>;
+    ssh_removed?: Array<SshGrant>;
 };
 
 export type Flow = {
@@ -173,6 +175,14 @@ export type Flow = {
     destination: string;
     protocol: string;
     ports: string;
+};
+
+/**
+ * An "ssh" rule's effect, described the way the console renders it — "SSH access granted: principal → target" — rather than as a host:port flow, since ssh gating has no ports or protocol of its own (plans/phase-6/07-acl-gated-ssh.md §3.1).
+ */
+export type SshGrant = {
+    principal: string;
+    target: string;
 };
 
 export type PolicyTestResult = {

@@ -1703,7 +1703,7 @@ func (h *handler) policyPreview(w http.ResponseWriter, r *http.Request) {
 	candidate, err := karstpolicy.Parse([]byte(request.Document))
 	if err != nil {
 		line, column := karstpolicy.ErrorLocation([]byte(request.Document), err)
-		util.WriteJSONObject(r.Context(), w, map[string]any{"added": []any{}, "removed": []any{}, "diagnostics": []map[string]any{{"severity": "error", "message": err.Error(), "line": line, "column": column}}})
+		util.WriteJSONObject(r.Context(), w, map[string]any{"added": []any{}, "removed": []any{}, "ssh_added": []any{}, "ssh_removed": []any{}, "diagnostics": []map[string]any{{"severity": "error", "message": err.Error(), "line": line, "column": column}}})
 		return
 	}
 	visible, err := h.authorizedNodes(r.Context(), user.AccountId, user.UserId)
@@ -1737,7 +1737,23 @@ func (h *handler) policyPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	added, removed := diffFlows(oldFlows, newFlows)
-	util.WriteJSONObject(r.Context(), w, map[string]any{"added": added, "removed": removed})
+
+	oldSSH, err := compiledSSHGrants(current, network)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	newSSH, err := compiledSSHGrants(candidate, network)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	addedSSH, removedSSH := diffSSHGrants(oldSSH, newSSH)
+
+	util.WriteJSONObject(r.Context(), w, map[string]any{
+		"added": added, "removed": removed,
+		"ssh_added": addedSSH, "ssh_removed": removedSSH,
+	})
 }
 
 func (h *handler) requirePolicy(w http.ResponseWriter, r *http.Request) bool {
@@ -1815,6 +1831,58 @@ func diffFlows(old, next map[string]policyFlow) (added, removed []policyFlow) {
 	})
 	sort.Slice(removed, func(i, j int) bool {
 		return removed[i].Source+removed[i].Destination+removed[i].Ports < removed[j].Source+removed[j].Destination+removed[j].Ports
+	})
+	return added, removed
+}
+
+// sshGrant is an "ssh" rule's effect, described in the same principal/target
+// language as the source plan rather than as a host:port flow — ssh gating
+// has no ports or protocol of its own (plans/phase-6/07-acl-gated-ssh.md §3.1).
+type sshGrant struct {
+	Principal string `json:"principal"`
+	Target    string `json:"target"`
+}
+
+// compiledSSHGrants mirrors compiledFlows for the SSH gate: it compiles
+// CompileSSH per node (who may reach it) rather than per source, since the
+// gate is described by destination the same way the general ingress filter
+// is.
+func compiledSSHGrants(document *karstpolicy.Document, nodes []karstpolicy.Node) (map[string]sshGrant, error) {
+	grants := make(map[string]sshGrant)
+	for _, target := range nodes {
+		filter, err := document.CompileSSH(target, nodes)
+		if err != nil {
+			return nil, err
+		}
+		if filter == nil {
+			continue // no "ssh" block in this document: nothing to describe
+		}
+		for _, rule := range filter.Rules {
+			for _, principal := range rule.Srcs {
+				grant := sshGrant{Principal: principal, Target: target.Handle}
+				grants[grant.Principal+"\x00"+grant.Target] = grant
+			}
+		}
+	}
+	return grants, nil
+}
+
+func diffSSHGrants(old, next map[string]sshGrant) (added, removed []sshGrant) {
+	for key, grant := range next {
+		if _, ok := old[key]; !ok {
+			added = append(added, grant)
+		}
+	}
+	for key, grant := range old {
+		if _, ok := next[key]; !ok {
+			removed = append(removed, grant)
+		}
+	}
+	sort.Slice(added, func(i, j int) bool {
+		return added[i].Principal+added[i].Target < added[j].Principal+added[j].Target
+	})
+	sort.Slice(removed, func(i, j int) bool {
+		return removed[i].Principal+removed[i].Target < removed[j].Principal+removed[j].Target
 	})
 	return added, removed
 }
