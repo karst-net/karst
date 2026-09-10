@@ -431,12 +431,20 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// outbound. Both are needed for §4.3's "enforced on both ends", and neither
 	// is derivable from the other: Karst's ACLs are unidirectional grants, so a
 	// node's inbound rules say nothing about what it may send.
-	filter, egress, err := h.compileFilter(policy.WithAccount(ctx, accountID), self, peers)
+	//
+	// sshFilter is a third, independent gate (plans/phase-6/07-acl-gated-ssh.md
+	// §3.1) — never merged into packet_filter — and sshFilterPresent carries
+	// the nil-vs-empty distinction CompileSSH returns, since an absent "ssh"
+	// block and one that grants nothing must not compile to the same wire
+	// shape.
+	filter, egress, sshFilter, sshFilterPresent, err := h.compileFilter(policy.WithAccount(ctx, accountID), self, peers)
 	if err != nil {
 		return nil, err
 	}
 	resp.PacketFilter = filter
 	resp.EgressFilter = egress
+	resp.SshFilter = sshFilter
+	resp.SshFilterPresent = sshFilterPresent
 
 	// The Bedrock log tip, so a node can tell whether the log it has verified
 	// is the log the server is serving — bedrock-v1.md §5, layer 1. Absent when
@@ -515,10 +523,12 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	return out, nil
 }
 
-// compileFilter turns the policy into this node's packet filters, inbound and
-// outbound.
+// compileFilter turns the policy into this node's packet filters: inbound,
+// outbound, and the independent SSH admission gate. sshPresent carries
+// CompileSSH's nil-vs-empty distinction onto the wire (§3.2).
 func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []*nbpeer.Peer) (
-	[]*proto.KarstFilterRule, []*proto.KarstEgressRule, error,
+	inbound []*proto.KarstFilterRule, outbound []*proto.KarstEgressRule,
+	ssh []*proto.KarstFilterRule, sshPresent bool, err error,
 ) {
 	doc := h.Policy
 	if h.PolicyStore != nil {
@@ -526,15 +536,15 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 		if errors.Is(err, policy.ErrNoVersion) {
 			doc = nil
 		} else if err != nil {
-			return nil, nil, fmt.Errorf("load current policy: %w", err)
+			return nil, nil, nil, false, fmt.Errorf("load current policy: %w", err)
 		} else if doc, err = h.parsedPolicy(version); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, false, err
 		}
 	}
 	if doc == nil {
 		// No policy loaded: empty filters, which are default deny in both
-		// directions.
-		return nil, nil, nil
+		// directions, and no SSH gate at all.
+		return nil, nil, nil, false, nil
 	}
 
 	all := make([]policy.Node, 0, len(peers))
@@ -552,22 +562,33 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 
 	compiled, err := doc.Compile(target, all)
 	if err != nil {
-		return nil, nil, fmt.Errorf("compile policy: %w", err)
+		return nil, nil, nil, false, fmt.Errorf("compile policy: %w", err)
 	}
-	outbound, err := doc.CompileEgress(target, all)
+	compiledEgress, err := doc.CompileEgress(target, all)
 	if err != nil {
-		return nil, nil, fmt.Errorf("compile egress policy: %w", err)
+		return nil, nil, nil, false, fmt.Errorf("compile egress policy: %w", err)
+	}
+	compiledSSH, err := doc.CompileSSH(target, all)
+	if err != nil {
+		return nil, nil, nil, false, fmt.Errorf("compile ssh policy: %w", err)
 	}
 
 	out := make([]*proto.KarstFilterRule, 0, len(compiled.Rules))
 	for _, r := range compiled.Rules {
 		out = append(out, &proto.KarstFilterRule{Srcs: r.Srcs, Ports: portRanges(r.Ports)})
 	}
-	eg := make([]*proto.KarstEgressRule, 0, len(outbound.Rules))
-	for _, r := range outbound.Rules {
+	eg := make([]*proto.KarstEgressRule, 0, len(compiledEgress.Rules))
+	for _, r := range compiledEgress.Rules {
 		eg = append(eg, &proto.KarstEgressRule{Dsts: r.Dsts, Ports: portRanges(r.Ports)})
 	}
-	return out, eg, nil
+	var sshRules []*proto.KarstFilterRule
+	if compiledSSH != nil {
+		sshRules = make([]*proto.KarstFilterRule, 0, len(compiledSSH.Rules))
+		for _, r := range compiledSSH.Rules {
+			sshRules = append(sshRules, &proto.KarstFilterRule{Srcs: r.Srcs, Ports: portRanges(r.Ports)})
+		}
+	}
+	return out, eg, sshRules, compiledSSH != nil, nil
 }
 
 func (h *NetmapHandler) parsedPolicy(version *policy.Version) (*policy.Document, error) {
@@ -753,6 +774,24 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 		}
 		writePorts(h, r.GetPorts())
 	}
+	// A third, independent admission gate (§3.1), never merged with
+	// packet_filter. The presence flag is hashed explicitly — an absent "ssh"
+	// block and one that grants nothing must move the version differently even
+	// though both currently produce an empty rule list.
+	writeField(h, []byte("karst-ssh-filter"))
+	if resp.GetSshFilterPresent() {
+		binary.BigEndian.PutUint32(buf[:4], 1)
+	} else {
+		binary.BigEndian.PutUint32(buf[:4], 0)
+	}
+	h.Write(buf[:4])
+	for _, r := range resp.GetSshFilter() {
+		for _, src := range r.GetSrcs() {
+			writeField(h, []byte(src))
+		}
+		writePorts(h, r.GetPorts())
+	}
+
 	writeField(h, []byte("karst-relays"))
 	for _, relay := range resp.GetRelays() {
 		writeField(h, []byte(relay.GetAddress()))

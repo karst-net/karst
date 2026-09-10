@@ -350,6 +350,8 @@ enum KarstRouteRole {
 }
 
 message KarstNetmapResponse {
+  reserved 8; // never assigned; reserved so the gap stops looking accidental.
+
   uint64 version = 1;
   // Selects which PSK generation these keys belong to; carried in PHREATIC
   // msg1 so the two ends agree on a generation (phreatic-v1.md §13.2).
@@ -415,6 +417,24 @@ message KarstNetmapResponse {
   //
   // An empty list is DEFAULT DENY here too.
   repeated KarstEgressRule egress_filter = 12;
+
+  // A second, independent admission gate for interactive SSH access to this
+  // node's TCP/22, evaluated in addition to — never instead of — packet_filter
+  // (plans/phase-6/07-acl-gated-ssh.md §3.1). Both must permit a flow for it
+  // to reach port 22. Reuses KarstFilterRule; `ports` on every rule here is
+  // always {22, 22}, since ssh gating carries no port of its own.
+  //
+  // `ssh_filter_present` disambiguates the two states an empty `ssh_filter`
+  // cannot: `false` means the account's policy has no "ssh" block at all, so
+  // SSH reachability is governed by packet_filter alone (this workstream does
+  // not apply). `true` with an empty `ssh_filter` means the "ssh" block is
+  // present but grants nothing, so SSH beyond packet_filter is denied
+  // entirely. Same nil-vs-empty discipline as packet_filter's own
+  // `unchanged`/emptiness distinction above, for the identical reason: an
+  // absent feature and a feature that denies everything must not compile to
+  // the same wire shape.
+  repeated KarstFilterRule ssh_filter = 18;
+  bool ssh_filter_present = 19;
 
   // True when `peers` contains only entries that changed, and `removed_peers`
   // names those to drop. False means `peers` is the complete set and anything

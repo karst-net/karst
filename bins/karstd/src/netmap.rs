@@ -623,6 +623,16 @@ pub struct Netmap {
     /// derivable from `packet_filter`: Karst's ACLs are unidirectional grants,
     /// so a node's inbound rules say nothing about what it may send.
     pub egress_filter: Vec<pb::KarstEgressRule>,
+    /// A second, independent admission gate for interactive SSH access to
+    /// this node's TCP/22 (`plans/phase-6/07-acl-gated-ssh.md` §3.1),
+    /// evaluated in addition to — never instead of — `packet_filter`. Reuses
+    /// `KarstFilterRule`; `ports` on every rule here is always `{22, 22}`.
+    pub ssh_filter: Vec<pb::KarstFilterRule>,
+    /// Disambiguates "no `ssh` block in policy" (`false`, SSH governed by
+    /// `packet_filter` alone) from "`ssh` block present but empty" (`true`
+    /// with an empty `ssh_filter`, deny all SSH beyond `packet_filter`) — the
+    /// two are observably different states and must not collide (§3.2).
+    pub ssh_filter_present: bool,
     /// Pinned relay choices, replaced wholesale with every netmap.
     pub relays: Vec<Relay>,
     /// TURN fallback servers, each with a credential minted fresh for the
@@ -666,9 +676,44 @@ impl fmt::Debug for Netmap {
             .field("peers", &self.peers.len())
             .field("filter_rules", &self.packet_filter.len())
             .field("egress_rules", &self.egress_filter.len())
+            .field(
+                "ssh_gate",
+                &if self.ssh_filter_present {
+                    format!("enforcing, {} rule(s)", self.ssh_filter.len())
+                } else {
+                    "absent".to_owned()
+                },
+            )
             .field("turn_servers", &self.turn_servers.len())
             .finish_non_exhaustive()
     }
+}
+
+/// A compiled rule carrying `ports`, regardless of which direction it names
+/// its peers for. Lets [`port_pairs_of`] serve `packet_filter`,
+/// `egress_filter`, and `ssh_filter` alike without repeating the same
+/// `.iter().map(...).collect()` three times in [`Netmap::content_version`].
+trait HasPorts {
+    fn ports(&self) -> &[pb::KarstPortRange];
+}
+
+impl HasPorts for pb::KarstFilterRule {
+    fn ports(&self) -> &[pb::KarstPortRange] {
+        &self.ports
+    }
+}
+
+impl HasPorts for pb::KarstEgressRule {
+    fn ports(&self) -> &[pb::KarstPortRange] {
+        &self.ports
+    }
+}
+
+fn port_pairs_of<T: HasPorts>(rules: &[T]) -> Vec<Vec<(u32, u32)>> {
+    rules
+        .iter()
+        .map(|r| r.ports().iter().map(|p| (p.first, p.last)).collect())
+        .collect()
 }
 
 impl Netmap {
@@ -685,6 +730,8 @@ impl Netmap {
             bedrock_head: BedrockHead::default(),
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
+            ssh_filter: Vec::new(),
+            ssh_filter_present: false,
             relays: Vec::new(),
             turn_servers: Vec::new(),
             routes: Vec::new(),
@@ -784,6 +831,8 @@ impl Netmap {
         // failure would be an outage, not an opening.
         self.packet_filter = resp.packet_filter;
         self.egress_filter = resp.egress_filter;
+        self.ssh_filter = resp.ssh_filter;
+        self.ssh_filter_present = resp.ssh_filter_present;
         self.relays = resp
             .relays
             .iter()
@@ -865,20 +914,13 @@ impl Netmap {
                 allowed_ips: &p.allowed_ips,
             })
             .collect();
-        let in_ports: Vec<Vec<(u32, u32)>> = self
-            .packet_filter
-            .iter()
-            .map(|r| r.ports.iter().map(|p| (p.first, p.last)).collect())
-            .collect();
-        let out_ports: Vec<Vec<(u32, u32)>> = self
-            .egress_filter
-            .iter()
-            .map(|r| r.ports.iter().map(|p| (p.first, p.last)).collect())
-            .collect();
+        let in_ports = port_pairs_of(&self.packet_filter);
+        let out_ports = port_pairs_of(&self.egress_filter);
+        let ssh_ports = port_pairs_of(&self.ssh_filter);
         let rules: Vec<FilterRuleView<'_>> = self
             .packet_filter
             .iter()
-            .zip(in_ports.iter())
+            .zip(&in_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.srcs,
                 ports,
@@ -887,9 +929,18 @@ impl Netmap {
         let egress: Vec<FilterRuleView<'_>> = self
             .egress_filter
             .iter()
-            .zip(out_ports.iter())
+            .zip(&out_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.dsts,
+                ports,
+            })
+            .collect();
+        let ssh: Vec<FilterRuleView<'_>> = self
+            .ssh_filter
+            .iter()
+            .zip(&ssh_ports)
+            .map(|(r, ports)| FilterRuleView {
+                nodes: &r.srcs,
                 ports,
             })
             .collect();
@@ -927,6 +978,8 @@ impl Netmap {
             peers: &entries,
             packet_filter: &rules,
             egress_filter: &egress,
+            ssh_filter: &ssh,
+            ssh_filter_present: self.ssh_filter_present,
             relays: &relays,
             routes: &routes,
             dns: DNSConfigView {
@@ -986,6 +1039,8 @@ impl Netmap {
             peers: self.peers.values().map(Peer::to_wire).collect(),
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
+            ssh_filter: self.ssh_filter.clone(),
+            ssh_filter_present: self.ssh_filter_present,
             relays: self.relays.iter().map(Relay::to_wire).collect(),
             routes: self
                 .routes
@@ -1048,6 +1103,8 @@ mod tests {
         projected.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
         projected.packet_filter = resp.packet_filter.clone();
         projected.egress_filter = resp.egress_filter.clone();
+        projected.ssh_filter = resp.ssh_filter.clone();
+        projected.ssh_filter_present = resp.ssh_filter_present;
         projected.relays = resp
             .relays
             .iter()
@@ -1419,6 +1476,55 @@ mod tests {
         filtered.apply(sealed(resp, &filtered)).expect("apply");
 
         assert_ne!(plain.version, filtered.version);
+    }
+
+    /// The SSH gate is independent of, and separately hashed from,
+    /// `packet_filter` (plans/phase-6/07-acl-gated-ssh.md §3.1) — an SSH-only
+    /// policy change must move the version, or a node would be told
+    /// "unchanged" and enforce a revoked or newly-granted SSH rule forever.
+    #[test]
+    fn changing_only_the_ssh_filter_changes_the_version() {
+        let mut plain = Netmap::new();
+        plain
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &plain))
+            .expect("apply");
+
+        let mut gated = Netmap::new();
+        let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        resp.ssh_filter = vec![pb::KarstFilterRule {
+            srcs: vec!["aaa".to_owned()],
+            ports: vec![pb::KarstPortRange {
+                first: 22,
+                last: 22,
+            }],
+        }];
+        resp.ssh_filter_present = true;
+        gated.apply(sealed(resp, &gated)).expect("apply");
+
+        assert_ne!(plain.version, gated.version);
+    }
+
+    /// `ssh_filter_present` alone must move the version: an absent "ssh"
+    /// block and a present-but-empty one are observably different states
+    /// (§3.2), and both currently produce an identical, empty `ssh_filter`
+    /// list, so the presence flag is the only thing that can tell them apart.
+    #[test]
+    fn ssh_filter_presence_alone_changes_the_version() {
+        let mut absent = Netmap::new();
+        absent
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &absent))
+            .expect("apply");
+
+        let mut present_but_empty = Netmap::new();
+        let mut resp = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        resp.ssh_filter_present = true;
+        present_but_empty
+            .apply(sealed(resp, &present_but_empty))
+            .expect("apply");
+
+        assert_ne!(absent.version, present_but_empty.version);
+        assert!(absent.ssh_filter.is_empty());
+        assert!(present_but_empty.ssh_filter.is_empty());
     }
 
     /// Relay pins are mutable control-plane state. If they were omitted from

@@ -56,6 +56,14 @@ struct VersionCase {
     peers: Option<Vec<VersionPeer>>,
     packet_filter: Option<Vec<VersionRule>>,
     egress_filter: Option<Vec<VersionRule>>,
+    /// The independent SSH admission gate (plans/phase-6/
+    /// 07-acl-gated-ssh.md §3.1). `ssh_filter_present` carries the
+    /// nil-vs-empty distinction: absent means no "ssh" block at all, `true`
+    /// with an empty `ssh_filter` means present but granting nothing.
+    #[serde(default)]
+    ssh_filter: Option<Vec<VersionRule>>,
+    #[serde(default)]
+    ssh_filter_present: bool,
     #[serde(default)]
     relays: Option<Vec<VersionRelay>>,
     #[serde(default)]
@@ -464,6 +472,7 @@ struct VersionInputs {
     ips: Vec<Vec<String>>,
     ports: Vec<Vec<(u32, u32)>>,
     egress_ports: Vec<Vec<(u32, u32)>>,
+    ssh_ports: Vec<Vec<(u32, u32)>>,
     node_id: Vec<u8>,
     addresses: Vec<String>,
     relay_ids: Vec<Vec<u8>>,
@@ -506,6 +515,7 @@ fn inputs(c: &VersionCase) -> VersionInputs {
             .collect(),
         ports: port_ranges(c.packet_filter.as_deref().unwrap_or_default()),
         egress_ports: port_ranges(c.egress_filter.as_deref().unwrap_or_default()),
+        ssh_ports: port_ranges(c.ssh_filter.as_deref().unwrap_or_default()),
         node_id: unhex(&c.node_id),
         addresses: c.addresses.clone().unwrap_or_default(),
         relay_ids: relays_of(c).iter().map(|r| unhex(&r.relay_id)).collect(),
@@ -548,6 +558,12 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let egress: Vec<FilterRuleView<'_>> = outbound_nodes
         .iter()
         .zip(held.egress_ports.iter())
+        .map(|(nodes, ports)| FilterRuleView { nodes, ports })
+        .collect();
+    let ssh_nodes = rule_nodes(c.ssh_filter.as_deref().unwrap_or_default());
+    let ssh: Vec<FilterRuleView<'_>> = ssh_nodes
+        .iter()
+        .zip(held.ssh_ports.iter())
         .map(|(nodes, ports)| FilterRuleView { nodes, ports })
         .collect();
 
@@ -602,6 +618,8 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         peers: &entries,
         packet_filter: &rules,
         egress_filter: &egress,
+        ssh_filter: &ssh,
+        ssh_filter_present: c.ssh_filter_present,
         relays: &relays,
         routes: &routes,
         dns: DNSConfigView {
@@ -750,6 +768,69 @@ fn the_version_covers_the_packet_filter() {
     assert_ne!(
         filtered.version, unfiltered.version,
         "adding a rule left the version unchanged, so a policy edit would never be delivered"
+    );
+}
+
+/// A third, independent admission gate (§3.1): an SSH-only policy change must
+/// move the version, exactly like the packet filter above — otherwise a
+/// revoked or newly-granted SSH rule would never reach a node.
+#[test]
+fn the_version_covers_the_ssh_filter() {
+    let v = vectors();
+    let gated = v
+        .cases
+        .netmap_version
+        .iter()
+        .find(|c| !c.ssh_filter.as_deref().unwrap_or_default().is_empty())
+        .expect("vectors no longer cover a netmap with an ssh filter");
+    let ungated = v
+        .cases
+        .netmap_version
+        .iter()
+        .find(|c| {
+            c.ssh_filter.as_deref().unwrap_or_default().is_empty()
+                && !c.ssh_filter_present
+                && c.node_id == gated.node_id
+                && c.peers.as_deref().unwrap_or_default().len()
+                    == gated.peers.as_deref().unwrap_or_default().len()
+                && !c.peers.as_deref().unwrap_or_default().is_empty()
+        })
+        .expect("vectors no longer cover the same netmap without an ssh filter");
+
+    assert_ne!(
+        gated.version, ungated.version,
+        "adding an ssh rule left the version unchanged, so a policy edit would never be delivered"
+    );
+}
+
+/// §3.2: an absent "ssh" block and one present but granting nothing are
+/// observably different states, and must move the version differently even
+/// though both currently hash the same empty rule list.
+#[test]
+fn ssh_filter_presence_alone_changes_the_version() {
+    let v = vectors();
+    let present_empty = v
+        .cases
+        .netmap_version
+        .iter()
+        .find(|c| c.ssh_filter_present && c.ssh_filter.as_deref().unwrap_or_default().is_empty())
+        .expect("vectors no longer cover a present-but-empty ssh filter");
+    let absent = v
+        .cases
+        .netmap_version
+        .iter()
+        .find(|c| {
+            !c.ssh_filter_present
+                && c.ssh_filter.as_deref().unwrap_or_default().is_empty()
+                && c.node_id == present_empty.node_id
+                && c.peers.as_deref().unwrap_or_default().len()
+                    == present_empty.peers.as_deref().unwrap_or_default().len()
+        })
+        .expect("vectors no longer cover an absent ssh filter with the same shape");
+
+    assert_ne!(
+        present_empty.version, absent.version,
+        "ssh_filter_present alone did not move the version"
     );
 }
 

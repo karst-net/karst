@@ -239,6 +239,15 @@ pub struct NetmapContent<'a> {
     pub packet_filter: &'a [FilterRuleView<'a>],
     /// Whom this node may reach.
     pub egress_filter: &'a [FilterRuleView<'a>],
+    /// The independent SSH admission gate for TCP/22
+    /// (`plans/phase-6/07-acl-gated-ssh.md` §3.1) — never merged with
+    /// `packet_filter`. `srcs`/`nodes` name who may open the connection;
+    /// `ports` on every rule here is always `(22, 22)`.
+    pub ssh_filter: &'a [FilterRuleView<'a>],
+    /// Disambiguates "no `ssh` block" (`false`) from "`ssh` block present but
+    /// grants nothing" (`true`, empty `ssh_filter`) — the same nil-vs-empty
+    /// distinction `packet_filter`'s own emptiness carries via `unchanged`.
+    pub ssh_filter_present: bool,
     pub relays: &'a [RelayView<'a>],
     pub routes: &'a [RouteView<'a>],
     /// Authenticated resolver policy. Changes must move the netmap version so
@@ -313,6 +322,13 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     // not move, and the inverted policy is never delivered.
     push(&mut h, b"karst-egress-filter");
     push_rules(&mut h, content.egress_filter);
+    // A third, independent admission gate (§3.1), never merged with
+    // packet_filter. The presence flag is hashed explicitly — an absent
+    // "ssh" block and one that grants nothing must move the version
+    // differently even though both currently produce an empty rule list.
+    push(&mut h, b"karst-ssh-filter");
+    h.update(u32::from(content.ssh_filter_present).to_be_bytes());
+    push_rules(&mut h, content.ssh_filter);
     push(&mut h, b"karst-relays");
     for relay in content.relays {
         push(&mut h, relay.address.as_bytes());

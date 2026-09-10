@@ -371,6 +371,8 @@ each peer's LP(node_id, kem_public_key, dns_name, endpoint,
 each ingress filter rule's LP(sources..., BE32(first) || BE32(last), ...) ||
 LP("karst-egress-filter") ||
 each egress filter rule's LP(destinations..., BE32(first) || BE32(last), ...) ||
+LP("karst-ssh-filter") || BE32(ssh_filter_present ? 1 : 0) ||
+each ssh rule's LP(sources..., BE32(first) || BE32(last), ...) ||
 LP("karst-relays") ||
 each relay's LP(address, tls_server_name, relay_id, identity_key, region) ||
 LP("karst-routes") ||
@@ -422,6 +424,16 @@ Both the head hash **and** its sequence are hashed. Hashing only the hash would
 let a server rewind its log and re-serve an earlier tip without the version
 moving, which would leave a node enforcing against coverage it believes is
 current (`bedrock-v1.md` §5).
+
+**Compatibility note (2026-09-10).** The `"karst-ssh-filter"` separator, its
+presence flag, and its rules were added after the routes construction, for the
+independent SSH admission gate (`plans/phase-6/07-acl-gated-ssh.md` §3.1). The
+presence flag is hashed explicitly, before the rule list: an absent `"ssh"`
+policy block and one present but granting nothing both currently produce an
+empty rule list, and without the flag the two states would be indistinguishable
+on the wire even though §3.2 requires them to be observably different.
+Pre-change version values are intentionally incompatible; both implementations
+and the shared vectors moved together.
 
 ---
 
