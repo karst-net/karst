@@ -185,6 +185,83 @@ fn carries_a_real_outbound_ipv4_packet_from_the_host() {
     assert_eq!(a.source, std::net::IpAddr::V4(Ipv4Addr::new(10, 123, 0, 1)));
 }
 
+/// **karst-net/karst#118.** A second queue is a second, independent
+/// read/write handle on the *same* interface, not a second interface — and
+/// it must actually be able to receive a real packet the kernel routed to
+/// it, not merely exist. Nonblocking, so the test fails within a bound
+/// rather than hanging if the kernel's flow hash somehow delivers to
+/// neither (it delivers to exactly one of the two for a single flow, and
+/// which one is not this test's business — see `open_queue`'s own doc
+/// comment on why sharding is by peer/flow count, not by steering).
+#[test]
+#[ignore = "needs CAP_NET_ADMIN"]
+fn a_second_queue_reads_from_the_same_interface_as_the_first() {
+    assert!(have_net_admin(), "run with sudo");
+    let primary = Tun::create(&TunConfig {
+        name: "karst-mq1".to_owned(),
+        nonblocking: true,
+        ..TunConfig::default()
+    })
+    .expect("create");
+    assert!(
+        primary.multi_queue(),
+        "IFF_MULTI_QUEUE must be negotiated by default on any kernel this test runs on"
+    );
+
+    let second = primary.open_queue().expect("open a second queue");
+    assert_eq!(second.name(), primary.name());
+    assert_eq!(second.offload(), primary.offload());
+
+    primary
+        .set_ipv4(Ipv4Addr::new(10, 124, 0, 1), 24)
+        .expect("assign address");
+
+    let peer = Ipv4Addr::new(10, 124, 0, 2);
+    std::thread::spawn(move || {
+        let sock = UdpSocket::bind((Ipv4Addr::new(10, 124, 0, 1), 0)).expect("bind");
+        for _ in 0..80 {
+            let _ = sock.send_to(b"karst-mq", (peer, 9999));
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
+
+    let mut buf = [0u8; 2048];
+    let mut seen_on = None;
+    for _ in 0..80 {
+        for (label, q) in [("primary", &primary), ("second", &second)] {
+            if let Ok(n) = q.recv(&mut buf) {
+                let packet = buf.get(..n).unwrap_or_default();
+                if ip::addresses(packet)
+                    .is_some_and(|a| a.destination == std::net::IpAddr::V4(peer))
+                {
+                    seen_on = Some(label);
+                }
+            }
+        }
+        if seen_on.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        seen_on.is_some(),
+        "neither queue saw the packet — a second queue that cannot receive \
+         anything is worse than no second queue"
+    );
+
+    // Exactly one interface, not two: `open_queue` must not have asked the
+    // kernel to create anything new.
+    let count = std::fs::read_dir("/sys/class/net")
+        .expect("sysfs")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("karst-mq1"))
+        .count();
+    assert_eq!(
+        count, 1,
+        "a second queue must not create a second interface"
+    );
+}
+
 /// IPv6 inside the tunnel is the reason the MTU floor is 1280 (spec §13.6).
 /// If IPv6 cannot be assigned and carried, that whole argument is hollow — so
 /// it gets a test rather than a comment.

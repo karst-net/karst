@@ -38,6 +38,7 @@
 use std::sync::Arc;
 
 use karst_control_client::transport::pb;
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::config::{Config, LocalSettings};
 use karstd::engine::Engine;
 use karstd::netmap::Netmap;
@@ -192,6 +193,7 @@ fn local() -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         exit_node_state_file: None,
+        datapath_workers: 1,
     }
 }
 
@@ -224,7 +226,9 @@ fn every_diagnostic(config: &Arc<Config>, netmap: &Netmap) -> String {
     packet[16..20].copy_from_slice(&[100, 64, 0, 2]);
     packet[22..24].copy_from_slice(&22u16.to_be_bytes());
     let _ = engine.outbound(&packet, 10);
+    let mut reasm = Reassembler::new(ReasmConfig::default());
     let _ = engine.inbound(
+        &mut reasm,
         &[0xFF; 64],
         "127.0.0.1:1".parse().expect("addr"),
         11,

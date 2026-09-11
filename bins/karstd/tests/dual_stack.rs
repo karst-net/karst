@@ -40,11 +40,13 @@
     clippy::indexing_slicing
 )]
 
+use std::cell::RefCell;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use karst_control_client::handle;
 use karst_noise::handshake::{ResponderRandomness, StaticKeys};
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::config::{Config, Peer};
 use karstd::engine::{Engine, Via};
 use karstd::routing::{AllowedIps, Prefix};
@@ -99,6 +101,10 @@ struct Node {
     /// Where this node's datagrams come *from*, as its peer's socket would see
     /// them before that socket's family is applied.
     endpoint: SocketAddr,
+    /// This node's own reassembler — see `Engine`'s doc comment on why it is
+    /// no longer the engine's own state. A `RefCell` because `carry` below
+    /// takes both nodes by shared reference.
+    reasm: RefCell<Reassembler>,
 }
 
 /// One node holding one peer, each with a configured IPv4 endpoint.
@@ -147,11 +153,13 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str, own_at: &s
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
+        datapath_workers: 1,
     });
 
     Node {
         engine: Engine::new(&config),
         endpoint: own_at.parse().expect("own endpoint"),
+        reasm: RefCell::new(Reassembler::new(ReasmConfig::default())),
     }
 }
 
@@ -172,12 +180,20 @@ fn carry(from: &Node, to: &Node, out: karstd::engine::Output, family: Family, no
             continue;
         };
         let source = family.reports(from.endpoint);
-        let reply = to.engine.inbound(&datagram, source, now, &rand());
+        let reply = to
+            .engine
+            .inbound(&mut to.reasm.borrow_mut(), &datagram, source, now, &rand());
         carried += 1;
         for (datagram, via) in reply.datagrams {
             if matches!(via, Via::Direct(_)) {
                 let back = Family::V4Only.reports(to.endpoint);
-                let _ = from.engine.inbound(&datagram, back, now, &rand());
+                let _ = from.engine.inbound(
+                    &mut from.reasm.borrow_mut(),
+                    &datagram,
+                    back,
+                    now,
+                    &rand(),
+                );
             }
         }
     }

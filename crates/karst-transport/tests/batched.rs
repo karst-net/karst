@@ -12,8 +12,11 @@
 //! platform has — `sendmmsg`/`recvmmsg` on Linux, the safe loop in
 //! `src/portable.rs` elsewhere. That is deliberate: the two are meant to be
 //! indistinguishable to a caller, and the only way to keep them that way is to
-//! hold both to the same assertions. Only the three UDP GSO tests are gated,
-//! because `send_segmented` has no portable form at all.
+//! hold both to the same assertions. The UDP GSO tests are gated because
+//! `send_segmented` has no portable form at all, and the `SO_REUSEPORT` tests
+//! because `bind_reuseport` is Linux-only (karst-net/karst#118): other
+//! platforms have a same-named socket option that does not load-balance the
+//! way this crate depends on.
 
 #![allow(
     clippy::panic,
@@ -22,6 +25,8 @@
     clippy::indexing_slicing
 )]
 
+#[cfg(target_os = "linux")]
+use std::net::UdpSocket;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
@@ -267,6 +272,92 @@ fn a_segment_size_over_the_datagram_limit_is_refused() {
         .send_segmented(&payload, u16::try_from(MAX_DATAGRAM + 1).unwrap(), ba)
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+// ── SO_REUSEPORT (karst-net/karst#118) ──────────────────────────────────────
+
+/// **The property `SO_REUSEPORT` exists for.** Binding the same port twice
+/// ordinarily fails with `EADDRINUSE`; the second bind here must succeed
+/// specifically because both went through `bind_reuseport`, not because the
+/// address happened to be free.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_second_socket_can_share_the_first_ones_port() {
+    let a = UdpTransport::bind_reuseport(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let port = a.local_addr().unwrap().port();
+
+    UdpTransport::bind_reuseport(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+        .expect("a second bind_reuseport to the same port must join the group, not refuse it");
+
+    // And the ordinary path must still refuse it, or this test would prove
+    // nothing about `SO_REUSEPORT` specifically.
+    let plain = UdpTransport::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
+    assert!(
+        plain.is_err(),
+        "a plain bind to a reuseport group's port must still collide"
+    );
+}
+
+/// **Traffic must not be lost across the group, and it must actually use more
+/// than one member.** Sixteen distinct source ports, so the kernel's flow
+/// hash has more than one 4-tuple to spread across the two sockets — a
+/// single sender would prove only that `SO_REUSEPORT` does not drop traffic,
+/// which `karst-transport` already needed regardless of sharding.
+///
+/// The split assertion is the one place in this file that trusts kernel
+/// behavior rather than this crate's own code: with sixteen independent
+/// source ports the chance every one hashes to the same member is
+/// vanishingly small (well under 1 in 30,000 for even a two-way coin-flip
+/// hash), so a failure here means the kernel's reuseport load-balancing
+/// changed underneath this assumption, which is worth knowing loudly rather
+/// than never.
+#[cfg(target_os = "linux")]
+#[test]
+fn reuseport_splits_traffic_across_both_sockets_without_losing_any() {
+    const SENDERS: usize = 16;
+
+    let a = UdpTransport::bind_reuseport(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let port = a.local_addr().unwrap().port();
+    let b = UdpTransport::bind_reuseport(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).unwrap();
+    a.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    b.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+
+    let dst = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    for i in 0..SENDERS {
+        let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        sender
+            .send_to(format!("packet {i}").as_bytes(), dst)
+            .unwrap();
+    }
+
+    let mut bufs = buffers();
+    let mut meta: Vec<Received> = Vec::new();
+    let (mut got_a, mut got_b) = (0usize, 0usize);
+    // Bounded rather than "until both are quiet": a socket with nothing
+    // waiting returns promptly on its own read timeout, so this only needs to
+    // outlast that timeout a few times over, not loop indefinitely.
+    for _ in 0..(SENDERS * 2) {
+        if got_a + got_b >= SENDERS {
+            break;
+        }
+        if let Ok(n) = a.recv_batch(&mut bufs, &mut meta) {
+            got_a += n;
+        }
+        if let Ok(n) = b.recv_batch(&mut bufs, &mut meta) {
+            got_b += n;
+        }
+    }
+
+    assert_eq!(
+        got_a + got_b,
+        SENDERS,
+        "every datagram sent to the shared port must arrive on one of the two \
+         sockets — {SENDERS} sent, {got_a} on the first, {got_b} on the second"
+    );
+    assert!(got_a > 0, "the first socket received nothing");
+    assert!(got_b > 0, "the second socket received nothing");
 }
 
 /// The batched and single-datagram paths must agree — the same bytes to the

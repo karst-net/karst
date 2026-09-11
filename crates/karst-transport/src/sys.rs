@@ -26,7 +26,7 @@
 use std::io;
 use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
 use crate::{Received, BATCH};
 
@@ -170,6 +170,74 @@ fn from_sockaddr(storage: &libc::sockaddr_storage) -> Option<SocketAddr> {
         }
         _ => None,
     }
+}
+
+/// Bind a UDP socket with `SO_REUSEPORT` set before `bind` — karst-net/karst#118's
+/// multi-reader receive scaling.
+///
+/// `std::net::UdpSocket::bind` has no way to reach this: the option has to be
+/// set between `socket(2)` and `bind(2)`, and the standard library does both
+/// in one call with no seam to hook a `setsockopt` into. Every socket that
+/// binds the same port with this flag joins one reuseport group, and the
+/// kernel hashes an inbound datagram across the group by its 4-tuple — which
+/// in practice means by source, since the destination side is this one fixed
+/// `(addr, port)` for every member. A peer's traffic therefore lands on the
+/// same socket for as long as its own address does, which covers the
+/// ordinary case of one NAT binding; a roaming peer whose address changes
+/// mid-session may land on a different member afterward, same as it may
+/// migrate `SO_REUSEPORT` groups in any other multi-reader design.
+///
+/// # Errors
+/// Any `socket`, `setsockopt` or `bind` failure.
+pub(crate) fn bind_reuseport(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
+    let family = if addr.is_ipv4() {
+        libc::AF_INET
+    } else {
+        libc::AF_INET6
+    };
+    // SAFETY: `socket` takes three integers and returns a fresh descriptor or
+    // -1; no pointers are involved.
+    let raw = unsafe { libc::socket(family, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor this function owns and has handed to
+    // nothing else yet — exactly `from_raw_fd`'s contract. Held as `OwnedFd`
+    // so an early return below closes it instead of leaking it.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+
+    let one: libc::c_int = 1;
+    // SAFETY: `value` points at `one`, a live local for the duration of this
+    // call, and `len` is exactly `size_of_val(&one)`, so the kernel reads no
+    // more than what is there.
+    let rc = unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_REUSEPORT,
+            std::ptr::from_ref(&one).cast(),
+            libc::socklen_t::try_from(mem::size_of_val(&one)).unwrap_or(0),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let (storage, len) = to_sockaddr(addr);
+    // SAFETY: `storage` is a live `sockaddr_storage` on this frame, sized and
+    // aligned for every family per its own contract, and `len` is exactly what
+    // `to_sockaddr` wrote into it — either a `sockaddr_in` or `sockaddr_in6`
+    // prefix — so `bind` reads no further into `storage` than what is
+    // actually initialized.
+    let rc = unsafe { libc::bind(fd.as_raw_fd(), std::ptr::from_ref(&storage).cast(), len) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    // SAFETY: `fd` is a live, uniquely owned, now-bound UDP socket with no
+    // other handle anywhere — `into_raw_fd` transfers that one ownership to
+    // the `UdpSocket` this returns, which is `from_raw_fd`'s contract.
+    Ok(unsafe { std::net::UdpSocket::from_raw_fd(fd.into_raw_fd()) })
 }
 
 /// Send up to `BATCH` datagrams in one syscall.

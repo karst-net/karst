@@ -25,7 +25,7 @@ use std::sync::Arc;
 use karst_crypto::kem::{keypair_from_seed, KemKind};
 use karst_noise::handshake::ResponderRandomness;
 use karst_proto::dos::{mac1_key, FragMacKey};
-use karst_proto::reassembly::Config as ReasmConfig;
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karst_proto::{fragment, MessageType};
 use karstd::config::{encode_hex, Config};
 use karstd::engine::{Engine, Output};
@@ -110,10 +110,22 @@ allowed_ips = ["10.79.0.{peer_octet}/32"]
 }
 
 /// Hand every datagram in `out` to `to`, returning what it emits.
-fn deliver(to: &Engine, from_addr: SocketAddr, out: Output, now: u64) -> Output {
+///
+/// `reasm` stands in for the reassembler a real UDP-reader thread would own —
+/// see `Engine`'s doc comment. It must be the *same* instance across every
+/// call this test makes for a given node, `flood` included: the whole point
+/// of this file is a reassembler's state accumulating across many separate
+/// datagrams, which a fresh one per call would silently stop testing.
+fn deliver(
+    to: &Engine,
+    reasm: &mut Reassembler,
+    from_addr: SocketAddr,
+    out: Output,
+    now: u64,
+) -> Output {
     let mut result = Output::default();
     for (datagram, _) in out.datagrams {
-        let o = to.inbound(&datagram, from_addr, now, &rand());
+        let o = to.inbound(reasm, &datagram, from_addr, now, &rand());
         result.datagrams.extend(o.datagrams);
         result.packets.extend(o.packets);
     }
@@ -125,7 +137,7 @@ fn deliver(to: &Engine, from_addr: SocketAddr, out: Output, now: u64) -> Output 
 /// spoofed-source flood looks like from B's side, and cheap to build because
 /// none of it needs to be a real handshake: `Reassembler::push` only asks
 /// whether the shape is legal, not whether the content is.
-fn flood(b: &Engine, b_kem_pk: &[u8], count: u16, now: u64) {
+fn flood(b: &Engine, reasm_b: &mut Reassembler, b_kem_pk: &[u8], count: u16, now: u64) {
     let key = FragMacKey::new(&mac1_key(b_kem_pk));
     let fake_msg = vec![0xABu8; 3210]; // HandshakeInit's real size, garbage content
     for i in 0..count {
@@ -140,7 +152,7 @@ fn flood(b: &Engine, b_kem_pk: &[u8], count: u16, now: u64) {
         let from: SocketAddr = format!("127.0.0.1:{}", 20_000 + i).parse().expect("addr");
         // Only fragment 0 — the second never arrives, so the entry stays
         // `Buffered` and keeps its slot rather than completing or expiring.
-        let out = b.inbound(&first, from, now, &rand());
+        let out = b.inbound(reasm_b, &first, from, now, &rand());
         assert!(
             out.datagrams.is_empty(),
             "an unvalidated flood gets nothing back below threshold"
@@ -158,6 +170,8 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     let b_cfg = config_for("b", 0xB1, 0xA1, B_ADDR, A_ADDR);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
     // Seed B's cookie secret — the real path is `Engine::poll`, called here
     // once rather than looping the daemon's timer, since only its side effect
@@ -168,6 +182,7 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     // so A's first attempt arrives into the exact condition §9.1 describes.
     flood(
         &b,
+        &mut reasm_b,
         &kem_pk_bytes(0xB1),
         u16::try_from(load_threshold).unwrap(),
         1,
@@ -180,7 +195,7 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     // B refuses to allocate reassembly state for A and answers with cookies
     // instead of a `HandshakeResponse` — this is Finding 1's fix actually
     // firing, not merely present in the source.
-    let challenge = deliver(&b, a_addr, msg1, 3);
+    let challenge = deliver(&b, &mut reasm_b, a_addr, msg1, 3);
     assert!(
         !challenge.datagrams.is_empty(),
         "B must answer an address-unvalidated sender under load with a CookieReply"
@@ -197,7 +212,7 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
 
     // A processes the challenge and retries under mac2 — automatically, the
     // same way a real daemon would on the next `inbound` call for this peer.
-    let retry = deliver(&a, b_addr, challenge, 4);
+    let retry = deliver(&a, &mut reasm_a, b_addr, challenge, 4);
     assert_eq!(
         retry.datagrams.len(),
         3,
@@ -208,14 +223,14 @@ fn a_genuine_peer_gets_a_cookie_reply_under_load_and_still_connects() {
     // sender that received B's CookieReply — sent to A's real address — could
     // produce, so B treats A as address-validated despite still being over
     // `load_threshold` for everyone else.
-    let msg2 = deliver(&b, a_addr, retry, 5);
+    let msg2 = deliver(&b, &mut reasm_b, a_addr, retry, 5);
     assert_eq!(
         msg2.datagrams.len(),
         3,
         "B answers with a HandshakeResponse"
     );
 
-    let nothing = deliver(&a, b_addr, msg2, 6);
+    let nothing = deliver(&a, &mut reasm_a, b_addr, msg2, 6);
     assert!(nothing.datagrams.is_empty());
 
     assert!(
@@ -234,10 +249,12 @@ fn an_off_path_spoofer_gets_no_more_than_the_amplification_bound_allows() {
     let load_threshold = ReasmConfig::default().load_threshold;
     let b_cfg = config_for("spoof-b", 0xB1, 0xA1, B_ADDR, A_ADDR);
     let b = Engine::new(&Arc::new(b_cfg));
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
     let _ = b.poll(0, seed);
 
     flood(
         &b,
+        &mut reasm_b,
         &kem_pk_bytes(0xB1),
         u16::try_from(load_threshold).unwrap(),
         1,
@@ -249,7 +266,7 @@ fn an_off_path_spoofer_gets_no_more_than_the_amplification_bound_allows() {
     let fake_msg = vec![0xCDu8; 3210];
     let frags = fragment(MessageType::HandshakeInit, 999, &fake_msg, &key).expect("fragments");
     let spoofed: SocketAddr = "127.0.0.1:59999".parse().unwrap();
-    let out = b.inbound(&frags[0], spoofed, 2, &rand());
+    let out = b.inbound(&mut reasm_b, &frags[0], spoofed, 2, &rand());
 
     // §6.4 invariant 3 (`karst_proto::sizes::COOKIE_REPLY` against
     // `FRAGMENT_PAYLOAD_MAX`) is a message-body comparison — 64 against

@@ -28,11 +28,13 @@
     clippy::indexing_slicing
 )]
 
+use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use karst_control_client::handle;
 use karst_noise::handshake::{ResponderRandomness, StaticKeys};
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::config::{Config, Peer};
 use karstd::engine::{Engine, Transport, Via};
 use karstd::netmap::Relay;
@@ -93,6 +95,10 @@ struct Node {
     config: Arc<Config>,
     /// This node's Ponor id, which is what the relay stamps on what it sends.
     id: [u8; 32],
+    /// This node's own reassembler for relayed traffic — see `Engine`'s doc
+    /// comment on why it is no longer the engine's own state. A `RefCell`
+    /// because `forward` below takes both ends by shared reference.
+    reasm: RefCell<Reassembler>,
 }
 
 /// One peer, as the netmap would describe it.
@@ -176,6 +182,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
+        datapath_workers: 1,
     };
 
     let config = Arc::new(config);
@@ -183,6 +190,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         engine: Engine::new(&config),
         config,
         id: id_of(own),
+        reasm: RefCell::new(Reassembler::new(ReasmConfig::default())),
     }
 }
 
@@ -228,9 +236,13 @@ fn forward(from: &Node, to: &Node, out: karstd::engine::Output, now: u64) -> usi
             continue;
         };
         assert_eq!(destination, to.id, "the relay was asked for the wrong node");
-        let reply = to
-            .engine
-            .inbound_from_relay(from.id, &datagram, now, &rand());
+        let reply = to.engine.inbound_from_relay(
+            &mut to.reasm.borrow_mut(),
+            from.id,
+            &datagram,
+            now,
+            &rand(),
+        );
         carried += 1;
         // Whatever the far end says back travels the same way.
         for (datagram, via) in reply.datagrams {
@@ -239,9 +251,13 @@ fn forward(from: &Node, to: &Node, out: karstd::engine::Output, now: u64) -> usi
             } = via
             {
                 assert_eq!(back, from.id);
-                let _ = from
-                    .engine
-                    .inbound_from_relay(to.id, &datagram, now, &rand());
+                let _ = from.engine.inbound_from_relay(
+                    &mut from.reasm.borrow_mut(),
+                    to.id,
+                    &datagram,
+                    now,
+                    &rand(),
+                );
             }
         }
     }
@@ -466,9 +482,13 @@ fn one_peer_cannot_replay_anothers_handshake_under_its_own_identity() {
 
     // Stamped as C: the AEAD resolves A, the relay says C, so it is refused.
     for (datagram, _) in &init.datagrams {
-        let _ = b
-            .engine
-            .inbound_from_relay(id_of(0x03), datagram, 0, &rand());
+        let _ = b.engine.inbound_from_relay(
+            &mut b.reasm.borrow_mut(),
+            id_of(0x03),
+            datagram,
+            0,
+            &rand(),
+        );
     }
     assert!(
         !b.engine.established(0) && !b.engine.established(1),
@@ -477,16 +497,22 @@ fn one_peer_cannot_replay_anothers_handshake_under_its_own_identity() {
 
     // A node id B holds no peer for at all, refused one step earlier.
     for (datagram, _) in &init.datagrams {
-        let _ = b
-            .engine
-            .inbound_from_relay([0x9E; 32], datagram, 0, &rand());
+        let _ = b.engine.inbound_from_relay(
+            &mut b.reasm.borrow_mut(),
+            [0x9E; 32],
+            datagram,
+            0,
+            &rand(),
+        );
     }
     assert!(!b.engine.established(0) && !b.engine.established(1));
 
     // And under the right source it works, so the refusals above were the
     // checks rather than a broken fixture.
     for (datagram, _) in &init.datagrams {
-        let out = b.engine.inbound_from_relay(a.id, datagram, 0, &rand());
+        let out =
+            b.engine
+                .inbound_from_relay(&mut b.reasm.borrow_mut(), a.id, datagram, 0, &rand());
         assert!(
             out.datagrams.iter().all(
                 |(_, via)| matches!(via, Via::Relay { destination, .. } if *destination == a.id)

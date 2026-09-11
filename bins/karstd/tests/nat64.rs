@@ -266,5 +266,6 @@ fn config() -> karstd::config::Config {
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
+        datapath_workers: 1,
     }
 }

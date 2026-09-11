@@ -276,6 +276,7 @@ fn local(seed: u8) -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         metrics_listen: None,
+        datapath_workers: 1,
     }
 }
 

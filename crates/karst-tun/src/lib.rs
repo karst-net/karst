@@ -191,6 +191,10 @@ pub enum TunError {
         /// What it said, or the exit status if it said nothing.
         detail: String,
     },
+    /// The operation needs a capability this handle does not have — Linux's
+    /// `Tun::open_queue` on an interface `Tun::create` did not itself open
+    /// with `IFF_MULTI_QUEUE`, most likely because the kernel declined it.
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for TunError {
@@ -224,6 +228,7 @@ impl fmt::Display for TunError {
             ),
             Self::Io(e) => write!(f, "tun I/O: {e}"),
             Self::Tool { tool, detail } => write!(f, "{tool} {detail}"),
+            Self::Unsupported(what) => write!(f, "unsupported: {what}"),
         }
     }
 }
