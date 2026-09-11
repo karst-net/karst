@@ -107,6 +107,7 @@ fn config_for(
         // mechanism, unaffected by the independent SSH gate covered in
         // tests/ssh_gate.rs.
         ssh_filter: karstd::filter::SshFilter::absent(),
+        datapath_workers: 1,
     };
     Arc::new(config)
 }

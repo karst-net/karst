@@ -406,6 +406,7 @@ mod tests {
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
+            datapath_workers: 1,
         }
     }
 

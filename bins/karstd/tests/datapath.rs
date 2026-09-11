@@ -23,6 +23,7 @@ use std::sync::Arc;
 use karst_control_client::transport::pb;
 use karst_crypto::kem::{keypair_from_seed, KemKind};
 use karst_noise::handshake::ResponderRandomness;
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::config::{encode_hex, Config};
 use karstd::engine::{Engine, Output};
 use karstd::filter::PacketFilter;
@@ -163,10 +164,21 @@ fn packet(src: [u8; 4], dst: [u8; 4], payload: &[u8]) -> Vec<u8> {
 }
 
 /// Hand every datagram in `out` to the other engine, returning what it emits.
-fn deliver(to: &Engine, from_addr: SocketAddr, out: Output, now: u64) -> Output {
+///
+/// `reasm` stands in for the reassembler a real UDP-reader thread would own —
+/// see `Engine`'s doc comment on why it is no longer the engine's own state.
+/// Each simulated node keeps exactly one across a test, reused across every
+/// `deliver` call addressed to it, the same way one thread would.
+fn deliver(
+    to: &Engine,
+    reasm: &mut Reassembler,
+    from_addr: SocketAddr,
+    out: Output,
+    now: u64,
+) -> Output {
     let mut result = Output::default();
     for (datagram, _) in out.datagrams {
-        let o = to.inbound(&datagram, from_addr, now, &rand());
+        let o = to.inbound(reasm, &datagram, from_addr, now, &rand());
         result.datagrams.extend(o.datagrams);
         result.packets.extend(o.packets);
     }
@@ -174,20 +186,20 @@ fn deliver(to: &Engine, from_addr: SocketAddr, out: Output, now: u64) -> Output 
 }
 
 /// Run the handshake to completion in both directions.
-fn establish(a: &Engine, b: &Engine) {
+fn establish(a: &Engine, reasm_a: &mut Reassembler, b: &Engine, reasm_b: &mut Reassembler) {
     let a_addr: SocketAddr = A_ADDR.parse().unwrap();
     let b_addr: SocketAddr = B_ADDR.parse().unwrap();
 
     // A initiates; B answers; A completes.
     let msg1 = a.connect_all(0, seed);
     assert_eq!(msg1.datagrams.len(), 3, "HandshakeInit is three fragments");
-    let msg2 = deliver(b, a_addr, msg1, 1);
+    let msg2 = deliver(b, reasm_b, a_addr, msg1, 1);
     assert_eq!(
         msg2.datagrams.len(),
         3,
         "HandshakeResponse is three fragments"
     );
-    let nothing = deliver(a, b_addr, msg2, 2);
+    let nothing = deliver(a, reasm_a, b_addr, msg2, 2);
     assert!(nothing.datagrams.is_empty());
 }
 
@@ -197,8 +209,10 @@ fn two_nodes_complete_a_handshake_and_carry_a_packet() {
     let b_cfg = config_for("b1", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
-    establish(&a, &b);
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(a.established(0), "initiator must be established");
     assert!(b.established(0), "responder must be established");
 
@@ -210,7 +224,7 @@ fn two_nodes_complete_a_handshake_and_carry_a_packet() {
     let out = a.outbound(&p, 3);
     assert!(!out.datagrams.is_empty(), "a routable packet must be sent");
 
-    let delivered = deliver(&b, A_ADDR.parse().unwrap(), out, 4);
+    let delivered = deliver(&b, &mut reasm_b, A_ADDR.parse().unwrap(), out, 4);
     assert_eq!(delivered.packets.len(), 1, "one packet must reach the host");
     assert_eq!(
         delivered.packets[0], p,
@@ -227,14 +241,28 @@ fn traffic_flows_in_both_directions() {
     let b_cfg = config_for("b2", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     let to_b = packet([10, 77, 0, 1], [10, 77, 0, 2], b"ping");
-    let got = deliver(&b, A_ADDR.parse().unwrap(), a.outbound(&to_b, 3), 4);
+    let got = deliver(
+        &b,
+        &mut reasm_b,
+        A_ADDR.parse().unwrap(),
+        a.outbound(&to_b, 3),
+        4,
+    );
     assert_eq!(got.packets.len(), 1);
 
     let to_a = packet([10, 77, 0, 2], [10, 77, 0, 1], b"pong");
-    let got = deliver(&a, B_ADDR.parse().unwrap(), b.outbound(&to_a, 5), 6);
+    let got = deliver(
+        &a,
+        &mut reasm_a,
+        B_ADDR.parse().unwrap(),
+        b.outbound(&to_a, 5),
+        6,
+    );
     assert_eq!(
         got.packets.len(),
         1,
@@ -251,7 +279,9 @@ fn a_full_mtu_packet_crosses_in_a_single_datagram() {
     let b_cfg = config_for("b3", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     let p = packet([10, 77, 0, 1], [10, 77, 0, 2], &vec![0x5A; 1260]);
     assert_eq!(p.len(), 1280, "the tunnel MTU");
@@ -264,7 +294,7 @@ fn a_full_mtu_packet_crosses_in_a_single_datagram() {
         "spec §13.6"
     );
 
-    let got = deliver(&b, A_ADDR.parse().unwrap(), out, 4);
+    let got = deliver(&b, &mut reasm_b, A_ADDR.parse().unwrap(), out, 4);
     assert_eq!(got.packets.len(), 1);
     assert_eq!(got.packets[0].len(), 1280, "padding must be trimmed");
     assert_eq!(got.packets[0], p);
@@ -279,7 +309,9 @@ fn a_peer_cannot_send_from_an_address_it_does_not_own() {
     let b_cfg = config_for("b4", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     // B is entitled to 10.77.0.2 only. It sends a packet claiming to be A.
     let spoofed = packet([10, 77, 0, 1], [10, 77, 0, 1], b"i am you");
@@ -288,13 +320,13 @@ fn a_peer_cannot_send_from_an_address_it_does_not_own() {
     let legit = packet([10, 77, 0, 2], [10, 77, 0, 1], b"honest");
     let out = b.outbound(&legit, 5);
     assert!(!out.datagrams.is_empty(), "the honest packet must be sent");
-    let got = deliver(&a, B_ADDR.parse().unwrap(), out, 6);
+    let got = deliver(&a, &mut reasm_a, B_ADDR.parse().unwrap(), out, 6);
     assert_eq!(got.packets.len(), 1, "an honest packet is delivered");
 
     // Now the spoof, through the same session.
     let out = b.outbound(&spoofed, 7);
     let before = a.stats().source_violations;
-    let got = deliver(&a, B_ADDR.parse().unwrap(), out, 8);
+    let got = deliver(&a, &mut reasm_a, B_ADDR.parse().unwrap(), out, 8);
     assert!(
         got.packets.is_empty(),
         "a peer must not be able to claim another peer's source address"
@@ -329,12 +361,13 @@ fn an_unroutable_packet_is_dropped_and_counted() {
 fn forged_datagrams_are_discarded_by_the_fragment_mac() {
     let cfg = config_for("a6", 0xA1, 0xB1, A_ADDR, Some(B_ADDR));
     let a = Engine::new(&Arc::new(cfg));
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
     let from: SocketAddr = B_ADDR.parse().unwrap();
 
     for i in 0..64u8 {
         let mut junk = vec![i; 300];
         junk[4] = 0; // idx 0, count 1
-        let out = a.inbound(&junk, from, 0, &rand());
+        let out = a.inbound(&mut reasm_a, &junk, from, 0, &rand());
         assert!(out.datagrams.is_empty() && out.packets.is_empty());
     }
     assert_eq!(
@@ -353,6 +386,8 @@ fn a_peer_without_an_endpoint_is_not_contacted_but_can_still_connect() {
     let b_cfg = config_for("b7", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
     assert!(
         b.connect_all(0, seed).datagrams.is_empty(),
@@ -360,7 +395,7 @@ fn a_peer_without_an_endpoint_is_not_contacted_but_can_still_connect() {
     );
     assert_eq!(b.endpoint(0), None);
 
-    establish(&a, &b);
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(b.established(0));
     assert_eq!(
         b.endpoint(0),
@@ -378,16 +413,17 @@ fn a_retransmitted_handshake_is_answered_again() {
     let b_cfg = config_for("b8", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
     let a_addr: SocketAddr = A_ADDR.parse().unwrap();
 
     let msg1 = a.connect_all(0, seed);
     let first: Vec<Vec<u8>> = msg1.datagrams.iter().map(|(d, _)| d.clone()).collect();
-    let r1 = deliver(&b, a_addr, msg1, 1);
+    let r1 = deliver(&b, &mut reasm_b, a_addr, msg1, 1);
     assert_eq!(r1.datagrams.len(), 3);
 
     let mut r2 = Output::default();
     for d in &first {
-        let o = b.inbound(d, a_addr, 2, &rand());
+        let o = b.inbound(&mut reasm_b, d, a_addr, 2, &rand());
         r2.datagrams.extend(o.datagrams);
     }
     assert_eq!(
@@ -493,7 +529,9 @@ fn an_expired_session_is_re_dialled() {
     let b_cfg = config_for("redial-b", 0xB1, 0xA1, B_ADDR, None);
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(a.established(0));
 
     // Past REJECT_AFTER_TIME with no successful rekey the session expires, and
@@ -507,8 +545,14 @@ fn an_expired_session_is_re_dialled() {
     );
 
     // And it must actually recover, end to end.
-    let reply = deliver(&b, A_ADDR.parse().unwrap(), out, expired + 2);
-    deliver(&a, B_ADDR.parse().unwrap(), reply, expired + 3);
+    let reply = deliver(&b, &mut reasm_b, A_ADDR.parse().unwrap(), out, expired + 2);
+    deliver(
+        &a,
+        &mut reasm_a,
+        B_ADDR.parse().unwrap(),
+        reply,
+        expired + 3,
+    );
     assert!(a.established(0), "the tunnel must come back on its own");
 }
 
@@ -576,11 +620,14 @@ fn the_receivers_acl_drops_a_packet_the_sender_was_willing_to_send() {
 
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     let a_addr: SocketAddr = A_ADDR.parse().unwrap();
 
     let permitted = deliver(
         &b,
+        &mut reasm_b,
         a_addr,
         a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 22), 10),
         11,
@@ -589,6 +636,7 @@ fn the_receivers_acl_drops_a_packet_the_sender_was_willing_to_send() {
 
     let refused = deliver(
         &b,
+        &mut reasm_b,
         a_addr,
         a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 8080), 12),
         13,
@@ -620,7 +668,9 @@ fn the_senders_acl_drops_a_packet_before_it_is_encrypted() {
 
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     let refused = a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 22), 10);
     assert!(refused.datagrams.is_empty(), "nothing may go on the wire");
@@ -649,7 +699,9 @@ fn peer_status_reports_bytes_sent_and_received() {
 
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     assert_eq!(a.status()[0].tx_bytes, 0, "nothing sent yet");
     assert_eq!(b.status()[0].rx_bytes, 0, "nothing received yet");
@@ -674,7 +726,7 @@ fn peer_status_reports_bytes_sent_and_received() {
         "tx_bytes must track the plaintext length, not the sealed wire size"
     );
 
-    let delivered = deliver(&b, A_ADDR.parse().unwrap(), sent, 12);
+    let delivered = deliver(&b, &mut reasm_b, A_ADDR.parse().unwrap(), sent, 12);
     assert_eq!(delivered.packets.len(), 1);
     assert_eq!(
         b.status()[0].rx_bytes,
@@ -717,10 +769,13 @@ fn a_roster_without_a_policy_still_carries_traffic() {
 
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     let out = deliver(
         &b,
+        &mut reasm_b,
         A_ADDR.parse().unwrap(),
         a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 8080), 10),
         11,
@@ -742,10 +797,13 @@ fn an_empty_policy_denies_the_traffic_no_policy_permits() {
 
     let a = Engine::new(&Arc::new(a_cfg));
     let b = Engine::new(&Arc::new(b_cfg));
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     let out = deliver(
         &b,
+        &mut reasm_b,
         A_ADDR.parse().unwrap(),
         a.outbound(&tcp_packet([10, 77, 0, 1], [10, 77, 0, 2], 8080), 10),
         11,
@@ -802,7 +860,9 @@ fn adding_a_peer_leaves_the_existing_session_alone() {
 
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(a.established(0), "the session must be up before the change");
 
     let grown = Arc::new(config_with_two_peers("recfg-grow", 0xA1, 0xB1, 0xC1));
@@ -825,6 +885,7 @@ fn adding_a_peer_leaves_the_existing_session_alone() {
     // And traffic still flows on the surviving session, without a new handshake.
     let out = deliver(
         &b,
+        &mut reasm_b,
         A_ADDR.parse().unwrap(),
         a.outbound(&packet([10, 77, 0, 1], [10, 77, 0, 2], b"after"), 100),
         101,
@@ -842,13 +903,15 @@ fn a_learned_endpoint_survives_a_reconfiguration() {
 
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
     // B dials A, so A learns B's endpoint from the handshake rather than from
     // configuration — the roster gave it none.
     assert_eq!(a.endpoint(0), None, "A starts with no endpoint for B");
     let msg1 = b.connect_all(0, seed);
-    let msg2 = deliver(&a, B_ADDR.parse().unwrap(), msg1, 1);
-    let _ = deliver(&b, A_ADDR.parse().unwrap(), msg2, 2);
+    let msg2 = deliver(&a, &mut reasm_a, B_ADDR.parse().unwrap(), msg1, 1);
+    let _ = deliver(&b, &mut reasm_b, A_ADDR.parse().unwrap(), msg2, 2);
     assert_eq!(
         a.endpoint(0),
         Some(B_ADDR.parse().unwrap()),
@@ -895,7 +958,9 @@ fn a_peer_whose_key_changed_gets_a_fresh_session() {
 
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(a.established(0));
 
     // Same name, same address, different key.
@@ -952,7 +1017,9 @@ allowed_ips = ["10.77.0.2/32"]
     ));
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
-    establish(&a, &b);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
     assert!(a.established(0));
 
     let rotated = write_epoch(4, "epoch4.toml");
@@ -968,6 +1035,7 @@ allowed_ips = ["10.77.0.2/32"]
     // And traffic keeps flowing on the keys derived from the *old* epoch.
     let out = deliver(
         &b,
+        &mut reasm_b,
         A_ADDR.parse().unwrap(),
         a.outbound(&packet([10, 77, 0, 1], [10, 77, 0, 2], b"rotated"), 200),
         201,
@@ -1074,8 +1142,10 @@ fn a_fresh_handshake_survives_the_responder_being_one_epoch_ahead() {
     );
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
+    let mut reasm_a = Reassembler::new(ReasmConfig::default());
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
-    establish(&a, &b);
+    establish(&a, &mut reasm_a, &b, &mut reasm_b);
 
     assert!(
         a.established(0),
@@ -1123,10 +1193,11 @@ fn a_handshake_two_epochs_behind_is_still_rejected() {
     );
     let a = Engine::new(&a_cfg);
     let b = Engine::new(&b_cfg);
+    let mut reasm_b = Reassembler::new(ReasmConfig::default());
 
     let a_addr: SocketAddr = A_ADDR.parse().unwrap();
     let msg1 = a.connect_all(0, seed);
-    let msg2 = deliver(&b, a_addr, msg1, 1);
+    let msg2 = deliver(&b, &mut reasm_b, a_addr, msg1, 1);
 
     assert!(
         msg2.datagrams.is_empty(),

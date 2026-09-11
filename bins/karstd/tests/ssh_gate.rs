@@ -143,6 +143,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
         skipped: Vec::new(),
         filter,
         ssh_filter,
+        datapath_workers: 1,
     })
 }
 

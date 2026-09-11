@@ -64,6 +64,15 @@ fn sh(args: &[&str]) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// As [`sh`], returning stdout instead of a success bool.
+fn sh_output(args: &[&str]) -> String {
+    let out = Command::new(args[0])
+        .args(&args[1..])
+        .output()
+        .unwrap_or_else(|e| panic!("{args:?} failed to run: {e}"));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 fn public_of(n: u8) -> String {
     let (_, kem_pk) = keypair_from_seed(KemKind::MlKem1024, &[n; 64]);
 
@@ -165,6 +174,21 @@ impl Drop for Node {
 
 /// Write a config and start `karstd` inside a namespace.
 fn start(tag: &str, netns: &str, me: u8, peer: u8, my_ip: u8, peer_endpoint: Option<&str>) -> Node {
+    start_with_node_keys(tag, netns, me, peer, my_ip, peer_endpoint, "")
+}
+
+/// As [`start`], with extra `[node]` keys appended — for the one test that
+/// needs a real kernel under `node.datapath_workers` rather than the default
+/// single queue every other test here exercises.
+fn start_with_node_keys(
+    tag: &str,
+    netns: &str,
+    me: u8,
+    peer: u8,
+    my_ip: u8,
+    peer_endpoint: Option<&str>,
+    extra_node_keys: &str,
+) -> Node {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = std::env::temp_dir().join(format!("karstd-two-{}-{tag}", std::process::id()));
@@ -187,6 +211,7 @@ listen = "0.0.0.0:51820"
 interface = "karst0"
 addresses = ["10.77.0.{my_ip}/24"]
 private_key_file = "node.key"
+{extra_node_keys}
 
 [[peer]]
 name = "other"
@@ -299,6 +324,112 @@ fn two_daemons_carry_real_ip_traffic() {
             "10.77.0.1",
         ]),
         "the responder must be able to originate traffic too"
+    );
+
+    teardown_namespaces();
+}
+
+/// **karst-net/karst#118, against a real kernel.** `node.datapath_workers`
+/// must actually open more than one queue and more than one socket — not
+/// merely fail to break the single-queue path, which
+/// [`two_daemons_carry_real_ip_traffic`] already covers on its own — and
+/// traffic must still cross the tunnel with it turned on.
+#[test]
+#[ignore = "needs CAP_NET_ADMIN"]
+fn a_sharded_datapath_carries_real_ip_traffic_across_multiple_queues() {
+    const WORKERS: u32 = 3;
+
+    assert!(have_net_admin(), "run as root");
+    assert!(setup_namespaces(), "could not build the test namespaces");
+
+    let _a = start_with_node_keys(
+        "shard-a",
+        NETNS_A,
+        0xA1,
+        0xB1,
+        1,
+        Some("192.0.2.2:51820"),
+        &format!("datapath_workers = {WORKERS}\n"),
+    );
+    let _b = start_with_node_keys(
+        "shard-b",
+        NETNS_B,
+        0xB1,
+        0xA1,
+        2,
+        None,
+        &format!("datapath_workers = {WORKERS}\n"),
+    );
+
+    wait_for("both interfaces to appear", || {
+        sh(&[
+            "ip", "netns", "exec", NETNS_A, "ip", "link", "show", "karst0",
+        ]) && sh(&[
+            "ip", "netns", "exec", NETNS_B, "ip", "link", "show", "karst0",
+        ])
+    });
+
+    // The property this test is actually about: `WORKERS` independent UDP
+    // sockets really did bind the datapath port via `SO_REUSEPORT`, not just
+    // one that happens to still work. `ss -H` (no header) lists one row per
+    // socket, so counting rows counts sockets.
+    wait_for("every reuseport socket to be bound", || {
+        let rows = sh_output(&[
+            "ip", "netns", "exec", NETNS_A, "ss", "-H", "-lnu", "sport", "=", ":51820",
+        ]);
+        let count = rows.lines().filter(|l| !l.trim().is_empty()).count();
+        count == WORKERS as usize
+    });
+
+    // And the datapath itself must still work end to end with it on — a
+    // sharded socket that cannot carry a ping is worse than an unsharded one.
+    wait_for("a ping to traverse the sharded tunnel", || {
+        sh(&[
+            "ip",
+            "netns",
+            "exec",
+            NETNS_A,
+            "ping",
+            "-c",
+            "1",
+            "-W",
+            "2",
+            "10.77.0.2",
+        ])
+    });
+    assert!(
+        sh(&[
+            "ip",
+            "netns",
+            "exec",
+            NETNS_B,
+            "ping",
+            "-c",
+            "3",
+            "-W",
+            "2",
+            "10.77.0.1",
+        ]),
+        "the responder must be able to originate traffic too, sharded or not"
+    );
+
+    // `karst0/queues/` is the kernel's own record of how many RX/TX queue
+    // pairs the interface has — the TUN-side half of this feature, checked
+    // independently of the socket-side half above.
+    let queues = sh_output(&[
+        "ip",
+        "netns",
+        "exec",
+        NETNS_A,
+        "sh",
+        "-c",
+        "ls /sys/class/net/karst0/queues/ | grep -c ^rx-",
+    ]);
+    assert_eq!(
+        queues.trim(),
+        WORKERS.to_string(),
+        "the kernel must report {WORKERS} RX queues on karst0, not just {WORKERS} sockets \
+         behind one"
     );
 
     teardown_namespaces();

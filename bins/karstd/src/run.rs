@@ -26,6 +26,7 @@ use karst_control_client::transport::pb;
 use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
 use karst_tun::{Tun, TunConfig, Userspace};
 
@@ -285,13 +286,29 @@ pub fn run_with_control(
     }
     let dns_host = Mutex::new(dns_host);
 
+    // How many TUN-queue/UDP-socket workers this run actually gets —
+    // `node.datapath_workers`, reduced to what this platform and attachment
+    // mode support (karst-net/karst#118).
+    let workers = effective_datapath_workers(config, &tun);
+
     // Every peer endpoint the datapath is given is an IPv4 literal from a
     // netmap or a call-me-maybe. On a NAT64 node the socket is what turns those
     // into addresses it can reach, and turns the answers back — so the engine
     // above it goes on comparing plain IPv4 addresses and never learns that its
     // own network spells them differently.
-    let socket = UdpTransport::bind_via_nat64(config.listen, config.nat64)?;
+    //
+    // **`SO_REUSEPORT` only when sharded.** More than one worker means more
+    // than one socket on this port, which needs every one of them — this one
+    // included — to set the flag; one worker keeps the plain bind every
+    // version before #118 had, so a fleet that is not sharded sees no change
+    // at all, not even a different socket option.
+    let socket = bind_datapath_socket(config, workers)?;
     socket.set_read_timeout(Some(POLL_TIMEOUT))?;
+
+    // Queue/socket 1..workers, each paired the same way worker 0 is. Built
+    // before the scope so every worker's thread below can borrow its own pair
+    // for the daemon's whole life, the same as `tun`/`socket` themselves.
+    let extra_workers = open_extra_workers(config, &tun, workers)?;
 
     // Routes for anything outside the interface's own on-link prefix — a
     // subnet router, say. Without them the kernel sends that traffic to the
@@ -335,7 +352,7 @@ pub fn run_with_control(
         tracing::warn!("karstd: persisted exit selection is dormant: {error}");
     }
 
-    announce(config, &tun, &socket)?;
+    announce(config, &tun, &socket, workers)?;
 
     let control = ipc::bind(socket_path)?;
     // A short accept timeout is what lets the control thread notice a shutdown
@@ -482,6 +499,7 @@ pub fn run_with_control(
         metrics_listen: config.metrics_listen,
         relay_ca_file: config.relay_ca_file.clone(),
         exit_node_state_file: config.exit_node_state_file.clone(),
+        datapath_workers: config.datapath_workers,
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
     // refresh worker takes ownership of the client, so the relay reader can
@@ -565,30 +583,43 @@ pub fn run_with_control(
             }
         }
 
-        // ── host → tunnel ──────────────────────────────────────────────────
+        // ── datapath workers ─────────────────────────────────────────────────
+        // Worker 0 is `tun`/`socket`, the pair every daemon has always had;
+        // `extra_workers` (empty unless `node.datapath_workers` asked for more
+        // and the platform granted it — see `effective_datapath_workers`)
+        // holds the rest. Each gets both directions, on its own two threads,
+        // exactly as worker 0 always did — see `host_to_tunnel_worker`'s doc
+        // comment for why running N of these is what karst-net/karst#118 is.
+        let egress = Egress {
+            relay: relay_out,
+            turn: turn_out,
+        };
         let engine_host = &engine;
         let socket_host = &socket;
         let tun_host = &tun;
         scope.spawn(move || {
-            // Big enough for a coalesced read: the kernel may hand back up to
-            // 64 KB behind one header.
-            let mut buf = vec![0u8; 65_536 + 64];
-            let mut packets: Vec<Vec<u8>> = Vec::new();
-            while !shutdown.requested() {
-                let Ok(count) = tun_host.recv_segments(&mut buf, &mut packets) else {
-                    continue;
-                };
-                // One `Output` per read rather than per packet, so a coalesced
-                // stream becomes one batched `sendmmsg`.
-                let mut out = Output::default();
-                for packet in packets.iter().take(count) {
-                    let o = engine_host.outbound(packet, now_ms(started));
-                    out.datagrams.extend(o.datagrams);
-                    out.packets.extend(o.packets);
-                }
-                dispatch(out, socket_host, tun_host, relay_out, turn_out);
-            }
+            host_to_tunnel_worker(
+                shutdown,
+                started,
+                engine_host,
+                tun_host,
+                socket_host,
+                egress,
+            );
         });
+        for (worker_tun, worker_socket) in &extra_workers {
+            let engine_w = &engine;
+            scope.spawn(move || {
+                host_to_tunnel_worker(
+                    shutdown,
+                    started,
+                    engine_w,
+                    worker_tun,
+                    worker_socket,
+                    egress,
+                );
+            });
+        }
 
         // ── the relay ─────────────────────────────────────────────────────
         // Both protocols and both directions. AVEN's rendezvous made this
@@ -628,28 +659,25 @@ pub fn run_with_control(
         let socket_rx = &socket;
         let tun_rx = &tun;
         scope.spawn(move || {
-            // Allocated once. `recvmmsg` fills as many as have arrived, so a
-            // busy link costs one syscall per 32 datagrams instead of 32.
-            let mut buffers = vec![[0u8; MAX_DATAGRAM]; BATCH];
-            let mut meta: Vec<Received> = Vec::with_capacity(BATCH);
-            while !shutdown.requested() {
-                // A timeout here is normal and expected — it is what lets this
-                // thread observe a shutdown request.
-                let Ok(count) = socket_rx.recv_batch(&mut buffers, &mut meta) else {
-                    continue;
-                };
-                for i in 0..count {
-                    let (Some(buf), Some(m)) = (buffers.get(i), meta.get(i)) else {
-                        continue;
-                    };
-                    let Some(datagram) = buf.get(..m.len) else {
-                        continue;
-                    };
-                    let out = demultiplex(datagram, m.from, now_ms(started), disco_rx, engine_rx);
-                    dispatch(out, socket_rx, tun_rx, relay_out, turn_out);
-                }
-            }
+            tunnel_to_host_worker(
+                shutdown, started, disco_rx, engine_rx, tun_rx, socket_rx, egress,
+            );
         });
+        for (worker_tun, worker_socket) in &extra_workers {
+            let disco_w = &disco;
+            let engine_w = &engine;
+            scope.spawn(move || {
+                tunnel_to_host_worker(
+                    shutdown,
+                    started,
+                    disco_w,
+                    engine_w,
+                    worker_tun,
+                    worker_socket,
+                    egress,
+                );
+            });
+        }
 
         // ── control socket ─────────────────────────────────────────────────
         let engine_ctl = &engine;
@@ -1775,6 +1803,11 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
     let mut outbound = outbound;
     let mut backoff = RELAY_BACKOFF_MIN;
     let mut failures = 0u32;
+    // This connection's own reassembler, on the same basis as the UDP-reader
+    // thread's — see `Engine`'s doc comment. One relay connection is one
+    // thread, so it costs nothing to give it a private one rather than share
+    // the direct path's.
+    let mut reasm = Reassembler::new(ReasmConfig::default());
     while !context.common.shutdown.requested() {
         // §9.2's decision, carried out. The home connection follows the
         // selector: this is the point where a choice that moved becomes a
@@ -1871,7 +1904,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         runtime.block_on(async {
             tokio::join!(
                 relay_send_loop(&context, &closing, sender, &mut outbound),
-                relay_receive_loop(&context, &closing, receiver),
+                relay_receive_loop(&context, &closing, receiver, &mut reasm),
             )
         });
 
@@ -1950,6 +1983,7 @@ async fn relay_receive_loop(
     context: &RelayContext<'_>,
     closing: &AtomicBool,
     mut receiver: crate::relay::Receiver,
+    reasm: &mut Reassembler,
 ) {
     while !context.common.shutdown.requested() && !closing.load(Ordering::Relaxed) {
         let received = tokio::time::timeout(
@@ -1973,14 +2007,14 @@ async fn relay_receive_loop(
             }
         }
         for event in events {
-            on_relay_event(context, event);
+            on_relay_event(context, event, reasm);
         }
     }
 }
 
 /// Act on one event from a relay, whichever of §9.1's two connections it
 /// arrived on.
-fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
+fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm: &mut Reassembler) {
     // §9.1's first rule, answered. The relay this node holds cannot
     // deliver to this peer, so anything further for it goes to the
     // relay the peer published — if it published one this node can
@@ -2099,11 +2133,13 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event) {
     if handled {
         return;
     }
-    let out =
-        context
-            .common
-            .engine
-            .inbound_from_relay(source_id, &payload, now, &responder_randomness());
+    let out = context.common.engine.inbound_from_relay(
+        reasm,
+        source_id,
+        &payload,
+        now,
+        &responder_randomness(),
+    );
     // **The reply goes back over the relay**, and it has to: the
     // response to a relayed `HandshakeInit` is what completes the
     // handshake, and until it does there is no session and no direct
@@ -2491,6 +2527,10 @@ async fn turn_session(
     ops: &mut tokio::sync::mpsc::Receiver<TurnOp>,
 ) {
     let mut buf = vec![0u8; MAX_DATAGRAM];
+    // This allocation's own reassembler — see `relay_worker`'s identical
+    // comment. One TURN allocation is one thread's worth of reads, so it
+    // gets a private one rather than the direct path's.
+    let mut reasm = Reassembler::new(ReasmConfig::default());
     loop {
         if common.shutdown.requested() {
             return;
@@ -2574,7 +2614,14 @@ async fn turn_session(
                     continue;
                 };
                 let now = now_ms(common.started);
-                let out = demultiplex_via_turn(datagram, from, now, common.disco, common.engine);
+                let out = demultiplex_via_turn(
+                    &mut reasm,
+                    datagram,
+                    from,
+                    now,
+                    common.disco,
+                    common.engine,
+                );
                 dispatch(
                     out,
                     common.socket,
@@ -2608,13 +2655,14 @@ async fn turn_session(
 /// and rewrites the one `Via` value the rewrite rule above guarantees is safe
 /// to rewrite.
 fn demultiplex_via_turn(
+    reasm: &mut Reassembler,
     datagram: &[u8],
     from: std::net::SocketAddr,
     now_ms: u64,
     disco: &Mutex<disco::Disco>,
     engine: &Engine,
 ) -> Output {
-    let mut out = demultiplex(datagram, from, now_ms, disco, engine);
+    let mut out = demultiplex(reasm, datagram, from, now_ms, disco, engine);
     for (_, via) in &mut out.datagrams {
         if *via == Via::Direct(from) {
             *via = Via::Turn(from);
@@ -3218,6 +3266,127 @@ fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
         }
     }
     Ok(tun)
+}
+
+/// How many datapath workers this run should actually spawn —
+/// `node.datapath_workers`, reduced to what this platform and attachment
+/// mode can support (karst-net/karst#118).
+///
+/// **A silent reduction, not a startup failure.** `datapath_workers` in a
+/// config file is meant to be as portable as `offload` already is: a fleet
+/// is not always one platform, and a value that only helps on some of it
+/// should not fail startup on the rest. An operator who configured more than
+/// this returns gets a log line saying why, once, at startup.
+#[cfg(target_os = "linux")]
+fn effective_datapath_workers(config: &Config, tun: &NetworkDevice) -> usize {
+    let requested = config.datapath_workers.max(1);
+    if requested == 1 {
+        return 1;
+    }
+    match tun {
+        NetworkDevice::Tun(primary) if primary.multi_queue() => requested,
+        NetworkDevice::Tun(_) => {
+            tracing::warn!(
+                requested,
+                "node.datapath_workers > 1 was requested but this kernel declined \
+                 IFF_MULTI_QUEUE; carrying on with a single queue"
+            );
+            1
+        }
+        NetworkDevice::Userspace(_) => {
+            tracing::warn!(
+                requested,
+                "node.datapath_workers > 1 has no effect in userspace attachment mode"
+            );
+            1
+        }
+    }
+}
+
+/// As above, on every platform without `IFF_MULTI_QUEUE`/`SO_REUSEPORT`
+/// receive scaling — which today is every platform but Linux.
+#[cfg(not(target_os = "linux"))]
+fn effective_datapath_workers(config: &Config, _tun: &NetworkDevice) -> usize {
+    if config.datapath_workers > 1 {
+        tracing::warn!(
+            requested = config.datapath_workers,
+            "node.datapath_workers > 1 has no effect on this platform; \
+             IFF_MULTI_QUEUE and SO_REUSEPORT receive scaling are Linux-only"
+        );
+    }
+    1
+}
+
+/// Bind the datapath socket, with `SO_REUSEPORT` set if and only if more than
+/// one worker is going to share this port.
+///
+/// A plain [`UdpTransport::bind_via_nat64`] for `workers == 1` rather than
+/// always asking for `SO_REUSEPORT` and simply never opening a second socket:
+/// the option itself has a cost even with one socket wearing it — any other
+/// local process can then bind the same port and take a share of this node's
+/// traffic. `effective_datapath_workers` already keeps `workers` at `1`
+/// unless an operator asked for more *and* the platform can grant it, so this
+/// is the one place that decision becomes a different socket option.
+#[cfg(target_os = "linux")]
+fn bind_datapath_socket(config: &Config, workers: usize) -> io::Result<UdpTransport> {
+    if workers > 1 {
+        UdpTransport::bind_reuseport_via_nat64(config.listen, config.nat64)
+    } else {
+        UdpTransport::bind_via_nat64(config.listen, config.nat64)
+    }
+}
+
+/// As above, where `bind_reuseport_via_nat64` does not exist at all —
+/// `effective_datapath_workers` already pins `workers` to `1` here, so the
+/// plain bind is the only one ever needed.
+#[cfg(not(target_os = "linux"))]
+fn bind_datapath_socket(config: &Config, _workers: usize) -> io::Result<UdpTransport> {
+    UdpTransport::bind_via_nat64(config.listen, config.nat64)
+}
+
+/// Open queue/socket `1..workers`, each paired the way worker 0 (`tun`/the
+/// socket [`bind_datapath_socket`] returned) already is.
+///
+/// # Errors
+/// Any failure opening an additional TUN queue or binding an additional
+/// reuseport socket.
+#[cfg(target_os = "linux")]
+fn open_extra_workers(
+    config: &Config,
+    tun: &NetworkDevice,
+    workers: usize,
+) -> io::Result<Vec<(NetworkDevice, UdpTransport)>> {
+    let mut extra = Vec::with_capacity(workers.saturating_sub(1));
+    for _ in 1..workers {
+        // `effective_datapath_workers` only returns more than `1` for a
+        // `NetworkDevice::Tun` whose primary queue is itself multi-queue —
+        // reaching the `Userspace` arm here would be that function's bug, not
+        // a configuration this daemon can be handed at runtime.
+        let NetworkDevice::Tun(primary) = tun else {
+            return Err(io::Error::other(
+                "datapath sharding requires network_mode = \"tun\"; this is a bug, not a \
+                 configuration error, since effective_datapath_workers already checked this",
+            ));
+        };
+        let queue = primary
+            .open_queue()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        let socket = UdpTransport::bind_reuseport_via_nat64(config.listen, config.nat64)?;
+        socket.set_read_timeout(Some(POLL_TIMEOUT))?;
+        extra.push((NetworkDevice::Tun(queue), socket));
+    }
+    Ok(extra)
+}
+
+/// As above, where there is never anything to open: `effective_datapath_workers`
+/// already pins `workers` to `1` on every platform without `Tun::open_queue`.
+#[cfg(not(target_os = "linux"))]
+fn open_extra_workers(
+    _config: &Config,
+    _tun: &NetworkDevice,
+    _workers: usize,
+) -> io::Result<Vec<(NetworkDevice, UdpTransport)>> {
+    Ok(Vec::new())
 }
 
 /// Stop the process, having been asked to.
@@ -3895,6 +4064,7 @@ fn dns_query_report(config: &Config, name: &str) -> String {
 /// discard a real fragment about once a day on a busy node with nothing in any
 /// log to explain it.
 fn demultiplex(
+    reasm: &mut Reassembler,
     datagram: &[u8],
     from: std::net::SocketAddr,
     now_ms: u64,
@@ -3918,7 +4088,9 @@ fn demultiplex(
                 .collect(),
             packets: Vec::new(),
         },
-        disco::Verdict::NotAven => engine.inbound(datagram, from, now_ms, &responder_randomness()),
+        disco::Verdict::NotAven => {
+            engine.inbound(reasm, datagram, from, now_ms, &responder_randomness())
+        }
     }
 }
 
@@ -3999,6 +4171,97 @@ fn dispatch(
     }
     for packet in out.packets {
         let _ = tun.send(&packet);
+    }
+}
+
+/// The host→tunnel half of one datapath worker: read outbound packets off
+/// `tun`, encrypt them, and dispatch onto `socket`.
+///
+/// **One worker's queue and socket, not the daemon's.** Every worker
+/// `run_with_control` spawns — one by default, more with
+/// `node.datapath_workers` (karst-net/karst#118) — calls this with its own
+/// pair, so that N workers are N independent read→encrypt→send pipelines
+/// sharing nothing but the engine's already-thread-safe state (per-peer
+/// session locks, atomics, `RwLock<Roster>`) rather than N threads
+/// contending on one queue and one socket the way the pre-sharding two
+/// fixed threads did.
+fn host_to_tunnel_worker(
+    shutdown: &Shutdown,
+    started: Instant,
+    engine: &Engine,
+    tun: &NetworkDevice,
+    socket: &UdpTransport,
+    egress: Egress<'_>,
+) {
+    // Big enough for a coalesced read: the kernel may hand back up to 64 KB
+    // behind one header.
+    let mut buf = vec![0u8; 65_536 + 64];
+    let mut packets: Vec<Vec<u8>> = Vec::new();
+    while !shutdown.requested() {
+        let Ok(count) = tun.recv_segments(&mut buf, &mut packets) else {
+            continue;
+        };
+        // One `Output` per read rather than per packet, so a coalesced stream
+        // becomes one batched `sendmmsg`.
+        let mut out = Output::default();
+        for packet in packets.iter().take(count) {
+            let o = engine.outbound(packet, now_ms(started));
+            out.datagrams.extend(o.datagrams);
+            out.packets.extend(o.packets);
+        }
+        dispatch(out, socket, tun, egress.relay, egress.turn);
+    }
+}
+
+/// Where a `dispatch`ed datagram may need to leave through, beyond the
+/// worker's own socket — carried as one value because every caller of
+/// [`host_to_tunnel_worker`]/[`tunnel_to_host_worker`] already has both or
+/// neither, and because two positional `Option` reference parameters at a
+/// call site is exactly the shape that is easy to swap by accident.
+#[derive(Clone, Copy)]
+struct Egress<'a> {
+    relay: Option<&'a RelaySender>,
+    turn: Option<&'a TurnSender>,
+}
+
+/// The tunnel→host half of one datapath worker: read inbound datagrams off
+/// `socket`, decrypt them, and dispatch onto `tun` — see
+/// [`host_to_tunnel_worker`]'s doc comment for why this takes one worker's
+/// own queue and socket rather than the daemon's.
+fn tunnel_to_host_worker(
+    shutdown: &Shutdown,
+    started: Instant,
+    disco: &Mutex<disco::Disco>,
+    engine: &Engine,
+    tun: &NetworkDevice,
+    socket: &UdpTransport,
+    egress: Egress<'_>,
+) {
+    // Allocated once. `recvmmsg` fills as many as have arrived, so a busy
+    // link costs one syscall per 32 datagrams instead of 32.
+    let mut buffers = vec![[0u8; MAX_DATAGRAM]; BATCH];
+    let mut meta: Vec<Received> = Vec::with_capacity(BATCH);
+    // This worker's own reassembler — not the engine's. See `Engine`'s doc
+    // comment on why reassembly moved out of it: a single reader thread made
+    // a shared one and a private one behave identically, and only the
+    // private one still works once a second reader thread exists.
+    let mut reasm = Reassembler::new(ReasmConfig::default());
+    while !shutdown.requested() {
+        // A timeout here is normal and expected — it is what lets this
+        // thread observe a shutdown request.
+        let Ok(count) = socket.recv_batch(&mut buffers, &mut meta) else {
+            continue;
+        };
+        for i in 0..count {
+            let (Some(buf), Some(m)) = (buffers.get(i), meta.get(i)) else {
+                continue;
+            };
+            let Some(datagram) = buf.get(..m.len) else {
+                continue;
+            };
+            let out = demultiplex(&mut reasm, datagram, m.from, now_ms(started), disco, engine);
+            dispatch(out, socket, tun, egress.relay, egress.turn);
+        }
     }
 }
 
@@ -4258,14 +4521,27 @@ fn refresh_netmap(
 /// carried that this node could not use is, from the outside, indistinguishable
 /// from a peer the server was never told about, which is a completely different
 /// problem.
-fn announce(config: &Config, tun: &NetworkDevice, socket: &UdpTransport) -> io::Result<()> {
+fn announce(
+    config: &Config,
+    tun: &NetworkDevice,
+    socket: &UdpTransport,
+    workers: usize,
+) -> io::Result<()> {
     tracing::warn!(
-        "karstd: {} up, mtu {}, listening on {}, {} peer(s){}",
+        "karstd: {} up, mtu {}, listening on {}, {} peer(s){}{}",
         tun.name(),
         tun.mtu(),
         socket.local_addr()?,
         config.peers.len(),
-        if tun.offload() { ", tso" } else { "" }
+        if tun.offload() { ", tso" } else { "" },
+        // Silent at `workers == 1` — every version before karst-net/karst#118
+        // printed this same line with nothing after "peer(s)", and the common
+        // case should still read exactly that way.
+        if workers > 1 {
+            format!(", {workers} datapath workers")
+        } else {
+            String::new()
+        }
     );
     // A peer the netmap carried and this node could not use. Said loudly at
     // startup, because from the outside it is indistinguishable from a peer the
@@ -4569,6 +4845,7 @@ mod route_tests {
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
+            datapath_workers: 1,
         }
     }
 
@@ -5167,6 +5444,7 @@ mod probe_tests {
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
+            datapath_workers: 1,
         });
         Engine::new(&config)
     }
@@ -5679,6 +5957,7 @@ mod probe_tests {
             skipped: Vec::new(),
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
+            datapath_workers: 1,
         }
     }
 }

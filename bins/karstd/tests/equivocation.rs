@@ -30,6 +30,7 @@
     clippy::indexing_slicing
 )]
 
+use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -37,6 +38,7 @@ use karst_bedrock::{genesis_body, node_sign_body, Builder, Entry, Op, Signature}
 use karst_control_client::handle::handle;
 use karst_crypto::sign::{AuthorityKey, RootKey, ROOT_SEED};
 use karst_noise::handshake::{PeerPublic, ResponderRandomness, StaticKeys};
+use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
 use karstd::bedrock::Log;
 use karstd::config::{Config, Peer};
 use karstd::engine::{Engine, Via};
@@ -67,6 +69,10 @@ fn peer_endpoint(byte: u8) -> SocketAddr {
 struct Node {
     engine: Engine,
     endpoint: SocketAddr,
+    /// This node's own reassembler — see `Engine`'s doc comment on why it is
+    /// no longer the engine's own state. A `RefCell` because `pump` below
+    /// takes both nodes by shared reference, bouncing datagrams between them.
+    reasm: RefCell<Reassembler>,
 }
 
 fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
@@ -113,11 +119,13 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         skipped: Vec::new(),
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
+        datapath_workers: 1,
     });
 
     Node {
         engine: Engine::new(&config),
         endpoint: peer_endpoint(own),
+        reasm: RefCell::new(Reassembler::new(ReasmConfig::default())),
     }
 }
 
@@ -144,9 +152,13 @@ fn pump(a: &Node, b: &Node, out: karstd::engine::Output, to_b: bool, now: u64) {
             return;
         };
         let (target, source) = if for_b { (b, a) } else { (a, b) };
-        let produced = target
-            .engine
-            .inbound(&datagram, source.endpoint, now, &rand());
+        let produced = target.engine.inbound(
+            &mut target.reasm.borrow_mut(),
+            &datagram,
+            source.endpoint,
+            now,
+            &rand(),
+        );
         for (datagram, via) in produced.datagrams {
             if matches!(via, Via::Direct(_)) {
                 queue.push((!for_b, datagram));

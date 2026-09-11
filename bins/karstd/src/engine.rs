@@ -28,7 +28,7 @@ use karst_crypto::kem::KemPublicKey;
 use karst_node::{Action, Session};
 use karst_noise::handshake::{peer_id_hint, PeerPublic, ResponderRandomness};
 use karst_proto::dos::{build_cookie_reply, mac1_key, mac2_key, CookieSecret, FragMacKey};
-use karst_proto::reassembly::{Accept, Config as ReasmConfig, Reassembler, Reject};
+use karst_proto::reassembly::{Accept, Reassembler, Reject};
 use karst_proto::{fragment, split_datagram, FragmentHeader, MessageType};
 use karst_transport::source_key;
 use karst_tun::ip;
@@ -390,17 +390,17 @@ struct Roster {
 ///   crypto;
 /// - **atomic counters**, which would otherwise be a single point every packet
 ///   passes through;
-/// - **the reassembler behind its own lock**, off the outbound path entirely —
-///   sending a packet must not wait on inbound reassembly, which is unrelated
-///   work that happens to live in the same struct.
+/// - **reassembly is not the engine's state at all.** [`Self::inbound`] and
+///   [`Self::inbound_from_relay`] take a `&mut Reassembler` from the caller
+///   instead of locking one here. A single shared instance was invisible while
+///   exactly one thread ever called each method; the moment a second inbound
+///   reader thread exists (Phase 7's sharded datapath — PLAN.md §3.4/Phase 7),
+///   a `Mutex<Reassembler>` inside `Engine` would become the very serialization
+///   point that sharding sets out to remove. A reader thread now owns its
+///   reassembler the same way it owns its socket, and pays no lock for it.
 pub struct Engine {
     /// The peer set, replaceable while the daemon runs.
     roster: RwLock<Arc<Roster>>,
-    /// Node-level reassembly, bounded at construction (§9.1).
-    ///
-    /// Locked separately and released before any session work, so the outbound
-    /// path never touches it.
-    reasm: Mutex<Reassembler>,
     /// This node's verified Bedrock log, for peer head comparison (§5 layer 3).
     ///
     /// `None` until the control client has verified one. Held here rather than
@@ -456,7 +456,6 @@ impl Engine {
         Self {
             roster: RwLock::new(Arc::new(roster)),
             bedrock: RwLock::new(None),
-            reasm: Mutex::new(Reassembler::new(ReasmConfig::default())),
             in_mac_key,
             cookie: Mutex::new(None),
             stats: Counters::default(),
@@ -1428,8 +1427,13 @@ impl Engine {
     }
 
     /// A datagram arrived on the UDP socket.
+    ///
+    /// `reasm` is the caller's, not the engine's — see the note on
+    /// [`Engine`]'s fields. The daemon's UDP-reader thread owns one for the
+    /// life of the thread and passes it in on every call; tests do the same.
     pub fn inbound(
         &self,
+        reasm: &mut Reassembler,
         datagram: &[u8],
         from: SocketAddr,
         now_ms: u64,
@@ -1485,11 +1489,11 @@ impl Engine {
             return out;
         }
 
-        // The reassembly lock is taken here and released immediately: the
-        // message is copied out before any session work starts, so a handshake
-        // — which runs ML-KEM — never blocks the next datagram's reassembly.
+        // No lock to take any more — `reasm` is this thread's own — but the
+        // message is still copied out before any session work starts, so a
+        // handshake (which runs ML-KEM) never holds the caller's reassembler
+        // borrowed any longer than this block.
         let msg = {
-            let mut reasm = Self::lock(&self.reasm);
             match reasm.push(source_key(from), addr_validated, &hdr, payload, now_ms) {
                 Accept::Complete(msg) => msg.to_vec(),
                 // §9.1 — no state was allocated for this. Answer with a
@@ -1588,8 +1592,17 @@ impl Engine {
     /// the AEAD resolves a `peer_id_hint` — and requiring them to agree is what
     /// stops one admitted peer from replaying another's handshake under its own
     /// relay identity.
+    ///
+    /// `reasm` is the caller's, same as [`Self::inbound`] — and in practice a
+    /// *different* instance from the one the UDP-reader thread holds, since
+    /// each relay connection runs on its own thread. The disjoint key
+    /// namespaces (`source_key` above vs. [`relay_source_key`] here) were
+    /// always what kept a shared reassembler safe, not the sharing itself, so
+    /// splitting the instance apart loses nothing and narrows the relay path's
+    /// reassembly budget to its own connection rather than the whole node's.
     pub fn inbound_from_relay(
         &self,
+        reasm: &mut Reassembler,
         source_id: [u8; karst_relay_proto::consts::ID_LEN],
         datagram: &[u8],
         now_ms: u64,
@@ -1622,7 +1635,6 @@ impl Engine {
         }
 
         let msg = {
-            let mut reasm = Self::lock(&self.reasm);
             let Accept::Complete(msg) =
                 reasm.push(relay_source_key(&source_id), true, &hdr, payload, now_ms)
             else {

@@ -1125,6 +1125,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         userspace_publish: file.node.userspace_publish.clone(),
         nat64,
         metrics_listen: file.metrics.listen,
+        datapath_workers: file.node.datapath_workers,
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),

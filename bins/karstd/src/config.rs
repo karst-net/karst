@@ -355,6 +355,31 @@ pub struct NodeSection {
     /// worth of exit-route state.
     #[serde(default)]
     pub exit_node_state_file: Option<PathBuf>,
+    /// How many TUN-queue/UDP-socket worker threads carry the datapath —
+    /// karst-net/karst#118's sharded datapath.
+    ///
+    /// `1` — the default, and every behavior before this field existed —
+    /// keeps the one TUN-reader thread and one UDP-reader thread this daemon
+    /// always had. A value above `1` is otherwise silently reduced back to
+    /// `1` wherever the platform or attachment mode cannot honor it: only
+    /// Linux's kernel TUN path supports `IFF_MULTI_QUEUE` and
+    /// `SO_REUSEPORT`, so this is a request the daemon is free to not fully
+    /// grant rather than a promise it must keep, and a config file shared
+    /// across a Linux server and a laptop of another kind is not an error on
+    /// either.
+    ///
+    /// **Not the default even where it is fully supported.** More than one
+    /// socket sharing this port means `SO_REUSEPORT` is set on it, and any
+    /// other local process — not just another `karstd` — can then bind the
+    /// same port and receive a share of this node's traffic. A single node
+    /// with one flow to one peer cannot exceed roughly one core's throughput
+    /// either way (PLAN.md §3.4/Phase 7): this only helps once there is more
+    /// than one peer or flow to spread across cores, so it is an opt-in for
+    /// the deployments that actually have that shape, not a default that
+    /// would weaken every installation's "only this daemon holds this port"
+    /// property for a benefit most of them cannot use.
+    #[serde(default = "default_datapath_workers")]
+    pub datapath_workers: usize,
 }
 
 /// The `[control]` table: how to reach the coordination server.
@@ -517,6 +542,29 @@ const fn default_port_mapping() -> bool {
 }
 const fn default_epoch() -> u32 {
     1
+}
+const fn default_datapath_workers() -> usize {
+    1
+}
+
+/// Above this, `datapath_workers` is almost certainly a typo — no host Karst
+/// runs on has anywhere near this many cores to give the datapath, and each
+/// one costs a queue and a socket whether or not anything ever reads it.
+const MAX_DATAPATH_WORKERS: usize = 64;
+
+fn validate_datapath_workers(workers: usize) -> Result<(), ConfigError> {
+    if workers == 0 {
+        return Err(ConfigError::Unusable(
+            "node.datapath_workers = 0 would leave nothing reading the tunnel at all".to_owned(),
+        ));
+    }
+    if workers > MAX_DATAPATH_WORKERS {
+        return Err(ConfigError::Unusable(format!(
+            "node.datapath_workers = {workers} exceeds the sanity bound of \
+             {MAX_DATAPATH_WORKERS}"
+        )));
+    }
+    Ok(())
 }
 
 /// A `[[peer]]` table.
@@ -693,6 +741,10 @@ pub struct Config {
     /// same TOML-roster path that gives `filter` its unrestricted state —
     /// there is no ACL notion on that path, so there is no SSH gate either.
     pub ssh_filter: SshFilter,
+    /// See [`NodeSection::datapath_workers`]. Validated to be at least `1` by
+    /// the time it reaches here; [`crate::run`] is what further reduces it to
+    /// what the platform and attachment mode actually support.
+    pub datapath_workers: usize,
 }
 
 impl fmt::Debug for Config {
@@ -711,6 +763,7 @@ impl fmt::Debug for Config {
             .field("skipped", &self.skipped)
             .field("filter", &self.filter)
             .field("peers", &self.peers)
+            .field("datapath_workers", &self.datapath_workers)
             .finish_non_exhaustive()
     }
 }
@@ -792,6 +845,7 @@ impl Config {
             &file.node.userspace_publish,
         )?;
         validate_metrics_listen(file.metrics.listen)?;
+        validate_datapath_workers(file.node.datapath_workers)?;
         Ok(Self {
             keys,
             listen: file.node.listen,
@@ -822,6 +876,7 @@ impl Config {
             skipped: Vec::new(),
             filter: PacketFilter::unrestricted(),
             ssh_filter: SshFilter::absent(),
+            datapath_workers: file.node.datapath_workers,
         })
     }
 
@@ -873,6 +928,7 @@ impl Config {
             &local.userspace_publish,
         )?;
         validate_metrics_listen(local.metrics_listen)?;
+        validate_datapath_workers(local.datapath_workers)?;
         // The node's own addresses carry the *on-link* prefix, so peers are
         // reachable over the interface. A bare address parses as a /32 here,
         // which brings the interface up with nothing on-link — the server is
@@ -1018,6 +1074,7 @@ impl Config {
             skipped,
             filter,
             ssh_filter,
+            datapath_workers: local.datapath_workers,
         })
     }
 }
@@ -1077,6 +1134,10 @@ pub struct LocalSettings {
     pub relay_ca_file: Option<PathBuf>,
     /// Root-owned durable exit-route selection.
     pub exit_node_state_file: Option<PathBuf>,
+    /// See [`NodeSection::datapath_workers`] — a local performance tuning
+    /// knob, not something the coordination server has any business
+    /// deciding.
+    pub datapath_workers: usize,
 }
 
 impl fmt::Debug for LocalSettings {
@@ -1091,6 +1152,7 @@ impl fmt::Debug for LocalSettings {
             .field("userspace_publish", &self.userspace_publish)
             .field("nat64", &self.nat64)
             .field("metrics_listen", &self.metrics_listen)
+            .field("datapath_workers", &self.datapath_workers)
             .finish_non_exhaustive()
     }
 }
@@ -2014,6 +2076,56 @@ allowed_ips = ["10.99.0.3/32"]
         let cfg = Config::load(&roster(dir.path(), "")).expect("load");
         assert_eq!(cfg.metrics_listen, None);
     }
+
+    /// **The one-thread datapath every version before karst-net/karst#118
+    /// had must stay the default.** Sharding is an opt-in precisely because
+    /// enabling it means `SO_REUSEPORT` on the datapath socket, which lets
+    /// any other local process share this node's port — see
+    /// [`NodeSection::datapath_workers`]'s own doc comment for the full
+    /// argument.
+    #[test]
+    fn datapath_workers_is_one_by_default() {
+        let dir = Scratch::new("cfg");
+        let cfg = Config::load(&roster(dir.path(), "")).expect("load");
+        assert_eq!(cfg.datapath_workers, 1);
+    }
+
+    /// An operator who does ask for more must get exactly what they asked
+    /// for.
+    #[test]
+    fn a_configured_datapath_workers_value_is_honored() {
+        let dir = Scratch::new("cfg");
+        let cfg = node_with(dir.path(), "datapath_workers = 4\n", "")
+            .expect("4 workers must be accepted");
+        assert_eq!(cfg.datapath_workers, 4);
+    }
+
+    /// Zero workers would leave nothing reading the tunnel at all — refused
+    /// at load time rather than left to fail silently the moment the daemon
+    /// tries to spawn a worker pool of size zero.
+    #[test]
+    fn zero_datapath_workers_is_refused() {
+        let dir = Scratch::new("cfg");
+        let err = node_with(dir.path(), "datapath_workers = 0\n", "").expect_err("must be refused");
+        assert!(
+            err.to_string().contains("nothing reading"),
+            "the refusal does not say why: {err}"
+        );
+    }
+
+    /// A value nothing this host could have that many cores to justify is
+    /// almost certainly a typo, and refusing it names the bound rather than
+    /// letting the daemon start a worker pool nobody meant to ask for.
+    #[test]
+    fn an_absurd_datapath_workers_value_is_refused() {
+        let dir = Scratch::new("cfg");
+        let err =
+            node_with(dir.path(), "datapath_workers = 100000\n", "").expect_err("must be refused");
+        assert!(
+            err.to_string().contains("exceeds"),
+            "the refusal does not say why: {err}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2086,6 +2198,7 @@ mod netmap_tests {
             userspace_socks5_listen: None,
             userspace_publish: Vec::new(),
             nat64: None,
+            datapath_workers: 1,
         }
     }
 
