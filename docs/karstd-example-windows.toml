@@ -18,6 +18,7 @@
 # service and the private key file both need Administrator to create):
 #
 #   karstd genkey | Out-File -Encoding ascii C:\ProgramData\Karst\node.key
+#   icacls C:\ProgramData\Karst\node.key /inheritance:r /grant:r "*S-1-5-32-544:R" "SYSTEM:R"
 #   karstd pubkey --config C:\ProgramData\Karst\karstd.toml   # paste into the other node
 #   karstd check  --config C:\ProgramData\Karst\karstd.toml   # validate before running
 #   Start-Service karstd
@@ -25,12 +26,16 @@
 # `karstd pubkey` deliberately works before any peer is configured — a new
 # node needs to publish its key precisely in order to be added elsewhere.
 #
-# Windows does not yet enforce the "file must not be readable by other
-# accounts" check this key relies on elsewhere (Linux and macOS refuse a
-# world-readable key file at startup; the Windows ACL equivalent is
-# unimplemented — see issue #110). Until it lands, treat this file's
-# permissions as your own responsibility: it lives under %ProgramData%,
-# which ordinary user accounts can read from by default.
+# The `icacls` line is not optional. `%ProgramData%` is world-readable by
+# default (ordinary user accounts can read from it), and `Out-File` above
+# just inherits that — it does not narrow anything on its own. karstd
+# refuses to start on a key file whose ACL grants access to Everyone,
+# Authenticated Users, or the local Users group (the Windows counterpart of
+# Linux/macOS's "refuse a world-readable key file" check), so skipping this
+# step is not a shortcut that quietly works: `karstd check` above will name
+# the file and refuse. `*S-1-5-32-544` is the well-known SID for the local
+# Administrators group — spelled as a SID rather than a name because
+# "Administrators" is localized on non-English Windows and a SID is not.
 
 [node]
 # UDP socket for PHREATIC traffic. 0.0.0.0 accepts on every interface; pin it

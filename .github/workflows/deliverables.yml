@@ -850,11 +850,19 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($key)) { throw "genkey produced no key" }
           $keyDir = Join-Path $env:RUNNER_TEMP "karst-msi-key"
           New-Item -ItemType Directory -Force -Path $keyDir | Out-Null
-          Set-Content -Path (Join-Path $keyDir "node.key") -Value $key -NoNewline
+          $nodeKeyPath = Join-Path $keyDir "node.key"
+          Set-Content -Path $nodeKeyPath -Value $key -NoNewline
+          # `$env:RUNNER_TEMP` is not a narrowly-scoped directory — files
+          # created under it inherit an ACL wide enough that karstd's own
+          # (real, as of this segment) ACL check refuses the key without
+          # this, the same `icacls` step
+          # `docs/karstd-example-windows.toml` documents as mandatory for a
+          # real install rather than a CI convenience.
+          icacls $nodeKeyPath /inheritance:r /grant:r "*S-1-5-32-544:R" "SYSTEM:R" | Out-Null
           # Forward slashes rather than escaping backslashes for TOML: Rust's
           # `Path` accepts either separator on Windows, and a slash needs no
           # escaping at all inside a TOML basic string.
-          $keyPath = (Join-Path $keyDir "node.key") -replace '\\', '/'
+          $keyPath = $nodeKeyPath -replace '\\', '/'
           Set-Content -Path (Join-Path $keyDir "karstd.toml") -Value "[node]`nprivate_key_file = `"$keyPath`"`n"
           $pubkeyOut = & "$installDir\karstd.exe" pubkey --config (Join-Path $keyDir "karstd.toml") 2>&1
           if ($LASTEXITCODE -ne 0) { throw "pubkey rejected the key genkey produced: $pubkeyOut" }
