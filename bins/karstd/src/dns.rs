@@ -902,6 +902,44 @@ mod tests {
         }
     }
 
+    /// Start a `Runtime` on a port nothing else is using.
+    ///
+    /// `Runtime::start` binds both a `UdpSocket` and a `TcpListener` to the
+    /// *same* port — a real DNS server answers both on one well-known port —
+    /// so a test needing "a free port" can't just pass `:0` to each
+    /// independently and get the same number back twice. Probing with one
+    /// throwaway `TcpListener`, reading the port it got, and dropping it
+    /// finds a number; it does not reserve it. Another test's socket, or
+    /// anything else on the machine, can take that exact port in the gap
+    /// between the drop and this function's own bind — which is a real race,
+    /// not a hypothetical one: it is what turned this test flaky on a loaded
+    /// CI runner. A few retries with a fresh probe absorb that, at the cost
+    /// of nothing a passing run ever pays.
+    fn start_runtime_on_free_port(resolver: &Resolver) -> (Runtime, SocketAddr) {
+        try_start_runtime_on_free_port(resolver).expect("runtime start")
+    }
+
+    /// The fallible half of [`start_runtime_on_free_port`], split out so the
+    /// retry loop can use `?` instead of a `panic!` clippy denies even in
+    /// test code here.
+    fn try_start_runtime_on_free_port(
+        resolver: &Resolver,
+    ) -> std::io::Result<(Runtime, SocketAddr)> {
+        let mut attempt = 0;
+        loop {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let address = probe.local_addr()?;
+            drop(probe);
+            match Runtime::start(address, resolver.clone()) {
+                Ok(runtime) => return Ok((runtime, address)),
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && attempt < 9 => {
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     #[test]
     fn revert_host_is_a_no_op_when_host_integration_is_none() {
         let settings = crate::config::DnsSettings {
@@ -1058,14 +1096,11 @@ mod tests {
 
     #[test]
     fn runtime_binds_and_stops_both_transports() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
-        let address = probe.local_addr().expect("address");
-        drop(probe);
         let resolver = Resolver::new(
             Config::new(vec![], vec![], vec![], "aquifer.karst", true).expect("config"),
             [],
         );
-        Runtime::start(address, resolver).expect("start").stop();
+        start_runtime_on_free_port(&resolver).0.stop();
     }
 
     #[test]
@@ -1090,10 +1125,7 @@ mod tests {
             disco_key: None,
         });
         let resolver = from_netmap(&netmap).expect("resolver");
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe");
-        let address = probe.local_addr().expect("address");
-        drop(probe);
-        let runtime = Runtime::start(address, resolver).expect("runtime");
+        let (runtime, address) = start_runtime_on_free_port(&resolver);
         for kind in [RecordType::A, RecordType::AAAA] {
             let client = std::net::UdpSocket::bind("127.0.0.1:0").expect("client");
             client
