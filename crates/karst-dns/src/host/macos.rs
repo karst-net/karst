@@ -17,26 +17,44 @@
 //! type-checks the whole macOS DNS path. `karstd` still refuses to *select*
 //! this mechanism off macOS, where the files it writes would change nothing.
 //!
-//! # What this does not do
+//! # The resolver search list
 //!
-//! `/etc/resolver` routes names **that are already fully qualified**. It has no
-//! key for the resolver search list, so a bare `laptop` does not become
-//! `laptop.aquifer.karst` through this mechanism — that list lives in the
-//! SystemConfiguration store, and putting an entry there requires holding an
-//! `SCDynamicStore` session open for as long as the entry should live. A
-//! `scutil` child process cannot do it: its session ends when it exits, and the
-//! store drops the keys with it. Doing it properly means linking
-//! SystemConfiguration and calling `SCDynamicStoreSetValue` from `karstd`
-//! itself, which under ADR-0003 means the FFI belongs in `karst-tun`. That is
-//! the remaining piece of `plans/phase-5/06-macos-client.md` §5 and it is
-//! recorded there rather than half-built here.
+//! `/etc/resolver` routes names **that are already fully qualified**; it has
+//! no key for the resolver search list, so getting a bare `laptop` to become
+//! `laptop.aquifer.karst` needs a second mechanism. That list lives in the
+//! SystemConfiguration dynamic store, and [`Macos::apply`] puts it there with
+//! a one-shot `scutil` subprocess against a synthetic, fixed-UUID
+//! `State:/Network/Service/.../DNS` key ([`SEARCH_LIST_KEY`]) that names no
+//! real network service — it is Karst's own place to write and remove, the
+//! same trick every other production macOS split-DNS VPN client (Tailscale's
+//! `net/dns/manager_darwin.go` among them) uses.
 //!
-//! Because the absence is invisible from the outside — every search domain
-//! still gets a resolver file, and names below it still resolve when qualified
-//! — `karstd` states it rather than leaving it to be discovered: `karst dns
-//! status` reports `search_list = "not applied"` beneath the search-domain
-//! list, and the daemon warns once on the first netmap that carries one. See
-//! `karstd`'s `HostRuntime::search_list`.
+//! **A one-shot process is sufficient here, which was not obvious going in.**
+//! Apple's `SCDynamicStore.h` documents session-scoped auto-removal only for
+//! `SCDynamicStoreAddTemporaryValue`; `SCDynamicStoreSetValue` — what
+//! `scutil`'s interactive `set` command drives — has no such note, and adds
+//! or replaces the key with no tie to the session that set it. Holding an
+//! `SCDynamicStore` FFI session open for the daemon's lifetime, which an
+//! earlier pass through this file assumed was required (and which would have
+//! put `unsafe` in `karst-tun` under ADR-0003), is not needed.
+//!
+//! **This cannot clobber DHCP's own search domains**, which is the trap
+//! `networksetup -setsearchdomains` falls into by writing into a *real*
+//! network service's DNS dictionary. [`SEARCH_LIST_KEY`] names no real
+//! service, so it never touches what DHCP/IPConfiguration wrote for the
+//! host's own interfaces; macOS aggregates `SearchDomains` across every
+//! active resolver — the same mechanism that lets a corporate VPN and a home
+//! network both contribute search domains at once — so this is additive, not
+//! a replacement. Scoping `SupplementalMatchDomains` to exactly the zone and
+//! search domains, never an empty catch-all match, keeps this resolver from
+//! ever becoming the machine's default: it only ever affects names
+//! `/etc/resolver` is already the authority for.
+//!
+//! Applying this is best-effort: a `scutil` failure is recorded
+//! ([`Macos::search_list_error`]) rather than failing [`Macos::apply`],
+//! because the resolver files above are already correct and load-bearing.
+//! `karstd`'s `HostRuntime::search_list` reports the outcome as
+//! `search_list = "applied"` or `"not applied"` in `karst dns status`.
 //!
 //! # Crash recovery
 //!
@@ -50,12 +68,22 @@
 //!   otherwise come back with permanent stale DNS and no record of why.
 //! - Every file Karst writes carries a marker line, so [`Macos::recover`] can
 //!   still find and remove its own leftovers when the record is gone entirely.
+//!
+//! [`SEARCH_LIST_KEY`] needs none of this bookkeeping: [`Macos::recover`]
+//! removes it unconditionally on every start, whether or not a resolver-file
+//! record exists to recover. Nothing else can legitimately hold that key, so
+//! there is nothing to compare against before removing it — unlike a
+//! resolver file, which might have been replaced by someone else since.
 
+#[cfg(test)]
+use std::cell::RefCell;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
+use std::io::Write as _;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 #[cfg(test)]
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -70,6 +98,12 @@ pub const RESOLVER_DIRECTORY: &str = "/etc/resolver";
 
 /// The revert record. `/var/db` rather than `/var/run` — see the module docs.
 pub const REVERT_STATE: &str = "/var/db/karst/dns-revert";
+
+/// The dynamic-store key Karst's resolver search list lives under. A fixed,
+/// synthetic service UUID — it names no real network service, just a
+/// well-known place of Karst's own to write and later remove. See the module
+/// docs for why this is safe to set from a one-shot `scutil` subprocess.
+const SEARCH_LIST_KEY: &str = "State:/Network/Service/3988FD44-EE20-4632-BD4E-9AE4DC352694/DNS";
 
 /// Errors applying macOS host DNS configuration.
 #[derive(Debug, thiserror::Error)]
@@ -139,6 +173,76 @@ enum Flush {
     Counted(AtomicU32),
 }
 
+/// How to write and remove [`SEARCH_LIST_KEY`].
+///
+/// A one-shot subprocess is enough — see the module docs for why the key it
+/// sets outlives the process. It is an enum for the same reason [`Flush`] is:
+/// the test variant records the exact script instead of running anything, so
+/// the mechanism is covered on every platform, not only a Mac.
+#[derive(Debug)]
+enum ScutilRunner {
+    /// `/usr/sbin/scutil`, scripted over stdin.
+    Real,
+    /// Record every script passed instead of running one. Tests only. `fail`
+    /// carries the exact message `run` should return, so a test can check
+    /// [`Macos::remove_search_list`]'s `"No such key"` tolerance as well as
+    /// an ordinary failure.
+    #[cfg(test)]
+    Recorded {
+        scripts: RefCell<Vec<String>>,
+        fail: RefCell<Option<String>>,
+    },
+}
+
+impl ScutilRunner {
+    fn run(&self, script: &str) -> Result<(), String> {
+        match self {
+            Self::Real => {
+                let mut child = Command::new("/usr/sbin/scutil")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|error| format!("scutil: {error}"))?;
+                child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| "scutil: no stdin".to_owned())?
+                    .write_all(script.as_bytes())
+                    .map_err(|error| format!("scutil: {error}"))?;
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("scutil: {error}"))?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "scutil exited {}: {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                // scutil's interactive mode reports a bad script ("set" or
+                // "remove" failing, an unrecognized command) on stdout with
+                // exit status 0, so a clean run is a silent one.
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stdout = stdout.trim();
+                if stdout.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!("scutil: {stdout}"))
+                }
+            }
+            #[cfg(test)]
+            Self::Recorded { scripts, fail } => {
+                scripts.borrow_mut().push(script.to_owned());
+                match &*fail.borrow() {
+                    Some(message) => Err(message.clone()),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+}
+
 /// macOS host DNS integration over one resolver directory.
 ///
 /// The directory and the revert record are constructor arguments so tests never
@@ -148,8 +252,10 @@ pub struct Macos {
     directory: PathBuf,
     state_path: PathBuf,
     flush: Flush,
+    scutil: ScutilRunner,
     applied: Option<Revert>,
     flush_error: Option<String>,
+    search_list_error: Option<String>,
 }
 
 impl Macos {
@@ -160,8 +266,10 @@ impl Macos {
             directory: directory.into(),
             state_path: state_path.into(),
             flush: Flush::Responder,
+            scutil: ScutilRunner::Real,
             applied: None,
             flush_error: None,
+            search_list_error: None,
         }
     }
 
@@ -204,15 +312,15 @@ impl Macos {
 
         let content = resolver_file(stub);
         let mut files = Vec::with_capacity(names.len());
-        for name in names {
-            let path = self.directory.join(&name);
+        for name in &names {
+            let path = self.directory.join(name);
             let original = match fs::read(&path) {
                 Ok(bytes) => Some(bytes),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => return Err(io_at(&path)(error)),
             };
             files.push(ManagedFile {
-                name,
+                name: name.clone(),
                 original,
                 applied: content.clone(),
             });
@@ -230,6 +338,7 @@ impl Macos {
             write_atomic(&path, &file.applied).map_err(io_at(&path))?;
         }
         self.applied = Some(revert);
+        self.apply_search_list(stub, &names);
         self.flush();
         Ok(())
     }
@@ -299,6 +408,10 @@ impl Macos {
         }
 
         restored |= self.sweep_orphans(&known)?;
+        // Unconditional, unlike the file recovery above: the key is
+        // exclusively Karst's, so there is nothing to compare against before
+        // removing it. See the module docs.
+        self.remove_search_list();
         if restored {
             self.flush();
         }
@@ -341,7 +454,42 @@ impl Macos {
         self.flush_error.as_deref()
     }
 
+    /// Why the last resolver search-list update failed, if it did. See the
+    /// module docs: a failure here does not fail [`Macos::apply`], because
+    /// the resolver files are already correct and load-bearing.
+    #[must_use]
+    pub fn search_list_error(&self) -> Option<&str> {
+        self.search_list_error.as_deref()
+    }
+
+    /// Whether the resolver search list is currently installed: something is
+    /// applied, and the last attempt to write [`SEARCH_LIST_KEY`] succeeded.
+    #[must_use]
+    pub const fn search_list_applied(&self) -> bool {
+        self.applied.is_some() && self.search_list_error.is_none()
+    }
+
+    /// Best-effort: see the module docs for why a `scutil` failure here is
+    /// recorded rather than propagated.
+    fn apply_search_list(&mut self, stub: SocketAddr, names: &[String]) {
+        let script = search_list_script(stub, names);
+        self.search_list_error = self.scutil.run(&script).err();
+    }
+
+    /// Unconditional and idempotent — see the module docs on why this key
+    /// needs no ownership check before removal, unlike a resolver file.
+    /// `"No such key"` means there was nothing to remove, which is success,
+    /// not a failure to report.
+    fn remove_search_list(&mut self) {
+        self.search_list_error = match self.scutil.run(&remove_search_list_script()) {
+            Ok(()) => None,
+            Err(detail) if detail.contains("No such key") => None,
+            Err(detail) => Some(detail),
+        };
+    }
+
     fn restore(&mut self, revert: &Revert) -> Result<(), MacosError> {
+        self.remove_search_list();
         for file in &revert.files {
             let path = self.directory.join(&file.name);
             restore_file(&path, file.original.as_deref())?;
@@ -439,6 +587,36 @@ fn resolver_file(stub: SocketAddr) -> Vec<u8> {
         stub.port()
     )
     .into_bytes()
+}
+
+/// The `scutil` script that installs [`SEARCH_LIST_KEY`]: `names` — the same
+/// zone-and-search-domain list [`resolver_names`] already computed — as both
+/// the match domains (so this key is picked up as a resolver for exactly
+/// what `/etc/resolver` already routes) and the search domains (the part
+/// `/etc/resolver` cannot express). Every entry already passed
+/// [`resolver_name`]'s ASCII-label whitelist, so none can contain a
+/// character `scutil`'s script syntax would need quoted.
+fn search_list_script(stub: SocketAddr, names: &[String]) -> String {
+    let mut script = String::from("d.init\n");
+    let _ = writeln!(script, "d.add ServerAddresses * {}", stub.ip());
+    let _ = write!(script, "d.add SupplementalMatchDomains *");
+    for name in names {
+        let _ = write!(script, " {name}");
+    }
+    script.push('\n');
+    let _ = write!(script, "d.add SearchDomains *");
+    for name in names {
+        let _ = write!(script, " {name}");
+    }
+    script.push('\n');
+    let _ = writeln!(script, "set {SEARCH_LIST_KEY}");
+    script.push_str("quit\n");
+    script
+}
+
+/// The `scutil` script that removes [`SEARCH_LIST_KEY`].
+fn remove_search_list_script() -> String {
+    format!("remove {SEARCH_LIST_KEY}\nquit\n")
 }
 
 /// The resolver file names for one netmap DNS configuration, deduplicated and
@@ -636,6 +814,10 @@ mod tests {
             fs::create_dir_all(&root).expect("temporary root");
             let mut host = Macos::new(root.join("resolver"), root.join("state/dns-revert"));
             host.flush = Flush::Counted(AtomicU32::new(0));
+            host.scutil = ScutilRunner::Recorded {
+                scripts: RefCell::new(Vec::new()),
+                fail: RefCell::new(None),
+            };
             Self { root, host }
         }
 
@@ -649,10 +831,46 @@ mod tests {
                 Flush::Responder => panic!("fixture must count flushes"),
             }
         }
+
+        fn scutil_scripts(&self) -> Vec<String> {
+            match &self.host.scutil {
+                ScutilRunner::Recorded { scripts, .. } => scripts.borrow().clone(),
+                ScutilRunner::Real => panic!("fixture must record scutil scripts"),
+            }
+        }
+
+        fn fail_scutil(&self) {
+            self.fail_scutil_with("scutil: simulated failure");
+        }
+
+        fn fail_scutil_with(&self, message: &str) {
+            match &self.host.scutil {
+                ScutilRunner::Recorded { fail, .. } => {
+                    *fail.borrow_mut() = Some(message.to_owned())
+                }
+                ScutilRunner::Real => panic!("fixture must record scutil scripts"),
+            }
+        }
     }
 
     fn stub() -> SocketAddr {
         "100.100.100.100:53".parse().expect("stub address")
+    }
+
+    /// A `Macos` instance whose `flush` and `scutil` are both recorded
+    /// rather than real, for constructions outside [`Fixture`] — chiefly the
+    /// crash-recovery tests, which build a "killed" and a "restarted"
+    /// instance over the same paths. Real `scutil` must never run from a
+    /// unit test: on a Mac it would touch this machine's actual dynamic
+    /// store.
+    fn test_host(directory: impl Into<PathBuf>, state_path: impl Into<PathBuf>) -> Macos {
+        let mut host = Macos::new(directory, state_path);
+        host.flush = Flush::Counted(AtomicU32::new(0));
+        host.scutil = ScutilRunner::Recorded {
+            scripts: RefCell::new(Vec::new()),
+            fail: RefCell::new(None),
+        };
+        host
     }
 
     #[test]
@@ -673,6 +891,111 @@ mod tests {
         );
         assert!(fixture.host.observe().expect("observe"));
         assert_eq!(fixture.flushes(), 1, "apply must flush the resolver cache");
+    }
+
+    /// The search list is issue #111's whole point: a bare `laptop` becoming
+    /// `laptop.aquifer.karst`. The domain set it installs must be exactly the
+    /// one the resolver files above use, and the script must never touch a
+    /// key belonging to a real network service.
+    #[test]
+    fn apply_installs_the_same_domains_as_a_scoped_search_list() {
+        let mut fixture = Fixture::new("search-list-apply");
+        fixture
+            .host
+            .apply(stub(), "aquifer.karst.", &["corp.example.".to_owned()])
+            .expect("apply");
+
+        let scripts = fixture.scutil_scripts();
+        assert_eq!(scripts.len(), 1, "one script for the one apply");
+        let script = &scripts[0];
+        assert!(script.starts_with("d.init\n"), "{script}");
+        assert!(
+            script.contains("d.add ServerAddresses * 100.100.100.100"),
+            "{script}"
+        );
+        assert!(
+            script.contains("d.add SupplementalMatchDomains * aquifer.karst corp.example"),
+            "{script}"
+        );
+        assert!(
+            script.contains("d.add SearchDomains * aquifer.karst corp.example"),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("set {SEARCH_LIST_KEY}")),
+            "{script}"
+        );
+        assert!(script.trim_end().ends_with("quit"), "{script}");
+        assert!(
+            !script.contains("SupplementalMatchDomains * \"\""),
+            "an empty match domain would make this a catch-all default resolver: {script}"
+        );
+
+        assert!(fixture.host.search_list_applied());
+        assert_eq!(fixture.host.search_list_error(), None);
+    }
+
+    /// A `scutil` failure does not fail `apply` — the resolver files, which
+    /// are load-bearing, are already correct — but it must be visible to the
+    /// operator rather than silently reported as applied.
+    #[test]
+    fn a_scutil_failure_is_reported_but_does_not_fail_apply() {
+        let mut fixture = Fixture::new("search-list-failure");
+        fixture.fail_scutil();
+        fixture
+            .host
+            .apply(stub(), "aquifer.karst.", &[])
+            .expect("apply succeeds despite the search-list failure");
+
+        assert!(!fixture.host.search_list_applied());
+        assert_eq!(
+            fixture.host.search_list_error(),
+            Some("scutil: simulated failure")
+        );
+    }
+
+    /// Revert must remove the search-list key, not just the resolver files.
+    #[test]
+    fn revert_removes_the_search_list_key() {
+        let mut fixture = Fixture::new("search-list-revert");
+        fixture
+            .host
+            .apply(stub(), "aquifer.karst.", &[])
+            .expect("apply");
+        fixture.host.revert().expect("revert");
+
+        let scripts = fixture.scutil_scripts();
+        let last = scripts.last().expect("a script from revert");
+        assert_eq!(last, &format!("remove {SEARCH_LIST_KEY}\nquit\n"));
+        assert!(!fixture.host.search_list_applied());
+    }
+
+    /// The SIGKILL case for the search-list key: `recover` removes it
+    /// unconditionally, with no record needed — see the module docs.
+    #[test]
+    fn recover_removes_the_search_list_key_even_without_a_resolver_file_record() {
+        let fixture = Fixture::new("search-list-recover-untouched");
+        let mut host = test_host(
+            fixture.root.join("resolver"),
+            fixture.root.join("state/dns-revert"),
+        );
+        assert!(!host.recover().expect("recover on an untouched machine"));
+        let scripts = match &host.scutil {
+            ScutilRunner::Recorded { scripts, .. } => scripts.borrow().clone(),
+            ScutilRunner::Real => panic!("test_host must record scutil scripts"),
+        };
+        assert_eq!(scripts, vec![format!("remove {SEARCH_LIST_KEY}\nquit\n")]);
+    }
+
+    /// `"No such key"` is what `scutil` says when there was nothing to
+    /// remove — the ordinary case on almost every recovery — and it must not
+    /// be reported as a failure.
+    #[test]
+    fn a_missing_search_list_key_on_removal_is_not_an_error() {
+        let mut fixture = Fixture::new("search-list-missing");
+        fixture.fail_scutil_with("No such key");
+        fixture.host.remove_search_list();
+        assert_eq!(fixture.host.search_list_error(), None);
     }
 
     /// The plan's exit criterion 3 and 5: nothing of Karst's is left behind,
@@ -703,8 +1026,7 @@ mod tests {
         let theirs = b"nameserver 10.0.0.53\n";
         fs::write(fixture.resolver("corp.example"), theirs).expect("their file");
 
-        let mut host = Macos::new(&directory, fixture.root.join("state/dns-revert"));
-        host.flush = Flush::Counted(AtomicU32::new(0));
+        let mut host = test_host(&directory, fixture.root.join("state/dns-revert"));
         host.apply(stub(), "aquifer.karst.", &["corp.example".to_owned()])
             .expect("apply");
         assert!(fs::read(fixture.resolver("corp.example"))
@@ -729,15 +1051,13 @@ mod tests {
         let fixture = Fixture::new("recover");
         let directory = fixture.root.join("resolver");
         let state = fixture.root.join("state/dns-revert");
-        let mut killed = Macos::new(&directory, &state);
-        killed.flush = Flush::Counted(AtomicU32::new(0));
+        let mut killed = test_host(&directory, &state);
         killed
             .apply(stub(), "aquifer.karst.", &["corp.example".to_owned()])
             .expect("apply");
         drop(killed);
 
-        let mut restarted = Macos::new(&directory, &state);
-        restarted.flush = Flush::Counted(AtomicU32::new(0));
+        let mut restarted = test_host(&directory, &state);
         assert!(restarted.recover().expect("recover"));
         assert!(!fixture.resolver("aquifer.karst").exists());
         assert!(!fixture.resolver("corp.example").exists());
@@ -752,14 +1072,12 @@ mod tests {
         let fixture = Fixture::new("orphan");
         let directory = fixture.root.join("resolver");
         let state = fixture.root.join("state/dns-revert");
-        let mut killed = Macos::new(&directory, &state);
-        killed.flush = Flush::Counted(AtomicU32::new(0));
+        let mut killed = test_host(&directory, &state);
         killed.apply(stub(), "aquifer.karst.", &[]).expect("apply");
         drop(killed);
         fs::remove_file(&state).expect("simulate a cleared /var/run");
 
-        let mut restarted = Macos::new(&directory, &state);
-        restarted.flush = Flush::Counted(AtomicU32::new(0));
+        let mut restarted = test_host(&directory, &state);
         assert!(restarted.recover().expect("recover"));
         assert!(!fixture.resolver("aquifer.karst").exists());
     }
@@ -771,15 +1089,13 @@ mod tests {
         let fixture = Fixture::new("external");
         let directory = fixture.root.join("resolver");
         let state = fixture.root.join("state/dns-revert");
-        let mut killed = Macos::new(&directory, &state);
-        killed.flush = Flush::Counted(AtomicU32::new(0));
+        let mut killed = test_host(&directory, &state);
         killed.apply(stub(), "aquifer.karst.", &[]).expect("apply");
         drop(killed);
         fs::write(fixture.resolver("aquifer.karst"), b"nameserver 10.0.0.53\n")
             .expect("administrator edit");
 
-        let mut restarted = Macos::new(&directory, &state);
-        restarted.flush = Flush::Counted(AtomicU32::new(0));
+        let mut restarted = test_host(&directory, &state);
         assert!(!restarted.recover().expect("recover"));
         assert_eq!(
             fs::read(fixture.resolver("aquifer.karst")).expect("their file"),
@@ -937,8 +1253,7 @@ mod tests {
         let state = fixture.root.join("state/dns-revert");
         fs::create_dir_all(state.parent().expect("state parent")).expect("state directory");
         fs::write(&state, b"not a revert record").expect("write");
-        let mut host = Macos::new(fixture.root.join("resolver"), &state);
-        host.flush = Flush::Counted(AtomicU32::new(0));
+        let mut host = test_host(fixture.root.join("resolver"), &state);
         assert!(matches!(
             host.recover(),
             Err(MacosError::State { detail, .. }) if detail.contains("malformed")
@@ -948,11 +1263,10 @@ mod tests {
     #[test]
     fn recovery_of_a_machine_karst_never_touched_is_a_no_op() {
         let fixture = Fixture::new("untouched");
-        let mut host = Macos::new(
+        let mut host = test_host(
             fixture.root.join("resolver"),
             fixture.root.join("state/dns-revert"),
         );
-        host.flush = Flush::Counted(AtomicU32::new(0));
         assert!(!host.recover().expect("recover"));
     }
 
