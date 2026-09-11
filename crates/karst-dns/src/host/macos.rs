@@ -846,7 +846,7 @@ mod tests {
         fn fail_scutil_with(&self, message: &str) {
             match &self.host.scutil {
                 ScutilRunner::Recorded { fail, .. } => {
-                    *fail.borrow_mut() = Some(message.to_owned())
+                    *fail.borrow_mut() = Some(message.to_owned());
                 }
                 ScutilRunner::Real => panic!("fixture must record scutil scripts"),
             }
