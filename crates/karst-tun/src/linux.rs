@@ -39,6 +39,15 @@ pub struct Tun {
     /// Whether reads and writes carry a `virtio_net_hdr`, and so whether the
     /// kernel may hand over coalesced segments.
     offload: bool,
+    /// Whether this handle negotiated `IFF_MULTI_QUEUE`, and so whether
+    /// [`Tun::open_queue`] can attach another queue to the same interface.
+    /// Device-wide once set at [`Tun::create`] time — see the constant's own
+    /// doc comment in `sys` for why a later open cannot change it.
+    multi_queue: bool,
+    /// Whether this handle (and so every queue [`Tun::open_queue`] opens from
+    /// it) was opened `O_NONBLOCK`. Carried rather than re-read from the fd,
+    /// since a queue's own open call is what needs to match it.
+    nonblocking: bool,
     /// Netlink sequence numbers for route requests.
     ///
     /// Atomic because routes are added from the control thread while the
@@ -74,23 +83,45 @@ impl Tun {
         // exactly one IP packet with nothing to strip.
         //
         // IFF_VNET_HDR additionally prefixes a `virtio_net_hdr`, which is what
-        // lets the kernel coalesce. It is requested first and retried without
-        // on failure: an old kernel, or a container without the capability,
-        // must still get a working interface rather than none.
-        let mut offload = cfg.offload;
+        // lets the kernel coalesce; IFF_MULTI_QUEUE is what lets `open_queue`
+        // attach a second, independent queue later (karst-net/karst#118). Both
+        // are requested richest-first and dropped one at a time on refusal —
+        // multi-queue before offload, since offload's fallback predates it and
+        // is kept exactly as it was for a kernel or container that supports
+        // neither. Whichever rung actually succeeds decides both flags at once:
+        // there is no later chance to add either back, only to open a *queue*
+        // that inherits whatever this call negotiated (see `open_queue`'s own
+        // doc comment for why offload cannot be negotiated per queue).
         let base = sys::IFF_TUN | sys::IFF_NO_PI;
-        let with_vnet =
-            offload.then(|| sys::set_iff(dev.as_fd(), requested, base | sys::IFF_VNET_HDR));
-        let assigned = if let Some(Ok(name)) = with_vnet {
-            name
-        } else {
-            // Either offload was not asked for, or the kernel refused the flag.
-            // Fall back to a plain device rather than to no device at all.
-            offload = false;
-            sys::set_iff(dev.as_fd(), requested, base).map_err(|source| TunError::Ioctl {
+        let mut rungs: Vec<(i16, bool, bool)> = Vec::with_capacity(4);
+        if cfg.offload {
+            rungs.push((base | sys::IFF_MULTI_QUEUE | sys::IFF_VNET_HDR, true, true));
+        }
+        rungs.push((base | sys::IFF_MULTI_QUEUE, false, true));
+        if cfg.offload {
+            rungs.push((base | sys::IFF_VNET_HDR, true, false));
+        }
+        rungs.push((base, false, false));
+
+        let mut negotiated = None;
+        let mut last_err = None;
+        for (flags, off, mq) in rungs {
+            match sys::set_iff(dev.as_fd(), requested, flags) {
+                Ok(name) => {
+                    negotiated = Some((name, off, mq));
+                    break;
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        let Some((assigned, mut offload, multi_queue)) = negotiated else {
+            return Err(TunError::Ioctl {
                 op: "TUNSETIFF",
-                source,
-            })?
+                // The loop above always tries `base` alone last, with no flag
+                // that could plausibly be refused, so reaching here without a
+                // recorded error would mean the loop never ran at all.
+                source: last_err.unwrap_or_else(std::io::Error::last_os_error),
+            });
         };
         let name = decode_name(&assigned);
 
@@ -132,6 +163,8 @@ impl Tun {
             name,
             mtu: cfg.mtu,
             offload,
+            multi_queue,
+            nonblocking: cfg.nonblocking,
             // 1 rather than 0: netlink treats sequence 0 as unsolicited, which
             // would make an ack indistinguishable from a broadcast.
             route_seq: std::sync::atomic::AtomicU32::new(1),
@@ -142,6 +175,77 @@ impl Tun {
     #[must_use]
     pub fn offload(&self) -> bool {
         self.offload
+    }
+
+    /// Whether this handle can grow a second queue via [`Tun::open_queue`].
+    #[must_use]
+    pub fn multi_queue(&self) -> bool {
+        self.multi_queue
+    }
+
+    /// Open one more queue on the interface this handle already created.
+    ///
+    /// Each open of `/dev/net/tun` naming the same interface with
+    /// `IFF_MULTI_QUEUE` set is an independent queue the kernel load-balances
+    /// packets across — karst-net/karst#118's sharded datapath. Which queue a
+    /// given packet lands on is the kernel's own flow hash of the packet
+    /// being read here, not a choice this crate makes — it does not steer by
+    /// peer, so more queues raise aggregate throughput across peers and flows
+    /// rather than any single flow's ceiling.
+    ///
+    /// **Offload cannot be requested independently per queue.** Confirmed
+    /// against a live kernel while implementing this: `IFF_VNET_HDR` is
+    /// negotiated once, for the whole device, at [`Tun::create`] time, and
+    /// `/sys/class/net/<if>/tun_flags` does not change on a later
+    /// `TUNSETIFF` regardless of what it asks for. So the new handle simply
+    /// inherits this one's [`Tun::offload`] rather than re-negotiating it —
+    /// asking for anything else would silently not happen anyway.
+    ///
+    /// # Errors
+    /// [`TunError::Unsupported`] if this handle did not itself negotiate
+    /// `IFF_MULTI_QUEUE` at creation — most likely a kernel or container old
+    /// enough to decline the flag entirely, in which case no queue on this
+    /// interface can ever have a sibling. [`TunError::OpenDevice`] if
+    /// `/dev/net/tun` cannot be reopened; [`TunError::Ioctl`] if the kernel
+    /// refuses the attach, including a name mismatch if the interface was
+    /// removed and recreated by something else between the two opens.
+    pub fn open_queue(&self) -> Result<Self, TunError> {
+        if !self.multi_queue {
+            return Err(TunError::Unsupported(
+                "this interface was not created with IFF_MULTI_QUEUE",
+            ));
+        }
+        let mut opts = OpenOptions::new();
+        opts.read(true).write(true);
+        if self.nonblocking {
+            opts.custom_flags(libc::O_NONBLOCK);
+        }
+        let dev = opts.open(DEV_NET_TUN).map_err(TunError::OpenDevice)?;
+
+        let flags = sys::IFF_TUN
+            | sys::IFF_NO_PI
+            | sys::IFF_MULTI_QUEUE
+            | if self.offload { sys::IFF_VNET_HDR } else { 0 };
+        sys::set_iff(dev.as_fd(), self.encoded_name()?, flags).map_err(|source| {
+            TunError::Ioctl {
+                op: "TUNSETIFF (additional queue)",
+                source,
+            }
+        })?;
+
+        Ok(Self {
+            dev,
+            name: self.name.clone(),
+            mtu: self.mtu,
+            offload: self.offload,
+            multi_queue: true,
+            nonblocking: self.nonblocking,
+            // Independent from the primary's: each queue only ever uses this
+            // to tag its own route/address requests against its own fresh
+            // netlink socket, so nothing compares one queue's counter with
+            // another's.
+            route_seq: std::sync::atomic::AtomicU32::new(1),
+        })
     }
 
     /// The interface name the kernel assigned.
@@ -488,5 +592,45 @@ impl Tun {
 impl AsFd for Tun {
     fn as_fd(&self) -> BorrowedFd<'_> {
         self.dev.as_fd()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    /// A handle standing in for one that failed to negotiate
+    /// `IFF_MULTI_QUEUE` — no `CAP_NET_ADMIN` needed, since it never calls
+    /// `TUNSETIFF` at all. `/dev/null` only has to be *some* open file; its
+    /// contents are never read or written on this path.
+    fn non_multi_queue_handle() -> Tun {
+        Tun {
+            dev: File::open("/dev/null").expect("/dev/null always exists"),
+            name: "karst-fake".to_owned(),
+            mtu: karst_proto::consts::TUNNEL_MTU,
+            offload: false,
+            multi_queue: false,
+            nonblocking: false,
+            route_seq: std::sync::atomic::AtomicU32::new(1),
+        }
+    }
+
+    /// **`open_queue` must refuse before it opens anything**, on a handle
+    /// that never negotiated `IFF_MULTI_QUEUE` in the first place — there is
+    /// no flag combination a second `TUNSETIFF` could send that would attach
+    /// a queue to a device that was never made multi-queue-capable (§sys's
+    /// own doc comment on `IFF_MULTI_QUEUE`, confirmed against a live
+    /// kernel). Asking the kernel anyway would fail too, but with an `EINVAL`
+    /// that names no cause; refusing here names the actual one.
+    #[test]
+    fn open_queue_refuses_a_handle_that_is_not_multi_queue() {
+        let tun = non_multi_queue_handle();
+        let err = tun.open_queue().expect_err("must refuse");
+        assert!(
+            matches!(err, TunError::Unsupported(_)),
+            "got {err:?}, expected TunError::Unsupported"
+        );
     }
 }

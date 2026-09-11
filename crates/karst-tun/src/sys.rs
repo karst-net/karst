@@ -46,6 +46,18 @@ pub(crate) const IFF_NO_PI: i16 = 0x1000;
 /// Each read and write is prefixed by a `virtio_net_hdr`, which is what allows
 /// the kernel to hand over coalesced segments.
 pub(crate) const IFF_VNET_HDR: i16 = 0x4000;
+/// An independent queue, load-balanced against every other open queue on the
+/// same interface — Linux 3.8+, karst-net/karst#118.
+///
+/// **Every open of `/dev/net/tun` for one interface must agree on this
+/// flag.** Confirmed against a live kernel while implementing this: an
+/// interface created without it refuses a later open that asks for it, and
+/// one created with it refuses a later open that omits it — both fail
+/// `TUNSETIFF` with `EINVAL`, not merely getting a single-queue result. So
+/// whether an interface can ever grow a second queue is decided at
+/// [`crate::linux::Tun::create`] time, once, not at
+/// [`crate::linux::Tun::open_queue`] time.
+pub(crate) const IFF_MULTI_QUEUE: i16 = 0x0100;
 
 /// Offload capabilities for `TUNSETOFFLOAD`.
 pub(crate) const TUN_F_CSUM: u32 = 0x01;
