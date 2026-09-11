@@ -33,11 +33,23 @@
 #                       A preference, not a promise: macOS names utun devices
 #                       itself and karstd reports the name it actually got.
 #     --duration SECS   iperf3 run length              (default: 10)
+#     --workers N       node.datapath_workers on both rosters, for
+#                       karst-net/karst#118's sharded datapath (default:
+#                       unset — karstd's own default of 1, i.e. today's
+#                       single TUN-reader/UDP-reader behavior)
 #     --no-bench        set the tunnel up and stop; do not measure
 #     --keep            leave the daemons running on exit
 #
 # One host may be behind NAT: pass its peer no address and it will be learned
 # from the handshake. Pass --addr-a "" to say A is unreachable inbound.
+#
+# --workers here can only show what one peer, one session can do: sharding by
+# peer/socket-hash does not parallelize a single flow to a single peer across
+# cores (see karst-tun's `Tun::open_queue` doc comment), so raising it and
+# re-running this script is a test of whether nothing *regressed*, not of
+# whether sharding helped — for that, see scripts/multi-peer-bench.sh, which
+# measures the thing #118's `--workers` is actually for: aggregate throughput
+# across more peers than one core can serialize.
 
 set -euo pipefail
 
@@ -47,6 +59,7 @@ IFACE=karst0
 DURATION=10
 BENCH=1
 KEEP=0
+WORKERS=0
 ADDR_A=""
 ADDR_B=""
 ADDR_A_SET=0
@@ -66,6 +79,7 @@ while [ $# -gt 0 ]; do
         --subnet)    SUBNET=$2;   shift 2 ;;
         --iface)     IFACE=$2;    shift 2 ;;
         --duration)  DURATION=$2; shift 2 ;;
+        --workers)   WORKERS=$2;  shift 2 ;;
         --no-bench)  BENCH=0;     shift ;;
         --keep)      KEEP=1;      shift ;;
         *) die "unknown option $1" ;;
@@ -101,6 +115,7 @@ trap cleanup EXIT
 OS_A=$(sh_a 'uname -s')
 OS_B=$(sh_b 'uname -s')
 say "Hosts: $HOST_A is $OS_A, $HOST_B is $OS_B"
+[ "$WORKERS" -gt 0 ] && say "datapath_workers = $WORKERS on both rosters"
 
 # ping's reply timeout: seconds on Linux, milliseconds on macOS.
 ping_wait() { case $1 in Darwin) echo "-W 2000" ;; *) echo "-W 2" ;; esac; }
@@ -163,10 +178,13 @@ PSK=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 say "Writing rosters"
 write_config() {
     local host=$1 me=$2 peer_name=$3 peer_kem=$4 peer_addr=$5 peer_ip=$6
-    local endpoint=""
+    local endpoint="" workers_line=""
     # An empty peer address means that peer is behind NAT: leave the endpoint
     # out and it is learned from the handshake.
     [ -n "$peer_addr" ] && endpoint="endpoint = \"$peer_addr:$PORT\""
+    # 0 (the default) omits the key entirely, so karstd applies its own
+    # default rather than this script asserting one — see --workers above.
+    [ "$WORKERS" -gt 0 ] && workers_line="datapath_workers = $WORKERS"
     ssh -n -o BatchMode=yes "$host" "cat > $RUN/karstd.toml <<'CFG'
 [node]
 listen = \"0.0.0.0:$PORT\"
@@ -174,6 +192,7 @@ interface = \"$IFACE\"
 addresses = [\"$SUBNET.$me/24\"]
 private_key_file = \"node.key\"
 psk_epoch = 1
+$workers_line
 
 [[peer]]
 name = \"$peer_name\"
