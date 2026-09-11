@@ -344,7 +344,7 @@ jobs:
           if-no-files-found: error
 
   images:
-    name: Container images (${{ matrix.name }})
+    name: Container images (${{ matrix.name }}, ${{ matrix.arch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -353,23 +353,42 @@ jobs:
           - name: client
             file: deploy/images/karstd.Dockerfile
             image: karstd
+            arch: amd64
+          - name: client
+            file: deploy/images/karstd.Dockerfile
+            image: karstd
+            arch: arm64
           - name: relay
             file: deploy/images/karst-relay.Dockerfile
             image: karst-relay
+            arch: amd64
+          - name: relay
+            file: deploy/images/karst-relay.Dockerfile
+            image: karst-relay
+            arch: arm64
           - name: control
             file: deploy/images/karst-control.Dockerfile
             image: karst-control
+            arch: amd64
+          - name: control
+            file: deploy/images/karst-control.Dockerfile
+            image: karst-control
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
+      # The hosted runner is amd64. Register emulators so this build-only gate
+      # catches architecture-specific Dockerfile and compilation failures too.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - name: Build ${{ matrix.name }} image
+      - name: Build ${{ matrix.name }} image (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
           load: true
           push: false
-          tags: local/${{ matrix.image }}:${{ github.sha }}
+          platforms: linux/${{ matrix.arch }}
+          tags: local/${{ matrix.image }}:${{ github.sha }}-${{ matrix.arch }}
 
   # A release image is a digest, not a tag: a tag may move after an operator
   # has inspected it.  This job consequently pushes and signs only immutable
@@ -400,6 +419,10 @@ jobs:
             image: karst-control
     steps:
       - uses: actions/checkout@v4
+      # Buildx needs QEMU to produce the arm64 variant from GitHub's amd64
+      # hosted runner. The pushed result is one OCI image index, so each tag
+      # selects the native variant automatically when it is pulled.
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -421,6 +444,7 @@ jobs:
           tags: |
             ghcr.io/karst-net/${{ matrix.image }}:${{ github.ref_name }}
             ghcr.io/karst-net/${{ matrix.image }}:sha-${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
       - name: Sign the immutable image digest
         env:
           IMAGE: ghcr.io/karst-net/${{ matrix.image }}
