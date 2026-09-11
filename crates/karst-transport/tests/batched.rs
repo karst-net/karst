@@ -25,7 +25,9 @@
     clippy::indexing_slicing
 )]
 
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+#[cfg(target_os = "linux")]
+use std::net::UdpSocket;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};

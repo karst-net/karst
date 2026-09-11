@@ -3380,7 +3380,12 @@ fn open_extra_workers(
 
 /// As above, where there is never anything to open: `effective_datapath_workers`
 /// already pins `workers` to `1` on every platform without `Tun::open_queue`.
+///
+/// `Result` in the return type is never actually needed on this platform —
+/// this arm can't fail — but the signature has to match the Linux one above
+/// since `run_with_control` calls whichever this `cfg` selects with `?`.
 #[cfg(not(target_os = "linux"))]
+#[allow(clippy::unnecessary_wraps)]
 fn open_extra_workers(
     _config: &Config,
     _tun: &NetworkDevice,
