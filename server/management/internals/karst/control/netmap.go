@@ -313,19 +313,30 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		return nil, fmt.Errorf("account prefixes: %w", err)
 	}
 
+	// h.Relays/h.TurnServers are the fallback documented above: they apply
+	// only when the account-scoped store has nothing of its own, not
+	// whenever a store happens to be configured. RelayStore and TurnStore
+	// are always non-nil in a real deployment, so treating their presence
+	// alone as the switch would make the static, file/env-configured lists
+	// permanently unreachable — exactly the accounts they exist to serve.
 	relays := h.Relays
 	if h.RelayStore != nil {
-		var err error
-		relays, err = h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+		stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load relays: %w", err)
+		}
+		if len(stored) > 0 {
+			relays = stored
 		}
 	}
 	turnEntries := h.TurnServers
 	if h.TurnStore != nil {
-		turnEntries, err = h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
+		stored, err := h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
 		if err != nil {
 			return nil, fmt.Errorf("load turn servers: %w", err)
+		}
+		if len(stored) > 0 {
+			turnEntries = stored
 		}
 	}
 	turnServers, err := turncred.NetmapEntries(turnEntries, h.TurnMinter)

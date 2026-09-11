@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/mlkem"
 	"crypto/sha1"
+	"encoding/base64"
 	"errors"
 	"net/netip"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/shared/management/proto"
@@ -1525,5 +1527,135 @@ func TestNetmapCarriesTurnServersFromTheStore(t *testing.T) {
 	}
 	if servers[0].GetRegion() != "eu" {
 		t.Fatalf("region = %q, want eu", servers[0].GetRegion())
+	}
+}
+
+// The DB-backed half of the relay fallback: when a RelayStore is configured
+// and holds an entry for the account, it supplies the registry instead of
+// the static Relays field, mirroring TestNetmapCarriesTurnServersFromTheStore.
+func TestNetmapCarriesRelaysFromTheStore(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+
+	db, err := gorm.Open(sqlite.Open("file:netmap-relaystore?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_relays").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	store, err := relayreg.NewStore(db)
+	if err != nil {
+		t.Fatalf("relay store: %v", err)
+	}
+	if _, err := store.Create(relayreg.WithAccount(context.Background(), "acct"), relayreg.Entry{
+		Address:       "203.0.113.7:443",
+		TLSServerName: "relay.store.example.com",
+		IdentityKey:   base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, relayreg.IdentityKeySize)),
+		Region:        "eu",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Relays is deliberately left populated with something else, so the test
+	// also proves the store takes priority rather than merely working when
+	// the static field is empty.
+	f.handler.Relays = []*proto.KarstRelay{{
+		Address:       "127.0.0.1:443",
+		TlsServerName: "relay.static.example.com",
+		RelayId:       bytes.Repeat([]byte{0x91}, 32),
+		IdentityKey:   bytes.Repeat([]byte{0x92}, relayreg.IdentityKeySize),
+		Region:        "us",
+	}}
+	f.handler.RelayStore = store
+
+	resp := requestNetmap(t, f, 0)
+	relays := resp.GetRelays()
+	if len(relays) != 1 {
+		t.Fatalf("got %d relays, want 1", len(relays))
+	}
+	if relays[0].GetAddress() != "203.0.113.7:443" {
+		t.Fatalf("address = %q, want the store-backed entry, not the static field", relays[0].GetAddress())
+	}
+	if relays[0].GetRegion() != "eu" {
+		t.Fatalf("region = %q, want eu", relays[0].GetRegion())
+	}
+}
+
+// GitHub issue #109's live packaged demonstration hit exactly this: an
+// operator set KARST_RELAY_REGISTRY_FILE, the startup log confirmed the
+// registry was loaded, and every enrolled node still received zero relays
+// and stayed permanently unable to dial one. RelayStore is always non-nil
+// in a real deployment (bootstrap.Install constructs it unconditionally),
+// so treating its mere presence as the switch — rather than falling back
+// when its account-scoped table is empty — silently discarded the static
+// registry for every account that had not also called the relay-registry
+// API. Nothing here may regress to "RelayStore configured means static is
+// dead" without this test catching it.
+func TestNetmapFallsBackToStaticRelaysWhenStoreIsEmpty(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+
+	db, err := gorm.Open(sqlite.Open("file:netmap-relaystore-empty?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_relays").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	store, err := relayreg.NewStore(db)
+	if err != nil {
+		t.Fatalf("relay store: %v", err)
+	}
+
+	f.handler.Relays = []*proto.KarstRelay{{
+		Address:       "127.0.0.1:443",
+		TlsServerName: "relay.static.example.com",
+		RelayId:       bytes.Repeat([]byte{0x91}, 32),
+		IdentityKey:   bytes.Repeat([]byte{0x92}, relayreg.IdentityKeySize),
+		Region:        "us",
+	}}
+	f.handler.RelayStore = store
+
+	resp := requestNetmap(t, f, 0)
+	relays := resp.GetRelays()
+	if len(relays) != 1 {
+		t.Fatalf("got %d relays, want the static fallback entry", len(relays))
+	}
+	if relays[0].GetAddress() != "127.0.0.1:443" {
+		t.Fatalf("address = %q, want the static field's entry", relays[0].GetAddress())
+	}
+}
+
+// The TURN half of the same fallback bug: an empty account-scoped TurnStore
+// must not silently discard a configured static TurnServers list either.
+func TestNetmapFallsBackToStaticTurnServersWhenStoreIsEmpty(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+
+	db, err := gorm.Open(sqlite.Open("file:netmap-turnstore-empty?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_turn_servers").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	store, err := turncred.NewStore(db)
+	if err != nil {
+		t.Fatalf("turn store: %v", err)
+	}
+
+	minter, err := turncred.NewMinter("s3cret", time.Hour)
+	if err != nil {
+		t.Fatalf("new minter: %v", err)
+	}
+	f.handler.TurnServers = []turncred.Entry{{URI: "turn:static.example.com:3478", Region: "us"}}
+	f.handler.TurnStore = store
+	f.handler.TurnMinter = minter
+
+	resp := requestNetmap(t, f, 0)
+	servers := resp.GetTurnServers()
+	if len(servers) != 1 {
+		t.Fatalf("got %d turn servers, want the static fallback entry", len(servers))
+	}
+	if servers[0].GetUri() != "turn:static.example.com:3478" {
+		t.Fatalf("uri = %q, want the static field's entry", servers[0].GetUri())
 	}
 }
