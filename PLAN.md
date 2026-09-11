@@ -996,10 +996,11 @@ onwards, anchored on the week of 2026-08-10.
   Remaining: signature/AEAD traits, ML-DSA-65, SLH-DSA, libcrux and aws-lc-rs
   backends, NIST KAT vectors.
 - ✅ `karst-proto`: **fragment codec, §6.4 invariants, reassembly sublayer,
-  fragment MACs and stateless cookies** (37 tests, panic-free, invariants
+  fragment MACs and stateless cookies** (52 tests, panic-free, invariants
   asserted at compile time, fuzzed). The reassembler allocates all memory at
   construction and never grows, so a flood causes rejections rather than
-  exhaustion. Remaining: `no_std`.
+  exhaustion. `no_std`-compatible (issue #129): `core`/`alloc` only, behind a
+  default-on `std` feature, checked in CI against a bare-metal target.
 - ✅ **Fragmentation wired to the handshake**: a real 2378-byte `HandshakeInit`
   travels as two MAC-authenticated fragments and reassembles byte-exact, with
   anti-amplification measured on the wire (6 integration tests).

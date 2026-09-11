@@ -102,6 +102,25 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
 
+  # karst-proto's `no_std` claim (issue #129), kept honest by actually
+  # building it that way instead of trusting that nothing std-only creeps
+  # back in. `x86_64-unknown-none` has no std at all, so a `check`/`clippy`
+  # pass here only succeeds if the crate really only reaches `core`/`alloc`.
+  # This builds the library alone (`--no-default-features` turns off the
+  # crate's own `std` feature) — it does not run the test suite, which
+  # needs the `std`-enabled default build the `rust` job above already
+  # covers; that is where the codec, reassembly and DoS regression
+  # coverage this item asks to preserve actually runs.
+  no-std:
+    name: karst-proto no_std
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy, targets: x86_64-unknown-none }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p karst-proto --no-default-features --target x86_64-unknown-none --lib -- -D warnings
+
   # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
   # Wintun adapter/session/IP-Helper code in karst-tun, karst-ipc's named
   # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport),

@@ -11,6 +11,14 @@ authors.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["std"]
+# No `std`-only code exists in this crate today (see lib.rs's `no_std`
+# note) — the feature exists so downstream `no_std` builds can opt out of
+# it explicitly (`--no-default-features`) rather than relying on that
+# staying true by accident.
+std = []
+
 [dependencies]
 # CookieReply's `enc_cookie` (§6.3, §9.3). Reached directly rather than through
 # karst-crypto's suite-selected `Algorithm`: cookie encryption is deliberately

@@ -2,6 +2,7 @@
 // Copyright the Karst contributors.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "std"), no_std)]
 //! `PHREATIC` v1 wire formats, fragmentation and codec.
 //!
 //! Implements `spec/phreatic-v1.md` §5–§6. This crate is **sans-io**: it turns
@@ -12,6 +13,21 @@
 //! attacker-controlled bytes before anything is verified — so it is written to
 //! be panic-free: no indexing, no slicing, no `unwrap`. Bounds are discharged
 //! once by `first_chunk`, and the fixed-size array is then destructured.
+//!
+//! # `no_std`
+//!
+//! This crate needs only `alloc` — `Vec` for [`fragment`]'s output and the
+//! reassembler's slot table, nothing that needs an allocator-free bound. The
+//! `std` feature is on by default; a caller with its own allocator builds
+//! with `--no-default-features` instead. There is no behavioral difference
+//! between the two builds — `std` exists only so the ordinary `cargo build`
+//! path doesn't force every downstream crate to declare an allocator, and CI
+//! (`ci.yml`'s `no-std` job) builds `--no-default-features` against a bare
+//! target to keep that claim honest.
+
+extern crate alloc;
+
+use alloc::vec::Vec;
 
 pub mod dos;
 pub mod reassembly;

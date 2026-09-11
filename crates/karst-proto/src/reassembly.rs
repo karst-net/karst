@@ -21,6 +21,9 @@
 //! validated it (§9.2) before calling [`Reassembler::push`], and must pass
 //! `addr_validated` honestly. Getting that wrong defeats the cookie mechanism.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::{consts, FragmentHeader};
 
 /// Opaque source identity — 16 bytes of address plus 2 of port, caller-encoded.
