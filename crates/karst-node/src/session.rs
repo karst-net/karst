@@ -309,7 +309,11 @@ impl Session {
             index,
             state: State::Idle,
             attempt: 0,
-            reasm: Reassembler::new(ReasmConfig::default()),
+            // Not `ReasmConfig::default()` — that's sized for the whole-node
+            // pre-authentication reassembler (§9.1). This one only ever sees
+            // fragments from the single peer this session already handshaked
+            // with (GitHub issue #139).
+            reasm: Reassembler::new(ReasmConfig::per_session()),
             out_mac_key,
             in_mac_key,
             reassembly_id: 0,

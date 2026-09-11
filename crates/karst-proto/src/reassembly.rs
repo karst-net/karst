@@ -62,6 +62,30 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Sizing for one already-authenticated peer's own post-handshake
+    /// reassembler, as opposed to [`Config::default`]'s whole-node,
+    /// pre-authentication flood budget.
+    ///
+    /// A session only ever reassembles fragments from the one peer it
+    /// already handshaked with (GitHub issue #139) — it needs to bound a
+    /// handful of that peer's own concurrent in-flight large messages, not
+    /// defend against hundreds of distinct unauthenticated sources sharing
+    /// one table. `load_threshold` is set but never consulted on this path:
+    /// a session always passes `addr_validated = true` to [`Reassembler::push`]
+    /// (it only ever talks to a peer it already initiated toward), so the
+    /// value here exists only to stay meaningful if that ever changes.
+    #[must_use]
+    pub fn per_session() -> Self {
+        Self {
+            max_entries: 8,
+            max_per_source: 4,
+            timeout_ms: 3_000,
+            load_threshold: 8,
+        }
+    }
+}
+
 /// Outcome of offering a fragment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accept<'a> {
@@ -379,6 +403,39 @@ mod tests {
             r.push(SRC_A, true, &hdr(9, 0, 2), &full(), 0),
             Accept::Complete(_)
         ));
+    }
+
+    // ── per-session sizing (GitHub issue #139) ──────────────────────────────
+
+    /// A single peer's own fragmented messages still reassemble correctly
+    /// under the much smaller per-session budget — the memory win below
+    /// isn't free if it also breaks the one source it has to serve.
+    #[test]
+    fn per_session_config_still_reassembles_one_peers_traffic() {
+        let mut r = Reassembler::new(Config::per_session());
+        assert_eq!(
+            r.push(SRC_A, true, &hdr(1, 0, 2), &full(), 0),
+            Accept::Buffered
+        );
+        let tail = vec![0xCD; 100];
+        match r.push(SRC_A, true, &hdr(1, 1, 2), &tail, 0) {
+            Accept::Complete(m) => assert_eq!(m.len(), consts::FRAGMENT_PAYLOAD_MAX + 100),
+            other => panic!("expected Complete, got {other:?}"),
+        }
+    }
+
+    /// Locks in the memory win issue #139 is about: `Session::new` used to
+    /// allocate `Config::default()`'s 256-entry, whole-node flood budget for
+    /// every configured peer regardless of handshake status, at ≈1.18 MB
+    /// each. `per_session` must stay a small fraction of that.
+    #[test]
+    fn per_session_config_is_far_smaller_than_the_default_flood_budget() {
+        let per_session = Reassembler::new(Config::per_session()).memory_bytes();
+        let default = Reassembler::new(Config::default()).memory_bytes();
+        assert!(
+            per_session * 10 < default,
+            "per_session ({per_session} B) is not far smaller than default ({default} B)"
+        );
     }
 
     // ── the DoS properties ──────────────────────────────────────────────────
