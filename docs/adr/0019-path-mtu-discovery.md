@@ -151,27 +151,34 @@ Add **RFC 4821-style Packetization-Layer PMTU Discovery** to `karst-disco`
 - Pre-validating a challenger path before promotion is left undone (see
   Alternatives rejected); a path that looked good on RTT alone can still be
   promoted and then demoted a few seconds later once its search converges.
-- **§8.4's demotion is inert in the shipped daemon today, and this is a
-  pre-existing gap rather than one this change introduces.** `PathSet::
-  set_relay` — the call that gives AVEN's own selection a relay `Path` to
-  demote a black hole *behind* — is never invoked anywhere in `bins/karstd`;
-  `Engine::via` (`bins/karstd/src/engine.rs`) decides direct-versus-relay on
-  its own, independently, from whether a direct endpoint is installed at all,
-  never by asking `PathSet` to rank one against a relay. So §8 rule 2's
-  existing "direct beats relay, always" is *also* not exercised by
-  `PathSet`'s own comparison in production — `via`'s `if let Some(addr) =
-  self.endpoint(peer)` branch already gets that answer for free, unconditionally,
-  before a relay is ever considered. §8.4 is built to the same contract rule 2
-  already has, verified the same way (unit tests inside `karst-disco`), and is
-  ready the moment something calls `set_relay` with a measured relay path —
-  it is not blocked on anything this ADR left undone, only on integration work
-  nobody has done yet for rule 2 either. Until then, a confirmed black hole
-  updates `Path.mtu` (visible to anything that reads `PathSet` directly) but
-  does not change which address `karstd`'s datapath actually sends to, and is
-  not yet surfaced in `karst status`'s `PeerStatus` — wiring either requires
-  bridging `Disco` and `Engine`, which are deliberately separate, independently
-  locked components (`bins/karstd/src/disco.rs`'s own module doc: AVEN "sits
-  *in front* of the PHREATIC engine rather than inside it").
+- ~~**§8.4's demotion is inert in the shipped daemon today.**~~ **Resolved.**
+  `Engine::via` (`bins/karstd/src/engine.rs`) still decides direct-versus-relay
+  the same way it always has — from whether a direct endpoint is installed,
+  never by asking `PathSet` to rank one against a relay directly — so this is
+  bridged rather than replaced: `Disco::set_relay_latency`/`clear_relay` feed
+  every peer's `PathSet` a relay `Path` from this node's held-relay RTT
+  (`home::Selector`, sampled once per tick from `run.rs`), and `path_changes`
+  (`bins/karstd/src/disco.rs`) now checks `PathSet::chosen_kind()`: a
+  direct-kind choice installs exactly as before, but a **relay-kind** choice —
+  §8.4 having demoted a confirmed black hole — withdraws the direct install
+  instead of installing the relay's bookkeeping address, and `via`'s existing,
+  unmodified relay/TURN fallback takes it from there. `PathSet`'s own
+  comparison is still not what `via` consults for the ordinary rule-2 case;
+  only the black-hole exception is bridged.
+- **Still not surfaced in `karst status`'s `PeerStatus`.** A confirmed black
+  hole updates `Path::mtu` and now affects real routing, but nothing yet
+  reads that state back out for diagnostics — an operator can infer it only
+  indirectly (traffic moving over the relay despite a direct endpoint
+  existing). Bridging `Disco` and `Engine` for status reporting remains
+  future work; routing did not require it because `path_changes`'s existing
+  `Install`/`Release` boundary was the narrower, sufficient integration point.
+- The relay latency fed to every peer's `PathSet` is this node's own held
+  relay only (`home::Selector::chosen_latency_ms`), applied uniformly. A
+  peer's separately published home relay (`via_relay`'s `refused` fallback,
+  reached only after this node's own relay has said it cannot reach that
+  peer) is not modeled — §8.4's decision does not depend on the relay's
+  latency value (`group()` alone decides it), only on a relay `Path` existing
+  at all, so this is a real simplification but not presently an accuracy gap.
 
 ### Reconsider if
 
@@ -180,7 +187,5 @@ Add **RFC 4821-style Packetization-Layer PMTU Discovery** to `karst-disco`
   ICMP accelerant becomes worth the second mechanism's cost.
 - Multi-TURN-server or per-peer-relay deployments make pre-validating a
   challenger's MTU before promotion worth its probe-traffic cost.
-- Someone wires a measured relay path into `PathSet::set_relay` (for §8 rule 2
-  generally, not specific to this ADR) or bridges `Disco` and `Engine` for
-  `karst status` — at which point §8.4's demotion starts affecting real
-  datapath routing and diagnostics with no further change needed here.
+- Someone bridges `Disco` and `Engine` for `karst status`, at which point
+  §8.4's demotion becomes diagnosable as well as effective.

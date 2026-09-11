@@ -609,6 +609,30 @@ impl PathSet {
         self.chosen
     }
 
+    /// The kind of path currently in use, if any.
+    ///
+    /// Lets a caller tell "a real direct address, install it" apart from
+    /// "the relay — because §8.4 demoted a confirmed black hole" without
+    /// re-deriving `best()`'s own logic. A relay's `addr` (`set_relay`) is a
+    /// bookkeeping key for ranking, not a socket a caller may send to — this
+    /// is what a caller checks before deciding whether `chosen()`'s address
+    /// is one of those.
+    #[must_use]
+    pub fn chosen_kind(&self) -> Option<PathKind> {
+        let addr = self.chosen?;
+        self.paths.iter().find(|p| p.addr == addr).map(|p| p.kind)
+    }
+
+    /// Forget the relay path entirely — no relay is currently connected.
+    ///
+    /// The withdrawal half of [`Self::set_relay`]. Without this, a relay that
+    /// disconnects would leave a stale `Path` behind: §8.4 would go on
+    /// ranking a confirmed black hole below a relay that can no longer carry
+    /// anything, which is worse than the black hole alone.
+    pub fn clear_relay(&mut self) {
+        self.paths.retain(|p| p.kind != PathKind::Relay);
+    }
+
     /// Re-evaluate which path to use — §8.
     ///
     /// Call after every measurement. Returns what happened, so a caller can
@@ -1279,6 +1303,43 @@ mod tests {
         confirm(&mut s, 1, v4(7), 0, 10);
         run_search(&mut s, v4(7), 1_300);
         assert_eq!(s.select(1), Selection::Chose(v4(7)));
+    }
+
+    #[test]
+    fn chosen_kind_tells_a_relay_apart_from_a_real_direct_address() {
+        // What `bins/karstd`'s `path_changes` relies on to avoid installing
+        // a relay's bookkeeping address as if it were a socket to send to.
+        let mut s = PathSet::new();
+        assert_eq!(s.chosen_kind(), None, "nothing chosen yet");
+
+        confirm(&mut s, 1, v4(7), 0, 10);
+        assert_eq!(s.select(1), Selection::Chose(v4(7)));
+        assert_eq!(s.chosen_kind(), Some(PathKind::DirectV4));
+
+        run_search(&mut s, v4(7), 1_300);
+        s.set_relay(v4(200), 200, 2);
+        assert_eq!(s.select(3), Selection::Switched(v4(200)));
+        assert_eq!(s.chosen_kind(), Some(PathKind::Relay));
+    }
+
+    #[test]
+    fn clear_relay_drops_the_demotion_along_with_the_relay() {
+        // A relay that disconnects must not go on outranking a confirmed
+        // black hole it can no longer actually carry anything for.
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 0, 10);
+        run_search(&mut s, v4(7), 1_300);
+        assert_eq!(s.select(1), Selection::Chose(v4(7)));
+        s.set_relay(v4(200), 200, 2);
+        assert_eq!(s.select(3), Selection::Switched(v4(200)));
+
+        s.clear_relay();
+        assert_eq!(
+            s.select(4),
+            Selection::Switched(v4(7)),
+            "with no relay left to rank against, the black hole is the only path again"
+        );
+        assert_eq!(s.chosen_kind(), Some(PathKind::DirectV4));
     }
 
     #[test]

@@ -36,8 +36,22 @@ use std::net::SocketAddr;
 use karst_disco::consts::{MAGIC, TAG_LEN};
 use karst_disco::key::PeerIndex;
 use karst_disco::msg::{self, Endpoint, Message, TxId};
-use karst_disco::path::PongOutcome;
+use karst_disco::path::{PathKind, PongOutcome};
 use karst_disco::{DiscoKey, Engine, TagTable};
+
+/// The address `PathSet::set_relay` is called with for every peer.
+///
+/// A relay path has no socket address in this daemon at all — `via_relay`
+/// (`bins/karstd/src/engine.rs`) dispatches over the existing Ponor
+/// connection, addressed by relay node id, never by `SocketAddr`. `PathSet`
+/// still models a relay as a `Path` with an `addr` field, purely so §8's
+/// ranking has something to compare against §7.9's confirmed-black-hole
+/// direct paths — this is that bookkeeping key, unspecified on purpose so it
+/// can never be mistaken for a real candidate. `path_changes` never installs
+/// it (see [`PathChange::Install`]'s doc): a chosen relay withdraws the
+/// direct install instead, and `via` finds its own way from there.
+const RELAY_PATH_ADDR: SocketAddr =
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
 
 /// What to do with an arriving datagram.
 #[derive(Debug, PartialEq, Eq)]
@@ -160,14 +174,21 @@ pub struct Outbound {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathChange {
     /// A direct path was confirmed. Install it.
+    ///
+    /// Never issued for the relay: `path_changes` only ever installs a
+    /// direct-kind chosen path (`PathSet::chosen_kind`). A relay's `addr`
+    /// (`RELAY_PATH_ADDR`) is a ranking bookkeeping key, not a socket to send
+    /// datapath traffic to — see that constant's doc.
     Install {
         /// Roster index of the peer.
         peer: usize,
         /// The confirmed endpoint.
         endpoint: SocketAddr,
     },
-    /// Discovery has given up on every path to this peer. Withdraw the one the
-    /// datapath holds, so it falls back to the relay.
+    /// Discovery has given up on every path to this peer, **or** §7.9 has
+    /// confirmed the installed direct path a black hole and a relay `PathSet`
+    /// now knows about outranks it (§8.4). Withdraw the one the datapath
+    /// holds, so `Engine::via` falls back to the relay by its own logic.
     ///
     /// Carries what was installed because the datapath must not clobber an
     /// endpoint some other writer has since put there — see
@@ -562,6 +583,35 @@ impl Disco {
         }
     }
 
+    /// Tell every peer's path selection that this node's relay connection is
+    /// up, with `latency_ms` its most recently measured round trip —
+    /// §8.4 needs a relay `Path` to rank a confirmed black hole against.
+    ///
+    /// Applied uniformly to every peer via one shared bookkeeping address
+    /// (`RELAY_PATH_ADDR`, never a real send target — see [`PathChange`]'s
+    /// doc on why `path_changes` never installs it). This models the common
+    /// case only: `via_relay` (`bins/karstd/src/engine.rs`) tries this node's
+    /// own held relay first for every peer, and only falls back to a peer's
+    /// separately published home relay once that relay has said it cannot
+    /// reach them (`refused`). That edge is not distinguished here — ADR-0019.
+    pub fn set_relay_latency(&mut self, latency_ms: u64, now_ms: u64) {
+        for peer in &mut self.peers {
+            let paths = peer.engine.paths_mut();
+            paths.set_relay(RELAY_PATH_ADDR, latency_ms, now_ms);
+            let _ = paths.select(now_ms);
+        }
+    }
+
+    /// The withdrawal half of [`Self::set_relay_latency`] — no relay is
+    /// currently connected at all.
+    pub fn clear_relay(&mut self, now_ms: u64) {
+        for peer in &mut self.peers {
+            let paths = peer.engine.paths_mut();
+            paths.clear_relay();
+            let _ = paths.select(now_ms);
+        }
+    }
+
     /// Withdraw every endpoint this node installed, against the roster they
     /// were installed on.
     ///
@@ -782,18 +832,11 @@ impl Disco {
                 // A converged answer can change which path §8.4 prefers — a
                 // direct path just confirmed a black hole ranks behind a
                 // relay `PathSet` knows about, from this measurement on.
-                //
-                // **No caller here ever gives `PathSet` a relay to rank
-                // against** (`PathSet::set_relay` has no call site in
-                // `bins/karstd`, and neither does §8 rule 2's ordinary
-                // direct-vs-relay comparison — `Engine::via` in
-                // `engine.rs` decides that independently, from whether a
-                // direct endpoint is installed at all). So today this
-                // updates `Path::mtu` and `PathSet::select`'s internal
-                // state correctly, and — per §8.4 with no relay known —
-                // correctly leaves `chosen` right where it was; it does not
-                // yet change what the datapath sends to. See ADR-0019's
-                // Negative/Reconsider-if sections.
+                // `Self::set_relay_latency`/`clear_relay` are what keep that
+                // relay entry current (called from `run.rs`'s tick, fed by
+                // `home::Selector`); `path_changes` is what turns a resulting
+                // `chosen_kind() == Relay` into withdrawing the direct
+                // install so `Engine::via` finds its own way to the relay.
                 let _ = peer.engine.paths_mut().select(now_ms);
             }
             // Unreachable: `header.is_reflect()` returned above for exactly
@@ -1044,12 +1087,23 @@ impl Disco {
     pub fn path_changes(&mut self) -> Vec<PathChange> {
         let mut out = Vec::new();
         for peer in &mut self.peers {
-            let chosen = peer.engine.paths().chosen();
-            if chosen == peer.installed {
+            let paths = peer.engine.paths();
+            // §8.4: a chosen path that is the *relay* is never installable —
+            // its `addr` is a bookkeeping key for ranking (`PathSet::set_relay`),
+            // not a socket this daemon may send raw datapath traffic to.
+            // `Engine::via` (bins/karstd/src/engine.rs) already has its own,
+            // separate, correct relay dispatch (Ponor, addressed by node id);
+            // withdrawing the direct install below is what hands control back
+            // to it, the same as when discovery has no confirmed path at all.
+            let installable = match paths.chosen_kind() {
+                Some(kind) if kind.is_direct() => paths.chosen(),
+                _ => None,
+            };
+            if installable == peer.installed {
                 continue;
             }
-            match (peer.installed, chosen) {
-                // A confirmed path, where there was none or a different one.
+            match (peer.installed, installable) {
+                // A confirmed direct path, where there was none or a different one.
                 (_, Some(endpoint)) => {
                     peer.installed = Some(endpoint);
                     out.push(PathChange::Install {
@@ -1057,12 +1111,17 @@ impl Disco {
                         endpoint,
                     });
                 }
-                // **Only once discovery has actually given up.** Before that,
-                // "nothing chosen" means "not confirmed yet" — which is the
-                // state every peer is in for the second of probing that follows
-                // every roster change, and withdrawing there would drop a
-                // working endpoint onto the relay each time the netmap moved.
-                (Some(installed), None) if peer.engine.exhausted() => {
+                // Withdraw for either of two reasons: discovery has given up
+                // on every path (the original rule — before that, "nothing
+                // chosen" just means "not confirmed yet", the state every
+                // peer is in for the second of probing that follows every
+                // roster change, and withdrawing there would drop a working
+                // endpoint onto the relay each time the netmap moved), or
+                // §7.9 has confirmed the installed direct path a black hole
+                // and a relay `PathSet` knows about now ranks ahead of it.
+                (Some(installed), None)
+                    if peer.engine.exhausted() || paths.chosen_kind() == Some(PathKind::Relay) =>
+                {
                     peer.installed = None;
                     out.push(PathChange::Release {
                         peer: peer.route_index,
@@ -1511,6 +1570,104 @@ mod tests {
             panic!("the probe was not handled");
         };
         assert!(second.is_empty(), "a replayed probe drew a second ack");
+    }
+
+    /// §8.4 end to end, the integration gap ADR-0019 originally left open:
+    /// once a direct path is confirmed a black hole *and* a relay is known,
+    /// `path_changes` must withdraw the install so `Engine::via` falls back
+    /// to its own relay dispatch — never install the relay's bookkeeping
+    /// address as if it were a socket to send to.
+    #[test]
+    fn a_confirmed_black_hole_is_withdrawn_once_a_relay_is_known() {
+        use karst_disco::consts::TX_TIMEOUT_MS;
+
+        let (mut d, key) = with_confirmed_path(None);
+        assert_eq!(
+            d.path_changes(),
+            vec![PathChange::Install {
+                peer: 0,
+                endpoint: addr(9),
+            }]
+        );
+
+        // Drive §7.9's search to a confirmed black hole by never acking an
+        // `MtuProbe` — every candidate size is confirmed lost and the search
+        // resolves at `MTU_FLOOR`. Answering every `Ping` along the way is
+        // not optional: real convergence takes several times
+        // `TX_TIMEOUT_MS`, and only `Engine::poll`'s own §7.5 keepalive
+        // (every `KEEPALIVE_MS`, well under `PATH_STALE_MS`) is what keeps
+        // the path itself from going stale while that plays out — the same
+        // thing that happens in a real daemon.
+        let mut counter: u32 = 0;
+        let mut mint = move || {
+            counter += 1;
+            let mut bytes = [0u8; 12];
+            bytes[..4].copy_from_slice(&counter.to_be_bytes());
+            TxId(bytes)
+        };
+        let mut t: u64 = 10;
+        loop {
+            let out = d.poll(t, &mut mint);
+            for (bytes, to) in &out.datagrams {
+                if let Ok(Message::Ping { tx }) = msg::open(bytes, &key) {
+                    let pong = from_peer(
+                        &key,
+                        &Message::Pong {
+                            tx,
+                            observed: Endpoint(*to),
+                        },
+                        7,
+                    );
+                    assert!(matches!(d.inbound(&pong, addr(9), t), Verdict::Handled(_)));
+                }
+                // An `MtuProbe` is deliberately left unanswered.
+            }
+            let mtu = d
+                .engine_mut(PeerIndex(0))
+                .expect("peer")
+                .paths()
+                .paths()
+                .iter()
+                .find(|p| p.addr == addr(9))
+                .expect("path")
+                .mtu;
+            if matches!(mtu, karst_disco::path::Mtu::Confirmed { .. }) {
+                break;
+            }
+            t += TX_TIMEOUT_MS + 1;
+            assert!(t < 600_000, "the search did not converge in time");
+        }
+        assert!(
+            d.path_changes().is_empty(),
+            "nothing changed without a relay"
+        );
+
+        // Now a relay becomes known, the way `sync_relay_latency` (run.rs)
+        // reports this node's held relay every tick.
+        d.set_relay_latency(50, t + 1);
+        assert_eq!(
+            d.path_changes(),
+            vec![PathChange::Release {
+                peer: 0,
+                installed: addr(9),
+            }],
+            "a confirmed black hole must be withdrawn, not left installed, \
+             once a relay outranks it"
+        );
+
+        // And the reverse: with the relay gone, a confirmed black hole with
+        // nothing else to use is still strictly better than no path at all
+        // (ADR-0019: "demotion is relative to a relay that exists") — so it
+        // is reinstalled rather than left withdrawn.
+        d.clear_relay(t + 2);
+        assert_eq!(
+            d.path_changes(),
+            vec![PathChange::Install {
+                peer: 0,
+                endpoint: addr(9),
+            }],
+            "no relay left to rank against — the black hole is the only path again"
+        );
     }
 
     /// **The case the datapath had no way to hear about.** `PathSet::select`
