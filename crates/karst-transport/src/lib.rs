@@ -196,6 +196,45 @@ impl UdpTransport {
         })
     }
 
+    /// Bind with `SO_REUSEPORT` set, so more than one socket can share this
+    /// port and the kernel splits inbound datagrams across them —
+    /// karst-net/karst#118's multi-reader receive scaling, the transport half
+    /// of it (a multi-queue TUN device is the other, in `karst-tun`).
+    ///
+    /// **Linux only.** `SO_REUSEPORT` exists on BSD-derived platforms too, but
+    /// without the load-balancing behavior this depends on; Windows has
+    /// nothing comparable. A caller wanting more than one reader elsewhere has
+    /// to shard some other way — or not shard at all, which is exactly what a
+    /// single [`UdpTransport::bind`] already does correctly, just on one
+    /// thread.
+    ///
+    /// # Errors
+    /// Any `socket`, `setsockopt` or `bind` failure.
+    #[cfg(target_os = "linux")]
+    pub fn bind_reuseport(addr: SocketAddr) -> io::Result<Self> {
+        Self::bind_reuseport_via_nat64(addr, None)
+    }
+
+    /// [`Self::bind_reuseport`] on a NAT64 network — see [`Self::bind_via_nat64`]
+    /// for what that changes and why it is fixed for the socket's life.
+    ///
+    /// # Errors
+    /// Any `socket`, `setsockopt` or `bind` failure.
+    #[cfg(target_os = "linux")]
+    pub fn bind_reuseport_via_nat64(
+        addr: SocketAddr,
+        prefix: Option<Nat64Prefix>,
+    ) -> io::Result<Self> {
+        let socket = sys::bind_reuseport(addr)?;
+        let ipv4_only = socket.local_addr().map_or(addr.is_ipv4(), |a| a.is_ipv4());
+        Ok(Self {
+            socket,
+            nat64: prefix,
+            ipv4_only,
+            unreachable: AtomicU64::new(0),
+        })
+    }
+
     /// Whether this socket is `AF_INET`, and so can never send to an IPv6
     /// address.
     #[must_use]
