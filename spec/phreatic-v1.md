@@ -784,10 +784,21 @@ messages, which still fit the minimum MTU.
 The cost is real and is accepted here: a path with an MTU below 1384 will
 black-hole full-size data packets while handshakes still succeed, which
 presents as a working tunnel that stalls on large transfers. This is the classic
-MTU black hole, and it is the same exposure Tailscale and WireGuard carry. Path
-MTU discovery (PLAN.md Phase 6) is the fix; until then the tunnel MTU MUST be
-operator-configurable, and the value MUST be reported by `karst status` so the
-failure is diagnosable rather than mysterious.
+MTU black hole, and it is the same exposure Tailscale and WireGuard carry. The
+tunnel MTU MUST be operator-configurable, and the value MUST be reported by
+`karst status` so the failure is diagnosable rather than mysterious.
+
+**Path MTU discovery (GitHub issue #121, ADR-0019) neither changes nor lowers
+any constant on this page.** `TUNNEL_MTU`, `TRANSPORT_DATAGRAM_MAX`,
+`HANDSHAKE_DATAGRAM_MAX` and the §9 reassembly budget are exactly as this
+section leaves them — there is still nothing smaller to fall back to for real
+traffic, and transport messages still never fragment. What it adds lives
+entirely in `aven-v1.md` §7.9/§8.4: an RFC 4821-style probe, carried as a new
+AVEN message pair rather than a PHREATIC one, that finds out *whether* a given
+direct path actually delivers `TRANSPORT_DATAGRAM_MAX` bytes and demotes path
+**selection** below the relay when it confirms one that does not. A black hole
+is discovered and routed around; it is not shrunk, because — per this section
+— it cannot be.
 
 ### 13.7 The fragment MAC is keyed by the *recipient*, not by the responder
 

@@ -24,7 +24,7 @@ pub use msg::{Endpoint, Message, TxId};
 pub use path::{margin, PathKind, PathSet, Selection};
 
 pub mod consts {
-    //! Normative constants — `spec/aven-v1.md` §6 and §7.5.
+    //! Normative constants — `spec/aven-v1.md` §6, §7.5 and §7.9.
 
     /// Discriminates AVEN from PHREATIC on a shared socket — §4.
     ///
@@ -106,6 +106,43 @@ pub mod consts {
     /// Reflect key — §5.3. Same width as a disco key; a different secret.
     pub const REFLECT_KEY_LEN: usize = KEY_LEN;
 
+    /// `MtuProbeAck` on the wire — §7.9.1. Deliberately unpadded: unlike
+    /// `Reflect`/`Reflection`, only the tested peer holds the key needed to
+    /// produce either message, so there is no third party to amplify against
+    /// and the reply is free to be smaller than the request it answers.
+    pub const MTU_PROBE_ACK_LEN: usize = PING_LEN;
+
+    /// Bytes of `MtuProbe` besides its zero padding: header, `tx_id`, MAC.
+    pub const MTU_PROBE_OVERHEAD: usize = HEADER + TX_ID_LEN + MAC_LEN;
+
+    /// Floor of the MTU search — §7.9.3. The IPv6-minimum-MTU UDP payload
+    /// every path is guaranteed to deliver (RFC 8200 §5), shared verbatim with
+    /// `phreatic-v1.md`'s `HANDSHAKE_DATAGRAM_MAX` so the two specs cannot
+    /// silently disagree about what "guaranteed" means.
+    pub const MTU_FLOOR: usize = karst_proto::consts::HANDSHAKE_DATAGRAM_MAX;
+
+    /// Ceiling of the search — §7.9.3. The full-size transport datagram real
+    /// traffic needs, shared with `phreatic-v1.md`'s `TRANSPORT_DATAGRAM_MAX`
+    /// for the same reason. A path resolved here is fully datapath-capable; a
+    /// probe is never sent larger than this, because nothing sent over the
+    /// data plane ever is either.
+    pub const MTU_CEILING: usize = karst_proto::consts::TRANSPORT_DATAGRAM_MAX;
+
+    /// Largest legal `MtuProbe` datagram — exactly [`MTU_CEILING`], since
+    /// probing past what real traffic needs would test a size selection can
+    /// never use the answer for.
+    pub const MTU_PROBE_DATAGRAM_MAX: usize = MTU_CEILING;
+
+    /// Consecutive timeouts at one probe size before it is trusted as a loss
+    /// rather than ordinary packet drop — §7.9.3. RFC 4821's own guidance;
+    /// the requirement is "more than one", not this exact figure.
+    pub const MTU_LOSS_THRESHOLD: u32 = 3;
+
+    /// How long a resolved MTU search stands before being re-opened — §7.9.4.
+    /// Catches a black hole clearing and a working path regressing, on the
+    /// same clock rather than two.
+    pub const MTU_RECHECK_MS: u64 = 300_000;
+
     // §7.6's amplification argument, asserted rather than asserted-in-prose.
     // A reflector answers a datagram it did not solicit, so a reply larger than
     // its request is a contribution to somebody else's attack. `REFLECT_PAD_LEN`
@@ -117,10 +154,19 @@ pub mod consts {
 
     // Asserted at compile time. Discovery has to be cheap relative to what it
     // is discovering a path for, and it must never need fragmenting — AVEN has
-    // no reassembly layer and is not getting one.
+    // no reassembly layer and is not getting one. `MtuProbe` is the one
+    // deliberate exception (§7.9): its entire job is to be exactly as large as
+    // the transport datagram it tests, so it is bounded separately by
+    // `MTU_CEILING` rather than by `DATAGRAM_MAX`.
     const _: () = {
         assert!(PING_LEN < 64);
         assert!(DATAGRAM_MAX < 1232);
+        assert!(MTU_FLOOR < MTU_CEILING);
+        assert!(MTU_PROBE_OVERHEAD < MTU_FLOOR);
+        // §7.9.3: a threshold of exactly one would trust the very first
+        // timeout, which is indistinguishable from ordinary packet loss.
+        assert!(MTU_LOSS_THRESHOLD > 1);
+        assert!(MTU_PROBE_ACK_LEN == PING_LEN);
     };
 
     /// An outstanding `tx_id` expires after this — §7.1.
@@ -263,5 +309,17 @@ mod tests {
         assert_eq!(REFLECTION_LEN, 65);
         // The smallest CallMeMaybe, one candidate.
         assert_eq!(HEADER + 1 + ENDPOINT_LEN + MAC_LEN, 54);
+    }
+
+    #[test]
+    fn mtu_bounds_match_phreatic_v1s_datagram_budget() {
+        // spec/aven-v1.md §7.9.3, spec/phreatic-v1.md §13.6. Two specs naming
+        // the same numbers is a claim; this is what keeps the claim honest —
+        // a change to either spec's constants shows up here as a diff rather
+        // than as silent drift.
+        assert_eq!(MTU_FLOOR, 1232);
+        assert_eq!(MTU_CEILING, 1336);
+        assert_eq!(MTU_PROBE_DATAGRAM_MAX, MTU_CEILING);
+        assert_eq!(MTU_PROBE_ACK_LEN, 46);
     }
 }

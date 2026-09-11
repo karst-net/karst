@@ -21,7 +21,8 @@ use std::net::SocketAddr;
 
 use crate::consts::{
     ANSWERED_WINDOW, HYSTERESIS_MS, HYSTERESIS_PERCENT, HYSTERESIS_SAMPLES, MAX_OUTSTANDING,
-    MAX_PATHS_PER_PEER, PATH_STALE_MS, TX_TIMEOUT_MS,
+    MAX_PATHS_PER_PEER, MTU_CEILING, MTU_FLOOR, MTU_LOSS_THRESHOLD, MTU_RECHECK_MS, PATH_STALE_MS,
+    TX_TIMEOUT_MS,
 };
 use crate::msg::TxId;
 
@@ -75,6 +76,8 @@ pub struct Path {
     pub latency_ms: Option<u64>,
     /// When it last answered.
     pub last_pong_ms: Option<u64>,
+    /// What §7.9's MTU search knows about this path, if anything.
+    pub mtu: Mtu,
 }
 
 impl Path {
@@ -86,6 +89,35 @@ impl Path {
             Some(t) => now_ms.saturating_sub(t) <= PATH_STALE_MS,
             None => false,
         }
+    }
+}
+
+/// What §7.9's MTU search has established about a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mtu {
+    /// No search has converged for this path yet. §8.4: this ranks exactly
+    /// like a fully capable path — optimistic until disproven, not the
+    /// reverse — since a probe that has merely not yet succeeded is not
+    /// evidence of anything.
+    Unconfirmed,
+    /// The search converged: `size` is the largest datagram confirmed
+    /// delivered, measured at `at_ms`. A relay path's `mtu` is never anything
+    /// but `Unconfirmed` — it is never entered into the search at all (§8.4).
+    Confirmed {
+        /// The largest confirmed-delivered size, in UDP-payload bytes.
+        size: usize,
+        /// When this was last measured, so a stale confirmation can be
+        /// re-opened — §7.9.4.
+        at_ms: u64,
+    },
+}
+
+impl Mtu {
+    /// Whether this path is confirmed **not** to carry a full-size transport
+    /// datagram — the one state §8.4 demotes below the relay.
+    #[must_use]
+    pub fn is_confirmed_black_hole(self) -> bool {
+        matches!(self, Self::Confirmed { size, .. } if size < MTU_CEILING)
     }
 }
 
@@ -147,6 +179,85 @@ struct Outstanding {
     sent_ms: u64,
 }
 
+/// An `MtuProbe` sent and not yet acked or timed out.
+#[derive(Debug, Clone, Copy)]
+struct MtuOutstanding {
+    addr: SocketAddr,
+    size: usize,
+    sent_ms: u64,
+}
+
+/// RFC 4821-style bisection state for one address — §7.9.3. No ICMP anywhere
+/// in this type: it is driven entirely by [`PathSet::on_mtu_probe_ack`] and
+/// the timeout sweep in [`PathSet::expire`].
+#[derive(Debug, Clone, Copy)]
+struct Bisect {
+    /// Largest size confirmed delivered so far.
+    low: usize,
+    /// Smallest size confirmed lost, or `MTU_CEILING + 1` while the ceiling
+    /// itself is still unrefuted — the sentinel that makes the first probe
+    /// the optimistic one.
+    high: usize,
+    /// Consecutive timeouts at the size currently on probe. Reset on any
+    /// success. A single one MUST NOT narrow `high` — see [`MTU_LOSS_THRESHOLD`].
+    losses: u32,
+}
+
+impl Bisect {
+    /// A fresh search: nothing probed yet, ceiling unrefuted.
+    fn start() -> Self {
+        Self {
+            low: MTU_FLOOR,
+            high: MTU_CEILING + 1,
+            losses: 0,
+        }
+    }
+
+    /// The size to probe next, or `None` once the search has converged.
+    fn next_probe(&self) -> Option<usize> {
+        if self.high <= self.low + 1 {
+            return None;
+        }
+        if self.high == MTU_CEILING + 1 {
+            // The ceiling has never been refuted -- try it directly. Most
+            // paths carry it, so this is what converges the common case in
+            // one round trip instead of a full bisection.
+            Some(MTU_CEILING)
+        } else {
+            Some(self.low + (self.high - self.low) / 2)
+        }
+    }
+
+    /// A probe of `size` was acked.
+    fn on_success(&mut self, size: usize) {
+        if size > self.low {
+            self.low = size;
+        }
+        self.losses = 0;
+    }
+
+    /// A probe of `size` timed out. Returns whether that narrowed `high` —
+    /// only true once [`MTU_LOSS_THRESHOLD`] consecutive timeouts at this
+    /// exact size have been seen, so one dropped datagram is never mistaken
+    /// for a black hole.
+    fn on_timeout(&mut self, size: usize) -> bool {
+        self.losses = self.losses.saturating_add(1);
+        if self.losses < MTU_LOSS_THRESHOLD {
+            return false;
+        }
+        if size < self.high {
+            self.high = size;
+        }
+        self.losses = 0;
+        true
+    }
+
+    /// The converged answer, if the search has resolved.
+    fn resolved(&self) -> Option<usize> {
+        (self.high <= self.low + 1).then_some(self.low)
+    }
+}
+
 /// What a node knows about how to reach one peer.
 #[derive(Debug, Default)]
 pub struct PathSet {
@@ -155,6 +266,12 @@ pub struct PathSet {
     /// Transaction ids this node has already answered — §7.4. A bounded
     /// window, oldest evicted first.
     answered: VecDeque<TxId>,
+    /// §7.9's search state, one entry per address currently under discovery.
+    /// Removed once the search converges — [`Path::mtu`] is the resting
+    /// place for the answer, this is only the working state to get there.
+    mtu_search: HashMap<SocketAddr, Bisect>,
+    /// `MtuProbe`s sent and not yet acked or timed out.
+    mtu_outstanding: HashMap<TxId, MtuOutstanding>,
     chosen: Option<SocketAddr>,
     /// Consecutive measurements in which one challenger has beaten the chosen
     /// path by the hysteresis margin — §8.2.
@@ -192,6 +309,7 @@ impl PathSet {
             kind,
             latency_ms: None,
             last_pong_ms: None,
+            mtu: Mtu::Unconfirmed,
         });
         Admission::Added { evicted }
     }
@@ -260,10 +378,10 @@ impl PathSet {
         Ok(())
     }
 
-    /// Decide whether to answer an authenticated `Ping` — §7.4.
+    /// Decide whether to answer an authenticated probe — §7.4.
     ///
     /// Returns `false` for a transaction id already answered inside the
-    /// window, in which case the caller MUST NOT emit a `Pong`.
+    /// window, in which case the caller MUST NOT emit a reply.
     ///
     /// This exists because `ProVerif` said so. Draft 0.1 of the specification
     /// had no such rule, on the reasoning that a `Ping` is authenticated and so
@@ -277,7 +395,12 @@ impl PathSet {
     /// The window is bounded, so this is "at most once within the window". An
     /// unbounded cache would be a memory-exhaustion vector reachable by the
     /// same replay it exists to stop.
-    pub fn on_ping_received(&mut self, tx: TxId) -> bool {
+    ///
+    /// **Shared between `Ping` and `MtuProbe`** (§7.9.2), rather than one
+    /// window each: the property being enforced — "this authenticated
+    /// transaction id was answered once" — does not depend on which message
+    /// carried it, and a `tx_id` is drawn from one CSPRNG regardless of type.
+    pub fn on_probe_received(&mut self, tx: TxId) -> bool {
         if self.answered.contains(&tx) {
             return false;
         }
@@ -314,6 +437,7 @@ impl PathSet {
                 kind: PathKind::direct_for(sent.addr),
                 latency_ms: Some(rtt_ms),
                 last_pong_ms: Some(now_ms),
+                mtu: Mtu::Unconfirmed,
             });
         }
 
@@ -337,12 +461,134 @@ impl PathSet {
             kind: PathKind::Relay,
             latency_ms: Some(latency_ms),
             last_pong_ms: Some(now_ms),
+            mtu: Mtu::Unconfirmed,
         });
     }
 
     fn expire(&mut self, now_ms: u64) {
         self.outstanding
             .retain(|_, o| now_ms.saturating_sub(o.sent_ms) <= TX_TIMEOUT_MS);
+
+        // §7.9.3: an unacked `MtuProbe` past the ordinary timeout is a
+        // *candidate* loss, not a confirmed one -- `Bisect::on_timeout`'s
+        // threshold is what tells the two apart.
+        let mut timed_out = Vec::new();
+        self.mtu_outstanding.retain(|_, o| {
+            let alive = now_ms.saturating_sub(o.sent_ms) <= TX_TIMEOUT_MS;
+            if !alive {
+                timed_out.push(*o);
+            }
+            alive
+        });
+        for o in timed_out {
+            let Some(search) = self.mtu_search.get_mut(&o.addr) else {
+                continue;
+            };
+            if search.on_timeout(o.size) {
+                self.sync_mtu_result(o.addr, now_ms);
+            }
+        }
+    }
+
+    /// Copy a converged search's answer onto the matching path and drop the
+    /// working state, now that it has a resting place — [`Path::mtu`].
+    fn sync_mtu_result(&mut self, addr: SocketAddr, now_ms: u64) {
+        let Some(size) = self.mtu_search.get(&addr).and_then(Bisect::resolved) else {
+            return;
+        };
+        self.mtu_search.remove(&addr);
+        if let Some(path) = self.paths.iter_mut().find(|p| p.addr == addr) {
+            path.mtu = Mtu::Confirmed {
+                size,
+                at_ms: now_ms,
+            };
+        }
+    }
+
+    /// Start §7.9's MTU search for `addr` if none is running and one is due:
+    /// no confirmation exists yet, or the last one is old enough to recheck
+    /// — §7.9.4. A no-op for an address this set does not know as a path.
+    pub fn ensure_mtu_search(&mut self, addr: SocketAddr, now_ms: u64) {
+        if self.mtu_search.contains_key(&addr) {
+            return;
+        }
+        let due = match self.paths.iter().find(|p| p.addr == addr).map(|p| p.mtu) {
+            None => false,
+            Some(Mtu::Unconfirmed) => true,
+            Some(Mtu::Confirmed { at_ms, .. }) => now_ms.saturating_sub(at_ms) >= MTU_RECHECK_MS,
+        };
+        if due {
+            self.mtu_search.insert(addr, Bisect::start());
+        }
+    }
+
+    /// The size to probe next for `addr`, if a search is running for it and
+    /// no probe is already outstanding — a caller MUST NOT have more than one
+    /// `MtuProbe` in flight per address at a time.
+    #[must_use]
+    pub fn next_mtu_probe(&self, addr: SocketAddr) -> Option<usize> {
+        if self.mtu_outstanding.values().any(|o| o.addr == addr) {
+            return None;
+        }
+        self.mtu_search.get(&addr)?.next_probe()
+    }
+
+    /// Record that an `MtuProbe` of `size` bytes bearing `tx` was sent to
+    /// `addr` — §7.9.3.
+    ///
+    /// # Errors
+    /// [`ProbeError::TooManyOutstanding`] once this peer's MTU-probe budget
+    /// is spent. Counted separately from ordinary `Ping`s (§7.1): this is
+    /// state a peer's behavior causes this node to allocate, the same
+    /// argument, applied to a second table.
+    pub fn on_mtu_probe_sent(
+        &mut self,
+        tx: TxId,
+        addr: SocketAddr,
+        size: usize,
+        now_ms: u64,
+    ) -> Result<(), ProbeError> {
+        self.expire(now_ms);
+        if self.mtu_outstanding.len() >= MAX_OUTSTANDING {
+            return Err(ProbeError::TooManyOutstanding);
+        }
+        self.mtu_outstanding.insert(
+            tx,
+            MtuOutstanding {
+                addr,
+                size,
+                sent_ms: now_ms,
+            },
+        );
+        Ok(())
+    }
+
+    /// Match an authenticated `MtuProbeAck` against an outstanding probe.
+    pub fn on_mtu_probe_ack(&mut self, tx: TxId, now_ms: u64) {
+        self.expire(now_ms);
+        let Some(o) = self.mtu_outstanding.remove(&tx) else {
+            return;
+        };
+        let Some(search) = self.mtu_search.get_mut(&o.addr) else {
+            return;
+        };
+        search.on_success(o.size);
+        self.sync_mtu_result(o.addr, now_ms);
+    }
+
+    /// Discard every path's MTU search state, back to fully unconfirmed and
+    /// optimistic.
+    ///
+    /// Called wherever ordinary probe state is reset for the same reason —
+    /// §7.5's rediscovery, a resumed host, a changed interface, a replaced
+    /// default route. Everything discovery measured through the old network
+    /// state may now be false, and MTU is no exception (§7.9.4).
+    pub fn reset_mtu(&mut self) {
+        self.mtu_search.clear();
+        self.mtu_outstanding.clear();
+        for path in &mut self.paths {
+            path.mtu = Mtu::Unconfirmed;
+        }
     }
 
     /// Probes awaiting an answer.
@@ -410,8 +656,13 @@ impl PathSet {
 
         // §8 rule 2 is exempt from hysteresis: a direct path that starts
         // working displaces a relay immediately, because causing exactly that
-        // transition is what the protocol is for.
-        if best.kind.is_direct() && !current.kind.is_direct() {
+        // transition is what the protocol is for. §8.4 is the same exemption
+        // read the other way: leaving a direct path §7.9 has *confirmed* a
+        // black hole is not two working paths trading places on a noisy
+        // measurement, so it is not gated behind hysteresis either. Both are
+        // exactly "the group improved" — `group` already encodes the
+        // black-hole demotion, so one comparison covers both cases.
+        if group(best) < group(current) {
             self.chosen = Some(best.addr);
             self.challenger = None;
             return Selection::Switched(best.addr);
@@ -472,7 +723,20 @@ fn score(p: Path) -> (u8, u64) {
     } else {
         latency
     };
-    (p.kind.group(), effective)
+    (group(p), effective)
+}
+
+/// §8's group, with §8.4's one exception folded in: a direct path §7.9 has
+/// **confirmed** a black hole for full-size traffic ranks behind the relay,
+/// not ahead of it. An unresolved search is not evidence of anything and
+/// keeps ranking exactly as `PathKind::group` says — a fresh direct path
+/// still displaces the relay immediately, unchanged from before this existed.
+fn group(p: Path) -> u8 {
+    if p.kind.is_direct() && p.mtu.is_confirmed_black_hole() {
+        2
+    } else {
+        p.kind.group()
+    }
 }
 
 /// Whether `challenger` beats `incumbent` by the §8.2 margin.
@@ -604,9 +868,9 @@ mod tests {
         // The reflector. A captured Ping replayed from anywhere must not
         // produce a second Pong.
         let mut s = PathSet::new();
-        assert!(s.on_ping_received(tx(1)));
-        assert!(!s.on_ping_received(tx(1)));
-        assert!(!s.on_ping_received(tx(1)));
+        assert!(s.on_probe_received(tx(1)));
+        assert!(!s.on_probe_received(tx(1)));
+        assert!(!s.on_probe_received(tx(1)));
     }
 
     #[test]
@@ -616,7 +880,7 @@ mod tests {
         // this reason.
         let mut s = PathSet::new();
         for i in 0..32 {
-            assert!(s.on_ping_received(tx(i)), "probe {i} was refused");
+            assert!(s.on_probe_received(tx(i)), "probe {i} was refused");
         }
     }
 
@@ -629,12 +893,12 @@ mod tests {
             let mut id = [0u8; 12];
             id[0] = (i & 0xff) as u8;
             id[1] = (i >> 8) as u8;
-            assert!(s.on_ping_received(TxId(id)));
+            assert!(s.on_probe_received(TxId(id)));
         }
         // The oldest have been evicted, so they would be answered again. That
         // is the stated limit of the guarantee — at most once *within the
         // window* — and it is a deliberate trade, not an oversight.
-        assert!(s.on_ping_received(TxId([0u8; 12])));
+        assert!(s.on_probe_received(TxId([0u8; 12])));
     }
 
     // ── §8, selection ─────────────────────────────────────────────────────
@@ -896,5 +1160,191 @@ mod tests {
         confirm(&mut s, 1, v4(7), 10_000, 10);
         assert!(s.paths()[0].is_usable(0));
         assert!(!s.paths()[0].is_usable(10_010 + PATH_STALE_MS + 1));
+    }
+
+    // ── §7.9, MTU discovery ─────────────────────────────────────────────────
+
+    /// Advance the clock without answering anything, so `expire` reaps
+    /// whatever has timed out — the same trick the ordinary-probe expiry test
+    /// uses, applied to the MTU table via a probe id nothing sent.
+    fn tick(s: &mut PathSet, at: u64) {
+        s.on_mtu_probe_ack(tx(255), at);
+    }
+
+    fn mtu(s: &PathSet, addr: SocketAddr) -> Mtu {
+        s.paths().iter().find(|p| p.addr == addr).expect("path").mtu
+    }
+
+    /// Run §7.9.3's search to convergence against an address whose real limit
+    /// is `true_limit` bytes — every probe at or below it acks, every one
+    /// above it times out (needing `MTU_LOSS_THRESHOLD` consecutive losses
+    /// before it counts, exactly as production traffic would see it: no
+    /// ICMP anywhere in this driver, only send/ack/timeout).
+    fn run_search(s: &mut PathSet, addr: SocketAddr, true_limit: usize) {
+        let mut t: u64 = 0;
+        let mut id: u8 = 1;
+        s.ensure_mtu_search(addr, t);
+        while let Some(size) = s.next_mtu_probe(addr) {
+            s.on_mtu_probe_sent(tx(id), addr, size, t)
+                .expect("room for a probe");
+            if size <= true_limit {
+                t += 1;
+                s.on_mtu_probe_ack(tx(id), t);
+            } else {
+                t += TX_TIMEOUT_MS + 1;
+                tick(s, t);
+            }
+            id = id.wrapping_add(1);
+            s.ensure_mtu_search(addr, t);
+        }
+    }
+
+    #[test]
+    fn a_full_size_probe_resolves_in_one_round_trip() {
+        // The optimistic case, and the common one: most paths carry the
+        // ceiling, so the first probe tried should be it, not the floor.
+        let mut s = PathSet::new();
+        s.add_candidate(v4(1), PathKind::DirectV4);
+        s.ensure_mtu_search(v4(1), 0);
+        assert_eq!(s.next_mtu_probe(v4(1)), Some(MTU_CEILING));
+        s.on_mtu_probe_sent(tx(1), v4(1), MTU_CEILING, 0)
+            .expect("room for a probe");
+        s.on_mtu_probe_ack(tx(1), 5);
+        assert_eq!(
+            mtu(&s, v4(1)),
+            Mtu::Confirmed {
+                size: MTU_CEILING,
+                at_ms: 5
+            }
+        );
+        assert!(!mtu(&s, v4(1)).is_confirmed_black_hole());
+        // Converged: nothing left to probe until §7.9.4 reopens it.
+        assert_eq!(s.next_mtu_probe(v4(1)), None);
+    }
+
+    #[test]
+    fn a_single_timeout_is_not_trusted_as_a_black_hole() {
+        // §7.9.3's whole reason to exist: one dropped datagram must not read
+        // as a confirmed black hole, or an ordinary lossy path would demote
+        // itself on the first bad packet.
+        let mut s = PathSet::new();
+        s.add_candidate(v4(1), PathKind::DirectV4);
+        s.ensure_mtu_search(v4(1), 0);
+        s.on_mtu_probe_sent(tx(1), v4(1), MTU_CEILING, 0)
+            .expect("room for a probe");
+        // `MTU_LOSS_THRESHOLD > 1` is asserted at compile time in `lib.rs`;
+        // this test would be vacuous without it.
+        tick(&mut s, TX_TIMEOUT_MS + 1);
+        assert_eq!(mtu(&s, v4(1)), Mtu::Unconfirmed);
+        // Still optimistic: the very next probe retries the same size.
+        assert_eq!(s.next_mtu_probe(v4(1)), Some(MTU_CEILING));
+    }
+
+    #[test]
+    fn bisection_converges_on_the_paths_true_limit() {
+        // No probe above 1300 bytes ever arrives on this path; the search
+        // must find that boundary using only send/ack/timeout.
+        let mut s = PathSet::new();
+        s.add_candidate(v4(1), PathKind::DirectV4);
+        run_search(&mut s, v4(1), 1_300);
+        let Mtu::Confirmed { size, .. } = mtu(&s, v4(1)) else {
+            panic!("search did not converge");
+        };
+        assert_eq!(size, 1_300);
+        assert!(mtu(&s, v4(1)).is_confirmed_black_hole());
+    }
+
+    #[test]
+    fn a_confirmed_black_hole_loses_to_a_slower_relay() {
+        // The inverse of `a_faster_relay_never_displaces_a_working_direct_path`:
+        // here the direct path is faster on latency and still loses, because
+        // §8.4 ranks a demonstrated defect over a hypothetical one.
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 0, 10);
+        run_search(&mut s, v4(7), 1_300);
+        assert_eq!(s.select(1), Selection::Chose(v4(7)));
+
+        s.set_relay(v4(200), 200, 2);
+        // No hysteresis wait: §8.4 says this transition is exempt, same as
+        // rule 2's relay-to-direct case.
+        assert_eq!(s.select(3), Selection::Switched(v4(200)));
+    }
+
+    #[test]
+    fn a_black_hole_with_no_relay_known_stays_the_only_path() {
+        // §8.4: demotion is relative to a relay that exists. Refusing a
+        // black-holed path outright, with nothing else to use, would be
+        // strictly worse than the partial capability it still has.
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 0, 10);
+        run_search(&mut s, v4(7), 1_300);
+        assert_eq!(s.select(1), Selection::Chose(v4(7)));
+    }
+
+    #[test]
+    fn an_unresolved_search_does_not_demote_a_fresh_direct_path() {
+        // A path with no *converged* answer yet ranks exactly as if nothing
+        // about MTU existed — optimistic until disproven, not the reverse.
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 0, 90);
+        s.ensure_mtu_search(v4(7), 1);
+        assert!(!mtu(&s, v4(7)).is_confirmed_black_hole());
+        s.set_relay(v4(200), 5, 2);
+        assert_eq!(
+            s.select(3),
+            Selection::Chose(v4(7)),
+            "an in-progress search must not itself demote the path"
+        );
+    }
+
+    #[test]
+    fn rediscovery_resets_every_paths_mtu_state() {
+        // §7.9.4: a route change may have invalidated everything measured
+        // through the old network state, MTU included.
+        let mut s = PathSet::new();
+        confirm(&mut s, 1, v4(7), 0, 10);
+        run_search(&mut s, v4(7), 1_300);
+        assert!(mtu(&s, v4(7)).is_confirmed_black_hole());
+
+        s.reset_mtu();
+        assert_eq!(mtu(&s, v4(7)), Mtu::Unconfirmed);
+        s.ensure_mtu_search(v4(7), 100_000);
+        assert_eq!(
+            s.next_mtu_probe(v4(7)),
+            Some(MTU_CEILING),
+            "search restarts optimistically rather than resuming where it left off"
+        );
+    }
+
+    #[test]
+    fn a_stale_confirmation_is_rechecked_after_the_recheck_interval() {
+        let mut s = PathSet::new();
+        s.add_candidate(v4(1), PathKind::DirectV4);
+        s.ensure_mtu_search(v4(1), 0);
+        s.on_mtu_probe_sent(tx(1), v4(1), MTU_CEILING, 0)
+            .expect("room for a probe");
+        s.on_mtu_probe_ack(tx(1), 0);
+        assert_eq!(
+            mtu(&s, v4(1)),
+            Mtu::Confirmed {
+                size: MTU_CEILING,
+                at_ms: 0
+            }
+        );
+
+        // Well within the recheck window: nothing new to probe.
+        s.ensure_mtu_search(v4(1), MTU_RECHECK_MS - 1);
+        assert_eq!(s.next_mtu_probe(v4(1)), None);
+
+        // Past it: the search reopens, optimistically, from scratch.
+        s.ensure_mtu_search(v4(1), MTU_RECHECK_MS);
+        assert_eq!(s.next_mtu_probe(v4(1)), Some(MTU_CEILING));
+    }
+
+    #[test]
+    fn mtu_search_is_not_run_for_an_address_this_set_does_not_know() {
+        let mut s = PathSet::new();
+        s.ensure_mtu_search(v4(1), 0);
+        assert_eq!(s.next_mtu_probe(v4(1)), None);
     }
 }

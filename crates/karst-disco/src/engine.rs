@@ -45,6 +45,18 @@ pub enum Action {
         /// Our candidates, capped by the caller's encoder.
         candidates: Vec<Endpoint>,
     },
+    /// Send an `MtuProbe` of `size` bytes bearing `tx` to `addr` — §7.9.
+    ///
+    /// Already recorded against the peer's outstanding MTU-probe set, so the
+    /// answering `MtuProbeAck` will resolve it.
+    ProbeMtu {
+        /// Where to send.
+        addr: SocketAddr,
+        /// The transaction id minted for it.
+        tx: TxId,
+        /// How large the caller must pad this datagram to.
+        size: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -248,6 +260,10 @@ impl Engine {
             self.advertise_pending = true;
             self.last_advertise_ms = None;
         }
+        // §7.9.4: everything discovery measured through the old network state
+        // may now be false, MTU included — back to fully unconfirmed and
+        // optimistic, the same treatment every other measurement here gets.
+        self.paths.reset_mtu();
     }
 
     /// Decide what to send now.
@@ -323,7 +339,33 @@ impl Engine {
             }
         }
 
+        // §7.9: MTU discovery runs only for the path actually carrying data,
+        // and only when it is direct — a relay is exempt entirely (§8.4), and
+        // probing every candidate's MTU would multiply probe traffic for
+        // paths that will never take a data packet.
+        if let Some(addr) = self.mtu_probe_target() {
+            self.paths.ensure_mtu_search(addr, now_ms);
+            if let Some(size) = self.paths.next_mtu_probe(addr) {
+                let tx = mint();
+                if self.paths.on_mtu_probe_sent(tx, addr, size, now_ms).is_ok() {
+                    out.push(Action::ProbeMtu { addr, tx, size });
+                }
+            }
+        }
+
         out
+    }
+
+    /// The address §7.9's search should run against right now, if any: the
+    /// chosen path, when it is direct.
+    fn mtu_probe_target(&self) -> Option<SocketAddr> {
+        let addr = self.paths.chosen()?;
+        self.paths
+            .paths()
+            .iter()
+            .find(|p| p.addr == addr)
+            .filter(|p| p.kind.is_direct())
+            .map(|p| p.addr)
     }
 
     /// Whether to put a `CallMeMaybe` on the wire this poll.
@@ -425,7 +467,7 @@ mod tests {
             .iter()
             .filter_map(|a| match a {
                 Action::Probe { addr, .. } => Some(*addr),
-                Action::Advertise { .. } => None,
+                Action::Advertise { .. } | Action::ProbeMtu { .. } => None,
             })
             .collect()
     }
@@ -964,5 +1006,89 @@ mod tests {
         let mut mint = counter();
         e.rediscover(0);
         assert!(e.poll(0, &mut mint).is_empty());
+    }
+
+    // ── §7.9, MTU discovery ─────────────────────────────────────────────────
+
+    fn mtu_probes(actions: &[Action]) -> Vec<(SocketAddr, usize)> {
+        actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::ProbeMtu { addr, size, .. } => Some((*addr, *size)),
+                Action::Probe { .. } | Action::Advertise { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Confirm `addr` as a direct path and select it, the way a real
+    /// `Ping`/`Pong` round trip would.
+    fn confirm_direct(e: &mut Engine, addr: SocketAddr, mint: &mut impl FnMut() -> TxId) {
+        e.add_peer_candidate(addr, 0, false);
+        let Some(Action::Probe { tx, .. }) = e.poll(0, mint).into_iter().next() else {
+            panic!("the candidate was not probed");
+        };
+        assert!(matches!(
+            e.paths_mut().on_pong(tx, 1),
+            PongOutcome::Confirmed { .. }
+        ));
+        e.on_confirmed(addr);
+        assert_eq!(e.paths_mut().select(1), Selection::Chose(addr));
+    }
+
+    #[test]
+    fn mtu_discovery_probes_the_chosen_direct_path() {
+        use crate::consts::MTU_CEILING;
+
+        let mut e = Engine::new();
+        let mut mint = counter();
+        confirm_direct(&mut e, v4(7), &mut mint);
+
+        assert_eq!(
+            mtu_probes(&e.poll(2, &mut mint)),
+            vec![(v4(7), MTU_CEILING)]
+        );
+        // Already outstanding: the same poll must not send a second one.
+        assert!(mtu_probes(&e.poll(2, &mut mint)).is_empty());
+    }
+
+    #[test]
+    fn mtu_discovery_never_runs_against_the_relay() {
+        let mut e = Engine::new();
+        let mut mint = counter();
+        e.paths_mut().set_relay(v4(200), 20, 0);
+        let _ = e.paths_mut().select(0);
+        assert_eq!(e.paths().chosen(), Some(v4(200)));
+
+        for t in 0..10_000u64 {
+            assert!(
+                mtu_probes(&e.poll(t, &mut mint)).is_empty(),
+                "the relay must never be entered into §7.9's search"
+            );
+        }
+    }
+
+    #[test]
+    fn rediscover_makes_the_ceiling_optimistic_again() {
+        use crate::consts::MTU_CEILING;
+
+        let mut e = Engine::new();
+        let mut mint = counter();
+        confirm_direct(&mut e, v4(7), &mut mint);
+
+        let actions = e.poll(2, &mut mint);
+        let Some(Action::ProbeMtu { tx, .. }) = actions
+            .iter()
+            .find(|a| matches!(a, Action::ProbeMtu { .. }))
+        else {
+            panic!("expected an MTU probe, got {actions:?}");
+        };
+        e.paths_mut().on_mtu_probe_ack(*tx, 3);
+
+        e.rediscover(4);
+        assert_eq!(
+            mtu_probes(&e.poll(4, &mut mint)),
+            vec![(v4(7), MTU_CEILING)],
+            "a resumed host must relearn the ceiling rather than trust the old answer"
+        );
     }
 }

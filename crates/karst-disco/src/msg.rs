@@ -11,8 +11,9 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use crate::consts::{
-    DATAGRAM_MAX, ENDPOINT_LEN, HEADER, MAC_LEN, MAGIC, MAX_CANDIDATES, PING_LEN, PONG_LEN,
-    REFLECTION_LEN, REFLECT_LEN, REFLECT_PAD_LEN, TAG_LEN, TX_ID_LEN, VERSION,
+    ENDPOINT_LEN, HEADER, MAC_LEN, MAGIC, MAX_CANDIDATES, MTU_PROBE_ACK_LEN,
+    MTU_PROBE_DATAGRAM_MAX, MTU_PROBE_OVERHEAD, PING_LEN, PONG_LEN, REFLECTION_LEN, REFLECT_LEN,
+    REFLECT_PAD_LEN, TAG_LEN, TX_ID_LEN, VERSION,
 };
 use crate::key::DiscoKey;
 use crate::Error;
@@ -160,6 +161,21 @@ pub enum Message {
         /// Where the reflector saw it come from.
         observed: Endpoint,
     },
+    /// `0x06` — a padded probe testing whether `size` bytes reach this peer —
+    /// §7.9.1. `size` is never carried explicitly: the padding *is* the probe,
+    /// so the total encoded length says everything a receiver needs to know.
+    MtuProbe {
+        /// Matches the answering `MtuProbeAck`.
+        tx: TxId,
+        /// Zero bytes of padding, chosen so the encoded datagram reaches the
+        /// candidate size under test.
+        padding: usize,
+    },
+    /// `0x07` — answers an `MtuProbe`. Deliberately unpadded — §7.9.1.
+    MtuProbeAck {
+        /// The `MtuProbe` being answered.
+        tx: TxId,
+    },
 }
 
 const T_PING: u8 = 0x01;
@@ -167,6 +183,8 @@ const T_PONG: u8 = 0x02;
 const T_CALL_ME_MAYBE: u8 = 0x03;
 const T_REFLECT: u8 = 0x04;
 const T_REFLECTION: u8 = 0x05;
+const T_MTU_PROBE: u8 = 0x06;
+const T_MTU_PROBE_ACK: u8 = 0x07;
 
 /// A datagram's header fields, read before the key is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +222,8 @@ impl Message {
             Self::CallMeMaybe { .. } => T_CALL_ME_MAYBE,
             Self::Reflect { .. } => T_REFLECT,
             Self::Reflection { .. } => T_REFLECTION,
+            Self::MtuProbe { .. } => T_MTU_PROBE,
+            Self::MtuProbeAck { .. } => T_MTU_PROBE_ACK,
         }
     }
 
@@ -220,7 +240,11 @@ impl Message {
         out.extend_from_slice(&epoch.to_be_bytes());
 
         match self {
-            Self::Ping { tx } => out.extend_from_slice(&tx.0),
+            // Identical bodies, deliberately merged: an `MtuProbeAck` is a
+            // `Ping` in every byte it puts on the wire — §7.9.1 chose to
+            // leave it unpadded precisely so it could be this small, and
+            // `msg_type` already carries the only difference.
+            Self::Ping { tx } | Self::MtuProbeAck { tx } => out.extend_from_slice(&tx.0),
             // Identical bodies, deliberately merged: `Reflection` is a `Pong`
             // for the reflect key space, with the same shape and a different
             // type byte. Keeping them apart would be two copies of one layout
@@ -250,6 +274,13 @@ impl Message {
                 // somebody else's attack.
                 out.extend_from_slice(&[0u8; REFLECT_PAD_LEN]);
             }
+            Self::MtuProbe { tx, padding } => {
+                out.extend_from_slice(&tx.0);
+                // §7.9.1: the padding *is* the probe. Its length is the only
+                // thing that matters, so zero bytes cost nothing to produce
+                // and give a receiver nothing to read a covert channel out of.
+                out.resize(out.len() + padding, 0);
+            }
         }
 
         let mac = key.mac(&out);
@@ -271,7 +302,13 @@ impl Message {
 /// instead. [`Error::TooLong`] before anything else is examined.
 pub fn peek(datagram: &[u8]) -> Result<Header, Error> {
     // Checked first, so no later step is ever handed an unbounded length.
-    if datagram.len() > DATAGRAM_MAX {
+    //
+    // `MTU_PROBE_DATAGRAM_MAX` bounds this rather than `DATAGRAM_MAX`: it is
+    // the larger of the two, since `MtuProbe` (§7.9) is the one deliberate
+    // exception to "every AVEN message stays small" — its entire purpose is
+    // to be as large as the transport datagram it tests. Every other type's
+    // own length is still enforced exactly, below.
+    if datagram.len() > MTU_PROBE_DATAGRAM_MAX {
         return Err(Error::TooLong(datagram.len()));
     }
     if datagram.len() < HEADER + MAC_LEN {
@@ -396,6 +433,34 @@ fn decode_body(header: &Header, body: &[u8], total: usize) -> Result<Message, Er
             }
             Ok(Message::Reflect { tx: TxId(*tx) })
         }
+        T_MTU_PROBE => {
+            // Bounded below by the smallest legal probe (no padding at all)
+            // and above by `peek`'s own `MTU_PROBE_DATAGRAM_MAX` check, which
+            // already ran before this function saw the body.
+            if total < MTU_PROBE_OVERHEAD {
+                return Err(bad_len());
+            }
+            let tx = body.first_chunk::<TX_ID_LEN>().ok_or_else(bad_len)?;
+            let pad = body.get(TX_ID_LEN..).ok_or_else(bad_len)?;
+            // Rejected rather than ignored, for the same reason as `Reflect`'s
+            // padding and an endpoint's IPv4 tail: a field whose only job is
+            // to be a certain number of bytes long is a covert channel the
+            // moment arbitrary content there is tolerated.
+            if pad.iter().any(|b| *b != 0) {
+                return Err(Error::Malformed);
+            }
+            Ok(Message::MtuProbe {
+                tx: TxId(*tx),
+                padding: pad.len(),
+            })
+        }
+        T_MTU_PROBE_ACK => {
+            if total != MTU_PROBE_ACK_LEN {
+                return Err(bad_len());
+            }
+            let tx = body.first_chunk::<TX_ID_LEN>().ok_or_else(bad_len)?;
+            Ok(Message::MtuProbeAck { tx: TxId(*tx) })
+        }
         T_REFLECTION => {
             if total != REFLECTION_LEN {
                 return Err(bad_len());
@@ -423,7 +488,7 @@ mod tests {
     )]
 
     use super::*;
-    use crate::consts::KEY_LEN;
+    use crate::consts::{DATAGRAM_MAX, KEY_LEN};
 
     fn key(b: u8) -> DiscoKey {
         DiscoKey::new([b; KEY_LEN])
@@ -472,6 +537,60 @@ mod tests {
                 .map(|i| v4(i as u8, 1000 + i as u16))
                 .collect(),
         });
+        roundtrip(&Message::MtuProbe {
+            tx: TxId([7; 12]),
+            padding: 0,
+        });
+        roundtrip(&Message::MtuProbe {
+            tx: TxId([7; 12]),
+            padding: MTU_PROBE_DATAGRAM_MAX - MTU_PROBE_OVERHEAD,
+        });
+        roundtrip(&Message::MtuProbeAck { tx: TxId([8; 12]) });
+    }
+
+    #[test]
+    fn an_mtu_probe_encodes_to_exactly_the_size_it_tests() {
+        // §7.9.1: the padding *is* the probe. A receiver never reads a size
+        // field — the caller who sent it is the one who chose the length —
+        // but a wrong length here would mean the wire format lied about what
+        // it was testing.
+        let k = key(1);
+        for candidate in [MTU_PROBE_OVERHEAD, 1000, MTU_PROBE_DATAGRAM_MAX] {
+            let padding = candidate - MTU_PROBE_OVERHEAD;
+            let bytes = Message::MtuProbe {
+                tx: TxId([1; 12]),
+                padding,
+            }
+            .encode(&k, &tag(), 0);
+            assert_eq!(bytes.len(), candidate);
+        }
+    }
+
+    #[test]
+    fn an_mtu_probe_with_dirty_padding_is_refused() {
+        // Same covert-channel rule as `Reflect`'s pad and an endpoint's IPv4
+        // tail: a field whose only job is to be a certain number of bytes
+        // long must not tolerate arbitrary content.
+        let k = key(1);
+        let mut d = Message::MtuProbe {
+            tx: TxId([1; 12]),
+            padding: 32,
+        }
+        .encode(&k, &tag(), 0);
+        let at = HEADER + TX_ID_LEN;
+        d[at] = 0x01;
+        let split = d.len() - MAC_LEN;
+        let mac = k.mac(&d[..split]);
+        d[split..].copy_from_slice(&mac);
+        assert_eq!(open(&d, &k), Err(Error::Malformed));
+    }
+
+    #[test]
+    fn an_mtu_probe_ack_is_not_padded() {
+        let k = key(1);
+        let bytes = Message::MtuProbeAck { tx: TxId([1; 12]) }.encode(&k, &tag(), 0);
+        assert_eq!(bytes.len(), MTU_PROBE_ACK_LEN);
+        assert_eq!(bytes.len(), PING_LEN, "§7.9.1: as small as a Ping");
     }
 
     /// The reflect types carry epoch 0 — §6.1 — so they need their own
@@ -592,6 +711,14 @@ mod tests {
                 },
                 true,
             ),
+            (
+                Message::MtuProbe {
+                    tx: TxId([1; 12]),
+                    padding: 8,
+                },
+                false,
+            ),
+            (Message::MtuProbeAck { tx: TxId([1; 12]) }, false),
         ] {
             let d = m.encode(&k, &tag(), 0);
             assert_eq!(peek(&d).expect("peek").is_reflect(), reflect, "{m:?}");
@@ -651,8 +778,28 @@ mod tests {
 
     #[test]
     fn an_over_long_datagram_is_rejected_before_anything_else() {
-        let junk = vec![0u8; DATAGRAM_MAX + 1];
-        assert_eq!(peek(&junk), Err(Error::TooLong(DATAGRAM_MAX + 1)));
+        // `MTU_PROBE_DATAGRAM_MAX`, not `DATAGRAM_MAX`: an `MtuProbe` is
+        // legally larger than every ordinary message, so the real ceiling is
+        // the larger of the two.
+        let junk = vec![0u8; MTU_PROBE_DATAGRAM_MAX + 1];
+        assert_eq!(peek(&junk), Err(Error::TooLong(MTU_PROBE_DATAGRAM_MAX + 1)));
+    }
+
+    #[test]
+    fn an_ordinary_message_over_339_bytes_but_within_the_probe_ceiling_is_still_rejected() {
+        // `DATAGRAM_MAX` (339) is the real ceiling for every type except
+        // `MtuProbe` — this is what proves `peek`'s wider bound didn't quietly
+        // admit an over-long `CallMeMaybe` along with it.
+        let k = key(1);
+        let many: Vec<Endpoint> = (0..=MAX_CANDIDATES).map(|i| v4(i as u8, 1)).collect();
+        let d = call_me_maybe_with(u8::try_from(many.len()).unwrap(), &many);
+        assert!(d.len() > DATAGRAM_MAX);
+        assert!(d.len() < MTU_PROBE_DATAGRAM_MAX);
+        assert!(peek(&d).is_ok(), "peek should still admit this length");
+        assert!(
+            open(&d, &k).is_err(),
+            "count over the cap must still be refused"
+        );
     }
 
     #[test]
@@ -709,6 +856,7 @@ mod tests {
             (T_PONG, PONG_LEN),
             (T_REFLECT, REFLECT_LEN),
             (T_REFLECTION, REFLECTION_LEN),
+            (T_MTU_PROBE_ACK, MTU_PROBE_ACK_LEN),
         ] {
             for wrong in [len - 1, len + 1] {
                 let mut body = vec![0u8; wrong - HEADER - MAC_LEN];
@@ -870,9 +1018,12 @@ mod tests {
     fn decoding_never_panics_on_arbitrary_bytes() {
         // The whole point of the module doc. Exhaustive over lengths up to a
         // full datagram, with the magic and version forced valid so the walk
-        // reaches the body parsers rather than bouncing off `peek`.
+        // reaches the body parsers rather than bouncing off `peek`. Bounded by
+        // `MTU_PROBE_DATAGRAM_MAX` rather than `DATAGRAM_MAX` now that it is
+        // the larger of the two, so `T_MTU_PROBE`'s parser is covered up to a
+        // full-size probe and not just up to the largest ordinary message.
         let k = key(1);
-        for len in 0..=DATAGRAM_MAX {
+        for len in 0..=MTU_PROBE_DATAGRAM_MAX {
             let mut d: Vec<u8> = (0..len).map(|i| ((i * 31 + 7) & 0xff) as u8).collect();
             if len >= 6 {
                 d[0..4].copy_from_slice(&MAGIC);

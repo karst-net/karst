@@ -726,7 +726,7 @@ impl Disco {
                 // §7.4, the rule ProVerif produced: answer each transaction id
                 // at most once, or a captured Ping replayed from anywhere makes
                 // this node a reflector.
-                if peer.engine.paths_mut().on_ping_received(tx) {
+                if peer.engine.paths_mut().on_probe_received(tx) {
                     let pong = Message::Pong {
                         tx,
                         observed: Endpoint(from),
@@ -766,6 +766,35 @@ impl Disco {
                     // one (if any) `on_call_me_maybe` above goes on to use.
                     prime.extend(candidates.iter().map(|c| c.0));
                 }
+            }
+            Message::MtuProbe { tx, .. } => {
+                // §7.9.2: the same at-most-once rule §7.4 gives `Ping`, and
+                // deliberately the same window rather than a second one — see
+                // `PathSet::on_probe_received`'s doc.
+                if peer.engine.paths_mut().on_probe_received(tx) {
+                    let ack = Message::MtuProbeAck { tx };
+                    let bytes = ack.encode(&peer.key, &peer.our_tag, self.epoch);
+                    out.push((bytes, from));
+                }
+            }
+            Message::MtuProbeAck { tx } => {
+                peer.engine.paths_mut().on_mtu_probe_ack(tx, now_ms);
+                // A converged answer can change which path §8.4 prefers — a
+                // direct path just confirmed a black hole ranks behind a
+                // relay `PathSet` knows about, from this measurement on.
+                //
+                // **No caller here ever gives `PathSet` a relay to rank
+                // against** (`PathSet::set_relay` has no call site in
+                // `bins/karstd`, and neither does §8 rule 2's ordinary
+                // direct-vs-relay comparison — `Engine::via` in
+                // `engine.rs` decides that independently, from whether a
+                // direct endpoint is installed at all). So today this
+                // updates `Path::mtu` and `PathSet::select`'s internal
+                // state correctly, and — per §8.4 with no relay known —
+                // correctly leaves `chosen` right where it was; it does not
+                // yet change what the datapath sends to. See ADR-0019's
+                // Negative/Reconsider-if sections.
+                let _ = peer.engine.paths_mut().select(now_ms);
             }
             // Unreachable: `header.is_reflect()` returned above for exactly
             // these two, and a peer key cannot open a datagram carrying a
@@ -984,6 +1013,18 @@ impl Disco {
                             self.epoch,
                         );
                         out.relayed.push((peer.their_id, bytes));
+                    }
+                    // §7.9: on the datapath socket, like `Probe` — an MTU
+                    // probe tests the same path liveness rides over, and a
+                    // relay knows nothing about AVEN either way.
+                    karst_disco::Action::ProbeMtu { addr, tx, size } => {
+                        let padding = size.saturating_sub(karst_disco::consts::MTU_PROBE_OVERHEAD);
+                        let bytes = Message::MtuProbe { tx, padding }.encode(
+                            &peer.key,
+                            &peer.our_tag,
+                            self.epoch,
+                        );
+                        out.datagrams.push((bytes, addr));
                     }
                 }
             }
@@ -1403,6 +1444,73 @@ mod tests {
         assert!(d.path_changes().is_empty());
         let _ = d.poll(20, || TxId([2; 12]));
         assert!(d.path_changes().is_empty(), "the same path was restated");
+    }
+
+    /// §7.9 end to end: a poll schedules an `MtuProbe` for the chosen direct
+    /// path, the peer's answer is fed back in exactly the way a real socket
+    /// read would, and the result lands on `PathSet`'s `Path::mtu`.
+    #[test]
+    fn an_mtu_probe_round_trips_and_updates_path_state() {
+        let (mut d, key) = with_confirmed_path(None);
+        let _ = d.path_changes(); // drain the initial Install
+
+        let out = d.poll(2, || TxId([9; 12]));
+        let Some((bytes, to)) = out
+            .datagrams
+            .iter()
+            .find(|(b, _)| matches!(msg::open(b, &key), Ok(Message::MtuProbe { .. })))
+        else {
+            panic!("no MtuProbe was scheduled for the chosen path");
+        };
+        assert_eq!(*to, addr(9));
+
+        let Message::MtuProbe { tx, .. } = msg::open(bytes, &key).expect("valid MtuProbe") else {
+            unreachable!("filtered above")
+        };
+        let ack = from_peer(&key, &Message::MtuProbeAck { tx }, 7);
+        assert!(matches!(d.inbound(&ack, addr(9), 3), Verdict::Handled(_)));
+
+        let mtu = d
+            .engine_mut(PeerIndex(0))
+            .expect("peer")
+            .paths()
+            .paths()
+            .iter()
+            .find(|p| p.addr == addr(9))
+            .expect("path")
+            .mtu;
+        assert!(
+            matches!(
+                mtu,
+                karst_disco::path::Mtu::Confirmed { size, .. }
+                    if size == karst_disco::consts::MTU_CEILING
+            ),
+            "{mtu:?}"
+        );
+    }
+
+    /// A captured `MtuProbe` replayed from anywhere must not draw a second
+    /// ack — the same §7.4 rule `Ping` gets, shared through
+    /// `PathSet::on_probe_received`'s one window rather than a second one.
+    #[test]
+    fn a_replayed_mtu_probe_is_not_answered_twice() {
+        let (mut d, key) = with_peer();
+        let probe = from_peer(
+            &key,
+            &Message::MtuProbe {
+                tx: TxId([4; 12]),
+                padding: 8,
+            },
+            7,
+        );
+        let Verdict::Handled(first) = d.inbound(&probe, addr(11), 0) else {
+            panic!("the probe was not handled");
+        };
+        assert_eq!(first.len(), 1, "the first probe must be acked");
+        let Verdict::Handled(second) = d.inbound(&probe, addr(11), 1) else {
+            panic!("the probe was not handled");
+        };
+        assert!(second.is_empty(), "a replayed probe drew a second ack");
     }
 
     /// **The case the datapath had no way to hear about.** `PathSet::select`
