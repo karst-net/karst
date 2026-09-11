@@ -269,7 +269,13 @@ fn check_permissions(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+// Always succeeds: the relay has no supported Windows deployment (unlike
+// bins/karstd, which does — see its own config.rs/control.rs for the real
+// ACL-based check that platform gets), so there is nothing to enforce here.
+// The `Result` return stays so callers do not need a second `#[cfg]` around
+// every `check_permissions(path)?`.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn check_permissions(_: &Path) -> Result<(), Error> {
     Ok(())
 }

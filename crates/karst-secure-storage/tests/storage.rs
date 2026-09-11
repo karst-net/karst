@@ -15,7 +15,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use karst_secure_storage::{create_secure_dir, SecureFile};
+use karst_secure_storage::{create_secure_dir, is_restricted, SecureFile};
 
 /// A distinct path per test, so a slow CI runner cannot collide between
 /// them — mirrors `karst-ipc/tests/pipe.rs`'s per-instance names for the
@@ -105,5 +105,57 @@ fn creating_an_existing_secure_file_again_fails() {
     assert!(
         SecureFile::create_new(&path).is_err(),
         "a second exclusive create over an existing file must fail"
+    );
+}
+
+/// `is_restricted` is what `bins/karstd/src/config.rs`'s and
+/// `bins/karstd/src/control.rs`'s `check_permissions` fall back to on
+/// Windows, so a file this crate itself locked down at creation is the
+/// baseline it must agree with: `SecureFile`'s Administrators/`LocalSystem`
+/// SDDL grants nothing to Everyone, Authenticated Users, or the local Users
+/// group.
+#[test]
+fn a_secure_file_reports_as_restricted() {
+    let dir = scratch_dir("restricted");
+    create_secure_dir(&dir).expect("create dir");
+    let path = dir.join("state");
+    drop(SecureFile::create_new(&path).expect("create"));
+
+    assert!(
+        is_restricted(&path).expect("read ACL"),
+        "a file SecureFile just created must report as restricted"
+    );
+}
+
+/// The other half: a file `icacls` has explicitly opened up to Everyone —
+/// standing in for the real case this whole mechanism exists to catch, an
+/// operator hand-placing `karstd genkey`'s output without thinking about who
+/// else can read it — must report as *not* restricted. `icacls`, not this
+/// crate's own SDDL machinery, builds the fixture: testing the read side
+/// against a permissive ACL this code itself never wrote is what makes this
+/// a check of real Windows behavior rather than of this crate agreeing with
+/// itself.
+#[test]
+fn a_world_readable_file_reports_as_not_restricted() {
+    let dir = scratch_dir("insecure");
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let path = dir.join("state");
+    std::fs::write(&path, b"exit-eu\n").expect("write");
+
+    let output = std::process::Command::new("icacls")
+        .arg(&path)
+        .arg("/grant")
+        .arg("Everyone:(R)")
+        .output()
+        .expect("run icacls");
+    assert!(
+        output.status.success(),
+        "icacls failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !is_restricted(&path).expect("read ACL"),
+        "a file readable by Everyone must not report as restricted"
     );
 }

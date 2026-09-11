@@ -92,6 +92,17 @@ pub enum ConfigError {
         /// The mode found, as octal.
         mode: u32,
     },
+    /// Windows counterpart of [`Self::Permissions`]: the file's ACL grants
+    /// access to Everyone, Authenticated Users, or the local Users group —
+    /// see [`karst_secure_storage::is_restricted`]. A distinct variant
+    /// rather than reusing `Permissions` because there is no `mode` to
+    /// report and "chmod 600" is not an instruction a Windows operator can
+    /// follow.
+    #[cfg(windows)]
+    InsecureAcl {
+        /// Which file.
+        path: PathBuf,
+    },
     /// A hex field was not valid hex, or was the wrong length.
     Hex {
         /// Which field.
@@ -131,6 +142,14 @@ impl fmt::Display for ConfigError {
                 f,
                 "{} is mode {mode:04o}; it holds key material and must not be \
                  readable by group or other (chmod 600)",
+                path.display()
+            ),
+            #[cfg(windows)]
+            Self::InsecureAcl { path } => write!(
+                f,
+                "{} holds key material and its ACL grants access to Everyone, \
+                 Authenticated Users, or the local Users group; restrict it to \
+                 its owner and Administrators",
                 path.display()
             ),
             Self::Hex { field, reason } => write!(f, "field {field}: {reason}"),
@@ -1347,13 +1366,23 @@ fn check_permissions(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-// Always succeeds: file permissions are a Unix-only check here (Windows
-// access control is a different model entirely, not yet implemented for
-// this path). The `Result` return stays so callers do not need a second
-// `#[cfg]` of their own around every `check_permissions(path)?`.
-#[cfg(not(unix))]
-#[allow(clippy::unnecessary_wraps)]
-fn check_permissions(_path: &Path) -> Result<(), ConfigError> {
+/// As above, on Windows: refuse a secret-bearing file whose ACL grants
+/// access to Everyone, Authenticated Users, or the local Users group — see
+/// [`karst_secure_storage::is_restricted`] for what "restricted" means
+/// there and why a read-time check is still needed even though nothing
+/// under this module ever creates `private_key_file` itself.
+#[cfg(windows)]
+fn check_permissions(path: &Path) -> Result<(), ConfigError> {
+    let restricted =
+        karst_secure_storage::is_restricted(path).map_err(|source| ConfigError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    if !restricted {
+        return Err(ConfigError::InsecureAcl {
+            path: path.to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -1426,13 +1455,11 @@ mod tests {
 
     use super::*;
 
-    /// `mode` is applied on Unix only — Windows has no mode bitmask, and the
-    /// handful of tests that need the file to actually be *rejected* for
-    /// being too permissive are themselves `#[cfg(unix)]` (see
-    /// `refuses_a_key_file_others_can_read` and
-    /// `refuses_a_readable_config_when_it_carries_psks`), so an ordinary
-    /// fixture write here on Windows is never mistaken for asserting
-    /// anything about permissions.
+    /// `mode` is applied on Unix only — Windows has no mode bitmask. The
+    /// Windows tests that need a file actually *rejected* for being too
+    /// permissive build that with `grant_everyone_read` (`icacls`) instead,
+    /// on top of a plain write here, so an ordinary call on Windows is
+    /// never mistaken for asserting anything about permissions.
     pub(super) fn write(dir: &Path, name: &str, contents: &str, mode: u32) -> PathBuf {
         let path = dir.join(name);
         std::fs::write(&path, contents).expect("write test file");
@@ -1744,11 +1771,10 @@ host_integration = "resolvconf"
     /// A world-readable key file is refused. This is the check that stops a
     /// `chmod 644` from quietly publishing the node's identity.
     ///
-    /// Unix only: `check_permissions` is a no-op on Windows (see its own
-    /// `#[cfg(not(unix))]` arm) — access control there is a security
-    /// descriptor set at creation, not a mode checked after the fact, and
-    /// there is nothing package-time creation applies here for this test to
-    /// exercise.
+    /// Unix only — `mode` (the fixture's own permissions, not what is being
+    /// asserted about the load) has no meaning on Windows; see
+    /// `refuses_a_key_file_with_an_insecure_acl` for that platform's
+    /// equivalent, which builds its fixture with `icacls` instead.
     #[cfg(unix)]
     #[test]
     fn refuses_a_key_file_others_can_read() {
@@ -1758,6 +1784,23 @@ host_integration = "resolvconf"
         match Config::load(&path) {
             Err(ConfigError::Permissions { mode, .. }) => assert_eq!(mode, 0o644),
             other => panic!("expected a permissions error, got {other:?}"),
+        }
+    }
+
+    /// As `refuses_a_key_file_others_can_read`, for Windows: a key file
+    /// `icacls` has explicitly opened to Everyone must be refused with
+    /// [`ConfigError::InsecureAcl`], the same way an operator hand-placing
+    /// `karstd genkey`'s output without thinking about its ACL would be.
+    #[cfg(windows)]
+    #[test]
+    fn refuses_a_key_file_with_an_insecure_acl() {
+        let dir = Scratch::new("cfg");
+        let path = roster(dir.path(), "");
+        let key_path = write(dir.path(), "node.key", &keys_hex(), 0);
+        grant_everyone_read(&key_path);
+        match Config::load(&path) {
+            Err(ConfigError::InsecureAcl { .. }) => {}
+            other => panic!("expected an ACL error, got {other:?}"),
         }
     }
 
@@ -1779,6 +1822,42 @@ host_integration = "resolvconf"
         assert!(
             matches!(Config::load(&path), Err(ConfigError::Permissions { .. })),
             "a group-readable config holding PSKs must be refused"
+        );
+    }
+
+    /// As `refuses_a_readable_config_when_it_carries_psks`, for Windows.
+    #[cfg(windows)]
+    #[test]
+    fn refuses_a_readable_config_with_an_insecure_acl_when_it_carries_psks() {
+        let dir = Scratch::new("cfg");
+        let psk = encode_hex(&[0x44u8; 32]);
+        let path = roster(dir.path(), &format!("psk = \"{psk}\""));
+        let contents = std::fs::read_to_string(&path).expect("read back");
+        let config_path = write(dir.path(), "karstd.toml", &contents, 0);
+        grant_everyone_read(&config_path);
+        assert!(
+            matches!(Config::load(&path), Err(ConfigError::InsecureAcl { .. })),
+            "an Everyone-readable config holding PSKs must be refused"
+        );
+    }
+
+    /// Build the insecure fixture Windows-only tests need: `icacls`, not
+    /// this crate's own ACL machinery, so the test exercises real Windows
+    /// behavior rather than this code agreeing with itself — the same
+    /// reasoning `karst-secure-storage/tests/storage.rs`'s equivalent
+    /// fixture uses.
+    #[cfg(windows)]
+    fn grant_everyone_read(path: &Path) {
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .arg("/grant")
+            .arg("Everyone:(R)")
+            .output()
+            .expect("run icacls");
+        assert!(
+            output.status.success(),
+            "icacls failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 

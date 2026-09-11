@@ -67,6 +67,12 @@ pub enum Error {
     Key(String),
     /// A file holding secrets is readable beyond its owner.
     Permissions { path: PathBuf, mode: u32 },
+    /// Windows counterpart of [`Self::Permissions`] — see
+    /// `crate::config::ConfigError::InsecureAcl`, which this mirrors for
+    /// the identity key and netmap cache instead of the PHREATIC private
+    /// key.
+    #[cfg(windows)]
+    InsecureAcl { path: PathBuf },
     /// The server refused, or could not be reached.
     Server(String),
     /// The server's answer did not make sense.
@@ -93,6 +99,14 @@ impl std::fmt::Display for Error {
                 f,
                 "{} is mode {mode:04o}; it holds key material and must not be \
                  readable by group or other (chmod 600)",
+                path.display()
+            ),
+            #[cfg(windows)]
+            Self::InsecureAcl { path } => write!(
+                f,
+                "{} holds key material and its ACL grants access to Everyone, \
+                 Authenticated Users, or the local Users group; restrict it to \
+                 its owner and Administrators",
                 path.display()
             ),
             Self::Server(m) => write!(f, "server: {m}"),
@@ -1246,6 +1260,33 @@ fn write_secret(path: &Path, contents: &str) -> Result<(), Error> {
     write_secret_bytes(path, contents.as_bytes())
 }
 
+/// The temporary file [`write_secret_bytes`] writes through before renaming
+/// into place — restricted to its owner the moment it exists, on both
+/// platforms, so there is no window in which the secret sits on disk with a
+/// looser default. `std::os::unix::fs::OpenOptionsExt::mode` on Unix;
+/// [`karst_secure_storage::SecureFile`]'s explicit ACL (Administrators and
+/// `LocalSystem` only) on Windows — the same split
+/// `bins/karstd/src/exit_node.rs` draws for the identical reason.
+#[cfg(unix)]
+type TempFile = std::fs::File;
+#[cfg(windows)]
+type TempFile = karst_secure_storage::SecureFile;
+
+#[cfg(unix)]
+fn create_temp_file(path: &Path) -> std::io::Result<TempFile> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn create_temp_file(path: &Path) -> std::io::Result<TempFile> {
+    karst_secure_storage::SecureFile::create_new(path)
+}
+
 pub(crate) fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Error> {
     use std::io::Write as _;
     let parent = path
@@ -1275,14 +1316,7 @@ pub(crate) fn write_secret_bytes(path: &Path, contents: &[u8]) -> Result<(), Err
         }
         name.push(random);
         let candidate = parent.join(name);
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            opts.mode(0o600);
-        }
-        match opts.open(&candidate) {
+        match create_temp_file(&candidate) {
             Ok(file) => {
                 temp = Some((candidate, file));
                 break;
@@ -1342,12 +1376,19 @@ fn check_permissions(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-// As `config::check_permissions`'s Windows stub: always succeeds, and the
-// `Result` return stays so callers do not need a second `#[cfg]` around
-// every `check_permissions(path)?`.
-#[cfg(not(unix))]
-#[allow(clippy::unnecessary_wraps)]
-fn check_permissions(_path: &Path) -> Result<(), Error> {
+/// As above, on Windows — see `config::check_permissions`, which this
+/// mirrors exactly.
+#[cfg(windows)]
+fn check_permissions(path: &Path) -> Result<(), Error> {
+    let restricted = karst_secure_storage::is_restricted(path).map_err(|source| Error::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    if !restricted {
+        return Err(Error::InsecureAcl {
+            path: path.to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -1404,8 +1445,8 @@ mod tests {
     /// And it is created unreadable by anyone else, from the moment it exists.
     ///
     /// Unix only — Windows has no mode bitmask to inspect; see
-    /// `bins/karstd/src/exit_node.rs`'s module docs for the Windows
-    /// counterpart's own, separately-tested ACL enforcement.
+    /// `a_created_identity_has_a_restricted_acl` for that platform's
+    /// equivalent.
     #[cfg(unix)]
     #[test]
     fn a_created_identity_is_not_world_readable() {
@@ -1417,6 +1458,23 @@ mod tests {
 
         let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode & 0o077, 0, "identity key is mode {mode:04o}");
+    }
+
+    /// As `a_created_identity_is_not_world_readable`, for Windows:
+    /// `write_secret_bytes`'s `SecureFile` temp file carries its restricted
+    /// ACL through the rename into the final identity key path.
+    #[cfg(windows)]
+    #[test]
+    fn a_created_identity_has_a_restricted_acl() {
+        let dir = Scratch::new("acl");
+        let path = dir.join("acl.key");
+        let _ = std::fs::remove_file(&path);
+        Identity::load_or_create(&path).expect("create");
+
+        assert!(
+            karst_secure_storage::is_restricted(&path).expect("read ACL"),
+            "a freshly created identity key must be restricted"
+        );
     }
 
     #[test]
@@ -1452,6 +1510,21 @@ mod tests {
         ));
     }
 
+    /// As `a_readable_identity_file_is_refused`, for Windows.
+    #[cfg(windows)]
+    #[test]
+    fn a_readable_identity_file_with_an_insecure_acl_is_refused() {
+        let dir = Scratch::new("insecure");
+        let path = dir.join("insecure.key");
+        std::fs::write(&path, encode_hex(&[0x11; IDENTITY_SEED_LEN])).expect("write");
+        grant_everyone_read(&path);
+
+        assert!(matches!(
+            Identity::load_or_create(&path),
+            Err(Error::InsecureAcl { .. })
+        ));
+    }
+
     /// Replacing a cache must not inherit an insecure mode from an older file.
     /// The fresh sibling is created `0600`, then atomically renamed into place.
     #[cfg(unix)]
@@ -1473,6 +1546,27 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode & 0o077, 0, "cache mode is {mode:04o}");
+    }
+
+    /// As `overwriting_a_readable_secret_repairs_its_permissions`, for
+    /// Windows: the fresh sibling is a [`karst_secure_storage::SecureFile`]
+    /// with its own explicit ACL, so replacing an Everyone-readable cache
+    /// repairs it the same way a fresh one is protected from creation.
+    #[cfg(windows)]
+    #[test]
+    fn overwriting_an_insecure_cache_repairs_its_acl() {
+        let dir = Scratch::new("cache-acl");
+        let path = dir.join("netmap.bin");
+        std::fs::write(&path, b"old secret").expect("seed cache");
+        grant_everyone_read(&path);
+
+        write_secret_bytes(&path, b"new secret").expect("atomic replacement");
+
+        assert_eq!(std::fs::read(&path).expect("read cache"), b"new secret");
+        assert!(
+            karst_secure_storage::is_restricted(&path).expect("read ACL"),
+            "the replaced cache must be restricted"
+        );
     }
 
     /// A cache holding PSKs is subject to the same read-side permission check
@@ -1499,6 +1593,47 @@ mod tests {
             client.load_cache(),
             Some(Err(Error::Permissions { .. }))
         ));
+    }
+
+    /// As `a_readable_cache_is_refused`, for Windows.
+    #[cfg(windows)]
+    #[test]
+    fn a_cache_with_an_insecure_acl_is_refused() {
+        let dir = Scratch::new("insecure-cache");
+        let path = dir.join("netmap.bin");
+        let _ = std::fs::remove_file(dir.join("id.key"));
+        std::fs::write(&path, b"not important: the ACL check fails first").expect("seed cache");
+        grant_everyone_read(&path);
+        let mut client = Client::new(
+            &section(dir.path(), Some("netmap.bin")),
+            dir.path(),
+            &keys(),
+        )
+        .expect("client");
+
+        assert!(matches!(
+            client.load_cache(),
+            Some(Err(Error::InsecureAcl { .. }))
+        ));
+    }
+
+    /// Build the insecure fixture Windows-only tests need — `icacls`, not
+    /// this crate's own ACL machinery, so the test exercises real Windows
+    /// behavior rather than this code agreeing with itself. As
+    /// `bins/karstd/src/config.rs`'s helper of the same name.
+    #[cfg(windows)]
+    fn grant_everyone_read(path: &Path) {
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .arg("/grant")
+            .arg("Everyone:(R)")
+            .output()
+            .expect("run icacls");
+        assert!(
+            output.status.success(),
+            "icacls failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

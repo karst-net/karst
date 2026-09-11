@@ -18,6 +18,13 @@
 //! FFI (which `bins/karstd` cannot contain: it `#![forbid(unsafe_code)]`)
 //! lives here instead.
 //!
+//! [`is_restricted`] is the read side of the same story: a file this
+//! process did not create itself (`karstd genkey`'s output, always
+//! redirected to disk by an operator, never by `karstd`) needs its ACL
+//! checked rather than trusted, the same role Unix's `mode & 0o077 == 0`
+//! check plays for `bins/karstd/src/config.rs`'s and
+//! `bins/karstd/src/control.rs`'s own secret files.
+//!
 //! Windows-only by construction (`#![cfg(windows)]` above empties this
 //! crate on every other target), so `karstd`'s `Cargo.toml` depends on it
 //! only under `[target.'cfg(target_os = "windows")'.dependencies]`.
@@ -25,4 +32,4 @@
 mod storage;
 mod sys_windows;
 
-pub use storage::{create_secure_dir, SecureFile};
+pub use storage::{create_secure_dir, is_restricted, SecureFile};

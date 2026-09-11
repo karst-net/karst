@@ -96,6 +96,27 @@ impl Write for SecureFile {
     }
 }
 
+/// Whether `path`'s ACL restricts it to its owner and administrators — the
+/// Windows counterpart to Unix's `mode & 0o077 == 0` check
+/// (`bins/karstd/src/config.rs`'s and `bins/karstd/src/control.rs`'s own
+/// `check_permissions`, which this exists to give a real implementation to
+/// instead of their Windows no-op stub).
+///
+/// Unlike [`SecureFile`], which only ever verifies a file *this process*
+/// just created, this reads back whatever ACL a file already has —
+/// including one an operator hand-placed (`karstd genkey`'s output is never
+/// written to disk by `karstd` itself; an operator always redirects it
+/// there), which is the case Unix's mode check also has to cover and the
+/// reason a creation-time-only guarantee is not enough here either.
+///
+/// # Errors
+/// An [`io::Error`] from the last Win32 error if the file's security
+/// descriptor cannot be read.
+pub fn is_restricted(path: &Path) -> io::Result<bool> {
+    let name = sys_windows::wide_z(&path.to_string_lossy());
+    sys_windows::dacl_is_broadly_accessible(&name).map(|broad| !broad)
+}
+
 /// `ERROR_ALREADY_EXISTS`'s `u32` as the `i32` `raw_os_error()` returns,
 /// saturating rather than wrapping — this specific code is far below
 /// `i32::MAX`, so the cast is exact in practice; a named function documents
