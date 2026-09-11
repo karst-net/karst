@@ -165,8 +165,10 @@ relay identity that every node has already pinned.
 
 ## Notes
 
-- **First start needs outbound network.** The coordination server downloads
-  GeoLite2 databases into `state/netbird/`.
+- **`NB_DISABLE_GEOLOCATION` is set for a reason.** Without it, first start
+  fetches GeoLite2 databases from a third-party mirror before serving
+  anything, and a bad download is fatal — a dependency this deployment has no
+  use for and should not be able to break it.
 - `./state/` holds private keys and is in `.gitignore`. Back it up; losing the
   server keys breaks every enrolled node at once, because nodes pin them.
 - `state/management.json` is mounted read-write on purpose. The daemon writes a

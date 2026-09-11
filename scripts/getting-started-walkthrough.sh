@@ -776,10 +776,7 @@ path_c() {
 	WT_SUBST=$subst run_step C control-start
 	wait_for 60 "karst-control is active under systemd" -- \
 		systemctl is-active --quiet karst-control
-	# Generous, and §6.2 says why: the first start downloads GeoLite2 databases
-	# before it serves anything, so this is a network fetch and not just a
-	# process coming up.
-	wait_for 300 "the coordination server printed its pins to the journal" -- \
+	wait_for 60 "the coordination server printed its pins to the journal" -- \
 		bash -c "journalctl -u karst-control --no-pager | grep -q 'karst: server KEM pin'"
 	WT_SUBST=$subst run_step C control-pins
 	assert_file_has "$WORK/.out" "karst: server KEM pin" "the KEM pin reached the journal"

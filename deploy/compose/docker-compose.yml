@@ -28,6 +28,14 @@ services:
     image: ghcr.io/karst-net/karst-control:dev
     restart: unless-stopped
     environment:
+      # Inherited from the forked NetBird management daemon and unused by any
+      # Karst feature: nothing here gates policy on IP geolocation. Left
+      # enabled, first start fetches GeoLite2 databases from a third-party
+      # mirror and treats a bad download as fatal — turning that mirror's
+      # availability into this deployment's availability. Disabled, first
+      # start depends on nothing but the state this compose file already
+      # owns.
+      NB_DISABLE_GEOLOCATION: "true"
       # Rewrites roster.toml every 25s. **Not optional in this deployment.**
       # The relay's admission lease is refreshed by the file's modification
       # time and expires after 90 seconds, so without this the relay stops

@@ -601,6 +601,10 @@ so it needs no CORS setting.
 `/etc/karst/control.env`, read by the unit's `EnvironmentFile=`:
 
 ```sh walkthrough=C step=control-env file=/etc/karst/control.env
+# Inherited from the forked NetBird management daemon and unused by any Karst
+# feature. Left enabled, first start fetches GeoLite2 databases from a
+# third-party mirror and treats a bad download as fatal.
+NB_DISABLE_GEOLOCATION=true
 # Rewrites the relay's roster every 25s. Not optional when a relay sits beside
 # this server: the admission lease expires after 90 seconds.
 KARST_RELAY_ROSTER_FILE=/etc/karst/roster.toml
@@ -624,9 +628,7 @@ sudo cp deploy/systemd/karst-control.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now karst-control
 ```
 
-The first start is not instant — it downloads GeoLite2 databases before it
-serves anything — so give it a moment before looking for the two pins every
-node needs:
+Look for the two pins every node needs:
 
 ```sh walkthrough=C step=control-pins
 sudo journalctl -u karst-control | grep 'karst: server'
@@ -634,8 +636,10 @@ sudo journalctl -u karst-control | grep 'karst: server'
 
 Notes:
 
-- **First start needs outbound network.** The server downloads GeoLite2
-  databases into its data directory.
+- **`NB_DISABLE_GEOLOCATION=true` matters.** Without it, first start fetches
+  GeoLite2 databases from a third-party mirror before serving anything, and a
+  bad download is fatal — a dependency this deployment has no use for and
+  should not be able to break it.
 - gRPC and HTTP share port 33073, on one listener. It is plain TCP unless you
   pass `--letsencrypt-domain` or a certificate pair; the control channel does
   not depend on that, but the REST API the console uses does.
