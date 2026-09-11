@@ -116,8 +116,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `targets:` input on purpose — see the `macos` job below for the
+      # full explanation. `rust-toolchain.toml` pins 1.88 for the workspace
+      # and cargo reads that file, so `targets:` here would add the target to
+      # `stable` while the actual build runs under 1.88 and fails with
+      # "can't find crate for `core`". `rustup target add` honours the
+      # toolchain file, so it lands on the toolchain that actually compiles.
       - uses: dtolnay/rust-toolchain@stable
-        with: { components: clippy, targets: x86_64-unknown-none }
+        with: { components: clippy }
+      - run: rustup target add x86_64-unknown-none
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked -p karst-proto --no-default-features --target x86_64-unknown-none --lib -- -D warnings
 
