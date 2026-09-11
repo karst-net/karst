@@ -28,7 +28,18 @@
 //! ```text
 //! just test-aquifer
 //! ```
-
+//!
+//! To exercise a published client package rather than the workspace products,
+//! extract it and point `KARST_AQUIFER_BIN_DIR` at its `usr/bin` directory:
+//!
+//! ```text
+//! dpkg-deb -x karst-client-linux_*.deb /tmp/karst-client
+//! KARST_AQUIFER_BIN_DIR=/tmp/karst-client/usr/bin just test-aquifer
+//! ```
+//!
+//! The override is deliberately all-or-nothing: `karstd`, `karst`, and
+//! `karst-relay` must all come from the same directory. A package drill that
+//! silently ran one workspace binary would not be evidence about the package.
 #![allow(
     clippy::panic,
     clippy::expect_used,
@@ -297,6 +308,15 @@ fn repo() -> String {
 
 fn bin(name: &str) -> String {
     // The test binary is in target/<profile>/deps/; the products are two up.
+    if let Some(directory) = std::env::var_os("KARST_AQUIFER_BIN_DIR") {
+        let p = PathBuf::from(directory).join(name);
+        assert!(
+            p.is_file(),
+            "KARST_AQUIFER_BIN_DIR must contain {name}: {}",
+            p.display()
+        );
+        return p.to_string_lossy().into_owned();
+    }
     let exe = std::env::current_exe().expect("test binary path");
     let dir = exe
         .parent()
