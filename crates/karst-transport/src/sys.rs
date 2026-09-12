@@ -80,8 +80,14 @@ pub(crate) fn enable_gro(fd: BorrowedFd<'_>) -> io::Result<()> {
 /// cmsg never reports zero, but this function does not trust that a raw
 /// `u16` off the wire.
 fn gro_segments(total_len: usize, segment_size: usize) -> impl Iterator<Item = (usize, usize)> {
-    let step = if segment_size == 0 { total_len.max(1) } else { segment_size };
-    (0..total_len).step_by(step).map(move |offset| (offset, step.min(total_len - offset)))
+    let step = if segment_size == 0 {
+        total_len.max(1)
+    } else {
+        segment_size
+    };
+    (0..total_len)
+        .step_by(step)
+        .map(move |offset| (offset, step.min(total_len - offset)))
 }
 
 /// Read `UDP_GRO`'s segment-size cmsg out of a just-completed `recvmsg`, per
@@ -426,9 +432,12 @@ pub(crate) fn recv_batch(
         iov.iov_base = base;
         iov.iov_len = len;
 
-        let (Some(msg), Some(addr), Some(iov), Some(ctrl)) =
-            (msgs.get_mut(i), addrs.get_mut(i), iovecs.get_mut(i), ctrls.get_mut(i))
-        else {
+        let (Some(msg), Some(addr), Some(iov), Some(ctrl)) = (
+            msgs.get_mut(i),
+            addrs.get_mut(i),
+            iovecs.get_mut(i),
+            ctrls.get_mut(i),
+        ) else {
             break;
         };
         addr.1 = u32::try_from(mem::size_of::<libc::sockaddr_storage>()).unwrap_or(0);
@@ -491,10 +500,20 @@ pub(crate) fn recv_batch(
         match gro_segment_size(&msg.msg_hdr).filter(|&size| size > 0) {
             Some(size) => {
                 for (offset, len) in gro_segments(total, size) {
-                    out.push(Received { len, from, slot: i, offset });
+                    out.push(Received {
+                        len,
+                        from,
+                        slot: i,
+                        offset,
+                    });
                 }
             }
-            None => out.push(Received { len: total, from, slot: i, offset: 0 }),
+            None => out.push(Received {
+                len: total,
+                from,
+                slot: i,
+                offset: 0,
+            }),
         }
     }
     Ok(out.len())

@@ -78,7 +78,12 @@ pub(crate) fn recv_batch(
     };
     let (len, from) = socket.recv_from(buf)?;
     // GRO doesn't exist off Linux, so there is exactly one datagram, in slot 0.
-    out.push(Received { len, from, slot: 0, offset: 0 });
+    out.push(Received {
+        len,
+        from,
+        slot: 0,
+        offset: 0,
+    });
     Ok(out.len())
 }
 
