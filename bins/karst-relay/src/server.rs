@@ -237,7 +237,10 @@ impl Ctx {
         roster.mesh_region(relay_id) == Some(self.region.as_str())
     }
 
-    fn snapshot(&self) -> crate::metrics::Snapshot {
+    /// `pub(crate)`: [`crate::telemetry`] needs the same point-in-time view
+    /// the metrics endpoint renders, to report the same numbers rather than
+    /// recomputing them a second way.
+    pub(crate) fn snapshot(&self) -> crate::metrics::Snapshot {
         let (local_clients, mesh_peers, remote_clients, totals) = self.with_hub(|hub| {
             (
                 hub.local_clients(),
@@ -369,6 +372,17 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     // configured to prefer QUIC, exactly like a relay with no QUIC support at
     // all — indistinguishable from ADR-0020's opt-in default until a node
     // actually tries.
+    if let Some(t) = &cfg.telemetry {
+        eprintln!(
+            "karst-relay: reporting telemetry to {} every {}s",
+            t.control_url, t.interval_secs
+        );
+        tokio::spawn(crate::telemetry::telemetry_loop(
+            t.clone(),
+            Arc::clone(&ctx),
+        ));
+    }
+
     if cfg.quic {
         let quic_server = crate::quic::server_config(&ctx.tls)
             .map_err(|e| std::io::Error::other(e.to_string()))?;

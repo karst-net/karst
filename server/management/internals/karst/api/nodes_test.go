@@ -291,6 +291,9 @@ func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay
 	return &relayreg.StoredRelay{}, nil
 }
 func (scanRelays) Delete(context.Context, string) error { return nil }
+func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+	return nil, nil
+}
 
 type fixedRelays []relayreg.StoredRelay
 
@@ -299,6 +302,9 @@ func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRe
 	return &f[0], nil
 }
 func (fixedRelays) Delete(context.Context, string) error { return nil }
+func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+	return nil, nil
+}
 
 type scanTurns struct{}
 

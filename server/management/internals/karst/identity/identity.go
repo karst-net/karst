@@ -72,6 +72,13 @@ const (
 // is not.
 const ControlContext = "karst-control-v1"
 
+// RelayTelemetryContext domain-separates a relay's self-reported telemetry
+// signatures (ADR-0021) from every other use of its identity key — the same
+// key Ponor's RelayHello/ClientAuth/RelayAuth already sign, under a
+// completely different transcript and a different verifier, but the
+// discipline is the one this file already established for ControlContext.
+const RelayTelemetryContext = "karst-relay-telemetry-v1"
+
 var (
 	ErrKeySize = errors.New("identity: wrong key size")
 	ErrContext = errors.New("identity: context string exceeds 255 bytes")

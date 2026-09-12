@@ -91,9 +91,9 @@ type handler struct {
 
 // relayHealth is deliberately separate from relayreg.StoredRelay. Registry
 // records describe what nodes may dial; admission telemetry belongs to a
-// relay. Until a relay reports per-relay telemetry, a shared roster file
-// cannot be attributed safely to an arbitrary registry entry, so unknown is
-// the only truthful value for this API.
+// relay. ADR-0021: populated from a relay's own signed reports
+// (relayreg.Store.LatestTelemetry) when any have arrived; unknown remains the
+// only truthful value for a relay that has never reported.
 type relayHealth struct {
 	Source          string     `json:"source"`
 	LastConfirmedAt *time.Time `json:"last_confirmed_at"`
@@ -111,8 +111,45 @@ func unknownRelayHealth() relayHealth {
 	return relayHealth{Source: "roster_mtime", AdmissionState: "unknown"}
 }
 
-func relayResponseFor(relay relayreg.StoredRelay) relayResponse {
-	return relayResponse{StoredRelay: relay, Health: unknownRelayHealth()}
+// relayTelemetryFreshWindow bounds how old a relay's last confirmed report
+// may be before its health is reported as "stale" rather than "confirmed" —
+// ADR-0021. Generous relative to the relay's own default report interval
+// (60s, bins/karst-relay/src/config.rs) to tolerate a missed tick or two
+// without flapping between states.
+const relayTelemetryFreshWindow = 3 * time.Minute
+
+// healthFor derives a relay's health from its latest self-report, if any —
+// ADR-0021. A read error is treated the same as no report: this is a display
+// concern, not a reason to fail the surrounding list/get request.
+func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
+	if h.relays == nil {
+		return unknownRelayHealth()
+	}
+	record, err := h.relays.LatestTelemetry(ctx, id)
+	if err != nil || record == nil {
+		return unknownRelayHealth()
+	}
+	state := "stale"
+	if time.Since(record.ReportedAt) <= relayTelemetryFreshWindow {
+		state = "confirmed"
+	}
+	reportedAt := record.ReportedAt
+	// Sessions counts client connections specifically — mesh peers are
+	// infrastructure this relay dials or is dialled by, not sessions an
+	// admin reading this field would recognize as one.
+	sessions := record.LocalClients
+	bytes := int(record.BytesTotal)
+	return relayHealth{
+		Source:          "relay_telemetry",
+		LastConfirmedAt: &reportedAt,
+		Sessions:        &sessions,
+		Bytes:           &bytes,
+		AdmissionState:  state,
+	}
+}
+
+func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRelay) relayResponse {
+	return relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
 }
 
 type peerWriter interface {
@@ -163,6 +200,9 @@ type relayReader interface {
 	List(context.Context) ([]relayreg.StoredRelay, error)
 	Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error)
 	Delete(context.Context, string) error
+	// LatestTelemetry is ADR-0021's read side: a relay's most recent
+	// self-report, or nil if it has never reported.
+	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
 }
 
 type turnReader interface {
@@ -1115,7 +1155,7 @@ func (h *handler) relayHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, relay := range relays {
 		if relay.ID == mux.Vars(r)["relayId"] {
-			util.WriteJSONObject(r.Context(), w, unknownRelayHealth())
+			util.WriteJSONObject(r.Context(), w, h.healthFor(r.Context(), relay.ID))
 			return
 		}
 	}
@@ -1268,7 +1308,7 @@ func (h *handler) relaysList(w http.ResponseWriter, r *http.Request) {
 	}
 	result := make([]relayResponse, 0, len(relays))
 	for _, relay := range relays {
-		result = append(result, relayResponseFor(relay))
+		result = append(result, h.relayResponseFor(r.Context(), relay))
 	}
 	util.WriteJSONObject(r.Context(), w, result)
 }
@@ -1297,7 +1337,7 @@ func (h *handler) relaysCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(relayResponseFor(*relay)); err != nil {
+	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }

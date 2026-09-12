@@ -49,6 +49,13 @@ rustls = { version = "0.23", default-features = false, features = ["std", "aws-l
 # `cargo deny check advisories` fails the build on it. The replacement is the
 # `PemObject` trait, which rustls re-exports.
 rustls-pki-types = { version = "1", features = ["std"] }
+# ADR-0021's telemetry POST is the one connection this crate makes to
+# something that presents an ordinary, publicly-issued certificate rather
+# than the private CAs `tls::client_config` deliberately requires for a mesh
+# peer — this is what supplies that trust store. Pinned to the same version
+# `bins/karstd` already depends on for the analogous node-to-control-plane
+# case.
+rustls-native-certs = "0.8"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
 # ADR-0020. `rustls-aws-lc-rs` rather than the default `ring` backend for the
@@ -62,3 +69,9 @@ quinn = { version = "0.11.11", default-features = false, features = ["runtime-to
 # Self-signed certificates for the listener test. A relay whose TLS is only
 # ever exercised against a real CA is a relay whose TLS is never exercised.
 rcgen = "0.14"
+# `tests/telemetry_vector.rs` reads the Go-generated
+# `spec/vectors/relay-telemetry-v1.json` — the same tooling
+# `karst-control-client`'s own vector test already depends on for the
+# analogous file.
+hex = "0.4"
+serde_json = "1"

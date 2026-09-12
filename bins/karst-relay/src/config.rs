@@ -106,6 +106,15 @@ pub struct Config {
     #[serde(default)]
     pub quic: bool,
 
+    /// Self-reported health/throughput telemetry to the control plane —
+    /// ADR-0021.
+    ///
+    /// **Off unless configured**, the same posture as [`Reflect`] and
+    /// [`Metrics`]: an operator who has not pointed a relay at a control
+    /// plane should not have it phoning one.
+    #[serde(default)]
+    pub telemetry: Option<Telemetry>,
+
     /// Which region this relay serves — §8, §9.
     ///
     /// **Mesh is within a region**, and §8 gives the reason: cross-region
@@ -150,6 +159,26 @@ pub struct Mesh {
 pub struct Metrics {
     /// Address to serve `GET /metrics` on.
     pub listen: SocketAddr,
+}
+
+/// Where, and how often, to push self-reported telemetry — ADR-0021.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Telemetry {
+    /// The control plane's base URL, e.g. `https://control.example.com`.
+    ///
+    /// Always `https://host[:port]` with no path: the path this relay posts
+    /// to is fixed by ADR-0021, not configurable, so there is nothing a path
+    /// component here would mean.
+    pub control_url: String,
+
+    /// How often to push a report.
+    #[serde(default = "default_telemetry_interval_secs")]
+    pub interval_secs: u64,
+}
+
+fn default_telemetry_interval_secs() -> u64 {
+    60
 }
 
 /// Where the reflector listens, and where clients are told to reach it.
@@ -302,6 +331,23 @@ impl Config {
                     .to_owned(),
             ));
         }
+        if let Some(t) = &self.telemetry {
+            if !t.control_url.starts_with("https://") {
+                // Telemetry carries a signature, not a secret, but the
+                // control plane's identity still has to be TLS-verified — a
+                // plaintext control_url would send every report to whoever
+                // happens to be on the path, unauthenticated on either side.
+                return Err(Error::Invalid(format!(
+                    "config: telemetry.control_url = {:?} must start with https://",
+                    t.control_url
+                )));
+            }
+            if t.interval_secs == 0 {
+                return Err(Error::Invalid(
+                    "config: telemetry.interval_secs must be at least 1".to_owned(),
+                ));
+            }
+        }
         if let Some(r) = &self.reflect {
             let a = r.advertised();
             if a.ip().is_unspecified() || a.port() == 0 {
@@ -438,6 +484,37 @@ tls_key = "/etc/karst/relay.key"
         // one should not be running one.
         let c = Config::parse(MINIMAL).expect("parses");
         assert!(c.reflect.is_none());
+    }
+
+    #[test]
+    fn telemetry_is_off_unless_configured() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.telemetry.is_none());
+    }
+
+    #[test]
+    fn telemetry_defaults_to_a_sixty_second_interval() {
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        assert_eq!(c.telemetry.expect("configured").interval_secs, 60);
+    }
+
+    #[test]
+    fn a_non_https_control_url_is_refused() {
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"http://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("plaintext control_url");
+        assert!(format!("{err}").contains("control_url"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_telemetry_interval_is_refused() {
+        let text = format!(
+            "{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\ninterval_secs = 0\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("zero interval");
+        assert!(format!("{err}").contains("interval_secs"), "{err}");
     }
 
     #[test]

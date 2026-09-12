@@ -22,4 +22,5 @@ pub mod reflect;
 pub mod roster;
 pub mod server;
 pub mod sign;
+pub mod telemetry;
 pub mod tls;

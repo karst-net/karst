@@ -210,6 +210,40 @@ pub fn client_config(ca: &Path) -> Result<Arc<ClientConfig>, Error> {
     Ok(Arc::new(config))
 }
 
+/// A client configuration trusting the operating system's certificate
+/// authorities — ADR-0021's telemetry POST, the one outbound connection this
+/// crate makes to something that is not itself a Ponor peer.
+///
+/// **System roots are the right trust anchor here, unlike [`client_config`]
+/// above.** A mesh peer is authenticated by its ML-DSA-65 signature, never by
+/// its certificate, so [`client_config`] refuses public roots on principle —
+/// but the control plane has no such second check downstream of this
+/// connection. TLS *is* the whole authentication for this hop, and the
+/// control plane is expected to present an ordinary, publicly-issued
+/// certificate, so this needs exactly what an ordinary HTTPS client needs.
+///
+/// # Errors
+/// [`Error::NoPostQuantum`] if this build cannot offer the required hybrid
+/// key exchange; [`Error::Rustls`] if the host supplies no usable trust
+/// roots at all.
+pub fn webpki_client_config() -> Result<Arc<ClientConfig>, Error> {
+    let provider = provider()?;
+    let loaded = rustls_native_certs::load_native_certs();
+    let mut roots = rustls::RootCertStore::empty();
+    let (added, _invalid) = roots.add_parsable_certificates(loaded.certs);
+    if added == 0 {
+        return Err(Error::Rustls(rustls::Error::General(
+            "the host has no usable certificate authority roots".to_owned(),
+        )));
+    }
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(Error::Rustls)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
@@ -258,5 +292,12 @@ mod tests {
         assert!(format!("{err}").contains("no certificate"), "{err}");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_system_roots_alone_are_a_valid_telemetry_configuration() {
+        // The default, and the right one: the control plane presents an
+        // ordinary certificate, unlike a mesh peer.
+        assert!(webpki_client_config().is_ok());
     }
 }

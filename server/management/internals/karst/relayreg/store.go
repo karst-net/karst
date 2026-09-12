@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -50,6 +51,36 @@ type StoredRelay struct {
 
 func (StoredRelay) TableName() string { return "karst_relays" }
 
+// Telemetry is what a relay reports about itself — ADR-0021. Aggregate only,
+// mirroring bins/karst-relay/src/metrics.rs's own disclosure posture: no
+// per-node field belongs here, ever.
+type Telemetry struct {
+	LocalClients  int
+	MeshPeers     int
+	RemoteClients int
+	BytesTotal    int64
+	UptimeSecs    int64
+}
+
+// RelayTelemetryRecord is the latest self-reported report a relay has pushed
+// to the control plane, and the point of ADR-0021: deliberately its own
+// table, not columns on StoredRelay. Registry data is operator-asserted
+// configuration; this is relay-asserted, signature-authenticated
+// observation, and a caller reading one must never be able to mistake it for
+// the other.
+type RelayTelemetryRecord struct {
+	AccountID     string `gorm:"primaryKey;size:64"`
+	ID            string `gorm:"primaryKey"`
+	ReportedAt    time.Time
+	LocalClients  int
+	MeshPeers     int
+	RemoteClients int
+	BytesTotal    int64
+	UptimeSecs    int64
+}
+
+func (RelayTelemetryRecord) TableName() string { return "karst_relay_telemetry" }
+
 type Store struct {
 	db             *gorm.DB
 	compiledMu     sync.RWMutex
@@ -63,7 +94,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay registry: nil database")
 	}
-	if err := db.AutoMigrate(&StoredRelay{}); err != nil {
+	if err := db.AutoMigrate(&StoredRelay{}, &RelayTelemetryRecord{}); err != nil {
 		return nil, fmt.Errorf("relay registry: migrate: %w", err)
 	}
 	return &Store{db: db, compiledNetmap: make(map[string]*proto.KarstRelay)}, nil
@@ -127,6 +158,65 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	s.invalidateCompiled(accountID, id)
 	s.recordSize(accountID)
 	return nil
+}
+
+// FindByID looks up every registered relay with this id, across every
+// account — ADR-0021. Unlike every other method here, deliberately not
+// account-scoped: a relay authenticates a telemetry report by proving
+// control of the key its own registry entry names, not by presenting an
+// account context the way a user session does, so the lookup has to start
+// from the id alone. Ordinarily returns at most one row; more than one means
+// the same identity key was registered under two accounts, and both should
+// see the report confirmed rather than this method guessing which one is
+// "right".
+func (s *Store) FindByID(_ context.Context, id string) ([]StoredRelay, error) {
+	var records []StoredRelay
+	if err := s.db.Where("id = ?", id).Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("relay registry: find by id: %w", err)
+	}
+	return records, nil
+}
+
+// RecordTelemetry stores the latest self-reported report for one relay under
+// one account — ADR-0021. An upsert: a relay reports on an interval, so the
+// common case after the first report is always "replace what's there".
+func (s *Store) RecordTelemetry(_ context.Context, accountID, id string, t Telemetry) error {
+	record := &RelayTelemetryRecord{
+		AccountID:     accountID,
+		ID:            id,
+		ReportedAt:    time.Now(),
+		LocalClients:  t.LocalClients,
+		MeshPeers:     t.MeshPeers,
+		RemoteClients: t.RemoteClients,
+		BytesTotal:    t.BytesTotal,
+		UptimeSecs:    t.UptimeSecs,
+	}
+	err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "account_id"}, {Name: "id"}},
+		UpdateAll: true,
+	}).Create(record).Error
+	if err != nil {
+		return fmt.Errorf("relay registry: record telemetry: %w", err)
+	}
+	return nil
+}
+
+// LatestTelemetry returns the most recent report for a relay, or nil if none
+// has ever arrived — ADR-0021.
+func (s *Store) LatestTelemetry(ctx context.Context, id string) (*RelayTelemetryRecord, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var record RelayTelemetryRecord
+	err = s.db.Where("account_id = ? AND id = ?", accountID, id).First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("relay registry: latest telemetry: %w", err)
+	}
+	return &record, nil
 }
 
 // recordSize refreshes the cached registry-size gauge for accountID after a

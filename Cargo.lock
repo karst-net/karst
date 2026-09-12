@@ -1510,6 +1510,7 @@ version = "0.0.0"
 dependencies = [
  "base64ct",
  "getrandom 0.3.4",
+ "hex",
  "karst-disco",
  "karst-relay-proto",
  "ml-dsa",
@@ -1517,8 +1518,10 @@ dependencies = [
  "rand_core 0.10.1",
  "rcgen",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "tokio-rustls",

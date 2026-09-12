@@ -38,6 +38,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -209,11 +210,16 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// operator file into a global, cross-account policy revision.
 
 	// Register after NewAPIHandler has installed the shared auth, CORS, and
-	// metrics middleware and its built-in routes. Karst therefore has no second
-	// authentication path, while the route ordering stays mechanically clear.
+	// metrics middleware and its built-in routes, so the route ordering stays
+	// mechanically clear. Every route here rides that shared user-session
+	// path except relaytelemetry's, which is deliberately outside it —
+	// ADR-0021: a relay authenticates itself by an ML-DSA-87 signature, not a
+	// user session, the same reason RegisterEnrollmentMetadata already sits
+	// outside karstapi's own `/karst/v1` subrouter for its own auth check.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.PermissionsManager(), router)
+		relaytelemetry.RegisterEndpoints(router, relayStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}

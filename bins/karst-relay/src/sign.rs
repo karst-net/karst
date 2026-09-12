@@ -19,6 +19,15 @@ use sha2::{Digest, Sha256};
 /// would be a valid value in the other.
 const CTX: &[u8] = b"ponor-v1";
 
+/// FIPS 204 context string for a relay's self-reported telemetry — ADR-0021.
+///
+/// A third purpose for the same identity key, alongside `CTX` (Ponor) and
+/// `karst-control-v1` (the node control channel, a different key entirely but
+/// the same context string this crate must never reuse). Domain separation is
+/// what lets one key sign for more than one purpose without a signature for
+/// one ever being mistaken for the other.
+const TELEMETRY_CTX: &[u8] = b"karst-relay-telemetry-v1";
+
 /// Domain label for a relay identifier — §5.2.
 const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
 
@@ -145,6 +154,24 @@ impl Identity {
     #[must_use]
     pub fn public_key(&self) -> &[u8] {
         &self.public
+    }
+
+    /// Sign a telemetry report — ADR-0021. Under `TELEMETRY_CTX`, never
+    /// `CTX`: the same key signs Ponor handshakes, and without a distinct
+    /// context a captured telemetry signature would verify as a handshake
+    /// signature over the same bytes, and vice versa.
+    ///
+    /// # Errors
+    /// If the operating system's CSPRNG cannot be read.
+    pub fn sign_telemetry(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_randomized(message, TELEMETRY_CTX, &mut OsEntropy)
+            .map_err(|_| "signing the telemetry report failed")?;
+        Ok(sig.encode().to_vec())
     }
 }
 
@@ -351,6 +378,37 @@ mod tests {
         assert_ne!(a, b, "signatures are deterministic — not hedged");
         assert!(PonorVerifier.verify(k.public_key(), &msg, &a));
         assert!(PonorVerifier.verify(k.public_key(), &msg, &b));
+    }
+
+    #[test]
+    fn a_telemetry_signature_verifies_under_its_own_context() {
+        let k = identity(1);
+        let msg = [7u8; 64];
+        let sig = k.sign_telemetry(&msg).expect("signing");
+        let pk = <[u8; IDENTITY_PK_LEN]>::try_from(k.public_key()).expect("pk len");
+        let sg = <[u8; SIG_LEN]>::try_from(sig.as_slice()).expect("sig len");
+        let vk = ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&pk.into());
+        let decoded = ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&sg.into()).expect("decode");
+        assert!(vk.verify_with_context(&msg, TELEMETRY_CTX, &decoded));
+    }
+
+    #[test]
+    fn a_telemetry_signature_is_not_a_ponor_signature() {
+        // The whole reason for the context string: the same identity key
+        // signs in both protocols.
+        let k = identity(1);
+        let msg = [7u8; 64];
+        let telemetry = k.sign_telemetry(&msg).expect("signing");
+        assert!(!PonorVerifier.verify(k.public_key(), &msg, &telemetry));
+    }
+
+    #[test]
+    fn telemetry_signing_is_hedged() {
+        let k = identity(1);
+        let msg = [7u8; 64];
+        let a = k.sign_telemetry(&msg).expect("signing");
+        let b = k.sign_telemetry(&msg).expect("signing");
+        assert_ne!(a, b, "signatures are deterministic — not hedged");
     }
 
     #[test]
