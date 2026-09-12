@@ -17,6 +17,23 @@
 //! because `bind_reuseport` is Linux-only (karst-net/karst#118): other
 //! platforms have a same-named socket option that does not load-balance the
 //! way this crate depends on.
+//!
+//! # `UDP_GRO`
+//!
+//! `sys.rs` enables `UDP_GRO` best-effort on every Linux socket, so every test
+//! below already runs with it on — and none of them can *prove* GRO's
+//! coalescing logic this way. Loopback under the light, bursty load a unit
+//! test produces essentially never triggers real kernel coalescing (this is
+//! not a guess: it is exactly how a previous, broken `UDP_GRO` enablement
+//! passed every test here and then took two real hosts to 100% packet loss —
+//! see the postmortem `sys.rs` carries next to its GRO code). What these
+//! tests *do* prove is that ordinary, uncoalesced traffic is unaffected —
+//! every `Received` below lands at `slot == i`, `offset == 0`, matching the
+//! pre-GRO contract exactly. The splitting logic itself has direct,
+//! deterministic unit tests in `sys.rs` (`gro_segments`); the claim that real
+//! coalescing produces correct output is backed by a real two-host run,
+//! recorded in `docs/measurements/udp-gro-2026-09-12.md`, not by anything in
+//! this file.
 
 #![allow(
     clippy::panic,
@@ -30,7 +47,7 @@ use std::net::UdpSocket;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
+use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM, MAX_GRO_READ};
 
 fn pair() -> (UdpTransport, UdpTransport, SocketAddr, SocketAddr) {
     let a = UdpTransport::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
@@ -41,8 +58,11 @@ fn pair() -> (UdpTransport, UdpTransport, SocketAddr, SocketAddr) {
     (a, b, aa, ba)
 }
 
-fn buffers() -> Vec<[u8; MAX_DATAGRAM]> {
-    vec![[0u8; MAX_DATAGRAM]; BATCH]
+// `clippy::large_stack_arrays`: each `[u8; MAX_GRO_READ]` (64 KiB) is a large
+// array value syntactically, but this runs once per test, not in a loop.
+#[allow(clippy::large_stack_arrays)]
+fn buffers() -> Vec<[u8; MAX_GRO_READ]> {
+    vec![[0u8; MAX_GRO_READ]; BATCH]
 }
 
 /// Collect exactly `want` datagrams, batching as they arrive.
@@ -55,8 +75,8 @@ fn drain(sock: &UdpTransport, want: usize) -> Vec<Vec<u8>> {
         if n == 0 {
             break;
         }
-        for (i, m) in meta.iter().enumerate() {
-            got.push(bufs[i][..m.len].to_vec());
+        for m in &meta {
+            got.push(bufs[m.slot][m.offset..m.offset + m.len].to_vec());
         }
     }
     got
@@ -146,18 +166,20 @@ fn a_full_batch_of_full_size_datagrams_is_exact() {
 /// Nothing may be written past a receive buffer. Sentinel bytes after each
 /// buffer would be clobbered by an off-by-one in the `iovec` length.
 #[test]
+#[allow(clippy::large_stack_arrays)] // one-time 64 KiB literals, not a loop
 fn the_kernel_never_writes_past_a_receive_buffer() {
     let (a, b, _, ba) = pair();
     let payload = vec![0xFFu8; MAX_DATAGRAM];
     a.send_batch(&[(payload.as_slice(), ba)]).unwrap();
 
     // One extra buffer, pre-filled with a sentinel that must survive.
-    let mut bufs = vec![[0u8; MAX_DATAGRAM]; BATCH];
-    bufs[1] = [0x42u8; MAX_DATAGRAM];
+    let mut bufs = vec![[0u8; MAX_GRO_READ]; BATCH];
+    bufs[1] = [0x42u8; MAX_GRO_READ];
     let mut meta = Vec::new();
     assert_eq!(b.recv_batch(&mut bufs, &mut meta).unwrap(), 1);
 
     assert_eq!(meta[0].len, MAX_DATAGRAM);
+    assert_eq!(meta[0].slot, 0, "the lone datagram must land in slot 0");
     assert!(
         bufs[1].iter().all(|&x| x == 0x42),
         "a datagram was written into the wrong buffer"
@@ -407,6 +429,30 @@ fn one_datagram_returns_without_waiting_for_a_full_batch() {
         elapsed < Duration::from_millis(500),
         "a lone datagram took {elapsed:?} — recvmmsg is waiting for a full batch"
     );
+}
+
+/// Without coalescing, every datagram gets its own slot at offset 0 — the
+/// pre-GRO contract `run.rs`'s `tunnel_to_host_worker` and every caller of
+/// `recv_batch` before this change relied on. See this file's module doc for
+/// why real GRO coalescing itself cannot be asserted here.
+#[test]
+fn uncoalesced_datagrams_each_get_their_own_slot() {
+    let (a, b, _, ba) = pair();
+    let payloads: Vec<Vec<u8>> = (0..5u8).map(|i| vec![i; 40]).collect();
+    let batch: Vec<(&[u8], SocketAddr)> = payloads.iter().map(|p| (p.as_slice(), ba)).collect();
+    a.send_batch(&batch).unwrap();
+
+    let mut bufs = buffers();
+    let mut meta: Vec<Received> = Vec::new();
+    let mut seen = 0usize;
+    while seen < payloads.len() {
+        let n = b.recv_batch(&mut bufs, &mut meta).unwrap();
+        for (k, m) in meta.iter().enumerate() {
+            assert_eq!(m.offset, 0, "no coalescing occurred; offset must be 0");
+            assert_eq!(m.slot, seen + k, "each datagram must land in its own slot");
+        }
+        seen += n;
+    }
 }
 
 /// A partial batch is returned as soon as it is available, in full.

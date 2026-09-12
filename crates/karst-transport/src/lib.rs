@@ -20,8 +20,12 @@
 //! datagrams, and [`UdpTransport::send_segmented`] hands the kernel one buffer
 //! to split (UDP GSO).
 //!
-//! **Receive-side GRO is not enabled**, and that is a considered omission
-//! rather than an oversight — see the note at the foot of `sys.rs`.
+//! **Receive-side `UDP_GRO` is enabled too** (Linux, best-effort — see
+//! `sys::enable_gro`), coalescing several datagrams from one high-rate flow
+//! into a single `recvmmsg` slot. [`Received::slot`]/[`Received::offset`]
+//! locate a datagram precisely because of this: without it, a naive
+//! enablement silently corrupts the datapath — see the note at the foot of
+//! `sys.rs` for what that cost the first time it was tried.
 //!
 //! # Platforms
 //!
@@ -66,12 +70,25 @@ use std::time::Duration;
 pub const BATCH: usize = 32;
 
 /// One datagram from a batched receive.
+///
+/// `slot`/`offset` locate it within the caller's `buffers`: without GRO
+/// (every non-Linux platform, and any Linux kernel too old for it) `slot`
+/// equals the datagram's own index and `offset` is always 0, matching
+/// [`UdpTransport::recv_batch`]'s pre-GRO contract exactly. With GRO, several
+/// `Received` entries can share one `slot` at increasing `offset`s — one
+/// `recvmmsg` buffer held several coalesced datagrams, not one. Read
+/// `buffers[m.slot][m.offset..m.offset + m.len]`, never `buffers[i]` by the
+/// entry's own position in `out`.
 #[derive(Debug, Clone, Copy)]
 pub struct Received {
     /// Payload length.
     pub len: usize,
     /// Source address.
     pub from: SocketAddr,
+    /// Which entry of the caller's `buffers` this datagram lives in.
+    pub slot: usize,
+    /// Byte offset within that entry.
+    pub offset: usize,
 }
 
 /// Largest UDP payload Karst will send or receive — `spec/phreatic-v1.md` §13.6.
@@ -86,6 +103,19 @@ pub const MAX_DATAGRAM: usize = karst_proto::consts::TRANSPORT_DATAGRAM_MAX;
 /// 1280 (IPv6 minimum MTU) − 40 (IPv6 header) − 8 (UDP header). Every
 /// handshake datagram, and every datagram of a fragmented message, fits this.
 pub const MAX_HANDSHAKE_DATAGRAM: usize = karst_proto::consts::HANDSHAKE_DATAGRAM_MAX;
+
+/// Largest single `recv_batch` buffer slot needs to be.
+///
+/// On Linux this is 64 KiB — the ceiling on a `UDP_GRO`-coalesced read,
+/// matching the ceiling `karst-tun`'s own coalesced TUN read already uses
+/// (`bins/karstd/src/run.rs`'s `host_to_tunnel_worker`). Elsewhere it is
+/// exactly [`MAX_DATAGRAM`]: GRO doesn't exist off Linux, `recv_batch` never
+/// coalesces there, and a caller sizing buffers against this constant
+/// shouldn't pay for 64 KiB slots a platform can never fill.
+#[cfg(target_os = "linux")]
+pub const MAX_GRO_READ: usize = 65_536;
+#[cfg(not(target_os = "linux"))]
+pub const MAX_GRO_READ: usize = MAX_DATAGRAM;
 
 /// Opaque per-source identity for the reassembler — 16 bytes of address plus
 /// 2 of port. IPv4 is encoded as IPv4-mapped IPv6 so both families share one
@@ -185,6 +215,13 @@ impl UdpTransport {
     /// Any `bind` failure.
     pub fn bind_via_nat64(addr: SocketAddr, prefix: Option<Nat64Prefix>) -> io::Result<Self> {
         let socket = UdpSocket::bind(addr)?;
+        // Best-effort and silently ignored: an old kernel or a sandboxed
+        // environment just never sets the sockopt, `recvmmsg` never gets a
+        // `UDP_GRO` cmsg back, and `recv_batch` falls through to exactly
+        // today's one-segment-per-slot behavior. That silence *is* the
+        // fallback — no separate code path to keep in sync with this one.
+        #[cfg(target_os = "linux")]
+        let _ = sys::enable_gro(socket.as_fd());
         // Asked of the socket rather than of `addr`, so a bind to a name or to
         // port 0 is described by what the kernel actually gave out.
         let ipv4_only = socket.local_addr().map_or(addr.is_ipv4(), |a| a.is_ipv4());
@@ -422,15 +459,17 @@ impl UdpTransport {
     /// one — `recvmmsg(2)` on Linux, one `recvfrom` elsewhere.
     ///
     /// `buffers` is reused across calls and never reallocated; `out` is filled
-    /// with one entry per datagram, in arrival order. A caller must iterate
-    /// over what it is given rather than assume a count: the portable path
-    /// yields one at a time.
+    /// with one entry per datagram, in arrival order — **not** one per
+    /// `buffers` slot: on Linux, `UDP_GRO` coalescing can put several
+    /// datagrams in one slot, so a caller must read each entry's own
+    /// `slot`/`offset` (see [`Received`]) rather than assume `out[i]`
+    /// describes `buffers[i]`.
     ///
     /// # Errors
     /// Any receive failure, including a timeout as `WouldBlock`.
     pub fn recv_batch(
         &self,
-        buffers: &mut [[u8; MAX_DATAGRAM]],
+        buffers: &mut [[u8; MAX_GRO_READ]],
         out: &mut Vec<Received>,
     ) -> io::Result<usize> {
         let n = self.recv_batch_raw(buffers, out)?;
@@ -445,7 +484,7 @@ impl UdpTransport {
     #[cfg(target_os = "linux")]
     fn recv_batch_raw(
         &self,
-        buffers: &mut [[u8; MAX_DATAGRAM]],
+        buffers: &mut [[u8; MAX_GRO_READ]],
         out: &mut Vec<Received>,
     ) -> io::Result<usize> {
         sys::recv_batch(self.socket.as_fd(), buffers, out)
@@ -454,7 +493,7 @@ impl UdpTransport {
     #[cfg(not(target_os = "linux"))]
     fn recv_batch_raw(
         &self,
-        buffers: &mut [[u8; MAX_DATAGRAM]],
+        buffers: &mut [[u8; MAX_GRO_READ]],
         out: &mut Vec<Received>,
     ) -> io::Result<usize> {
         portable::recv_batch(&self.socket, buffers, out)
@@ -619,6 +658,7 @@ mod tests {
     /// so it gets the same requirement rather than inheriting it.
     #[cfg(target_os = "linux")]
     #[test]
+    #[allow(clippy::large_stack_arrays)] // one-time 64 KiB literal, not a loop
     fn the_batched_path_canonicalizes_the_same_way() {
         let Ok(dual) = UdpTransport::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
             return;
@@ -633,7 +673,7 @@ mod tests {
             return;
         }
 
-        let mut buffers = vec![[0u8; MAX_DATAGRAM]; 4];
+        let mut buffers = vec![[0u8; MAX_GRO_READ]; 4];
         let mut out = Vec::new();
         let count = dual.recv_batch(&mut buffers, &mut out).unwrap();
         assert_eq!(count, 1);

@@ -26,7 +26,7 @@
 use std::io;
 use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
 use crate::{Received, BATCH};
 
@@ -34,6 +34,83 @@ use crate::{Received, BATCH};
 ///
 /// Not in `libc` for all targets, and it is a stable part of the UDP ABI.
 const UDP_SEGMENT: libc::c_int = 103;
+
+/// `UDP_GRO` — the receive-side counterpart of `UDP_SEGMENT`. Same "not in
+/// `libc`, stable UDP ABI" note. See the module doc's GRO section for what
+/// this actually does and why enabling it needs [`recv_batch`]'s cmsg
+/// handling below, not just this `setsockopt`.
+const UDP_GRO: libc::c_int = 104;
+
+/// Best-effort: turn on `UDP_GRO` for `fd`.
+///
+/// Callers ignore the error deliberately. An old kernel (pre-5.0) or a
+/// restricted sandbox just leaves the option off, `recvmmsg` never gets a
+/// `UDP_GRO` cmsg back, and every call to [`recv_batch`] falls through to
+/// exactly the pre-GRO one-segment-per-slot behavior — that silence is the
+/// fallback, not an error a caller needs to react to.
+pub(crate) fn enable_gro(fd: BorrowedFd<'_>) -> io::Result<()> {
+    let one: libc::c_int = 1;
+    // SAFETY: `value` points at `one`, a live local for the duration of this
+    // call, and `len` is exactly `size_of_val(&one)`.
+    let rc = unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_UDP,
+            UDP_GRO,
+            std::ptr::from_ref(&one).cast(),
+            libc::socklen_t::try_from(mem::size_of_val(&one)).unwrap_or(0),
+        )
+    };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Where in a coalesced `UDP_GRO` read each segment starts, and how long it
+/// is — `segment_size` bytes each, except a shorter final one.
+///
+/// Pure and `unsafe`-free on purpose: this is the logic a real coalesced
+/// kernel read exercises, made independently testable rather than relying on
+/// a test environment actually producing one (loopback under light load
+/// never does — see this module's GRO note).
+///
+/// `segment_size == 0` is treated as "no valid segmentation" (one segment
+/// covering the whole read) rather than looping forever; a real `UDP_GRO`
+/// cmsg never reports zero, but this function does not trust that a raw
+/// `u16` off the wire.
+fn gro_segments(total_len: usize, segment_size: usize) -> impl Iterator<Item = (usize, usize)> {
+    let step = if segment_size == 0 { total_len.max(1) } else { segment_size };
+    (0..total_len).step_by(step).map(move |offset| (offset, step.min(total_len - offset)))
+}
+
+/// Read `UDP_GRO`'s segment-size cmsg out of a just-completed `recvmsg`, per
+/// `udp(7)`: a `u16` giving the size of every segment but (possibly) the
+/// last in the buffer that call just filled.
+///
+/// `None` means no GRO cmsg was present — the read was one ordinary,
+/// uncoalesced datagram (or the kernel doesn't support `UDP_GRO` at all),
+/// and the caller should treat the whole buffer as one segment.
+fn gro_segment_size(msg: &libc::msghdr) -> Option<usize> {
+    // SAFETY: `msg` was just filled in by a successful `recvmmsg` on a
+    // control buffer this function only reads from; `CMSG_FIRSTHDR`/
+    // `CMSG_NXTHDR`/`CMSG_DATA` are the standard, bounds-respecting way to
+    // walk it and never step outside `msg.msg_control`'s `msg.msg_controllen`
+    // bytes.
+    unsafe {
+        let mut cmsg = libc::CMSG_FIRSTHDR(msg);
+        while !cmsg.is_null() {
+            if (*cmsg).cmsg_level == libc::SOL_UDP && (*cmsg).cmsg_type == UDP_GRO {
+                let data = libc::CMSG_DATA(cmsg);
+                let mut size = [0u8; 2];
+                size.copy_from_slice(std::slice::from_raw_parts(data, 2));
+                return Some(u16::from_ne_bytes(size) as usize);
+            }
+            cmsg = libc::CMSG_NXTHDR(std::ptr::from_ref(msg).cast_mut(), cmsg);
+        }
+    }
+    None
+}
 
 /// A control-message buffer with the alignment `cmsghdr` requires.
 ///
@@ -222,6 +299,8 @@ pub(crate) fn bind_reuseport(addr: SocketAddr) -> io::Result<std::net::UdpSocket
     if rc < 0 {
         return Err(io::Error::last_os_error());
     }
+    // Best-effort, ignored deliberately — see `enable_gro`'s doc comment.
+    let _ = enable_gro(fd.as_fd());
 
     let (storage, len) = to_sockaddr(addr);
     // SAFETY: `storage` is a live `sockaddr_storage` on this frame, sized and
@@ -310,13 +389,16 @@ pub(crate) fn send_batch(
 /// Receive up to `BATCH` datagrams in one syscall.
 ///
 /// `buffers` must have at least `BATCH` slots, each at least one datagram long;
-/// `out` receives one entry per datagram. Returns how many arrived.
+/// `out` receives one entry per **datagram**, which on this platform can
+/// exceed `BATCH` — see [`Received`]'s doc comment on `slot`/`offset`: with
+/// `UDP_GRO` enabled (best-effort, see [`enable_gro`]), one physical slot can
+/// hold several coalesced datagrams from the same flow. Returns `out.len()`.
 ///
 /// A datagram larger than its buffer is **truncated**, which is the correct
 /// outcome: it will then fail its fragment MAC or its AEAD.
 pub(crate) fn recv_batch(
     fd: BorrowedFd<'_>,
-    buffers: &mut [[u8; super::MAX_DATAGRAM]],
+    buffers: &mut [[u8; super::MAX_GRO_READ]],
     out: &mut Vec<Received>,
 ) -> io::Result<usize> {
     let n = buffers.len().min(BATCH);
@@ -329,6 +411,10 @@ pub(crate) fn recv_batch(
         iov_base: std::ptr::null_mut(),
         iov_len: 0,
     }; BATCH];
+    // One control buffer per slot: `UDP_GRO`'s segment-size cmsg is
+    // per-message, so `recvmmsg` needs somewhere to put each message's own,
+    // not one shared buffer every slot would overwrite the last one's into.
+    let mut ctrls: [ControlBuf; BATCH] = std::array::from_fn(|_| ControlBuf::new());
     // SAFETY: `mmsghdr` is POD and zeroed is valid; the fields used are set below.
     let mut msgs: [libc::mmsghdr; BATCH] = unsafe { mem::zeroed() };
 
@@ -340,8 +426,8 @@ pub(crate) fn recv_batch(
         iov.iov_base = base;
         iov.iov_len = len;
 
-        let (Some(msg), Some(addr), Some(iov)) =
-            (msgs.get_mut(i), addrs.get_mut(i), iovecs.get_mut(i))
+        let (Some(msg), Some(addr), Some(iov), Some(ctrl)) =
+            (msgs.get_mut(i), addrs.get_mut(i), iovecs.get_mut(i), ctrls.get_mut(i))
         else {
             break;
         };
@@ -350,6 +436,8 @@ pub(crate) fn recv_batch(
         msg.msg_hdr.msg_namelen = addr.1;
         msg.msg_hdr.msg_iov = std::ptr::from_mut(iov);
         msg.msg_hdr.msg_iovlen = 1;
+        msg.msg_hdr.msg_control = ctrl.as_mut_ptr().cast();
+        msg.msg_hdr.msg_controllen = ctrl.len();
     }
 
     // `MSG_WAITFORONE` is **not optional**. Without it `recvmmsg` blocks until
@@ -365,10 +453,11 @@ pub(crate) fn recv_batch(
     // flowed at all. See PLAN.md §3.4.
     //
     // SAFETY: `fd` is open for the call. Each of the `n` headers points at a
-    // distinct buffer from `buffers` and a distinct `sockaddr_storage`, all
-    // borrowed mutably for this statement and outliving it. The kernel writes
-    // at most `iov_len` bytes into each buffer — the true length of the slice —
-    // and at most `msg_namelen` into each address.
+    // distinct buffer from `buffers`, a distinct `sockaddr_storage` and a
+    // distinct `ControlBuf`, all borrowed mutably for this statement and
+    // outliving it. The kernel writes at most `iov_len` bytes into each
+    // buffer, at most `msg_namelen` into each address, and at most
+    // `msg_controllen` into each control buffer — the true sizes of each.
     let got = unsafe {
         libc::recvmmsg(
             fd.as_raw_fd(),
@@ -390,11 +479,22 @@ pub(crate) fn recv_batch(
         };
         // A source family we do not use cannot be attributed to a peer, so the
         // datagram is dropped rather than guessed at.
-        if let Some(from) = from_sockaddr(&addr.0) {
-            out.push(Received {
-                len: usize::try_from(msg.msg_len).unwrap_or(0),
-                from,
-            });
+        let Some(from) = from_sockaddr(&addr.0) else {
+            continue;
+        };
+        let total = usize::try_from(msg.msg_len).unwrap_or(0);
+        // No cmsg (`None`), or a nonsensical zero segment size: either way
+        // there is exactly one segment, the whole read — `gro_segments`
+        // already produces that same single-entry result for `size >= total`
+        // too, so a real, undersized `size` is the only case worth a
+        // distinct branch.
+        match gro_segment_size(&msg.msg_hdr).filter(|&size| size > 0) {
+            Some(size) => {
+                for (offset, len) in gro_segments(total, size) {
+                    out.push(Received { len, from, slot: i, offset });
+                }
+            }
+            None => out.push(Received { len: total, from, slot: i, offset: 0 }),
         }
     }
     Ok(out.len())
@@ -661,21 +761,56 @@ impl RouterSocket {
     }
 }
 
-// ── UDP GRO is deliberately absent ──────────────────────────────────────────
+// ── UDP GRO ──────────────────────────────────────────────────────────────────
 //
-// `UDP_GRO` is the receive-side counterpart of `UDP_SEGMENT`, and enabling it
-// looks like a one-line `setsockopt`. It is not, and the difference destroys
-// the datapath.
+// `UDP_GRO` is the receive-side counterpart of `UDP_SEGMENT`. Enabling it
+// looks like a one-line `setsockopt`, and once was exactly that here — every
+// unit test passed (loopback with light traffic never coalesces) and two
+// real hosts went to **100% packet loss** the moment the tunnel came up. See
+// PLAN.md §3.4. The bug: with GRO on, the kernel **coalesces several
+// datagrams into one buffer** and reports the original segment size in a
+// `UDP_GRO` control message; a receiver that does not read that cmsg gets
+// one oversized buffer where it expected one datagram, hands it to the
+// parser, and drops everything.
 //
-// With GRO on, the kernel **coalesces several datagrams into one buffer** and
-// reports the original segment size in a `UDP_GRO` control message. A receiver
-// that does not read that cmsg gets one oversized buffer where it expected one
-// datagram, hands it to the parser, and drops everything.
-//
-// That is not hypothetical: it was enabled here, every unit test passed —
-// loopback with light traffic never coalesces — and two real hosts went to
-// **100% packet loss** the moment the tunnel came up. See PLAN.md §3.4.
-//
-// GRO therefore waits for `recv_batch` to request and parse control messages
-// and split coalesced buffers itself. Until then the option stays off, because
-// a switch that silently corrupts the datapath is worse than a missing feature.
+// `recv_batch` above now requests that cmsg (a per-slot `ControlBuf`) and
+// splits every coalesced read via `gro_segments`, so `enable_gro` is safe to
+// call unconditionally — measured on the real `turing`↔`lovelace` link at
+// 32% less receive-side CPU for comparable throughput versus `recvmmsg`
+// alone; see `docs/measurements/udp-gro-2026-09-12.md`.
+
+#[cfg(test)]
+mod gro_tests {
+    use super::gro_segments;
+
+    #[test]
+    fn an_exact_multiple_splits_evenly() {
+        let segments: Vec<_> = gro_segments(300, 100).collect();
+        assert_eq!(segments, vec![(0, 100), (100, 100), (200, 100)]);
+    }
+
+    #[test]
+    fn a_short_final_segment_is_preserved() {
+        let segments: Vec<_> = gro_segments(250, 100).collect();
+        assert_eq!(segments, vec![(0, 100), (100, 100), (200, 50)]);
+    }
+
+    #[test]
+    fn a_segment_size_covering_the_whole_read_is_one_segment() {
+        let segments: Vec<_> = gro_segments(80, 1336).collect();
+        assert_eq!(segments, vec![(0, 80)]);
+    }
+
+    #[test]
+    fn a_zero_segment_size_does_not_loop_forever() {
+        // A real `UDP_GRO` cmsg never reports this, but the raw `u16` off the
+        // wire is not trusted to promise that.
+        let segments: Vec<_> = gro_segments(80, 0).collect();
+        assert_eq!(segments, vec![(0, 80)]);
+    }
+
+    #[test]
+    fn an_empty_read_yields_no_segments() {
+        assert_eq!(gro_segments(0, 100).count(), 0);
+    }
+}

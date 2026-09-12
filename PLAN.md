@@ -4309,6 +4309,19 @@ Phase 5's.
 
 - iOS and Android clients via UniFFI over the Rust core.
 - Performance tuning: io_uring, path MTU discovery, QUIC relay transport.
+  **io_uring resolved 2026-09-12 (issue #120): evaluated and not adopted.**
+  A plain io_uring receive path loses to the existing `recvmmsg` batching
+  (3.6× the CPU for 4% less throughput), and the specific follow-up that
+  could have closed that gap — multishot recv over a registered
+  provided-buffer pool — loses far worse (90% packet loss under load; the
+  modern buffer-ring registration this needs returned `EINVAL` on the lab
+  kernel and wasn't root-caused). `UDP_GRO`, the other receive-side
+  candidate this repo already knew about and had reverted for lacking
+  correct cmsg handling, **is** a real win done properly: 32% less
+  receive-side CPU at comparable throughput, and a real two-host run found
+  zero corruption across 995,228 datagrams from genuinely coalesced reads.
+  Shipped in `karst-transport`; see `docs/measurements/io-uring-spike-2026-09-12.md`
+  and `docs/measurements/udp-gro-2026-09-12.md`.
 - **Shard the datapath.** Carried from Phase 2, where it was measured and
   scoped out: throughput does not rise with flow count (686 → 708 Mbps for
   1 → 4 flows) while both datapath threads sit at 70% CPU. One TUN-reader

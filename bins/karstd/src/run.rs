@@ -27,7 +27,7 @@ use karst_disco::TxId;
 use karst_noise::handshake::ResponderRandomness;
 use karst_portmap::Protocol;
 use karst_proto::reassembly::{Config as ReasmConfig, Reassembler};
-use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM};
+use karst_transport::{Received, UdpTransport, BATCH, MAX_DATAGRAM, MAX_GRO_READ};
 use karst_tun::{Tun, TunConfig, Userspace};
 
 use crate::config::Config;
@@ -4268,8 +4268,18 @@ fn tunnel_to_host_worker(
     egress: Egress<'_>,
 ) {
     // Allocated once. `recvmmsg` fills as many as have arrived, so a busy
-    // link costs one syscall per 32 datagrams instead of 32.
-    let mut buffers = vec![[0u8; MAX_DATAGRAM]; BATCH];
+    // link costs one syscall per 32 datagrams instead of 32 — and with
+    // `UDP_GRO` coalescing, one of those 32 slots can itself hold several
+    // datagrams from one high-rate flow, which is why each slot is sized to
+    // `MAX_GRO_READ` rather than one datagram.
+    //
+    // `clippy::large_stack_arrays` fires because each `[0u8; MAX_GRO_READ]`
+    // (64 KiB) element is, syntactically, a large array value — but this
+    // executes once per worker for the worker's whole lifetime, not per
+    // iteration, so a one-time construction cost here is not the kind of
+    // thing this lint exists to catch.
+    #[allow(clippy::large_stack_arrays)]
+    let mut buffers = vec![[0u8; MAX_GRO_READ]; BATCH];
     let mut meta: Vec<Received> = Vec::with_capacity(BATCH);
     // This worker's own reassembler — not the engine's. See `Engine`'s doc
     // comment on why reassembly moved out of it: a single reader thread made
@@ -4282,11 +4292,11 @@ fn tunnel_to_host_worker(
         let Ok(count) = socket.recv_batch(&mut buffers, &mut meta) else {
             continue;
         };
-        for i in 0..count {
-            let (Some(buf), Some(m)) = (buffers.get(i), meta.get(i)) else {
+        for m in meta.iter().take(count) {
+            let Some(buf) = buffers.get(m.slot) else {
                 continue;
             };
-            let Some(datagram) = buf.get(..m.len) else {
+            let Some(datagram) = buf.get(m.offset..m.offset + m.len) else {
                 continue;
             };
             let out = demultiplex(&mut reasm, datagram, m.from, now_ms(started), disco, engine);

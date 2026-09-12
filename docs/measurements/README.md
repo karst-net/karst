@@ -30,6 +30,8 @@ way are worth more than the number it produced.
 | `soak-2026-08-12-rekey-race.tsv` | **FAIL** — 459 samples, 7.9 h. Found the simultaneous-rekey race |
 | `soak-2026-08-12-pass.tsv` | **PASS** — 700 samples, 12.0 h, against the fix |
 | `userspace-cost-2026-08-21.md` | userspace mode at **37%** of the privileged path's throughput and 3× its RTT — after the measurement found a 71× window bug |
+| `io-uring-spike-2026-09-12.md` | issue #120 spike — plain and multishot io_uring both lose to `recvmmsg` on the receive side (multishot far worse: 90% packet loss under load); **`UDP_GRO`, implemented correctly this time, cuts receive-side CPU 32%** at comparable throughput — recommending GRO for Phase B, not io_uring |
+| `udp-gro-2026-09-12.md` | issue #120 Phase B, shipped — real two-host run of the production `UDP_GRO` implementation: **995,228 datagrams from genuinely coalesced reads, zero corrupted**, closing the correctness question the earlier reverted attempt got wrong |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened
