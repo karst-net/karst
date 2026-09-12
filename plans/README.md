@@ -50,6 +50,7 @@ Migrated 2026-09-06 from commit `49b008ebbe4ebb490fd17597ff42451225a6003c`.
 - Release-manifest generation and publication landed in 59e597e and 26e5b5d. Control-client TLS landed in 3851717. Older missing-manifest and h2c-only statements are superseded.
 - ADR-0018 supersedes the old hybrid/selectable CNSA suite roadmap; no issue recreates that obsolete work. Windows paid signing remains post-GA and separate from the functional beta requirement.
 - #131 preserves unscheduled ideas as disposition work, including the explicitly cut FreeBSD port; it does not restore them as release commitments.
+- #121 (path MTU discovery) is implemented — ADR-0019, `spec/aven-v1.md` §7.9/§8.4 — superseding PLAN.md §3.3's "Phase 6" deferral and `aven-v1.md`'s former §12 item 5. A confirmed black hole now changes live datapath routing (`bins/karstd/src/disco.rs`'s `path_changes`, fed by `Disco::set_relay_latency`/`clear_relay`); it is not yet surfaced in `karst status`'s `PeerStatus` — see ADR-0019's Negative section.
 
 ## Source coverage
 

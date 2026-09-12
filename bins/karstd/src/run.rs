@@ -1072,6 +1072,7 @@ pub fn run_with_control(
                     random_seed,
                 );
             }
+            sync_relay_latency(&disco, &home_selector, now);
             dispatch(
                 disco_poll(&disco, &engine, now, relay_out),
                 &socket,
@@ -2743,6 +2744,30 @@ mod turn_tests {
     #[test]
     fn a_global_v6_address_is_accepted() {
         assert!(plausibly_reachable_via_turn(v6(0x2001)));
+    }
+}
+
+/// Feed this node's currently held relay's latest measured latency into every
+/// peer's §8.4 comparison — GitHub issue #121, ADR-0019.
+///
+/// Ahead of [`apply_disco_paths`] in the tick on purpose, so a relay that just
+/// connected or disconnected is reflected before `path_changes` decides
+/// anything this tick, rather than one tick late.
+fn sync_relay_latency(
+    disco: &Mutex<disco::Disco>,
+    home_selector: &Mutex<crate::home::Selector>,
+    now: u64,
+) {
+    let latency = home_selector
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .chosen_latency_ms();
+    let mut disco = disco
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match latency {
+        Some(latency_ms) => disco.set_relay_latency(latency_ms, now),
+        None => disco.clear_relay(now),
     }
 }
 

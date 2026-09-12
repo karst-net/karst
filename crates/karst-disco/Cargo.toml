@@ -12,6 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+karst-proto.workspace = true
 hmac = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 subtle = { version = "2", default-features = false }

@@ -85,6 +85,20 @@ impl Selector {
         self.chosen
     }
 
+    /// The held relay's most recent measured round trip, if it has answered
+    /// at least one round since being chosen.
+    ///
+    /// Feeds `karst_disco`'s per-peer §8.4 comparison (`Disco::
+    /// set_relay_latency`, GitHub issue #121): that mechanism needs *a*
+    /// number to rank against a confirmed black-hole direct path, not a
+    /// precise one, since `group()` alone already decides the comparison —
+    /// the magnitude only matters for tie-breaks this single relay slot
+    /// never has.
+    #[must_use]
+    pub fn chosen_latency_ms(&self) -> Option<u64> {
+        self.latest.get(&self.chosen?).copied()
+    }
+
     /// Adopt a relay this node is already connected to, without evidence.
     ///
     /// **A daemon holds a relay before anything has been measured** — it has to,

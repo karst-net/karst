@@ -1435,6 +1435,7 @@ name = "karst-disco"
 version = "0.0.0"
 dependencies = [
  "hmac",
+ "karst-proto",
  "sha2",
  "subtle",
  "zeroize",

@@ -38,7 +38,8 @@ invented proper nouns get themed names and standard technical terms do not.
 | **Path probing** | Small authenticated `Ping`/`Pong` pairs to each candidate |
 | **Reflexive discovery** | A `Pong` reports the source address the `Ping` appeared to come from — the STUN function, without a STUN server |
 | **Candidate exchange** | `CallMeMaybe` over the relay, so both ends probe at once |
-| **Path selection** | Continuous measurement with hysteresis, preferring direct over relay and IPv6 over IPv4 |
+| **MTU discovery** | Bisected `MtuProbe`/`MtuProbeAck` pairs find the largest transport datagram a direct path delivers, with no dependence on ICMP |
+| **Path selection** | Continuous measurement with hysteresis, preferring direct over relay and IPv6 over IPv4, and demoting a direct path confirmed to black-hole full-size traffic |
 
 ### 1.2 What AVEN does not do
 
@@ -233,9 +234,13 @@ and body. Verified in constant time.
 
 The variable-length `body` begins at bit 144; the 16-byte `mac` follows it.
 
-A receiver MUST reject a datagram longer than **339** bytes — the largest
-legal one, a sixteen-candidate `CallMeMaybe` — before doing anything else, and MUST reject one whose length does not match what its type
-requires.
+A receiver MUST reject a datagram longer than **339** bytes — the largest of
+the ordinary message types, a sixteen-candidate `CallMeMaybe` — before doing
+anything else, with **one deliberate exception**: an `MtuProbe` (§7.9) MAY
+reach `MTU_CEILING` bytes, because its entire purpose is to be exactly as large
+as the transport datagram it is testing. A receiver MUST reject anything larger
+than `MTU_CEILING`, and MUST reject any other type whose length does not match
+what it requires.
 
 ### 6.1 Message types
 
@@ -246,6 +251,8 @@ requires.
 | `0x03` | `CallMeMaybe` | `count` (1) ‖ `count` × `endpoint` (19) | 54..339 |
 | `0x04` | `Reflect` | `tx_id` (12) ‖ `pad` (19) | 65 |
 | `0x05` | `Reflection` | `tx_id` (12) ‖ `observed` (19) | 65 |
+| `0x06` | `MtuProbe` | `tx_id` (12) ‖ `pad` (variable, zero) | 46..`MTU_CEILING` |
+| `0x07` | `MtuProbeAck` | `tx_id` (12) | 46 |
 
 `tx_id` is 12 bytes and MUST be drawn from a CSPRNG.
 
@@ -788,6 +795,129 @@ direct, so no new query is added — but the permission-priming requirement
 above is exactly the kind of liveness property Verifpal/ProVerif do not model
 well and this draft does not attempt to. Recorded in §12.
 
+### 7.9 MTU discovery — GitHub issue #121
+
+`phreatic-v1.md` §13.6 fixes the tunnel MTU at IPv6's 1280-byte floor (RFC 8200
+§5) and forbids both IP-layer and transport-message fragmentation, so a
+full-size transport datagram is a **fixed** `MTU_CEILING` bytes — there is
+nothing smaller to fall back to for real traffic. A path whose true MTU is
+below that silently black-holes every full-size data packet, with no wire-level
+signal that anything is wrong: nothing fragments, nothing is rejected, the
+datagram is simply gone. §12 item 5 named this gap; this closes it.
+
+**The mechanism does not, and cannot, shrink what real traffic sends.** What it
+does is find out, per direct path, whether `MTU_CEILING` bytes actually get
+through — and if not, say so clearly enough that §8's selection can act on it.
+
+#### Why not ICMP
+
+Packetization-Layer PMTU Discovery (RFC 4821) rather than classic,
+ICMP-fed PMTUD, for two independent reasons:
+
+1. **ICMP "packet too big" is exactly the signal NATs are known to drop**, and
+   a mesh VPN's whole reason for existing is nodes behind NATs. Depending on it
+   would make the common deployment the one where discovery silently does not
+   work.
+2. **Reading it needs a raw socket a Karst node does not reliably hold.**
+   `karst-transport`'s only existing raw-ICMP use (`RouterSocket`, PREF64
+   discovery) is opportunistic precisely because `CAP_NET_RAW` is not
+   guaranteed — userspace-mode `karstd` runs with an empty capability set. A
+   mechanism load-bearing for correctness cannot rest on a privilege the
+   process may not have.
+
+RFC 4821 is the standard answer to both: measure at the packetization layer
+itself, using the protocol's own acknowledgment and retransmission, and treat
+ICMP purely as an optional, unauthenticated accelerant that MAY skip a probe
+round but MUST NOT, on its own, mark a path degraded. An off-path attacker who
+can merely spoof ICMP gains at most one wasted probe cycle; forging
+`MtuProbeAck` itself needs the disco key (§7.9.1). **v1 does not implement
+even the accelerant** — no ICMP is read for this purpose at all — so the point
+above is a constraint on any future addition, not a description of one.
+
+#### 7.9.1 Wire format
+
+`MtuProbe` (`0x06`) and `MtuProbeAck` (`0x07`) are keyed by the ordinary §5.2
+disco key and tag, epoch included, exactly like `Ping`/`Pong` — not by the
+§5.3 reflect key. Only the two paired nodes can produce or verify either, so
+there is no unauthenticated party who can trigger one.
+
+`MtuProbe`'s body is `tx_id` (12 bytes) followed by zero `pad` bytes, sized so
+the **total encoded datagram** equals the candidate size being tested. The
+padding carries the probe: a receiver need not decode it, since either the
+whole authenticated datagram arrives intact or it does not arrive at all. A
+receiver MUST reject non-zero padding, for the same covert-channel reason
+§6.2's endpoint tail and §6.1's `Reflect` padding are rejected rather than
+ignored.
+
+`MtuProbeAck`'s body is `tx_id` alone — deliberately unpadded. This is the
+inverse of §7.6's `Reflect`/`Reflection` pair: there, request and reply are
+forced equal because a stranger can trigger the reply and amplification is the
+risk. Here, only the tested peer can produce anything at all, so there is no
+third party to amplify against — and the whole point is a large probe drawing
+a small acknowledgment, exactly like RFC 4821's own construction. A 1336-byte
+probe answered by a 46-byte ack is not an amplifier; it is the mechanism
+working.
+
+#### 7.9.2 Answered at most once
+
+§7.4's rule applies unchanged: a responder MUST answer a given `tx_id` at most
+once within the same bounded per-peer window `Ping` uses, and a prober MUST
+draw a fresh `tx_id` for every probe. The two message pairs share one
+replay-defense window per peer, not two, because the property either rule
+protects — "this authenticated transaction was answered once" — does not
+depend on which message carried it.
+
+#### 7.9.3 Search algorithm
+
+Two constants bound the search, both already normative elsewhere:
+
+| | Value | Source |
+|---|---|---|
+| `MTU_FLOOR` | 1232 B | `phreatic-v1.md`'s `HANDSHAKE_DATAGRAM_MAX` — the IPv6-minimum-MTU budget every path is guaranteed to deliver (RFC 8200 §5) |
+| `MTU_CEILING` | 1336 B | `phreatic-v1.md`'s `TRANSPORT_DATAGRAM_MAX` — the full-size transport datagram real traffic needs |
+
+A node performing discovery for a direct path holds `low` (largest size
+confirmed delivered, starting at `MTU_FLOOR`) and `high` (smallest size
+confirmed lost, starting at `MTU_CEILING + 1`, meaning "not yet refuted").
+
+1. While `high > low + 1`: probe `MTU_CEILING` if `high` is still
+   `MTU_CEILING + 1` (the optimistic first probe — most paths carry it, and
+   this converges the common case in one round trip); otherwise probe the
+   midpoint `low + (high − low) / 2`.
+2. A probe that is acked raises `low` to the probed size.
+3. A probe that times out **MUST NOT** immediately lower `high` — ordinary
+   packet loss is indistinguishable from a black hole for exactly one probe.
+   Only after **3 consecutive timeouts at the same size** does a node lower
+   `high` to it. This is RECOMMENDED as the threshold; the requirement is that
+   it be more than one.
+4. The search resolves to `low` once `high ≤ low + 1`.
+
+A path resolved at `low == MTU_CEILING` is fully datapath-capable. One resolved
+below it has a **confirmed black hole**: §8.4 is what a node does about that.
+
+**A node MUST NOT run this search against every known candidate.** Discovery
+already probes every candidate for liveness (§7.1); running the bisection
+against all of them multiplies probe traffic for no benefit, since only the
+path actually carrying data needs its ceiling known. A node SHOULD confine MTU
+discovery to the currently chosen path when it is direct — a relay path is
+exempt entirely (§8.4) — and MAY extend this to a serious challenger before
+promotion, which this draft does not require.
+
+#### 7.9.4 Recovery
+
+A resolved search MUST be re-opened periodically — RECOMMENDED, every **5
+minutes** — starting again from `low = MTU_FLOOR`, `high = MTU_CEILING + 1`.
+This is what lets a route change be found in either direction: a black hole
+that clears, or one that newly appears on a path previously confirmed clean.
+It is the same argument §7.5 already makes for re-probing liveness on a longer
+clock, applied to capacity instead of reachability.
+
+A node MUST also reset every peer's MTU search — back to fully unconfirmed,
+optimistic — whenever it resets ordinary probe state for the same reason
+(§7.5's rediscovery: a resumed host, a changed interface, a replaced default
+route). Everything discovery measured through the old network state may now be
+false, and MTU is no exception.
+
 
 ## 8. Path selection
 
@@ -796,7 +926,10 @@ strongest key first:
 
 1. **Working beats not working.** A path with no `Pong` inside the last 15
    seconds is not eligible.
-2. **Direct beats relay**, always, even when the relay is faster. A relay
+2. **Direct beats relay**, always, even when the relay is faster — **unless
+   §7.9's search has confirmed the direct path a black hole for full-size
+   transport datagrams**, in which case it ranks below the relay until
+   re-probing says otherwise (§8.4). Short of that exception, a relay
    discloses the traffic graph to its operator (`ponor-v1.md` §9); latency is
    not the only axis and the operator's exposure does not appear in a
    round-trip time. §7.8's TURN allocation carries the identical exposure and
@@ -850,6 +983,36 @@ A node MUST retain its relay path while a direct path is in use, and MUST fall
 back without dropping traffic when the direct path stops answering. The relay
 connection is not torn down on promotion (`ponor-v1.md` §9.1 keeps the home
 relay connected regardless), so falling back costs no handshake.
+
+### 8.4 A confirmed black hole loses to the relay
+
+**Optimistic until disproven, not the reverse.** A direct path with no MTU
+search yet resolved (§7.9.3) ranks exactly as rule 2 says — ahead of the relay,
+immediately on confirmation, with no wait for a search to finish. The demotion
+below applies only once §7.9.3 has actually **converged** on a size below
+`MTU_CEILING`; a probe that has merely not yet succeeded is not evidence of
+anything; treating it as a black hole before the loss threshold is met would
+demote a fresh path for want of a single round trip.
+
+Once converged below `MTU_CEILING`, a direct path MUST rank behind every relay
+path for that peer, by the same reasoning rule 2 itself is built on: a real,
+demonstrated defect (packets that do not arrive) outranks a hypothetical one
+(a relay operator's visibility). Relay paths are exempt from this whole
+mechanism — never entered into §7.9.3's search — because `ponor-v1.md`'s
+relay leg is a length-framed TCP stream with an 8192-byte frame budget, not a
+fixed-size UDP datagram, and structurally cannot black-hole the way a direct
+path does.
+
+**If no relay is known for the peer at all**, a confirmed black hole does not
+make the path unusable — it stays the best, indeed only, path, since refusing
+it entirely would be strictly worse than a partially-working one. The
+demotion is relative to a relay that exists, not an absolute unusability
+verdict.
+
+§8.2's hysteresis does not apply to this transition either, for the same
+reason it does not apply to rule 2: this is not two working paths trading
+places on a noisy measurement, it is a path proven broken for the traffic that
+matters.
 
 ---
 
@@ -917,7 +1080,8 @@ scope — so this is the ordinary configuration rather than an exotic one.
 Not modeled: §7.1's transaction-to-endpoint association, which lives in the
 receiver's bookkeeping rather than on the wire and is enforced by the
 implementation's types; path selection, which is availability rather than
-security; and §7.4's replay window, for the reason below.
+security; §7.4's replay window, for the reason below; and §7.9's `MtuProbe`/
+`MtuProbeAck` pair, for the reason §12's new open item gives.
 
 ### 11.1 Why §7.4 is not in the model
 
@@ -999,10 +1163,10 @@ must not be carried across to AVEN, where the MAC's job is different.
    170,000 probes per side for 99.9% — about 28 minutes at 100 packets per
    second — and 0.01% after twenty seconds of trying. That is not a rate to
    specify; it is a case to relay.
-5. **No path-MTU interaction.** A direct path may have a smaller MTU than the
-   relay path, and AVEN reports nothing about it. PLAN.md schedules PMTU
-   discovery for Phase 6; until then a path can be selected that black-holes
-   full-size packets, which is a worse failure than not selecting it.
+5. ~~**No path-MTU interaction.**~~ **Resolved.** §7.9 adds `MtuProbe`/
+   `MtuProbeAck` and an RFC 4821-style bisection with no ICMP dependence; §8.4
+   demotes a direct path confirmed to black-hole full-size datagrams below the
+   relay. GitHub issue #121.
 6. ~~**Nothing bounds the candidate set.**~~ **Resolved.** A node MUST cap the
    per-peer candidate table and MUST NOT exempt a confirmed path from that cap.
    The reference implementation holds 64 and evicts unconfirmed candidates
@@ -1054,3 +1218,16 @@ must not be carried across to AVEN, where the MAC's job is different.
     priming granted a pass on: no measured need yet, since every existing and
     planned deployment uses a single shared TURN server. The aquifer row does
     not exercise multiple TURN servers and would not catch a regression here.
+11. **`MtuProbe`/`MtuProbeAck` are not in the model** (§7.9, ADR-0019). The
+    same argument item 9 makes for `Reflect` applies here with the risk bounded
+    further still: both messages are keyed by the *existing* per-pair disco key
+    §11 already covers rather than a second one, so no new secret and no new
+    key-agreement property exists to state. What is new is the size relation
+    between the two messages, which is the opposite of §7.6's — a large
+    request, a small reply — and a symbolic model proves authentication, not
+    that an implementation actually produces a datagram of the size the spec
+    claims. §12's confidence here rests on `crates/karst-disco`'s unit tests
+    (`consts::MTU_CEILING`/`MTU_FLOOR` asserted against `karst-proto`'s wire
+    constants, and the bisection's convergence exercised without any ICMP in
+    the loop) rather than a proof, and it should be modeled before this draft
+    stops being one.
