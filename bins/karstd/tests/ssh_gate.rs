@@ -124,6 +124,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
         relays: Vec::new(),
         turn_servers: Vec::new(),
         relay_ca_file: None,
+        prefer_quic_relay: false,
         metrics_listen: None,
         peers: vec![Peer {
             name: "client".to_owned(),

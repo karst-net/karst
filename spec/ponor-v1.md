@@ -186,6 +186,39 @@ compatibility mode. This is a standing constraint recorded so that a future
 contributor does not add it as a helpful-looking feature: wire compatibility
 would produce a client whose default behavior consumes strangers' bandwidth.
 
+### 4.4 QUIC as an alternate transport binding — ADR-0020
+
+A Ponor connection MAY instead be carried over QUIC, on the port the relay
+also serves TCP+TLS on (§4.1's "same port either way" survives the switch:
+QUIC is UDP, so the two share a port number without conflict). This is a
+**transport binding, not a protocol change** — the handshake (§7.1) and every
+frame (§6) are byte-for-byte identical to the TCP binding. A relay or client
+that does not implement this section still interoperates fully with one that
+does, over TCP+TLS.
+
+- The QUIC connection's TLS 1.3 handshake MUST offer and SHOULD negotiate
+  `X25519MLKEM768`, exactly as §4.1 requires for TCP — this is the same
+  requirement restated for the same reason, not a separate one.
+- ALPN MUST be negotiated as `ponor/1`, replacing §4.1's HTTP/1.1 upgrade as
+  this binding's protocol-selection point. There is no HTTP request or
+  response on a QUIC-carried connection.
+- Exactly one bidirectional QUIC stream carries the connection, opened by
+  whichever side runs §7.1's relay role (the accepting side for a
+  client-to-relay connection; the accepting side of the mesh dial for a
+  relay-to-relay one) immediately after the QUIC handshake completes. That
+  side sends `RelayHello` (§7.1) as the stream's first bytes; the other side
+  MUST accept the stream rather than open one; opening from the wrong side
+  deadlocks, since a QUIC stream carries no data — and is therefore invisible
+  to the peer's accept — until its opener writes to it.
+- Every relayed peer continues to multiplex onto that one stream, exactly as
+  over TCP. This binding does **not** address open item §13 #5's
+  head-of-line-blocking cost — fixing that needs per-destination-peer stream
+  multiplexing, which needs the capability-negotiation field §13.10 already
+  flags as missing, and is not part of this binding.
+- A relay's support for this binding is not advertised in-band — v1 has no
+  capability negotiation (§13.10) — and is discovered out-of-band (deployment
+  configuration) rather than through the registry or netmap.
+
 ---
 
 ## 5. Identities and admission
@@ -823,11 +856,16 @@ somewhere else.
 4. **Relay key rotation.** `relay_id` is a hash of a key with no rotation
    procedure, overlap window, or defined client behavior on an unrecognized
    `relay_id` — the same gap as `karst-control-v1.md` §11.2.
-5. **TCP head-of-line blocking is unaddressed.** All of a client's relayed
-   peers share one TCP connection, so a lost segment stalls every one of them,
-   and a relayed PHREATIC session runs TCP inside TCP. PLAN.md §5 schedules
-   HTTP/3 + QUIC datagrams for Phase 6; until then this is a real cost, and it
-   is worst for exactly the loss-prone paths that need a relay.
+5. **Head-of-line blocking across relayed peers is unaddressed.** All of a
+   client's relayed peers share one connection, so a lost segment stalls
+   every one of them. §4.4 (ADR-0020) replaces TCP with QUIC as an
+   *available* transport, which removes the TCP-in-TCP retransmission cost —
+   QUIC's own loss recovery now covers this hop — but does not fix the
+   multiplexing itself: every relayed peer still shares the one stream §4.4
+   requires, so one peer's loss still stalls another's traffic on the same
+   connection. Fixing that needs per-destination-peer stream multiplexing,
+   which needs the capability-negotiation field §13.10 flags as missing, and
+   is deliberately out of §4.4's scope.
 6. **No congestion signal to the client.** §7.3 drops silently. A client cannot
    distinguish relay-side drop from path loss, so it cannot back off usefully,
    and a `Dropped` frame would itself be a channel a hostile relay could use to

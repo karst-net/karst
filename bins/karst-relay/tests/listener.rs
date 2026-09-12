@@ -290,11 +290,13 @@ impl Meshable {
             let ca = me.dir.join("mesh-ca.pem");
             std::fs::write(&ca, them.harness.ca_pem.clone()).expect("write ca");
             let tls = karst_relay::tls::client_config(&ca).expect("client tls");
+            let quic_tls = karst_relay::quic::client_config(&tls).expect("client quic tls");
             let dialler =
                 karst_relay::mesh::Dialler::new(me.harness.relay.relay_id(), "default".to_owned());
             tokio::spawn(karst_relay::server::mesh_loop(
                 Arc::clone(&me.ctx),
                 tls,
+                quic_tls,
                 dialler,
             ));
         }
@@ -621,6 +623,61 @@ async fn two_frames_in_one_write_are_both_delivered() {
             other => panic!("expected RecvPacket, got {other:?}"),
         }
     }
+}
+
+#[tokio::test]
+async fn a_frame_bundled_with_the_handshake_reply_is_delivered_without_further_traffic() {
+    // Regression: `drive()` used to consume its initial buffer only after a
+    // *subsequent* read arrived, so a frame a peer sent in the same segment
+    // as `ClientAuth` — or, over a mesh link, in the same read as
+    // `RelayAuth` — sat unprocessed until something else was sent on the
+    // same connection. On a fresh connection with nothing else queued in
+    // either direction, that could be indefinitely.
+    let alice = identity(0x51);
+    let bob = identity(0x52);
+    let h = start("bundled", &[(&alice, "acme"), (&bob, "acme")]).await;
+
+    let (mut b, _) = connect(&h).await;
+    handshake(&h, &mut b, &bob).await;
+
+    let (mut a, _) = connect(&h).await;
+    let mut client = ClientHandshake::new(
+        Role::Client,
+        nid(&alice),
+        h.relay.relay_id(),
+        h.relay.public_key().to_vec(),
+        [0x5a; 32],
+    );
+    let hello_bytes = a.frame().await;
+    let (hello, _) = decode(&hello_bytes).expect("decodes").expect("complete");
+    let auth = client
+        .on_relay_hello(&hello, &alice)
+        .expect("client signs the hello");
+
+    // `ClientAuth` and Alice's first `SendPacket`, in one write — the relay
+    // must not need anything past this to admit her *and* forward it.
+    let payload = [0x9a; 96];
+    let mut bundle = auth;
+    bundle.extend_from_slice(
+        &Frame::SendPacket {
+            dst_id: nid(&bob),
+            payload: &payload,
+        }
+        .to_vec(),
+    );
+    a.send(&bundle).await;
+
+    let got = tokio::time::timeout(std::time::Duration::from_secs(2), b.frame())
+        .await
+        .expect("the bundled frame was never processed");
+    let (frame, _) = decode(&got).expect("decodes").expect("complete");
+    assert_eq!(
+        frame,
+        Frame::RecvPacket {
+            src_id: nid(&alice),
+            payload: &payload,
+        }
+    );
 }
 
 /// Fetch one path from the metrics listener and return the whole response.

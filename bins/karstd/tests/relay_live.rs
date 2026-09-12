@@ -63,12 +63,27 @@ fn public_of(id: &Identity) -> Vec<u8> {
 
 struct Running {
     relay: Relay,
+    /// The same relay, addressed for a QUIC dial — `Some` only when
+    /// [`start_relay_quic`] started it. A separate `Relay` because the two
+    /// transports bind independent ephemeral ports in this harness; a real
+    /// deployment configures one `listen` for both (ADR-0020).
+    relay_quic: Option<Relay>,
     ca_path: std::path::PathBuf,
     _dir: TempDir,
 }
 
 /// Start a relay on an ephemeral loopback port, admitting `nodes`.
 async fn start_relay(tag: &str, nodes: &[&Identity]) -> Running {
+    start_relay_with(tag, nodes, false).await
+}
+
+/// As [`start_relay`], but also starting the relay's QUIC listener —
+/// ADR-0020.
+async fn start_relay_quic(tag: &str, nodes: &[&Identity]) -> Running {
+    start_relay_with(tag, nodes, true).await
+}
+
+async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running {
     let dir = temp_dir(tag);
 
     // Self-signed, which §4.2 makes fine and finding 16 made *possible*: the
@@ -113,7 +128,18 @@ async fn start_relay(tag: &str, nodes: &[&Identity]) -> Running {
 
     let listener = TcpListener::bind(cfg.listen).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, tls_config);
+    let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, Arc::clone(&tls_config));
+
+    let quic_addr = if quic {
+        let quic_server_cfg = karst_relay::quic::server_config(&tls_config).expect("quic tls");
+        let endpoint = karst_relay::quic::bind(cfg.listen, quic_server_cfg).expect("bind quic");
+        let quic_addr = endpoint.local_addr().expect("quic addr");
+        tokio::spawn(karst_relay::quic::serve_on(endpoint, Arc::clone(&ctx)));
+        Some(quic_addr)
+    } else {
+        None
+    };
+
     tokio::spawn(async move {
         let _ = serve_on(listener, ctx).await;
     });
@@ -126,12 +152,20 @@ async fn start_relay(tag: &str, nodes: &[&Identity]) -> Running {
         address: addr.to_string(),
         tls_server_name: "relay.test".to_owned(),
         relay_id: karst_relay::sign::relay_id(&identity_key),
-        identity_key,
+        identity_key: identity_key.clone(),
         region: "test".to_owned(),
     };
+    let relay_quic = quic_addr.map(|addr| Relay {
+        address: addr.to_string(),
+        tls_server_name: "relay.test".to_owned(),
+        relay_id: karst_relay::sign::relay_id(&identity_key),
+        identity_key,
+        region: "test".to_owned(),
+    });
 
     Running {
         relay,
+        relay_quic,
         ca_path: cert_path,
         _dir: dir,
     }
@@ -150,6 +184,21 @@ async fn connect(
     )
     .expect("the node's own handle decodes");
     karstd::relay::Connection::connect(session, &**id, &RelayVerifier, tls, &running.relay).await
+}
+
+/// As [`connect`], but over QUIC — ADR-0020.
+async fn connect_quic(
+    running: &Running,
+    id: &Arc<Identity>,
+) -> Result<karstd::relay::Connection, karstd::relay::ConnectError> {
+    let relay_quic = running.relay_quic.as_ref().expect("relay runs quic");
+    let tls = karstd::relay_tls::client_config(Some(&running.ca_path)).expect("client tls");
+    let quic_tls = karstd::relay_tls::quic_client_config(&tls).expect("client quic tls");
+    let session =
+        karstd::relay::Session::from_control_handle(id.handle().as_bytes(), relay_quic, [0x5A; 32])
+            .expect("the node's own handle decodes");
+    karstd::relay::Connection::connect_quic(session, &**id, &RelayVerifier, quic_tls, relay_quic)
+        .await
 }
 
 /// **The identifier both ends must agree on.**
@@ -186,6 +235,19 @@ async fn a_node_completes_a_ponor_handshake_with_a_real_relay() {
     // removing it changes nothing here — and saying otherwise would have
     // described a guarantee this test does not provide.
     let connection = connect(&running, &a).await.expect("handshake");
+    assert!(connection.split().is_some());
+}
+
+/// The QUIC counterpart — ADR-0020: real `karstd` client, real `karst-relay`
+/// server, over QUIC instead of TCP+TLS+HTTP-upgrade. Everything past ALPN is
+/// the same handshake as the TCP test above, and this is what proves it: two
+/// independent implementations, not a stub, on both sides.
+#[tokio::test]
+async fn a_node_completes_a_ponor_handshake_with_a_real_relay_over_quic() {
+    let a = node(0x21);
+    let running = start_relay_quic("handshake-quic", &[&a]).await;
+
+    let connection = connect_quic(&running, &a).await.expect("handshake");
     assert!(connection.split().is_some());
 }
 

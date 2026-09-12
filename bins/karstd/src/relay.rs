@@ -17,6 +17,26 @@ use tokio_rustls::client::TlsStream;
 
 use crate::netmap::Relay;
 
+/// What [`Connection`] needs of whatever carries the Ponor byte stream.
+///
+/// **A trait object, not a generic parameter.** [`Connection`], [`Sender`]
+/// and [`Receiver`] are named, non-generic types elsewhere in this crate
+/// (`run.rs` stores them as fields), and ADR-0020 adds a second transport
+/// (QUIC) beside the existing TLS one without disturbing any of that: boxing
+/// the difference here means every call site downstream is unchanged.
+pub(crate) trait Stream:
+    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
+{
+}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Stream for T {}
+
+/// One QUIC-carried Ponor connection: a joined send/receive stream pair.
+///
+/// The relay always opens this stream and speaks first — see
+/// `karst-relay`'s `quic.rs` for why — so a node always **accepts** it,
+/// exactly as it waits for `RelayHello` first over TCP+TLS.
+type QuicStream = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
+
 /// A fully pinned node-to-relay Ponor conversation.
 #[derive(Debug)]
 pub struct Session {
@@ -150,13 +170,15 @@ impl Decoder {
     }
 }
 
-/// A connected, TLS-protected Ponor client.
+/// A connected, transport-protected Ponor client — TCP+TLS or, since
+/// ADR-0020, QUIC.
 ///
-/// Its construction performs the whole HTTP and Ponor handshake. Consequently
-/// [`Self::send_packet`] and [`Self::receive`] cannot touch a relay stream that
-/// has not authenticated its registry-pinned ML-DSA identity.
+/// Its construction performs the whole handshake (the HTTP upgrade and TLS,
+/// or QUIC's ALPN, plus Ponor). Consequently [`Self::send_packet`] and
+/// [`Self::receive`] cannot touch a relay stream that has not authenticated
+/// its registry-pinned ML-DSA identity.
 pub struct Connection {
-    tls: TlsStream<TcpStream>,
+    tls: Box<dyn Stream>,
     decoder: Decoder,
     /// Events read past the end of the handshake — see
     /// [`write_handshake_events`].
@@ -182,6 +204,8 @@ pub enum ConnectError {
     Upgrade,
     /// TLS setup or Ponor framing/authentication failed.
     Protocol(String),
+    /// The QUIC handshake or a QUIC-carried stream failed — ADR-0020.
+    Quic(String),
 }
 
 impl std::fmt::Display for ConnectError {
@@ -191,6 +215,7 @@ impl std::fmt::Display for ConnectError {
             Self::Tls(error) => write!(f, "relay TLS: {error}"),
             Self::Upgrade => f.write_str("relay did not accept the Ponor HTTP upgrade"),
             Self::Protocol(error) => write!(f, "relay protocol: {error}"),
+            Self::Quic(error) => write!(f, "relay quic: {error}"),
         }
     }
 }
@@ -281,9 +306,99 @@ impl Connection {
             .map_err(|error| ConnectError::Protocol(error.to_string()))?;
         let deferred = write_handshake_events(&mut tls, events).await?;
         let mut connection = Self {
-            tls,
+            tls: Box::new(tls),
             decoder,
             deferred,
+        };
+        while !connection.decoder.established() {
+            let events = connection.read_events(signer, verifier).await?;
+            let more = write_handshake_events(&mut connection.tls, events).await?;
+            connection.deferred.extend(more);
+        }
+        Ok(connection)
+    }
+
+    /// As [`Self::connect`], but over QUIC — ADR-0020.
+    ///
+    /// There is no HTTP upgrade: ALPN (`karst_relay_proto::consts::QUIC_ALPN`)
+    /// is QUIC's protocol-selection point, settled inside the handshake
+    /// [`crate::relay_tls::quic_client_config`] already configures. Everything
+    /// past that — the Ponor handshake, `Sender`/`Receiver` — is identical to
+    /// the TCP+TLS path, because both only need [`Stream`].
+    ///
+    /// # Errors
+    /// Any QUIC or Ponor authentication failure. The caller discards the
+    /// connection; falling back to [`Self::connect`] on the same relay is the
+    /// intended recovery, not a further retry over QUIC.
+    pub async fn connect_quic(
+        session: Session,
+        signer: &impl Signer,
+        verifier: &impl Verifier,
+        quic: quinn::ClientConfig,
+        relay: &Relay,
+    ) -> Result<Self, ConnectError> {
+        match tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            Self::negotiate_quic(session, signer, verifier, quic, relay),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ConnectError::Quic(
+                "the relay did not complete the Ponor handshake in time".to_owned(),
+            )),
+        }
+    }
+
+    async fn negotiate_quic(
+        session: Session,
+        signer: &impl Signer,
+        verifier: &impl Verifier,
+        quic: quinn::ClientConfig,
+        relay: &Relay,
+    ) -> Result<Self, ConnectError> {
+        let socket_addr = tokio::net::lookup_host(&relay.address)
+            .await
+            .map_err(ConnectError::Io)?
+            .next()
+            .ok_or_else(|| {
+                ConnectError::Quic(format!("{} resolved to no address", relay.address))
+            })?;
+
+        let bind = if socket_addr.is_ipv6() {
+            std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0))
+        } else {
+            std::net::SocketAddr::from(([0, 0, 0, 0], 0))
+        };
+        let mut endpoint = quinn::Endpoint::client(bind)
+            .map_err(|error| ConnectError::Quic(format!("bind: {error}")))?;
+        endpoint.set_default_client_config(quic);
+
+        let connection = endpoint
+            .connect(socket_addr, &relay.tls_server_name)
+            .map_err(|error| ConnectError::Quic(format!("connect: {error}")))?
+            .await
+            .map_err(|error| ConnectError::Quic(format!("quic: {error}")))?;
+
+        // The relay opens the stream and speaks first — see `karst-relay`'s
+        // `quic.rs` "Who opens the stream" note. Accepting here rather than
+        // opening is the QUIC counterpart of waiting for `RelayHello` before
+        // sending anything, which the TCP path already does.
+        let (send, recv) = connection
+            .accept_bi()
+            .await
+            .map_err(|error| ConnectError::Quic(format!("accept_bi: {error}")))?;
+        let tls: QuicStream = tokio::io::join(recv, send);
+
+        // Unlike TCP there is no HTTP head to strip first: ALPN already
+        // settled the protocol, so the very first bytes are `RelayHello`
+        // itself and `read_events` below (a plain read then `Decoder::push`,
+        // which drains every complete frame its buffer holds) is all the
+        // bootstrapping this transport needs.
+        let mut connection = Self {
+            tls: Box::new(tls),
+            decoder: Decoder::new(session),
+            deferred: Vec::new(),
         };
         while !connection.decoder.established() {
             let events = connection.read_events(signer, verifier).await?;
@@ -387,9 +502,14 @@ impl Connection {
 ///
 /// Its existence is the proof the relay authenticated: it is reachable only
 /// through [`Connection::split`], which refuses an unestablished connection.
-#[derive(Debug)]
 pub struct Sender {
-    tls: tokio::io::WriteHalf<TlsStream<TcpStream>>,
+    tls: tokio::io::WriteHalf<Box<dyn Stream>>,
+}
+
+impl std::fmt::Debug for Sender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sender").finish_non_exhaustive()
+    }
 }
 
 impl Sender {
@@ -443,14 +563,22 @@ impl Sender {
 }
 
 /// The receive half of an established relay connection.
-#[derive(Debug)]
 pub struct Receiver {
-    tls: tokio::io::ReadHalf<TlsStream<TcpStream>>,
+    tls: tokio::io::ReadHalf<Box<dyn Stream>>,
     decoder: Decoder,
     /// Events the handshake read past — a `ReflectOffer` coalesced with
     /// `RelayAuth`. Delivered by the first [`Receiver::receive`], before it
     /// blocks on the socket.
     deferred: Vec<Event>,
+}
+
+impl std::fmt::Debug for Receiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Receiver")
+            .field("decoder", &self.decoder)
+            .field("deferred", &self.deferred)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Receiver {
@@ -525,7 +653,7 @@ fn upgrade_head_len(bytes: &[u8]) -> Option<usize> {
 /// leaves a node that never learns its mapped address with nothing to explain
 /// why.
 async fn write_handshake_events(
-    tls: &mut TlsStream<TcpStream>,
+    tls: &mut (impl tokio::io::AsyncWrite + Unpin),
     events: Vec<Event>,
 ) -> Result<Vec<Event>, ConnectError> {
     let mut deferred = Vec::new();

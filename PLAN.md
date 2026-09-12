@@ -770,8 +770,15 @@ the fleet: [ADR-0008](docs/adr/0008-relay-infrastructure-and-funding.md) rules
 out both, and `karst-relay` must never gain a DERP compatibility mode.
 
 - Transport: HTTPS/TLS 1.3 with hybrid `X25519MLKEM768`, upgrading to a binary
-  frame protocol. Port 443 so it survives restrictive networks. HTTP/3 +
-  QUIC datagrams as a Phase 6 alternative for better loss behavior.
+  frame protocol. Port 443 so it survives restrictive networks. **QUIC landed
+  as a second, opt-in transport binding carrying the same protocol**
+  ([ADR-0020](docs/adr/0020-quic-relay-transport.md), `spec/ponor-v1.md`
+  §4.4, issue #122) — same port, ALPN instead of the HTTP upgrade, TLS 1.3's
+  hybrid group requirement unchanged. It removes TCP-in-TCP retransmission on
+  that hop but not the per-peer head-of-line-blocking cost (spec §13 #5),
+  which needs per-destination-peer stream multiplexing and remains a distinct,
+  larger follow-up. QUIC *datagram* carriage (unreliable, for the multiplexed
+  case) is a further-out idea, not scheduled.
 - Relays are **addressed by node ID** — the 32-byte hash of the identity key,
   the same value as the KARST-CONTROL handle (spec §5.1). *Amended 2026-08-14:
   this line previously said "by node public key", which was written before the

@@ -51,6 +51,12 @@ rustls = { version = "0.23", default-features = false, features = ["std", "aws-l
 rustls-pki-types = { version = "1", features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
+# ADR-0020. `rustls-aws-lc-rs` rather than the default `ring` backend for the
+# same reason `tokio-rustls` above picks it: `ring` has no X25519MLKEM768, and
+# a QUIC listener with a different key exchange than the TCP one would be a
+# silent downgrade for whichever transport a client happened to pick.
+# `runtime-tokio` rather than `async-io`/`smol`: the relay is tokio throughout.
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 
 [dev-dependencies]
 # Self-signed certificates for the listener test. A relay whose TLS is only

@@ -141,6 +141,25 @@ pub fn client_config(extra_ca: Option<&std::path::Path>) -> Result<Arc<ClientCon
         .map(Arc::new)
 }
 
+/// Adapt [`client_config`]'s TLS configuration for a QUIC dial — ADR-0020.
+///
+/// A separate `rustls::ClientConfig` from the TCP+TLS one — cloned rather
+/// than shared — because ALPN is QUIC's protocol-selection point where the
+/// TCP path uses the HTTP upgrade instead, and setting it on the shared
+/// config would make the TCP dial negotiate `ponor/1` too, which nothing
+/// there expects.
+///
+/// # Errors
+/// [`Error::Rustls`] if the configuration cannot derive QUIC's initial keys —
+/// [`client_config`] always negotiates TLS 1.3, so this is defensive.
+pub fn quic_client_config(tls: &Arc<ClientConfig>) -> Result<quinn::ClientConfig, Error> {
+    let mut tls = (**tls).clone();
+    tls.alpn_protocols = vec![karst_relay_proto::consts::QUIC_ALPN.to_vec()];
+    let quic_tls = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+        .map_err(|_| Error::Rustls(rustls::Error::General("no TLS 1.3 initial keys".to_owned())))?;
+    Ok(quinn::ClientConfig::new(Arc::new(quic_tls)))
+}
+
 /// The SNI and certificate-validation name for a pinned relay.
 ///
 /// This is intentionally not derived from [`Relay::address`], which names a

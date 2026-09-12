@@ -451,6 +451,15 @@ pub struct ControlSection {
     /// Absent means the system roots alone, which is the right default for a
     /// relay with a public certificate.
     pub relay_ca_file: Option<PathBuf>,
+    /// Try QUIC before TCP+TLS for relay connections — ADR-0020.
+    ///
+    /// **Off by default**, matching the relay side's own opt-in: a relay a
+    /// node has not been told supports QUIC is not probed for it. When set,
+    /// [`crate::run::relay_worker`] attempts QUIC first and falls back to
+    /// TCP+TLS in the same attempt on failure, so a mixed fleet — some relays
+    /// upgraded, some not — costs nothing more than the one failed dial.
+    #[serde(default)]
+    pub prefer_quic_relay: bool,
 }
 
 fn default_interface() -> String {
@@ -712,6 +721,10 @@ pub struct Config {
     /// could redirect the hop. The relay's *identity* comes from the netmap and
     /// is post-quantum; this is only the TLS layer beneath it.
     pub relay_ca_file: Option<PathBuf>,
+    /// Try QUIC before TCP+TLS for relay connections — see
+    /// [`ControlSection::prefer_quic_relay`]. `false` for a static TOML
+    /// roster, which has no `[control]` section to set it from.
+    pub prefer_quic_relay: bool,
     /// Authenticated route offers retained for local consent and diagnostics.
     pub route_offers: Vec<crate::route_offer::Offer>,
     /// Root-owned local state selecting one exit route. None for static
@@ -869,6 +882,7 @@ impl Config {
             relays: Vec::new(),
             turn_servers: Vec::new(),
             relay_ca_file: None,
+            prefer_quic_relay: false,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             peers,
@@ -1067,6 +1081,7 @@ impl Config {
             // `crate::turn`'s connect failure is logged like any other.
             turn_servers: netmap.turn_servers.clone(),
             relay_ca_file: local.relay_ca_file,
+            prefer_quic_relay: local.prefer_quic_relay,
             peers,
             route_offers: netmap.routes.clone(),
             exit_node_state_file: local.exit_node_state_file,
@@ -1132,6 +1147,8 @@ pub struct LocalSettings {
     pub metrics_listen: Option<SocketAddr>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
+    /// See [`ControlSection::prefer_quic_relay`].
+    pub prefer_quic_relay: bool,
     /// Root-owned durable exit-route selection.
     pub exit_node_state_file: Option<PathBuf>,
     /// See [`NodeSection::datapath_workers`] — a local performance tuning
@@ -1153,6 +1170,7 @@ impl fmt::Debug for LocalSettings {
             .field("nat64", &self.nat64)
             .field("metrics_listen", &self.metrics_listen)
             .field("datapath_workers", &self.datapath_workers)
+            .field("prefer_quic_relay", &self.prefer_quic_relay)
             .finish_non_exhaustive()
     }
 }
@@ -1677,6 +1695,46 @@ host_integration = "resolvconf"
         assert_eq!(dns.host_integration, HostIntegration::Resolvconf);
     }
 
+    /// ADR-0020: QUIC is opt-in, matching the relay side's own default.
+    #[test]
+    fn prefer_quic_relay_defaults_to_off() {
+        let text = r#"
+[node]
+listen = "0.0.0.0:51820"
+interface = "karst7"
+private_key_file = "missing.key"
+
+[control]
+server = "https://karst.example.com:443"
+server_kem_pin = "aa"
+server_verify_pin = "bb"
+identity_key_file = "identity.key"
+"#;
+        let file: File = toml::from_str(text).expect("parses");
+        let control = file.control.expect("control section present");
+        assert!(!control.prefer_quic_relay);
+    }
+
+    #[test]
+    fn prefer_quic_relay_can_be_enabled() {
+        let text = r#"
+[node]
+listen = "0.0.0.0:51820"
+interface = "karst7"
+private_key_file = "missing.key"
+
+[control]
+server = "https://karst.example.com:443"
+server_kem_pin = "aa"
+server_verify_pin = "bb"
+identity_key_file = "identity.key"
+prefer_quic_relay = true
+"#;
+        let file: File = toml::from_str(text).expect("parses");
+        let control = file.control.expect("control section present");
+        assert!(control.prefer_quic_relay);
+    }
+
     #[test]
     fn dns_settings_default_when_the_table_is_absent() {
         let dir = Scratch::new("cfg-dns-default");
@@ -2187,6 +2245,7 @@ mod netmap_tests {
     pub(super) fn local() -> LocalSettings {
         LocalSettings {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             metrics_listen: None,
             exit_node_state_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64])),

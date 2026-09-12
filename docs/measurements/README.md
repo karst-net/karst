@@ -32,6 +32,7 @@ way are worth more than the number it produced.
 | `userspace-cost-2026-08-21.md` | userspace mode at **37%** of the privileged path's throughput and 3× its RTT — after the measurement found a 71× window bug |
 | `io-uring-spike-2026-09-12.md` | issue #120 spike — plain and multishot io_uring both lose to `recvmmsg` on the receive side (multishot far worse: 90% packet loss under load); **`UDP_GRO`, implemented correctly this time, cuts receive-side CPU 32%** at comparable throughput — recommending GRO for Phase B, not io_uring |
 | `udp-gro-2026-09-12.md` | issue #120 Phase B, shipped — real two-host run of the production `UDP_GRO` implementation: **995,228 datagrams from genuinely coalesced reads, zero corrupted**, closing the correctness question the earlier reverted attempt got wrong |
+| `quic-relay-2026-09-12.md` | issue #122 / ADR-0020, clean-loopback only — QUIC's handshake costs ~45% more median latency than TCP+TLS but a much shorter tail (worst case 5–6 ms vs 31–34 ms), and forwards 5–13% faster once established; the loss-recovery property the transport is actually for is not measured here and is left as a documented follow-up |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened
