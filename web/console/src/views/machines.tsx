@@ -3,11 +3,20 @@
 
 import { useMemo, useState } from "react";
 import type { Node } from "@karst-net/api-client";
-import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
+import { Dialog, EmptyState, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
+
+// Exhaustive — a new path kind must be given a tier here rather than fall
+// through as a warning by accident.
+const PATH_STATUS: Record<Paths["paths"][number]["kind"], StatusState> = {
+  direct: "healthy",
+  relay: "warning",
+  turn: "warning",
+  unreachable: "warning",
+};
 
 export function Machines() {
   const resource = useResource(api.nodes);
@@ -83,7 +92,7 @@ export function Machines() {
         : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Sent</th><th>Received</th><th>Observed</th></>}>
           {paths.value.paths.map((path, index) => <tr key={index}>
             <td><code>{path.peer_handle}</code></td>
-            <td><Status state={path.kind === "direct" ? "healthy" : "warning"} label={path.kind} /></td>
+            <td><Status state={PATH_STATUS[path.kind]} label={path.kind} /></td>
             <td>{path.endpoint ? <code>{path.endpoint}</code> : path.relay_id ? <>via relay <code>{path.relay_id}</code></> : "—"}</td>
             <td>{formatBytes(path.tx_bytes)}</td>
             <td>{formatBytes(path.rx_bytes)}</td>
