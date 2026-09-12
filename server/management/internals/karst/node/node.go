@@ -201,7 +201,7 @@ func (s *Store) ReplaceSessionObservations(reporter string, observations []Sessi
 		if o.PeerHandle == "" || o.PeerHandle == reporter || len(o.PeerHandle) > HandleLength {
 			return fmt.Errorf("node: invalid session peer handle")
 		}
-		if o.Path != "direct" && o.Path != "relay" && o.Path != "unreachable" {
+		if o.Path != "direct" && o.Path != "relay" && o.Path != "turn" && o.Path != "unreachable" {
 			return fmt.Errorf("node: invalid session path %q", o.Path)
 		}
 		if len(o.Endpoint) > maxSessionText || len(o.Suite) > maxSessionText {

@@ -302,6 +302,40 @@ func TestSessionObservationByteCountsRoundTrip(t *testing.T) {
 	}
 }
 
+// A peer relayed through a TURN allocation must not poison the whole batch —
+// issue #148 found "turn" rejected by validation, which discarded every
+// other peer's observation in the same report too, not just the TURN one.
+func TestSessionObservationAcceptsTurnPath(t *testing.T) {
+	s := newStore(t)
+	reporter, direct, relayed := newIdentity(t), newIdentity(t), newIdentity(t)
+	reporterHandle, err := s.Register(reporter.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register reporter: %v", err)
+	}
+	directHandle, err := s.Register(direct.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register direct peer: %v", err)
+	}
+	relayedHandle, err := s.Register(relayed.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register relayed peer: %v", err)
+	}
+	if err := s.ReplaceSessionObservations(reporterHandle, []node.SessionObservation{
+		{PeerHandle: directHandle, Path: "direct"},
+		{PeerHandle: relayedHandle, Path: "turn"},
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	observations, err := s.SessionObservations(reporterHandle)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("got %d observations, want 2 (turn must not drop the whole batch)", len(observations))
+	}
+}
+
 // Reporting the same relay again must not touch the row. Every node reports
 // this on every poll, so an unconditional write is one update per node per
 // refresh interval, and it moves UpdatedAt on rows nothing changed.

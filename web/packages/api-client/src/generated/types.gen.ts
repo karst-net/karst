@@ -118,11 +118,19 @@ export type NodePaths = {
 
 export type PathObservation = {
     peer_handle: string;
-    kind: 'direct' | 'relay' | 'unreachable';
+    kind: 'direct' | 'relay' | 'turn' | 'unreachable';
     endpoint?: string | null;
     relay_id?: string | null;
     since?: string | null;
     observed_at: string;
+    /**
+     * Bytes sent to this peer, a running total for the session
+     */
+    tx_bytes: number;
+    /**
+     * Bytes received from this peer, a running total for the session
+     */
+    rx_bytes: number;
 };
 
 export type NodePosture = {

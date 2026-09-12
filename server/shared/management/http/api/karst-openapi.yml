@@ -525,7 +525,7 @@ components:
     PathObservation:
       type: object
       required: [peer_handle, kind, observed_at, tx_bytes, rx_bytes]
-      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}, tx_bytes: {type: integer, minimum: 0, description: 'Bytes sent to this peer, a running total for the session'}, rx_bytes: {type: integer, minimum: 0, description: 'Bytes received from this peer, a running total for the session'}}
+      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, turn, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}, tx_bytes: {type: integer, minimum: 0, description: 'Bytes sent to this peer, a running total for the session'}, rx_bytes: {type: integer, minimum: 0, description: 'Bytes received from this peer, a running total for the session'}}
     NodePosture:
       type: object
       required: [status, observed_at]
