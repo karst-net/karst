@@ -447,9 +447,23 @@ fn uncoalesced_datagrams_each_get_their_own_slot() {
     let mut seen = 0usize;
     while seen < payloads.len() {
         let n = b.recv_batch(&mut bufs, &mut meta).unwrap();
-        for (k, m) in meta.iter().enumerate() {
+        // Only claim what both platforms actually guarantee: within *one*
+        // call, no coalescing occurred, so `offset` is 0 and every entry's
+        // `slot` is distinct — no physical slot served two datagrams in the
+        // same call. `slot`'s specific *value* is not part of the contract:
+        // the portable (non-Linux) path always reports slot 0 for its one
+        // datagram per call, which is exactly as correct as Linux's
+        // `recvmmsg` filling successive slots, and a fixed global numbering
+        // would wrongly fail on the former.
+        let mut slots_this_call: Vec<usize> = Vec::new();
+        for m in meta.iter().take(n) {
             assert_eq!(m.offset, 0, "no coalescing occurred; offset must be 0");
-            assert_eq!(m.slot, seen + k, "each datagram must land in its own slot");
+            assert!(
+                !slots_this_call.contains(&m.slot),
+                "slot {} served two datagrams in the same call",
+                m.slot
+            );
+            slots_this_call.push(m.slot);
         }
         seen += n;
     }
