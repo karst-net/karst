@@ -69,7 +69,7 @@ pub(crate) fn send_batch(
 /// At most one per call; see the module documentation for why.
 pub(crate) fn recv_batch(
     socket: &UdpSocket,
-    buffers: &mut [[u8; super::MAX_DATAGRAM]],
+    buffers: &mut [[u8; super::MAX_GRO_READ]],
     out: &mut Vec<Received>,
 ) -> io::Result<usize> {
     out.clear();
@@ -77,7 +77,13 @@ pub(crate) fn recv_batch(
         return Ok(0);
     };
     let (len, from) = socket.recv_from(buf)?;
-    out.push(Received { len, from });
+    // GRO doesn't exist off Linux, so there is exactly one datagram, in slot 0.
+    out.push(Received {
+        len,
+        from,
+        slot: 0,
+        offset: 0,
+    });
     Ok(out.len())
 }
 
@@ -109,7 +115,7 @@ mod tests {
             2
         );
 
-        let mut buffers = vec![[0u8; crate::MAX_DATAGRAM]; BATCH];
+        let mut buffers = vec![[0u8; crate::MAX_GRO_READ]; BATCH];
         let mut out = Vec::new();
         let mut lengths = Vec::new();
         for _ in 0..2 {
@@ -152,7 +158,7 @@ mod tests {
         b.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let to = b.local_addr().unwrap();
 
-        let mut buffers = vec![[0u8; crate::MAX_DATAGRAM]; BATCH];
+        let mut buffers = vec![[0u8; crate::MAX_GRO_READ]; BATCH];
         let mut out = Vec::new();
         for len in [16usize, 32] {
             send_batch(&a, &[(&vec![0u8; len][..], to)]).unwrap();
