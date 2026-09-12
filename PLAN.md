@@ -4331,10 +4331,22 @@ Phase 5's.
 - **Measure the absolute ≥ 1 Gbps figure**, deferred from Phase 2's exit
   criterion, on a link carrying ≥ 1.13 Gbps single-flow. The lab's 3×1G bond
   gives one flow one slave and cannot express the number.
-- CNSA 2.0 profile as **suite 3** of the agility layer (ML-KEM-1024 /
+- ~~CNSA 2.0 profile as **suite 3** of the agility layer (ML-KEM-1024 /
   ML-DSA-87 / AES-256-GCM / SHA-384, PQ-only) — shipped *through* the
   mechanism rather than by patching, which is what proves the layer works.
-  Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.
+  Confirmed for Phase 7 by §13 Q6: no customer mandate, no date.~~ **Stale as
+  of ADR-0015 (2026-08-25) and superseded further by
+  [ADR-0018](docs/adr/0018-cnsa-2-0-as-the-sole-suite.md) (2026-09-05): §13
+  Q6 was reopened and answered yes before this phase began, and CNSA 2.0
+  (ML-KEM-1024 / ML-DSA-87 / AES-256-GCM / SHA-384, Category 5, PQ-only)
+  shipped not as a third suite alongside others but as the agility layer's
+  *sole* suite (`KARST_2`) — ADR-0018 deleted the suite-registry mechanism
+  itself (`SuiteId`/`Suite`/`Profile`/`SuitePolicy`) once it was clear only
+  one suite would ever be needed. There is no further Phase 7 work here;
+  reintroducing a second suite would mean superseding ADR-0018, and its own
+  "reconsider if" clause names the only conditions that would justify that
+  (non-PQ-only deployment target, or cryptanalytic advances forcing a
+  classical hybrid) — neither holds today.
 - v1.0 GA.
 
 ### Phase 8 — External review and Windows signing (post-GA · from Jan 2027)
