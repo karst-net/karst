@@ -3081,6 +3081,32 @@ fn converge(net: &Aquifer, shape: Shape) {
     }
 }
 
+/// The endpoint `tag`'s status reports for its peer, waited for rather than
+/// read once.
+///
+/// **Issue #144.** `converge()` waits for the `transport` field to reach
+/// `"direct"`/`"turn"`; every caller here reads the separately-updated
+/// `endpoint` field straight after, in a fresh `status()` call. The two
+/// fields settle on their own schedules, so a read taken the instant
+/// `converge()` returns can still catch `endpoint` at its `"-"` placeholder
+/// even though `transport` already flipped — not a fault in the daemon, a
+/// fault in reading two fields as if one confirmed the other. A peer that
+/// never converges still fails loudly: `wait_for` panics with the same
+/// four-log diagnostic every other timeout in this file gives.
+fn wait_for_endpoint(net: &Aquifer, tag: &str, ns: &str, want: &str) -> String {
+    let mut last = String::new();
+    wait_for(
+        net,
+        &format!("{tag}'s endpoint to reach {want}"),
+        Duration::from_secs(15),
+        || {
+            last = field(&status(net, tag, ns), "endpoint").unwrap_or_default();
+            last.starts_with(want)
+        },
+    );
+    last
+}
+
 /// Both sessions are up, and each holds an address that can actually reach the
 /// other.
 ///
@@ -3091,7 +3117,22 @@ fn converge(net: &Aquifer, shape: Shape) {
 fn assert_endpoints(net: &Aquifer, shape: Shape) {
     for (tag, ns) in [("a", NS_A), ("b", NS_B)] {
         let s = status(net, tag, ns);
-        assert_eq!(field(&s, "state").as_deref(), Some("established"), "{s}");
+        // "established" or "established (rekeying)" — issue #144. Several
+        // shapes budget up to 210s for convergence (`Shape::budget`), well
+        // past `REKEY_AFTER_MS`'s 120s (`karst-noise/src/transport.rs`), so a
+        // pair that took its time reaching a direct path can already be
+        // mid-rekey by the time this runs. That is a session working
+        // correctly, not a fault — rejecting it here makes the outcome depend
+        // on whether a scheduled rekey happens to be in flight at the one
+        // instant this reads status, which is exactly the race #144 reported.
+        let state = field(&s, "state");
+        assert!(
+            matches!(
+                state.as_deref(),
+                Some("established" | "established (rekeying)")
+            ),
+            "{s}"
+        );
     }
     if shape == Shape::SameLan {
         // **The assertion the row exists for.** Both nodes advertise a
@@ -3101,12 +3142,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
         // peer's `10.98.1.x` address is what distinguishes that from a hairpin
         // that happened to work.
         for (tag, ns, want) in [("a", NS_A, IP_B_SAME_LAN), ("b", NS_B, IP_A_PRIVATE)] {
-            let s = status(net, tag, ns);
-            let endpoint = field(&s, "endpoint").unwrap_or_default();
-            assert!(
-                endpoint.starts_with(want),
-                "node {tag} should hold its peer's private address {want}, not {endpoint}"
-            );
+            let endpoint = wait_for_endpoint(net, tag, ns, want);
             assert!(
                 !endpoint.starts_with(NAT_A_OUTER),
                 "node {tag} reached its peer at the NAT's outer address, which \
@@ -3134,12 +3170,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
             | Shape::SymmetricAndAddressRestricted
             | Shape::SymmetricAndPortRestrictedMapped
     ) {
-        let s = status(net, "b", NS_B);
-        let endpoint = field(&s, "endpoint").unwrap_or_default();
-        assert!(
-            endpoint.starts_with(NAT_A_OUTER),
-            "B should hold A's mapped address {NAT_A_OUTER}, not {endpoint}"
-        );
+        let endpoint = wait_for_endpoint(net, "b", NS_B, NAT_A_OUTER);
         assert!(
             !endpoint.starts_with(IP_A_PRIVATE),
             "B is using A's private address, which cannot be reachable: {endpoint}"
@@ -3153,12 +3184,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
         // hold B's *mapped* address, learned from a reflector rather than from
         // a probe that arrived — because no probe from B could arrive until A
         // had already advertised something reachable.
-        let s = status(net, "a", NS_A);
-        let endpoint = field(&s, "endpoint").unwrap_or_default();
-        assert!(
-            endpoint.starts_with(NAT_B_OUTER),
-            "A should hold B's mapped address {NAT_B_OUTER}, not {endpoint}"
-        );
+        let endpoint = wait_for_endpoint(net, "a", NS_A, NAT_B_OUTER);
         assert!(
             !endpoint.starts_with(IP_B_PRIVATE),
             "A is using B's private address, which cannot be reachable: {endpoint}"
@@ -3209,13 +3235,7 @@ fn assert_endpoints(net: &Aquifer, shape: Shape) {
 /// coincidence: nothing else in this fixture hands out addresses there.
 fn assert_turn_only(net: &Aquifer) {
     for (tag, ns, other_nat_outer) in [("a", NS_A, NAT_B_OUTER), ("b", NS_B, NAT_A_OUTER)] {
-        let s = status(net, tag, ns);
-        let endpoint = field(&s, "endpoint").unwrap_or_default();
-        assert!(
-            endpoint.starts_with(IP_PUB),
-            "node {tag} should hold its peer's turn-relayed address on \
-             {IP_PUB}, not {endpoint}"
-        );
+        let endpoint = wait_for_endpoint(net, tag, ns, IP_PUB);
         assert!(
             !endpoint.starts_with(other_nat_outer),
             "node {tag} reached its peer at the raw NAT address \
@@ -3276,23 +3296,8 @@ fn assert_nat64(net: &Aquifer) {
          serves.\n── a.log ──\n{log}"
     );
 
-    let a = status(net, "a", NS_A);
-    let endpoint = field(&a, "endpoint").unwrap_or_default();
-    assert!(
-        endpoint.starts_with(IP_B_PUBLIC),
-        "node A holds {endpoint} for its peer, not the plain IPv4 address \
-         {IP_B_PUBLIC}. A synthesised address above the socket is one this node \
-         will hand to peers as an observed address, and it names nothing \
-         outside this network.\n{a}"
-    );
-
-    let b = status(net, "b", NS_B);
-    let endpoint = field(&b, "endpoint").unwrap_or_default();
-    assert!(
-        endpoint.starts_with(NAT_A_OUTER),
-        "node B holds {endpoint} for a peer it should see at the translator's \
-         masqueraded address {NAT_A_OUTER}\n{b}"
-    );
+    wait_for_endpoint(net, "a", NS_A, IP_B_PUBLIC);
+    wait_for_endpoint(net, "b", NS_B, NAT_A_OUTER);
 }
 
 fn assert_double_nat(net: &Aquifer) {
@@ -3301,12 +3306,7 @@ fn assert_double_nat(net: &Aquifer) {
     // A knows about itself names it: A holds a 10.98 address, its router
     // holds a 100.64 one, and the reflector shows A a *different* carrier
     // port than the one B sees, because the carrier is symmetric.
-    let s = status(net, "b", NS_B);
-    let endpoint = field(&s, "endpoint").unwrap_or_default();
-    assert!(
-        endpoint.starts_with(CG_OUTER),
-        "B should hold A's carrier address {CG_OUTER}, not {endpoint}"
-    );
+    let endpoint = wait_for_endpoint(net, "b", NS_B, CG_OUTER);
     assert!(
         !endpoint.starts_with(NAT_A_CG),
         "B is using the subscriber router's address inside the carrier, \
