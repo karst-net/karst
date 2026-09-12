@@ -182,6 +182,7 @@ fn netmap_with_psks() -> Netmap {
 fn local() -> LocalSettings {
     LocalSettings {
         relay_ca_file: None,
+        prefer_quic_relay: false,
         metrics_listen: None,
         keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
         listen: "0.0.0.0:51820".parse().expect("addr"),

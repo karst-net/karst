@@ -379,6 +379,7 @@ mod tests {
     fn config() -> Config {
         Config {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,

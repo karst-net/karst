@@ -72,6 +72,10 @@ util = { package = "webrtc-util", version = "0.17.1", default-features = false, 
 rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs", "prefer-post-quantum"] }
 rustls-native-certs = "0.8"
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
+# ADR-0020's node-side QUIC dial path — client-only, since a node never
+# accepts a QUIC connection. Same `rustls-aws-lc-rs` backend as `tokio-rustls`
+# above, for the same reason: `ring` has no X25519MLKEM768.
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs"] }

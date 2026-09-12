@@ -398,6 +398,7 @@ pub fn run_with_control(
     let relay = config.relays.first().cloned();
     let relay_node_id = config.node_id.clone();
     let relay_ca = config.relay_ca_file.clone();
+    let relay_prefer_quic = config.prefer_quic_relay;
     // Present only when a relay is configured. `None` means anything the engine
     // routes over the relay is dropped where it is produced — which is correct
     // and already consistent: `Engine::via` returns a relay destination only
@@ -498,6 +499,7 @@ pub fn run_with_control(
         nat64: config.nat64,
         metrics_listen: config.metrics_listen,
         relay_ca_file: config.relay_ca_file.clone(),
+        prefer_quic_relay: config.prefer_quic_relay,
         exit_node_state_file: config.exit_node_state_file.clone(),
         datapath_workers: config.datapath_workers,
     };
@@ -521,6 +523,7 @@ pub fn run_with_control(
             identity,
             node_id: relay_node_id,
             relay_ca_file: relay_ca,
+            prefer_quic_relay: relay_prefer_quic,
             disco: &disco,
             engine: &engine,
             socket: &socket,
@@ -1591,6 +1594,8 @@ struct RelayCommon<'a> {
     tun: &'a NetworkDevice,
     /// Extra trust anchors for the TLS hop, from local configuration.
     relay_ca_file: Option<std::path::PathBuf>,
+    /// Try QUIC before TCP+TLS — ADR-0020, `ControlSection::prefer_quic_relay`.
+    prefer_quic_relay: bool,
     /// Where a reply to a relayed datagram goes when it is itself relayed —
     /// which every response to a relayed handshake is, until a direct path
     /// exists. Sending is non-blocking, so the receive task may use it.
@@ -1768,6 +1773,94 @@ fn handover(
     relayed.hold(old.relay_id);
 }
 
+/// The QUIC client config a relay worker dials with, if ADR-0020's opt-in is
+/// set — built once, like the TCP+TLS config beside it.
+///
+/// `None` either because the operator has not enabled it or because this
+/// build's TLS configuration cannot derive QUIC's initial keys (defensive —
+/// the TCP+TLS config already only ever negotiates TLS 1.3); either way, the
+/// worker then behaves as if no relay had been told to expect QUIC from this
+/// node.
+fn quic_client_config_if_enabled(
+    context: &RelayContext<'_>,
+    tls: &Arc<rustls::ClientConfig>,
+) -> Option<quinn::ClientConfig> {
+    if !context.common.prefer_quic_relay {
+        return None;
+    }
+    match crate::relay_tls::quic_client_config(tls) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            tracing::warn!("karstd: {e}; relay connections will use tcp+tls only");
+            None
+        }
+    }
+}
+
+/// One connection attempt, trying QUIC first when configured and falling back
+/// to TCP+TLS in the same attempt on failure — ADR-0020.
+///
+/// Falling back immediately, rather than waiting for the next backoff tick,
+/// matters for a mixed fleet: a relay this node has not yet confirmed
+/// supports QUIC (or one that briefly does not) should cost one failed dial,
+/// not a connection an operator has to notice is stuck.
+async fn connect_preferring_quic(
+    context: &RelayContext<'_>,
+    tls: &Arc<rustls::ClientConfig>,
+    quic_tls: Option<&quinn::ClientConfig>,
+    session: crate::relay::Session,
+) -> Result<crate::relay::Connection, crate::relay::ConnectError> {
+    let Some(quic_cfg) = quic_tls else {
+        return crate::relay::Connection::connect(
+            session,
+            &*context.common.identity,
+            &crate::control::RelayVerifier,
+            Arc::clone(tls),
+            &context.relay,
+        )
+        .await;
+    };
+    match crate::relay::Connection::connect_quic(
+        session,
+        &*context.common.identity,
+        &crate::control::RelayVerifier,
+        quic_cfg.clone(),
+        &context.relay,
+    )
+    .await
+    {
+        Ok(connection) => return Ok(connection),
+        Err(e) => tracing::debug!(
+            "karstd: quic dial to {} failed ({e}); falling back to tcp+tls",
+            context.relay.address
+        ),
+    }
+    // A fresh session and nonce: the one above is spent on the failed QUIC
+    // attempt, and §5.5 binds `client_random` to the one connection it
+    // authenticates — reusing it here would sign over a value tied to a
+    // connection that never completed.
+    let Some(session) = crate::relay::Session::from_control_handle(
+        &context.common.node_id,
+        &context.relay,
+        random_seed(),
+    ) else {
+        // Unreachable: the same handle already decoded into the session this
+        // function was called with. Named rather than asserted, because a
+        // datapath thread has no supervisor to catch a panic.
+        return Err(crate::relay::ConnectError::Protocol(
+            "invalid node handle".to_owned(),
+        ));
+    };
+    crate::relay::Connection::connect(
+        session,
+        &*context.common.identity,
+        &crate::control::RelayVerifier,
+        Arc::clone(tls),
+        &context.relay,
+    )
+    .await
+}
+
 /// Carry relayed traffic — AVEN rendezvous and PHREATIC data — over one
 /// authenticated Ponor connection.
 ///
@@ -1800,6 +1893,8 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             return;
         }
     };
+
+    let quic_tls = quic_client_config_if_enabled(&context, &tls);
 
     let mut outbound = outbound;
     let mut backoff = RELAY_BACKOFF_MIN;
@@ -1841,12 +1936,11 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
             tracing::warn!("karstd: invalid node handle; the relay path is disabled");
             return;
         };
-        let connected = runtime.block_on(crate::relay::Connection::connect(
+        let connected = runtime.block_on(connect_preferring_quic(
+            &context,
+            &tls,
+            quic_tls.as_ref(),
             session,
-            &*context.common.identity,
-            &crate::control::RelayVerifier,
-            Arc::clone(&tls),
-            &context.relay,
         ));
         let connection = match connected {
             Ok(c) => c,
@@ -4859,6 +4953,7 @@ mod route_tests {
         }
         Config {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
@@ -5461,6 +5556,7 @@ mod probe_tests {
     fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
         let config = Arc::new(crate::config::Config {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
@@ -5974,6 +6070,7 @@ mod probe_tests {
         let relays = engine.relays();
         crate::config::Config {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             metrics_listen: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,

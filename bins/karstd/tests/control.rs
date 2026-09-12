@@ -249,6 +249,7 @@ fn section_with_floor(
         bedrock_mode: floor.map(ToOwned::to_owned),
         control_minimum_version: None,
         relay_ca_file: None,
+        prefer_quic_relay: false,
         server: format!("http://{}", server.address),
         server_kem_pin: server.kem_pin.clone(),
         server_verify_pin: server.verify_pin.clone(),
@@ -265,6 +266,7 @@ fn keys(seed: u8) -> Arc<karst_noise::handshake::StaticKeys> {
 fn local(seed: u8) -> LocalSettings {
     LocalSettings {
         relay_ca_file: None,
+        prefer_quic_relay: false,
         exit_node_state_file: None,
         keys: keys(seed),
         listen: "0.0.0.0:51820".parse().expect("addr"),

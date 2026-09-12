@@ -1129,6 +1129,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),
+        prefer_quic_relay: section.prefer_quic_relay,
         exit_node_state_file: Some(file.node.exit_node_state_file.as_ref().map_or_else(
             || crate::exit_node::DEFAULT_STATE_FILE.into(),
             |p| resolve(p, dir),
@@ -1662,6 +1663,7 @@ mod tests {
     fn section(dir: &Path, cache: Option<&str>) -> ControlSection {
         ControlSection {
             relay_ca_file: None,
+            prefer_quic_relay: false,
             server: "http://127.0.0.1:1".to_owned(),
             server_kem_pin: encode_hex(&[0x01; 1184]),
             server_verify_pin: encode_hex(&[0x02; 2592]),

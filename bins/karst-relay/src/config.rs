@@ -96,6 +96,16 @@ pub struct Config {
     #[serde(default)]
     pub mesh: Option<Mesh>,
 
+    /// Whether to also accept Ponor connections over QUIC — ADR-0020.
+    ///
+    /// **Off by default, and additive.** The QUIC listener binds `listen`'s
+    /// address as UDP rather than TCP, so turning this on never changes what
+    /// the TCP/TLS listener does or requires a second address to configure.
+    /// A relay a node has not been told supports QUIC is unaffected either
+    /// way: nothing today probes for it.
+    #[serde(default)]
+    pub quic: bool,
+
     /// Which region this relay serves — §8, §9.
     ///
     /// **Mesh is within a region**, and §8 gives the reason: cross-region
@@ -428,6 +438,16 @@ tls_key = "/etc/karst/relay.key"
         // one should not be running one.
         let c = Config::parse(MINIMAL).expect("parses");
         assert!(c.reflect.is_none());
+    }
+
+    #[test]
+    fn quic_is_off_unless_configured() {
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(!c.quic);
+
+        let text = format!("{MINIMAL}\nquic = true\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.quic);
     }
 
     #[test]

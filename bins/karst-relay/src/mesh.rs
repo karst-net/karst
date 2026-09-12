@@ -57,6 +57,12 @@ pub struct Peer {
     pub name: Option<String>,
     /// Which region it serves — §8.
     pub region: String,
+    /// Dial this peer over QUIC rather than TCP+TLS — ADR-0020.
+    ///
+    /// A deployment fact like `addr`/`name`, not a protocol negotiation: mesh
+    /// v1 has no capability exchange, so both relays in a pair must be
+    /// configured to agree, the same way both must already agree on `addr`.
+    pub quic: bool,
 }
 
 impl Peer {
@@ -79,6 +85,8 @@ pub struct Due {
     pub addr: String,
     /// The name to validate its certificate against.
     pub name: String,
+    /// Dial over QUIC rather than TCP+TLS — ADR-0020.
+    pub quic: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +176,7 @@ impl Dialler {
                 id: peer.id,
                 addr: peer.addr.clone(),
                 name: peer.server_name().to_owned(),
+                quic: peer.quic,
             });
         }
         out
@@ -205,6 +214,7 @@ mod tests {
             addr: format!("relay{n}.test:8443"),
             name: None,
             region: "default".to_owned(),
+            quic: false,
         }
     }
 
@@ -222,6 +232,7 @@ mod tests {
             addr: "10.0.0.5:8443".to_owned(),
             name: None,
             region: "default".to_owned(),
+            quic: false,
         };
         assert_eq!(plain.server_name(), "10.0.0.5");
         let behind_lb = Peer {
@@ -229,6 +240,7 @@ mod tests {
             addr: "10.0.0.5:8443".to_owned(),
             name: Some("relay-a.example".to_owned()),
             region: "default".to_owned(),
+            quic: false,
         };
         assert_eq!(behind_lb.server_name(), "relay-a.example");
     }

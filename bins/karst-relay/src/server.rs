@@ -88,8 +88,13 @@ pub struct Ctx {
     shared: Mutex<Shared>,
     roster: RwLock<Arc<FileRoster>>,
     roster_updates: watch::Sender<u64>,
-    identity: Arc<Identity>,
-    tls: Arc<rustls::ServerConfig>,
+    /// `pub(crate)`: [`crate::quic`] needs it for the relay's own relay id in
+    /// log lines and for mesh dialling, exactly as this module does.
+    pub(crate) identity: Arc<Identity>,
+    /// `pub(crate)`: [`crate::quic`] needs the same TLS configuration to
+    /// derive its QUIC server config — ADR-0020. Never touched outside this
+    /// crate.
+    pub(crate) tls: Arc<rustls::ServerConfig>,
     started: Instant,
     /// Which region this relay serves — §8.
     region: String,
@@ -258,7 +263,9 @@ impl Ctx {
         f(&mut g.hub)
     }
 
-    fn roster(&self) -> Arc<FileRoster> {
+    /// `pub(crate)`: [`crate::quic::dial_mesh`] looks up the same roster
+    /// entry the TCP mesh dial does.
+    pub(crate) fn roster(&self) -> Arc<FileRoster> {
         match self.roster.read() {
             Ok(roster) => Arc::clone(&roster),
             Err(poisoned) => Arc::clone(&poisoned.into_inner()),
@@ -345,9 +352,29 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
         // finding it out from a log line nobody is reading.
         let client_tls = crate::tls::client_config(&mesh.ca)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
+        // Built unconditionally alongside it, for the same reason: a roster
+        // reload can turn a TCP mesh peer into a QUIC one without a restart,
+        // and finding out then that the QUIC client config never came up
+        // would be the same silent-failure shape ADR-0020 exists to avoid.
+        let quic_tls = crate::quic::client_config(&client_tls)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         let dialler = crate::mesh::Dialler::new(ctx.identity.relay_id(), cfg.region.clone());
         eprintln!("karst-relay: mesh dialling enabled");
-        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, dialler));
+        tokio::spawn(mesh_loop(Arc::clone(&ctx), client_tls, quic_tls, dialler));
+    }
+
+    // Bound before the TCP listener and spawned rather than awaited, for the
+    // same reason the reflector and metrics listeners are bound first: a
+    // relay whose QUIC listener silently is not running looks, to a node
+    // configured to prefer QUIC, exactly like a relay with no QUIC support at
+    // all — indistinguishable from ADR-0020's opt-in default until a node
+    // actually tries.
+    if cfg.quic {
+        let quic_server = crate::quic::server_config(&ctx.tls)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let endpoint = crate::quic::bind(cfg.listen, quic_server)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        tokio::spawn(crate::quic::serve_on(endpoint, Arc::clone(&ctx)));
     }
 
     let listener = TcpListener::bind(cfg.listen).await?;
@@ -513,6 +540,19 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
         // Either the peer stalled or it was refused. Both close silently.
         return;
     };
+    after_established(tls_stream, buf, admitted, peer, ctx).await;
+}
+
+/// What every transport does once its own handshake has produced an
+/// [`Admitted`] connection — ADR-0020's shared tail, called by both `serve`
+/// (TCP) and [`crate::quic::serve`].
+pub(crate) async fn after_established<S: Stream>(
+    mut stream: S,
+    buf: Vec<u8>,
+    admitted: Admitted,
+    peer: SocketAddr,
+    ctx: Arc<Ctx>,
+) {
     // §8's regional boundary, on the accepting side. Guarding only the dialler
     // would leave it holding on one side of every pair: an operator who put a
     // foreign relay in the list would simply be meshed *by* it instead.
@@ -522,17 +562,16 @@ async fn serve(stream: TcpStream, peer: SocketAddr, ctx: Arc<Ctx>) {
             return;
         }
     }
-    let mut tls_stream = tls_stream;
     // §7.7: after `RelayAuth`, before any `RecvPacket`. Sent here rather than
     // through the hub's queue because the ordering is the security argument —
     // the client has verified `sig_relay` by now, so the key it is about to
     // receive comes from the ML-DSA-65 identity the netmap pinned.
     if let Some(offer) = ctx.reflect_offer(&admitted) {
-        if tls_stream.write_all(&offer).await.is_err() {
+        if stream.write_all(&offer).await.is_err() {
             return;
         }
     }
-    drive(tls_stream, buf, admitted, peer, ctx).await;
+    drive(stream, buf, admitted, peer, ctx).await;
 }
 
 type Tls = tokio_rustls::server::TlsStream<TcpStream>;
@@ -589,14 +628,33 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
     // Bytes beyond the head are already Ponor framing.
     buf.drain(..head_len);
 
-    // ── Ponor handshake — §7.1 ─────────────────────────────────────────────
+    establish_ponor(tls, ctx, buf).await
+}
+
+/// The Ponor handshake — §7.1. Transport-agnostic: `RelayHandshake` only
+/// reads and writes bytes, so this runs identically after TCP's HTTP upgrade
+/// and after QUIC's ALPN negotiation ([`crate::quic::establish`]).
+///
+/// `buf` carries whatever bytes arrived after the transport's own
+/// negotiation — already-Ponor framing that must not be discarded, exactly
+/// as `establish`'s HTTP-upgrade tail is not discarded.
+///
+/// Returns the stream, whatever bytes arrived after the handshake, and who
+/// was admitted. Every failure is a silent close — §10 requires handshake
+/// rejections to be uniform, because distinguishing "not in the roster" from
+/// "bad signature" hands an unauthenticated caller a membership oracle.
+pub(crate) async fn establish_ponor<S: Stream>(
+    mut stream: S,
+    ctx: &Arc<Ctx>,
+    mut buf: Vec<u8>,
+) -> Option<(S, Vec<u8>, Admitted)> {
     let mut relay_random = [0u8; 32];
     getrandom::fill(&mut relay_random).ok()?;
     let mut hs = RelayHandshake::new(ctx.identity.relay_id(), relay_random);
 
     // The relay speaks first, so the peer signs over a value it has not yet
     // seen and a captured ClientAuth is useless on any other connection.
-    tls.write_all(&hs.hello().to_vec()).await.ok()?;
+    stream.write_all(&hs.hello().to_vec()).await.ok()?;
 
     loop {
         let outcome = match decode(&buf) {
@@ -611,13 +669,13 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
         match outcome {
             Some((Ok((admitted, reply)), used)) => {
                 buf.drain(..used);
-                tls.write_all(&reply).await.ok()?;
-                return Some((tls, buf, admitted));
+                stream.write_all(&reply).await.ok()?;
+                return Some((stream, buf, admitted));
             }
             // Uniform: no Close frame, no reason, no distinction.
             Some((Err(_), _)) => return None,
             None => {
-                if !read_more(&mut tls, &mut buf).await {
+                if !read_more(&mut stream, &mut buf).await {
                     return None;
                 }
             }
@@ -626,7 +684,7 @@ async fn establish(stream: TcpStream, ctx: &Arc<Ctx>) -> Option<(Tls, Vec<u8>, A
 }
 
 /// The steady state: read frames, hand them to the hub, write what it queues.
-async fn drive(
+pub(crate) async fn drive(
     mut tls: impl Stream,
     mut buf: Vec<u8>,
     admitted: Admitted,
@@ -650,58 +708,72 @@ async fn drive(
     }
     ctx.wake_dirty();
 
-    let idle = Duration::from_secs(IDLE_TIMEOUT_SECS);
-    let mut roster_updates = ctx.roster_updates.subscribe();
-    let mut deadline = tokio::time::Instant::now() + idle;
-    // **On the heap, not the stack.** This buffer lives across every `.await`
-    // in the loop below, so a stack array would sit inside this function's
-    // future — and these futures nest, so the cost compounds. Doubling
-    // FRAME_PAYLOAD_MAX for ML-DSA-87 (ADR-0015) was enough to overflow a test
-    // thread's stack, which is how close to the edge the stack version was.
-    // One allocation per connection buys the margin back. FINDINGS 58.
-    let mut chunk = vec![0u8; CHUNK];
+    // `buf` may already hold a complete frame: a peer that sent its first
+    // Ponor frame in the same segment as its handshake (`http.rs` names this
+    // case explicitly for the TCP upgrade) or — over QUIC — in the same read
+    // as `RelayAuth`, hands it here as leftover bytes rather than losing it.
+    // The loop below only consumes `buf` after a *subsequent* read arrives,
+    // so without processing it once up front, a frame that arrived this way
+    // sits unconsumed until something else happens to be sent on the same
+    // connection — which, on a fresh mesh link with nothing queued yet in
+    // either direction, can be indefinitely.
+    if consume(&mut buf, id, &admitted, &ctx) {
+        ctx.wake_dirty();
 
-    loop {
-        // Write first, so a frame queued by another task on the previous
-        // iteration is not held until this connection happens to read.
-        if !flush(&mut tls, id, &ctx).await {
-            break;
-        }
-        let closing = ctx.with_hub(|hub| (hub.close_reason(id), hub.pending(id)));
-        if closing.0.is_some() && closing.1 == 0 {
-            break;
-        }
+        let idle = Duration::from_secs(IDLE_TIMEOUT_SECS);
+        let mut roster_updates = ctx.roster_updates.subscribe();
+        let mut deadline = tokio::time::Instant::now() + idle;
+        // **On the heap, not the stack.** This buffer lives across every
+        // `.await` in the loop below, so a stack array would sit inside this
+        // function's future — and these futures nest, so the cost compounds.
+        // Doubling FRAME_PAYLOAD_MAX for ML-DSA-87 (ADR-0015) was enough to
+        // overflow a test thread's stack, which is how close to the edge the
+        // stack version was. One allocation per connection buys the margin
+        // back. FINDINGS 58.
+        let mut chunk = vec![0u8; CHUNK];
 
-        tokio::select! {
-            read = tls.read(&mut chunk) => {
-                let Ok(n) = read else { break };
-                if n == 0 {
-                    break; // orderly close
-                }
-                let Some(bytes) = chunk.get(..n) else { break };
-                buf.extend_from_slice(bytes);
-                if buf.len() > READ_BUF_MAX {
-                    break; // not speaking Ponor
-                }
-                deadline = tokio::time::Instant::now() + idle;
-                if !consume(&mut buf, id, &admitted, &ctx) {
-                    break;
-                }
-                ctx.wake_dirty();
+        loop {
+            // Write first, so a frame queued by another task on the previous
+            // iteration is not held until this connection happens to read.
+            if !flush(&mut tls, id, &ctx).await {
+                break;
             }
-            () = notify.notified() => {}
-            changed = roster_updates.changed() => {
-                if changed.is_err() || !ctx.remains_admitted(&admitted) {
-                    // A known member learning that it was revoked is allowed
-                    // this reason; §10's uniform silence is only for the
-                    // unauthenticated handshake.
-                    ctx.with_hub(|hub| hub.begin_close(id, Some(Reason::NotAdmitted)));
+            let closing = ctx.with_hub(|hub| (hub.close_reason(id), hub.pending(id)));
+            if closing.0.is_some() && closing.1 == 0 {
+                break;
+            }
+
+            tokio::select! {
+                read = tls.read(&mut chunk) => {
+                    let Ok(n) = read else { break };
+                    if n == 0 {
+                        break; // orderly close
+                    }
+                    let Some(bytes) = chunk.get(..n) else { break };
+                    buf.extend_from_slice(bytes);
+                    if buf.len() > READ_BUF_MAX {
+                        break; // not speaking Ponor
+                    }
+                    deadline = tokio::time::Instant::now() + idle;
+                    if !consume(&mut buf, id, &admitted, &ctx) {
+                        break;
+                    }
                     ctx.wake_dirty();
                 }
-            }
-            () = tokio::time::sleep_until(deadline) => {
-                // §7.5: three missed keepalives.
-                break;
+                () = notify.notified() => {}
+                changed = roster_updates.changed() => {
+                    if changed.is_err() || !ctx.remains_admitted(&admitted) {
+                        // A known member learning that it was revoked is allowed
+                        // this reason; §10's uniform silence is only for the
+                        // unauthenticated handshake.
+                        ctx.with_hub(|hub| hub.begin_close(id, Some(Reason::NotAdmitted)));
+                        ctx.wake_dirty();
+                    }
+                }
+                () = tokio::time::sleep_until(deadline) => {
+                    // §7.5: three missed keepalives.
+                    break;
+                }
             }
         }
     }
@@ -807,7 +879,7 @@ async fn read_more(tls: &mut impl Stream, buf: &mut Vec<u8>) -> bool {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -831,6 +903,7 @@ const MESH_UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
 pub async fn mesh_loop(
     ctx: Arc<Ctx>,
     client_tls: Arc<rustls::ClientConfig>,
+    quic_tls: quinn::ClientConfig,
     mut dialler: crate::mesh::Dialler,
 ) {
     loop {
@@ -845,13 +918,19 @@ pub async fn mesh_loop(
         for due in dialler.due(now, &connected) {
             let ctx = Arc::clone(&ctx);
             let tls = Arc::clone(&client_tls);
+            let quic_tls = quic_tls.clone();
             // Outcomes are reported through the hub rather than back into the
             // dialler: the task outlives this iteration, and `due` has already
             // marked the attempt so nothing dials it again meanwhile.
             // Boxed for the reason the inbound spawn is — `dial_mesh` runs the
             // same three stages and so carries the same large state machine.
             tokio::spawn(Box::pin(async move {
-                if let Err(e) = dial_mesh(&ctx, &tls, due.id, &due.addr, &due.name).await {
+                let result = if due.quic {
+                    crate::quic::dial_mesh(&ctx, &quic_tls, due.id, &due.addr, &due.name).await
+                } else {
+                    dial_mesh(&ctx, &tls, due.id, &due.addr, &due.name).await
+                };
+                if let Err(e) = result {
                     eprintln!("karst-relay: mesh dial to {} failed: {e}", due.addr);
                 }
             }));
@@ -979,7 +1058,10 @@ fn find_head_end(buf: &[u8]) -> Option<usize> {
 }
 
 /// Read one complete Ponor frame, using anything already buffered first.
-async fn next_frame(stream: &mut impl Stream, buf: &mut Vec<u8>) -> Result<Vec<u8>, String> {
+pub(crate) async fn next_frame(
+    stream: &mut impl Stream,
+    buf: &mut Vec<u8>,
+) -> Result<Vec<u8>, String> {
     loop {
         if let Ok(Some((_, used))) = karst_relay_proto::frame::decode(buf) {
             return Ok(buf.drain(..used).collect());

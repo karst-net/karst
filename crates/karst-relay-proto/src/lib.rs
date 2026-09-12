@@ -114,6 +114,12 @@ pub mod consts {
 
     /// Recommended per-destination write queue depth — §7.3.
     pub const WRITE_QUEUE_DEPTH: usize = 32;
+
+    /// The ALPN token a QUIC connection negotiates to select Ponor —
+    /// ADR-0020. QUIC has no HTTP upgrade to carry `Ponor-Version`, so this is
+    /// versioned the same way the upgrade path is: a new Ponor version would
+    /// be a new token, not a new field on this one.
+    pub const QUIC_ALPN: &[u8] = b"ponor/1";
 }
 
 /// Everything that can go wrong parsing or driving Ponor.

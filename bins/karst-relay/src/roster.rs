@@ -91,6 +91,11 @@ struct MeshRow {
     /// Which region this peer serves — §8. Must match this relay's own.
     #[serde(default = "default_region")]
     region: String,
+    /// Dial this peer over QUIC rather than TCP+TLS — ADR-0020. Off by
+    /// default: a mesh peer not yet running a QUIC listener must not be
+    /// dialled as though it were.
+    #[serde(default)]
+    quic: bool,
 }
 
 fn default_region() -> String {
@@ -274,6 +279,7 @@ impl FileRoster {
                     addr: addr.clone(),
                     name: row.name.clone(),
                     region: row.region.clone(),
+                    quic: row.quic,
                 });
             }
             region.insert(id, row.region.clone());
@@ -418,6 +424,22 @@ mod tests {
         let first = dial.first().expect("one dialable peer");
         assert_eq!(first.addr, "r2.test:8443");
         assert_eq!(first.id, relay_id(&pk(2)));
+    }
+
+    #[test]
+    fn a_mesh_peer_dials_over_tcp_unless_quic_is_set() {
+        let r = FileRoster::parse(&format!(
+            "[[mesh]]\nidentity_pk = \"{}\"\ndial = \"r1.test:8443\"\n\n\
+             [[mesh]]\nidentity_pk = \"{}\"\ndial = \"r2.test:8443\"\nquic = true\n",
+            key(1),
+            key(2)
+        ))
+        .expect("parses");
+        let dial = r.mesh_dial_list();
+        let tcp = dial.iter().find(|p| p.addr == "r1.test:8443").expect("r1");
+        let quic = dial.iter().find(|p| p.addr == "r2.test:8443").expect("r2");
+        assert!(!tcp.quic, "quic defaults to off");
+        assert!(quic.quic);
     }
 
     #[test]
