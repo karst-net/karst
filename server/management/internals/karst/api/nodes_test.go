@@ -150,8 +150,8 @@ type nodesWithSessions struct {
 func (n nodesWithSessions) SessionObservations(reporter string) ([]node.SessionObservation, error) {
 	return n.observations[reporter], nil
 }
-func (f fakeNodes) AllSessionObservations() ([]node.SessionObservation, error)    { return nil, nil }
-func (fakeNodes) BindEnrollmentKey(string, string) error                          { return nil }
+func (f fakeNodes) AllSessionObservations() ([]node.SessionObservation, error) { return nil, nil }
+func (fakeNodes) BindEnrollmentKey(string, string) error                       { return nil }
 func (f fakeNodes) All() ([]node.Identity, error) {
 	items := make([]node.Identity, 0, len(f))
 	for _, identity := range f {

@@ -73,7 +73,7 @@ func TestJSONSchemaRuleShapesMatchTheGoTypes(t *testing.T) {
 			Properties map[string]struct {
 				Items struct {
 					Properties map[string]json.RawMessage `json:"properties"`
-					Required   []string                    `json:"required"`
+					Required   []string                   `json:"required"`
 				} `json:"items"`
 			} `json:"properties"`
 		}
