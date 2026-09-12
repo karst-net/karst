@@ -275,7 +275,7 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		observations = append(observations, node.SessionObservation{
 			PeerHandle: peerHandle, Path: report.GetPath(),
 			Endpoint: report.GetEndpoint(), LatticeOnly: report.GetLatticeOnly(), PSKEpoch: report.GetPskEpoch(),
-			Suite: report.GetSuite(),
+			Suite: report.GetSuite(), TxBytes: report.GetTxBytes(), RxBytes: report.GetRxBytes(),
 		})
 	}
 	// An absent repeated field is indistinguishable from an empty one in proto3.

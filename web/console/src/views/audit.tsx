@@ -10,6 +10,7 @@ export function Audit() {
   const [filters, setFilters] = useState<{ actor: string; action: string }>({ actor: "", action: "" });
   const [applied, setApplied] = useState<{ actor: string; action: string }>({ actor: "", action: "" });
   const resource = useResource(() => api.audit({ actor: applied.actor || undefined, action: applied.action || undefined }), [applied]);
+  const sinks = useResource(api.auditSinks);
   const [message, setMessage] = useState<string>();
   const [verified, setVerified] = useState<Awaited<ReturnType<typeof api.auditVerify>>>();
   const [sink, setSink] = useState<{ kind: string; endpoint: string }>();
@@ -39,7 +40,12 @@ export function Audit() {
   };
   const addSink = async () => {
     if (!sink) return;
-    try { await api.addAuditSink(sink.kind, sink.endpoint.trim()); setMessage(`Audit events will be forwarded to ${sink.endpoint}.`); setSink(undefined); }
+    try { await api.addAuditSink(sink.kind, sink.endpoint.trim()); setMessage(`Audit events will be forwarded to ${sink.endpoint}.`); setSink(undefined); sinks.reload(); }
+    catch (error) { setMessage((error as Error).message); }
+  };
+  const removeSink = async (id: string, endpoint: string) => {
+    if (!confirm(`Stop forwarding to ${endpoint}? Anything already delivered stays delivered; nothing further will be sent there.`)) return;
+    try { await api.removeAuditSink(id); setMessage(`Stopped forwarding to ${endpoint}.`); sinks.reload(); }
     catch (error) { setMessage((error as Error).message); }
   };
 
@@ -62,6 +68,19 @@ export function Audit() {
     </div>
     <Notice message={message} />
     {verified && <p><Status state={verified.valid ? "healthy" : "danger"} label={verified.valid ? `chain intact to ${verified.head.sequence}` : `chain broken at ${verified.first_bad_sequence}`} /></p>}
+
+    <h3>SIEM sinks</h3>
+    {sinks.error ? <Failure message={sinks.error} retry={sinks.reload} />
+      : (sinks.value ?? []).length === 0
+        ? <p className="lede">No sinks configured. Audit events are recorded here and nowhere else.</p>
+        : <Rows head={<><th>Kind</th><th>Endpoint</th><th>Actions</th></>}>
+          {(sinks.value ?? []).map((s) => <tr key={s.id}>
+            <td>{s.kind}</td>
+            <td><code>{s.endpoint}</code></td>
+            <td><button className="danger" onClick={() => void removeSink(s.id, s.endpoint)}>Remove</button></td>
+          </tr>)}
+        </Rows>}
+
     {entries.length
       ? <Rows head={<><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></>}>
         {entries.map((entry) => <tr key={entry.sequence}>

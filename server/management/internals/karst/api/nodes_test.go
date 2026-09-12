@@ -139,6 +139,17 @@ func (f fakeNodes) Get(handle string) (*node.Identity, error) {
 }
 
 func (f fakeNodes) SessionObservations(string) ([]node.SessionObservation, error) { return nil, nil }
+
+// nodesWithSessions is fakeNodes plus real per-reporter session observations,
+// for tests that need getNodePaths to see something other than "no data yet".
+type nodesWithSessions struct {
+	fakeNodes
+	observations map[string][]node.SessionObservation
+}
+
+func (n nodesWithSessions) SessionObservations(reporter string) ([]node.SessionObservation, error) {
+	return n.observations[reporter], nil
+}
 func (f fakeNodes) AllSessionObservations() ([]node.SessionObservation, error)    { return nil, nil }
 func (fakeNodes) BindEnrollmentKey(string, string) error                          { return nil }
 func (f fakeNodes) All() ([]node.Identity, error) {
@@ -247,6 +258,8 @@ func (scanAudit) ListBefore(context.Context, uint64, int) ([]audit.Entry, error)
 func (scanAudit) AddSink(context.Context, string, string) (*audit.Sink, error) {
 	return &audit.Sink{ID: "sink"}, nil
 }
+func (scanAudit) ListSinks(context.Context) ([]audit.Sink, error) { return nil, nil }
+func (scanAudit) RemoveSink(context.Context, string) error        { return nil }
 
 type exportAudit struct{ entries []audit.Entry }
 
@@ -270,6 +283,8 @@ func (a exportAudit) ListBefore(_ context.Context, before uint64, _ int) ([]audi
 func (exportAudit) AddSink(context.Context, string, string) (*audit.Sink, error) {
 	return &audit.Sink{ID: "sink"}, nil
 }
+func (exportAudit) ListSinks(context.Context) ([]audit.Sink, error) { return nil, nil }
+func (exportAudit) RemoveSink(context.Context, string) error        { return nil }
 
 type scanPolicy struct{}
 
@@ -523,6 +538,52 @@ func TestFilterPostureRows_OnlyReturnsRequestedPosture(t *testing.T) {
 	require.Len(t, filtered, 2)
 	require.Equal(t, "b", filtered[0].PeerHandle)
 	require.Equal(t, "c", filtered[1].PeerHandle)
+}
+
+// The schema needs no policy store at all — it describes the document shape,
+// not any account's saved version of one — so this registers with a nil
+// policy store to prove the route does not accidentally depend on it.
+func TestNodePathsIncludesReportedByteCounts(t *testing.T) {
+	nodes := nodesWithSessions{
+		fakeNodes: fakeNodes{"handle-a": {Handle: "handle-a"}},
+		observations: map[string][]node.SessionObservation{
+			"handle-a": {{PeerHandle: "handle-b", Path: "direct", TxBytes: 12_345, RxBytes: 67_890}},
+		},
+	}
+	router := mux.NewRouter()
+	RegisterEndpoints(nodes, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, router)
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes/handle-a/paths", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var result struct {
+		Paths []struct {
+			PeerHandle string `json:"peer_handle"`
+			TxBytes    int    `json:"tx_bytes"`
+			RxBytes    int    `json:"rx_bytes"`
+		} `json:"paths"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Len(t, result.Paths, 1)
+	require.Equal(t, "handle-b", result.Paths[0].PeerHandle)
+	require.Equal(t, 12_345, result.Paths[0].TxBytes)
+	require.Equal(t, 67_890, result.Paths[0].RxBytes)
+}
+
+func TestPolicySchemaNeedsNoPolicyStore(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, router)
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/policy/schema", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Header().Get("Content-Type"), "application/json")
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &schema))
+	require.Contains(t, schema, "properties")
 }
 
 func TestPolicyPreviewCompilesFiftyNodesUnderOneSecond(t *testing.T) {
@@ -968,6 +1029,56 @@ func TestSuccessfulMutationAppendsToTheAuditLog(t *testing.T) {
 	require.Equal(t, "admin", entries[0].Actor)
 	require.Equal(t, "karst.post", entries[0].Action)
 	require.Equal(t, "audit/sinks", entries[0].Target)
+}
+
+func TestAuditSinkListAndDelete(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:audit-sink-list?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	auditLog, err := audit.New(db)
+	require.NoError(t, err)
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, router)
+	authed := func(req *http.Request) *http.Request {
+		return nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
+	}
+
+	empty := httptest.NewRecorder()
+	router.ServeHTTP(empty, authed(httptest.NewRequest(http.MethodGet, "/karst/v1/audit/sinks", nil)))
+	require.Equal(t, http.StatusOK, empty.Code, empty.Body.String())
+	require.JSONEq(t, `[]`, empty.Body.String())
+
+	create := httptest.NewRecorder()
+	router.ServeHTTP(create, authed(httptest.NewRequest(http.MethodPost, "/karst/v1/audit/sinks",
+		strings.NewReader(`{"kind":"webhook","endpoint":"https://siem.example.test/ingest"}`))))
+	require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &created))
+	id, _ := created["id"].(string)
+	require.NotEmpty(t, id)
+
+	listed := httptest.NewRecorder()
+	router.ServeHTTP(listed, authed(httptest.NewRequest(http.MethodGet, "/karst/v1/audit/sinks", nil)))
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var sinks []map[string]any
+	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &sinks))
+	require.Len(t, sinks, 1)
+	require.Equal(t, id, sinks[0]["id"])
+	require.Equal(t, "webhook", sinks[0]["kind"])
+	require.Equal(t, "https://siem.example.test/ingest", sinks[0]["endpoint"])
+
+	deleted := httptest.NewRecorder()
+	router.ServeHTTP(deleted, authed(httptest.NewRequest(http.MethodDelete, "/karst/v1/audit/sinks/"+id, nil)))
+	require.Equal(t, http.StatusNoContent, deleted.Code, deleted.Body.String())
+
+	// Idempotent: deleting the same id again is still success, not a 404.
+	deletedAgain := httptest.NewRecorder()
+	router.ServeHTTP(deletedAgain, authed(httptest.NewRequest(http.MethodDelete, "/karst/v1/audit/sinks/"+id, nil)))
+	require.Equal(t, http.StatusNoContent, deletedAgain.Code, deletedAgain.Body.String())
+
+	afterDelete := httptest.NewRecorder()
+	router.ServeHTTP(afterDelete, authed(httptest.NewRequest(http.MethodGet, "/karst/v1/audit/sinks", nil)))
+	require.Equal(t, http.StatusOK, afterDelete.Code, afterDelete.Body.String())
+	require.JSONEq(t, `[]`, afterDelete.Body.String())
 }
 
 // Every Karst route is discovered from mux rather than copied into this test.

@@ -174,6 +174,17 @@ paths:
       responses:
         '200': {description: Policy version, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyVersion'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /policy/schema:
+    get:
+      operationId: getPolicySchema
+      tags: [policy]
+      responses:
+        # No response schema: the body is a JSON Schema (2020-12) document
+        # for editor autocomplete/lint, a different vocabulary from every
+        # other schema here, and pinning its own shape into this spec would
+        # buy nothing a JSON Schema meta-schema does not already say better.
+        '200': {description: 'JSON Schema (2020-12) for a policy document, for editor autocomplete/lint', content: {application/json: {}}}
+        default: {$ref: '#/components/responses/Error'}
   /policy/validate:
     post:
       operationId: validatePolicy
@@ -377,12 +388,26 @@ paths:
         '200': {description: Audit chain verification, content: {application/json: {schema: {$ref: '#/components/schemas/ChainVerification'}}}}
         default: {$ref: '#/components/responses/Error'}
   /audit/sinks:
+    get:
+      operationId: listAuditSinks
+      tags: [audit]
+      responses:
+        '200': {description: Configured audit sinks, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AuditSink'}}}}}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createAuditSink
       tags: [audit]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AuditSinkWrite'}}}}
       responses:
         '201': {description: Audit sink configured, content: {application/json: {schema: {$ref: '#/components/schemas/AuditSink'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /audit/sinks/{sinkId}:
+    parameters: [{$ref: '#/components/parameters/sinkId'}]
+    delete:
+      operationId: deleteAuditSink
+      tags: [audit]
+      responses:
+        '204': {description: Audit sink removed}
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
@@ -391,6 +416,7 @@ components:
     handle: {name: handle, in: path, required: true, schema: {type: string, minLength: 44, maxLength: 44}}
     relayId: {name: relayId, in: path, required: true, schema: {type: string, readOnly: true}}
     turnId: {name: turnId, in: path, required: true, schema: {type: string, readOnly: true}}
+    sinkId: {name: sinkId, in: path, required: true, schema: {type: string, readOnly: true}}
     version: {name: version, in: path, required: true, schema: {type: integer, minimum: 1}}
     cursor: {name: cursor, in: query, schema: {type: string}}
     limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
@@ -498,8 +524,8 @@ components:
       properties: {observed_at: {type: string, nullable: true, format: date-time}, paths: {type: array, items: {$ref: '#/components/schemas/PathObservation'}}}
     PathObservation:
       type: object
-      required: [peer_handle, kind, observed_at]
-      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}}
+      required: [peer_handle, kind, observed_at, tx_bytes, rx_bytes]
+      properties: {peer_handle: {type: string}, kind: {type: string, enum: [direct, relay, unreachable]}, endpoint: {type: string, nullable: true}, relay_id: {type: string, nullable: true}, since: {type: string, nullable: true, format: date-time}, observed_at: {type: string, format: date-time}, tx_bytes: {type: integer, minimum: 0, description: 'Bytes sent to this peer, a running total for the session'}, rx_bytes: {type: integer, minimum: 0, description: 'Bytes received from this peer, a running total for the session'}}
     NodePosture:
       type: object
       required: [status, observed_at]

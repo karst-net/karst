@@ -4518,6 +4518,8 @@ fn refresh_netmap(
                 lattice_only: status.psk_is_fallback,
                 psk_epoch: epoch,
                 suite: status.suite,
+                tx_bytes: status.tx_bytes,
+                rx_bytes: status.rx_bytes,
             })
             .collect();
         client.set_session_observations(sessions);

@@ -54,7 +54,7 @@ export function Relays() {
           <td><button className="danger" onClick={() => remove(relay)}>Remove</button></td>
         </tr>)}
       </Rows>}
-    <p className="lede">Admission health comes from the roster the coordination server rewrites every 25 seconds. A relay that goes <strong>stale</strong> has stopped seeing those rewrites and will admit nobody once its 90-second lease expires.</p>
+    <p className="lede">Health comes from the relay's own signed report of itself, pushed roughly once a minute. A relay that goes <strong>stale</strong> has stopped reporting; it may still be forwarding traffic, but nothing here has heard from it within the last few minutes.</p>
 
     <Dialog open={Boolean(draft)} title="Add relay" onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void add(); }}>

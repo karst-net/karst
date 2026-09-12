@@ -6,6 +6,19 @@ import type { Node } from "@karst-net/api-client";
 
 export const statusFor = (posture: Node["posture"]["status"]) => posture === "pq" ? "healthy" : posture === "lattice_only" ? "warning" : posture === "stale" ? "danger" : "unknown";
 
+const byteUnits = ["B", "KB", "MB", "GB", "TB"];
+
+/** A running byte total, formatted for a table cell. Karst's session
+ * observations are always counters since a session began, never a rate, so
+ * this never claims one — "12.3 MB", not "12.3 MB/s". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < byteUnits.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toFixed(1)} ${byteUnits[unit]}`;
+}
+
 export function useResource<T>(load: () => Promise<T>, dependencies: unknown[] = []) {
   const [value, setValue] = useState<T>(); const [error, setError] = useState<string>(); const [loading, setLoading] = useState(true);
   const reload = () => { setLoading(true); setError(undefined); load().then(setValue).catch((e: Error) => setError(e.message)).finally(() => setLoading(false)); };

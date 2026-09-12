@@ -191,6 +191,8 @@ type auditReader interface {
 	ListFiltered(context.Context, string, string, int, int) ([]audit.Entry, error)
 	ListBefore(context.Context, uint64, int) ([]audit.Entry, error)
 	AddSink(context.Context, string, string) (*audit.Sink, error)
+	ListSinks(context.Context) ([]audit.Sink, error)
+	RemoveSink(context.Context, string) error
 }
 type auditAnchorReader interface {
 	Head(context.Context) (uint64, string, error)
@@ -276,7 +278,10 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/audit", h.auditList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/audit/export", h.auditExport).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/audit/sinks", h.auditSink).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/audit/sinks", h.auditSinkList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/audit/sinks/{sinkId}", h.auditSinkDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/policy", h.policyCurrent).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/policy/schema", h.policySchema).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/policy/validate", h.policyValidate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/policy/preview", h.policyPreview).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/policy/test", h.policyTest).Methods(http.MethodPost, http.MethodOptions)
@@ -1543,6 +1548,44 @@ func (h *handler) auditSink(w http.ResponseWriter, r *http.Request) {
 	util.WriteJSONObject(r.Context(), w, map[string]any{"id": sink.ID, "kind": request.Kind, "endpoint": request.Endpoint})
 }
 
+func (h *handler) auditSinkList(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
+	if h.audit == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "audit log is not configured"), w)
+		return
+	}
+	sinks, err := h.audit.ListSinks(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	// Same reason auditSink shapes its own response by hand: the storage
+	// model carries account-scoped fields that are not part of the public
+	// AuditSink contract.
+	result := make([]map[string]any, 0, len(sinks))
+	for _, sink := range sinks {
+		result = append(result, map[string]any{"id": sink.ID, "kind": sink.Kind, "endpoint": sink.Endpoint})
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+func (h *handler) auditSinkDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
+	if h.audit == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "audit log is not configured"), w)
+		return
+	}
+	if err := h.audit.RemoveSink(r.Context(), mux.Vars(r)["sinkId"]); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *handler) policyRollback(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePolicy(w, r) {
 		return
@@ -1671,6 +1714,18 @@ func (h *handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", strconv.FormatUint(version.Version, 10))
 	util.WriteJSONObject(r.Context(), w, policyVersionResponse(version))
+}
+
+// policySchema serves a static JSON Schema for editor autocomplete/lint —
+// issue #128. Unlike every other /policy route, it needs no policy store: the
+// schema describes the document shape, not any particular version of one, so
+// it is available even to an account that has never saved a policy yet.
+func (h *handler) policySchema(w http.ResponseWriter, r *http.Request) {
+	if !requireUser(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	_, _ = w.Write([]byte(karstpolicy.JSONSchema))
 }
 
 func (h *handler) policyCurrent(w http.ResponseWriter, r *http.Request) {
@@ -2263,6 +2318,8 @@ func (h *handler) getNodePaths(w http.ResponseWriter, r *http.Request) {
 			Kind:       karstcontract.PathObservationKind(observation.Path),
 			Endpoint:   endpoint,
 			ObservedAt: at,
+			TxBytes:    int(observation.TxBytes),
+			RxBytes:    int(observation.RxBytes),
 		})
 	}
 	util.WriteJSONObject(r.Context(), w, karstcontract.NodePaths{ObservedAt: observedAt, Paths: paths})

@@ -123,6 +123,12 @@ message KarstSessionObservation {
   uint32 psk_epoch = 5;
   // The fixed PHREATIC suite, "KARST_2_MLKEM1024_MLDSA87_AES256GCM_SHA384".
   string suite = 6;
+  // Bytes sent to this peer, a running total for the lifetime of the session
+  // slot (survives a reconfigure that carries the peer over) — never reset to
+  // report a delta, so a missed report never under-counts.
+  uint64 tx_bytes = 7;
+  // Bytes received from this peer, same accounting as tx_bytes.
+  uint64 rx_bytes = 8;
 }
 
 // KarstPeerDigest is a node's summary of one peer entry it holds.

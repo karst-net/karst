@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import type { Node } from "@karst-net/api-client";
 import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
 import { api } from "../api";
-import { Failure, Notice, Rows, statusFor, useMutation, useResource } from "../common";
+import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
 
@@ -80,14 +80,17 @@ export function Machines() {
     <Dialog open={Boolean(paths)} title={`Paths — ${paths?.node.name ?? ""}`} onClose={() => setPaths(undefined)}>
       {paths?.error ? <p role="alert">{paths.error}</p> : !paths?.value ? <p>Loading paths…</p> : paths.value.paths.length === 0
         ? <p>No paths observed. The machine has not reached another peer in this window.</p>
-        : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Observed</th></>}>
+        : <Rows head={<><th>Peer</th><th>Kind</th><th>Endpoint</th><th>Sent</th><th>Received</th><th>Observed</th></>}>
           {paths.value.paths.map((path, index) => <tr key={index}>
             <td><code>{path.peer_handle}</code></td>
             <td><Status state={path.kind === "direct" ? "healthy" : "warning"} label={path.kind} /></td>
             <td>{path.endpoint ? <code>{path.endpoint}</code> : path.relay_id ? <>via relay <code>{path.relay_id}</code></> : "—"}</td>
+            <td>{formatBytes(path.tx_bytes)}</td>
+            <td>{formatBytes(path.rx_bytes)}</td>
             <td><Observed at={path.observed_at} /></td>
           </tr>)}
         </Rows>}
+      <p className="lede">Sent/received are running totals for this session, as this machine last reported them — not a live rate.</p>
       <div className="actions"><button onClick={() => setPaths(undefined)}>Close</button></div>
     </Dialog>
 

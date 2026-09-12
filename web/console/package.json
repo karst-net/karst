@@ -12,10 +12,17 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/lang-json": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/lint": "^6.0.0",
+    "@codemirror/state": "^6.0.0",
+    "@lezer/highlight": "^1.0.0",
     "@karst-net/api-client": "workspace:*",
     "@karst-net/tokens": "workspace:*",
     "@karst-net/ui": "workspace:*",
     "@vitejs/plugin-react": "latest",
+    "codemirror": "^6.0.0",
     "oidc-client-ts": "^3.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

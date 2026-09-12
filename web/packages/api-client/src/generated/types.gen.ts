@@ -398,6 +398,8 @@ export type RelayId = string;
 
 export type TurnId = string;
 
+export type SinkId = string;
+
 export type Version = number;
 
 export type Cursor = string;
@@ -962,6 +964,29 @@ export type GetPolicyVersionResponses = {
 };
 
 export type GetPolicyVersionResponse = GetPolicyVersionResponses[keyof GetPolicyVersionResponses];
+
+export type GetPolicySchemaData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/policy/schema';
+};
+
+export type GetPolicySchemaErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetPolicySchemaError = GetPolicySchemaErrors[keyof GetPolicySchemaErrors];
+
+export type GetPolicySchemaResponses = {
+    /**
+     * JSON Schema (2020-12) for a policy document, for editor autocomplete/lint
+     */
+    200: unknown;
+};
 
 export type ValidatePolicyData = {
     body: PolicyWrite;
@@ -1659,6 +1684,31 @@ export type VerifyAuditResponses = {
 
 export type VerifyAuditResponse = VerifyAuditResponses[keyof VerifyAuditResponses];
 
+export type ListAuditSinksData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/audit/sinks';
+};
+
+export type ListAuditSinksErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListAuditSinksError = ListAuditSinksErrors[keyof ListAuditSinksErrors];
+
+export type ListAuditSinksResponses = {
+    /**
+     * Configured audit sinks
+     */
+    200: Array<AuditSink>;
+};
+
+export type ListAuditSinksResponse = ListAuditSinksResponses[keyof ListAuditSinksResponses];
+
 export type CreateAuditSinkData = {
     body: AuditSinkWrite;
     path?: never;
@@ -1683,3 +1733,30 @@ export type CreateAuditSinkResponses = {
 };
 
 export type CreateAuditSinkResponse = CreateAuditSinkResponses[keyof CreateAuditSinkResponses];
+
+export type DeleteAuditSinkData = {
+    body?: never;
+    path: {
+        readonly sinkId: string;
+    };
+    query?: never;
+    url: '/audit/sinks/{sinkId}';
+};
+
+export type DeleteAuditSinkErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteAuditSinkError = DeleteAuditSinkErrors[keyof DeleteAuditSinkErrors];
+
+export type DeleteAuditSinkResponses = {
+    /**
+     * Audit sink removed
+     */
+    204: void;
+};
+
+export type DeleteAuditSinkResponse = DeleteAuditSinkResponses[keyof DeleteAuditSinkResponses];

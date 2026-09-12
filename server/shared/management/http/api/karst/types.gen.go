@@ -714,7 +714,13 @@ type PathObservation struct {
 	ObservedAt time.Time           `json:"observed_at"`
 	PeerHandle string              `json:"peer_handle"`
 	RelayId    *string             `json:"relay_id,omitempty"`
-	Since      *time.Time          `json:"since,omitempty"`
+
+	// RxBytes Bytes received from this peer, a running total for the session
+	RxBytes int        `json:"rx_bytes"`
+	Since   *time.Time `json:"since,omitempty"`
+
+	// TxBytes Bytes sent to this peer, a running total for the session
+	TxBytes int `json:"tx_bytes"`
 }
 
 // PathObservationKind defines model for PathObservation.Kind.
@@ -900,6 +906,9 @@ type Posture string
 
 // RelayId defines model for relayId.
 type RelayId = string
+
+// SinkId defines model for sinkId.
+type SinkId = string
 
 // Tag defines model for tag.
 type Tag = string

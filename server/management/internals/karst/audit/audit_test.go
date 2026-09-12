@@ -122,6 +122,63 @@ func TestAppendQueuesAndRetriesSinkDelivery(t *testing.T) {
 	}
 }
 
+func TestListSinksIsScopedToTheAskingAccount(t *testing.T) {
+	l, _ := newLog(t)
+	a := audit.WithAccount(context.Background(), "account-a")
+	b := audit.WithAccount(context.Background(), "account-b")
+	if _, err := l.AddSink(a, "webhook", "https://siem.example.test/ingest"); err != nil {
+		t.Fatalf("add sink: %v", err)
+	}
+
+	sinksA, err := l.ListSinks(a)
+	if err != nil || len(sinksA) != 1 {
+		t.Fatalf("account-a sinks: %#v err=%v", sinksA, err)
+	}
+	sinksB, err := l.ListSinks(b)
+	if err != nil || len(sinksB) != 0 {
+		t.Fatalf("account-b sinks: %#v err=%v", sinksB, err)
+	}
+}
+
+func TestRemoveSinkStopsItFromListingAndFromRetrying(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := audit.WithAccount(context.Background(), "account-a")
+	sink, err := l.AddSink(ctx, "webhook", "https://siem.example.test/ingest")
+	if err != nil {
+		t.Fatalf("add sink: %v", err)
+	}
+	if _, err := l.Append(ctx, "alice", "peer.login", "node-1", ""); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	if err := l.RemoveSink(ctx, sink.ID); err != nil {
+		t.Fatalf("remove sink: %v", err)
+	}
+
+	sinks, err := l.ListSinks(ctx)
+	if err != nil || len(sinks) != 0 {
+		t.Fatalf("sinks after removal: %#v err=%v", sinks, err)
+	}
+	// A delivery queued for the removed sink must not still be pending — left
+	// in place, DeliverPendingAt's "load sink" failure has no retry ceiling
+	// and would fail and reschedule this forever.
+	deliverer := &recordingDeliverer{}
+	if delivered, err := l.DeliverPending(ctx, deliverer, 10); err != nil || delivered != 0 {
+		t.Fatalf("delivery survived sink removal: delivered=%d err=%v", delivered, err)
+	}
+	if len(deliverer.entries) != 0 {
+		t.Fatalf("delivered to a removed sink: %#v", deliverer.entries)
+	}
+}
+
+func TestRemoveSinkIsIdempotent(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := audit.WithAccount(context.Background(), "account-a")
+	if err := l.RemoveSink(ctx, "sink-does-not-exist"); err != nil {
+		t.Fatalf("remove missing sink: %v", err)
+	}
+}
+
 func TestWebhookTransportDeliversImmutableEntry(t *testing.T) {
 	entry := audit.Entry{Seq: 9, CreatedAt: time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC), Actor: "admin", Action: "karst.delete", Target: "nodes/node-a", PrevHash: "previous", Hash: "current"}
 	seen := make(chan map[string]any, 1)

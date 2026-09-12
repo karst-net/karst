@@ -164,6 +164,13 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/audit/sinks",
 		},
 		{
+			// Idempotent by design (audit.RemoveSink), so a missing id is
+			// still success, unlike the relay/turn deletes above.
+			name: "remove an audit sink", method: http.MethodDelete,
+			path: "/karst/v1/audit/sinks/unknown-sink", body: "",
+			want: []int{http.StatusNoContent}, template: "/karst/v1/audit/sinks/{sinkId}",
+		},
+		{
 			name: "set the Bedrock mode", method: http.MethodPut,
 			path: "/karst/v1/bedrock/mode", body: `{"mode":"advisory"}`,
 			want: []int{http.StatusOK, http.StatusConflict}, template: "/karst/v1/bedrock/mode",

@@ -108,6 +108,14 @@ export type Token = { id: string; name: string; expiration_date: string; created
 
 export type DnsSettings = { disabled_management_groups: string[] };
 
+// Only the identifying fields the console actually shows. The fork's own
+// `Account` also carries a large settings blob (peer login expiration, DNS,
+// JWT groups, …) that is not part of Karst's product surface here — SSO,
+// SCIM and webhooks are explicitly server configuration, not console-owned,
+// per the note in Settings below, so nothing in that blob belongs on this
+// page even though the endpoint returns it.
+export type Account = { id: string; domain: string; created_at: string; created_by: string };
+
 export type BedrockLogEntry = { sequence: number; op: string; tier: string; subject: string; signed_at: string; signers: string[] };
 /** An offline signing bundle is intentionally opaque to the console: it is
  * created and signed by the Bedrock CLI, not interpreted or signed here. */
@@ -124,7 +132,7 @@ export const api = {
   // ── machines ───────────────────────────────────────────────────────────────
   nodes: () => request<NodePage>("/nodes?limit=100"),
   node: (handle: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`),
-  nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; relay_id: string | null; since: string | null; observed_at: string }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
+  nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; relay_id: string | null; since: string | null; observed_at: string; tx_bytes: number; rx_bytes: number }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
   // Only the name. The contract rejects a PATCH carrying tags, expiry or
   // enabled with "only name is currently mutable for a Karst node", so the
   // console offers exactly what the server accepts rather than a form that
@@ -139,6 +147,10 @@ export const api = {
   validate: (document: string) => request<PolicyValidation>("/policy/validate", { method: "POST", body: body({ document }) }),
   preview: (document: string) => request<PolicyPreview>("/policy/preview", { method: "POST", body: body({ document }) }),
   testPolicy: (document: string) => request<{ passed: boolean; results: Array<{ name: string; passed: boolean; message: string }> }>("/policy/test", { method: "POST", body: body({ document }) }),
+  // A JSON Schema (2020-12) describing the policy document shape, for the
+  // editor's autocomplete and inline lint. Static per server version, not
+  // per account — safe to fetch once and keep for the life of the view.
+  policySchema: () => request<Record<string, unknown>>("/policy/schema"),
   savePolicy: (document: string, version: number) => request<PolicyVersion>("/policy", { method: "PUT", headers: { "if-match": String(version) }, body: body({ document }) }),
   rollbackPolicy: (version: number, currentVersion: number) => request<PolicyVersion>(`/policy/rollback/${version}`, { method: "POST", headers: { "if-match": String(currentVersion) } }),
 
@@ -164,6 +176,8 @@ export const api = {
   auditVerify: () => request<{ valid: boolean; first_bad_sequence: number | null; head: { sequence: number; hash: string } }>("/audit/verify"),
   auditExport,
   addAuditSink: (kind: string, endpoint: string) => request<{ id: string; kind: string; endpoint: string }>("/audit/sinks", { method: "POST", body: body({ kind, endpoint }) }),
+  auditSinks: () => request<Array<{ id: string; kind: string; endpoint: string }>>("/audit/sinks"),
+  removeAuditSink: (id: string) => request<void>(`/audit/sinks/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── relays ─────────────────────────────────────────────────────────────────
   relays: () => request<Relay[]>("/relays"),
@@ -188,6 +202,11 @@ export const api = {
   currentUser: () => management<AccountUser>("/users/current"),
   updateUser: (id: string, changes: { role: string; is_blocked: boolean; auto_groups: string[] }) => management<AccountUser>(`/users/${encodeURIComponent(id)}`, { method: "PUT", body: body(changes) }),
   deprovisionUser: (id: string) => management<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── organization ───────────────────────────────────────────────────────────
+  // The fork's endpoint is plural (`getAllAccounts`) but scopes to the
+  // caller's own account and always returns exactly one — see accounts_handler.go.
+  account: () => management<Account[]>("/accounts").then((accounts) => accounts[0]),
 
   // ── groups ─────────────────────────────────────────────────────────────────
   groups: () => management<Group[]>("/groups"),

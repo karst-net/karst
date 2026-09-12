@@ -30,6 +30,21 @@ let setupKeys = [];
 let invitations = [];
 let users = seedUsers();
 let groups = seedGroups();
+let sinks = [];
+const account = { id: "account-fixture", domain: "example.test", domain_category: "private", created_at: "2026-01-01T00:00:00Z", created_by: "user-it" };
+// Mirrors server/management/internals/karst/policy/schema.go's shape closely
+// enough to exercise the console's own autocomplete against — not the full
+// document (descriptions, patterns), which nothing here reads.
+const policySchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: {
+    groups: { type: "object" },
+    tagOwners: { type: "object" },
+    acls: { type: "array", items: { type: "object", properties: { action: { const: "accept" }, src: { type: "array" }, dst: { type: "array" } } } },
+    ssh: { type: "array", items: { type: "object", properties: { action: { const: "accept" }, src: { type: "array" }, dst: { type: "array" } } } },
+  },
+};
 let routes = fixture.routes.map((route) => ({ ...route }));
 let nameservers = fixture.nameservers.map((group) => ({ ...group }));
 let tokens = seedTokens();
@@ -159,6 +174,7 @@ const server = http.createServer((request, response) => {
       invitations = [];
       users = empty ? [] : seedUsers();
       groups = empty ? [] : seedGroups();
+      sinks = [];
       routes = fixture.routes.map((route) => ({ ...route }));
       nameservers = fixture.nameservers.map((group) => ({ ...group }));
       tokens = empty ? {} : seedTokens();
@@ -235,6 +251,8 @@ const server = http.createServer((request, response) => {
     return noContent(response);
   }
 
+  if (path === "/api/accounts" && method === "GET") return json(response, 200, [account]);
+
   if (path === "/api/groups" && method === "GET") return json(response, 200, groups);
   if (path === "/api/groups" && method === "POST") {
     return readBody(request).then((draft) => {
@@ -306,7 +324,7 @@ const server = http.createServer((request, response) => {
     const index = fixture.nodes.findIndex((item) => item.handle === nodeMatch[1]);
     if (index < 0) return error(response, 404, "not_found", "node not found");
     const node = fixture.nodes[index];
-    if (method === "GET" && nodeMatch[2] === "paths") return json(response, 200, { observed_at: fixture.asOf, paths: [{ peer_handle: fixture.nodes[1].handle, kind: "relay", endpoint: null, relay_id: fixture.relays[0]?.id ?? null, since: null, observed_at: fixture.asOf }] });
+    if (method === "GET" && nodeMatch[2] === "paths") return json(response, 200, { observed_at: fixture.asOf, paths: [{ peer_handle: fixture.nodes[1].handle, kind: "relay", endpoint: null, relay_id: fixture.relays[0]?.id ?? null, since: null, observed_at: fixture.asOf, tx_bytes: 1_234_567, rx_bytes: 7_654_321 }] });
     if (method === "GET" && nodeMatch[2] === "posture") return json(response, 200, node.posture);
     if (method === "GET") return json(response, 200, node);
     // Name and nothing else, exactly as the contract's updateNode enforces: a
@@ -320,6 +338,7 @@ const server = http.createServer((request, response) => {
     });
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }
   }
+  if (method === "GET" && karst === "/policy/schema") return json(response, 200, policySchema);
   if (method === "GET" && karst === "/policy") return json(response, 200, fixture.policy);
   if (method === "GET" && karst === "/policy/versions") return json(response, 200, page(fixture.policyVersions, url));
   if (method === "GET" && /^\/policy\/versions\/\d+$/.test(karst)) {
@@ -387,7 +406,21 @@ const server = http.createServer((request, response) => {
   }
   if (method === "GET" && karst === "/audit/head") return json(response, 200, { sequence: 42, hash: "audit-hash-42" });
   if (method === "GET" && karst === "/audit/verify") return json(response, 200, { valid: false, first_bad_sequence: 42, head: { sequence: 42, hash: "audit-hash-42" } });
-  if (method === "POST" && karst === "/audit/sinks") return readBody(request).then((body) => json(response, 201, { id: id("sink"), kind: body.kind ?? "webhook", endpoint: body.endpoint ?? "" }));
+  if (method === "GET" && karst === "/audit/sinks") return json(response, 200, sinks);
+  if (method === "POST" && karst === "/audit/sinks") {
+    return readBody(request).then((body) => {
+      const sink = { id: id("sink"), kind: body.kind ?? "webhook", endpoint: body.endpoint ?? "" };
+      sinks.push(sink);
+      return json(response, 201, sink);
+    });
+  }
+  const sinkMatch = karst.match(/^\/audit\/sinks\/([^/]+)$/);
+  if (sinkMatch && method === "DELETE") {
+    // Idempotent, mirroring audit.RemoveSink: removing an id that is not
+    // there is success, not a 404.
+    sinks = sinks.filter((sink) => sink.id !== sinkMatch[1]);
+    return noContent(response);
+  }
   return error(response, 404, "not_found", "mock route has not been configured");
 });
 

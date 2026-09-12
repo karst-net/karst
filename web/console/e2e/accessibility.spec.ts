@@ -153,6 +153,15 @@ test("adding a machine opens the invitation flow", async ({ page }) => {
   await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
 });
 
+test("a machine's paths show sent/received totals, not just kind and endpoint", async ({ page }) => {
+  await page.goto("/#/machines");
+  await page.locator("tbody tr").filter({ hasText: "sre-laptop" }).getByRole("button", { name: "Paths" }).click();
+  const row = page.locator("dialog[open] tbody tr").first();
+  await expect(row).toContainText("relay");
+  await expect(row).toContainText("1.2 MB");
+  await expect(row).toContainText("7.3 MB");
+});
+
 test("the machine filter narrows the list without hiding the count", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByLabel("Filter machines").fill("prod-db-01");

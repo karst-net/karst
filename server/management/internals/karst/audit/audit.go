@@ -128,6 +128,43 @@ func (l *Log) AddSink(ctx context.Context, kind, endpoint string) (*Sink, error)
 	return s, nil
 }
 
+// ListSinks returns every configured delivery destination for the caller's
+// account, oldest first.
+func (l *Log) ListSinks(ctx context.Context) ([]Sink, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var sinks []Sink
+	if err := l.db.WithContext(ctx).Where("account_id = ?", accountID).Order("created_at ASC").Find(&sinks).Error; err != nil {
+		return nil, fmt.Errorf("audit: list sinks: %w", err)
+	}
+	return sinks, nil
+}
+
+// RemoveSink deletes a configured sink and anything still queued for it.
+//
+// The queued deliveries have to go too: DeliverPendingAt's "load sink"
+// failure path has no retry ceiling, so a sink deleted out from under a
+// pending Delivery row would otherwise fail and reschedule forever rather
+// than simply stopping. Idempotent, like the rest of this package's deletes —
+// removing an id that is not there (or already gone) is not an error.
+func (l *Log) RemoveSink(ctx context.Context, id string) error {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND sink_id = ?", accountID, id).Delete(&Delivery{}).Error; err != nil {
+			return fmt.Errorf("audit: remove queued deliveries: %w", err)
+		}
+		if err := tx.Where("account_id = ? AND id = ?", accountID, id).Delete(&Sink{}).Error; err != nil {
+			return fmt.Errorf("audit: remove sink: %w", err)
+		}
+		return nil
+	})
+}
+
 // Sink is an audit export destination. Credentials are deliberately not part
 // of this model; a delivery implementation must obtain them from the secret
 // store rather than returning or persisting them with the REST configuration.

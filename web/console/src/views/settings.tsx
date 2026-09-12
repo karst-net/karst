@@ -10,6 +10,7 @@ const expiries = [["30 days", 30], ["90 days", 90], ["365 days", 365]] as const;
 
 export function Settings() {
   const me = useResource(api.currentUser);
+  const account = useResource(api.account);
   const tokens = useResource(() => me.value ? api.tokens(me.value.id) : Promise.resolve([] as Token[]), [me.value?.id]);
   const { message, setMessage, run } = useMutation(tokens.reload);
   const [draft, setDraft] = useState<{ name: string; expires_in: number }>();
@@ -63,6 +64,11 @@ export function Settings() {
         </Rows>}
 
     <h3>Organization</h3>
+    {account.loading ? <p>Loading organization…</p> : account.error
+      ? <Failure message={account.error} retry={account.reload} />
+      : account.value && <Rows head={<><th>Organization ID</th><th>Domain</th><th>Created</th></>}>
+        <tr><td><code>{account.value.id}</code></td><td>{account.value.domain || "—"}</td><td><Observed at={account.value.created_at} /></td></tr>
+      </Rows>}
     <p className="lede">Single sign-on, SCIM provisioning and webhooks are configured on the coordination server rather than here — they are server startup configuration, and a console that pretended to own them would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide.</p>
 
     <Dialog open={Boolean(draft)} title="Create personal access token" onClose={() => setDraft(undefined)}>

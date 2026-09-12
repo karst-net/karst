@@ -108,7 +108,12 @@ type SessionObservation struct {
 	LatticeOnly    bool
 	PSKEpoch       uint32
 	Suite          string
-	ObservedAt     time.Time `gorm:"not null;index"`
+	// TxBytes/RxBytes are running totals for the lifetime of the reporter's
+	// session slot with this peer, not a delta since the last report — the
+	// same accounting `bins/karstd/src/engine.rs`'s PeerStatus already keeps.
+	TxBytes    uint64
+	RxBytes    uint64
+	ObservedAt time.Time `gorm:"not null;index"`
 }
 
 func (SessionObservation) TableName() string { return "karst_session_observations" }

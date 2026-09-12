@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Observed, Status } from "@karst-net/ui";
 import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useResource } from "../common";
+import { PolicyEditor } from "../policy-editor";
 
 type Flow = { source: string; destination: string; protocol: string; ports: string };
 // An "ssh" rule's effect, described by principal/target rather than as a
@@ -17,6 +18,7 @@ type TestResults = Awaited<ReturnType<typeof api.testPolicy>>;
 export function Access() {
   const resource = useResource(api.policy);
   const history = useResource(api.policyVersions);
+  const schema = useResource(api.policySchema);
   const [document, setDocument] = useState("");
   const [diagnostics, setDiagnostics] = useState<Array<{ severity: string; message: string; line: number; column: number }>>([]);
   const [preview, setPreview] = useState<{ added: Flow[]; removed: Flow[]; ssh_added?: SshGrant[]; ssh_removed?: SshGrant[] }>();
@@ -62,9 +64,9 @@ export function Access() {
   return <section>
     <h2>Access controls</h2>
     <p className="lede">JSON policies are validated by the same server that applies them.</p>
-    <label htmlFor="policy">Policy document</label>
-    <textarea id="policy" spellCheck={false} value={document} onChange={(event) => setDocument(event.target.value)} aria-describedby="policy-help" />
-    <p id="policy-help">Use strict JSON. Save uses the version currently loaded.</p>
+    <p id="policy-label">Policy document</p>
+    <PolicyEditor value={document} onChange={setDocument} diagnostics={diagnostics} schema={schema.value} labelledBy="policy-label" describedBy="policy-help" />
+    <p id="policy-help">Autocomplete suggests the four top-level keys, a rule's action/src/dst, and selectors already defined elsewhere in the document. Save uses the version currently loaded.</p>
     <div className="actions">
       <button onClick={() => void validate()}>Validate policy</button>
       <button onClick={() => void api.preview(document).then(setPreview).catch((e: Error) => setNotice(e.message))}>Preview changes</button>

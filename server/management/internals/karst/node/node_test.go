@@ -270,6 +270,38 @@ func TestDeleteRemovesIdentityAndRelatedObservations(t *testing.T) {
 	}
 }
 
+// TxBytes/RxBytes round-trip like every other observation field — a running
+// total for the session, not a delta, so a value of 0 (a fresh session) must
+// be distinguishable from a value that simply failed to persist.
+func TestSessionObservationByteCountsRoundTrip(t *testing.T) {
+	s := newStore(t)
+	reporter, peer := newIdentity(t), newIdentity(t)
+	reporterHandle, err := s.Register(reporter.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register reporter: %v", err)
+	}
+	peerHandle, err := s.Register(peer.Public(), testKeys())
+	if err != nil {
+		t.Fatalf("register peer: %v", err)
+	}
+	if err := s.ReplaceSessionObservations(reporterHandle, []node.SessionObservation{
+		{PeerHandle: peerHandle, Path: "direct", TxBytes: 12_345, RxBytes: 67_890},
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	observations, err := s.SessionObservations(reporterHandle)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("got %d observations, want 1", len(observations))
+	}
+	if observations[0].TxBytes != 12_345 || observations[0].RxBytes != 67_890 {
+		t.Fatalf("byte counts did not round-trip: %+v", observations[0])
+	}
+}
+
 // Reporting the same relay again must not touch the row. Every node reports
 // this on every poll, so an unconditional write is one update per node per
 // refresh interval, and it moves UpdatedAt on rows nothing changed.
