@@ -128,6 +128,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked -p karst-proto --no-default-features --target x86_64-unknown-none --lib -- -D warnings
 
+  # Phase 7 / issue #117: karst-tun's mobile backend (crates/karst-tun/src/mobile.rs)
+  # adopts a tunnel fd iOS's NEPacketTunnelProvider or Android's VpnService
+  # already created — neither can be exercised without a real device or
+  # emulator, which this project has no runner for (unlike windows-latest and
+  # macos-latest, both real GitHub-hosted runners the Windows and macOS ports
+  # use). Cross-compiling and linting both targets is the honest substitute:
+  # it is the only property checkable from here, and it is a real one — a
+  # `cfg(target_os = "ios")`/`"android"` mistake that would only surface on a
+  # device fails this job instead, the same reason the no_std job above
+  # exists for karst-proto's own claim.
+  mobile-tun:
+    name: karst-tun mobile targets (compile-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - run: rustup target add aarch64-linux-android aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p karst-tun --target aarch64-linux-android -- -D warnings
+      - run: cargo clippy --locked -p karst-tun --target aarch64-apple-ios -- -D warnings
+
   # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
   # Wintun adapter/session/IP-Helper code in karst-tun, karst-ipc's named
   # pipes (bins/karstd/src/ipc.rs's Windows control-channel transport),

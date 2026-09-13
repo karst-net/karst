@@ -21,6 +21,11 @@ libc = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 
+# mobile.rs's set_nonblocking only — from_fd itself needs no FFI beyond std's
+# own OwnedFd/File.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+libc = "0.2"
+
 # ADR-0017: Win32 declarations only, no Wintun Cargo wrapper. The DLL itself
 # is loaded at runtime via `LoadLibraryExW` from the protected install
 # directory — see `sys_windows`, not this dependency.

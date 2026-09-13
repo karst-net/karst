@@ -75,10 +75,15 @@ mod sys_windows;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
+mod mobile;
+
 #[cfg(target_os = "linux")]
 pub use linux::Tun;
 #[cfg(target_os = "macos")]
 pub use macos::Tun;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub use mobile::Tun;
 pub use userspace::{TcpHandle, UdpHandle, Userspace};
 #[cfg(target_os = "windows")]
 pub use windows::Tun;
