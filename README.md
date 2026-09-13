@@ -5,6 +5,9 @@
 **A post-quantum mesh VPN with self-hosted coordination, an admin console, and
 user management.**
 
+**[karst-net.github.io](https://karst-net.github.io)** has the project
+overview for a non-technical read; this README is the technical one.
+
 > **Status: pre-alpha; internally reviewed, not externally reviewed.** Phase 6
 > hardening is underway. Deprovisioning is measured at 2.0s against its 30s CI
 > bound, but the required unaided outsider walkthrough remains unrun. No
@@ -50,9 +53,10 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SCIM 2.0 (deprovisioning timing tracked as an open gap, see status above) |
 | Console / portal (TypeScript) | Admin console and self-service portal; client-user lifecycle verified against a real server — create/invite a user, enroll a Linux device, revoke, deprovision |
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS, host integration. **Linux and macOS both shipping** (`systemd-resolved`/NetworkManager/`resolv.conf` on Linux, `/etc/resolver` on macOS); macOS's resolver *search list* is a stated Phase 6 gap, not silent. Windows (NRPT integration) is now Phase 6, pulled forward from Phase 8 as a firm beta-blocking requirement |
+| Windows client | Pulled forward from Phase 8 to a firm beta gate ([ADR-0017](docs/adr/0017-windows-tun-provider.md)). TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and the MSI installer are built; Wintun 0.14.1 is vendored with its Authenticode signer verified, and a real adapter-creation test now runs in CI on `windows-latest`. Unsigned Karst executables/MSI — paid artifact signing is deferred to Phase 8. Not yet beta-gate complete |
 | **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, client enforcement, and automated audit anchoring through [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier — implemented in both languages against shared vectors |
 
-**874 Rust tests** and **157 Go tests** run unprivileged; a further suite runs
+**1315 Rust tests** and **406 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
 twelve-row NAT matrix and **twelve end-to-end aquifer topologies** — each one a
 whole aquifer, and each ending in a TCP conversation under an ACL. That suite

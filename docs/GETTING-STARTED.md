@@ -205,7 +205,7 @@ and `web/portal/dist`.
 Before trusting any of it, run the gate the CI runs:
 
 ```sh walkthrough=none reason="the release gate; each recipe is already a CI job of its own"
-just check              # fmt, clippy, 874 Rust tests, cargo-deny, licenses
+just check              # fmt, clippy, 1315 Rust tests, cargo-deny, licenses
 just go-test go-lint    # the coordination server
 just test-privileged    # namespaces, TUN devices, the NAT matrix — needs sudo
 ```
