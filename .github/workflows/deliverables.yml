@@ -830,6 +830,19 @@ jobs:
               throw "$exe missing from $installDir"
             }
           }
+          # ADR-0017: wintun.dll must land next to karstd.exe, not a
+          # subfolder — that fixed path is what bins/karstd/src/run.rs
+          # builds from %ProgramFiles% at runtime.
+          $wintunPath = Join-Path $installDir "wintun.dll"
+          if (-not (Test-Path $wintunPath)) { throw "wintun.dll missing from $installDir" }
+          $installedHash = (Get-FileHash -Algorithm SHA256 $wintunPath).Hash.ToLower()
+          $pinnedHash = (Get-Content "packaging/windows/vendor/wintun/wintun.dll.sha256").Split(' ')[0].Trim().ToLower()
+          if ($installedHash -ne $pinnedHash) {
+            throw "installed wintun.dll hash $installedHash does not match pinned $pinnedHash"
+          }
+          if (-not (Test-Path (Join-Path $installDir "wintun-LICENSE.txt"))) {
+            throw "wintun-LICENSE.txt missing from $installDir"
+          }
           if (-not (Test-Path (Join-Path $dataDir "karstd.toml.example"))) {
             throw "karstd.toml.example missing from $dataDir"
           }

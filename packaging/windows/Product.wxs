@@ -22,16 +22,21 @@
     rather than relying on the default, so the two can never quietly drift
     apart.
 
+  `wintun.dll`: ADR-0017's distribution review completed 2026-09-10 and
+  approved bundling the unmodified amd64 DLL. It ships from
+  `packaging/windows/vendor/wintun/` — see that directory's `NOTICE.md` for
+  the archive digest, the DLL's own pinned hash, and the WireGuard LLC
+  Authenticode signer `scripts/build-windows-msi.ps1` verifies before every
+  build — installed alongside `karstd.exe` at `%ProgramFiles%\Karst\wintun.dll`,
+  the fixed path `bins/karstd/src/run.rs` looks for. Its license
+  (`vendor/wintun/LICENSE.txt`) ships next to it per that license's own
+  notice-preservation term. ADR-0012's userspace mode
+  (`network_mode = "userspace"` in `karstd.toml`) remains the fallback for a
+  machine where Wintun's driver cannot load for any reason — this package
+  installs the DLL, not a mode selection.
+
   What is deliberately not here yet:
 
-  - `wintun.dll`. ADR-0017's distribution review is still pending
-    (plans/phase-6/10-windows-client.md §4) — bundling the driver before
-    that review completes would be exactly the "shipped, decide later"
-    mistake ADR-0007's `deny.toml` gate exists to prevent for Cargo
-    dependencies, applied here to a vendored binary instead. Until it lands,
-    this package installs `karstd`/`karst` only; ADR-0012's userspace mode
-    (`network_mode = "userspace"` in `karstd.toml`) is what actually runs on
-    a machine with no Wintun adapter, per the plan's own "honest fallback."
   - Per-interface DNS (`SetInterfaceDnsSettings`) — `karst_dns::host::Nrpt`'s
     own module docs track this as the remaining piece of plan §6; nothing
     about packaging changes when it lands.
@@ -163,6 +168,30 @@
       </Component>
       <Component Id="CmpKarst" Guid="*">
         <File Id="KarstExe" Source="$(var.KarstSourceDir)\karst.exe" KeyPath="yes" />
+      </Component>
+      <!--
+        ADR-0017. `karst-tun`'s Windows backend (`sys_windows.rs`) loads this
+        by the absolute path `bins/karstd/src/run.rs` builds from
+        `%ProgramFiles%`, never by search — it must land in this same
+        directory as `karstd.exe`, not a subfolder. `KarstWintunDir` points
+        at `packaging/windows/vendor/wintun`, whose `NOTICE.md` records the
+        pinned hash `scripts/build-windows-msi.ps1` checks before this file
+        is ever staged into a build.
+      -->
+      <Component Id="CmpWintunDll" Guid="*">
+        <File Id="WintunDll" Source="$(var.KarstWintunDir)\wintun.dll" KeyPath="yes" />
+      </Component>
+      <!--
+        The Wintun license's own notice-preservation term (§3c) and
+        ADR-0017's "retain the license and notices" both require this to
+        travel with the DLL. Named distinctly from any Karst license file so
+        the two are never confused for one another.
+      -->
+      <Component Id="CmpWintunLicense" Guid="*">
+        <File Id="WintunLicense"
+              Source="$(var.KarstWintunDir)\LICENSE.txt"
+              Name="wintun-LICENSE.txt"
+              KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

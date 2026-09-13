@@ -60,6 +60,32 @@ foreach ($exe in @("karstd.exe", "karst.exe")) {
     }
 }
 
+# ── Wintun ───────────────────────────────────────────────────────────────
+#
+# ADR-0017: the DLL is vendored, not fetched here — packaging/windows/vendor
+# /wintun/NOTICE.md records where it came from and the hash below. Checked
+# twice, for two different failure modes: the hash catches a corrupted or
+# silently edited checked-in file; the Authenticode check catches a file
+# that hashes right but was never actually WireGuard LLC's signed build (a
+# concern the hash alone can't rule out once anyone could regenerate both
+# together).
+$wintunDir = Join-Path $root "packaging/windows/vendor/wintun"
+$wintunDll = Join-Path $wintunDir "wintun.dll"
+$pinned = (Get-Content (Join-Path $wintunDir "wintun.dll.sha256")).Split(' ')[0].Trim().ToLower()
+$actual = (Get-FileHash -Algorithm SHA256 $wintunDll).Hash.ToLower()
+if ($actual -ne $pinned) {
+    Write-Error "packaging/windows/vendor/wintun/wintun.dll does not match its pinned hash (expected $pinned, got $actual) — see that directory's NOTICE.md before replacing it"
+}
+
+$sig = Get-AuthenticodeSignature $wintunDll
+if ($sig.Status -ne "Valid") {
+    Write-Error "wintun.dll's Authenticode signature is $($sig.Status), expected Valid"
+}
+if ($sig.SignerCertificate.Subject -notmatch "WireGuard LLC") {
+    Write-Error "wintun.dll is signed by '$($sig.SignerCertificate.Subject)', expected WireGuard LLC"
+}
+Write-Host "==> wintun.dll hash and signature verified (WireGuard LLC)"
+
 # ── WiX ──────────────────────────────────────────────────────────────────
 #
 # Pinned exactly, both here and for the extension below: an unpinned `wix
@@ -108,6 +134,7 @@ wix build "packaging/windows/Product.wxs" `
     -arch x64 `
     -d "KarstVersion=$msiVersion" `
     -d "KarstSourceDir=$sourceDir" `
+    -d "KarstWintunDir=$wintunDir" `
     -d "KarstConfigExample=$(Join-Path $root 'docs/karstd-example-windows.toml')" `
     -ext "WixToolset.Firewall.wixext/$wixVersion" `
     -o $msiPath

@@ -3,19 +3,20 @@
 
 //! Tests against a **real `wintun.dll`**.
 //!
-//! Creating an adapter needs Administrator and the DLL itself, which CI's
-//! `windows-core` job (`.github/workflows/ci.yml`) does not yet provision —
-//! acquiring and pinning it is packaging work (plan §7), not this crate's.
-//! Until then, these are the tests that need neither: what a caller must
+//! Creating an adapter needs Administrator and the DLL itself. The two
+//! unprivileged tests below run everywhere and assert what a caller must
 //! observe when the DLL is missing, and that configuration is validated
 //! before `Tun::create` ever tries to load it — the same split
 //! `tests/device.rs` draws between what needs `CAP_NET_ADMIN` and what
 //! doesn't, applied to the one privilege Windows adds on top: the DLL has to
 //! be found at all.
 //!
-//! A real-adapter test (`#[ignore]`, run explicitly once CI can provision
-//! `wintun.dll` and Administrator) belongs alongside these once that lands —
-//! not invented here without a way to run it even once.
+//! The real-adapter test is `#[ignore]`d and run explicitly:
+//! `cargo test -p karst-tun --test windows_adapter -- --ignored`. It needs
+//! Administrator (`windows-latest` GitHub runners already are one — the same
+//! property `karst-secure-storage`'s ACL tests rely on) and the vendored
+//! `packaging/windows/vendor/wintun/wintun.dll` (ADR-0017), found relative to
+//! this crate rather than passed in, since CI checks out the whole repo.
 
 #![cfg(target_os = "windows")]
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
@@ -73,4 +74,45 @@ fn invalid_configuration_is_rejected_before_touching_wintun() {
         unchecked,
     );
     assert!(matches!(bad_name, Err(TunError::InvalidName(_))));
+}
+
+/// The vendored DLL's path, relative to this crate — not `%ProgramFiles%`:
+/// that fixed path (`bins/karstd/src/run.rs`) is only real after the MSI has
+/// installed something there, which this test does not assume.
+fn vendored_wintun_dll() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packaging/windows/vendor/wintun/wintun.dll")
+}
+
+/// **The real test.** Creates an actual Wintun adapter and asks the OS,
+/// through `ConvertInterfaceLuidToIndex`, whether the LUID we got back names
+/// a live interface — the Windows counterpart of `tests/device.rs` reading
+/// `/sys/class/net/<name>` back rather than trusting our own return value.
+/// Dropping `tun` at the end of the test exercises the cleanup path the
+/// module documentation describes (Wintun removes a created adapter on
+/// close) — nothing further to assert there without a second, independent
+/// way to enumerate adapters, which this crate does not expose.
+#[test]
+#[ignore = "needs Administrator and wintun.dll"]
+fn creates_a_real_adapter_the_os_agrees_exists() {
+    let dll = vendored_wintun_dll();
+    assert!(
+        dll.is_file(),
+        "vendored wintun.dll not found at {dll:?} — run from a full checkout"
+    );
+
+    let tun = Tun::create(
+        &TunConfig {
+            name: "karst-t1".to_owned(),
+            ..TunConfig::default()
+        },
+        &dll,
+    )
+    .expect("create (needs Administrator)");
+
+    assert_eq!(tun.name(), "karst-t1");
+    assert_eq!(tun.mtu(), TunConfig::default().mtu);
+    assert!(!tun.offload(), "Wintun has no offload");
+    tun.ifindex()
+        .expect("the OS must agree the adapter's LUID names a live interface");
 }

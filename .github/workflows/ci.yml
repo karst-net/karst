@@ -152,10 +152,12 @@ jobs:
   # `enrollment`, `Scratch`-based sockets) in a way that is a separate, much
   # larger port than this job's scope.
   #
-  # A real Wintun adapter test needs Administrator and wintun.dll, neither
-  # provisioned yet — that lands alongside the MSI packaging work that
-  # acquires the DLL (plan §7), same split Linux's `tun` job below draws for
-  # CAP_NET_ADMIN.
+  # A real Wintun adapter test needs Administrator and wintun.dll. The DLL is
+  # now vendored (ADR-0017, packaging/windows/vendor/wintun) and
+  # `windows-latest` runners are already Administrator (the same property
+  # `karst-secure-storage`'s ACL tests rely on), so the ignored test in
+  # `tests/windows_adapter.rs` runs explicitly below, same split Linux's
+  # `tun` job draws for CAP_NET_ADMIN.
   windows-core:
     name: Windows portable networking
     runs-on: windows-latest
@@ -176,6 +178,8 @@ jobs:
       - run: cargo test --locked -p karst-proto -p karst-tun -p karst-ipc -p karst-secure-storage -p karst-winlog -p karst-dns --lib --tests
       - run: cargo test --locked -p karstd --lib
       - run: cargo build --locked -p karstd --bin karstd
+      - name: Real Wintun adapter creation
+        run: cargo test --locked -p karst-tun --test windows_adapter -- --ignored
 
   # TUN needs CAP_NET_ADMIN, so these tests are #[ignore]d and never run in the
   # job above. Without this job the entire kernel-facing surface — interface
