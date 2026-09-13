@@ -15,6 +15,7 @@ as evidence.
 
 | Document | Components and use cases covered |
 | --- | --- |
+| [00-command-procedures.md](00-command-procedures.md) | Command-by-command procedures for every scenario ID below |
 | [01-foundation-and-connectivity.md](01-foundation-and-connectivity.md) | `karst-control`, `karst-relay`, `karstd`, `karst`; UC-01, UC-02, UC-04, UC-08 |
 | [02-clients-and-networking.md](02-clients-and-networking.md) | Linux, macOS, Windows clients; TUN/userspace, KarstDNS, subnet routing and exit nodes; UC-01, UC-06, UC-07, UC-08 |
 | [03-administration-and-portal.md](03-administration-and-portal.md) | Admin console, user portal, IdP/SCIM, policy, lifecycle, DNS, routes and relay registry; UC-03 through UC-08 |
