@@ -6,11 +6,10 @@ How to build every Karst component from this tree and stand it up on Linux
 hosts: the node agent, the relay, the coordination server, the web console and
 portal, and the offline Bedrock signer.
 
-> **Status: pre-alpha. Do not deploy this.** Nothing here has had external
-> cryptographic or security review and the wire formats are still changing.
-> This document exists so that Karst can be *run and reviewed*, not so that it
-> can be relied on. Read the caveats in [README.md](../README.md) and
-> [GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) first.
+> **Status: beta.** This guide supports feature and platform testing, not a
+> production deployment. Karst has not had external cryptographic or security
+> review, and wire formats may still change. Read the caveats in
+> [README.md](../README.md) and [GitHub issues](https://github.com/karst-net/karst/issues?q=is%3Aissue) first.
 
 **Where this walkthrough stops.** Paths A, B and C below get you a running
 relay, a running coordination server, and a node that enrolls and carries

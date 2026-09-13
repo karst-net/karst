@@ -8,17 +8,16 @@ user management.**
 **[karst-net.github.io](https://karst-net.github.io)** has the project
 overview for a non-technical read; this README is the technical one.
 
-> **Status: pre-alpha; internally reviewed, not externally reviewed.** Phase 6
-> hardening is underway. Deprovisioning is measured at 2.0s against its 30s CI
-> bound, but the required unaided outsider walkthrough remains unrun. No
-> external cryptographic review or external penetration test has happened;
-> both are Phase 8 work, and wire formats may still change without compatibility
-> guarantees. Start with the [install guide](docs/GETTING-STARTED.md), then use
-> the [operations manual](docs/OPERATIONS.md),
+> **Status: beta.** Karst is being tested with design partners across every
+> product feature and supported client platform. It is not a production or
+> general-availability release: interoperability, upgrade behavior, platform
+> integration, and operational workflows remain under active validation. Wire
+> formats may change without compatibility guarantees. No external
+> cryptographic review or external penetration test has happened. Start with
+> the [install guide](docs/GETTING-STARTED.md), then use the
+> [operations manual](docs/OPERATIONS.md),
 > [security whitepaper](docs/SECURITY-WHITEPAPER.md), and
 > [WireGuard/Tailscale migration guide](docs/MIGRATING-FROM-WIREGUARD-TAILSCALE.md).
-> The whitepaper and this wording still require the recorded crypto-lead
-> sign-off before the documentation workstream can close.
 
 Karst is a Tailscale-equivalent overlay network in which every long-term
 cryptographic dependency is post-quantum. The driving threat is
@@ -26,7 +25,7 @@ cryptographic dependency is post-quantum. The driving threat is
 by a quantum computer. That deadline has already passed for anything you send
 over a classical VPN — which is the reason this project exists.
 
-## What actually works today
+## Beta scope: what we are testing
 
 The headline: **two `karstd` daemons, a real relay and a real coordination
 server, in separate network namespaces with real TUN devices, reaching a direct
@@ -47,14 +46,27 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | **KARST-CONTROL** — control channel ([spec](spec/karst-control-v1.md)) | Draft 0.1. Enrollment, netmap, per-pair PSKs and disco keys, encrypted cache |
 | **Ponor** — relay ([spec](spec/ponor-v1.md)) | Draft 0.1. TLS 1.3 with `X25519MLKEM768` enforced, ML-DSA-65 relay identity, structural admission |
 | **AVEN** — NAT traversal ([spec](spec/aven-v1.md)) | Draft 0.1. Probing, path selection with hysteresis, candidate exchange, server-reflexive discovery |
-| `karstd` — node agent | TUN, datapath, stateful packet filter, discovery, relay client |
+| `karstd` — node agent | TUN or userspace datapath, stateful packet filter, discovery, relay and TURN client |
 | `karst-relay` — relay server | Forwarding, presence, rate limiting, AVEN reflector |
 | `karst-portmap` — NAT-PMP and PCP | Codec for both, verified against `miniupnpd` rather than against itself; wired into `karstd` |
-| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay registry, SCIM 2.0 (deprovisioning timing tracked as an open gap, see status above) |
-| Console / portal (TypeScript) | Admin console and self-service portal; client-user lifecycle verified against a real server — create/invite a user, enroll a Linux device, revoke, deprovision |
-| **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS, host integration. **Linux and macOS both shipping** (`systemd-resolved`/NetworkManager/`resolv.conf` on Linux, `/etc/resolver` on macOS); macOS's resolver *search list* is a stated Phase 6 gap, not silent. Windows (NRPT integration) is now Phase 6, pulled forward from Phase 8 as a firm beta-blocking requirement |
-| Windows client | Pulled forward from Phase 8 to a firm beta gate ([ADR-0017](docs/adr/0017-windows-tun-provider.md)). TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and the MSI installer are built; Wintun 0.14.1 is vendored with its Authenticode signer verified, and a real adapter-creation test now runs in CI on `windows-latest`. Unsigned Karst executables/MSI — paid artifact signing is deferred to Phase 8. Not yet beta-gate complete |
+| `karst-control` — coordination server (Go) | Enrollment, netmap, policy, audit, relay/TURN registry, SSO and SCIM 2.0 |
+| Console / portal (TypeScript) | Administration, invitations, device lifecycle, policy and self-service downloads |
+| **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS and host integration: Linux (`systemd-resolved`/NetworkManager/`resolv.conf`), macOS (`/etc/resolver`) and Windows (NRPT) |
+| Windows client | TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and MSI installer are built; Wintun signer verification and adapter creation run in Windows CI. Unsigned Karst executables/MSI and release validation remain beta work |
 | **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, client enforcement, and automated audit anchoring through [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier — implemented in both languages against shared vectors |
+| Subnet routers, exit nodes and ACL-gated SSH | Managed route distribution, exit-node consent and forwarding, plus a separately authorized SSH admission gate |
+| Operations | Prometheus metrics, diagnostics/bug reports, HA engineering drills and deployment artifacts |
+
+### Supported beta clients
+
+| Platform | Client experience under test |
+|---|---|
+| **Linux** (x86-64, arm64) | Debian/RHEL packages, systemd service, desktop setup, TUN or userspace networking, and mesh DNS integration |
+| **macOS** (Apple Silicon, Intel) | Signed/notarized `.pkg`, LaunchDaemon, menu-bar status app, TUN or userspace networking, and mesh DNS integration |
+| **Windows** (x64) | MSI, Windows service, userspace networking and NRPT DNS integration; Wintun distribution and release-signing validation remain beta work |
+
+Mobile clients (iOS and Android), FreeBSD, and other platforms are not
+supported beta targets.
 
 **1315 Rust tests** and **406 Go tests** run unprivileged; a further suite runs
 under `sudo` with real network namespaces (`just test-privileged`), including a
@@ -106,12 +118,13 @@ Two of those found real defects before the code shipped: `aven.pv` produced a
 same as saying a genuine one cannot be *replayed*), and `ponor-norelayid.pv`
 shows a rogue relay replaying a client's authentication to the real one.
 
-### Caveats stated plainly
+### Beta caveats stated plainly
 
 A security project that advertises only its wins is not trustworthy.
 
 - **No external cryptographic or security review has happened.** Symbolic models
-  check a design, not an implementation.
+  check a design, not an implementation. The beta program tests features; it
+  is not a substitute for independent assessment.
 - **ADR-0002's "secure if either cryptographic family holds" is not fully
   proved.** The classical-break direction is proved in ProVerif; the
   lattice-break direction has bounded Verifpal verification only, because
@@ -170,11 +183,12 @@ Notable decisions, each with an ADR:
 
 | Component | Language | Role |
 |---|---|---|
-| `karstd` | Rust | Node agent — TUN, peer state, routing, discovery, DNS |
+| `karstd` | Rust | Node agent — TUN/userspace networking, peer state, routing, discovery and DNS |
 | `karst` | Rust | CLI |
-| `karst-relay` | Rust | **Ponor** encrypted relay, and the AVEN reflector |
-| `karst-control` | Go | Coordination server — registration, policy, SSO, audit |
-| console / portal | TypeScript | Admin console and user self-service |
+| `karst-relay` | Rust | **Ponor** encrypted relay, AVEN reflector and TURN fallback support |
+| `karst-control` | Go | Coordination server — registration, policy, SSO, audit, relay/TURN registry |
+| console / portal | TypeScript | Administration, invitations, lifecycle and user self-service |
+| `karst-bedrock` | Rust | Offline signer and network-lock ceremony |
 
 The handshake is **PHREATIC**; the relay protocol is **Ponor**; NAT traversal is
 **AVEN**; the network lock is **Bedrock**; the name service is **KarstDNS**. All
