@@ -30,7 +30,10 @@ pub const REJECT_AFTER_MS: u64 = 180_000;
 /// Force a fresh KEM handshake at least this often — §10, 600 s.
 pub const PQ_REKEY_INTERVAL_MS: u64 = 600_000;
 
-/// Transport header: type, reserved, `receiver_index`, counter — §8.
+/// Transport header: type, reserved, `receiver_index`, counter — §8. Passed
+/// whole as the AEAD's AAD (§13.13, GitHub issue #59): it rides in cleartext,
+/// but every byte of it must fail closed if flipped in flight, not just
+/// `counter` by virtue of feeding the nonce.
 pub const HEADER_LEN: usize = 1 + 3 + 4 + 8;
 /// AEAD tag length.
 pub const TAG_LEN: usize = 16;
@@ -253,9 +256,14 @@ impl TransportSession {
         out.resize(HEADER_LEN + padded_len, 0);
 
         let tag = {
-            let body = out.get_mut(HEADER_LEN..).ok_or(TransportError::Malformed)?;
+            // Header bytes are the AAD (§8, GitHub issue #59): `type`,
+            // `reserved` and `receiver_index` ride in cleartext but must not
+            // be forgeable independently of the ciphertext they accompany.
+            // `split_at_mut` borrows both halves at once; `get_mut` couldn't,
+            // since the header lives before the range it would slice.
+            let (header, body) = out.split_at_mut(HEADER_LEN);
             self.send_cipher
-                .seal_in_place(&nonce(counter), &[], body)
+                .seal_in_place(&nonce(counter), header, body)
                 .map_err(|_| TransportError::AuthenticationFailed)?
         };
         out.extend_from_slice(&tag);
@@ -299,8 +307,9 @@ impl TransportSession {
         let tag: &[u8; AEAD_TAG_LEN] = tag
             .try_into()
             .map_err(|_| TransportError::AuthenticationFailed)?;
+        // Header bytes are the AAD — see the matching note in `seal`.
         self.recv_cipher
-            .open_in_place(&nonce(counter), &[], &mut pt, tag)
+            .open_in_place(&nonce(counter), header, &mut pt, tag)
             .map_err(|_| TransportError::AuthenticationFailed)?;
 
         // §8 — the window is touched only now, and only under a lock held for
@@ -455,6 +464,25 @@ mod tests {
             *b ^= 0x01;
         }
         assert_eq!(r.open(&msg, 0), Err(TransportError::AuthenticationFailed));
+    }
+
+    /// GitHub issue #59: the header is the AAD, so a reserved byte or
+    /// `receiver_index` — neither of which feeds the nonce the way `counter`
+    /// does — must fail closed if flipped, not pass through unauthenticated.
+    #[test]
+    fn tampering_with_a_reserved_or_receiver_index_byte_is_detected() {
+        let (i, r) = pair();
+        for idx in [1usize, 2, 3, 4, 5, 6, 7] {
+            let mut msg = i.seal(b"genuine", 0).unwrap();
+            if let Some(b) = msg.get_mut(idx) {
+                *b ^= 0x01;
+            }
+            assert_eq!(
+                r.open(&msg, 0),
+                Err(TransportError::AuthenticationFailed),
+                "byte {idx} of the header must be authenticated"
+            );
+        }
     }
 
     #[test]

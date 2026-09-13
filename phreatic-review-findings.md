@@ -692,9 +692,22 @@ restored rather than worked around. GitHub issue
   here rather than re-filed.
 - GitHub issue [#59](https://github.com/karst-net/karst/issues/59) (transport
   type byte outside the AEAD) is an accepted, recorded constraint, re-checked
-  and unchanged — Bedrock's head exchange correctly multiplexed inside the
-  plaintext on the `0x00` marker rather than adding a second outer type
-  (`fdb81ab`), so the constraint was respected rather than tripped.
+  and unchanged **as of this pass** — Bedrock's head exchange correctly
+  multiplexed inside the plaintext on the `0x00` marker rather than adding a
+  second outer type (`fdb81ab`), so the constraint was respected rather than
+  tripped.
+
+  **Update, 2026-09-13: closed, ahead of any second outer type existing.**
+  The fix this section already named — the header as AAD — landed in
+  `TransportSession::seal`/`open` (`crates/karst-noise/src/transport.rs`),
+  spec §13.13. `type`, `reserved` and `receiver_index` are now authenticated
+  on every `TransportData` message rather than only `counter` (which was
+  covered incidentally, by feeding the nonce); a regression test flips each
+  of the first three header bytes and confirms the AEAD now rejects the
+  tampered message. This is a wire-format change — the AEAD tag differs from
+  what a pre-fix binary computes — accepted pre-GA with no interop commitment
+  at stake. Pulled forward rather than left for the next outer type, per this
+  session's own judgment, not a new finding from a second review pass.
 
 ---
 

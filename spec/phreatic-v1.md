@@ -346,6 +346,10 @@ bit 128.
 
 - `counter` is a 64-bit little-endian nonce counter, never reused under a key.
 - AEAD nonce is `LE32(0) ‖ LE64(counter)`.
+- The full 16-byte header (`type ‖ reserved ‖ receiver_index ‖ counter`) is
+  the AEAD's associated data. It travels in cleartext, but every byte of it
+  MUST be authenticated — not merely `counter`, which is covered only
+  incidentally by feeding the nonce (§13.13).
 - Replay rejection uses a sliding window of at least 2048 entries.
 - Transport messages are **never fragmented**. A sender MUST refuse a packet
   whose sealed length would exceed `TRANSPORT_PAYLOAD_MAX` (1312 B) rather than
@@ -1082,6 +1086,36 @@ transport message, never on the strength of the unconfirmed second
 break's guarantee — it is §12.6's existing rule against trusting an
 unauthenticated handshake message applied consistently, and the pair is
 fully usable in both directions throughout regardless.
+
+### 13.13 The transport header is now the AAD
+
+Recorded during Bedrock's peer head exchange design (GitHub issue
+[#59](https://github.com/karst-net/karst/issues/59)) as a constraint, not a
+live defect: `TransportData`'s AEAD call passed an empty AAD, so `type`,
+`reserved` and `receiver_index` rode in cleartext with nothing but `counter`
+— by virtue of feeding the nonce, not by AAD coverage — resisting tampering.
+Flipping any of the other three bytes was undetectable at this layer.
+
+**Why it was harmless, and only currently.** §8 names exactly one transport
+type, `0x04`, and `open` rejects anything else outright, so flipping the type
+byte only ever turned a valid message into a dropped one. Bedrock's own head
+exchange multiplexes inside the *plaintext* on a `0x00` marker instead
+(zero is not a legal IP version, so it cannot collide with a tunnelled
+packet, and the marker is covered by the AEAD like the rest of the body) —
+the right choice for that feature, and one that leaves this section's
+constraint for the next one to trip over: the obvious way to add a second
+outer type is a new value here, and it would not be safe without this fix,
+because the AEAD would still verify while having never seen the byte that
+picked the handler.
+
+**Resolution.** The full 16-byte header (`type ‖ reserved ‖ receiver_index ‖
+counter`) is now the AEAD's associated data on every `TransportData` message,
+both directions. This is a wire-format change in name only — the bytes on
+the wire are identical, since the header was already being sent in cleartext
+immediately before the ciphertext; what changes is that a receiver now
+rejects a message whose header was altered in flight instead of silently
+demultiplexing on the tampered value. Implemented in
+`karst-noise/src/transport.rs`'s `seal`/`open`.
 
 ---
 
