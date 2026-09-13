@@ -79,7 +79,16 @@ test("policy validation and save are keyboard accessible", async ({ page }) => {
 
 test("policy syntax errors surface their line number", async ({ page }) => {
   await page.goto("/#/access");
-  await page.getByLabel("Policy document").fill('{\n  "acls": [],\n}');
+  // `.fill()` targets an <input>/<textarea> value directly; the policy
+  // document is a CodeMirror 6 editor (issue #128) whose content is a
+  // `contenteditable` div, not either of those, so `.fill()` raced
+  // CodeMirror's own view update and intermittently left the field's
+  // original content in place — the same keyboard-driven interaction the
+  // "keyboard accessible" test above already uses is what actually reaches
+  // the editor reliably.
+  await page.getByLabel("Policy document").focus();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type('{\n  "acls": [],\n}');
   await page.getByRole("button", { name: "Validate policy" }).click();
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
 });
