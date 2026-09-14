@@ -19,10 +19,16 @@ policy](../README.md#beta-caveats-stated-plainly) of disclosing what it does
 not do — an explicit note where the scenario is **not** something Karst
 supports today, rather than stretching an existing feature to imply it does.
 
-Two scenarios in this set (SC-05, SC-06) are *not* currently achievable with
-Karst. They are kept in the basis set deliberately: they are realistic asks,
-worth tracking, and the honest answer belongs in documentation next to the
-scenarios Karst does handle, not omitted because it's inconvenient.
+One scenario in this set, SC-06, is *not* currently achievable with Karst.
+SC-05 looked the same way at first — a feature request evaluated and
+declined ([ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md))
+— until a follow-up proposal led to a working recipe using an
+already-shipped feature instead ([ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md)).
+Both are kept in the basis set deliberately, including the history: they are
+realistic asks, worth tracking, and the honest answer — a decline, a
+recipe, or a genuine gap — belongs in documentation next to the scenarios
+Karst handles outright, not omitted because it's inconvenient or because the
+answer changed once.
 
 ## SC-01 — Telecommuter on untrusted coffee-shop Wi-Fi
 
@@ -180,12 +186,38 @@ child as enrolled user" relationship is not the employer/employee
 relationship the audit log (UC-10) was built around, and reusing it would
 extend a fleet-management primitive into surveillance over a person.
 
-Achieving this goal today requires a mechanism outside Karst's account-owner
-surface — the honest one, per ADR-0023, is pointing the device's DNS queries
-at a resolver the household controls through KarstDNS's existing split-DNS
-configuration (UC-06, SC-06). That is visible, inspectable configuration
-on the device, not a covert reporting feature, which is the distinction
-ADR-0023 turns on.
+**A concrete recipe exists, using an already-shipped feature.**
+[ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md) revisited this
+after a proposal to force traffic through the *relay* — which cannot work;
+Ponor is verified to derive no session key and never see payload content
+(`spec/ponor-v1.md` §11/§13.3), so it can only ever add the same
+mesh-peer-traffic metadata already disclosed in
+[THREAT-MODEL.md §7](THREAT-MODEL.md#7-accepted-risks-and-non-goals), never
+a website. The **exit node** (UC-07), by contrast, already sees cleartext
+destinations and TLS SNI hostnames by construction — that's inherent to
+being the box that un-wraps overlay traffic onto the real Internet
+(`docs/subnet-routers-and-exit-nodes.md` §3), not a new capability.
+
+What makes this work without any new Karst feature is that Karst already
+separates two roles this scenario conflates: the *enrolled Karst user* of a
+device, and the *local operator* who holds administrator rights on it. A
+parent who sets up and administers a child's computer already **is** its
+local operator, distinct from the child's enrolled-user identity. The parent
+runs `karst exit-node use <route-id>` once, as the machine's administrator,
+pointing at an exit node they run — durable across restarts
+(`docs/subnet-routers-and-exit-nodes.md` §4) — and the child's own
+unprivileged OS account cannot reach the root-only control socket
+(`bins/karstd/src/ipc.rs`) needed to disable it. Visibility then comes from
+ordinary host-side tooling (DNS logs, SNI inspection, or a logging proxy) on
+the parent's own gateway — nothing Karst needs to build.
+
+This does not reach a device whose enrolled user is *also* its own local
+administrator (a self-administered, personally-owned machine): no
+client-side VPN, Karst included, can prevent a local admin from
+reconfiguring their own machine, and Karst deliberately keeps it that
+way — see ADR-0024's decision not to let the control plane force exit-route
+activation, which would reopen exactly the disclosure problem ADR-0023
+declined.
 
 ## SC-06 — Parent implementing web filtering with time-of-day rules
 
@@ -340,7 +372,7 @@ one is real:**
 | SC-02 Home-region streaming IP | Exit node, consented default route | UC-07, UC-05 | Supported |
 | SC-03 Print on home printer | Subnet router, port-scoped ACL | UC-07, UC-05 | Supported |
 | SC-04 Restricted file share | Subnet router, group-scoped ACL | UC-07, UC-05 | Supported |
-| SC-05 Monitor child's browsing | — | — | **Declined — [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md)** |
+| SC-05 Monitor child's browsing | Exit node run by the machine's local operator | UC-07 | Supported today if the admin is also the device's local operator — see [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md) / [ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md) |
 | SC-06 Web filtering + time-of-day | — | — | **Not supported** |
 | SC-07 Coworker dev-server review | Peer connectivity, narrow ACL | UC-08, UC-05 | Supported |
 | SC-08 Geo sizing of relays | Relay `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
