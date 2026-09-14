@@ -102,7 +102,7 @@ the same netmap application and the original resolvers remain usable.
 
 ## Non-goals
 
-Two things this version deliberately does not do, recorded as decisions
+Three things this version deliberately does not do, recorded as decisions
 rather than gaps:
 
 - **DNSSEC validation.** The mesh zone is authenticated by the control
@@ -116,3 +116,10 @@ rather than gaps:
   mesh. Both are defensible extensions for a later version; neither is
   required for the mesh zone's own authentication, which is what this
   version's threat model depends on.
+- **Domain/category content filtering.** KarstDNS is a policy resolver for
+  the mesh zone and configured forwarding, not a general-purpose DNS server,
+  and blocklist curation is a different, ongoing-maintenance product that
+  dedicated filtering resolvers (Pi-hole, AdGuard Home, hosted filtering DNS
+  services) already do well. An administrator gets the same outcome by
+  scoping a distribution group's primary nameserver group to one of those
+  resolvers instead — see [ADR-0025](../docs/adr/0025-dns-scoped-filtering-resolves-sc-06.md).

@@ -19,12 +19,16 @@ policy](../README.md#beta-caveats-stated-plainly) of disclosing what it does
 not do — an explicit note where the scenario is **not** something Karst
 supports today, rather than stretching an existing feature to imply it does.
 
-One scenario in this set, SC-06, is *not* currently achievable with Karst.
-SC-05 looked the same way at first — a feature request evaluated and
-declined ([ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md))
-— until a follow-up proposal led to a working recipe using an
-already-shipped feature instead ([ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md)).
-Both are kept in the basis set deliberately, including the history: they are
+Neither SC-05 nor SC-06 is a Karst *feature*, and both went through a real
+evaluation to get to their current answer. SC-05 was a feature request
+evaluated and declined ([ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md))
+until a follow-up proposal found a working recipe using an already-shipped
+feature instead ([ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md)).
+SC-06 got the same composition question applied to it directly
+([ADR-0025](adr/0025-dns-scoped-filtering-resolves-sc-06.md)): most of it
+also turns out to be a recipe, though a real piece — a general,
+non-DNS-based time-of-day primitive — remains genuinely unbuilt. Both are
+kept in the basis set deliberately, including the history: they are
 realistic asks, worth tracking, and the honest answer — a decline, a
 recipe, or a genuine gap — belongs in documentation next to the scenarios
 Karst handles outright, not omitted because it's inconvenient or because the
@@ -226,28 +230,44 @@ device, with different rules at different times of day (e.g., no
 non-homework sites on school nights after 8pm).
 **Goal:** category- and schedule-based content filtering.
 
-**Not currently supported, on two independent axes:**
+**Not built into Karst, on two independent axes — but the specific scenario
+already has a working recipe.** [ADR-0025](adr/0025-dns-scoped-filtering-resolves-sc-06.md)
+applied the same composition question that resolved SC-05 (ADR-0024): does
+an already-shipped mechanism cover this once the literal proposal is set
+aside? For SC-06, yes.
 
 1. **No time-of-day dimension exists in the policy engine.** The access-policy
    schema ([UC-05](USE-CASE-ANALYSIS.md#uc-05--grant-and-validate-connectivity-permissions);
    `spec/karst-control-v1.md`) expresses `accept` rules over groups, tags, and
    ports — there is no schedule, time window, or day-of-week field to attach
-   to a rule. A rule is either in the compiled policy or it isn't.
-2. **No content/category filtering exists.** Karst's ACLs authorize network
-   flows to IP-and-port destinations, not domain categories. Even if a
-   destination-based rule were written, most modern websites sit behind
-   shared CDN/anycast infrastructure, so blocking "a website" by IP is
-   unreliable in a way that doesn't apply to the printer- or file-share-style
-   destinations in SC-03/SC-04, which have stable, specific addresses.
-   KarstDNS ([UC-06](USE-CASE-ANALYSIS.md#uc-06--configure-dns-and-private-service-discovery))
-   resolves mesh names and directs split-domain queries to designated
-   upstreams, but has no category-blocklist concept either.
+   to a rule, and ADR-0025 declined to add one speculatively, absent a second
+   use case to shape it.
+2. **No content/category filtering exists in Karst itself.** Karst's ACLs
+   authorize network flows to IP-and-port destinations, not domain
+   categories, and most modern websites sit behind shared CDN/anycast
+   infrastructure, so blocking "a website" by IP is unreliable in a way that
+   doesn't apply to the printer- or file-share-style destinations in
+   SC-03/SC-04. ADR-0025 declined to build category filtering into KarstDNS
+   too — it's "deliberately a policy resolver, not a general-purpose DNS
+   server" (`spec/karstdns-v1.md`), and duplicating dedicated filtering-DNS
+   products would be a worse answer than pointing at one.
 
-This is a genuine gap rather than a scenario Karst quietly half-supports: if
-it's prioritized, it most plausibly lands as a scheduled-policy extension to
-the access-policy engine plus a DNS-based filtering upstream wired through
-KarstDNS's split-DNS mechanism — not as a stretch of the existing ACL or
-routing primitives.
+**The recipe:** KarstDNS already lets an administrator scope a distribution
+group's *global* DNS upstream to any resolver of their choosing
+([UC-06](USE-CASE-ANALYSIS.md#uc-06--configure-dns-and-private-service-discovery);
+`spec/karstdns-v1.md`'s "primary groups become global upstreams"). Point a
+`kids`-tagged group's nameserver group at a filtering resolver that already
+does category blocking and per-client scheduling (AdGuard Home, Pi-hole, or
+a hosted filtering DNS service) — both halves of SC-06 then live in that
+resolver, not in Karst.
+
+**Real limits, stated plainly:** this needs kernel-TUN mode — KarstDNS never
+takes over host DNS in userspace mode. It's DNS-based, so a device capable
+of using a hardcoded DNS-over-HTTPS resolver bypasses it entirely; Karst has
+no ACL primitive to block non-approved outbound DNS today. And it resolves
+*this* scenario, not the general gap — a request to schedule access to a
+non-DNS-nameable destination (an enterprise wanting SSH reachable only
+during business hours, say) still hits axis 1 above, unchanged.
 
 ## SC-07 — Coworker asking another coworker to review a dev server
 
@@ -373,7 +393,7 @@ one is real:**
 | SC-03 Print on home printer | Subnet router, port-scoped ACL | UC-07, UC-05 | Supported |
 | SC-04 Restricted file share | Subnet router, group-scoped ACL | UC-07, UC-05 | Supported |
 | SC-05 Monitor child's browsing | Exit node run by the machine's local operator | UC-07 | Supported today if the admin is also the device's local operator — see [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md) / [ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md) |
-| SC-06 Web filtering + time-of-day | — | — | **Not supported** |
+| SC-06 Web filtering + time-of-day | KarstDNS group-scoped global upstream, pointed at a filtering resolver | UC-06 | Recipe covers the scenario — see [ADR-0025](adr/0025-dns-scoped-filtering-resolves-sc-06.md); general ACL time-of-day primitive still not built |
 | SC-07 Coworker dev-server review | Peer connectivity, narrow ACL | UC-08, UC-05 | Supported |
 | SC-08 Geo sizing of relays | Relay `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
 | SC-09 Replace OpenVPN/AWS VPN | Control plane + relay + exit node, migration procedure | UC-02, UC-05, UC-07 | Supported (needs a dedicated migration guide); protocol-level facade not possible |
