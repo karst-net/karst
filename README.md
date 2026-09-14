@@ -166,6 +166,12 @@ rationale, its alternatives, and its costs.
   boundaries, and a compromise-yield matrix. **§7 lists what Karst deliberately
   does not defend**, which is the section worth reading first
 - **[docs/adr/](docs/adr/)** — architecture decision records
+- **[docs/USE-CASE-ANALYSIS.md](docs/USE-CASE-ANALYSIS.md)** — actors,
+  components, and the formal use cases (UC-01–UC-10) they drive
+- **[docs/CUSTOMER-SCENARIOS.md](docs/CUSTOMER-SCENARIOS.md)** — the same
+  system from the requester's side: day-in-the-life scenarios (SC-01–SC-09),
+  each traced to a use case and stating plainly where Karst doesn't (yet) do
+  what's being asked
 
 Notable decisions, each with an ADR:
 
