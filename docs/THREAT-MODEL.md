@@ -209,6 +209,12 @@ Stated plainly, because a reviewer will find them anyway.
 7. **No FIPS 140-3 validated boundary.** Validated implementations are used
    where available (`aws-lc-rs`); no validation of our own module is pursued.
 8. **No WireGuard interoperability** (ADR-0003).
+9. **An account owner does not get visibility into a device's own browsing
+   or connection activity.** `karstd` is architecturally capable of
+   observing this — nothing here is a cryptographic limit — but the
+   client-user/administrator authority boundary deliberately does not
+   include it.
+   [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md).
 
 ---
 

@@ -170,14 +170,22 @@ blocks) — not a user's browsing history — and that distinction is
 intentional: an enrolled device's owner is not meant to be surveilled by the
 account administrator as a matter of course.
 
-Achieving this goal today requires a mechanism outside Karst entirely — for
-example, router- or endpoint-level monitoring software, or DNS query logging
-on a resolver the family chooses to point traffic at. If this becomes a
-tracked feature request, it should be designed as its own consent and
-disclosure model (the "parent as administrator, child as enrolled user"
-relationship is a materially different trust relationship from an employer
-and an employee, and deserves its own threat-model treatment rather than
-reusing the enterprise audit log as-is).
+**Decided, not just unbuilt.** [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md)
+evaluated this as a tracked feature request (GitHub issue #150) and declined
+it: extending the administrator role to surface a device's own activity to
+its account owner, without a disclosure requirement designed in, would break
+the client-user/administrator authority boundary the rest of the
+[identity model](USE-CASE-ANALYSIS.md#actors-and-identities) depends on. The "parent as administrator,
+child as enrolled user" relationship is not the employer/employee
+relationship the audit log (UC-10) was built around, and reusing it would
+extend a fleet-management primitive into surveillance over a person.
+
+Achieving this goal today requires a mechanism outside Karst's account-owner
+surface — the honest one, per ADR-0023, is pointing the device's DNS queries
+at a resolver the household controls through KarstDNS's existing split-DNS
+configuration (UC-06, SC-06). That is visible, inspectable configuration
+on the device, not a covert reporting feature, which is the distinction
+ADR-0023 turns on.
 
 ## SC-06 — Parent implementing web filtering with time-of-day rules
 
@@ -332,7 +340,7 @@ one is real:**
 | SC-02 Home-region streaming IP | Exit node, consented default route | UC-07, UC-05 | Supported |
 | SC-03 Print on home printer | Subnet router, port-scoped ACL | UC-07, UC-05 | Supported |
 | SC-04 Restricted file share | Subnet router, group-scoped ACL | UC-07, UC-05 | Supported |
-| SC-05 Monitor child's browsing | — | — | **Not supported** |
+| SC-05 Monitor child's browsing | — | — | **Declined — [ADR-0023](adr/0023-declining-device-activity-visibility-for-account-owners.md)** |
 | SC-06 Web filtering + time-of-day | — | — | **Not supported** |
 | SC-07 Coworker dev-server review | Peer connectivity, narrow ACL | UC-08, UC-05 | Supported |
 | SC-08 Geo sizing of relays | Relay `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
