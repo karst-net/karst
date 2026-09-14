@@ -78,10 +78,18 @@ mkdir -p "$state/tls" "$state/netbird"
 # ---------------------------------------------------------------------------
 if [ ! -f "$state/tls/relay.crt" ]; then
     echo "bootstrap: issuing a self-signed certificate for $server_name"
+    # `openssl req -x509` defaults to a CA certificate (basicConstraints
+    # CA:TRUE) unless told otherwise — fine for a root CA, fatal here: rustls
+    # (karstd's relay TLS client) refuses a CA:TRUE certificate presented as
+    # a leaf, failing every connection with "invalid peer certificate:
+    # CaUsedAsEndEntity". This has to be an end-entity certificate.
     openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
         -keyout "$state/tls/relay.key" -out "$state/tls/relay.crt" \
         -subj "/CN=$server_name" \
-        -addext "subjectAltName=DNS:$server_name,IP:$KARST_RELAY_IP" >/dev/null 2>&1
+        -addext "subjectAltName=DNS:$server_name,IP:$KARST_RELAY_IP" \
+        -addext "basicConstraints=critical,CA:FALSE" \
+        -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+        -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
     chmod 600 "$state/tls/relay.key"
 else
     echo "bootstrap: keeping the existing certificate"
