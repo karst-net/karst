@@ -71,6 +71,18 @@ func (DeviceSession) TableName() string { return "karst_device_sessions" }
 // quarter?".
 const SessionRetention = 90 * 24 * time.Hour
 
+// ConnectedGracePeriod is how recently a session may have ended and still
+// count as "connected" for [Store.ConnectedHandles]. See that function's own
+// doc comment for why this exists at all: a supersede-on-reconnect close is
+// routine, not a real disconnect, and gateway candidacy has no way to notice
+// and retry once the real session lands a moment later. Long enough to
+// absorb a normal handshake-then-supersede cycle (observed in the low
+// seconds); short enough that a gateway genuinely gone stops being offered
+// well within the failover this exists to serve (GitHub issue #109) —
+// nothing about a real crash makes it end its old session within this
+// window, so a truly offline gateway is unaffected by it.
+const ConnectedGracePeriod = 15 * time.Second
+
 // OpenSession records a device attaching, returning the row id to close it
 // with. addr may be a host:port — the port is dropped.
 func (s *Store) OpenSession(handle, addr string, at time.Time) (uint64, error) {
@@ -173,6 +185,18 @@ func (s *Store) RecoverSessions(now time.Time) (recovered int64, pruned int64, e
 // than mapping to false, so callers do a presence check
 // (`connected[handle]`) rather than trusting a zero value that would be
 // indistinguishable from "checked and found connected: false".
+//
+// "Connected" tolerates a session that ended within [ConnectedGracePeriod]:
+// a node's very first connection attempt routinely opens and closes within
+// milliseconds before its real session supersedes it (`s.active.
+// CompareAndDelete` in control/service.go evicts the loser) — confirmed live,
+// this is not hypothetical — and a route's gateway candidacy has no retry of
+// its own if a route-sync check lands in that window: it is evaluated once,
+// on whatever netmap happens to be built at that instant, with nothing to
+// prompt a recheck once the real session lands a moment later. Without this
+// grace period, a gateway that reconnects normally could see every route it
+// serves withdrawn and never automatically restored — exactly the "route
+// flapping" plan §7 step 4 requires this feature not to cause.
 func (s *Store) ConnectedHandles(handles []string) (map[string]struct{}, error) {
 	if len(handles) == 0 {
 		return nil, nil
@@ -180,7 +204,7 @@ func (s *Store) ConnectedHandles(handles []string) (map[string]struct{}, error) 
 	var rows []string
 	err := s.db.Model(&DeviceSession{}).
 		Distinct("handle").
-		Where("handle IN ? AND ended_at IS NULL", handles).
+		Where("handle IN ? AND (ended_at IS NULL OR ended_at > ?)", handles, time.Now().UTC().Add(-ConnectedGracePeriod)).
 		Pluck("handle", &rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("node: connected handles: %w", err)

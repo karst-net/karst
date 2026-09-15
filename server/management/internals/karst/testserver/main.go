@@ -105,6 +105,14 @@ func main() {
 	svc := control.New(static, identity.ControlSigner{Key: srvKey},
 		lookup, identity.ControlVerifier{}, handler)
 
+	// Without this, a `--netmap` node's session is never opened in
+	// node.Store, and control/routes.go's excludeOfflineGateways (GitHub
+	// issue #109) then finds no live session for any gateway candidate —
+	// see sessionRecorder's own doc comment in netmap.go.
+	if netmapRouter != nil {
+		svc.RecordSessionsWith(sessionRecorder{nodes: netmapRouter.nodes})
+	}
+
 	// The push mechanism (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) matters to every row
 	// that runs with --control: the deprovisioning check (peer removal, via
 	// /remove) and the routing rows that measure /routes converging without

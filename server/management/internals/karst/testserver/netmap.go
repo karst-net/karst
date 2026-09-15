@@ -269,6 +269,36 @@ type router struct {
 	routes *routeRegistry
 }
 
+// sessionRecorder adapts router's node.Store to control.SessionRecorder, the
+// same shape bootstrap.Install wires in production
+// (bootstrap/session.go's own sessionRecorder — duplicated rather than
+// exported and shared, since it is three trivial one-line methods and the two
+// packages otherwise have no reason to depend on each other).
+//
+// Without this, control.Service.RecordSessionsWith is never called in
+// `--netmap` mode, so a connecting node's session is never opened in
+// node.Store — and control/routes.go's excludeOfflineGateways (GitHub issue
+// #109) then finds no live session for any gateway candidate at all, no
+// matter how genuinely connected it is, and filters every route offer down
+// to nothing. This is exactly what broke every routing-fixture row in CI:
+// the fixture used to be free to leave sessions unrecorded because nothing
+// downstream depended on them; excludeOfflineGateways changed that
+// unconditionally, and the fixture is what needs to catch up, not the
+// feature it is failing to actually exercise.
+type sessionRecorder struct{ nodes *node.Store }
+
+func (r sessionRecorder) Opened(_ context.Context, handle, clientAddr string) (uint64, error) {
+	return r.nodes.OpenSession(handle, clientAddr, time.Now())
+}
+
+func (r sessionRecorder) Touched(_ context.Context, id uint64) error {
+	return r.nodes.TouchSession(id, time.Now())
+}
+
+func (r sessionRecorder) Closed(_ context.Context, id uint64) error {
+	return r.nodes.CloseSession(id, time.Now())
+}
+
 func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, errors.New("empty request")
@@ -381,10 +411,25 @@ func relayRow(address string, key []byte) *proto.KarstRelay {
 }
 
 func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, error) {
+	// This in-memory, shared-cache database now takes real concurrent
+	// write traffic it did not before — every connected node's session
+	// Opened/Touched/Closed calls (GitHub issue #109's
+	// excludeOfflineGateways depends on them to know a gateway candidate is
+	// actually reachable). "Shared cache" still means one *sqlite3* handle
+	// per pooled connection, each serializing against the others, and
+	// GORM's default pool hands out several. Ruled out as this fixture's
+	// actual flakiness (see node.ConnectedGracePeriod for the real cause —
+	// a routine session supersede-on-reconnect, not database contention),
+	// but a single connection removes a genuine, if smaller, risk for free:
+	// a handful of local test nodes have no concurrency worth pooling for,
+	// and production runs on Postgres, which has no equivalent constraint.
 	db, err := gorm.Open(sqlite.Open("file:karst-testserver?mode=memory&cache=shared"),
 		&gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		return nil, fmt.Errorf("db: %w", err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 	nodes, err := node.NewStore(db)
 	if err != nil {

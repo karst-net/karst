@@ -269,6 +269,11 @@ func TestConnectedHandlesReportsOnlyLiveSessions(t *testing.T) {
 		t.Fatal("a handle with no session at all must not be reported connected")
 	}
 
+	// Closed *just now*: still within node.ConnectedGracePeriod, so still
+	// reported connected — see ConnectedHandles's own doc comment on why a
+	// bare "is there an open row" check is wrong (a routine supersede-on-
+	// reconnect close, not a real disconnect, and nothing else retries the
+	// check once the real session lands a moment later).
 	if err := s.CloseSession(id, time.Now()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -276,11 +281,30 @@ func TestConnectedHandlesReportsOnlyLiveSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connected: %v", err)
 	}
-	if _, ok := connected["gw-primary"]; ok {
-		t.Fatal("gw-primary's session closed and must no longer be reported connected")
+	if _, ok := connected["gw-primary"]; !ok {
+		t.Fatal("gw-primary's session just closed and must still be reported connected within the grace period")
 	}
 	if _, ok := connected["gw-standby"]; !ok {
 		t.Fatal("gw-standby's session is still open")
+	}
+
+	// A *different* session, explicitly closed well before the grace
+	// period's start, must not be reported connected — the grace period
+	// forgives a recent close, not an old one.
+	longAgo := time.Now().Add(-node.ConnectedGracePeriod - time.Hour)
+	staleID, err := s.OpenSession("gw-old", "203.0.113.9:1", longAgo)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := s.CloseSession(staleID, longAgo.Add(time.Second)); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	connected, err = s.ConnectedHandles([]string{"gw-old"})
+	if err != nil {
+		t.Fatalf("connected: %v", err)
+	}
+	if _, ok := connected["gw-old"]; ok {
+		t.Fatal("gw-old's session closed well past the grace period and must no longer be reported connected")
 	}
 }
 

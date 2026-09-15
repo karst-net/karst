@@ -154,8 +154,13 @@ type Service struct {
 	lookup   channel.IdentityLookup
 	verifier channel.Verifier
 	handler  Handler
-	// sessions is optional. Nil means the deployment keeps no session history,
-	// which is how the test server and every existing caller of New behave.
+	// sessions is optional. Nil means the deployment keeps no session
+	// history — the default for a caller of New that has no node.Store to
+	// record into (the echo-handler mode of karst-testserver, and every
+	// caller outside this repo's own tests). The testserver's `--netmap`
+	// mode does record sessions, via its own RecordSessionsWith call:
+	// control/routes.go's excludeOfflineGateways (GitHub issue #109) depends
+	// on them to know a gateway candidate is actually reachable.
 	sessions SessionRecorder
 	// peers and updates are optional together. Nil means the deployment sends
 	// no server-initiated push and every node stays on the 60 s poll floor —
