@@ -88,6 +88,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         }),
         endpoint: Some(peer_endpoint(peer)),
         allowed_ips: vec![prefix],
+        identity_addresses: vec![prefix],
         psk_is_fallback: false,
         psk_previous: None,
         disco_key: None,

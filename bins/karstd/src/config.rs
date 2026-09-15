@@ -632,8 +632,23 @@ pub struct Peer {
     pub public: Arc<PeerPublic>,
     /// Where to reach it, if known.
     pub endpoint: Option<SocketAddr>,
-    /// Ranges it owns.
+    /// Ranges cryptokey-routed to it — this peer's own identity address(es)
+    /// from the wire, **plus** the prefix of any route this peer is the
+    /// effective gateway for (`Config::from_netmap` appends those after
+    /// construction, for `AllowedIps::build` below). Despite the name, this
+    /// is membership in the routing table, not a claim about identity — for
+    /// that, see `identity_addresses`.
     pub allowed_ips: Vec<Prefix>,
+    /// This peer's own address(es) as the netmap's wire entry gave them,
+    /// fixed at construction and never touched by the route-gateway merge
+    /// `allowed_ips` receives. The distinction matters once a peer is also a
+    /// route's gateway: `allowed_ips` then legitimately contains a subnet
+    /// this peer merely forwards, and using it to decide "is this packet
+    /// actually addressed to this peer" would answer yes for that subnet too
+    /// — exactly the ambiguity `PacketFilter::egress`'s `to_addresses`
+    /// exists to resolve (GitHub issue #109). Use this field for that, never
+    /// `allowed_ips`.
+    pub identity_addresses: Vec<Prefix>,
     /// Whether the PSK is the all-zero fallback (§7.3).
     pub psk_is_fallback: bool,
     /// The pair's PSK at `psk_epoch - 1`, if this node holds one — §7.3's
@@ -1326,6 +1341,10 @@ impl Peer {
             allowed_ips.push(prefix);
             pairs.push((prefix, index));
         }
+        // A snapshot, not a reference to `allowed_ips`: the caller appends
+        // gateway route prefixes to that field after this returns, and this
+        // one must not follow — see its own doc comment on `Peer`.
+        let identity_addresses = allowed_ips.clone();
 
         // An endpoint the server does not know is not an error: a peer behind
         // NAT is expected to contact us rather than be dialled.
@@ -1341,6 +1360,7 @@ impl Peer {
             public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint,
             allowed_ips,
+            identity_addresses,
             psk_is_fallback,
             psk_previous,
             disco_key: entry.disco_key.as_ref().map(|key| *key.as_bytes()),
@@ -1419,6 +1439,9 @@ impl Peer {
             node_id: Vec::new(),
             public: Arc::new(PeerPublic { kem_pk, psk }),
             endpoint: section.endpoint,
+            // A static roster has no route-offer/gateway-merge step at all —
+            // the two fields are identical here, always.
+            identity_addresses: allowed_ips.clone(),
             allowed_ips,
             psk_is_fallback,
             psk_previous,

@@ -111,12 +111,29 @@ impl Rule {
     /// about the destination network, not about which specific gateway peer
     /// happens to be carrying it right now (a route's effective gateway can
     /// change under HA failover without the policy needing to change too).
-    /// `peer`-based matching is untouched: a node-handle grant still matches
-    /// only that specific peer.
-    fn permits(&self, peer: PeerIndex, port: u16, destination: Option<IpAddr>) -> bool {
-        let target_matches = self.nodes.contains(peer)
-            || destination.is_some_and(|d| self.dst_prefixes.iter().any(|p| p.contains(d)));
-        target_matches && self.ports.iter().any(|r| r.contains(port))
+    ///
+    /// `peer_owns_destination` gates the node-handle side: a rule naming
+    /// `peer` only matches when the packet is actually addressed to that
+    /// peer's own identity, never merely because `peer` happens to be the
+    /// next hop. Without this, a plain "may reach node gw-primary" grant —
+    /// entirely ordinary mesh connectivity, unrelated to subnet access —
+    /// would double as unlimited permission to route arbitrary traffic
+    /// through gw-primary to anything it gateways, since the datapath's
+    /// per-packet check is keyed on the next-hop peer alone. `evaluate`
+    /// computes this from the caller's own address list on egress, and
+    /// passes `true` unconditionally on ingress and for the SSH gate, where
+    /// no such ambiguity exists (see their own call sites).
+    fn permits(
+        &self,
+        peer: PeerIndex,
+        port: u16,
+        destination: Option<IpAddr>,
+        peer_owns_destination: bool,
+    ) -> bool {
+        let via_node = self.nodes.contains(peer) && peer_owns_destination;
+        let via_cidr =
+            destination.is_some_and(|d| self.dst_prefixes.iter().any(|p| p.contains(d)));
+        (via_node || via_cidr) && self.ports.iter().any(|r| r.contains(port))
     }
 }
 
@@ -220,16 +237,43 @@ impl PacketFilter {
     /// have come from that peer.
     #[must_use]
     pub fn ingress(&self, from: PeerIndex, packet: &[u8]) -> Verdict {
-        Self::evaluate(self.ingress.as_deref(), from, packet)
+        // `true`: no gateway-forwarding ambiguity exists on this side. A
+        // packet's destination here is always this node's own address, never
+        // `from`'s, so "does `from` own the destination" would ask the wrong
+        // question entirely — it must not gate an ingress node-handle grant
+        // the way it gates an egress one. `dst_prefixes` is empty on every
+        // ingress rule regardless (see `Rule`'s own doc comment), so this
+        // flag is moot for the CIDR side either way.
+        Self::evaluate(self.ingress.as_deref(), from, packet, None)
     }
 
     /// May we send this packet to `to`?
+    ///
+    /// `to_addresses` is `to`'s own advertised ranges (its overlay `/32`
+    /// and/or `/128`) — see [`Rule::permits`]'s doc comment for why a
+    /// node-handle grant must be checked against it. This node's own
+    /// caller (`engine.rs`) is expected to pass the peer's real, netmap-
+    /// authenticated addresses; an empty slice here degrades safely to "no
+    /// node-handle grant can match at all" rather than to "any packet is
+    /// this peer's own", so a caller that cannot supply them yet only loses
+    /// egress the CIDR path can restore, never gains anything.
     #[must_use]
-    pub fn egress(&self, to: PeerIndex, packet: &[u8]) -> Verdict {
-        Self::evaluate(self.egress.as_deref(), to, packet)
+    pub fn egress(&self, to: PeerIndex, packet: &[u8], to_addresses: &[Prefix]) -> Verdict {
+        Self::evaluate(self.egress.as_deref(), to, packet, Some(to_addresses))
     }
 
-    fn evaluate(rules: Option<&[Rule]>, peer: PeerIndex, packet: &[u8]) -> Verdict {
+    /// `own_addresses`: `None` means a node-handle grant matches
+    /// unconditionally (ingress and the SSH gate, where the packet's
+    /// destination is always this node itself, never the sending peer's own
+    /// address — asking "does `peer` own the destination" would ask the
+    /// wrong question). `Some(addresses)` restricts a node-handle grant to
+    /// packets actually addressed to one of them (egress only).
+    fn evaluate(
+        rules: Option<&[Rule]>,
+        peer: PeerIndex,
+        packet: &[u8],
+        own_addresses: Option<&[Prefix]>,
+    ) -> Verdict {
         let Some(rules) = rules else {
             return Verdict::Permit; // no policy source at all
         };
@@ -244,9 +288,15 @@ impl PacketFilter {
         // (egress only); cheap to compute unconditionally rather than thread
         // a direction flag through just to skip it on ingress.
         let destination = ip::destination(packet);
+        let peer_owns_destination = match own_addresses {
+            None => true,
+            Some(addresses) => {
+                destination.is_some_and(|d| addresses.iter().any(|p| p.contains(d)))
+            }
+        };
         if rules
             .iter()
-            .any(|r| r.permits(peer, ports.destination, destination))
+            .any(|r| r.permits(peer, ports.destination, destination, peer_owns_destination))
         {
             Verdict::Permit
         } else {
@@ -331,7 +381,10 @@ impl SshFilter {
         let Some(rules) = self.0.as_deref() else {
             return Verdict::Permit; // no "ssh" block: this gate does not apply
         };
-        if rules.iter().any(|r| r.permits(from, 22, None)) {
+        // `true`: the SSH gate is ingress-shaped (who may reach *this* node's
+        // port 22), the same "destination is always us" reasoning as
+        // `PacketFilter::ingress` — see its own doc comment.
+        if rules.iter().any(|r| r.permits(from, 22, None, true)) {
             Verdict::Permit
         } else {
             Verdict::Denied
@@ -524,6 +577,15 @@ mod tests {
         p
     }
 
+    /// `tcp()`'s own fixed destination, as the address a peer "owns" for a
+    /// test asserting a node-handle egress grant — `egress` now requires the
+    /// carrying peer's own addresses to make that grant matter (GitHub issue
+    /// #109's second half: a node-handle grant used to double as unlimited
+    /// gateway-forwarding permission).
+    fn owns_tcp_destination() -> Vec<Prefix> {
+        vec!["10.0.0.2/32".parse().expect("valid prefix")]
+    }
+
     /// An ICMP echo request — a protocol with no ports at all.
     fn icmp() -> Vec<u8> {
         let mut p = vec![0u8; 28];
@@ -543,7 +605,7 @@ mod tests {
     fn an_empty_rule_set_denies_everything() {
         let f = PacketFilter::compile(&[], &[], &handles());
         assert_eq!(f.ingress(0, &tcp(22)), Verdict::Denied);
-        assert_eq!(f.egress(0, &tcp(22)), Verdict::Denied);
+        assert_eq!(f.egress(0, &tcp(22), &[]), Verdict::Denied);
         assert_eq!(f.ingress(0, &icmp()), Verdict::Denied);
         assert!(f.is_enforcing());
     }
@@ -733,12 +795,15 @@ mod tests {
 
         assert_eq!(f.ingress(1, &tcp(22)), Verdict::Permit);
         assert_eq!(
-            f.egress(1, &tcp(22)),
+            f.egress(1, &tcp(22), &owns_tcp_destination()),
             Verdict::Denied,
             "being allowed to receive from bob on 22 says nothing about sending"
         );
 
-        assert_eq!(f.egress(0, &tcp(443)), Verdict::Permit);
+        assert_eq!(
+            f.egress(0, &tcp(443), &owns_tcp_destination()),
+            Verdict::Permit
+        );
         assert_eq!(f.ingress(0, &tcp(443)), Verdict::Denied);
     }
 
@@ -750,7 +815,7 @@ mod tests {
     fn an_empty_egress_set_denies_even_when_ingress_permits() {
         let f = PacketFilter::compile(&[rule(&["*"], vec![port(0, 65535)])], &[], &handles());
         assert_eq!(f.ingress(0, &tcp(22)), Verdict::Permit);
-        assert_eq!(f.egress(0, &tcp(22)), Verdict::Denied);
+        assert_eq!(f.egress(0, &tcp(22), &owns_tcp_destination()), Verdict::Denied);
     }
 
     // ── destination-CIDR egress rules ───────────────────────────────────────
@@ -762,8 +827,12 @@ mod tests {
     // one).
 
     /// The basic grant: a destination inside the CIDR is permitted, regardless
-    /// of which peer carries the packet — a CIDR grant is about the network,
-    /// not about which gateway happens to be forwarding to it right now.
+    /// of which peer carries the packet **and without that peer owning the
+    /// destination at all** — a CIDR grant is about the network, not about
+    /// which gateway happens to be forwarding to it right now. `&[]` here is
+    /// deliberate: it proves the CIDR path grants this on its own, not
+    /// through the node-handle path `owns_tcp_destination()` exercises
+    /// elsewhere in this file.
     #[test]
     fn a_dst_cidr_grant_permits_any_peer_carrying_a_matching_destination() {
         let f = PacketFilter::compile(
@@ -771,9 +840,12 @@ mod tests {
             &[egress_cidr_rule(&["10.50.0.0/24"], vec![port(0, 65535)])],
             &handles(),
         );
-        assert_eq!(f.egress(0, &tcp_to([10, 50, 0, 10], 80)), Verdict::Permit);
         assert_eq!(
-            f.egress(1, &tcp_to([10, 50, 0, 10], 80)),
+            f.egress(0, &tcp_to([10, 50, 0, 10], 80), &[]),
+            Verdict::Permit
+        );
+        assert_eq!(
+            f.egress(1, &tcp_to([10, 50, 0, 10], 80), &[]),
             Verdict::Permit,
             "a different peer carrying the same granted destination is equally permitted"
         );
@@ -790,11 +862,14 @@ mod tests {
             &handles(),
         );
         assert_eq!(
-            f.egress(0, &tcp_to([10, 50, 1, 10], 80)),
+            f.egress(0, &tcp_to([10, 50, 1, 10], 80), &[]),
             Verdict::Denied,
             "10.50.1.0/24 is a sibling network, not the granted /24"
         );
-        assert_eq!(f.egress(0, &tcp_to([203, 0, 113, 1], 80)), Verdict::Denied);
+        assert_eq!(
+            f.egress(0, &tcp_to([203, 0, 113, 1], 80), &[]),
+            Verdict::Denied
+        );
     }
 
     /// IPv4 and IPv6 must never cross here either — the same standard
@@ -812,7 +887,7 @@ mod tests {
             80,
         );
         assert_eq!(
-            f.egress(0, &mapped),
+            f.egress(0, &mapped, &[]),
             Verdict::Denied,
             "a v4-mapped v6 destination must not match a v4 prefix"
         );
@@ -830,19 +905,23 @@ mod tests {
             ],
             &handles(),
         );
-        assert_eq!(f.egress(0, &tcp(443)), Verdict::Permit, "alice, port 443");
         assert_eq!(
-            f.egress(0, &tcp(80)),
+            f.egress(0, &tcp(443), &owns_tcp_destination()),
+            Verdict::Permit,
+            "alice, port 443"
+        );
+        assert_eq!(
+            f.egress(0, &tcp(80), &owns_tcp_destination()),
             Verdict::Denied,
             "alice on 80 matches neither rule (10.0.0.2 is outside the /24)"
         );
         assert_eq!(
-            f.egress(1, &tcp_to([10, 50, 0, 5], 80)),
+            f.egress(1, &tcp_to([10, 50, 0, 5], 80), &[]),
             Verdict::Permit,
-            "bob reaching the granted subnet on 80"
+            "bob reaching the granted subnet on 80, via the CIDR grant alone — bob owns nothing here"
         );
         assert_eq!(
-            f.egress(1, &tcp_to([10, 50, 0, 5], 443)),
+            f.egress(1, &tcp_to([10, 50, 0, 5], 443), &[]),
             Verdict::Denied,
             "the subnet grant is scoped to port 80, not 443"
         );
@@ -858,7 +937,46 @@ mod tests {
             &[egress_cidr_rule(&["not-a-cidr"], vec![port(0, 65535)])],
             &handles(),
         );
-        assert_eq!(f.egress(0, &tcp_to([10, 50, 0, 10], 80)), Verdict::Denied);
+        assert_eq!(
+            f.egress(0, &tcp_to([10, 50, 0, 10], 80), &[]),
+            Verdict::Denied
+        );
+    }
+
+    /// **The second half of GitHub issue #109's fix, and the one that makes
+    /// the first half actually mean something.** A plain node-handle grant to
+    /// a gateway peer — ordinary mesh connectivity, unrelated to subnet
+    /// access — must not double as unlimited permission to route arbitrary
+    /// traffic through that gateway to whatever it forwards. Before this,
+    /// `nodes.contains(peer)` matched on the next-hop peer alone, so any
+    /// grant naming the gateway (however innocuous) silently bypassed every
+    /// CIDR restriction: a "denied" client reached a routed subnet exactly
+    /// like an "allowed" one, live, in a real deployment, the moment its
+    /// policy happened to include any rule at all granting it the gateway's
+    /// own handle.
+    #[test]
+    fn a_node_handle_grant_to_a_gateway_does_not_leak_its_forwarded_traffic() {
+        let f = PacketFilter::compile(
+            &[],
+            &[egress_rule(&["alice"], vec![port(0, 65535)])],
+            &handles(),
+        );
+        // alice (peer 0) is granted egress to alice's own handle — ordinary,
+        // and it must still work when the destination really is alice's own
+        // address.
+        assert_eq!(
+            f.egress(0, &tcp(80), &owns_tcp_destination()),
+            Verdict::Permit,
+            "a node-handle grant must still work for the peer's own address"
+        );
+        // The same rule, the same peer index, but the packet is headed to a
+        // subnet alice merely gateways — alice does not own it. No CIDR rule
+        // grants it either. This must be denied.
+        assert_eq!(
+            f.egress(0, &tcp_to([10, 50, 0, 10], 80), &owns_tcp_destination()),
+            Verdict::Denied,
+            "a node-handle grant to the gateway must not forward to a subnet it merely carries"
+        );
     }
 
     /// A peer index beyond the roster must not match anything, whatever the

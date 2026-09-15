@@ -4946,6 +4946,7 @@ mod route_tests {
                     psk: [0u8; 32],
                 }),
                 endpoint: None,
+                identity_addresses: allowed.clone(),
                 allowed_ips: allowed,
                 psk_is_fallback: true,
                 psk_previous: None,

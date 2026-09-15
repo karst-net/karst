@@ -1999,7 +1999,18 @@ impl Engine {
     ) -> bool {
         let verdict = match dir {
             Direction::In => roster.config.filter.ingress(peer, packet),
-            Direction::Out => roster.config.filter.egress(peer, packet),
+            Direction::Out => {
+                // `to`'s own advertised ranges, so an egress node-handle grant
+                // cannot double as unrestricted permission to route arbitrary
+                // traffic through `to` when it is a route's gateway — see
+                // `PacketFilter::egress`'s doc comment.
+                let to_addresses = roster
+                    .config
+                    .peers
+                    .get(peer)
+                    .map_or(&[][..], |p| &p.identity_addresses);
+                roster.config.filter.egress(peer, packet, to_addresses)
+            }
         };
         match verdict {
             Verdict::Permit => {
