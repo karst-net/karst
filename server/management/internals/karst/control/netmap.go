@@ -365,6 +365,12 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		if routeErr != nil {
 			return nil, fmt.Errorf("project routes: %w", routeErr)
 		}
+		if h.Nodes != nil {
+			networkMap.Routes, routeErr = excludeOfflineGateways(networkMap.Routes, self, h.Nodes)
+			if routeErr != nil {
+				return nil, fmt.Errorf("project routes: %w", routeErr)
+			}
+		}
 		resp.Routes, routeErr = projectRouteOffers(networkMap, self)
 		if routeErr != nil {
 			return nil, routeErr

@@ -162,6 +162,36 @@ func (s *Store) RecoverSessions(now time.Time) (recovered int64, pruned int64, e
 	return result.RowsAffected, prune.RowsAffected, nil
 }
 
+// ConnectedHandles reports which of the given devices currently hold a live
+// (unended) session — GitHub issue #109: a route's gateway candidacy needs
+// to know whether a candidate is actually reachable, not merely that it is
+// enrolled. One query regardless of how many handles are asked about, since
+// this runs on every netmap build for every candidate gateway a recipient
+// might be offered.
+//
+// A handle with no live session simply does not appear in the result rather
+// than mapping to false, so callers do a presence check
+// (`connected[handle]`) rather than trusting a zero value that would be
+// indistinguishable from "checked and found connected: false".
+func (s *Store) ConnectedHandles(handles []string) (map[string]struct{}, error) {
+	if len(handles) == 0 {
+		return nil, nil
+	}
+	var rows []string
+	err := s.db.Model(&DeviceSession{}).
+		Distinct("handle").
+		Where("handle IN ? AND ended_at IS NULL", handles).
+		Pluck("handle", &rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("node: connected handles: %w", err)
+	}
+	connected := make(map[string]struct{}, len(rows))
+	for _, h := range rows {
+		connected[h] = struct{}{}
+	}
+	return connected, nil
+}
+
 // SessionsForHandles returns sessions for the given devices, newest first.
 //
 // Handles come from the caller's own authorized device list, never from a

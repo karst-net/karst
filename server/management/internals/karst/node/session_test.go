@@ -244,3 +244,53 @@ func TestSessionsAreNewestFirstAndBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectedHandlesReportsOnlyLiveSessions(t *testing.T) {
+	s := newSessionStore(t)
+	id, err := s.OpenSession("gw-primary", "203.0.113.7:1", time.Now())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := s.OpenSession("gw-standby", "203.0.113.8:1", time.Now()); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	connected, err := s.ConnectedHandles([]string{"gw-primary", "gw-standby", "never-enrolled"})
+	if err != nil {
+		t.Fatalf("connected: %v", err)
+	}
+	if _, ok := connected["gw-primary"]; !ok {
+		t.Fatal("gw-primary has a live session and must be reported connected")
+	}
+	if _, ok := connected["gw-standby"]; !ok {
+		t.Fatal("gw-standby has a live session and must be reported connected")
+	}
+	if _, ok := connected["never-enrolled"]; ok {
+		t.Fatal("a handle with no session at all must not be reported connected")
+	}
+
+	if err := s.CloseSession(id, time.Now()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	connected, err = s.ConnectedHandles([]string{"gw-primary", "gw-standby"})
+	if err != nil {
+		t.Fatalf("connected: %v", err)
+	}
+	if _, ok := connected["gw-primary"]; ok {
+		t.Fatal("gw-primary's session closed and must no longer be reported connected")
+	}
+	if _, ok := connected["gw-standby"]; !ok {
+		t.Fatal("gw-standby's session is still open")
+	}
+}
+
+func TestConnectedHandlesWithNoHandlesQueriesNothing(t *testing.T) {
+	s := newSessionStore(t)
+	connected, err := s.ConnectedHandles(nil)
+	if err != nil {
+		t.Fatalf("connected: %v", err)
+	}
+	if len(connected) != 0 {
+		t.Fatalf("got %d, want none", len(connected))
+	}
+}

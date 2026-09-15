@@ -4,6 +4,7 @@
 package control
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/netbirdio/netbird/management/server/types"
@@ -12,6 +13,54 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// connectedChecker is the slice of node.Store excludeOfflineGateways needs —
+// narrow for the same reason PeerLister and the other NetmapHandler fields
+// are: it lets a test supply a fake without a database.
+type connectedChecker interface {
+	ConnectedHandles(handles []string) (map[string]struct{}, error)
+}
+
+// excludeOfflineGateways drops a route candidate whose gateway peer holds no
+// live control-channel session, so a recipient never learns about a route
+// through a gateway nothing can currently reach — plan §3.3 point 4, "an
+// eligible, *connected* gateway is selected," which the inherited route sync
+// this wraps does not itself enforce (GitHub issue #109: a gateway *group*
+// route offered every member regardless of liveness, and nothing ever
+// shrank that candidate set, so a recipient's client-side HA selection had
+// nothing to reselect toward when the effective gateway died).
+//
+// A route where self is the gateway (`r.Peer == self`) is never dropped: a
+// node always knows about its own routes, and the session carrying this very
+// request is proof enough that self itself is connected.
+func excludeOfflineGateways(routes []*nbroute.Route, self string, nodes connectedChecker) ([]*nbroute.Route, error) {
+	var candidates []string
+	for _, r := range routes {
+		if r != nil && r.Peer != "" && r.Peer != self {
+			candidates = append(candidates, r.Peer)
+		}
+	}
+	if len(candidates) == 0 {
+		return routes, nil
+	}
+	connected, err := nodes.ConnectedHandles(candidates)
+	if err != nil {
+		return nil, fmt.Errorf("route gateway liveness: %w", err)
+	}
+	filtered := make([]*nbroute.Route, 0, len(routes))
+	for _, r := range routes {
+		if r == nil {
+			continue
+		}
+		if r.Peer != "" && r.Peer != self {
+			if _, ok := connected[r.Peer]; !ok {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered, nil
+}
 
 // projectRouteOffers adapts the inherited, per-peer effective route set into
 // Karst's authenticated contract. The inherited network-map builder remains

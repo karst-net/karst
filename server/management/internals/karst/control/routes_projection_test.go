@@ -105,3 +105,68 @@ func TestProjectRouteOffersOmitsDisabledRows(t *testing.T) {
 		t.Fatalf("got %d offers for a disabled route", len(offers))
 	}
 }
+
+// fakeConnectedChecker is a connectedChecker whose result is fixed at
+// construction, so a test controls exactly which handles are "connected"
+// without a database.
+type fakeConnectedChecker map[string]struct{}
+
+func (f fakeConnectedChecker) ConnectedHandles(handles []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, h := range handles {
+		if _, ok := f[h]; ok {
+			out[h] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+func TestExcludeOfflineGatewaysDropsAnUnreachableCandidate(t *testing.T) {
+	primary := effectiveRoute("route:primary", "10.50.0.0/24", "gw-primary")
+	standby := effectiveRoute("route:standby", "10.50.0.0/24", "gw-standby")
+	both := []*nbroute.Route{primary, standby}
+
+	t.Run("both candidates connected", func(t *testing.T) {
+		checker := fakeConnectedChecker{"gw-primary": {}, "gw-standby": {}}
+		got, err := excludeOfflineGateways(both, "recipient", checker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d routes, want 2", len(got))
+		}
+	})
+
+	t.Run("the effective gateway is offline", func(t *testing.T) {
+		checker := fakeConnectedChecker{"gw-standby": {}}
+		got, err := excludeOfflineGateways(both, "recipient", checker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Peer != "gw-standby" {
+			t.Fatalf("got %+v, want only the standby route", got)
+		}
+	})
+
+	t.Run("every candidate is offline", func(t *testing.T) {
+		checker := fakeConnectedChecker{}
+		got, err := excludeOfflineGateways(both, "recipient", checker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("got %d routes, want the route withdrawn entirely", len(got))
+		}
+	})
+
+	t.Run("a node's own gateway route survives even if the liveness check would say no", func(t *testing.T) {
+		checker := fakeConnectedChecker{}
+		got, err := excludeOfflineGateways([]*nbroute.Route{primary}, "gw-primary", checker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d routes, want self's own route kept unconditionally", len(got))
+		}
+	})
+}
