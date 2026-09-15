@@ -258,7 +258,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
-		bedrockStore, bedrockLog, permissions.NewManager(s), router)
+		bedrockStore, bedrockLog, am, permissions.NewManager(s), router)
 	return router
 }
 

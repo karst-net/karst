@@ -77,6 +77,15 @@ type peerReader interface {
 	GetPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*peer.Peer, error)
 }
 
+// accountUpdater triggers a netmap push. Karst's own policy writes are the
+// one Karst-specific account mutation that does not already go through the
+// inherited route/group handlers' own affected-peers dispatch (GitHub issue
+// #109): this is that dispatch, narrowed to the one method policyWrite and
+// policyRollback need.
+type accountUpdater interface {
+	UpdateAccountPeers(ctx context.Context, accountID string, reason types.UpdateReason)
+}
+
 type handler struct {
 	nodes      nodeReader
 	peers      peerReader
@@ -87,6 +96,7 @@ type handler struct {
 	bedrock    bedrockReader
 	chain      bedrockLogReader
 	peerWriter peerWriter
+	accounts   accountUpdater
 }
 
 // relayHealth is deliberately separate from relayreg.StoredRelay. Registry
@@ -248,8 +258,8 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, permissionsManager permissions.Manager, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -1623,6 +1633,7 @@ func (h *handler) policyRollback(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	h.pushPolicyUpdate(r.Context(), user.AccountId)
 	w.Header().Set("ETag", strconv.FormatUint(written.Version, 10))
 	util.WriteJSONObject(r.Context(), w, policyVersionResponse(written))
 }
@@ -1712,8 +1723,34 @@ func (h *handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	h.pushPolicyUpdate(r.Context(), user.AccountId)
 	w.Header().Set("ETag", strconv.FormatUint(version.Version, 10))
 	util.WriteJSONObject(r.Context(), w, policyVersionResponse(version))
+}
+
+// pushPolicyUpdate triggers a netmap push to every peer in the account after
+// a policy write. Route and group mutations already push through the
+// inherited account manager's own affected-peers dispatch; a policy change
+// had no equivalent (GitHub issue #109), so an already-connected peer's
+// compiled filter went stale — silently, sometimes indefinitely, until an
+// unrelated reconnect — for as long as the account's own next netmap change
+// happened to take. Account-wide, not a narrower affected set: unlike a
+// route or group, a policy document has no fixed membership to diff against
+// — any rule anywhere in it can name any node — so every peer's filter must
+// be treated as potentially affected. Immediate, not buffered
+// (`accountUpdater` deliberately exposes `UpdateAccountPeers`, not
+// `BufferUpdateAccountPeers`): a policy write is an infrequent, deliberate
+// admin action, not a hot path debounce needs to protect, and the
+// motivating case — revoking access — is exactly the one plan §3.4 calls a
+// security property, not a caching concern, to begin with.
+func (h *handler) pushPolicyUpdate(ctx context.Context, accountID string) {
+	if h.accounts == nil {
+		return
+	}
+	h.accounts.UpdateAccountPeers(ctx, accountID, types.UpdateReason{
+		Resource:  types.UpdateResourcePolicy,
+		Operation: types.UpdateOperationUpdate,
+	})
 }
 
 // policySchema serves a static JSON Schema for editor autocomplete/lint —
