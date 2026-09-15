@@ -52,6 +52,31 @@ falls back to the Ponor relay when the local NAT or a captive portal's
 filtering prevents that ([UC-08](USE-CASE-ANALYSIS.md#uc-08--establish-and-maintain-peer-connectivity);
 see the NAT matrix in the [README](../README.md)).
 
+```mermaid
+flowchart LR
+    WiFi["Untrusted Wi-Fi<br/>Internet transport"]
+    Client["Karst Client<br/>karstd"]
+    AVEN["AVEN<br/>NAT traversal"]
+    Relay["Ponor Relay<br/>ciphertext only"]
+    Peer["Internal Karst Peer<br/>wiki / DB / build server"]
+    Control["karst-control<br/>netmap + policy"]
+    Bedrock["Bedrock<br/>membership authority"]
+
+    WiFi --> Client
+    Client --> AVEN
+    AVEN -->|"direct PHREATIC path"| Peer
+    AVEN -.->|"direct path unavailable"| Relay
+    Relay -.->|"encrypted relay path"| Peer
+    Control -->|"peer identity, policy,<br/>relay registry"| Client
+    Control --> Peer
+    Bedrock -->|"signed membership state"| Control
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class Client,AVEN,Relay,Peer focus;
+    class WiFi,Control,Bedrock context;
+```
+
 **Caveats:**
 - The client still needs ordinary Internet reachability on the hostile
   network first — Karst does not get a device past a captive portal.
@@ -90,6 +115,28 @@ offers the default route; an access-policy entry restricts who may consent to
 and use that exit route to the household's own devices/group, following the
 least-privilege pattern in [UC-05](USE-CASE-ANALYSIS.md#uc-05--grant-and-validate-connectivity-permissions).
 
+```mermaid
+flowchart LR
+    Traveler["Traveling<br/>Karst Client"]
+    Path["AVEN / Ponor<br/>peer path"]
+    Exit["Home Karst Client<br/>Exit Node"]
+    HomeWAN["Home Internet<br/>Residential IP"]
+    Service["Internet /<br/>Streaming Service"]
+    Control["karst-control"]
+    Policy["Route + ACL Policy<br/>explicit default-route consent"]
+
+    Traveler --> Path -->|"PHREATIC"| Exit
+    Exit --> HomeWAN --> Service
+    Control --> Policy
+    Policy -->|"0.0.0.0/0 / ::/0<br/>for authorized client"| Traveler
+    Policy --> Exit
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class Traveler,Exit,Policy,HomeWAN focus;
+    class Path,Service,Control context;
+```
+
 **Caveats:**
 - **This is a general capability of the exit-node feature, not something
   built or marketed as a streaming-geolocation bypass.** Whether it complies
@@ -120,6 +167,31 @@ port (typically IPP/631) and to the traveler's own node
 This is the scoped-route pattern deliberately called out in that use case:
 advertise the destination that's actually needed, not the whole LAN, and gate
 it with policy rather than relying on network topology alone.
+
+```mermaid
+flowchart LR
+    Traveler["Traveling<br/>Karst Client"]
+    Mesh["PHREATIC Mesh<br/>direct or Ponor"]
+    Gateway["Home Karst Client<br/>Subnet Router"]
+    Printer["LAN Printer<br/>not a Karst node"]
+    Control["karst-control"]
+    Route["Scoped Route<br/>printer /32"]
+    ACL["Access Policy<br/>traveler → printer:631"]
+
+    Traveler --> Mesh --> Gateway
+    Gateway -->|"IPP / TCP 631"| Printer
+    Control --> Route
+    Control --> ACL
+    Route --> Traveler
+    Route --> Gateway
+    ACL --> Traveler
+    ACL --> Gateway
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class Traveler,Gateway,Route,ACL,Printer focus;
+    class Mesh,Control context;
+```
 
 **Caveats:** the printer itself does not become a Karst node — a gateway
 device on the same LAN as the printer (a home router or always-on machine
@@ -157,6 +229,29 @@ Karst's ACLs are default-deny, so anyone not in `group:family` is denied the
 share by the mesh itself, independent of whatever share-level authentication
 the file server also performs — the two controls are additive, per
 [UC-05](USE-CASE-ANALYSIS.md#uc-05--grant-and-validate-connectivity-permissions).
+
+```mermaid
+flowchart LR
+    User["Authorized<br/>Karst Client"]
+    Mesh["PHREATIC Mesh"]
+    Gateway["Subnet Router"]
+    NAS["File Server / NAS<br/>SMB or NFS"]
+    Control["karst-control"]
+    Group["group:family"]
+    ACL["Default-deny ACL<br/>group:family → NAS:445"]
+    ShareAuth["Native Share Auth<br/>SMB / NFS credentials"]
+
+    User --> Mesh --> Gateway --> NAS
+    Control --> Group --> ACL
+    ACL -->|"permits network reachability"| User
+    ACL --> Gateway
+    ShareAuth -->|"separate authorization"| NAS
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class User,Gateway,Group,ACL,NAS,ShareAuth focus;
+    class Mesh,Control context;
+```
 
 **Caveats:** the share's own user authentication (e.g., SMB credentials)
 still applies; Karst's ACL controls network reachability to the port, not
@@ -215,6 +310,32 @@ unprivileged OS account cannot reach the root-only control socket
 ordinary host-side tooling (DNS logs, SNI inspection, or a logging proxy) on
 the parent's own gateway — nothing Karst needs to build.
 
+```mermaid
+flowchart LR
+    Child["Child's Computer<br/>Karst Client"]
+    Mesh["PHREATIC Mesh"]
+    Exit["Parent-operated<br/>Exit Node"]
+    Monitor["Gateway-side Visibility<br/>DNS / SNI / proxy logs"]
+    Internet["Internet"]
+    Relay["Ponor Relay<br/>ciphertext only"]
+    Parent["Parent<br/>Local OS Operator"]
+    Control["karst-control"]
+
+    Child --> Mesh --> Exit --> Monitor --> Internet
+    Mesh -.->|"fallback transport"| Relay
+    Relay -.->|"cannot inspect websites"| Exit
+    Parent -->|"locally enables durable<br/>exit-node selection"| Child
+    Parent --> Monitor
+    Control -->|"route/policy distribution"| Child
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    classDef no fill:#ffe3e3,stroke:#c92a2a,stroke-width:2px,color:#212529;
+    class Child,Exit,Monitor,Parent focus;
+    class Mesh,Control,Internet context;
+    class Relay no;
+```
+
 This does not reach a device whose enrolled user is *also* its own local
 administrator (a self-administered, personally-owned machine): no
 client-side VPN, Karst included, can prevent a local admin from
@@ -261,6 +382,33 @@ does category blocking and per-client scheduling (AdGuard Home, Pi-hole, or
 a hosted filtering DNS service) — both halves of SC-06 then live in that
 resolver, not in Karst.
 
+```mermaid
+flowchart LR
+    Child["Child's Device<br/>kernel-TUN Karst Client"]
+    DNS["KarstDNS"]
+    Filter["Filtering DNS Resolver<br/>AdGuard / Pi-hole / hosted service"]
+    Internet["Internet"]
+    Control["karst-control"]
+    Group["kids Distribution Group"]
+    DNSConfig["Group-scoped<br/>Global DNS Upstream"]
+
+    Control --> Group --> DNSConfig
+    DNSConfig -->|"delivered in netmap"| DNS
+    Child -->|"DNS queries"| DNS
+    DNS -->|"group-selected upstream"| Filter
+    Filter -->|"category + schedule policy"| Internet
+    Child -->|"permitted application traffic"| Internet
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class DNS,Group,DNSConfig,Filter,Child focus;
+    class Control,Internet context;
+```
+
+Karst determines **which resolver the device uses**; the filtering resolver
+determines **what names are blocked and when**. This is not a general scheduled
+Karst ACL.
+
 **Real limits, stated plainly:** this needs kernel-TUN mode — KarstDNS never
 takes over host DNS in userspace mode. It's DNS-based, so a device capable
 of using a hardcoded DNS-over-HTTPS resolver bypasses it entirely; Karst has
@@ -297,6 +445,31 @@ ngrok), the dev server is never exposed to the open Internet — reachability
 is limited to the named peer by the ACL, and the relay (when used) carries
 PHREATIC ciphertext, not a plaintext HTTP proxy.
 
+```mermaid
+flowchart LR
+    Reviewer["Reviewer<br/>Karst Client"]
+    AVEN["AVEN<br/>Path Selection"]
+    Dev["Developer Workstation<br/>tag:devbox"]
+    App["Local Dev Server<br/>TCP 3000"]
+    Relay["Ponor Relay"]
+    Control["karst-control"]
+    ACL["Temporary ACL<br/>reviewer → devbox:3000"]
+
+    Reviewer --> AVEN
+    AVEN -->|"preferred direct<br/>PHREATIC path"| Dev
+    AVEN -.->|"fallback"| Relay
+    Relay -.->|"PHREATIC ciphertext"| Dev
+    Dev --> App
+    Control --> ACL
+    ACL --> Reviewer
+    ACL --> Dev
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class Reviewer,AVEN,Dev,App,ACL focus;
+    class Relay,Control context;
+```
+
 **Caveats:** this scenario is intentionally ephemeral in practice — a tag or
 rule scoped to one reviewer and one port is easy to add and remove, and
 should be removed once the review is done rather than left as a standing
@@ -323,6 +496,35 @@ registration and roster freshness
 ([UC-10](USE-CASE-ANALYSIS.md#uc-10--monitor-investigate-and-prove-administrative-activity)),
 an IT team has the raw signal needed to see which relays are loaded, which
 regions are underserved, and where a client's actual last-known endpoint sits.
+
+```mermaid
+flowchart LR
+    Clients["Karst Clients"]
+    Relay["Ponor Relays"]
+    Control["karst-control"]
+    Registry["Relay Registry<br/>operator-set region"]
+    Paths["Last-known Path<br/>Telemetry"]
+    Metrics["Relay Metrics<br/>load / admission"]
+    GeoIP["External GeoIP<br/>Correlation"]
+    IT["IT / Capacity Planning"]
+
+    Clients -->|"endpoint + direct/relay/<br/>unreachable observations"| Paths
+    Relay --> Metrics
+    Control --> Registry
+    Paths --> Control
+    Metrics --> Control
+    Control --> IT
+    Registry --> IT
+    Paths --> IT
+    Metrics --> IT
+    Paths -->|"observed endpoint IP"| GeoIP
+    GeoIP -->|"approximate geography"| IT
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    class Control,Registry,Paths,Metrics,GeoIP,IT,Relay focus;
+    class Clients context;
+```
 
 **Caveats:**
 - **Karst does not itself do GeoIP resolution of client public IP addresses
@@ -361,6 +563,41 @@ Karst's user/device lifecycle and IdP integration
 ([UC-03](USE-CASE-ANALYSIS.md#uc-03--add-invite-and-deprovision-a-user),
 [UC-04](USE-CASE-ANALYSIS.md#uc-04--enroll-and-manage-a-device)) replace the
 legacy VPN's certificate or PSK distribution process.
+
+```mermaid
+flowchart LR
+    User["Remote User<br/>Karst Client"]
+    Control["karst-control"]
+    IdP["IdP / Enrollment"]
+    Policy["Groups + ACLs<br/>Default Deny"]
+    Mesh["PHREATIC Mesh"]
+    Relay["Ponor Relay"]
+    Gateway["Karst Subnet Router<br/>inside VPC / LAN"]
+    Private["Private Resources<br/>VPC / On-Prem"]
+    Legacy["OpenVPN / AWS VPN<br/>Legacy System"]
+    Bridge["Protocol Bridge<br/>NOT SUPPORTED"]
+
+    IdP --> Control
+    Control -->|"netmap / identities / routes"| User
+    Control --> Policy
+    Policy --> User
+    Policy --> Gateway
+    User --> Mesh
+    Mesh -->|"direct when possible"| Gateway
+    Mesh -.-> Relay
+    Relay -.-> Gateway
+    Gateway --> Private
+    Legacy -.->|"migration / clean cutover"| Control
+    Legacy -.-> Bridge
+    Bridge -.-> Mesh
+
+    classDef focus fill:#fff3bf,stroke:#f08c00,stroke-width:3px,color:#212529;
+    classDef context fill:#f1f3f5,stroke:#868e96,color:#495057;
+    classDef no fill:#ffe3e3,stroke:#c92a2a,stroke-width:2px,color:#212529;
+    class User,Control,IdP,Policy,Mesh,Relay,Gateway,Private focus;
+    class Legacy context;
+    class Bridge no;
+```
 
 **Caveats — read literally, "facade" has two possible meanings, and only
 one is real:**
