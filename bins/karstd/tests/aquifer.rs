@@ -4019,8 +4019,9 @@ fn a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding() 
     );
 
     // Port 22, not some arbitrary port: the fixture's compiled ACL
-    // (`buildNetmapServer` in `karst-testserver`) accepts only `*:22` — see
-    // every other row's own listener/probe pair in this file.
+    // (`buildNetmapServer` in `karst-testserver`) explicitly grants this
+    // destination CIDR only on port 22. A separate `*:22` node grant keeps
+    // ordinary peer traffic working without authorizing forwarded traffic.
     let listener = format!(
         "import socket\n\
          s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\

@@ -403,7 +403,10 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, 
 	account := newMemoryAccount()
 
 	// A policy the Rust side can check it received: the preloaded peers may
-	// reach this node on 22, and nothing else may reach it at all.
+	// reach this node on 22, and may reach the routing fixture's isolated
+	// destination LAN on 22. The CIDR grant is explicit because a node-handle
+	// grant to the gateway deliberately does not authorize traffic the gateway
+	// merely forwards.
 	//
 	// sshPolicy layers the independent SSH gate on top, for the aquifer row
 	// exercising plans/phase-6/07-acl-gated-ssh.md end to end over the real
@@ -420,7 +423,7 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, 
 		sshBlock = `, "ssh": []`
 	}
 	doc, err := policy.Parse([]byte(`{
-	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22"] } ]` + sshBlock + `
+	  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:22", "10.99.0.0/24:22"] } ]` + sshBlock + `
 	}`))
 	if err != nil {
 		return nil, fmt.Errorf("policy: %w", err)
