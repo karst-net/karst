@@ -41,6 +41,10 @@ had an external cryptographic review or penetration test. See
 | **Configuration-dependent** | Karst can strongly or weakly support the control depending on deployment choices described below. |
 | **Gap / external** | The scenario may be achievable only with another product, host control, or organizational process; Karst must not be credited for that external function. |
 
+Individual control and enhancement mappings, including the Low, Moderate, and
+High baseline-selection matrix, are maintained in
+[NIST-SP-800-53-INDIVIDUAL-CONTROLS.md](NIST-SP-800-53-INDIVIDUAL-CONTROLS.md).
+
 ## Configuration choices that change control coverage
 
 These choices recur across the controls below.
