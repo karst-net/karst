@@ -3075,6 +3075,20 @@ fn reconcile_exit(
     policy.activate(tun.name(), offer.prefix.base(), escapes)
 }
 
+/// Whether `route_id` names a currently offered, eligible exit route.
+///
+/// Pulled out of `exit_node_command`'s `ExitList` arm so `selected_offered`'s
+/// logic — the operator-visible sign of dormant, dangling consent (GitHub
+/// issue #109) — has a unit test that does not need the rest of that
+/// function's dependencies.
+fn exit_offer_is_present(route_offers: &[crate::route_offer::Offer], route_id: &str) -> bool {
+    route_offers.iter().any(|offer| {
+        offer.kind == crate::route_offer::Kind::Exit
+            && offer.role == crate::route_offer::Role::Recipient
+            && offer.route_id == route_id
+    })
+}
+
 /// Handle the three local-consent commands against the current authenticated
 /// netmap. The server can offer an exit, but only this state transition can
 /// install its kernel route.
@@ -3111,6 +3125,19 @@ fn exit_node_command(
                     .active();
             let mut out = String::new();
             let _ = writeln!(out, "selected = {selected:?}");
+            // The wire carries no distinction between a route the server
+            // temporarily disabled and one deleted for good — both are
+            // simply absent from config.route_offers (GitHub issue #109) —
+            // so consent for an offer that has vanished is kept dormant
+            // rather than guessed at automatically (docs/subnet-routers-
+            // and-exit-nodes.md's Recovery table). This line is the operator-
+            // visible signal for that state: a selected ID this daemon has
+            // not seen offered in its current netmap, which `karst exit-node
+            // disable` clears locally when that is really what is wanted.
+            if let Some(route_id) = selected.as_deref() {
+                let offered = exit_offer_is_present(&config.route_offers, route_id);
+                let _ = writeln!(out, "selected_offered = {offered}");
+            }
             for offer in config.route_offers.iter().filter(eligible) {
                 let active = installed && selected.as_deref() == Some(offer.route_id.as_str());
                 let _ = writeln!(out, "[[offers]]");
@@ -5219,6 +5246,34 @@ mod route_tests {
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    /// GitHub issue #109: the wire has no way to tell "the server disabled
+    /// this route" from "the server deleted it" — both simply stop
+    /// appearing in `route_offers`, so consent for either is kept dormant
+    /// rather than guessed at (docs/subnet-routers-and-exit-nodes.md's
+    /// Recovery table). `exit_offer_is_present` is the pure check behind
+    /// `selected_offered`'s operator-visible signal of that dormant state.
+    #[test]
+    fn exit_offer_is_present_distinguishes_offered_from_vanished() {
+        assert!(super::exit_offer_is_present(
+            &[exit_offer("exit-eu")],
+            "exit-eu"
+        ));
+        assert!(!super::exit_offer_is_present(
+            &[exit_offer("exit-eu")],
+            "exit-us-disabled-or-deleted",
+        ));
+        assert!(!super::exit_offer_is_present(&[], "exit-eu"));
+    }
+
+    /// A subnet offer sharing the selected exit route's ID must not count —
+    /// `exit_offer_is_present` checks kind and role, not just the ID string.
+    #[test]
+    fn exit_offer_is_present_ignores_a_same_id_subnet_offer() {
+        let mut subnet = exit_offer("shared-id");
+        subnet.kind = crate::route_offer::Kind::Subnet;
+        assert!(!super::exit_offer_is_present(&[subnet], "shared-id"));
     }
 
     #[test]

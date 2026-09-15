@@ -91,7 +91,7 @@ the local operator has explicitly opted in.
 | Situation | What restores it |
 |---|---|
 | A client no longer wants its exit route active | `karst exit-node disable` — withdraws the kernel default route immediately and clears the durable consent record. Re-selecting the same or a different route needs `exit-node use` again. |
-| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the gateway — no restart needed on either side. Disabling keeps dormant consent for that route ID; deleting clears it, so re-enabling a merely-disabled route does not require re-consenting on `/0` clients. |
+| An operator disables or deletes a route in the console | The next pushed netmap withdraws the kernel route on every affected recipient and the forwarding grant on the gateway — no restart needed on either side. Both leave dormant consent in place for that route ID: the wire carries no distinction between "temporarily disabled" and "gone for good" (a disabled route is simply absent from the offer list, the same as a deleted one), and a recipient cannot safely treat "the server stopped mentioning this ID" as authorization to discard its own durable consent record — §3.2's client-owned-consent boundary cuts both ways. Re-enabling a disabled route never needs re-consent, by construction. Clearing consent for an ID that is gone for good is always available locally: `karst exit-node disable`. |
 | The gateway's `karstd` crashes or is restarted | Reconciliation is idempotent at every layer that installs anything, tolerating exactly what a crashed prior instance would have left behind (`Drop` does not run under `SIGKILL`): `nft add table` tolerates the table already existing, a recipient's kernel route is installed with replace semantics, and the exit-policy `ip route`/`ip rule` installs each delete the same spec first. The fresh process rebuilds everything from the current netmap on its own, with no operator action — but see the row below for how long a *recipient already connected to that gateway* takes to notice. |
 | A recipient's `karstd` crashes or is restarted | Exit-route consent is read back from `exit_node_state_file` at startup and re-applied without re-running `exit-node use`; subnet routes reappear from the next netmap fetch, the same as any other cryptokey route. |
 | A gateway crashes and restarts while a recipient's own session stays up | Slower than every other row in this table, and not a routing-layer property: the recipient's session with the gateway looks established right up until the crash, and PHREATIC's own rule that only the initiator rekeys (`spec/phreatic-v1.md` §7) means the surviving recipient has no reason to dial a fresh handshake until its session reaches `REKEY_AFTER_TIME` (120s). Measured in practice at a little over two minutes end to end. A route or policy change on an already-live session reaches it in seconds (the row above); a peer's own process dying is a session-liveness question, not a route-push one. |
@@ -106,7 +106,10 @@ the local operator has explicitly opted in.
   (`gateway` or `recipient`), its kind (`subnet` or `exit`), and whether it
   is currently active.
 - **`karst exit-node list`** — every currently offered exit route and
-  whether it is the one this device has consented to.
+  whether it is the one this device has consented to. `selected_offered`
+  reports whether the selected route ID is still among them — `false` is
+  the operator-visible sign of the dormant, dangling consent described in
+  the Recovery table above (§4), clearable with `karst exit-node disable`.
 - **`nft list table inet karst_routes`** (root) — the gateway's own live
   forwarding and NAT rules, including per-rule packet/byte counters. A table
   that is empty or missing on a node whose own `karst status` reports it as
