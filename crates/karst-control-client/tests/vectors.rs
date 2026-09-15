@@ -534,6 +534,24 @@ fn routes_of(c: &VersionCase) -> &[VersionRoute] {
     c.routes.as_deref().unwrap_or_default()
 }
 
+fn dns_config<'a>(c: &'a VersionCase, routes: &'a [DNSRouteView<'a>]) -> DNSConfigView<'a> {
+    DNSConfigView {
+        nameservers: &c.dns.nameservers,
+        search_domains: &c.dns.search_domains,
+        routes,
+        zone: &c.dns.zone,
+        magic_dns: c.dns.magic_dns,
+    }
+}
+
+fn bedrock_head<'a>(c: &VersionCase, hash: &'a [u8]) -> BedrockHeadView<'a> {
+    BedrockHeadView {
+        hash,
+        seq: c.bedrock.seq,
+        mode: c.bedrock.mode,
+    }
+}
+
 fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let wire = c.peers.as_deref().unwrap_or_default();
     let entries: Vec<PeerEntry<'_>> = wire
@@ -634,18 +652,8 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         ssh_filter_present: c.ssh_filter_present,
         relays: &relays,
         routes: &routes,
-        dns: DNSConfigView {
-            nameservers: &c.dns.nameservers,
-            search_domains: &c.dns.search_domains,
-            routes: &dns_routes,
-            zone: &c.dns.zone,
-            magic_dns: c.dns.magic_dns,
-        },
-        bedrock_head: BedrockHeadView {
-            hash: &bedrock_hash,
-            seq: c.bedrock.seq,
-            mode: c.bedrock.mode,
-        },
+        dns: dns_config(c, &dns_routes),
+        bedrock_head: bedrock_head(c, &bedrock_hash),
     })
 }
 

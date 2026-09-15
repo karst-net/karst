@@ -131,8 +131,7 @@ impl Rule {
         peer_owns_destination: bool,
     ) -> bool {
         let via_node = self.nodes.contains(peer) && peer_owns_destination;
-        let via_cidr =
-            destination.is_some_and(|d| self.dst_prefixes.iter().any(|p| p.contains(d)));
+        let via_cidr = destination.is_some_and(|d| self.dst_prefixes.iter().any(|p| p.contains(d)));
         (via_node || via_cidr) && self.ports.iter().any(|r| r.contains(port))
     }
 }
@@ -290,9 +289,7 @@ impl PacketFilter {
         let destination = ip::destination(packet);
         let peer_owns_destination = match own_addresses {
             None => true,
-            Some(addresses) => {
-                destination.is_some_and(|d| addresses.iter().any(|p| p.contains(d)))
-            }
+            Some(addresses) => destination.is_some_and(|d| addresses.iter().any(|p| p.contains(d))),
         };
         if rules
             .iter()
@@ -815,7 +812,10 @@ mod tests {
     fn an_empty_egress_set_denies_even_when_ingress_permits() {
         let f = PacketFilter::compile(&[rule(&["*"], vec![port(0, 65535)])], &[], &handles());
         assert_eq!(f.ingress(0, &tcp(22)), Verdict::Permit);
-        assert_eq!(f.egress(0, &tcp(22), &owns_tcp_destination()), Verdict::Denied);
+        assert_eq!(
+            f.egress(0, &tcp(22), &owns_tcp_destination()),
+            Verdict::Denied
+        );
     }
 
     // ── destination-CIDR egress rules ───────────────────────────────────────
