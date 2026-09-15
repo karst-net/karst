@@ -1008,7 +1008,17 @@ impl Config {
         // advertised prefix in cryptokey routing. For an exit offer this only
         // makes the gateway a valid encrypted next hop; the kernel default route
         // remains dormant until the independent local consent store selects it.
-        for offer in &netmap.routes {
+        //
+        // `select_effective`, not `netmap.routes` directly: a route advertised
+        // through a gateway *group* carries one authenticated offer per member
+        // (see `route_offer::parse_all`'s doc comment on why `netmap.routes`
+        // itself must keep all of them), and `AllowedIps::build` below hard-
+        // rejects two peers claiming the same prefix. Reducing to one
+        // effective candidate per prefix here, after authentication, is what
+        // makes a gateway-group route usable at all instead of a build-time
+        // `Conflict`.
+        let effective_routes = crate::route_offer::select_effective(&netmap.routes);
+        for offer in &effective_routes {
             if offer.role != crate::route_offer::Role::Recipient {
                 continue;
             }
@@ -1083,7 +1093,10 @@ impl Config {
             relay_ca_file: local.relay_ca_file,
             prefer_quic_relay: local.prefer_quic_relay,
             peers,
-            route_offers: netmap.routes.clone(),
+            // The effective (post-HA-selection) set, not `netmap.routes`
+            // directly — `karst status` and `karst exit-node list` report one
+            // row per route, not one per gateway-group candidate.
+            route_offers: effective_routes,
             exit_node_state_file: local.exit_node_state_file,
             routes,
             skipped,
@@ -2677,6 +2690,67 @@ mod skip_tests {
             .allowed_ips
             .iter()
             .any(|prefix| prefix.contains(destination)));
+    }
+
+    /// A route advertised through a gateway *group* (the console's own
+    /// "select the gateway group" configuration) arrives as one authenticated
+    /// offer per member — this reproduces that shape directly against a real
+    /// `Config::from_netmap` build, not just `route_offer`'s own unit tests.
+    /// It must not fail to build (the netmap-wide rejection this fixed,
+    /// GitHub issue #109), and exactly one gateway — the lower metric — must
+    /// end up owning the prefix in `AllowedIps`, never both: a second peer
+    /// claiming the same prefix is `AllowedIps::build`'s own hard `Conflict`.
+    #[test]
+    fn a_gateway_groups_ha_candidates_resolve_to_one_owner() {
+        let mut map = netmap(
+            vec!["100.64.0.1/16".to_owned()],
+            vec![
+                wire_peer("aaa", "primary", "100.64.0.2"),
+                wire_peer("bbb", "standby", "100.64.0.3"),
+            ],
+            vec![],
+        );
+        let mut via_standby = route_offer(
+            "corp:bbb",
+            "10.20.0.0/16",
+            "bbb",
+            pb::KarstRouteKind::Subnet,
+        );
+        via_standby.metric = 200;
+        let mut via_primary = route_offer(
+            "corp:aaa",
+            "10.20.0.0/16",
+            "aaa",
+            pb::KarstRouteKind::Subnet,
+        );
+        via_primary.metric = 100;
+        map.routes.push(via_standby);
+        map.routes.push(via_primary);
+
+        let cfg = Config::from_netmap(local(), &map).expect("a gateway-group route must build");
+
+        let destination = "10.20.4.5".parse().unwrap();
+        assert_eq!(
+            cfg.routes.route(destination),
+            Some(0),
+            "the lower-metric gateway (peer index 0, \"primary\") must own the prefix"
+        );
+        assert!(cfg.peers[0]
+            .allowed_ips
+            .iter()
+            .any(|prefix| prefix.contains(destination)));
+        assert!(
+            !cfg.peers[1]
+                .allowed_ips
+                .iter()
+                .any(|prefix| prefix.contains(destination)),
+            "the standby must not also claim the prefix"
+        );
+        assert_eq!(
+            cfg.route_offers.len(),
+            1,
+            "status must report one route, not one per candidate"
+        );
     }
 
     #[test]
