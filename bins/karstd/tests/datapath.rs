@@ -603,6 +603,7 @@ fn out_rule(dsts: &[&str], first: u32, last: u32) -> pb::KarstEgressRule {
     pb::KarstEgressRule {
         dsts: dsts.iter().map(|s| (*s).to_owned()).collect(),
         ports: vec![pb::KarstPortRange { first, last }],
+        ..Default::default()
     }
 }
 

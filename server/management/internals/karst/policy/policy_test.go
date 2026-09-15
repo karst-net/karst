@@ -489,6 +489,90 @@ func TestEgressWildcards(t *testing.T) {
 	}
 }
 
+// A "dst" selector naming a network directly (GitHub issue #109: a routed
+// subnet has no node of its own to be a Dsts entry) compiles to DstCidrs,
+// never resolved against node identity, and is granted by real destination
+// address rather than by handle.
+func TestEgressToACIDRGrantsByAddressNotHandle(t *testing.T) {
+	d := mustParse(t, `{
+	  "acls": [ { "action": "accept", "src": ["alice@example.com"], "dst": ["10.50.0.0/24:80,443"] } ]
+	}`)
+	f := compileEgress(t, d, "hA")
+
+	for _, r := range f.Rules {
+		if len(r.Dsts) != 0 {
+			t.Fatalf("a CIDR selector must not resolve against node identity, got Dsts %v", r.Dsts)
+		}
+	}
+	cases := []struct {
+		name string
+		dst  string
+		port uint16
+		want bool
+	}{
+		{"inside the /24, granted port", "10.50.0.10", 80, true},
+		{"inside the /24, the other granted port", "10.50.0.10", 443, true},
+		{"inside the /24, an ungranted port", "10.50.0.10", 22, false},
+		{"a sibling /24, not the granted one", "10.50.1.10", 80, false},
+		{"outside the subnet entirely", "203.0.113.1", 80, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := f.Permits(tc.dst, tc.port); got != tc.want {
+				t.Fatalf("Permits(%q, %d) = %v, want %v", tc.dst, tc.port, got, tc.want)
+			}
+		})
+	}
+
+	if compileEgress(t, d, "hB").Permits("10.50.0.10", 80) {
+		t.Fatal("a source the ACL does not name must not inherit the CIDR grant")
+	}
+}
+
+// The same address-family discipline the wire filter itself holds to: a v4
+// grant must never cover a v6 destination, or vice versa.
+func TestEgressCIDRNeverCrossesAddressFamilies(t *testing.T) {
+	d := mustParse(t, `{
+	  "acls": [
+	    { "action": "accept", "src": ["alice@example.com"], "dst": ["10.50.0.0/24:*"] },
+	    { "action": "accept", "src": ["alice@example.com"], "dst": ["fd00:50::/32:*"] }
+	  ]
+	}`)
+	f := compileEgress(t, d, "hA")
+	if !f.Permits("10.50.0.1", 22) {
+		t.Fatal("the v4 grant should cover a v4 destination inside it")
+	}
+	if f.Permits("::ffff:10.50.0.1", 22) {
+		t.Fatal("a v4-mapped v6 destination must not match the v4 prefix")
+	}
+	if !f.Permits("fd00:50::1", 22) {
+		t.Fatal("the v6 grant should cover a v6 destination inside it")
+	}
+	if f.Permits("fd00:51::1", 22) {
+		t.Fatal("an address outside the v6 prefix must still be denied")
+	}
+}
+
+// A bare address with no "/" is not recognized as a network — it falls
+// through to node-identity resolution like any other selector, and (since it
+// names no real node) grants nothing. Requiring an explicit prefix keeps
+// every CIDR selector self-delimiting against splitDst's own port-suffix
+// rule (see parseCIDRSelector's doc comment): a bare IPv6 address is itself
+// colon-separated and cannot otherwise be told apart from its own port
+// suffix.
+func TestEgressBareAddressIsNotACIDRSelector(t *testing.T) {
+	d := mustParse(t, `{
+	  "acls": [ { "action": "accept", "src": ["alice@example.com"], "dst": ["10.50.0.10:80"] } ]
+	}`)
+	f := compileEgress(t, d, "hA")
+	if len(f.Rules) != 0 {
+		t.Fatalf("a bare address names no real node and must grant nothing, got %d rules", len(f.Rules))
+	}
+	if f.Permits("10.50.0.10", 80) {
+		t.Fatal("a bare address selector must not be treated as a network")
+	}
+}
+
 // Without a stable order, map iteration would make every recompilation look
 // like a change and defeat the netmap's version hash.
 func TestEgressCompilationIsDeterministic(t *testing.T) {

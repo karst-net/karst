@@ -553,18 +553,30 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let rules: Vec<FilterRuleView<'_>> = inbound_nodes
         .iter()
         .zip(held.ports.iter())
-        .map(|(nodes, ports)| FilterRuleView { nodes, ports })
+        .map(|(nodes, ports)| FilterRuleView {
+            nodes,
+            dst_cidrs: &[],
+            ports,
+        })
         .collect();
     let egress: Vec<FilterRuleView<'_>> = outbound_nodes
         .iter()
         .zip(held.egress_ports.iter())
-        .map(|(nodes, ports)| FilterRuleView { nodes, ports })
+        .map(|(nodes, ports)| FilterRuleView {
+            nodes,
+            dst_cidrs: &[],
+            ports,
+        })
         .collect();
     let ssh_nodes = rule_nodes(c.ssh_filter.as_deref().unwrap_or_default());
     let ssh: Vec<FilterRuleView<'_>> = ssh_nodes
         .iter()
         .zip(held.ssh_ports.iter())
-        .map(|(nodes, ports)| FilterRuleView { nodes, ports })
+        .map(|(nodes, ports)| FilterRuleView {
+            nodes,
+            dst_cidrs: &[],
+            ports,
+        })
         .collect();
 
     let relays: Vec<RelayView<'_>> = relays_of(c)

@@ -923,6 +923,7 @@ impl Netmap {
             .zip(&in_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.srcs,
+                dst_cidrs: &[],
                 ports,
             })
             .collect();
@@ -932,6 +933,7 @@ impl Netmap {
             .zip(&out_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.dsts,
+                dst_cidrs: &r.dst_cidrs,
                 ports,
             })
             .collect();
@@ -941,6 +943,7 @@ impl Netmap {
             .zip(&ssh_ports)
             .map(|(r, ports)| FilterRuleView {
                 nodes: &r.srcs,
+                dst_cidrs: &[],
                 ports,
             })
             .collect();

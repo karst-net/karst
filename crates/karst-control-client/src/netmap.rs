@@ -175,6 +175,11 @@ pub fn peer_digest(entry: &PeerEntry<'_>, epoch: u32) -> u64 {
 #[derive(Debug, Default)]
 pub struct FilterRuleView<'a> {
     pub nodes: &'a [String],
+    /// Destination networks, canonical CIDR strings — only ever populated on
+    /// an egress rule (see `KarstEgressRule.dst_cidrs`); always empty on
+    /// `packet_filter`/`ssh_filter`, so it contributes no bytes there and
+    /// every version computed before this field existed is unaffected.
+    pub dst_cidrs: &'a [String],
     /// Inclusive `(first, last)` port ranges.
     pub ports: &'a [(u32, u32)],
 }
@@ -386,6 +391,9 @@ fn push_rules(h: &mut Sha256, rules: &[FilterRuleView<'_>]) {
     for r in rules {
         for node in r.nodes {
             push(h, node.as_bytes());
+        }
+        for cidr in r.dst_cidrs {
+            push(h, cidr.as_bytes());
         }
         for (first, last) in r.ports {
             let mut pr = [0u8; 8];

@@ -341,7 +341,7 @@ mod tests {
     }
 
     /// A route advertised through a gateway *group* arrives as one offer per
-    /// member, all agreeing on kind/masquerade/keep_route — the netbird-
+    /// member, all agreeing on `kind`/`masquerade`/`keep_route` — the netbird-
     /// inherited HA shape (see `select_effective`'s doc comment). The lowest
     /// metric must win, and the loser must not appear in `select_effective`'s
     /// result: passing both through to `config.rs` would hand

@@ -590,7 +590,7 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 	}
 	eg := make([]*proto.KarstEgressRule, 0, len(compiledEgress.Rules))
 	for _, r := range compiledEgress.Rules {
-		eg = append(eg, &proto.KarstEgressRule{Dsts: r.Dsts, Ports: portRanges(r.Ports)})
+		eg = append(eg, &proto.KarstEgressRule{Dsts: r.Dsts, DstCidrs: r.DstCidrs, Ports: portRanges(r.Ports)})
 	}
 	var sshRules []*proto.KarstFilterRule
 	if compiledSSH != nil {
@@ -782,6 +782,16 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	for _, r := range resp.GetEgressFilter() {
 		for _, dst := range r.GetDsts() {
 			writeField(h, []byte(dst))
+		}
+		// Appended after Dsts with no separator of its own: an old, unpatched
+		// netmap never populates this field, so an empty range here writes
+		// zero bytes and every version computed before dst_cidrs existed
+		// still hashes identically. A policy edit that adds or removes a CIDR
+		// grant must still move the version — see the comment above
+		// karst-egress-filter on why a filter's content has to be hashed at
+		// all.
+		for _, cidr := range r.GetDstCidrs() {
+			writeField(h, []byte(cidr))
 		}
 		writePorts(h, r.GetPorts())
 	}

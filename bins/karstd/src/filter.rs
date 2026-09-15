@@ -29,11 +29,12 @@
 //! would eventually let one be read as the other.
 
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 
 use karst_control_client::transport::pb;
 use karst_tun::ip;
 
-use crate::routing::PeerIndex;
+use crate::routing::{PeerIndex, Prefix};
 
 /// Which way a packet is going, for the ACL check and for connection tracking.
 ///
@@ -92,15 +93,30 @@ impl NodeSet {
 }
 
 /// One compiled rule.
+///
+/// `dst_prefixes` is only ever populated on an egress rule (a destination
+/// network a policy grants directly — see `karst_control.proto`'s
+/// `KarstEgressRule.dst_cidrs`); an ingress or SSH-gate rule always compiles
+/// with it empty, so `permits` below is a no-op change for those directions.
 #[derive(Debug, Clone)]
 struct Rule {
     nodes: NodeSet,
+    dst_prefixes: Vec<Prefix>,
     ports: Vec<PortRange>,
 }
 
 impl Rule {
-    fn permits(&self, peer: PeerIndex, port: u16) -> bool {
-        self.nodes.contains(peer) && self.ports.iter().any(|r| r.contains(port))
+    /// `destination` is the packet's real destination address, checked
+    /// against `dst_prefixes` **independent of `peer`** — a CIDR grant is
+    /// about the destination network, not about which specific gateway peer
+    /// happens to be carrying it right now (a route's effective gateway can
+    /// change under HA failover without the policy needing to change too).
+    /// `peer`-based matching is untouched: a node-handle grant still matches
+    /// only that specific peer.
+    fn permits(&self, peer: PeerIndex, port: u16, destination: Option<IpAddr>) -> bool {
+        let target_matches = self.nodes.contains(peer)
+            || destination.is_some_and(|d| self.dst_prefixes.iter().any(|p| p.contains(d)));
+        target_matches && self.ports.iter().any(|r| r.contains(port))
     }
 }
 
@@ -188,7 +204,7 @@ impl PacketFilter {
             .collect();
         let outbound = egress
             .iter()
-            .filter_map(|r| compile_rule(&r.dsts, &r.ports, handles))
+            .filter_map(|r| compile_egress_rule(&r.dsts, &r.dst_cidrs, &r.ports, handles))
             .collect();
         Self {
             ingress: Some(inbound),
@@ -224,7 +240,14 @@ impl PacketFilter {
         let Some(ports) = ip::ports(packet) else {
             return Verdict::Unclassifiable;
         };
-        if rules.iter().any(|r| r.permits(peer, ports.destination)) {
+        // Only ever consulted by a rule with a populated `dst_prefixes`
+        // (egress only); cheap to compute unconditionally rather than thread
+        // a direction flag through just to skip it on ingress.
+        let destination = ip::destination(packet);
+        if rules
+            .iter()
+            .any(|r| r.permits(peer, ports.destination, destination))
+        {
             Verdict::Permit
         } else {
             Verdict::Denied
@@ -308,7 +331,7 @@ impl SshFilter {
         let Some(rules) = self.0.as_deref() else {
             return Verdict::Permit; // no "ssh" block: this gate does not apply
         };
-        if rules.iter().any(|r| r.permits(from, 22)) {
+        if rules.iter().any(|r| r.permits(from, 22, None)) {
             Verdict::Permit
         } else {
             Verdict::Denied
@@ -328,7 +351,29 @@ impl SshFilter {
     }
 }
 
-/// Compile one rule, or `None` if it grants nothing.
+/// Resolve a wire node-name list to a `NodeSet` — `Any` for a literal `"*"`,
+/// otherwise only the names this node actually holds a peer for. A named peer
+/// this node does not hold is silently dropped, not an error: the rule still
+/// compiles, just without that peer.
+fn node_set(nodes: &[String], handles: &[Vec<u8>]) -> NodeSet {
+    if nodes.iter().any(|n| n == "*") {
+        return NodeSet::Any;
+    }
+    let mut set = BTreeSet::new();
+    for name in nodes {
+        // Handles are base64 on the wire and bytes in the netmap.
+        if let Some(index) = handles.iter().position(|h| h == name.as_bytes()) {
+            set.insert(index);
+        }
+    }
+    NodeSet::These(set)
+}
+
+/// Compile one ingress or SSH-gate rule, or `None` if it grants nothing.
+///
+/// These directions have no CIDR concept (see `Rule`'s own doc comment): who
+/// may reach *this node* is always a question about peers, never about an
+/// external network.
 fn compile_rule(
     nodes: &[String],
     ports: &[pb::KarstPortRange],
@@ -348,28 +393,54 @@ fn compile_rule(
         return None;
     }
 
-    if nodes.iter().any(|n| n == "*") {
-        return Some(Rule {
-            nodes: NodeSet::Any,
-            ports,
-        });
-    }
-
-    let mut set = BTreeSet::new();
-    for name in nodes {
-        // Handles are base64 on the wire and bytes in the netmap.
-        if let Some(index) = handles.iter().position(|h| h == name.as_bytes()) {
-            set.insert(index);
-        }
-    }
-    if set.is_empty() {
+    let nodes = node_set(nodes, handles);
+    if matches!(&nodes, NodeSet::These(set) if set.is_empty()) {
         // Every named peer is unknown to this node — a rule about peers we do
         // not hold. It grants nothing, and must not be widened into one that
         // grants everything.
         return None;
     }
     Some(Rule {
-        nodes: NodeSet::These(set),
+        nodes,
+        dst_prefixes: Vec::new(),
+        ports,
+    })
+}
+
+/// Compile one egress rule, or `None` if it grants nothing.
+///
+/// The mirror of [`compile_rule`], with one addition: `dst_cidrs` names
+/// destination networks directly, never resolved against a peer at all (a
+/// routed subnet has no node of its own to be a `dsts` entry). A malformed
+/// CIDR is dropped rather than rejected outright — the server validates on
+/// write, so this is defense in depth against a wire value this node cannot
+/// itself trust blindly, not an expected case.
+fn compile_egress_rule(
+    dsts: &[String],
+    dst_cidrs: &[String],
+    ports: &[pb::KarstPortRange],
+    handles: &[Vec<u8>],
+) -> Option<Rule> {
+    let ports: Vec<PortRange> = ports
+        .iter()
+        .copied()
+        .filter_map(PortRange::from_wire)
+        .collect();
+    if ports.is_empty() {
+        return None;
+    }
+
+    let nodes = node_set(dsts, handles);
+    let dst_prefixes: Vec<Prefix> = dst_cidrs.iter().filter_map(|c| c.parse().ok()).collect();
+    let grants_no_peer = matches!(&nodes, NodeSet::These(set) if set.is_empty());
+    if grants_no_peer && dst_prefixes.is_empty() {
+        // Neither a peer nor a network resolved to anything real. Grants
+        // nothing, and must not be widened into one that grants everything.
+        return None;
+    }
+    Some(Rule {
+        nodes,
+        dst_prefixes,
         ports,
     })
 }
@@ -404,19 +475,52 @@ mod tests {
         pb::KarstEgressRule {
             dsts: dsts.iter().map(|s| (*s).to_owned()).collect(),
             ports,
+            ..Default::default()
+        }
+    }
+
+    fn egress_cidr_rule(cidrs: &[&str], ports: Vec<pb::KarstPortRange>) -> pb::KarstEgressRule {
+        pb::KarstEgressRule {
+            dst_cidrs: cidrs.iter().map(|s| (*s).to_owned()).collect(),
+            ports,
+            ..Default::default()
         }
     }
 
     /// A TCP packet to `dst_port`.
     fn tcp(dst_port: u16) -> Vec<u8> {
+        tcp_to([10, 0, 0, 2], dst_port)
+    }
+
+    /// A TCP packet to a chosen destination address, for the destination-CIDR
+    /// egress rules — [`tcp`] hardcodes `10.0.0.2`, which every peer-based
+    /// test relies on, so this is a separate function rather than an added
+    /// parameter on it.
+    fn tcp_to(dst: [u8; 4], dst_port: u16) -> Vec<u8> {
         let mut p = vec![0u8; 24];
         p[0] = 0x45;
         p[2..4].copy_from_slice(&24u16.to_be_bytes());
         p[9] = 6;
         p[12..16].copy_from_slice(&[10, 0, 0, 1]);
-        p[16..20].copy_from_slice(&[10, 0, 0, 2]);
+        p[16..20].copy_from_slice(&dst);
         p[20..22].copy_from_slice(&40000u16.to_be_bytes());
         p[22..24].copy_from_slice(&dst_port.to_be_bytes());
+        p
+    }
+
+    /// The IPv6 counterpart of [`tcp_to`], for the family-crossing test —
+    /// same minimal-TCP-payload shape, over a 40-byte fixed header instead of
+    /// 20.
+    fn tcp6_to(dst: [u8; 16], dst_port: u16) -> Vec<u8> {
+        let mut p = vec![0u8; 44];
+        p[0] = 0x60;
+        p[4..6].copy_from_slice(&4u16.to_be_bytes());
+        p[6] = 6; // next header: TCP
+        p[7] = 64; // hop limit
+        p[8..24].copy_from_slice(&[0xfd; 16]); // source, unused by the filter
+        p[24..40].copy_from_slice(&dst);
+        p[40..42].copy_from_slice(&40000u16.to_be_bytes());
+        p[42..44].copy_from_slice(&dst_port.to_be_bytes());
         p
     }
 
@@ -647,6 +751,114 @@ mod tests {
         let f = PacketFilter::compile(&[rule(&["*"], vec![port(0, 65535)])], &[], &handles());
         assert_eq!(f.ingress(0, &tcp(22)), Verdict::Permit);
         assert_eq!(f.egress(0, &tcp(22)), Verdict::Denied);
+    }
+
+    // ── destination-CIDR egress rules ───────────────────────────────────────
+    //
+    // A routed subnet behind a gateway has no node handle of its own — this is
+    // the only way a policy can grant reachability to it (GitHub issue #109:
+    // a policy naming a subnet by CIDR previously compiled to zero rules for
+    // everyone, so a "denied" recipient reached it exactly like an "allowed"
+    // one).
+
+    /// The basic grant: a destination inside the CIDR is permitted, regardless
+    /// of which peer carries the packet — a CIDR grant is about the network,
+    /// not about which gateway happens to be forwarding to it right now.
+    #[test]
+    fn a_dst_cidr_grant_permits_any_peer_carrying_a_matching_destination() {
+        let f = PacketFilter::compile(
+            &[],
+            &[egress_cidr_rule(&["10.50.0.0/24"], vec![port(0, 65535)])],
+            &handles(),
+        );
+        assert_eq!(f.egress(0, &tcp_to([10, 50, 0, 10], 80)), Verdict::Permit);
+        assert_eq!(
+            f.egress(1, &tcp_to([10, 50, 0, 10], 80)),
+            Verdict::Permit,
+            "a different peer carrying the same granted destination is equally permitted"
+        );
+    }
+
+    /// The regression case: a destination outside every granted CIDR (and
+    /// matching no node-handle rule either) is denied — this is what makes a
+    /// "denied" client's traffic actually stop, not just look configured.
+    #[test]
+    fn a_destination_outside_every_granted_cidr_is_denied() {
+        let f = PacketFilter::compile(
+            &[],
+            &[egress_cidr_rule(&["10.50.0.0/24"], vec![port(0, 65535)])],
+            &handles(),
+        );
+        assert_eq!(
+            f.egress(0, &tcp_to([10, 50, 1, 10], 80)),
+            Verdict::Denied,
+            "10.50.1.0/24 is a sibling network, not the granted /24"
+        );
+        assert_eq!(f.egress(0, &tcp_to([203, 0, 113, 1], 80)), Verdict::Denied);
+    }
+
+    /// IPv4 and IPv6 must never cross here either — the same standard
+    /// `routing.rs`'s `AllowedIps` holds itself to. A v4-only grant must not
+    /// let a v6 destination through, encoded or not.
+    #[test]
+    fn dst_cidr_matching_never_crosses_address_families() {
+        let f = PacketFilter::compile(
+            &[],
+            &[egress_cidr_rule(&["10.50.0.0/24"], vec![port(0, 65535)])],
+            &handles(),
+        );
+        let mapped = tcp6_to(
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 10, 50, 0, 10],
+            80,
+        );
+        assert_eq!(
+            f.egress(0, &mapped),
+            Verdict::Denied,
+            "a v4-mapped v6 destination must not match a v4 prefix"
+        );
+    }
+
+    /// A node-handle grant and a destination-CIDR grant on the same node are
+    /// independent, additive rules — one does not widen or narrow the other.
+    #[test]
+    fn a_node_grant_and_a_dst_cidr_grant_apply_independently() {
+        let f = PacketFilter::compile(
+            &[],
+            &[
+                egress_rule(&["alice"], vec![port(443, 443)]),
+                egress_cidr_rule(&["10.50.0.0/24"], vec![port(80, 80)]),
+            ],
+            &handles(),
+        );
+        assert_eq!(f.egress(0, &tcp(443)), Verdict::Permit, "alice, port 443");
+        assert_eq!(
+            f.egress(0, &tcp(80)),
+            Verdict::Denied,
+            "alice on 80 matches neither rule (10.0.0.2 is outside the /24)"
+        );
+        assert_eq!(
+            f.egress(1, &tcp_to([10, 50, 0, 5], 80)),
+            Verdict::Permit,
+            "bob reaching the granted subnet on 80"
+        );
+        assert_eq!(
+            f.egress(1, &tcp_to([10, 50, 0, 5], 443)),
+            Verdict::Denied,
+            "the subnet grant is scoped to port 80, not 443"
+        );
+    }
+
+    /// A malformed CIDR on the wire is dropped, not trusted blindly or turned
+    /// into a panic — the server validates on write, but this node cannot
+    /// assume the wire value is well-formed.
+    #[test]
+    fn an_unparseable_dst_cidr_grants_nothing() {
+        let f = PacketFilter::compile(
+            &[],
+            &[egress_cidr_rule(&["not-a-cidr"], vec![port(0, 65535)])],
+            &handles(),
+        );
+        assert_eq!(f.egress(0, &tcp_to([10, 50, 0, 10], 80)), Verdict::Denied);
     }
 
     /// A peer index beyond the roster must not match anything, whatever the

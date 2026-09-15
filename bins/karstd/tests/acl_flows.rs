@@ -134,6 +134,7 @@ fn ssh_only(peer_handle: &str) -> PacketFilter {
         &[pb::KarstEgressRule {
             dsts: vec![peer_handle.to_owned()],
             ports,
+            ..Default::default()
         }],
         &[peer_handle.as_bytes().to_vec()],
     )

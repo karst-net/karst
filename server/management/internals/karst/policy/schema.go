@@ -47,7 +47,7 @@ const JSONSchema = `{
         "properties": {
           "action": { "const": "accept", "description": "The only action that exists." },
           "src": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Selectors: \"*\", \"tag:name\", \"group:name\", or a user identifier." },
-          "dst": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Each a \"selector:ports\" pair, e.g. \"tag:prod:443\" or \"*:22,80,1000-2000\"." }
+          "dst": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Each a \"selector:ports\" pair, e.g. \"tag:prod:443\" or \"*:22,80,1000-2000\". A selector may also be an explicit CIDR (always with a \"/\", e.g. \"10.50.0.0/24:80,443\" or \"fd00:50::/32:*\" — a bare address is not recognized) to grant a routed subnet directly, matched by the packet's real destination address rather than by node identity." }
         }
       }
     },

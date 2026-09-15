@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -399,10 +400,20 @@ func (d *Document) CompileSSH(target Node, all []Node) (*Filter, error) {
 }
 
 // EgressRule is one compiled rule in a node's *outbound* filter: traffic from
-// this node to any of Dsts is permitted on Ports.
+// this node to any of Dsts, or into any of DstCidrs, is permitted on Ports.
+//
+// A rule from one "dst" selector populates exactly one of the two: a selector
+// that parses as a network names DstCidrs and is never resolved against node
+// identity (a routed subnet has no node of its own to be a Dsts entry), and
+// every other selector still resolves through Dsts exactly as before.
 type EgressRule struct {
 	// Dsts are node handles, or "*".
-	Dsts       []string    `json:"dsts"`
+	Dsts []string `json:"dsts,omitempty"`
+	// DstCidrs are destination networks granted directly, in canonical CIDR
+	// form. Matched by a packet's real destination address, independent of
+	// which peer or gateway carries it — see karst_control.proto's
+	// KarstEgressRule.dst_cidrs.
+	DstCidrs   []string    `json:"dst_cidrs,omitempty"`
 	Ports      []PortRange `json:"ports"`
 	Provenance Provenance  `json:"-"`
 }
@@ -448,6 +459,10 @@ func (d *Document) CompileEgress(target Node, all []Node) (*EgressFilter, error)
 			if err != nil {
 				return nil, fmt.Errorf("%w: acl %d: %v", ErrInvalid, i, err)
 			}
+			if cidr, ok := parseCIDRSelector(selector); ok {
+				f.Rules = append(f.Rules, EgressRule{DstCidrs: []string{cidr}, Ports: ports, Provenance: Provenance{Rule: i + 1, SourceTerm: sourceTerm, DestinationTerm: selector}})
+				continue
+			}
 			dsts := d.resolveSources([]string{selector}, all)
 			if len(dsts) == 0 {
 				// Resolving to nobody grants nothing. Not an error — a group can
@@ -477,13 +492,29 @@ func (d *Document) matchingSource(selectors []string, n Node) string {
 //
 // Default deny, for the same reason Filter.Permits is: a policy typo must
 // remove access rather than grant it.
+//
+// dst is either a node handle (matched against Dsts, as always) or an IP
+// address (matched against DstCidrs) — whichever it parses as. A caller
+// checking reachability to a routed subnet passes an address; one checking
+// reachability to a peer passes its handle. The two never collide: a real
+// node handle is never valid IP-address syntax.
 func (f *EgressFilter) Permits(dst string, port uint16) bool {
+	dstAddr, addrErr := netip.ParseAddr(dst)
+	isAddr := addrErr == nil
 	for _, r := range f.Rules {
 		matched := false
 		for _, s := range r.Dsts {
 			if s == Wildcard || s == dst {
 				matched = true
 				break
+			}
+		}
+		if !matched && isAddr {
+			for _, cidr := range r.DstCidrs {
+				if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Contains(dstAddr) {
+					matched = true
+					break
+				}
 			}
 		}
 		if !matched {
@@ -511,15 +542,47 @@ func normalizeEgress(rules []EgressRule) []EgressRule {
 		})
 	}
 	sort.Slice(rules, func(a, b int) bool {
-		if s := strings.Join(rules[a].Dsts, ","); s != strings.Join(rules[b].Dsts, ",") {
-			return s < strings.Join(rules[b].Dsts, ",")
+		key := func(r EgressRule) string {
+			return strings.Join(r.Dsts, ",") + "\x00" + strings.Join(r.DstCidrs, ",")
+		}
+		if ka, kb := key(rules[a]), key(rules[b]); ka != kb {
+			return ka < kb
 		}
 		return rules[a].Ports[0].First < rules[b].Ports[0].First
 	})
 	return rules
 }
 
+// parseCIDRSelector reports whether a "dst" selector names a network
+// directly, as an alternative to resolving it against a node's identity — the
+// only way a policy can grant reachability to a routed subnet, which has no
+// node of its own to match. Only an explicit "address/prefix-length" is
+// recognized, never a bare address: splitDst separates a selector from its
+// trailing port at the *last* colon, and a bare IPv6 address is itself
+// colon-separated — "fd00::5:22" cannot be told apart from the complete,
+// valid address "fd00::5:22" by that rule alone. Requiring the "/" makes
+// every such selector self-delimiting, for both address families, and the
+// result is masked to its canonical form (the same convention `route.Network`
+// already uses server-side, and karstd's own `Prefix` uses client-side).
+func parseCIDRSelector(selector string) (string, bool) {
+	if !strings.Contains(selector, "/") {
+		return "", false
+	}
+	prefix, err := netip.ParsePrefix(selector)
+	if err != nil {
+		return "", false
+	}
+	return prefix.Masked().String(), true
+}
+
 // matches reports whether a selector describes the given node.
+//
+// A CIDR selector (see parseCIDRSelector) never reaches this function on the
+// egress side — CompileEgress recognizes and routes it to DstCidrs before
+// resolution — and on the ingress side (Compile) it safely falls through to
+// the default "bare handle" case below and matches no real node, which is
+// correct: a routed subnet is never the target of inbound traffic to *this*
+// node, only ever a destination this node's own egress may reach.
 func (d *Document) matches(selector string, n Node) bool {
 	switch {
 	case selector == Wildcard:

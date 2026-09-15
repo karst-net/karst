@@ -477,7 +477,8 @@ message KarstFilterRule {
   repeated KarstPortRange ports = 2;
 }
 
-// KarstEgressRule permits traffic from this node to any of `dsts` on `ports`.
+// KarstEgressRule permits traffic from this node to any of `dsts` or into any
+// of `dst_cidrs`, on `ports`.
 //
 // The mirror of KarstFilterRule. A separate message rather than the same one
 // with a renamed field, because a rule whose direction is implied by which
@@ -485,6 +486,14 @@ message KarstFilterRule {
 message KarstEgressRule {
   // Node handles, or "*" for any destination.
   repeated string dsts = 1;
+  // Destination networks a policy grants directly, never resolved against a
+  // node identity: a routed subnet behind a gateway has no node of its own to
+  // match against `dsts`, so this is the only way a policy can name "the
+  // network beyond that gateway" rather than a peer on the mesh. Each entry
+  // is a canonical CIDR (a bare address is written as its host prefix,
+  // `/32` or `/128`) and matches by the packet's real destination address,
+  // independent of which peer or gateway actually carries it.
+  repeated string dst_cidrs = 3;
   repeated KarstPortRange ports = 2;
 }
 

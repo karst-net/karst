@@ -539,6 +539,21 @@ starting point, not a destination:
 The format rejects unknown fields, so a comment smuggled in as a key stops the
 server booting. The full grammar is PLAN.md §4.3.
 
+A `"dst"` selector is usually a node — `"*"`, `"tag:name"`, `"group:name"`,
+or a user identifier — but a routed subnet (`plans/phase-6/06-subnet-routers-
+and-exit-nodes.md`) has no node of its own to name. For that, write the
+destination as an explicit CIDR instead, always with a `/`:
+
+```json walkthrough=none reason="illustrative; not part of the getting-started policy"
+{ "acls": [ { "action": "accept", "src": ["group:sre"], "dst": ["10.50.0.0/24:80,443"] } ] }
+```
+
+A bare address without a `/` is not recognized as a network — it is resolved
+against node identity like any other selector, and since it names no real
+node, grants nothing. This is deliberate for IPv6 as much as IPv4: a bare
+IPv6 address is itself colon-separated, so `"fd00::5:22"` could not otherwise
+be told apart from its own trailing port.
+
 An optional `"ssh"` block adds a second, independent gate on top of `"acls"`,
 scoped to interactive SSH access:
 
