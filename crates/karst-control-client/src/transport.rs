@@ -12,8 +12,9 @@
 //! Go server compiles**, so there is one definition of the wire format rather
 //! than two that must be kept in step by hand.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, Notify};
 use tokio_stream::wrappers::ReceiverStream;
@@ -21,6 +22,53 @@ use tonic::transport::{Channel as TonicChannel, ClientTlsConfig};
 use tonic::Streaming;
 
 use crate::channel::{self, Keys, Record};
+
+/// Diagnostics for GitHub issue [#155](https://github.com/karst-net/karst/issues/155): how many pushes the reader task has
+/// actually decoded, and when the most recent one landed — recorded
+/// independently of whether `pushed` (a [`Notify`]) ever woke a waiting
+/// caller.
+///
+/// `Notify` deliberately coalesces: one pending permit is enough, by design,
+/// so a caller cannot tell from `pushed` alone whether three pushes arrived
+/// and were collapsed into one wakeup or whether nothing arrived at all. That
+/// ambiguity is exactly what #155's live trials could not resolve — "the
+/// server confirms it sent a push" was traced all the way to the wire, but
+/// nothing on the node recorded whether *this* layer, independently of the
+/// wakeup mechanism, ever saw it. This is that second, uncoalesced record,
+/// kept purely for observability and consulted by nothing that affects
+/// behavior.
+#[derive(Debug, Default)]
+pub struct PushTelemetry {
+    count: AtomicU64,
+    last: Mutex<Option<Instant>>,
+}
+
+impl PushTelemetry {
+    fn record(&self) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    /// Total pushes decoded across this signal's lifetime — survives a
+    /// reconnect exactly like `pushed` itself does, since both are created
+    /// once by the caller and threaded through every `Connection::open`.
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    /// When the most recently decoded push was observed, if any.
+    #[must_use]
+    pub fn last(&self) -> Option<Instant> {
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
 
 /// Generated from `server/shared/management/proto/karst_control.proto`.
 #[allow(
@@ -180,6 +228,8 @@ pub struct Connection {
     /// coalescing a burst of them into "at least one refresh is due" is
     /// exactly the semantics the caller wants.
     pushed: Arc<Notify>,
+    /// GitHub issue #155 diagnostics — see [`PushTelemetry`]'s own doc comment.
+    push_telemetry: Arc<PushTelemetry>,
     /// Aborted on drop — see the `Drop` impl below.
     reader: tokio::task::JoinHandle<()>,
 }
@@ -220,6 +270,8 @@ impl Connection {
     /// reconnects — the whole point of holding one `Connection` across many
     /// requests — can keep selecting on the same `Notify` across the
     /// reconnect instead of having to notice a new one exists each time.
+    /// `push_telemetry` is supplied for the identical reason — see
+    /// [`PushTelemetry`]'s own doc comment.
     ///
     /// # Errors
     ///
@@ -237,6 +289,7 @@ impl Connection {
         randomness: &EncapRandomness,
         push_marker: u8,
         pushed: Arc<Notify>,
+        push_telemetry: Arc<PushTelemetry>,
     ) -> Result<Self, Error>
     where
         S: Signer,
@@ -323,6 +376,7 @@ impl Connection {
             push_marker,
             responses_tx,
             Arc::clone(&pushed),
+            Arc::clone(&push_telemetry),
         ));
 
         Ok(Self {
@@ -331,6 +385,7 @@ impl Connection {
             node_id,
             responses,
             pushed,
+            push_telemetry,
             reader,
         })
     }
@@ -392,6 +447,12 @@ impl Connection {
     pub fn push_signal(&self) -> Arc<Notify> {
         Arc::clone(&self.pushed)
     }
+
+    /// GitHub issue #155 diagnostics — see [`PushTelemetry`]'s own doc comment.
+    #[must_use]
+    pub fn push_telemetry(&self) -> Arc<PushTelemetry> {
+        Arc::clone(&self.push_telemetry)
+    }
 }
 
 /// Reads server messages for the lifetime of one [`Connection`], routing each
@@ -407,6 +468,7 @@ async fn read_loop(
     push_marker: u8,
     responses: mpsc::Sender<Result<Vec<u8>, Error>>,
     pushed: Arc<Notify>,
+    push_telemetry: Arc<PushTelemetry>,
 ) {
     loop {
         let msg = match rx.message().await {
@@ -427,6 +489,10 @@ async fn read_loop(
                     // carries nothing else to trust (spec §5.3.1) — anything
                     // else is a reply some `request()` call is waiting on.
                     Ok(payload) if payload == [push_marker] => {
+                        // Recorded before the (coalescing) notify, not after —
+                        // see `PushTelemetry`'s own doc comment on why this
+                        // exists as a second, uncoalesced record.
+                        push_telemetry.record();
                         pushed.notify_one();
                     }
                     Ok(payload) => {

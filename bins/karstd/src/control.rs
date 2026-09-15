@@ -304,6 +304,11 @@ pub struct Client {
     /// to every `Connection::open` call — so a caller `select!`ing on it does
     /// not need to notice a reconnect happened underneath it.
     pushed: Arc<tokio::sync::Notify>,
+    /// GitHub issue #155 diagnostics — see
+    /// [`karst_control_client::transport::PushTelemetry`]'s own doc comment.
+    /// Outlives any one `Connection`, the same way `pushed` does and for the
+    /// same reason.
+    push_telemetry: Arc<karst_control_client::transport::PushTelemetry>,
     /// The relay this node has chosen to hold — `ponor-v1.md` §9.1.
     ///
     /// Reported on every netmap request. Empty until something has been
@@ -467,6 +472,7 @@ impl Client {
             seal,
             conn: None,
             pushed: Arc::new(tokio::sync::Notify::new()),
+            push_telemetry: Arc::new(karst_control_client::transport::PushTelemetry::default()),
             kem_public: keys.kem_pk.to_bytes().clone(),
             netmap: Netmap::new(),
             bedrock: crate::bedrock::Log::new(),
@@ -593,6 +599,7 @@ impl Client {
             &randomness(),
             karst_control_client::transport::KIND_PUSH,
             Arc::clone(&self.pushed),
+            Arc::clone(&self.push_telemetry),
         )
         .await
         .map_err(|e| Error::Server(e.to_string()))?;
@@ -614,6 +621,14 @@ impl Client {
     #[must_use]
     pub fn push_signal(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.pushed)
+    }
+
+    /// GitHub issue #155 diagnostics — see
+    /// [`karst_control_client::transport::PushTelemetry`]'s own doc comment.
+    /// Stable across reconnects, the same way `push_signal` is.
+    #[must_use]
+    pub fn push_telemetry(&self) -> Arc<karst_control_client::transport::PushTelemetry> {
+        Arc::clone(&self.push_telemetry)
     }
 
     /// Authenticate and durably enroll without changing host networking.

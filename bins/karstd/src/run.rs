@@ -41,6 +41,14 @@ use crate::random_seed;
 /// (§10), so this has to be comfortably finer than that.
 const TICK: Duration = Duration::from_millis(100);
 
+/// GitHub issue #155 diagnostic threshold: how long a push notification may
+/// sit decoded-but-unactioned before `refresh_netmap` warns about it. Set
+/// well above `TICK` so ordinary scheduling jitter between the reader task
+/// and the next `pushed.notified()` check never fires this — it exists to
+/// catch the multi-second-and-up stalls #155's live trials reported, not to
+/// second-guess normal latency.
+const PUSH_STALL_WARNING: Duration = Duration::from_secs(2);
+
 /// Read timeout on the UDP socket, so the receive thread notices a shutdown
 /// request rather than blocking on a socket that will never speak again.
 const POLL_TIMEOUT: Duration = Duration::from_millis(250);
@@ -4474,6 +4482,19 @@ fn refresh_netmap(
     // unprompted push (GitHub issues [#72](https://github.com/karst-net/karst/issues/72) and [#73](https://github.com/karst-net/karst/issues/73)) — stable across whatever reconnects
     // `client.sync()` does internally, so it only needs to be fetched once.
     let pushed = client.push_signal();
+    // GitHub issue #155 diagnostic — see `PushTelemetry`'s own doc comment on
+    // why this is tracked separately from `pushed` itself. `last_reported_pushes`
+    // is what this loop has already logged, so the debug line below fires once
+    // per newly observed push rather than once per 100 ms tick.
+    let push_telemetry = client.push_telemetry();
+    let mut last_reported_pushes = push_telemetry.count();
+    // The push count as of the last time this loop actually ran a sync
+    // (`due` was true). Distinct from `last_reported_pushes`: that one tracks
+    // what's been logged, this one tracks what's been *acted on*, so the
+    // stall check below can tell a push that was handled seconds ago from one
+    // still waiting — `push_telemetry.last()` alone can't, since it never
+    // resets and would otherwise re-warn on every quiet tick forever.
+    let mut last_actioned_pushes = last_reported_pushes;
     let mut next = Instant::now() + crate::control::REFRESH;
     // What the server was last told, so a change can be published without
     // waiting for the refresh timer.
@@ -4510,6 +4531,23 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         }
+        // GitHub issue #155 diagnostic. `pushed` coalesces by design — this
+        // reads the reader task's independent, uncoalesced count so a live
+        // trial can tell "the transport decoded a push and this loop noticed
+        // within a tick" from "the transport decoded a push and this loop did
+        // not react to it," which read identically before this existed.
+        let observed_pushes = push_telemetry.count();
+        if observed_pushes != last_reported_pushes {
+            tracing::debug!(
+                total_pushes = observed_pushes,
+                woke_this_tick = due,
+                "karstd: transport decoded a push notification"
+            );
+            last_reported_pushes = observed_pushes;
+        }
+        if due {
+            last_actioned_pushes = observed_pushes;
+        }
         let chosen = home
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -4521,6 +4559,27 @@ fn refresh_netmap(
         // refresh interval of that is the one case where waiting for the next
         // tick is not free, and a deprovisioning notice is the other.
         if !due && Instant::now() < next && chosen == published {
+            // GitHub issue #155 diagnostic: a push the reader task decoded but
+            // that has sat for longer than `PUSH_STALL_WARNING` without this
+            // loop reacting to it — reproducing the stall the live trials
+            // reported, rather than the ordinary sub-tick gap between decode
+            // and this loop noticing. Gated on `observed_pushes >
+            // last_actioned_pushes`: without that, this would re-fire on
+            // every quiet tick for a push that was already synced minutes
+            // ago, since `push_telemetry.last()` never resets on its own.
+            if observed_pushes > last_actioned_pushes {
+                if let Some(last) = push_telemetry.last() {
+                    let since_decoded = last.elapsed();
+                    if since_decoded > PUSH_STALL_WARNING {
+                        tracing::warn!(
+                            since_decoded = ?since_decoded,
+                            total_pushes = observed_pushes,
+                            "karstd: a push notification was decoded but has not yet triggered a \
+                             sync — GitHub issue #155"
+                        );
+                    }
+                }
+            }
             continue;
         }
         next = Instant::now() + crate::control::REFRESH;
@@ -4565,6 +4624,18 @@ fn refresh_netmap(
             // content-hash version exists to make cheap: no peer entry crosses
             // the wire.
             Ok(crate::netmap::Outcome::Unchanged) => {
+                // GitHub issue #155: previously silent. A push-triggered sync
+                // that lands here — the server says nothing changed, right
+                // after telling this node to re-fetch — is exactly the case
+                // #155's live trials could not distinguish from a push that
+                // never arrived at all, because neither path logged anything.
+                if due {
+                    tracing::debug!(
+                        netmap_version = client.netmap().version,
+                        "karstd: push-triggered sync completed; server reported the netmap \
+                         unchanged — GitHub issue #155"
+                    );
+                }
                 control_backoff = RELAY_BACKOFF_MIN;
                 continue;
             }
@@ -4573,7 +4644,7 @@ fn refresh_netmap(
                 outcome
             }
             Err(e) => {
-                tracing::warn!(error = %e, retry_in = ?control_backoff, "netmap refresh failed; session held open, retrying");
+                tracing::warn!(error = %e, retry_in = ?control_backoff, push_triggered = due, "netmap refresh failed; session held open, retrying");
                 // Retry soon rather than waiting out the rest of REFRESH — see
                 // control_backoff's own comment for why that distinction now
                 // matters.
@@ -4659,6 +4730,11 @@ fn refresh_netmap(
             removed = report.removed,
             kept = report.kept,
             epoch_rotated = report.epoch_rotated,
+            // GitHub issue #155: `added`/`removed`/`kept` describe peer churn
+            // only — this says whether a push is what triggered this cycle at
+            // all, since a filter-only change (no peer added or removed) is
+            // otherwise indistinguishable in this line from a periodic poll.
+            push_triggered = due,
             "netmap updated"
         );
         if let Err(e) = client.save_cache() {
