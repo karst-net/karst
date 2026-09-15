@@ -202,3 +202,190 @@ fix restores relay connectivity requires a new release tag built from a
 commit that includes it, then repeating the isolated and live-topology
 exercises above against that tag; this session did not do that rebuild-and-
 republish cycle, so the six-step demonstration in plan §7 is still open.
+
+## 2026-09-14/15: rc.17 confirms the relay fix, and finds five more bugs
+
+`v0.1.0-rc.15` (2026-09-12) was the first published tag to contain `3faabb6`.
+A fresh temporary Docker Compose deployment — control, relay, a real Keycloak
+OIDC provider, and a Caddy TLS edge, all loopback-bound, distinct from and
+making no connection to any other deployment — was built against the
+published `v0.1.0-rc.17` control and relay image digests
+(`karst-control@sha256:32df39568b8ddc8eecd25384028ffb1f4e6788df0583e25313613a3f8c840402`,
+`karst-relay@sha256:9d423348f5d3449e646f3a546373fb1bbc6aa58f3df9993f38623d87e35ababc`)
+and rc.17 client/relay `.deb` packages, SHA256SUMS- and signature-verified
+against the checked-in release key as before. Four rc.17 nodes (two gateway
+candidates, an allowed and a denied recipient) enrolled and reached
+`control_synchronized = true` with full three-peer netmaps — **the first
+direct confirmation that `3faabb6` fixes relay connectivity against a real
+published control-plane image**, closing the loop the 2026-09-11 entry above
+left open.
+
+That direct confirmation immediately surfaced a second, previously-masked
+bug: every node stayed `connecting`, `invalid peer certificate:
+CaUsedAsEndEntity`. `deploy/compose/bootstrap.sh`'s `openssl req -x509`
+issues the relay's TLS certificate with default `basicConstraints
+CA:TRUE` — a valid root CA certificate, and exactly the shape rustls (the
+relay TLS client in `karstd`) refuses to accept as an end-entity leaf. This
+had blocked every fresh co-located deployment's relay path since the
+feature existed; nothing had exercised it, because no node ever had relay
+information to dial before `3faabb6`. Fixed
+(`312a22f`, `deploy/compose: issue the relay cert as a leaf, not a CA`) by
+adding explicit `basicConstraints=critical,CA:FALSE`, `keyUsage`, and
+`extendedKeyUsage=serverAuth` extensions.
+
+### Gateway-group HA broke netmap sync entirely
+
+Plan §7 step 2 tells an operator to "select the gateway group" — a route
+whose `peer_groups` names more than one candidate gateway (`gw-primary`,
+`gw-standby`). Configuring the demo route exactly that way made the
+recipient reject its entire netmap outright: `netmap: invalid route offer:
+duplicate effective route 10.50.0.0/24`, taking policy and every other
+route down with it, not just the ambiguous route.
+
+Traced through both languages. Server-side, this is correct, inherited
+NetBird behavior: `getRoutesToSync`/`routesByPeer`
+(`server/shared/management/types/networkmap_components.go`) sends a
+recipient one route offer per gateway-group member — NetBird's standard
+multi-candidate HA shape, expecting the client to select. Client-side,
+`bins/karstd/src/route_offer.rs`'s `parse_all` had no selection logic at
+all, just a hard reject on any two offers sharing `(prefix, role)`. The one
+namespace test that seemed to cover this,
+`a_recipients_route_follows_its_effective_gateway_to_a_standby`, never
+actually exercised the real shape: it creates a route with a *single*
+gateway peer and later re-points that one field, sequential reassignment,
+not the simultaneous multi-candidate offer a real gateway group produces —
+a gap between what the passing suite covered and what the plan's own demo
+instructions configure.
+
+The fix could not simply reduce the offer list at parse time:
+`parse_all`'s output is hashed byte-for-byte against the server's own
+signed `Netmap::content_version`, so dropping a standby's offer there
+desyncs the client's hash from the server's. Landed in two parts
+(`603dda3`, `karstd: resolve gateway-group HA route offers instead of
+rejecting them`): `parse_all` now preserves every offer in wire order,
+rejecting only genuinely conflicting definitions (same prefix and role,
+different kind/masquerade/keep_route); a new, separate
+`route_offer::select_effective` picks one candidate per `(prefix, role)` by
+lowest metric, tied by the lexicographically smallest gateway id, called
+only where `config.rs` turns an already-authenticated netmap into local
+routing state. This is load-bearing beyond correctness:
+`routing.rs`'s `AllowedIps::build` hard-rejects two peers claiming the same
+prefix, by explicit design ("a silent winner means traffic goes somewhere
+the operator did not choose") — without `select_effective`, a gateway-group
+route would trade the netmap-wide rejection for an `AllowedIps::build`
+`Conflict` one layer deeper, not fix anything.
+
+### The policy engine could not gate a routed subnet at all
+
+With the HA fix in place, plan §7 step 3's other half — "a policy that
+permits one client and denies another" reaching the routed subnet — turned
+out to be impossible to express. `server/management/internals/karst/policy/
+policy.go`'s `Document.matches` recognized only `*`, `tag:`, `group:`, or a
+bare node handle; a `dst` selector naming a CIDR matched no real node and
+compiled to zero rules. Confirmed live: the "denied" client reached the
+destination exactly like the "allowed" one (a genuine 200 from nginx
+through the real tunnel, not a shortcut).
+
+Fixed in two commits. `00516db` (`policy: grant a routed subnet by CIDR,
+not just by node identity`) added an additive wire field,
+`KarstEgressRule.dst_cidrs`, recognized end to end: the Go schema/compiler
+treats a CIDR-shaped `dst` selector as a network grant rather than
+resolving it against node identity, and `bins/karstd/src/filter.rs`'s
+`Rule` gained a `dst_prefixes` match kind checked against the packet's real
+destination address, independent of which peer happens to carry it. This
+is additive to the signed wire hash (the golden vectors in
+`crates/karst-control-client/tests/vectors.rs` needed no rebaselining: an
+empty new field changes nothing for existing shapes).
+
+That fix exposed a second, adjacent hole: a plain node-handle grant to a
+gateway peer — ordinary mesh connectivity, e.g. "these four nodes may
+reach each other," unrelated to subnet access — doubled as unlimited
+permission to route arbitrary traffic through that gateway to whatever it
+forwards, because `bins/karstd/src/engine.rs`'s egress check was keyed
+entirely on the next-hop peer, never on whether the packet was actually
+addressed to that peer's own identity. Confirmed live, again: a "denied"
+client still reached the subnet after the CIDR fix alone, via an ordinary
+mesh rule that happened to name the gateway. Fixed (`1f6ede6`, `karstd: a
+node-handle egress grant must not double as gateway bypass`) with a new
+`Peer::identity_addresses` field — a peer's own netmap address, fixed
+before `Config::from_netmap`'s route-gateway merge ever touches the
+existing, broader `allowed_ips` — and a specific regression test,
+`a_node_handle_grant_to_a_gateway_does_not_leak_its_forwarded_traffic`.
+
+### No automatic gateway failover, and dangling exit-route consent
+
+Live re-verification of plan §7 step 4 (`select_effective` alone, before
+this fix) found no automatic failover at all: stopping `gw-primary` left
+`client-allowed`'s `allowed_ips` still pointed at it more than two minutes
+later, because `select_effective` is a pure function of whatever candidate
+set the netmap carries, not of live reachability, and nothing shrank that
+set. A first attempt read plan §3.3 point 4's "an eligible, *connected*
+gateway is selected" as NetBird's own inherited `peer.Status.Connected` and
+filtered on it in the generic, shared network-map builder — reverted before
+ever being pushed, once testing found every Karst node reports
+`Status.Connected = false` permanently: Karst nodes speak
+`KarstControlService`'s own `Session` stream (ADR-0011), never NetBird's
+original `Sync` stream that field is maintained from. Filtering on it would
+have withdrawn every gateway-group route in every real deployment,
+unconditionally — worse than the bug being fixed. The actual, already-
+correct liveness signal lives in `node.Store`'s `DeviceSession` rows
+(opened at handshake success, closed on stream teardown). Fixed
+(`1ce77ea`, `karst/control: exclude an offline gateway from a route's HA
+candidate set`) at Karst's own netmap-assembly layer: a new
+`node.Store.ConnectedHandles` batches the liveness check, and
+`excludeOfflineGateways` drops any candidate with no live session before
+`select_effective` ever runs — reusing that selection logic entirely
+unchanged. Live re-verification after rebuilding: stopping `gw-primary`
+converged `client-allowed` to `gw-standby` in 25.74 seconds; restarting
+`gw-primary` reconverged cleanly, once, with no flapping and no window
+where both gateways' `nft` tables claimed the route simultaneously.
+
+Separately, deleting an offered exit route was documented
+(this file's own Recovery-table source,
+`docs/subnet-routers-and-exit-nodes.md`) to clear local consent, while
+disabling one merely left it dormant. Confirmed live that this distinction
+does not exist on the wire: `KarstNetmapResponse.routes` is replaced
+wholesale with no per-route removal reason, so a disabled route and a
+deleted one are indistinguishable to a recipient — both simply stop
+appearing. Auto-clearing consent on absence, as the docs' claim would
+require, would have regressed the one behavior worth keeping: re-enabling a
+disabled route must not require re-consenting. `9f1b4fd` (`karstd: surface
+dangling exit-route consent instead of guessing at it`) corrected the docs
+to state the true behavior and added a `selected_offered` line to `karst
+exit-node list`, so dangling consent is at least visible rather than
+silently wrong. A real fix needs a new wire signal distinguishing the two
+cases in the inherited NetBird route-sync path — out of scope here, and
+tracked as follow-up rather than attempted under this session's own
+guardrail against unilaterally expanding scope mid-fix.
+
+### Live re-verification, rc.17 control plane, local source builds
+
+Rebuilding `karst`/`karstd`/the control image from `main` (all six fixes
+above plus `3faabb6`) and redeploying against the same rc.17 topology:
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| 3 — allowed reaches, denied fails | pass | real 200 vs. connection timeout; `acl_denied_out` 0→185 on the denied node |
+| 3 — spoofed source dropped | pass | `source_violations` 0→1 on the gateway |
+| 4 — stop selected gateway, converge to standby | pass | 25.74 s convergence; clean single reconvergence on restart, no flapping, no duplicate ownership |
+| 5 — IPv4 exit offer inert until local consent | pass | `ip rule`/policy-routing table populated only after `exit-node use`; control/relay sessions stayed live throughout |
+| 5 — IPv6 exit offer | not tested | the loopback-bound Docker bridge network in this harness carries no IPv6 at all — an environment limitation, not a product bug |
+| 6 — revoke policy, withdraw subnet route | pass | gateway `nft` forwarding/NAT rules gone within ~7 s; kernel route gone from the recipient |
+| 6 — exit-route delete semantics | now visible, not fully closed | `selected_offered` flips `true→false` on deletion; the underlying wire ambiguity above is unresolved |
+
+### Still required before closing #109
+
+- All six fixes above (`312a22f`, `603dda3`, `00516db`, `1f6ede6`,
+  `1ce77ea`, `9f1b4fd`) are verified only against **local source builds**
+  swapped into rc.17's containers, not the published package. Only
+  `3faabb6` (already in rc.15+) has been verified against a real published
+  release. A new rc tag built from a commit including all six, then a
+  repeat of this exercise against the *published* artifacts, is what would
+  actually close the "published packages" half of this issue's title.
+- The wire-level fix for exit-route delete-vs-disable ambiguity, noted
+  above, is unattempted.
+- A real IPv6 exit-node exercise needs a topology with IPv6 connectivity,
+  which this loopback Docker harness does not provide.
+- Console/browser evidence (as opposed to direct API calls, used
+  throughout this and the 2026-09-10/11 exercises) has still not been
+  captured for any step.
