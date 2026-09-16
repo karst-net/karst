@@ -307,6 +307,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 				}
 			})
 			hub.OnPeer(func(peerID string) { updates.DeliverNotification(context.Background(), peerID) })
+			// GitHub issue #155: a PublishPeer fired while this replica's
+			// LISTEN connection was down or reconnecting is gone for good —
+			// see ResyncAllNotifiedPeers's own doc comment for why nothing
+			// can single out just the peers actually affected, so every
+			// (re)connect wakes every locally subscribed peer instead.
+			hub.OnListenEstablished(func() { updates.ResyncAllNotifiedPeers(context.Background()) })
 		}
 	}
 

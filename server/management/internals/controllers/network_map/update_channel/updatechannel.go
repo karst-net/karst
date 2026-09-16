@@ -114,6 +114,31 @@ func (p *PeersUpdateManager) DeliverNotification(ctx context.Context, peerID str
 	p.sendNotification(ctx, peerID, false)
 }
 
+// ResyncAllNotifiedPeers wakes every peer currently holding a lightweight
+// notification channel, as if something had changed for each of them.
+//
+// GitHub issue #155: cross-replica delivery (`PublishNotificationsWith`/
+// `DeliverNotification`) rides on a transport — production wires it to
+// PostgreSQL LISTEN/NOTIFY (`karst/ha.Hub`) — that has no delivery guarantee
+// and no queue. A `SendNotification` published while the receiving
+// replica's listener was down or reconnecting is not merely delayed, it is
+// gone: nothing else ever re-sends it, unlike session ownership, which
+// `ha.Hub.Reconcile` can always re-derive from `ControlSession`'s durable
+// row. There is no equivalent durable record of "what changed" for a peer
+// invalidation to reconcile from — only whether one might have been missed.
+// The correct response to "one might have been missed" is to wake every
+// locally subscribed peer once, unconditionally: a spurious wake costs one
+// no-op re-fetch (already logged as `Outcome::Unchanged` on the client
+// side), while a missed one that goes unnoticed can leave a revoked grant
+// live indefinitely. Call this whenever the local cross-replica listener
+// (re)establishes, session included, since the moment it depends on is "was
+// this replica possibly deaf a moment ago," which no argument distinguishes.
+func (p *PeersUpdateManager) ResyncAllNotifiedPeers(ctx context.Context) {
+	for peerID := range p.GetAllNotifiedPeers() {
+		p.DeliverNotification(ctx, peerID)
+	}
+}
+
 // CreateChannel creates a go channel for a given peer used to deliver updates relevant to the peer.
 func (p *PeersUpdateManager) CreateChannel(ctx context.Context, peerID string) chan *network_map.UpdateMessage {
 	start := time.Now()

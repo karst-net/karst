@@ -56,6 +56,7 @@ type Hub struct {
 	mu       sync.RWMutex
 	sessions []func(identity, replica, token string)
 	peers    []func(peerID string)
+	listened []func()
 }
 
 var channelName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
@@ -101,6 +102,31 @@ func (h *Hub) OnPeer(f func(peerID string)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.peers = append(h.peers, f)
+}
+
+// OnListenEstablished registers f to run every time this replica's LISTEN
+// connection comes up — the first time, and again after every reconnect
+// `listen` performs following a lost connection. GitHub issue #155: a
+// `PublishPeer` fired while this window was down is undeliverable and
+// unrecoverable by any means inside this package (see
+// `update_channel.PeersUpdateManager.ResyncAllNotifiedPeers`'s doc comment
+// for why no reconciliation is possible for peer events the way `Reconcile`
+// exists for session ownership) — f is where a caller closes that gap by
+// treating "the listener just came up" as "something might have been
+// missed" and resyncing unconditionally.
+func (h *Hub) OnListenEstablished(f func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.listened = append(h.listened, f)
+}
+
+func (h *Hub) dispatchListenEstablished() {
+	h.mu.RLock()
+	fs := append([]func(){}, h.listened...)
+	h.mu.RUnlock()
+	for _, f := range fs {
+		f()
+	}
 }
 
 // Claim fails closed: callers must reject a new authenticated stream if its
@@ -183,6 +209,11 @@ func (h *Hub) listen(ctx context.Context, ready chan<- error) {
 				ready <- nil
 				first = false
 			}
+			// Every successful (re)connect, not just the first: a caller
+			// registered before this replica ever loses its connection
+			// only ever sees "first" fire, and would otherwise have no way
+			// to know a later reconnect had happened at all.
+			h.dispatchListenEstablished()
 			for ctx.Err() == nil {
 				n, waitErr := conn.Conn().WaitForNotification(ctx)
 				if waitErr != nil {
