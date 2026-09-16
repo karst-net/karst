@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! The mobile TUN backend — iOS's `NEPacketTunnelProvider` and Android's
-//! `VpnService` (PLAN.md §9, Phase 7, GitHub issue #117).
+//! The mobile TUN backend — iOS's `NEPacketTunnelProvider`, Android's
+//! `VpnService` (PLAN.md §9, Phase 7, GitHub issue #117) — and, under the
+//! `network-extension` feature, a macOS system extension's
+//! `NEPacketTunnelProvider` (docs/adr/0026-macos-network-extension-backend.md).
 //!
 //! # Neither platform lets native code create the interface
 //!
@@ -11,10 +13,14 @@
 //! iOS and Android, only the platform's own app-extension code
 //! (`NEPacketTunnelProvider`/`VpnService`, which only Swift/Kotlin can drive)
 //! is allowed to create the tunnel at all; the most a native library can ever
-//! be given is the resulting file descriptor. [`Tun::from_fd`] adopts that
-//! fd rather than opening anything, which is the one structural way this
-//! module differs from `linux`/`macos`/`windows` — everything downstream of
-//! construction (`recv`, `send`, `mtu`, `offload`) is the same shape.
+//! be given is the resulting file descriptor. A macOS system extension is
+//! under the identical constraint — it is the same `NEPacketTunnelProvider`
+//! API, just hosted by `launchd` instead of iOS's app-extension runtime — so
+//! it needs the same adoption, not a variant of it. [`Tun::from_fd`] adopts
+//! that fd rather than opening anything, which is the one structural way
+//! this module differs from `linux`/`macos`/`windows` — everything
+//! downstream of construction (`recv`, `send`, `mtu`, `offload`) is the same
+//! shape.
 //!
 //! # Framing differs by platform, not by choice
 //!
@@ -26,10 +32,12 @@
 //! primitive `macos::Tun` uses, obtained via the private (but stable, and
 //! used in production by `WireGuard`'s and Tailscale's own iOS apps — there is
 //! no public API for it) `socket.fileDescriptor` key-value lookup on
-//! `NEPacketTunnelProvider.packetFlow`. It therefore carries the identical
-//! four-byte address-family prefix on every frame, so this module reuses
-//! [`crate::macos_wire`] verbatim rather than re-deriving it — that module
-//! compiles everywhere for exactly this reason.
+//! `NEPacketTunnelProvider.packetFlow`. **A macOS system extension's
+//! `packetFlow` is the same API over the same kernel primitive**, so it
+//! carries the identical four-byte address-family prefix and reuses the
+//! same `impl Tun` block as iOS, not a third one. This module reuses
+//! [`crate::macos_wire`] verbatim rather than re-deriving that framing —
+//! that module compiles everywhere for exactly this reason.
 //!
 //! # Ownership
 //!
@@ -58,12 +66,12 @@
 #![allow(unsafe_code)]
 
 use std::fs::File;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use std::io::{IoSlice, IoSliceMut};
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 use crate::macos_wire::{af_header, family_agrees, AF_HEADER_LEN};
 use crate::{encode_name, validate_mtu, TunConfig, TunError};
 
@@ -81,13 +89,14 @@ pub struct Tun {
 impl Tun {
     /// Adopt a tunnel file descriptor the platform side already created.
     ///
-    /// **This creates nothing.** `fd` must already be a live tunnel: iOS's
-    /// `NEPacketTunnelProvider.packetFlow` socket, or the descriptor
-    /// `ParcelFileDescriptor.detachFd()` returned from a completed
-    /// `VpnService.Builder.establish()`. `cfg.name` is not the interface's
-    /// real name — the platform chose that before this call and does not
-    /// expose it here — it only satisfies [`Tun::name`]'s contract with the
-    /// rest of the datapath, which reads it for logging, not for identity.
+    /// **This creates nothing.** `fd` must already be a live tunnel: iOS's or
+    /// a macOS system extension's `NEPacketTunnelProvider.packetFlow`
+    /// socket, or the descriptor `ParcelFileDescriptor.detachFd()` returned
+    /// from a completed `VpnService.Builder.establish()`. `cfg.name` is not
+    /// the interface's real name — the platform chose that before this call
+    /// and does not expose it here — it only satisfies [`Tun::name`]'s
+    /// contract with the rest of the datapath, which reads it for logging,
+    /// not for identity.
     ///
     /// # Safety
     /// `fd` must be a valid, open file descriptor whose ownership the caller
@@ -200,13 +209,14 @@ impl Tun {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 impl Tun {
     /// Read one outbound IP packet from the host.
     ///
-    /// iOS's tunnel fd prefixes every frame with a four-byte address family,
-    /// exactly as `macos::Tun::recv` reads — see that method and
-    /// [`crate::macos_wire`] for the framing this mirrors verbatim.
+    /// iOS's and a macOS system extension's tunnel fd both prefix every
+    /// frame with a four-byte address family, exactly as `macos::Tun::recv`
+    /// reads — see that method and [`crate::macos_wire`] for the framing
+    /// this mirrors verbatim.
     ///
     /// # Errors
     /// [`TunError::BufferTooSmall`] for an undersized buffer; [`TunError::Io`]

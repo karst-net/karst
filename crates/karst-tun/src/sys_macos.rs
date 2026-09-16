@@ -28,11 +28,20 @@ use std::ffi::c_void;
 use std::io;
 use std::mem;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+// Only the `utun`-creation calls below need a descriptor at all —
+// `local_addresses`/`default_gateway` are plain `sysctl`/`getifaddrs` calls.
+#[cfg(not(feature = "network-extension"))]
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 use crate::macos_wire::{parse_default_gateway, RT_MSGHDR_LEN};
 
 /// The kernel control that vends `utun` interfaces.
+///
+/// Only [`macos::Tun::create`](crate::macos::Tun::create) asks the kernel to
+/// allocate one — the `network-extension` feature's `Tun` adopts a fd a
+/// system extension already created (`crate::mobile`), so this and the
+/// syscalls around it are unused, not merely unreachable, on that build.
+#[cfg(not(feature = "network-extension"))]
 const UTUN_CONTROL_NAME: &[u8] = b"com.apple.net.utun_control\0";
 
 /// `RT_MSGHDR_LEN` is derived by hand in `macos_wire` so that the parser can
@@ -45,6 +54,7 @@ const _: () = assert!(mem::size_of::<libc::rt_msghdr>() == RT_MSGHDR_LEN);
 ///
 /// Unlike Linux there is no device node to open: the interface *is* the
 /// socket, created by connecting this one to the `utun` kernel control.
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn utun_socket() -> io::Result<OwnedFd> {
     // SAFETY: `socket` with constant, valid arguments has no preconditions. It
     // returns -1 or an owned descriptor.
@@ -60,6 +70,7 @@ pub(crate) fn utun_socket() -> io::Result<OwnedFd> {
 /// Resolve the numeric id of the `com.apple.net.utun_control` kernel control.
 ///
 /// The id is not a constant: it is assigned at boot and has to be asked for.
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn utun_control_id(fd: BorrowedFd<'_>) -> io::Result<u32> {
     // SAFETY: `ctl_info` is POD; zeroed is a valid instance, and the only field
     // the kernel reads is written below.
@@ -97,6 +108,7 @@ pub(crate) fn utun_control_id(fd: BorrowedFd<'_>) -> io::Result<u32> {
 /// in the interface's name: unit 4 is `utun3`. **Unit 0 asks the kernel to
 /// allocate the first free one**, which is what Karst does unless the operator
 /// named a specific `utunN`.
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn utun_connect(fd: BorrowedFd<'_>, ctl_id: u32, unit: u32) -> io::Result<()> {
     let addr = libc::sockaddr_ctl {
         #[allow(clippy::cast_possible_truncation)]
@@ -133,6 +145,7 @@ pub(crate) fn utun_connect(fd: BorrowedFd<'_>, ctl_id: u32, unit: u32) -> io::Re
 /// **This is the only way to learn it.** macOS does not accept a requested
 /// name, so nothing downstream may assume the configured one; see
 /// [`crate::TunConfig::name`].
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn utun_name(fd: BorrowedFd<'_>) -> io::Result<String> {
     // `IFNAMSIZ` plus room for the NUL the kernel writes.
     let mut buf = [0u8; crate::MAX_NAME_LEN + 1];
@@ -166,6 +179,7 @@ pub(crate) fn utun_name(fd: BorrowedFd<'_>) -> io::Result<String> {
 ///
 /// Linux passes `O_NONBLOCK` when opening `/dev/net/tun`; there is no open
 /// here to pass it to, so it is set afterwards.
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn set_nonblocking(fd: BorrowedFd<'_>) -> io::Result<()> {
     // SAFETY: `fd` is open for the duration of both calls; `F_GETFL` and
     // `F_SETFL` take and return an int and touch no memory the caller owns.
@@ -182,6 +196,7 @@ pub(crate) fn set_nonblocking(fd: BorrowedFd<'_>) -> io::Result<()> {
 }
 
 /// The kernel's index for a named interface.
+#[cfg(not(feature = "network-extension"))]
 pub(crate) fn interface_index(name: &str) -> io::Result<u32> {
     let c_name = std::ffi::CString::new(name).map_err(|_| {
         io::Error::new(io::ErrorKind::InvalidInput, "interface name contains a NUL")

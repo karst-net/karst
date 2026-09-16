@@ -11,6 +11,15 @@ authors.workspace = true
 [lints]
 workspace = true
 
+# docs/adr/0026-macos-network-extension-backend.md: on target_os = "macos",
+# selects the fd-adoption `Tun` (`mobile.rs`, the same backend iOS already
+# uses) over the LaunchDaemon one (`macos.rs`) that ships by default. Inert
+# everywhere else — `mobile.rs`'s macOS-shaped `impl Tun` block is gated on
+# `all(target_os = "macos", feature = "network-extension")`, so enabling this
+# on Linux, Windows, or without `target_os = "macos"` compiles nothing new.
+[features]
+network-extension = []
+
 [dependencies]
 karst-proto.workspace = true
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }

@@ -24,8 +24,12 @@
 //! hard-coded `utun3` would pass on a bare CI runner and fail on any developer
 //! machine with a VPN already running, which is the failure mode the name
 //! audit in `plans/phase-5/06-macos-client.md` §2 exists to prevent.
+//!
+//! Skipped under `network-extension` (ADR-0026): that build's `Tun` is
+//! `mobile::Tun`, which has no `create` — it adopts a fd a system extension
+//! already made, exercised instead wherever that adoption is tested.
 
-#![cfg(target_os = "macos")]
+#![cfg(all(target_os = "macos", not(feature = "network-extension")))]
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
 use std::net::Ipv4Addr;

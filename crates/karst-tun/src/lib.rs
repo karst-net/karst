@@ -32,6 +32,18 @@
 //! on macOS the `PF_SYSTEM` socket opens and the `connect` that creates the
 //! interface is refused. Both are why [`TunError::Ioctl`] names the operation.
 //!
+//! # The `network-extension` feature
+//!
+//! On `target_os = "macos"`, this selects [`mobile::Tun`]'s fd-adoption
+//! backend — the same one iOS already uses — instead of [`macos::Tun`],
+//! which creates its own `utun` and needs root. See
+//! docs/adr/0026-macos-network-extension-backend.md: a
+//! `NEPacketTunnelProvider` system extension cannot create a tunnel
+//! interface itself any more than iOS's can, so it needs the same shape of
+//! backend, not a third one. The two are alternative builds, never both at
+//! once — enabling the feature is meaningless off macOS and does not affect
+//! the default macOS build unless passed explicitly.
+//!
 //! # Interface names
 //!
 //! [`TunConfig::name`] is a **preference**, not a request. Linux honors it;
@@ -61,8 +73,16 @@ mod linux;
 #[cfg(target_os = "linux")]
 mod sys;
 
-#[cfg(target_os = "macos")]
+// The default macOS backend — creates its own `utun`, needs root. Excluded
+// under `network-extension` (ADR-0026), which selects `mobile`'s
+// fd-adoption `Tun` instead: the two are alternative builds for the same
+// `target_os`, not simultaneous ones, so only one may define `Tun` here.
+#[cfg(all(target_os = "macos", not(feature = "network-extension")))]
 mod macos;
+// `local_addresses`/`default_gateway` below need this regardless of which
+// `Tun` backend is selected — only `macos.rs`'s own `utun`-creation calls are
+// specific to the LaunchDaemon backend, and are gated individually inside
+// this module rather than by excluding the whole thing.
 #[cfg(target_os = "macos")]
 mod sys_macos;
 // Compiled everywhere, on purpose: it holds the two macOS byte formats that
@@ -75,14 +95,27 @@ mod sys_windows;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+// ADR-0026: a macOS System Extension's `packetFlow` fd is reached the same
+// private-KVC way iOS's is, over the same kernel primitive (`utun`) —
+// `mobile`'s iOS `impl Tun` block already covers the framing this needs, so
+// `network-extension` widens this module's reach rather than adding a
+// second implementation of it.
+#[cfg(any(
+    target_os = "ios",
+    target_os = "android",
+    all(target_os = "macos", feature = "network-extension")
+))]
 mod mobile;
 
 #[cfg(target_os = "linux")]
 pub use linux::Tun;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "network-extension")))]
 pub use macos::Tun;
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(
+    target_os = "ios",
+    target_os = "android",
+    all(target_os = "macos", feature = "network-extension")
+))]
 pub use mobile::Tun;
 pub use userspace::{TcpHandle, UdpHandle, Userspace};
 #[cfg(target_os = "windows")]
