@@ -96,6 +96,9 @@ the **same JSON body `Command::StatusJson` already produces**
    gains an `NETunnelProviderManager`-saving path, or enrollment becomes a
    distinct step from "create the VPN configuration," is genuinely open and
    is the next design question once this one is settled — not decided here.
+   **Decided in ADR-0028**: the same `sendProviderMessage` channel carries the
+   enrollment invitation too, and the extension — never the host app — is
+   what turns it into a stored identity.
 
 ### Alternatives rejected
 
