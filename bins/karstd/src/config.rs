@@ -233,6 +233,13 @@ pub enum HostIntegration {
     /// posture as `Macos` above, and refused at startup off Windows for the
     /// identical reason: the registry keys it writes would change nothing.
     Nrpt,
+    /// macOS's `NetworkExtension` backend: `NEDNSSettings`, applied by the
+    /// embedding `PacketTunnelProvider`'s `setTunnelNetworkSettings` call,
+    /// not by this process writing `/etc/resolver` files —
+    /// docs/adr/0026-macos-network-extension-backend.md item 4. Same
+    /// portability-by-name posture as `Macos`/`Nrpt`, and refused at startup
+    /// off macOS for the identical reason.
+    NetworkExtension,
     None,
 }
 

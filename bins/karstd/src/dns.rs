@@ -49,6 +49,22 @@ pub enum HostRuntime {
         /// once-per-daemon warning applies here.
         announced_search_gap: bool,
     },
+    /// macOS's NetworkExtension backend. `NEDNSSettings` — not resolver
+    /// files or `scutil` — is what actually applies these, installed by the
+    /// embedding `PacketTunnelProvider`'s `setTunnelNetworkSettings` call
+    /// (docs/adr/0026-macos-network-extension-backend.md item 4), the same
+    /// way item 3 already gives `NEPacketTunnelNetworkSettings` addressing
+    /// and routing instead of this process's own `ifconfig`/`route`
+    /// shell-out. This variant carries no host handle and does nothing on
+    /// apply/revert/observe: a sandboxed system extension has neither
+    /// `/etc/resolver` to write nor permission to write it, so pretending
+    /// otherwise here would be the same invented-success
+    /// `karst_dns::host::macos` already refuses to ship. The DNS state the
+    /// extension needs already lives in `config.netmap_dns`, which
+    /// `status_json` (`run.rs`) already exposes for its own
+    /// `setTunnelNetworkSettings` call to read. Compiled on every platform,
+    /// like `Macos` above, so a non-macOS build still type-checks this path.
+    NetworkExtension,
 }
 
 /// What a mechanism does with the netmap's search domains.
@@ -160,6 +176,20 @@ impl HostRuntime {
             HostIntegration::Nrpt => {
                 Err("dns.host_integration = \"nrpt\" is the Windows NRPT (Name \
                      Resolution Policy Table) mechanism and only Windows reads it"
+                    .to_owned())
+            }
+            // No host handle to construct — see `Self::NetworkExtension`'s
+            // doc comment on why apply/revert/observe are all no-ops here.
+            #[cfg(target_os = "macos")]
+            HostIntegration::NetworkExtension => Ok(Self::NetworkExtension),
+            // Refused off macOS for the same reason `Macos` and `Nrpt` are
+            // refused off their own platforms: selectable by name anywhere
+            // for a portable config, but this mechanism changes nothing on a
+            // platform with no NetworkExtension framework to apply it.
+            #[cfg(not(target_os = "macos"))]
+            HostIntegration::NetworkExtension => {
+                Err("dns.host_integration = \"network-extension\" is macOS's \
+                     NetworkExtension/NEDNSSettings mechanism and only macOS has it"
                     .to_owned())
             }
             // macOS: `/etc/resolver` files, which make every mesh name resolve
@@ -280,6 +310,10 @@ impl HostRuntime {
                 warn_flush_error("NRPT rules", host.flush_error());
                 Ok(())
             }
+            // `setTunnelNetworkSettings` applies and reverts this, driven by
+            // the extension's own `startTunnel`/`stopTunnel`, not by a
+            // netmap poll here — see the variant's doc comment.
+            Self::NetworkExtension => Ok(()),
         }
     }
 
@@ -296,6 +330,9 @@ impl HostRuntime {
             Self::Macos(host) => host.revert().map_err(|error| error.to_string()),
             #[cfg(windows)]
             Self::Nrpt { host, .. } => host.revert().map_err(|error| error.to_string()),
+            // Tunnel teardown reverts `NEDNSSettings` on its own; there is no
+            // separate host record for this process to revert.
+            Self::NetworkExtension => Ok(()),
         }
     }
 
@@ -354,6 +391,12 @@ impl HostRuntime {
                     }
                 })
                 .map_err(|error| error.to_string()),
+            // Honest about the gap rather than guessing: this process never
+            // applies `NEDNSSettings` and has no API to read back what the
+            // extension's own `setTunnelNetworkSettings` call did with it.
+            Self::NetworkExtension => {
+                Ok("not observable from karstd; applied via NEDNSSettings by the host extension")
+            }
         }
     }
 
@@ -367,6 +410,7 @@ impl HostRuntime {
             Self::Macos(_) => "/etc/resolver",
             #[cfg(windows)]
             Self::Nrpt { .. } => "NRPT",
+            Self::NetworkExtension => "NEDNSSettings",
         }
     }
 
@@ -378,9 +422,15 @@ impl HostRuntime {
             // `resolved` sets them as link search domains, NetworkManager as
             // the connection's `dns-search`, and the `resolv.conf` controller
             // writes them to the `search` line. All three qualify a bare name.
-            Self::Resolved(_) | Self::NetworkManager(_) | Self::ResolvConf(_) => {
-                SearchList::Applied
-            }
+            // `NEDNSSettings.searchDomains` is the same kind of first-class
+            // field — unlike `/etc/resolver`'s per-domain files, it needs no
+            // `scutil` workaround to qualify a bare name — so it belongs in
+            // this structural group rather than with `Macos`'s
+            // live-success-dependent case below.
+            Self::Resolved(_)
+            | Self::NetworkManager(_)
+            | Self::ResolvConf(_)
+            | Self::NetworkExtension => SearchList::Applied,
             // Reflects whether the last `scutil` write actually succeeded —
             // see `karst_dns::host::Macos::search_list_applied`.
             Self::Macos(host) if host.search_list_applied() => SearchList::Applied,
@@ -457,7 +507,12 @@ pub fn revert_host(settings: &crate::config::DnsSettings, interface: &str) -> Re
         .join(interface)
         .exists();
     match settings.host_integration {
-        HostIntegration::None => Ok(()),
+        // `NetworkExtension` joins `None` here, not because it is unselected
+        // the way `None` is, but because it never writes host state either:
+        // this process's own `stopTunnel` already reverts `NEDNSSettings`
+        // when the tunnel goes down, leaving nothing for a separate `karst
+        // dns revert` invocation to undo.
+        HostIntegration::None | HostIntegration::NetworkExtension => Ok(()),
         // The opposite case to the link-scoped one below, and the reason it is
         // named rather than left to fall through: `/etc/resolver` files and
         // NRPT rules are not attached to the interface and outlive it, which
@@ -1042,6 +1097,67 @@ mod tests {
             }
             .mechanism(),
             "NRPT"
+        );
+        assert_eq!(HostRuntime::NetworkExtension.mechanism(), "NEDNSSettings");
+    }
+
+    /// `NEDNSSettings` supports a first-class search-domain list, unlike
+    /// `/etc/resolver`'s per-domain files or the NRPT — so, unlike those two,
+    /// it belongs in the "applied" group, and it does so unconditionally
+    /// rather than depending on a live host write the way `Macos` does.
+    #[test]
+    fn network_extension_reports_its_search_list_as_applied_unconditionally() {
+        assert_eq!(
+            HostRuntime::NetworkExtension.search_list(),
+            SearchList::Applied
+        );
+    }
+
+    /// Revert/observe are no-ops: the extension's own
+    /// `setTunnelNetworkSettings`/`stopTunnel` own this state, not `karstd`.
+    /// (`update` takes a full `crate::config::Config`, exercised instead by
+    /// `revert_host`'s and `HostRuntime::new`'s own tests above, which don't
+    /// need one.)
+    #[test]
+    fn network_extension_revert_and_observe_are_no_ops() {
+        let mut host = HostRuntime::NetworkExtension;
+        assert!(host
+            .observe()
+            .expect("no-op observe")
+            .contains("NEDNSSettings"));
+        host.shutdown().expect("no-op shutdown");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn network_extension_is_selectable_by_name_on_macos() {
+        let settings = crate::config::DnsSettings {
+            host_integration: crate::config::HostIntegration::NetworkExtension,
+            ..crate::config::DnsSettings::default()
+        };
+        let host = HostRuntime::new(&settings, None, "utun9").expect("selectable mechanism");
+        assert_eq!(host.mechanism(), "NEDNSSettings");
+    }
+
+    /// Selectable by name on any host so a config is portable and a mistake
+    /// is diagnosable, and refused at startup off macOS, where there is no
+    /// NetworkExtension framework to apply it — the same posture
+    /// `the_resolver_directory_mechanism_is_refused_off_macos` and
+    /// `the_nrpt_mechanism_is_refused_off_windows` already hold their own
+    /// mechanisms to.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_network_extension_mechanism_is_refused_off_macos() {
+        let settings = crate::config::DnsSettings {
+            host_integration: crate::config::HostIntegration::NetworkExtension,
+            ..crate::config::DnsSettings::default()
+        };
+        let error = HostRuntime::new(&settings, None, "karst0")
+            .expect_err("NetworkExtension is not a mechanism on this platform");
+        assert!(error.contains("network-extension"), "{error}");
+        assert!(
+            revert_host(&settings, "karst0").is_ok(),
+            "reverting a never-applied mechanism is a no-op, not an error"
         );
     }
 
