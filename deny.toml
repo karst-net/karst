@@ -16,6 +16,15 @@ allow = [
     # Added deliberately rather than discovered: a new license in the tree is a
     # decision, and this list is where the decision is recorded.
     "0BSD",
+    # MPL-2.0 reaches the tree through `uniffi` (`crates/karst-ffi`,
+    # ADR-0029) — the mobile/macOS-NetworkExtension FFI boundary named in
+    # ADR-0022. It is file-level copyleft: it obligates source availability
+    # for modifications to MPL-covered files themselves, not for code that
+    # links against them or for the application as a whole, so it imposes no
+    # obligation on `karst-ffi`'s own MIT/Apache-2.0 code or on anyone
+    # shipping `Karst.app`. See ADR-0029's Context for why this is a
+    # deliberate inclusion, not an oversight.
+    "MPL-2.0",
 ]
 confidence-threshold = 0.93
 

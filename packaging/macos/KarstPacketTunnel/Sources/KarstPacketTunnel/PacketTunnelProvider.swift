@@ -95,16 +95,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(Self.errorResponse("enroll message carried no invitation"))
                 return
             }
-            // TODO(karst-ffi): call `enrollment::enroll_invitation`'s
-            // existing Rust logic in-process
-            // (docs/adr/0028-macos-network-extension-enrollment.md item 3),
-            // write the resulting identity to `Self.identityPath`, and
-            // report success. `invitation` is intentionally unused past this
-            // guard — see the type's own doc comment on not inventing what
-            // this build cannot yet do.
+            // TODO(karst-ffi): call `crates/karst-ffi`'s `enroll_invitation`
+            // (ADR-0029), write the resulting identity to `Self.identityPath`,
+            // and report success. That crate exists now and wraps
+            // `enrollment::enroll_invitation`'s existing Rust logic verbatim
+            // (docs/adr/0028-macos-network-extension-enrollment.md item 3) —
+            // what is still missing is the packaging half (ADR-0026 item 7):
+            // this target has no Swift Package/xcframework dependency on the
+            // compiled `karst_ffi` library yet, so there is nothing to import
+            // and call. `invitation` is intentionally unused past this guard
+            // — see the type's own doc comment on not inventing what this
+            // build cannot yet do.
             _ = invitation
             completionHandler(Self.errorResponse(
-                "karst NetworkExtension enrollment is not yet linked into this extension — see docs/adr/0028-macos-network-extension-enrollment.md"
+                "karst NetworkExtension enrollment is not yet linked into this extension — see crates/karst-ffi and docs/adr/0029-ffi-boundary-uniffi.md"
             ))
         default:
             completionHandler(Self.errorResponse("unknown app message verb \(verb)"))

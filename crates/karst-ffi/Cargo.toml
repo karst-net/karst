@@ -1,0 +1,43 @@
+[package]
+name = "karst-ffi"
+description = "UniFFI-bound boundary for the mobile and macOS NetworkExtension clients (ADR-0022, ADR-0029)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# `cdylib`/`staticlib` are what Swift and Kotlin actually link against;
+# `lib` (rlib) is what `cargo test` and any future in-workspace consumer use.
+# ADR-0029.
+[lib]
+name = "karst_ffi"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[lints]
+workspace = true
+
+[features]
+# Forwards to `uniffi`'s own `cli` feature so `required-features` below can
+# name it — `required-features` only resolves the package's own feature
+# names, not a dependency's feature path directly.
+cli = ["uniffi/cli"]
+
+[[bin]]
+# Regenerates Swift/Kotlin bindings from the compiled library — UniFFI's
+# "library mode" workflow, needing no `.udl` to stay in sync. See
+# ADR-0029 item 4 for the invocation.
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["cli"]
+
+[dependencies]
+karstd.workspace = true
+thiserror = "2"
+uniffi = "0.29"
+
+[dev-dependencies]
+base64ct = { version = "1", features = ["alloc"] }
+serde_json = "1"
