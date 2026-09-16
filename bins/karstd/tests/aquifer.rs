@@ -2427,6 +2427,38 @@ fn field(status: &str, key: &str) -> Option<String> {
         })
 }
 
+/// [`field`], scoped to the `[[route]]` block whose own `route_id` matches —
+/// for a status with more than one route present, where `field`'s
+/// first-match-in-the-whole-text search would silently read whichever
+/// route happens to be listed first rather than the one a caller actually
+/// asked about. `route_changes_converge_through_push_not_restart` never
+/// needed this because it never has more than one route active at a time.
+fn route_field(status: &str, route_id: &str, key: &str) -> Option<String> {
+    let lines: Vec<&str> = status.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i] != "[[route]]" {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while end < lines.len() && !lines[end].starts_with('[') {
+            end += 1;
+        }
+        let block = &lines[start..end];
+        if block.contains(&format!("route_id = {route_id:?}").as_str()) {
+            for l in block {
+                if let Some(value) = l.strip_prefix(&format!("{key} = ")) {
+                    return Some(value.trim_matches('"').to_owned());
+                }
+            }
+        }
+        i = end;
+    }
+    None
+}
+
 // ── the test ────────────────────────────────────────────────────────────────
 
 /// **The Phase 4 deliverable, end to end.**
@@ -5014,6 +5046,183 @@ fn route_changes_converge_through_push_not_restart() {
          ── node B ──\n{}",
         status(&net, "b", NS_B)
     );
+}
+
+/// **GitHub issue #155**: overlapping, rapid-fire pushes with no peer-list
+/// churn, against a control server kept busy with unrelated route traffic —
+/// the exact condition the issue's live trials hit (three genuinely distinct
+/// policy writes to an already-connected, already-synced node; total
+/// client-side silence on two of the three), and specifically the condition
+/// neither `route_changes_converge_through_push_not_restart` (one write,
+/// full convergence wait, then the next write) nor the diagnostic session's
+/// own `aquifer.rs` runs exercised — every push in those rows was isolated
+/// and converged in single-digit milliseconds. The issue names this
+/// directly: "notification-channel delivery timing under concurrent/
+/// rapid-fire conditions... is a notification ever silently dropped or
+/// coalesced away before a slow-to-drain stream picks it up?"
+///
+/// Each round fires a burst of concurrent, in-flight-overlapping route
+/// updates for the *same* `route_id` (so the server's `notify` fans out many
+/// times in close succession, same peer set throughout — no peer connects or
+/// disconnects, matching the live trials), interleaved with unrelated
+/// `"noise"` route writes racing them for the same lock and the same
+/// `PeersUpdateManager`, then a background thread hammering the control
+/// server with more unrelated writes for the round's whole duration — the
+/// "busier control-plane thread" half of the issue's own suggested
+/// reproduction conditions. Because concurrent completion order for the
+/// burst's own writes is not guaranteed, the round closes with one more
+/// *synchronous* write (issued only after every burst request has been
+/// spawned and joined, so it is strictly last into the server's single
+/// mutex) to a known sentinel metric — that is the value
+/// [`assert_push_converges`] checks node B against, so this row stays
+/// deterministic despite the deliberate chaos leading up to it.
+#[test]
+#[ignore = "needs root, network namespaces and a Go toolchain"]
+fn overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state() {
+    const ROUNDS: u32 = 10;
+    const BURST_WIDTH: u32 = 10;
+
+    if !have_prerequisites() {
+        return;
+    }
+    let (net, _pins, _ca) = start_routing_topology("burst");
+
+    let gateway_ip = overlay_peer_address(&net, "b", NS_B);
+    let gateway_handle = fixture_handle_for(&gateway_ip);
+
+    let stop_noise = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let noise_thread = {
+        let stop_noise = stop_noise.clone();
+        let gateway_handle = gateway_handle.clone();
+        std::thread::spawn(move || {
+            let mut metric = 100_u32;
+            // A tight loop of unrelated route writes, for the round loop's
+            // whole duration below — every one of these also calls
+            // `memoryAccount.notify` and so also calls `SendNotification`/
+            // `SendUpdate` for node B, exactly like the writes under test,
+            // which is the point: this is what makes the control server's
+            // dispatch path "busy" rather than idle between the writes this
+            // row actually checks.
+            while !stop_noise.load(std::sync::atomic::Ordering::Relaxed) {
+                // Routes accept metrics 1..=9999 (`server/route/route.go`'s
+                // `MinMetric`/`MaxMetric`) — wrap inside that range rather
+                // than incrementing without bound, which the first version
+                // of this row did not do and so failed every node sync with
+                // "invalid metric" once the counter walked past 9999,
+                // masking the row's actual point behind an unrelated error.
+                metric = 100 + (metric + 1 - 100) % 9800;
+                fixture_create_route(&RouteOfferBody {
+                    route_id: "background-noise",
+                    prefix: "203.0.113.0/24",
+                    gateway_handle: &gateway_handle,
+                    metric,
+                    masquerade: true,
+                    keep_route: false,
+                    enabled: None,
+                });
+            }
+        })
+    };
+
+    for round in 0..ROUNDS {
+        let mut children = Vec::new();
+        for step in 0..BURST_WIDTH {
+            let metric = 200 + round * BURST_WIDTH + step;
+            children.push(fixture_create_route_spawn(&RouteOfferBody {
+                route_id: "dest-lan",
+                prefix: DEST_PREFIX,
+                gateway_handle: &gateway_handle,
+                metric,
+                masquerade: true,
+                keep_route: false,
+                enabled: None,
+            }));
+            children.push(fixture_create_route_spawn(&RouteOfferBody {
+                route_id: "concurrent-noise",
+                prefix: "198.51.100.0/24",
+                gateway_handle: &gateway_handle,
+                metric: 200 + step,
+                masquerade: true,
+                keep_route: false,
+                enabled: None,
+            }));
+        }
+        for mut child in children {
+            let _ = child.wait();
+        }
+
+        // The barrier write: synchronous, issued only after every concurrent
+        // request above has been both spawned and joined, so it is strictly
+        // the last "dest-lan" upsert into the server's route map regardless
+        // of how the concurrent ones above actually interleaved.
+        let sentinel_metric = 900 + round;
+        assert!(
+            fixture_create_route(&RouteOfferBody {
+                route_id: "dest-lan",
+                prefix: DEST_PREFIX,
+                gateway_handle: &gateway_handle,
+                metric: sentinel_metric,
+                masquerade: true,
+                keep_route: false,
+                enabled: None,
+            }),
+            "round {round}: the fixture rejected the barrier route write"
+        );
+        assert_push_converges(
+            &net,
+            &format!("round {round}'s post-burst barrier write"),
+            || {
+                route_field(&status(&net, "b", NS_B), "dest-lan", "metric").as_deref()
+                    == Some(sentinel_metric.to_string()).as_deref()
+            },
+        );
+    }
+
+    stop_noise.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = noise_thread.join();
+}
+
+/// Like [`fixture_create_route`], but returns as soon as the request is
+/// in flight instead of waiting for it — so a caller can fire several at
+/// once and let them race each other and the control server's own
+/// dispatch, rather than serializing them the way waiting on each `curl`
+/// in turn would.
+fn fixture_create_route_spawn(body: &RouteOfferBody<'_>) -> Child {
+    let enabled_field = match body.enabled {
+        Some(value) => format!(",\"enabled\":{value}"),
+        None => String::new(),
+    };
+    let payload = format!(
+        "{{\"route_id\":{:?},\"prefix\":{:?},\"gateway_handle\":{:?},\
+         \"metric\":{},\"masquerade\":{},\"keep_route\":{}{enabled_field}}}",
+        body.route_id,
+        body.prefix,
+        body.gateway_handle,
+        body.metric,
+        body.masquerade,
+        body.keep_route,
+    );
+    Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            NS_PUB,
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-X",
+            "POST",
+            "-H",
+            "content-type: application/json",
+            "-d",
+            &payload,
+            &format!("http://{IP_PUB}:{CONTROL_PORT}/routes"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn curl")
 }
 
 /// Poll `predicate` until it holds, failing unless it does so within
