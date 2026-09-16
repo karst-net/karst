@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Template, unused by any signing step today — ADR-0026 item 1's entitlement
+  application is the actual prerequisite for this ever mattering, and item 7
+  is where it gets wired into a real `codesign` invocation. Recorded now so
+  the shape is not invented later under time pressure.
+
+  `packet-tunnel-provider-systemextension`, not the plain
+  `packet-tunnel-provider` value: the array value naming applies specifically
+  to a Developer ID-signed System Extension, which is
+  docs/adr/0026-macos-network-extension-backend.md's own choice over an app
+  extension — see that ADR's Decision item 5.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>packet-tunnel-provider-systemextension</string>
+    </array>
+</dict>
+</plist>

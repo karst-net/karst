@@ -1,0 +1,34 @@
+name: macOS packet tunnel extension (Swift)
+
+# Ad hoc build check for packaging/macos/KarstPacketTunnel —
+# docs/adr/0026-macos-network-extension-backend.md,
+# docs/adr/0027-macos-system-extension-host-app-ipc.md,
+# docs/adr/0028-macos-network-extension-enrollment.md. Same reasoning as
+# .github/workflows/macos-status-swift-build.yml, which this mirrors: that
+# package was written on a Linux machine with no Xcode/NetworkExtension SDK
+# available to verify it against, and this is the fastest way to find out
+# whether it actually compiles, without waiting on a Mac. Its own workflow
+# for the same reason the status app has one — no Rust, no Go, nothing else
+# in ci.yml, so running it costs nothing beyond itself.
+#
+# Not a merge gate. Whether this becomes part of the permanent `macos` CI job
+# is a decision for whoever picks packaging (ADR-0026 item 7) back up, not
+# made here by adding a job nobody asked to be a gate yet.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packaging/macos/KarstPacketTunnel/**'
+      - '.github/workflows/macos-packettunnel-swift-build.yml'
+
+jobs:
+  build:
+    name: swift build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build
+        working-directory: packaging/macos/KarstPacketTunnel

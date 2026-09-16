@@ -122,4 +122,73 @@ enum StatusParser {
         closeCurrentPeer()
         return status
     }
+
+    /// As `parse(_:)`, for `karst status --json`'s body
+    /// (`ipc::Command::StatusJson`, `run.rs`'s `status_json`) instead of the
+    /// TOML-ish text form — docs/adr/0027-macos-system-extension-host-app-ipc.md,
+    /// which is why this exists at all: the NetworkExtension build's
+    /// `handleAppMessage` answers with this JSON body, not the text one, so
+    /// `NetworkExtensionStatusClient` needs a parser for it. Deliberately
+    /// produces the *same* `DaemonStatus`/`PeerStatus` this file already
+    /// has, so `AppDelegate`'s rendering code does not need to know which
+    /// transport supplied the value — only `NetworkExtensionStatusClient`
+    /// versus `StatusClient` differ.
+    ///
+    /// **Unverified beyond visual review against the Rust `Serialize` impl
+    /// (`bins/karstd/src/run.rs`'s `StatusJson`/`PeerJson` structs) — there is
+    /// no NetworkExtension build to run this against yet.** Same posture
+    /// this package's Swift shipped under originally
+    /// (plans/phase-6/13-macos-status-indicators.md): reviewed line by line,
+    /// not run.
+    static func parseJSON(_ text: String) -> DaemonStatus {
+        var status = DaemonStatus()
+        guard
+            let data = text.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            status.refusal = "malformed status-json reply: not a JSON object"
+            return status
+        }
+
+        // `status_json`'s own fallback path emits `{"error": "..."}` on a
+        // `Serialize` failure; the unprivileged status socket's refusal for
+        // any command but `status`/`status-json` is the same shape in
+        // spirit as the text form's `error = "..."` line — one field to
+        // check either way.
+        if let error = object["error"] as? String {
+            status.refusal = error
+            return status
+        }
+
+        status.interface = object["interface"] as? String ?? ""
+        status.mtu = object["mtu"] as? Int ?? 0
+
+        for case let peerObject as [String: Any] in object["peers"] as? [Any] ?? [] {
+            var peer = PeerStatus()
+            peer.name = peerObject["name"] as? String ?? ""
+            peer.hint = peerObject["hint"] as? String ?? ""
+            peer.endpoint = peerObject["endpoint"] as? String ?? "-"
+            peer.pskFallback = peerObject["psk_fallback"] as? Bool ?? false
+            peer.transport = peerObject["transport"] as? String ?? "none"
+            // JSON numbers decode as `NSNumber` through `Any`; `uint64Value`
+            // rather than `as? UInt64`, which fails on every plain JSON
+            // integer literal because `JSONSerialization` never hands back
+            // that exact Swift type.
+            peer.txBytes = (peerObject["tx_bytes"] as? NSNumber)?.uint64Value ?? 0
+            peer.rxBytes = (peerObject["rx_bytes"] as? NSNumber)?.uint64Value ?? 0
+
+            // `status_json`'s `PeerJson` carries `established`/`rekeying`
+            // booleans rather than the text form's pre-rendered `state`
+            // string — rebuilt here to the identical three values `run.rs`'s
+            // `report` writes, so `AppDelegate`'s `stateSymbolName(for:)`
+            // (which matches on `state.hasPrefix("established")`) needs no
+            // changes to read either transport's result.
+            let established = peerObject["established"] as? Bool ?? false
+            let rekeying = peerObject["rekeying"] as? Bool ?? false
+            peer.state = !established ? "connecting" : (rekeying ? "established (rekeying)" : "established")
+
+            status.peers.append(peer)
+        }
+        return status
+    }
 }

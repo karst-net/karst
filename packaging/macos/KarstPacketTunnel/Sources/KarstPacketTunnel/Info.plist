@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Template. Nothing copies this into a real system-extension bundle yet —
+  packaging/macos/KarstStatus/Info.plist's own comment describes the pattern
+  (scripts/build-macos-pkg.sh copying a template and patching version keys
+  with `plutil -replace`) this file expects to follow once ADR-0026 item 7's
+  packaging work picks this up. `0.0.0` here is a placeholder for the same
+  reason it is in that file.
+
+  `NSExtensionPrincipalClass` names the class directly
+  (`KarstPacketTunnel.PacketTunnelProvider`) rather than the
+  `$(PRODUCT_MODULE_NAME)` substitution Xcode's own Network Extension
+  template uses, because nothing here builds through Xcode — this package
+  builds with plain `swift build`, the same as KarstStatus, so there is no
+  build system to perform that substitution.
+
+  `CFBundlePackageType` = `SYSX` for a System Extension bundle (as opposed to
+  an app extension's `.appex`, `XPC!`) is the one detail in this file taken
+  from secondary sources rather than an Apple documentation page found
+  directly during this session's research — flagged here rather than stated
+  with the same confidence as the rest.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>KarstPacketTunnel</string>
+    <key>CFBundleDisplayName</key>
+    <string>Karst Network Extension</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.karst.packettunnel</string>
+    <key>CFBundleExecutable</key>
+    <string>KarstPacketTunnel</string>
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright the Karst contributors. MIT OR Apache-2.0.</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.networkextension.packet-tunnel</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>KarstPacketTunnel.PacketTunnelProvider</string>
+    </dict>
+</dict>
+</plist>
