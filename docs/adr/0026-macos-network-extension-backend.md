@@ -108,8 +108,10 @@ step actually gated on Apple's queue is treated as gating:
    the way the LaunchDaemon already does, which is also the pasted
    suggestion's own reasoning and the right one. The host-app-to-extension IPC
    needs its own design: today's plain Unix status socket pattern does not
-   carry over unmodified into a sandboxed extension. Scope that as its own
-   follow-up rather than assuming `StatusClient.swift` ports as-is.
+   carry over unmodified into a sandboxed extension. **Decided in
+   ADR-0027**: `NETunnelProviderSession.sendProviderMessage`, carrying the
+   same JSON `status_json()` already produces — that ADR also names what it
+   does *not* settle (enrollment, and the DNS variant's outbound direction).
 6. **Add `karst status --json` (and consider `karst health`) to `karstd`'s IPC
    surface now, independent of the rest of this ADR.** It is the correct
    primitive for the Jamf health-check half of the pasted suggestion, which
