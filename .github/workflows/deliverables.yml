@@ -1079,9 +1079,34 @@ jobs:
           # it does needs one), and `gh` otherwise shells out to `git` to
           # infer the repository, which fails with "not a git repository"
           # against a bare artifact-only workspace.
-          gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$tag" \
-            --generate-notes \
-            "${prerelease[@]}" \
-            "${files[@]}"
+          #
+          # `gh release create` refuses outright if a release for this tag
+          # already exists — v0.1.0-rc.19 hit exactly this, from a release
+          # someone had created by hand for the tag before this job got to
+          # run. That is not this job's only way to get a pre-existing
+          # release: a prior attempt of this same step can also have created
+          # one and then failed partway through uploading assets. Either way,
+          # erroring out here leaves a tag that is already public with none
+          # of its signed artefacts attached, which is a worse outcome than
+          # converging on the existing release — so detect it and fall back
+          # to editing it and uploading (clobbering any stale asset of the
+          # same name) instead of failing.
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_prerelease=false
+            if [[ "$tag" == *-* ]]; then is_prerelease=true; fi
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" \
+              --prerelease="$is_prerelease"
+            gh release upload "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber \
+              "${files[@]}"
+          else
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" \
+              --generate-notes \
+              "${prerelease[@]}" \
+              "${files[@]}"
+          fi
