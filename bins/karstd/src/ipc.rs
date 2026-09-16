@@ -130,6 +130,11 @@ pub const DEFAULT_STATUS_SOCKET: &str = r"\\.\pipe\karst-status\karstd";
 pub enum Command {
     /// Report interface, MTU, listen address, and per-peer state.
     Status,
+    /// As [`Self::Status`], as a JSON object instead of TOML-ish text — for a
+    /// script (an MDM health check, docs/adr/0026-macos-network-extension-backend.md
+    /// item 6) to assert on fields rather than pattern-match lines out of a
+    /// format this crate makes no promise not to reword.
+    StatusJson,
     /// Ask the daemon to shut down.
     Down,
     /// Report the daemon's version.
@@ -164,6 +169,7 @@ impl Command {
         let line = line.trim();
         match line {
             "status" => Some(Self::Status),
+            "status-json" => Some(Self::StatusJson),
             "down" => Some(Self::Down),
             "version" => Some(Self::Version),
             "bugreport" => Some(Self::BugReport),
@@ -188,6 +194,7 @@ impl Command {
     pub fn as_str(&self) -> String {
         match self {
             Self::Status => "status".to_owned(),
+            Self::StatusJson => "status-json".to_owned(),
             Self::Down => "down".to_owned(),
             Self::Version => "version".to_owned(),
             Self::BugReport => "bugreport".to_owned(),
@@ -408,6 +415,7 @@ mod tests {
     fn commands_round_trip_through_their_wire_form() {
         for c in [
             Command::Status,
+            Command::StatusJson,
             Command::Down,
             Command::Version,
             Command::BugReport,

@@ -22,6 +22,8 @@ USAGE:
     karst enroll --bundle FILE  enroll using a trusted bundle (run with sudo)
       [--config PATH] [--state-dir PATH]  absolute paths for custom installations
     karst status     peers, session state, tunnel MTU
+    karst status --json  the same, as a JSON object for scripts (MDM health
+                         checks) instead of people
     karst dns status KarstDNS listener, host integration, and routes
     karst dns query NAME  explain the resolver path for NAME
     karst dns revert restore the host's DNS configuration and exit
@@ -112,6 +114,7 @@ fn main() -> ExitCode {
             println!("karst {}", karstd::VERSION);
             return ExitCode::SUCCESS;
         }
+        ("status", ["--json", ..]) => Command::StatusJson,
         ("status", _) => Command::Status,
         ("dns", ["status", ..]) => Command::DnsStatus,
         ("dns", ["query", name, ..]) => Command::DnsQuery((*name).to_owned()),
@@ -130,7 +133,8 @@ fn main() -> ExitCode {
 
     let command_args = match (*first, rest) {
         ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
-        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..]) => tail,
+        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..])
+        | ("status", ["--json", tail @ ..]) => tail,
         ("dns" | "exit-node", []) => &[],
         _ => rest,
     };

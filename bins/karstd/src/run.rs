@@ -800,6 +800,57 @@ pub fn run_with_control(
                                     active_exit.is_some(),
                                 );
                             }
+                            if command == ipc::Command::StatusJson {
+                                let current = engine_ctl.config();
+                                let selected = exit_node_ctl.and_then(|state| {
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                        .active()
+                                        .map(str::to_owned)
+                                });
+                                let exit_route_active = exit_policy_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
+                                let gateway_active = gateway_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .active();
+                                let gateway_error = gateway_error_ctl
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .clone();
+                                return status_json(
+                                    config,
+                                    engine_ctl,
+                                    &Attachment {
+                                        name: tun_ctl.name(),
+                                        mtu: tun_ctl.mtu(),
+                                        sockets: tun_ctl
+                                            .userspace()
+                                            .map(|stack| stack.socket_count()),
+                                        unreachable_family: socket_ctl
+                                            .is_ipv4_only()
+                                            .then(|| socket_ctl.unreachable_family()),
+                                    },
+                                    started,
+                                    &relay_dropped,
+                                    Some(portmap_state.snapshot()),
+                                    Some(ControlJson {
+                                        control_synchronized: control_synchronized_ctl
+                                            .load(Ordering::Relaxed),
+                                        control_peers: current.peers.len(),
+                                        routing: routing_json(
+                                            &current,
+                                            selected.as_deref(),
+                                            exit_route_active,
+                                            gateway_active,
+                                            gateway_error.as_deref(),
+                                        ),
+                                    }),
+                                );
+                            }
                             let mut output = report(
                                 &command,
                                 config,
@@ -910,9 +961,38 @@ pub fn run_with_control(
                         Ok((mut stream, _)) => {
                             let _ = stream.set_nonblocking(false);
                             let _ = ipc::serve(&mut stream, |command| {
-                                if command != ipc::Command::Status {
+                                if !matches!(
+                                    command,
+                                    ipc::Command::Status | ipc::Command::StatusJson
+                                ) {
                                     return "error = \"this socket serves status only\"\n"
                                         .to_owned();
+                                }
+                                if command == ipc::Command::StatusJson {
+                                    // No `control` section: this socket has
+                                    // no access to control-plane/routing
+                                    // state, only the same subset
+                                    // `Command::Status` already gives it —
+                                    // see `ipc.rs`'s module note on why it
+                                    // exists apart from the admin socket.
+                                    return status_json(
+                                        config,
+                                        engine_ctl,
+                                        &Attachment {
+                                            name: tun_ctl.name(),
+                                            mtu: tun_ctl.mtu(),
+                                            sockets: tun_ctl
+                                                .userspace()
+                                                .map(|stack| stack.socket_count()),
+                                            unreachable_family: socket_ctl
+                                                .is_ipv4_only()
+                                                .then(|| socket_ctl.unreachable_family()),
+                                        },
+                                        started,
+                                        &relay_dropped_status,
+                                        Some(portmap_state.snapshot()),
+                                        None,
+                                    );
                                 }
                                 report(
                                     &ipc::Command::Status,
@@ -3943,7 +4023,8 @@ fn report(
         | ipc::Command::ExitList
         | ipc::Command::ExitUse(_)
         | ipc::Command::ExitDisable
-        | ipc::Command::Metrics => {
+        | ipc::Command::Metrics
+        | ipc::Command::StatusJson => {
             unreachable!("handled before general report")
         }
         ipc::Command::Status => {
@@ -4126,6 +4207,304 @@ fn report(
             out
         }
     }
+}
+
+/// `Command::StatusJson`'s payload — the same facts `Command::Status` renders
+/// as TOML-ish text, structured for a script instead of a person.
+///
+/// docs/adr/0026-macos-network-extension-backend.md item 6: an MDM health
+/// check (Jamf `launchctl print` plus this) needs "control-plane: connected"
+/// and "network identity: enrolled" as fields it can assert on, not lines it
+/// has to pattern-match out of the text format — which this crate makes no
+/// promise not to reword.
+#[derive(serde::Serialize)]
+struct StatusJson {
+    interface: String,
+    mtu: usize,
+    listen: String,
+    uptime_seconds: u64,
+    addresses: Vec<String>,
+    psk_epoch: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    userspace_sockets: Option<usize>,
+    /// `Some(n)` only on an IPv4-only socket — see [`Attachment::unreachable_family`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ipv6_candidates_refused: Option<u64>,
+    portmap: PortmapJson,
+    stats: StatsJson,
+    policy: PolicyJson,
+    ssh_policy: SshPolicyJson,
+    peers: Vec<PeerJson>,
+    /// `None` on the unprivileged status socket, which serves the same
+    /// narrower subset `Command::Status` already gives it there — see
+    /// `ipc.rs`'s module note on why that socket exists at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control: Option<ControlJson>,
+}
+
+#[derive(serde::Serialize)]
+struct PortmapJson {
+    enabled: bool,
+    state: &'static str,
+    gateway: Option<String>,
+    protocol: Option<&'static str>,
+    internal: Option<String>,
+    external: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renews_in_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_in_seconds: Option<u64>,
+}
+
+#[derive(serde::Serialize)]
+struct StatsJson {
+    tx_packets: u64,
+    rx_packets: u64,
+    unroutable: u64,
+    source_violations: u64,
+    mac_failures: u64,
+    tx_dropped_no_session: u64,
+    malformed: u64,
+    decrypt_failures: u64,
+    acl_denied_in: u64,
+    acl_denied_out: u64,
+    acl_unclassifiable: u64,
+    ssh_denied: u64,
+    relay_dropped: u64,
+}
+
+/// Mirrors `report`'s `[policy]` section's three-way distinction: no ACL
+/// notion at all, versus an ACL enforcing deny-all, versus one with rules —
+/// see that section's comment for why collapsing these would hide a real
+/// difference from an operator.
+#[derive(serde::Serialize)]
+struct PolicyJson {
+    enforcing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ingress_rules: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    egress_rules: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped_peers: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+struct SshPolicyJson {
+    enforcing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rules: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+struct PeerJson {
+    name: String,
+    hint: String,
+    endpoint: Option<String>,
+    established: bool,
+    rekeying: bool,
+    allowed_ips: Vec<String>,
+    psk_fallback: bool,
+    /// `Transport`'s own `Display` — "direct" | "relay" | "turn" | "none" —
+    /// reused rather than re-matched, so a transport this struct doesn't know
+    /// about yet cannot compile without also updating this string.
+    transport: String,
+    tx_bytes: u64,
+    rx_bytes: u64,
+}
+
+/// Only present when the caller holds the control-plane state the admin
+/// socket's closure already has in scope — see [`StatusJson::control`].
+#[derive(serde::Serialize)]
+struct ControlJson {
+    control_synchronized: bool,
+    control_peers: usize,
+    routing: RoutingJson,
+}
+
+/// Mirrors `routing_report`'s `[routing]` section and its `[[route]]` rows.
+#[derive(serde::Serialize)]
+struct RoutingJson {
+    offers: usize,
+    selected_exit: Option<String>,
+    exit_route_active: bool,
+    gateway_active: bool,
+    gateway_error: Option<String>,
+    routes: Vec<RouteJson>,
+}
+
+#[derive(serde::Serialize)]
+struct RouteJson {
+    route_id: String,
+    prefix: String,
+    kind: &'static str,
+    role: &'static str,
+    metric: u32,
+    masquerade: bool,
+    keep_route: bool,
+    active: bool,
+}
+
+fn routing_json(
+    config: &Config,
+    selected_exit: Option<&str>,
+    exit_route_installed: bool,
+    gateway_active: bool,
+    gateway_error: Option<&str>,
+) -> RoutingJson {
+    let active_exit = active_exit_route(config, selected_exit, exit_route_installed);
+    let routes = config
+        .route_offers
+        .iter()
+        .map(|offer| {
+            let kind = match offer.kind {
+                crate::route_offer::Kind::Subnet => "subnet",
+                crate::route_offer::Kind::Exit => "exit",
+            };
+            let role = match offer.role {
+                crate::route_offer::Role::Recipient => "recipient",
+                crate::route_offer::Role::Gateway => "gateway",
+            };
+            let active = role == "gateway" && gateway_active
+                || kind == "exit"
+                    && role == "recipient"
+                    && active_exit == Some(offer.route_id.as_str());
+            RouteJson {
+                route_id: offer.route_id.clone(),
+                prefix: offer.prefix.to_string(),
+                kind,
+                role,
+                metric: offer.metric,
+                masquerade: offer.masquerade,
+                keep_route: offer.keep_route,
+                active,
+            }
+        })
+        .collect();
+    RoutingJson {
+        offers: config.route_offers.len(),
+        selected_exit: selected_exit.map(str::to_owned),
+        exit_route_active: active_exit.is_some(),
+        gateway_active,
+        gateway_error: gateway_error.map(str::to_owned),
+        routes,
+    }
+}
+
+/// `Command::StatusJson`'s renderer — see [`StatusJson`].
+#[allow(clippy::too_many_arguments)]
+fn status_json(
+    config: &Config,
+    engine: &Engine,
+    device: &Attachment<'_>,
+    started: Instant,
+    relay_dropped: &AtomicU64,
+    portmap: Option<portmap::Snapshot>,
+    control: Option<ControlJson>,
+) -> String {
+    let stats = engine.stats();
+    let peers = engine.status();
+    let mapping = portmap.unwrap_or_else(|| portmap::Snapshot::new(config.port_mapping));
+    let renews_in_seconds = mapping.renews_in_seconds();
+
+    let policy = match config.filter.rule_counts() {
+        None => PolicyJson {
+            enforcing: false,
+            source: Some("none (static roster)"),
+            ingress_rules: None,
+            egress_rules: None,
+            skipped_peers: None,
+        },
+        Some((inbound, outbound)) => PolicyJson {
+            enforcing: true,
+            source: None,
+            ingress_rules: Some(inbound),
+            egress_rules: Some(outbound),
+            skipped_peers: Some(config.skipped.len()),
+        },
+    };
+    let ssh_policy = match config.ssh_filter.rule_count() {
+        None => SshPolicyJson {
+            enforcing: false,
+            source: Some("none (no ssh block in policy)"),
+            rules: None,
+        },
+        Some(rules) => SshPolicyJson {
+            enforcing: true,
+            source: None,
+            rules: Some(rules),
+        },
+    };
+
+    let json = StatusJson {
+        interface: device.name.to_owned(),
+        mtu: device.mtu,
+        listen: config.listen.to_string(),
+        uptime_seconds: started.elapsed().as_secs(),
+        addresses: config.addresses.iter().map(ToString::to_string).collect(),
+        psk_epoch: config.psk_epoch,
+        userspace_sockets: device.sockets,
+        ipv6_candidates_refused: device.unreachable_family,
+        portmap: PortmapJson {
+            enabled: mapping.enabled,
+            state: mapping.state,
+            gateway: mapping.gateway.map(|a| a.to_string()),
+            protocol: mapping.protocol.map(|p| match p {
+                Protocol::NatPmp => "natpmp",
+                Protocol::Pcp => "pcp",
+            }),
+            internal: mapping.internal.map(|a| a.to_string()),
+            external: mapping.external.map(|a| a.to_string()),
+            renews_in_seconds,
+            reason: mapping.reason,
+            retry_in_seconds: mapping.retry_in.map(|d| d.as_secs()),
+        },
+        stats: StatsJson {
+            tx_packets: stats.tx_packets,
+            rx_packets: stats.rx_packets,
+            unroutable: stats.unroutable,
+            source_violations: stats.source_violations,
+            mac_failures: stats.mac_failures,
+            tx_dropped_no_session: stats.tx_dropped_no_session,
+            malformed: stats.malformed,
+            decrypt_failures: stats.decrypt_failures,
+            acl_denied_in: stats.acl_denied_in,
+            acl_denied_out: stats.acl_denied_out,
+            acl_unclassifiable: stats.acl_unclassifiable,
+            ssh_denied: stats.ssh_denied,
+            relay_dropped: relay_dropped.load(Ordering::Relaxed),
+        },
+        policy,
+        ssh_policy,
+        peers: peers
+            .into_iter()
+            .map(|p| PeerJson {
+                name: p.name,
+                hint: p.hint,
+                endpoint: p.endpoint.map(|e| e.to_string()),
+                established: p.established,
+                rekeying: p.rekeying,
+                allowed_ips: p.allowed_ips,
+                psk_fallback: p.psk_is_fallback,
+                transport: p.transport.to_string(),
+                tx_bytes: p.tx_bytes,
+                rx_bytes: p.rx_bytes,
+            })
+            .collect(),
+        control,
+    };
+
+    // `StatusJson` is all owned/plain data with no `Serialize` failure mode
+    // (no maps with non-string keys, no floats that could be NaN) — this
+    // fallback exists so a future field can't turn an IPC reply into a panic,
+    // not because one is expected today.
+    serde_json::to_string_pretty(&json)
+        .unwrap_or_else(|e| format!("{{\"error\": \"failed to render status: {e}\"}}"))
 }
 
 /// Current DNS state for `karst dns status`.
@@ -5016,7 +5395,12 @@ fn bug_report(
 
 #[cfg(test)]
 mod route_tests {
-    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing
+    )]
 
     use super::{
         dns_query_report, dns_report, routing_report, underlay_addresses, url_authority, Routes,
@@ -5322,6 +5706,79 @@ mod route_tests {
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    /// `Command::StatusJson`'s payload, structurally — the JSON counterpart
+    /// of the text-format assertions above (ADR-0026 item 6).
+    #[test]
+    fn status_json_reports_the_same_facts_as_status_text() {
+        let engine = one_peer_engine(None);
+        let cfg = config(&["100.64.0.1/16"], &[]);
+        let device = super::Attachment {
+            name: "karst0",
+            mtu: 1420,
+            sockets: None,
+            unreachable_family: None,
+        };
+
+        let text = super::status_json(
+            &cfg,
+            &engine,
+            &device,
+            std::time::Instant::now(),
+            &std::sync::atomic::AtomicU64::new(0),
+            None,
+            None,
+        );
+        let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+
+        assert_eq!(value["interface"], "karst0");
+        assert_eq!(value["mtu"], 1420);
+        assert_eq!(value["addresses"], serde_json::json!(["100.64.0.1/16"]));
+        // `config()` builds an unrestricted filter/absent ssh filter — the
+        // same "no ACL notion at all" state `[policy]`/`[ssh_policy]` report
+        // as text.
+        assert_eq!(value["policy"]["enforcing"], false);
+        assert_eq!(value["policy"]["source"], "none (static roster)");
+        assert_eq!(value["ssh_policy"]["enforcing"], false);
+        // No control state was supplied — the unprivileged status socket's
+        // own path — so the key is absent rather than null.
+        assert!(value.get("control").is_none(), "{value}");
+
+        let peers = value["peers"].as_array().expect("peers array");
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0]["established"], false);
+        assert_eq!(peers[0]["transport"], "none");
+
+        // With control-plane/routing state supplied — the admin socket's
+        // path — the same facts `routing_status_distinguishes_offered_selected_and_ready`
+        // checks in text land in the same places in JSON.
+        let mut cfg_with_offer = config(&["100.64.0.1/16"], &[]);
+        cfg_with_offer.route_offers.push(exit_offer("exit-eu"));
+        let control = super::ControlJson {
+            control_synchronized: true,
+            control_peers: 3,
+            routing: super::routing_json(&cfg_with_offer, Some("exit-eu"), true, false, None),
+        };
+        let text_with_control = super::status_json(
+            &cfg_with_offer,
+            &engine,
+            &device,
+            std::time::Instant::now(),
+            &std::sync::atomic::AtomicU64::new(0),
+            None,
+            Some(control),
+        );
+        let with_control: serde_json::Value =
+            serde_json::from_str(&text_with_control).expect("valid json");
+        assert_eq!(with_control["control"]["control_synchronized"], true);
+        assert_eq!(with_control["control"]["control_peers"], 3);
+        assert_eq!(with_control["control"]["routing"]["exit_route_active"], true);
+        let routes = with_control["control"]["routing"]["routes"]
+            .as_array()
+            .expect("routes array");
+        assert_eq!(routes[0]["route_id"], "exit-eu");
+        assert_eq!(routes[0]["active"], true);
     }
 
     /// GitHub issue #109: the wire has no way to tell "the server disabled
