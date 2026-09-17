@@ -205,11 +205,15 @@ impl NetworkDevice {
     /// is harmless: the only callers of a `Tun` arm's `Some` today
     /// (`HostRuntime::new`'s `resolved`/`network_manager` closures) are
     /// Linux-only and never reached on this build anyway.
+    // `Result` here only for signature parity with the non-`network-extension`
+    // arm below — every caller matches on `NetworkDevice::ifindex` without
+    // knowing which build it is, so the two must return the same type even
+    // though this one never actually errs.
     #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    #[allow(clippy::unnecessary_wraps)]
     fn ifindex(&self) -> Result<Option<u32>, karst_tun::TunError> {
         match self {
-            Self::Tun(_) => Ok(None),
-            Self::Userspace(_) => Ok(None),
+            Self::Tun(_) | Self::Userspace(_) => Ok(None),
         }
     }
 
