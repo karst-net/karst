@@ -103,17 +103,45 @@ impl Tun {
     /// is transferring to this `Tun`: nothing else may read it, write it,
     /// duplicate it, or close it afterward. This is the FFI boundary's own
     /// safety argument, carried across from the mobile app runtime that
-    /// obtained `fd`, which is why it cannot be checked from here.
+    /// obtained `fd` — *exclusive ownership* is a whole-program invariant no
+    /// local check can observe, which is why that half cannot be enforced
+    /// here. *Openness* is a different, narrower claim this function does
+    /// check, immediately, below: a caller that passes a closed, negative,
+    /// or otherwise never-valid `fd` gets [`TunError::Ioctl`] instead of
+    /// silently wrapping a bogus descriptor in a `File` and finding out only
+    /// on the first `recv`/`send`.
     ///
     /// # Errors
-    /// [`TunError::InvalidName`] or [`TunError::InvalidMtu`] for a
-    /// configuration that cannot work; [`TunError::Ioctl`] if
-    /// [`TunConfig::nonblocking`] was requested and the platform refuses it.
+    /// [`TunError::Ioctl`] if `fd` is not currently a valid, open descriptor,
+    /// or if [`TunConfig::nonblocking`] was requested and the platform
+    /// refuses it; [`TunError::InvalidName`] or [`TunError::InvalidMtu`] for
+    /// a configuration that cannot work.
     pub unsafe fn from_fd(fd: RawFd, cfg: &TunConfig) -> Result<Self, TunError> {
         encode_name(&cfg.name)?;
         validate_mtu(cfg.mtu)?;
 
-        // SAFETY: the caller's contract above — `fd` is ours alone from here.
+        // `F_GETFD` touches no memory and has no side effect beyond reading
+        // the close-on-exec flag — it fails with `EBADF` for exactly the
+        // fds this check exists to reject: negative, already-closed, or
+        // never opened. It cannot detect a *live* fd this caller does not
+        // actually own exclusively (a different process's socket number
+        // reused by coincidence, say) — that half of the contract is still
+        // the caller's alone, per this function's own `# Safety` section —
+        // only that `fd` is some open descriptor, not garbage.
+        //
+        // SAFETY: `fd` is read, not dereferenced or assumed to point
+        // anywhere — `fcntl(F_GETFD)` is defined for any `int` and simply
+        // reports failure for one that names nothing open.
+        if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+            return Err(TunError::Ioctl {
+                op: "fcntl(F_GETFD)",
+                source: std::io::Error::last_os_error(),
+            });
+        }
+
+        // SAFETY: the caller's contract above — `fd` is ours alone from
+        // here — and the check just above rules out the one part of it a
+        // local call can actually verify.
         let owned = unsafe { OwnedFd::from_raw_fd(fd) };
         if cfg.nonblocking {
             set_nonblocking(owned.as_raw_fd()).map_err(|source| TunError::Ioctl {
@@ -301,4 +329,77 @@ fn set_nonblocking(fd: RawFd) -> std::io::Result<()> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cannot run in this crate's own CI today — the `karst-tun mobile
+    /// targets (compile-only)` job's own name says why, and there is no
+    /// macOS runner exercising `network-extension` test binaries either —
+    /// but real coverage the moment a device, simulator, or a macOS runner
+    /// with this feature enabled does run it, rather than something that
+    /// only exists once `EngineHandle`'s own tests (issue #158/#159) reach
+    /// this deep. `/dev/null` stands in for a real tunnel descriptor here
+    /// deliberately: `from_fd`'s own `# Safety` section is explicit that
+    /// exclusive ownership can never be checked, only openness — this test
+    /// exercises exactly that narrower, real claim, nothing more.
+    #[test]
+    fn from_fd_refuses_a_closed_or_invalid_descriptor() {
+        let cfg = TunConfig {
+            name: "karsttest0".to_owned(),
+            ..TunConfig::default()
+        };
+
+        // SAFETY: `-1` names no descriptor at all — this is exactly the
+        // input `from_fd`'s new `fcntl(F_GETFD)` check exists to reject
+        // before it ever reaches `OwnedFd::from_raw_fd`.
+        let never_valid = unsafe { Tun::from_fd(-1, &cfg) };
+        assert!(
+            matches!(
+                never_valid,
+                Err(TunError::Ioctl {
+                    op: "fcntl(F_GETFD)",
+                    ..
+                })
+            ),
+            "{never_valid:?}"
+        );
+
+        // SAFETY: opened then immediately closed by this test, so the
+        // number is real but names nothing open by the time `from_fd` sees
+        // it — the other case `fcntl(F_GETFD)` must reject.
+        let raw = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(raw >= 0, "opening /dev/null for the fixture failed");
+        unsafe { libc::close(raw) };
+        let closed = unsafe { Tun::from_fd(raw, &cfg) };
+        assert!(
+            matches!(
+                closed,
+                Err(TunError::Ioctl {
+                    op: "fcntl(F_GETFD)",
+                    ..
+                })
+            ),
+            "{closed:?}"
+        );
+    }
+
+    /// The positive case: a real, currently-open descriptor is accepted,
+    /// not just the two rejection cases above.
+    #[test]
+    fn from_fd_accepts_a_genuinely_open_descriptor() {
+        let cfg = TunConfig {
+            name: "karsttest1".to_owned(),
+            ..TunConfig::default()
+        };
+        // SAFETY: freshly opened immediately above, not yet handed to
+        // anything else — this test is the fd's only owner.
+        let raw = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(raw >= 0, "opening /dev/null for the fixture failed");
+        // SAFETY: as this test's own comment above.
+        let tun = unsafe { Tun::from_fd(raw, &cfg) };
+        assert!(tun.is_ok(), "{tun:?}");
+    }
 }

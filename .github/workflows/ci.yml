@@ -147,8 +147,17 @@ jobs:
         with: { components: clippy }
       - run: rustup target add aarch64-linux-android aarch64-apple-ios
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked -p karst-tun --target aarch64-linux-android -- -D warnings
-      - run: cargo clippy --locked -p karst-tun --target aarch64-apple-ios -- -D warnings
+      # `--all-targets`, not just the lib: `mobile.rs`'s own `#[cfg(test)]`
+      # module (GitHub issue #159 — `Tun::from_fd`'s `fcntl(F_GETFD)`
+      # enforcement) is exactly what a `cfg(target_os = ...)` typo in test
+      # code would otherwise only surface on a real device for. Still
+      # compile-only: clippy type-checks and MIR-lints without a final link,
+      # which is why this job can do this at all without the Android
+      # NDK/iOS SDK cross-linker this runner does not have — an actual
+      # `cargo test --no-run` here fails at the link step regardless of
+      # this file's own correctness, confirmed while adding this change.
+      - run: cargo clippy --locked -p karst-tun --target aarch64-linux-android --all-targets -- -D warnings
+      - run: cargo clippy --locked -p karst-tun --target aarch64-apple-ios --all-targets -- -D warnings
 
   # Windows port gate: portable packet codecs, userspace TCP/UDP, the native
   # Wintun adapter/session/IP-Helper code in karst-tun, karst-ipc's named
@@ -399,6 +408,14 @@ jobs:
           cargo clippy --locked -p karst-ffi --features network-extension \
             --target aarch64-apple-darwin -- -D warnings
           cargo test --locked -p karst-ffi --features network-extension \
+            --target aarch64-apple-darwin
+          # This runner's host arch is aarch64-apple-darwin, unlike the
+          # mobile-tun job's Android/iOS cross-targets — a real link
+          # actually works here, so unlike that job, this one runs
+          # mobile.rs's own tests for real (GitHub issue #159's
+          # fcntl(F_GETFD) enforcement in Tun::from_fd), not just
+          # compile-checking them.
+          cargo test --locked -p karst-tun --features network-extension \
             --target aarch64-apple-darwin
       # Built unprivileged and only the run elevated, so no root-owned
       # artefacts land in target/ — the same arrangement as the `tun` job.
