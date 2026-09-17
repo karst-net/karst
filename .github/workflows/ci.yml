@@ -358,14 +358,35 @@ jobs:
           rustup show active-toolchain
           rustup target list --installed
       - uses: Swatinem/rust-cache@v2
+      # **Not `--all-features`.** `karst-tun`'s `network-extension` feature
+      # (ADR-0026) is not additive the way every other feature in the
+      # workspace is: it swaps macOS's `impl Tun` for `mobile.rs`'s
+      # fd-adoption backend, which has no `set_address`/`add_route`/
+      # `remove_route`/`ifindex` — `NEPacketTunnelNetworkSettings` owns that
+      # instead (item 3). Cargo's feature unification means `--workspace
+      # --all-features` turns it on for every crate in the same build,
+      # including `karstd`, whose `run.rs` calls those methods
+      # unconditionally on `Tun` — breaking the LaunchDaemon build this job
+      # exists to verify, over a feature meant for a different, not-yet-built
+      # consumer. Checked on its own two steps down, the same way the
+      # `karst-tun mobile targets (compile-only)` job isolates iOS/Android's
+      # equally feature-gated surface instead of building it into the
+      # `workspace`-wide daemon check.
       - name: Both architectures build
         run: |
-          cargo clippy --workspace --all-targets --all-features \
+          cargo clippy --workspace --all-targets \
             --target aarch64-apple-darwin -- -D warnings
-          cargo check --workspace --all-targets --all-features \
+          cargo check --workspace --all-targets \
             --target x86_64-apple-darwin
       - name: Unit and integration tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace
+      # The one feature this job's default-features build above cannot see —
+      # compile-only, and isolated to the one crate it changes, for the exact
+      # reason the step above stopped using `--all-features`.
+      - name: network-extension backend (compile-only)
+        run: |
+          cargo clippy --locked -p karst-tun --features network-extension \
+            --target aarch64-apple-darwin -- -D warnings
       # Built unprivileged and only the run elevated, so no root-owned
       # artefacts land in target/ — the same arrangement as the `tun` job.
       - name: Build the privileged utun suite

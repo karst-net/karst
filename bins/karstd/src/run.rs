@@ -5773,7 +5773,10 @@ mod route_tests {
             serde_json::from_str(&text_with_control).expect("valid json");
         assert_eq!(with_control["control"]["control_synchronized"], true);
         assert_eq!(with_control["control"]["control_peers"], 3);
-        assert_eq!(with_control["control"]["routing"]["exit_route_active"], true);
+        assert_eq!(
+            with_control["control"]["routing"]["exit_route_active"],
+            true
+        );
         let routes = with_control["control"]["routing"]["routes"]
             .as_array()
             .expect("routes array");
