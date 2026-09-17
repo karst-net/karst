@@ -155,6 +155,35 @@ plutil -replace CFBundleVersion -string "$pkg_version" "$app/Contents/Info.plist
 cp "$root/packaging/macos/dev.karst.karststatus.plist" "$stage_status/Library/LaunchAgents/"
 chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 
+# ── the packet-tunnel system extension (Swift) ───────────────────────────────
+#
+# ADR-0026 item 7. A system extension ships embedded inside its host app's
+# bundle — Apple's own distribution requirement, not a Karst layout choice —
+# at Contents/Library/SystemExtensions/<bundle-id>.systemextension/, which is
+# why this stages into $app rather than a component of its own the way
+# karstd/karst-cli get a top-level /usr/local/bin. Built and staged the same
+# way KarstStatus is above: single-`--arch` swift build, `--show-bin-path` for
+# the binary, the Info.plist template version-patched with `plutil -replace`.
+echo "==> building KarstPacketTunnel ($arch)"
+(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch")
+packettunnel_bin_dir="$(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" --show-bin-path)"
+packettunnel_bin="$packettunnel_bin_dir/KarstPacketTunnel"
+[ -x "$packettunnel_bin" ] \
+  || { echo "error: KarstPacketTunnel build did not produce $packettunnel_bin" >&2; exit 1; }
+lipo -info "$packettunnel_bin"
+
+# `dev.karst.packettunnel` — KarstPacketTunnel/Info.plist's own
+# `CFBundleIdentifier` — is this bundle's directory name too: macOS requires
+# a system extension's bundle to be named `<bundle-id>.systemextension`
+# exactly, not merely to declare that identifier inside its Info.plist.
+systemextension="$app/Contents/Library/SystemExtensions/dev.karst.packettunnel.systemextension"
+mkdir -p "$systemextension/Contents/MacOS"
+cp "$packettunnel_bin" "$systemextension/Contents/MacOS/KarstPacketTunnel"
+chmod 0755 "$systemextension/Contents/MacOS/KarstPacketTunnel"
+cp "$root/packaging/macos/KarstPacketTunnel/Info.plist" "$systemextension/Contents/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$pkg_version" "$systemextension/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$pkg_version" "$systemextension/Contents/Info.plist"
+
 # ── the app icon ─────────────────────────────────────────────────────────
 #
 # `sips` and `iconutil` are macOS-only (no Linux equivalent, hence this
@@ -223,16 +252,31 @@ if [ -n "$codesign_identity" ]; then
       --sign "$codesign_identity" "$stage/usr/local/bin/$binary"
     codesign --verify --strict --verbose=2 "$stage/usr/local/bin/$binary"
   done
-  echo "==> codesign Karst.app"
-  # Signs the whole bundle in one pass, karst-setup resource included —
-  # `codesign` seals everything under Contents/ into one bundle signature;
-  # a plain (non-executable-Mach-O) resource file needs no signature of its
-  # own to be covered by it.
+  # The system extension first, Karst.app last: `codesign` on a bundle seals
+  # everything already inside Contents/ at the moment it runs, so a nested
+  # bundle signed *after* its container would leave the container's
+  # signature covering an unsigned inner one, and the extension's own
+  # `--entitlements` grant would never take effect (Apple's own signing
+  # order requirement, not a Karst convention).
+  echo "==> codesign KarstPacketTunnel.systemextension"
   codesign --force --options runtime --timestamp \
+    --entitlements "$root/packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements" \
+    --sign "$codesign_identity" "$systemextension"
+  codesign --verify --strict --verbose=2 "$systemextension"
+  echo "==> codesign Karst.app"
+  # Signs the whole bundle in one pass, karst-setup resource and the
+  # already-signed system extension both included — `codesign` seals
+  # everything under Contents/ into one bundle signature; a plain
+  # (non-executable-Mach-O) resource file needs no signature of its own to
+  # be covered by it, and the extension's own nested signature (above)
+  # survives being sealed into the outer one, the same as any other signed
+  # nested bundle would.
+  codesign --force --options runtime --timestamp \
+    --entitlements "$root/packaging/macos/Karst.entitlements" \
     --sign "$codesign_identity" "$app"
   codesign --verify --strict --verbose=2 "$app"
 else
-  echo "==> no Developer ID Application identity: binaries and Karst.app will be UNSIGNED"
+  echo "==> no Developer ID Application identity: binaries, KarstPacketTunnel.systemextension and Karst.app will be UNSIGNED"
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 

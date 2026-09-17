@@ -3,10 +3,14 @@
   SPDX-License-Identifier: MIT OR Apache-2.0
   Copyright the Karst contributors.
 
-  Template, unused by any signing step today — ADR-0026 item 1's entitlement
-  application is the actual prerequisite for this ever mattering, and item 7
-  is where it gets wired into a real `codesign` invocation. Recorded now so
-  the shape is not invented later under time pressure.
+  Wired into scripts/build-macos-pkg.sh's codesign invocation for the
+  packet-tunnel system-extension bundle (ADR-0026 item 7). The
+  `com.apple.developer.networking.networkextension` entitlement below still
+  does nothing without ADR-0026 item 1's actual entitlement application
+  being granted — a build signed against this file today produces a bundle
+  Apple's provisioning system refuses to trust — but the codesign step
+  itself is real, not a placeholder, so nothing here needs re-deriving once
+  item 1 lands.
 
   `packet-tunnel-provider-systemextension`, not the plain
   `packet-tunnel-provider` value: the array value naming applies specifically

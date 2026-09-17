@@ -3,12 +3,12 @@
   SPDX-License-Identifier: MIT OR Apache-2.0
   Copyright the Karst contributors.
 
-  Template. Nothing copies this into a real system-extension bundle yet —
-  packaging/macos/KarstStatus/Info.plist's own comment describes the pattern
-  (scripts/build-macos-pkg.sh copying a template and patching version keys
-  with `plutil -replace`) this file expects to follow once ADR-0026 item 7's
-  packaging work picks this up. `0.0.0` here is a placeholder for the same
-  reason it is in that file.
+  Template. scripts/build-macos-pkg.sh now copies this into the real
+  system-extension bundle it stages inside Karst.app (ADR-0026 item 7), the
+  same `plutil -replace`-on-version pattern
+  packaging/macos/KarstStatus/Info.plist's own comment describes. `0.0.0`
+  here is a placeholder for the same reason it is in that file — never what
+  actually ships.
 
   `NSExtensionPrincipalClass` names the class directly
   (`KarstPacketTunnel.PacketTunnelProvider`) rather than the

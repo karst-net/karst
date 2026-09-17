@@ -649,6 +649,22 @@ jobs:
             ls -laR "/Applications/Karst.app" 2>&1 || true
             exit 1
           }
+          # The packet-tunnel system extension (ADR-0026 item 7) — staged
+          # inside Karst.app, not installed separately, so this is the one
+          # place a build that forgot to embed it, or embedded it under the
+          # wrong bundle-id directory name, would be caught.
+          systemextension="/Applications/Karst.app/Contents/Library/SystemExtensions/dev.karst.packettunnel.systemextension"
+          test -x "$systemextension/Contents/MacOS/KarstPacketTunnel" || {
+            echo "::error::KarstPacketTunnel executable missing from the system extension bundle"
+            ls -laR "/Applications/Karst.app/Contents/Library" 2>&1 || true
+            exit 1
+          }
+          plutil -extract CFBundleIdentifier raw "$systemextension/Contents/Info.plist" \
+            | tee /dev/stderr | grep -q '^dev\.karst\.packettunnel$'
+          got="$(lipo -archs "$systemextension/Contents/MacOS/KarstPacketTunnel")"
+          [ "$got" = "${{ matrix.arch }}" ] || {
+            echo "::error::KarstPacketTunnel is '$got', expected ${{ matrix.arch }}"; exit 1;
+          }
           # This runner has no console user, so status-scripts/postinstall's
           # best-effort `launchctl bootstrap` is expected to have found none
           # and done nothing — this only proves the app installed cleanly,

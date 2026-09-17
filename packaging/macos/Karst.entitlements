@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Karst.app's own entitlements — ADR-0026 item 7. A host app must hold
+  `com.apple.developer.system-extension.install` before
+  `OSSystemExtensionRequest.activationRequest` (SystemExtensionActivator.swift)
+  can do anything at all: without it, `submitRequest` fails immediately with
+  no user-approval prompt ever shown, which is a different, earlier failure
+  than ADR-0026 item 1's still-pending entitlement application (that one
+  gates whether the *extension's* own NetworkExtension entitlement is
+  trusted, not whether the host app may ask to install it).
+
+  Scoped to this one entitlement rather than merged into a broader
+  "Karst.app capabilities" file: KarstStatus does not otherwise touch any
+  hardened-runtime-gated capability, and adding entitlements nothing in the
+  app uses is exactly the kind of unreviewed scope creep a signed bundle
+  should not carry silently.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
+</dict>
+</plist>
