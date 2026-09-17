@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright the Karst contributors.
+//
+// Copied verbatim from `uniffi-bindgen`'s own generated output (see
+// karst_ffiFFI.h's header comment for regeneration instructions) — the
+// module name here, `karst_ffiFFI`, is what karst_ffi.swift's
+// `#if canImport(karst_ffiFFI)` checks for, so it must match exactly even
+// though this SwiftPM target's own name (`CKarstFFI`, Package.swift) does
+// not need to.
+module karst_ffiFFI {
+    header "karst_ffiFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

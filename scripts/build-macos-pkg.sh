@@ -164,6 +164,23 @@ chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 # karstd/karst-cli get a top-level /usr/local/bin. Built and staged the same
 # way KarstStatus is above: single-`--arch` swift build, `--show-bin-path` for
 # the binary, the Info.plist template version-patched with `plutil -replace`.
+#
+# `karst-ffi` first (ADR-0029/ADR-0030): KarstPacketTunnel's own Package.swift
+# links `libkarst_ffi.a` via `KARST_FFI_LIB_DIR`
+# (Sources/KarstFFI/karst_ffi.swift's own header comment has the full
+# reasoning), which `swift build` below needs already built and pointed at,
+# not produced as a side effect of building the Swift target itself.
+# `--features network-extension` even though the *committed* Swift bindings
+# (generated on Linux, without it — same file's header comment again) only
+# cover `enroll_invitation` today: the extra compiled symbols this adds
+# (`EngineHandle`) are simply unreferenced until a future regeneration adds
+# their Swift side, and an unreferenced symbol in a static library links
+# fine — only a *missing* one would break this build.
+echo "==> building karst-ffi ($arch)"
+(cd "$root" && cargo build --locked --release --target "$rust_target" \
+    --package karst-ffi --features network-extension)
+export KARST_FFI_LIB_DIR="$root/target/$rust_target/release"
+
 echo "==> building KarstPacketTunnel ($arch)"
 (cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch")
 packettunnel_bin_dir="$(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" --show-bin-path)"

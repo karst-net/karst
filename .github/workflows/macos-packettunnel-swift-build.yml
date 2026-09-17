@@ -3,13 +3,23 @@ name: macOS packet tunnel extension (Swift)
 # Ad hoc build check for packaging/macos/KarstPacketTunnel —
 # docs/adr/0026-macos-network-extension-backend.md,
 # docs/adr/0027-macos-system-extension-host-app-ipc.md,
-# docs/adr/0028-macos-network-extension-enrollment.md. Same reasoning as
-# .github/workflows/macos-status-swift-build.yml, which this mirrors: that
-# package was written on a Linux machine with no Xcode/NetworkExtension SDK
-# available to verify it against, and this is the fastest way to find out
-# whether it actually compiles, without waiting on a Mac. Its own workflow
-# for the same reason the status app has one — no Rust, no Go, nothing else
-# in ci.yml, so running it costs nothing beyond itself.
+# docs/adr/0028-macos-network-extension-enrollment.md,
+# docs/adr/0029-ffi-boundary-uniffi.md, docs/adr/0030-embedded-engine-lifecycle.md.
+# Same reasoning as .github/workflows/macos-status-swift-build.yml, which
+# this mirrors: that package was written on a Linux machine with no
+# Xcode/NetworkExtension SDK available to verify it against, and this is the
+# fastest way to find out whether it actually compiles, without waiting on a
+# Mac. Its own workflow for the same reason the status app has one — running
+# it costs nothing beyond itself.
+#
+# Rust now, unlike when this workflow was first written: KarstPacketTunnel's
+# Package.swift links `karst-ffi` (ADR-0029/ADR-0030's Sources/CKarstFFI,
+# Sources/KarstFFI), so `swift build` needs `libkarst_ffi.a` already built
+# and `KARST_FFI_LIB_DIR` pointed at it — the same two steps
+# scripts/build-macos-pkg.sh's own comment describes for the real packaging
+# pipeline, at native-arch/`--features network-extension` here too, matching
+# Package.swift's own default `KARST_FFI_LIB_DIR` fallback path so this
+# workflow needs no explicit override.
 #
 # Not a merge gate. Whether this becomes part of the permanent `macos` CI job
 # is a decision for whoever picks packaging (ADR-0026 item 7) back up, not
@@ -20,6 +30,8 @@ on:
   push:
     paths:
       - 'packaging/macos/KarstPacketTunnel/**'
+      - 'crates/karst-ffi/**'
+      - 'bins/karstd/**'
       - '.github/workflows/macos-packettunnel-swift-build.yml'
 
 jobs:
@@ -29,6 +41,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p karst-ffi --features network-extension
       - run: swift --version
       - run: swift build
         working-directory: packaging/macos/KarstPacketTunnel
