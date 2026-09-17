@@ -315,11 +315,17 @@ pub fn run_with_control(
 ///
 /// # Safety
 /// As [`karst_tun::Tun::from_fd`], forwarded verbatim: `fd` must be a live
-/// tunnel descriptor whose exclusive ownership transfers to this call.
+/// tunnel descriptor whose exclusive ownership transfers to this call. This
+/// function performs no unsafe operation itself — `fd` is plain data until
+/// `adopt_tun` reaches it, several safe calls further in — but it is the
+/// point where that untrusted raw value first enters this crate, which is
+/// where the obligation belongs, not scattered across every safe function
+/// that merely threads it along.
 ///
 /// # Errors
 /// As [`run`].
 #[cfg(all(target_os = "macos", feature = "network-extension"))]
+#[allow(unsafe_code)]
 pub unsafe fn run_with_adopted_fd(
     config: &Arc<Config>,
     shutdown: &Shutdown,
@@ -327,17 +333,14 @@ pub unsafe fn run_with_adopted_fd(
     socket_path: &std::path::Path,
     control_client: Option<crate::control::Client>,
 ) -> io::Result<()> {
-    // SAFETY: forwarded from this function's own contract above.
-    unsafe {
-        run_engine(
-            config,
-            shutdown,
-            socket_path,
-            control_client,
-            None,
-            DeviceOrigin::AdoptFd(fd),
-        )
-    }
+    run_engine(
+        config,
+        shutdown,
+        socket_path,
+        control_client,
+        None,
+        DeviceOrigin::AdoptFd(fd),
+    )
 }
 
 /// The shared implementation behind [`run_with_control`] and
@@ -3559,9 +3562,29 @@ fn kernel_release() -> String {
 /// has from Linux and macOS: `karst_tun::windows::Tun::create` also takes the
 /// path to `wintun.dll`, which the other two platforms have no counterpart
 /// to.
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(
+    target_os = "windows",
+    all(target_os = "macos", feature = "network-extension")
+)))]
 fn create_tun(cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
     Tun::create(cfg)
+}
+
+/// `network-extension` replaces `create` with `from_fd` entirely (ADR-0026
+/// item 2) — under this feature `karst_tun::Tun` is `mobile.rs`'s
+/// fd-adoption backend, which has no `create` to call. `DeviceOrigin::Create`
+/// still has to type-check under this build regardless — `run_with_control`
+/// (the `LaunchDaemon` entry point) is not excluded by this feature, only
+/// `run_with_adopted_fd` is added alongside it — so this refuses at runtime
+/// rather than failing to compile, the same honesty
+/// `PacketTunnelProvider.swift`'s own still-open gaps already hold
+/// themselves to: this build has no device to create, only one to adopt.
+#[cfg(all(target_os = "macos", feature = "network-extension"))]
+fn create_tun(_cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
+    Err(karst_tun::TunError::OpenDevice(io::Error::other(
+        "this build has no device-creation backend; the network-extension \
+         feature only supports run_with_adopted_fd",
+    )))
 }
 
 /// As above, on Windows: locate `wintun.dll` and create the adapter.
@@ -3598,19 +3621,18 @@ enum DeviceOrigin {
 }
 
 /// Adopt a tunnel descriptor the platform side already created, instead of
-/// creating one — the one `unsafe` call in this crate (ADR-0030, ADR-0003's
-/// "confined and self-documenting" posture applied here the way it already
-/// applies to `karst-tun` itself).
-///
-/// # Safety
-/// As [`karst_tun::Tun::from_fd`] — forwarded verbatim, not re-derived:
-/// `fd` must be a live tunnel descriptor whose exclusive ownership transfers
-/// to the returned `Tun`. This function's own callers (ultimately
-/// `run_with_adopted_fd`, `unsafe fn` itself) carry that obligation forward.
+/// creating one — the one `unsafe` *operation* in this crate (ADR-0030,
+/// ADR-0003's "confined and self-documenting" posture applied here the way
+/// it already applies to `karst-tun` itself). Not itself an `unsafe fn`:
+/// the obligation belongs on [`run_with_adopted_fd`], the point where `fd`
+/// first enters this crate as untrusted data — restating it here too would
+/// scatter the same contract across every layer that merely forwards it.
 #[cfg(all(target_os = "macos", feature = "network-extension"))]
 #[allow(unsafe_code)]
-unsafe fn adopt_tun(fd: std::os::fd::RawFd, cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
-    // SAFETY: forwarded from this function's own contract above.
+fn adopt_tun(fd: std::os::fd::RawFd, cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
+    // SAFETY: `run_with_adopted_fd`'s own `unsafe fn` contract — this
+    // function's only caller (`bring_up_interface`'s `AdoptFd` arm) is
+    // reachable only from there.
     unsafe { Tun::from_fd(fd, cfg) }
 }
 
@@ -3632,11 +3654,12 @@ fn bring_up_interface(config: &Config, attachment: DeviceOrigin) -> io::Result<N
                 .map(NetworkDevice::Userspace)
                 .map_err(|e| io::Error::other(e.to_string()))?,
         },
-        // SAFETY: `run_with_adopted_fd`'s own `unsafe fn` contract, carried
-        // this far unchanged — this arm is reachable only from there.
+        // `adopt_tun` is a safe fn — see its own doc comment on why the
+        // `unsafe` obligation lives on `run_with_adopted_fd` instead, not
+        // here too.
         #[cfg(all(target_os = "macos", feature = "network-extension"))]
         DeviceOrigin::AdoptFd(fd) => NetworkDevice::Tun(
-            unsafe { adopt_tun(fd, &tun_config) }.map_err(|e| io::Error::other(e.to_string()))?,
+            adopt_tun(fd, &tun_config).map_err(|e| io::Error::other(e.to_string()))?,
         ),
     };
 
