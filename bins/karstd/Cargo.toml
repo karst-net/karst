@@ -22,6 +22,11 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+# ADR-0030: lets `run.rs` adopt a `karst-tun` `network-extension` fd instead
+# of creating a device. Nothing outside `run.rs` needs to know this exists.
+[features]
+network-extension = ["karst-tun/network-extension"]
+
 [dependencies]
 karst-bedrock.workspace = true
 karst-control-client.workspace = true
@@ -86,10 +91,11 @@ karst-secure-storage.workspace = true
 karst-winlog.workspace = true
 # The SCM dispatcher/status-handle boilerplate (Mullvad's crate — chosen by
 # plan §5 over hand-rolling the `ServiceMain` state machine). Its own unsafe
-# FFI stays inside that crate, which is why `karstd`'s
-# `#![forbid(unsafe_code)]` can depend on it directly rather than needing a
-# `sys_windows`-pattern wrapper the way `karst-ipc`/`karst-secure-storage`/
-# `karst-winlog` do for APIs with no existing safe crate.
+# FFI stays inside that crate, which is why `karstd` (ADR-0030's
+# `#![deny(unsafe_code)]`, narrower than a blanket `allow`) can depend on it
+# directly rather than needing a `sys_windows`-pattern wrapper the way
+# `karst-ipc`/`karst-secure-storage`/`karst-winlog` do for APIs with no
+# existing safe crate.
 windows-service = "0.8"
 
 [dev-dependencies]

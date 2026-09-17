@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-#![forbid(unsafe_code)]
+// ADR-0030 permits `unsafe` in this crate, as narrowly as ADR-0003 already
+// holds `karst-tun` to: confined to `run.rs`'s `adopt_tun`, which carries its
+// own `#[allow(unsafe_code)]` and states its own argument. Nothing else here
+// needs it, which is what `deny` (rather than a blanket `allow`) still
+// enforces — only that one function may opt back in.
+#![deny(unsafe_code)]
 //! `karstd` — the node agent.
 //!
 //! Joins the two halves built so far: [`karst_tun`] takes packets from the host

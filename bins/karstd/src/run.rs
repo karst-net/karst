@@ -104,6 +104,24 @@ impl NetworkDevice {
         }
     }
 
+    /// Assign the interface's address. A no-op under
+    /// `network-extension` (ADR-0030 item 4): `NEPacketTunnelNetworkSettings`
+    /// owns addressing for that build (ADR-0026 item 3), and
+    /// `karst_tun::Tun` (`mobile.rs`'s fd-adoption backend, which is what
+    /// this build's `Tun` actually is) has no `set_address` to call.
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    fn set_address(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(_) => Ok(()),
+            Self::Userspace(stack) => stack.set_address(address, prefix_len),
+        }
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     fn set_address(
         &self,
         address: std::net::IpAddr,
@@ -115,6 +133,28 @@ impl NetworkDevice {
         }
     }
 
+    /// Add a route. A no-op under `network-extension` for the same reason
+    /// [`Self::set_address`] is — see that method's doc comment.
+    ///
+    /// **Known limitation, not a solved problem (ADR-0030 item 4):** this is
+    /// also how a subnet-router/exit-node policy change reaches the
+    /// interface mid-session, not only at startup. Answering `Ok(())` here
+    /// means such a change is silently not applied under this build until a
+    /// future slice adds a callback into the extension's own
+    /// `setTunnelNetworkSettings`.
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    fn add_route(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(_) => Ok(()),
+            Self::Userspace(stack) => stack.add_route(address, prefix_len),
+        }
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     fn add_route(
         &self,
         address: std::net::IpAddr,
@@ -126,6 +166,21 @@ impl NetworkDevice {
         }
     }
 
+    /// Remove a route. Same no-op posture and the same mid-session
+    /// limitation as [`Self::add_route`] under `network-extension`.
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    fn remove_route(
+        &self,
+        address: std::net::IpAddr,
+        prefix_len: u8,
+    ) -> Result<(), karst_tun::TunError> {
+        match self {
+            Self::Tun(_) => Ok(()),
+            Self::Userspace(stack) => stack.remove_route(address, prefix_len),
+        }
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     fn remove_route(
         &self,
         address: std::net::IpAddr,
@@ -144,6 +199,21 @@ impl NetworkDevice {
         }
     }
 
+    /// The interface's kernel index, when it has one. Always `None` under
+    /// `network-extension` — there is no kernel-visible index for an
+    /// adopted `packetFlow` fd the way there is for a kernel `utun` — which
+    /// is harmless: the only callers of a `Tun` arm's `Some` today
+    /// (`HostRuntime::new`'s `resolved`/`network_manager` closures) are
+    /// Linux-only and never reached on this build anyway.
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    fn ifindex(&self) -> Result<Option<u32>, karst_tun::TunError> {
+        match self {
+            Self::Tun(_) => Ok(None),
+            Self::Userspace(_) => Ok(None),
+        }
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     fn ifindex(&self) -> Result<Option<u32>, karst_tun::TunError> {
         match self {
             Self::Tun(tun) => tun.ifindex().map(Some),
@@ -218,7 +288,6 @@ pub fn run_with_socket(
 ///
 /// # Errors
 /// As [`run`].
-#[allow(clippy::too_many_lines)]
 pub fn run_with_control(
     config: &Arc<Config>,
     shutdown: &Shutdown,
@@ -226,10 +295,72 @@ pub fn run_with_control(
     control_client: Option<crate::control::Client>,
     status_socket_path: Option<&std::path::Path>,
 ) -> io::Result<()> {
+    run_engine(
+        config,
+        shutdown,
+        socket_path,
+        control_client,
+        status_socket_path,
+        DeviceOrigin::Create,
+    )
+}
+
+/// As [`run_with_control`], adopting an already-open tunnel descriptor
+/// instead of creating one — the embedding path a macOS
+/// `NEPacketTunnelProvider` needs, since it may not create the interface
+/// itself (ADR-0022, ADR-0030). `status_socket_path` has no counterpart
+/// here: nothing inside the same sandboxed process needs a *second*,
+/// unprivileged listener the way an external per-user client does — the one
+/// `socket_path` given is reached only from within this process either way.
+///
+/// # Safety
+/// As [`karst_tun::Tun::from_fd`], forwarded verbatim: `fd` must be a live
+/// tunnel descriptor whose exclusive ownership transfers to this call.
+///
+/// # Errors
+/// As [`run`].
+#[cfg(all(target_os = "macos", feature = "network-extension"))]
+pub unsafe fn run_with_adopted_fd(
+    config: &Arc<Config>,
+    shutdown: &Shutdown,
+    fd: std::os::fd::RawFd,
+    socket_path: &std::path::Path,
+    control_client: Option<crate::control::Client>,
+) -> io::Result<()> {
+    // SAFETY: forwarded from this function's own contract above.
+    unsafe {
+        run_engine(
+            config,
+            shutdown,
+            socket_path,
+            control_client,
+            None,
+            DeviceOrigin::AdoptFd(fd),
+        )
+    }
+}
+
+/// The shared implementation behind [`run_with_control`] and
+/// [`run_with_adopted_fd`] — ADR-0030 extracted this out from the previously
+/// `pub fn run_with_control` so the two entry points differ only in how the
+/// interface comes to exist, not in a second, forked copy of everything
+/// after that.
+///
+/// # Errors
+/// As [`run`].
+#[allow(clippy::too_many_lines)]
+fn run_engine(
+    config: &Arc<Config>,
+    shutdown: &Shutdown,
+    socket_path: &std::path::Path,
+    control_client: Option<crate::control::Client>,
+    status_socket_path: Option<&std::path::Path>,
+    attachment: DeviceOrigin,
+) -> io::Result<()> {
     let control_endpoint = control_client
         .as_ref()
         .map(|client| client.endpoint().to_owned());
-    let tun = bring_up_interface(config)?;
+    let tun = bring_up_interface(config, attachment)?;
     let gateway = Mutex::new(crate::gateway::Manager::default());
     let gateway_error = Mutex::new(None);
     apply_gateway(&gateway, &gateway_error, config);
@@ -3454,8 +3585,37 @@ fn create_tun(cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
     Tun::create(cfg, &dll_path)
 }
 
-fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
-    let attachment = TunConfig {
+/// How [`bring_up_interface`] obtains a tunnel device — ADR-0030.
+#[derive(Clone, Copy)]
+enum DeviceOrigin {
+    /// Create one — the `LaunchDaemon` path, needing `CAP_NET_ADMIN`/root.
+    Create,
+    /// Adopt an already-open descriptor — the embedding path a sandboxed
+    /// `NEPacketTunnelProvider` needs, since it may not create the interface
+    /// itself (ADR-0022, ADR-0030).
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    AdoptFd(std::os::fd::RawFd),
+}
+
+/// Adopt a tunnel descriptor the platform side already created, instead of
+/// creating one — the one `unsafe` call in this crate (ADR-0030, ADR-0003's
+/// "confined and self-documenting" posture applied here the way it already
+/// applies to `karst-tun` itself).
+///
+/// # Safety
+/// As [`karst_tun::Tun::from_fd`] — forwarded verbatim, not re-derived:
+/// `fd` must be a live tunnel descriptor whose exclusive ownership transfers
+/// to the returned `Tun`. This function's own callers (ultimately
+/// `run_with_adopted_fd`, `unsafe fn` itself) carry that obligation forward.
+#[cfg(all(target_os = "macos", feature = "network-extension"))]
+#[allow(unsafe_code)]
+unsafe fn adopt_tun(fd: std::os::fd::RawFd, cfg: &TunConfig) -> Result<Tun, karst_tun::TunError> {
+    // SAFETY: forwarded from this function's own contract above.
+    unsafe { Tun::from_fd(fd, cfg) }
+}
+
+fn bring_up_interface(config: &Config, attachment: DeviceOrigin) -> io::Result<NetworkDevice> {
+    let tun_config = TunConfig {
         name: config.interface.clone(),
         // Segmentation offload, if the kernel offers it. One read can then
         // return a coalesced TCP stream instead of a single packet, which is
@@ -3463,14 +3623,31 @@ fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
         offload: true,
         ..TunConfig::default()
     };
-    let tun = match config.network_mode {
-        crate::config::NetworkMode::Tun => create_tun(&attachment)
-            .map(NetworkDevice::Tun)
-            .map_err(|e| io::Error::other(e.to_string()))?,
-        crate::config::NetworkMode::Userspace => Userspace::create(&attachment)
-            .map(NetworkDevice::Userspace)
-            .map_err(|e| io::Error::other(e.to_string()))?,
+    let tun = match attachment {
+        DeviceOrigin::Create => match config.network_mode {
+            crate::config::NetworkMode::Tun => create_tun(&tun_config)
+                .map(NetworkDevice::Tun)
+                .map_err(|e| io::Error::other(e.to_string()))?,
+            crate::config::NetworkMode::Userspace => Userspace::create(&tun_config)
+                .map(NetworkDevice::Userspace)
+                .map_err(|e| io::Error::other(e.to_string()))?,
+        },
+        // SAFETY: `run_with_adopted_fd`'s own `unsafe fn` contract, carried
+        // this far unchanged — this arm is reachable only from there.
+        #[cfg(all(target_os = "macos", feature = "network-extension"))]
+        DeviceOrigin::AdoptFd(fd) => NetworkDevice::Tun(
+            unsafe { adopt_tun(fd, &tun_config) }.map_err(|e| io::Error::other(e.to_string()))?,
+        ),
     };
+
+    // ADR-0030 item 3: none of what follows runs for an adopted descriptor.
+    // `NEPacketTunnelNetworkSettings` — set by the extension itself, before
+    // this ever runs — owns addressing entirely for that build, the same
+    // way ADR-0026 item 3 already gives it routing.
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    if matches!(attachment, DeviceOrigin::AdoptFd(_)) {
+        return Ok(tun);
+    }
 
     for addr in &config.addresses {
         // `addr.addr`, not the network: assigning the masked base would leave
@@ -3489,6 +3666,12 @@ fn bring_up_interface(config: &Config) -> io::Result<NetworkDevice> {
     // just assigned above, leaving the node holding only the DNS stub and
     // unreachable as a mesh peer. `add_secondary_address` uses the additive
     // `RTM_NEWADDR` netlink path instead, so both addresses coexist.
+    //
+    // Not compiled under `network-extension`: `add_secondary_address` is a
+    // `macos::Tun`-only method (ADR-0026 item 3's LaunchDaemon backend),
+    // absent from `mobile.rs`'s fd-adoption `Tun` — and this arm never
+    // reaches an adopted descriptor anyway, per the early return above.
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
     if let NetworkDevice::Tun(inner) = &tun {
         if config.dns.enabled
             && config.netmap_dns.magic_dns
