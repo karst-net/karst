@@ -46,6 +46,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p karst-ffi --features network-extension
+        env:
+          # Matches Package.swift's .macOS(.v13) and
+          # scripts/build-macos-pkg.sh's own identical setting — without it,
+          # swift build's link step warns once per object file in
+          # libkarst_ffi.a about a deployment-target mismatch against
+          # whatever SDK version this runner's Xcode defaults to.
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
       - run: swift --version
       - run: swift build
         working-directory: packaging/macos/KarstPacketTunnel

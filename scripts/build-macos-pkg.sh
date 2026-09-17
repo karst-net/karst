@@ -176,9 +176,19 @@ chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 # (`EngineHandle`) are simply unreferenced until a future regeneration adds
 # their Swift side, and an unreferenced symbol in a static library links
 # fine — only a *missing* one would break this build.
+#
+# `MACOSX_DEPLOYMENT_TARGET` matches Package.swift's `.macOS(.v13)` and
+# Distribution.xml's `<os-version min="13.0"/>` — without it, `rustc`/`cc`
+# target whichever SDK version this runner's Xcode happens to default to
+# (14.5 as of the runner this was first verified against), and `swift
+# build`'s own link step warns, once per object file in `libkarst_ffi.a`,
+# that each one "was built for newer 'macOS' version ... than being linked."
+# Harmless — nothing here actually requires macOS 14 API surface — but
+# noisy enough (500+ lines, one per compilation unit `aws-lc-sys` produces)
+# to bury a real warning if one ever appears alongside it.
 echo "==> building karst-ffi ($arch)"
-(cd "$root" && cargo build --locked --release --target "$rust_target" \
-    --package karst-ffi --features network-extension)
+(cd "$root" && MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --locked --release \
+    --target "$rust_target" --package karst-ffi --features network-extension)
 export KARST_FFI_LIB_DIR="$root/target/$rust_target/release"
 
 echo "==> building KarstPacketTunnel ($arch)"
