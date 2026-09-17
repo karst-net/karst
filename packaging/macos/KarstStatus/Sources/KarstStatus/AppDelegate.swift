@@ -355,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(width: 560, height: .greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: 560, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
 
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 140))
