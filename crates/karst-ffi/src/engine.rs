@@ -58,6 +58,13 @@ impl EngineHandle {
     /// call, exactly `karst_tun::Tun::from_fd`'s own contract, carried
     /// across this boundary rather than re-derived: this is the point
     /// where the raw value first enters this crate as untrusted data.
+    ///
+    /// # Errors
+    /// Any failure loading `config_path` — see
+    /// `karstd::control::load_config`. Nothing past that point is fallible
+    /// here: the engine itself runs on its own thread, and a failure there
+    /// surfaces as a `tracing::error!` log line, not through this return —
+    /// there is no synchronous caller left by then to hand a `Result` to.
     #[uniffi::constructor]
     #[allow(clippy::needless_pass_by_value)]
     #[allow(unsafe_code)]
