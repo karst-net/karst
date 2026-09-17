@@ -2,8 +2,8 @@
 // Copyright the Karst contributors.
 
 //! Regenerates Swift/Kotlin bindings from the compiled `karst_ffi` library —
-//! ADR-0029 item 4. UniFFI's "library mode": it introspects the metadata
-//! UniFFI's proc macros embed in the compiled `cdylib`/`staticlib`, so there
+//! ADR-0029 item 4. `UniFFI`'s "library mode": it introspects the metadata
+//! `UniFFI`'s proc macros embed in the compiled `cdylib`/`staticlib`, so there
 //! is no `.udl` file to keep in sync by hand.
 //!
 //! ```sh
