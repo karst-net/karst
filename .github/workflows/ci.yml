@@ -381,18 +381,25 @@ jobs:
       - name: Unit and integration tests
         run: cargo test --workspace
       # The one feature this job's default-features build above cannot see —
-      # compile-only, for the exact reason the step above stopped using
-      # `--all-features`. Both crates: `karst-tun` is where the feature is
-      # defined, `karstd` is where ADR-0030 spends it (`run.rs`'s
-      # `DeviceOrigin::AdoptFd`/`adopt_tun`/`run_with_adopted_fd`) — nothing
-      # exercises the latter anywhere else, since the default-features build
-      # above never turns this feature on for either crate.
-      - name: network-extension backend (compile-only)
+      # for the exact reason the step above stopped using `--all-features`.
+      # `karst-tun` is where the feature is defined; `karstd` is where
+      # ADR-0030 spends it (`run.rs`'s `DeviceOrigin::AdoptFd`/`adopt_tun`/
+      # `run_with_adopted_fd`); `karst-ffi` is where ADR-0030's
+      # `engine::EngineHandle` calls it from the FFI boundary. `karst-tun`
+      # and `karstd` are compile-only — nothing here can adopt a real
+      # `packetFlow` fd without an actual extension host. `karst-ffi` runs
+      # its tests too: `EngineHandle::start`'s config-load failure path
+      # needs no real fd, so it is real coverage, not just a type-check.
+      - name: network-extension backend
         run: |
           cargo clippy --locked -p karst-tun --features network-extension \
             --target aarch64-apple-darwin -- -D warnings
           cargo clippy --locked -p karstd --lib --features network-extension \
             --target aarch64-apple-darwin -- -D warnings
+          cargo clippy --locked -p karst-ffi --features network-extension \
+            --target aarch64-apple-darwin -- -D warnings
+          cargo test --locked -p karst-ffi --features network-extension \
+            --target aarch64-apple-darwin
       # Built unprivileged and only the run elevated, so no root-owned
       # artefacts land in target/ — the same arrangement as the `tun` job.
       - name: Build the privileged utun suite

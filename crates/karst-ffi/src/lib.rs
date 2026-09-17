@@ -1,26 +1,33 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-#![forbid(unsafe_code)]
+// ADR-0030 permits `unsafe` in this crate, as narrowly as ADR-0003 already
+// holds `karst-tun` and `karstd` to: confined to `engine::EngineHandle::start`,
+// which carries its own `#[allow(unsafe_code)]` and states its own argument.
+#![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 //! The UniFFI-bound boundary mobile and macOS `NetworkExtension` clients link
 //! against — ADR-0022's "not built yet" gap, ADR-0029's tool and scope
 //! decision.
 //!
-//! **Scope today: enrollment only.** `startTunnel`'s engine bring-up,
-//! `stopTunnel`'s teardown, and a `status_json` query — the other three
-//! `TODO(karst-ffi)` sites in
-//! `packaging/macos/KarstPacketTunnel/Sources/KarstPacketTunnel/PacketTunnelProvider.swift`
-//! — need `bins/karstd`'s engine/netmap/DNS machinery to run somewhere other
-//! than that binary's own `main`, which ADR-0029 explicitly defers rather
-//! than guesses at. Track that work under
-//! <https://github.com/karst-net/karst/issues/157>.
+//! Two slices so far:
 //!
-//! [`enroll_invitation`] is a thin wrapper, not a reimplementation: it calls
-//! [`karstd::enrollment::enroll_invitation`] verbatim, so the bundle
-//! parsing, control-plane handshake and config-publishing behavior an
-//! operator already gets from `karst-setup`'s bash script is exactly what a
-//! linked extension gets too, not a second, divergent path.
+//! - [`enroll_invitation`] (ADR-0029) — a thin wrapper, not a
+//!   reimplementation: it calls [`karstd::enrollment::enroll_invitation`]
+//!   verbatim, so the bundle parsing, control-plane handshake and
+//!   config-publishing behavior an operator already gets from
+//!   `karst-setup`'s bash script is exactly what a linked extension gets
+//!   too, not a second, divergent path.
+//! - [`engine::EngineHandle`] (ADR-0030) — engine lifecycle and status over
+//!   an adopted `packetFlow` fd, macOS-`network-extension`-only. Closes the
+//!   other three `TODO(karst-ffi)` sites in
+//!   `packaging/macos/KarstPacketTunnel/Sources/KarstPacketTunnel/PacketTunnelProvider.swift`
+//!   (`startTunnel`'s engine bring-up, `stopTunnel`'s teardown, and the
+//!   `"status"` app-message verb) that ADR-0029 explicitly deferred rather
+//!   than guessed at. Track remaining wiring under
+//!   <https://github.com/karst-net/karst/issues/158>.
+
+pub mod engine;
 
 uniffi::setup_scaffolding!();
 
@@ -38,6 +45,11 @@ uniffi::setup_scaffolding!();
 pub enum FfiError {
     #[error("{0}")]
     Enrollment(String),
+    /// [`engine::EngineHandle`]'s failures — config loading, spawning the
+    /// engine, or the status-socket round trip. Same posture as
+    /// `Enrollment` above: the message travels verbatim, not reformatted.
+    #[error("{0}")]
+    Engine(String),
 }
 
 /// Provision this device from a pasted administrator invitation —
@@ -90,7 +102,9 @@ mod tests {
             "/nonexistent/state".to_owned(),
         )
         .expect_err("a malformed invitation must be refused");
-        let FfiError::Enrollment(message) = &error;
+        let FfiError::Enrollment(message) = &error else {
+            unreachable!("enroll_invitation only ever returns FfiError::Enrollment")
+        };
         assert!(!message.contains(secret), "{message}");
     }
 
@@ -124,7 +138,9 @@ mod tests {
             "relative/state".to_owned(),
         )
         .expect_err("a relative path must be refused");
-        let FfiError::Enrollment(message) = &error;
+        let FfiError::Enrollment(message) = &error else {
+            unreachable!("enroll_invitation only ever returns FfiError::Enrollment")
+        };
         assert!(message.contains("absolute"), "{message}");
     }
 }

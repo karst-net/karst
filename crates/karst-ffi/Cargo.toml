@@ -1,6 +1,6 @@
 [package]
 name = "karst-ffi"
-description = "UniFFI-bound boundary for the mobile and macOS NetworkExtension clients (ADR-0022, ADR-0029)"
+description = "UniFFI-bound boundary for the mobile and macOS NetworkExtension clients (ADR-0022, ADR-0029, ADR-0030)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,6 +24,10 @@ workspace = true
 # name it — `required-features` only resolves the package's own feature
 # names, not a dependency's feature path directly.
 cli = ["uniffi/cli"]
+# ADR-0030: enables `engine::EngineHandle`, which calls
+# `karstd::run::run_with_adopted_fd` — itself only compiled under
+# `karstd`'s own identically-named feature, hence the forward.
+network-extension = ["karstd/network-extension"]
 
 [[bin]]
 # Regenerates Swift/Kotlin bindings from the compiled library — UniFFI's
@@ -36,6 +40,7 @@ required-features = ["cli"]
 [dependencies]
 karstd.workspace = true
 thiserror = "2"
+tracing = "0.1"
 uniffi = "0.29"
 
 [dev-dependencies]
