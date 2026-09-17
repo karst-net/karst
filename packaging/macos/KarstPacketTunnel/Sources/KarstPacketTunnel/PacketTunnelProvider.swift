@@ -26,25 +26,50 @@ import os.log
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let log = OSLog(subsystem: "dev.karst.packettunnel", category: "provider")
 
+    /// Where this extension keeps its own state — never `/etc/karst`,
+    /// which is the `LaunchDaemon` build's namespace, running as a
+    /// different process this extension shares a machine with, not a
+    /// predecessor it replaces (ADR-0026 item 8 ships both "indefinitely,
+    /// not just during a transition"). Reusing `/etc/karst` would mean
+    /// enrolling one build silently corrupts the other's config the moment
+    /// both are ever present on the same machine — a distinct root-owned
+    /// directory costs nothing and removes the collision entirely.
+    ///
+    /// **Why a plain root-owned path, not an App Group container.** A
+    /// System Extension and its host app run as different users — root and
+    /// the console user — so an App Group container is *not* the shared
+    /// path it looks like: each side resolves it under its own home
+    /// (`/private/var/root/Library/Group Containers/...` for the
+    /// extension, `/Users/<user>/Library/Group Containers/...` for
+    /// `Karst.app`), which is two separate directories, not one. This
+    /// extension never needs to share these files with `Karst.app` at all
+    /// — enrollment crosses via `sendProviderMessage`
+    /// (docs/adr/0027-macos-system-extension-host-app-ipc.md), not a
+    /// shared file — so there is nothing an App Group would actually buy
+    /// here. `PacketTunnel.entitlements` carries no
+    /// `com.apple.security.app-sandbox` entitlement, so this process is
+    /// confined by what its own (root) UID can reach, the same as the
+    /// `LaunchDaemon` build already is for `/etc/karst` — not confined to
+    /// a container the way a fully App-Sandboxed process would be.
+    /// Checked against public developer-forum reports of this exact
+    /// app/extension split (root vs. console user, App Groups not
+    /// bridging them) during this session, not verified end-to-end on a
+    /// real machine — flag if a real activation finds this wrong.
+    private static let stateDir = "/Library/Application Support/dev.karst.packettunnel"
+
     /// The identity file a completed enrollment leaves behind —
     /// docs/adr/0028-macos-network-extension-enrollment.md item 3. Mirrors
-    /// `karstd`'s own `identity_key_file` in shape, not necessarily in exact
-    /// path: ADR-0026 item 7's packaging work now builds and signs a real
-    /// bundle, but *where inside the sandbox this extension may actually
-    /// read and write* — its own container, or an App Group shared with
-    /// `Karst.app` — is a separate question that work did not answer. This
-    /// stays a placeholder until it does, not a decision this file makes.
-    private static let identityPath = "/etc/karst/identity.key"
+    /// `karstd`'s own `identity_key_file` in shape and, now, in being a
+    /// real root-owned directory rather than a LaunchDaemon-shaped
+    /// placeholder — see `stateDir`'s own doc comment for why it is not
+    /// `/etc/karst`.
+    private static let identityPath = "\(stateDir)/identity.key"
 
-    /// As `identityPath` — placeholder, not a decision. `enrollInvitation`
-    /// (ADR-0029) writes a full `karstd`-shaped `config.toml` here, mirroring
-    /// `karst-setup`'s own `config_path`/`state_dir` split
+    /// As `identityPath`. `enrollInvitation` (ADR-0029) writes a full
+    /// `karstd`-shaped `config.toml` here, mirroring `karst-setup`'s own
+    /// `config_path`/`state_dir` split
     /// (`bins/karstd/src/enrollment.rs::enroll_bundle`).
-    private static let configPath = "/etc/karst/config.toml"
-
-    /// As `configPath` — where `enrollInvitation` writes `node.key` and,
-    /// once enrollment finishes, `identityPath` above.
-    private static let stateDir = "/etc/karst"
+    private static let configPath = "\(stateDir)/config.toml"
 
     override func startTunnel(
         options: [String: NSObject]?,
