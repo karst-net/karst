@@ -23,11 +23,15 @@ enum NetworkExtensionEnrollmentError: Error {
 /// same `sendProviderMessage` channel —
 /// docs/adr/0028-macos-network-extension-enrollment.md items 1-2.
 ///
-/// **Not wired into `AppDelegate`'s "Setup…" flow yet**, for the same reason
-/// `NetworkExtensionClient.swift` isn't: nothing packages the NetworkExtension
-/// build yet, so there is no real `providerBundleIdentifier` to enroll into.
-/// Written and reviewed against Apple's published API, not run — see that
-/// file's header for the standard this package holds itself to either way.
+/// Wired into `AppDelegate`'s "Setup (Network Extension)…" item
+/// (`runNetworkExtensionSetup`/`ensureConfigurationAndEnroll`) now that
+/// ADR-0026 item 7's packaging work gives `dev.karst.packettunnel` a real
+/// signed bundle to be a `providerBundleIdentifier` for. Written and
+/// reviewed against Apple's published API, not run — see
+/// `NetworkExtensionClient.swift`'s header for the standard this package
+/// holds itself to either way, and `SystemExtensionActivator.swift`'s for
+/// what "run" would even mean here (nothing has activated a real signed
+/// extension and driven this call for real).
 enum NetworkExtensionEnrollment {
     /// Create the `NETunnelProviderManager` if none exists yet for
     /// `providerBundleIdentifier`, or return the existing one.

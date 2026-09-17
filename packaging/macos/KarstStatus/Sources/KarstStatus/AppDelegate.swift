@@ -189,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             menu.addItem(NSMenuItem.separator())
             addSetupItem(to: menu)
+            addNetworkExtensionSetupItem(to: menu)
             menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return menu
@@ -207,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         addSetupItem(to: menu)
+        addNetworkExtensionSetupItem(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
@@ -235,6 +237,150 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [script]
         try? process.run()
+    }
+
+    /// The `NEPacketTunnelProvider` system extension's own bundle
+    /// identifier — `KarstPacketTunnel/Info.plist`'s `CFBundleIdentifier`,
+    /// the same value `SystemExtensionActivator`/`NetworkExtensionEnrollment`/
+    /// `NetworkExtensionStatusClient` all take as a parameter rather than
+    /// hardcoding themselves (each one's own doc comment says whoever wires
+    /// the flow in decides it). This is that call site.
+    private static let networkExtensionIdentifier = "dev.karst.packettunnel"
+
+    /// A second, separate setup path from `addSetupItem`'s own item —
+    /// ADR-0026 ships both the `LaunchDaemon` and `NetworkExtension` builds
+    /// "indefinitely, not just during a transition" (item 8), so this is
+    /// additive, not a replacement that would hide which mechanism a click
+    /// actually invokes.
+    private func addNetworkExtensionSetupItem(to menu: NSMenu) {
+        let item = NSMenuItem(
+            title: "Setup (Network Extension)…",
+            action: #selector(runNetworkExtensionSetup),
+            keyEquivalent: ""
+        )
+        item.target = self
+        menu.addItem(item)
+    }
+
+    /// Activates the system extension, creates its `NETunnelProviderManager`
+    /// if one does not already exist, asks for an invitation, and enrolls —
+    /// the first place `SystemExtensionActivator`,
+    /// `NetworkExtensionEnrollment.ensureConfiguration`, and
+    /// `NetworkExtensionEnrollment.enroll` are actually called in sequence,
+    /// closing the gap each of their own doc comments named ("not wired
+    /// into `AppDelegate` yet"). Whether this is the *right* place for a
+    /// user to find this — a menu item at all, versus automatic on first
+    /// launch, or gated behind a preference — is unresolved; this makes the
+    /// mechanism work, not the UX decision GitHub issue #159 left open.
+    ///
+    /// Each step reports its own failure by name, since the three-call
+    /// chain has three independently-shaped ways to fail (an activation the
+    /// user must separately approve in System Settings, a
+    /// `NETunnelProviderManager` save, and the enrollment handshake
+    /// itself) — collapsing them into one generic error would leave an
+    /// operator guessing which step to retry.
+    @objc private func runNetworkExtensionSetup() {
+        SystemExtensionActivator.activate(extensionIdentifier: Self.networkExtensionIdentifier) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.showAlert(
+                    title: "Could Not Activate the Network Extension",
+                    message: error.localizedDescription
+                )
+            case .success:
+                self.ensureConfigurationAndEnroll()
+            }
+        }
+    }
+
+    /// `controlURL` is a placeholder empty string:
+    /// `NETunnelProviderProtocol.serverAddress` is System Settings' own
+    /// VPN-list display field, not something the enrollment handshake
+    /// itself reads — the invitation pasted into `askInvitation` below
+    /// carries the real control-plane address, inside the Rust enrollment
+    /// logic `enrollInvitation` runs — see
+    /// `NetworkExtensionEnrollment.ensureConfiguration`'s own doc comment.
+    /// Parsing the invitation client-side in Swift just to populate a
+    /// display string before the user has pasted one yet is not worth
+    /// doing until something other than System Settings' own list actually
+    /// reads it.
+    private func ensureConfigurationAndEnroll() {
+        NetworkExtensionEnrollment.ensureConfiguration(
+            providerBundleIdentifier: Self.networkExtensionIdentifier,
+            controlURL: ""
+        ) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.showAlert(
+                    title: "Could Not Configure the Network Extension",
+                    message: error.localizedDescription
+                )
+            case .success(let manager):
+                guard let invitation = self.askInvitation() else { return }
+                NetworkExtensionEnrollment.enroll(invitation: invitation, manager: manager) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .failure(let error):
+                        self.showAlert(title: "Enrollment Failed", message: error.localizedDescription)
+                    case .success:
+                        self.showAlert(
+                            title: "Enrolled",
+                            message: "This device is now enrolled through the Network Extension build."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// A roomy paste field for an invitation — native `AppKit`, not
+    /// `packaging/macos/karst-setup`'s JXA (`osascript -l JavaScript`)
+    /// version of this identical `NSAlert`/`NSTextView`/`NSScrollView`
+    /// construction. That script runs as a detached, unprivileged child
+    /// process invoked via `Process`, which is why it exists as a separate
+    /// script at all — `karst setup` needs `do shell script ... with
+    /// administrator privileges`, a privilege boundary this flow never
+    /// crosses (nothing here runs as a different user), so there is no
+    /// reason to shell out to a second script for it.
+    private func askInvitation() -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Paste the enrollment invitation from your administrator."
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Cancel")
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 560, height: 140))
+        textView.font = NSFont.systemFont(ofSize: 13)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: 560, height: .greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 140))
+        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let invitation = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return invitation.isEmpty ? nil : invitation
+    }
+
+    /// One shape for every result this flow reports, success or failure —
+    /// an operator reads whichever `title` fired, not a distinct dialog
+    /// class per step.
+    private func showAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func stateSymbolName(for peer: PeerStatus) -> String {

@@ -25,11 +25,14 @@ enum NetworkExtensionStatusError: Error {
 /// docs/adr/0027-macos-system-extension-host-app-ipc.md's decision — the way
 /// `StatusClient` talks to the LaunchDaemon build's status socket.
 ///
-/// **Not wired into `AppDelegate` yet.** Nothing packages or signs the
-/// NetworkExtension build today — docs/adr/0026-macos-network-extension-backend.md
-/// items 5-7 are still open — so there is nothing live for this to poll, and
-/// no decided `providerBundleIdentifier` to hard-code here. Written now, at
-/// the same confidence this package's Swift originally shipped at
+/// **Still not wired into `AppDelegate`**, unlike `NetworkExtensionEnrollment`
+/// (ADR-0026 items 5-7's packaging work now gives that one a real
+/// `providerBundleIdentifier` — `AppDelegate`'s "Setup (Network
+/// Extension)…" item). What's missing here specifically is a UI decision,
+/// not a packaging one: whether the menu bar shows the `LaunchDaemon`
+/// build's status, the `NetworkExtension` build's, or both — GitHub issue
+/// #159 left that open rather than guessing at it. Written at the same
+/// confidence this package's Swift originally shipped at
 /// (plans/phase-6/13-macos-status-indicators.md): reviewed line by line
 /// against Apple's published `NETunnelProviderSession`/`NETunnelProviderManager`
 /// API, not compiled or run against a real System Extension.

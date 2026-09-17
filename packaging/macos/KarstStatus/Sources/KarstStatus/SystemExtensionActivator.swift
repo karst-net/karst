@@ -14,19 +14,20 @@ import SystemExtensions
 /// Settings ("System Settings > Privacy & Security > *Allow*") prompt
 /// themselves.
 ///
-/// **Not wired into `AppDelegate`'s menu yet**, for the same reason
-/// `NetworkExtensionClient.swift`/`NetworkExtensionEnrollment.swift` still
-/// aren't: activation is only the first of three steps a real "turn on the
-/// NetworkExtension build" flow needs (activate this, then
+/// Wired into `AppDelegate`'s "Setup (Network Extension)…" item
+/// (`runNetworkExtensionSetup`) as the first of the three calls a real
+/// "turn on the NetworkExtension build" flow needs — this, then
 /// `NetworkExtensionEnrollment.ensureConfiguration`, then
-/// `NetworkExtensionEnrollment.enroll`), and deciding how that flow is
-/// surfaced — a menu item, automatic on first launch, gated behind a
-/// preference — is a product decision this file does not make on its own.
+/// `NetworkExtensionEnrollment.enroll`. A menu item is a real decision,
+/// not a placeholder, but not necessarily the *last* word on the UX either
+/// — automatic-on-first-launch or a preference-gated toggle both remain
+/// open, GitHub issue #159's own text on this.
 /// Written and reviewed against Apple's published
 /// `SystemExtensions`/`OSSystemExtensionRequest` API, not run: nothing has
 /// submitted a real request against a signed, notarized extension bundle,
-/// which is the only way any of this is actually exercised — ADR-0026 items
-/// 1 and 7's remaining packaging/signing work.
+/// which is the only way any of this is actually exercised — ADR-0026
+/// item 1's still-pending entitlement application (#156) and real
+/// notarization are what that needs.
 final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate {
     /// Held for the request's lifetime — `OSSystemExtensionManager` does
     /// not retain its delegate, and this class's only owner today would
