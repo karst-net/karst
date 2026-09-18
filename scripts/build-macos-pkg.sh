@@ -257,21 +257,13 @@ rm -rf "$iconset"
 #
 # Karst's Linux counterpart, packaging/desktop/karst-setup, is a regular file
 # on $PATH launched by a .desktop entry; this one instead ships as a resource
-# inside Karst.app, run by AppDelegate.swift's "Setup…" menu item
+# inside Karst.app, run by AppDelegate.swift's "Enrollment…" menu item
 # (Process + /bin/bash) rather than opened directly — a plain resource file
 # needs no Info.plist, no CFBundleExecutable, and no second `pkgutil` receipt
 # of its own the way a standalone Karst Setup.app once did.
 echo "==> staging Karst Setup"
 cp "$root/packaging/macos/karst-setup" "$app/Contents/Resources/karst-setup"
 chmod 0755 "$app/Contents/Resources/karst-setup"
-
-# The menu-bar brand mark AppDelegate.swift composites the state badge onto
-# (Bundle.main.path(forResource: "karst-menu", ofType: "png")) — a plain
-# bundled resource, the same as karst-setup above, not a SwiftPM `resources:`
-# entry: Bundle.module's lookup differs depending on whether it is running
-# from inside an .app bundle or a bare `swift build` binary, and this way
-# sidesteps that entirely.
-cp "$root/packaging/macos/KarstStatus/Resources/karst-menu.png" "$app/Contents/Resources/karst-menu.png"
 
 # ── signing the binaries ────────────────────────────────────────────────────
 # The policy argument is not decoration. `-p codesigning` lists only identities

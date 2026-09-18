@@ -2,6 +2,7 @@
 // Copyright the Karst contributors.
 
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// The whole app: one `NSStatusItem`, refreshed on a timer.
@@ -31,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.imagePosition = .imageLeft
-        statusItem.button?.image = Self.brandedIcon(badge: "ellipsis.circle", accessibilityDescription: "karst: loading")
+        statusItem.button?.image = Self.karstMarkIcon(.loading, accessibilityDescription: "karst: loading")
         statusItem.button?.title = "karst: …"
         statusItem.menu = menu(for: nil)
         refresh()
@@ -68,17 +69,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// selected-item tint.
     private func render(_ status: DaemonStatus?) {
         guard let status, !status.interface.isEmpty else {
-            statusItem.button?.image = Self.brandedIcon(badge: "xmark.circle.fill", accessibilityDescription: "karst: not running")
+            statusItem.button?.image = Self.karstMarkIcon(.notRunning, accessibilityDescription: "karst: not running")
             statusItem.button?.title = "karst: not running"
             statusItem.menu = menu(for: nil)
             return
         }
 
         let established = status.peers.filter { $0.state.hasPrefix("established") }
-        let symbolName: String
+        let markState: MarkState
         let label: String
         if established.isEmpty {
-            symbolName = "circle"
+            markState = .noPeers
             label = "no peers"
         } else if established.contains(where: { $0.transport == "relay" || $0.transport == "turn" }) {
             // A mix of direct and relayed peers still reports the relayed
@@ -86,15 +87,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // bool (`engine.rs`'s doc comment on it) is that "slower and
             // through a third party" must stay visible, not be averaged
             // away by a healthier peer sitting next to it.
-            symbolName = "circle.lefthalf.filled"
+            markState = .relayed
             label = "\(established.count) via relay/TURN"
         } else {
-            symbolName = "circle.fill"
+            markState = .direct
             label = "\(established.count) direct"
         }
 
         let rate = throughputRate(for: status.peers)
-        statusItem.button?.image = Self.brandedIcon(badge: symbolName, accessibilityDescription: label)
+        statusItem.button?.image = Self.karstMarkIcon(markState, accessibilityDescription: label)
         statusItem.button?.title = "karst: \(label)\(rate)"
         statusItem.menu = menu(for: status)
     }
@@ -109,41 +110,136 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    /// The Karst mountain mark, bundled at `Contents/Resources/karst-menu.png`
-    /// by `scripts/build-macos-pkg.sh` (not a SwiftPM `resources:` entry —
-    /// see that script's comment on why). Template so it tints like the SF
-    /// Symbol badges it sits next to. Loaded once: the file never changes at
-    /// runtime, only the badge composited onto it does.
-    private static let brandMark: NSImage? = {
-        guard let path = Bundle.main.path(forResource: "karst-menu", ofType: "png"),
-              let image = NSImage(contentsOfFile: path)
-        else { return nil }
-        image.isTemplate = true
-        return image
-    }()
+    /// The five menu-bar states, each a fill/stroke/clip combination of the
+    /// Karst mountain mark's own shape — replacing a side-by-side
+    /// brand-mark-plus-SF-Symbol-badge composite that clipped both halves at
+    /// menu bar height, because the composite's width outgrew what
+    /// `NSStatusBarButton` gives a custom image. Drawn as vector paths
+    /// (`KarstMark`) rather than loaded from `karst-menu.png` (retired):
+    /// that raster asset's fine ridge-line texture read as mud once scaled
+    /// down to menu-bar size — the same "too much detail for the size"
+    /// problem in a different place.
+    private enum MarkState {
+        case loading
+        case notRunning
+        case noPeers
+        case relayed
+        case direct
+    }
 
-    /// Brand mark + a small state badge, composited into one image —
-    /// `NSStatusBarButton` tints and highlights whatever single image it's
-    /// given, so the badge has to be baked in rather than laid over the mark
-    /// as a second view. Side-by-side, not corner-overlaid: the mark's
-    /// silhouette runs edge-to-edge (see `karst-menu.png`'s crop), so a
-    /// badge stamped over a corner would sit on top of the mountain shape
-    /// rather than beside it.
-    private static func brandedIcon(badge symbolName: String, accessibilityDescription: String) -> NSImage? {
-        let badge = symbolImage(symbolName, accessibilityDescription: accessibilityDescription)
-        guard let brand = brandMark, let badge else { return badge }
-        let height: CGFloat = 16
-        let gap: CGFloat = 3
-        let badgeSize: CGFloat = 10
-        let brandWidth = height * (brand.size.width / brand.size.height)
-        let canvas = NSSize(width: brandWidth + gap + badgeSize, height: height)
-        let composite = NSImage(size: canvas, flipped: false) { rect in
-            brand.draw(in: NSRect(x: 0, y: 0, width: brandWidth, height: height))
-            badge.draw(in: NSRect(x: brandWidth + gap, y: (height - badgeSize) / 2, width: badgeSize, height: badgeSize))
+    /// The mark's outer silhouette — three summits over a flat base with a
+    /// cave arch cut from its center — in a 100×90 design space.
+    /// `valleyHeight` (35) is where the three summits visually merge into
+    /// one solid band; every state either draws the whole silhouette or
+    /// clips to the region above/below that line.
+    private enum KarstMark {
+        static let width: CGFloat = 100
+        static let height: CGFloat = 90
+        static let valleyHeight: CGFloat = 35
+
+        static let silhouette: CGPath = {
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: 0, y: 0))
+            path.addLine(to: CGPoint(x: 19, y: 55))
+            path.addLine(to: CGPoint(x: 31, y: valleyHeight))
+            path.addLine(to: CGPoint(x: 50, y: height))
+            path.addLine(to: CGPoint(x: 69, y: valleyHeight))
+            path.addLine(to: CGPoint(x: 81, y: 55))
+            path.addLine(to: CGPoint(x: 100, y: 0))
+            path.closeSubpath()
+            return path
+        }()
+
+        /// The one decorative detail simple enough to still read at
+        /// menu-bar size: an open half-circle, which CoreGraphics implicitly
+        /// closes along y=0 when filled or stroked, producing a
+        /// flat-bottomed "D" cut from the base's bottom-center.
+        static let archHole: CGPath = {
+            let path = CGMutablePath()
+            path.addArc(center: CGPoint(x: 50, y: 0), radius: 15, startAngle: 0, endAngle: .pi, clockwise: false)
+            return path
+        }()
+    }
+
+    private static func karstMarkIcon(_ state: MarkState, accessibilityDescription: String) -> NSImage {
+        let renderHeight: CGFloat = 18
+        let renderWidth = renderHeight * (KarstMark.width / KarstMark.height)
+        let image = NSImage(size: NSSize(width: renderWidth, height: renderHeight), flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            NSColor.black.setFill()
+            NSColor.black.setStroke()
+            ctx.saveGState()
+            ctx.scaleBy(x: renderHeight / KarstMark.height, y: renderHeight / KarstMark.height)
+
+            func clipped(minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat, _ draw: () -> Void) {
+                ctx.saveGState()
+                ctx.clip(to: CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY))
+                draw()
+                ctx.restoreGState()
+            }
+            // Design-space stroke width 7 (≈1.4pt after scaling to 18pt
+            // height) — heavier than a typical hairline on purpose, since a
+            // thin stroke on a shape this small disappears rather than
+            // reading as "hollow".
+            func strokeSilhouette() {
+                ctx.addPath(KarstMark.silhouette)
+                ctx.setLineWidth(7)
+                ctx.strokePath()
+            }
+            func fillSilhouette() {
+                ctx.addPath(KarstMark.silhouette)
+                ctx.fillPath()
+            }
+            func fillBase() {
+                clipped(minX: 0, maxX: KarstMark.width, minY: 0, maxY: KarstMark.valleyHeight) {
+                    ctx.addPath(KarstMark.silhouette)
+                    ctx.addPath(KarstMark.archHole)
+                    ctx.fillPath(using: .evenOdd)
+                }
+            }
+            let peaks = (minY: KarstMark.valleyHeight, maxY: KarstMark.height)
+
+            switch state {
+            case .loading:
+                // The base, normal — the summits are not this mark's
+                // business right now, replaced by the same "connecting"
+                // reading every other app's wifi glyph already carries.
+                fillBase()
+                if let wifi = NSImage(systemSymbolName: "wifi", accessibilityDescription: nil) {
+                    wifi.isTemplate = true
+                    wifi.draw(in: CGRect(x: 0, y: peaks.minY, width: KarstMark.width, height: peaks.maxY - peaks.minY))
+                }
+            case .notRunning:
+                // Nothing running, nothing solid — the whole mark hollow.
+                ctx.addPath(KarstMark.silhouette)
+                ctx.addPath(KarstMark.archHole)
+                ctx.setLineWidth(7)
+                ctx.strokePath()
+            case .noPeers:
+                // The tunnel exists (base, solid) but carries nobody yet
+                // (summits, hollow).
+                fillBase()
+                clipped(minX: 0, maxX: KarstMark.width, minY: peaks.minY, maxY: peaks.maxY, strokeSilhouette)
+            case .relayed:
+                // Base solid (the tunnel is up); summits half-and-half — the
+                // same "real, but not the good path" reading `Transport`
+                // already gives relay/TURN elsewhere in this file.
+                fillBase()
+                clipped(minX: 0, maxX: KarstMark.width / 2, minY: peaks.minY, maxY: peaks.maxY, strokeSilhouette)
+                clipped(minX: KarstMark.width / 2, maxX: KarstMark.width, minY: peaks.minY, maxY: peaks.maxY, fillSilhouette)
+            case .direct:
+                // The plain, whole mark — the good state needs no
+                // modification to say so.
+                fillBase()
+                clipped(minX: 0, maxX: KarstMark.width, minY: peaks.minY, maxY: peaks.maxY, fillSilhouette)
+            }
+
+            ctx.restoreGState()
             return true
         }
-        composite.isTemplate = true
-        return composite
+        image.isTemplate = true
+        image.accessibilityDescription = accessibilityDescription
+        return image
     }
 
     private func throughputRate(for peers: [PeerStatus]) -> String {
