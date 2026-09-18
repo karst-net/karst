@@ -265,6 +265,21 @@ echo "==> staging Karst Setup"
 cp "$root/packaging/macos/karst-setup" "$app/Contents/Resources/karst-setup"
 chmod 0755 "$app/Contents/Resources/karst-setup"
 
+# ── the menu-bar state icons ─────────────────────────────────────────────
+#
+# One flat PNG per `AppDelegate.swift` `MarkState` case
+# (`Bundle.main.path(forResource: "menu-<state>", ofType: "png")`), staged
+# the same way as karst-setup above — plain bundled resources, not a
+# SwiftPM `resources:` entry, for the same `Bundle.module` reason. Hand-
+# designed assets, not something this script or AppDelegate.swift
+# generates: a composited/vector-drawn menu bar icon was tried and
+# rejected on real hardware for reading poorly at menu bar size.
+echo "==> staging menu bar state icons"
+for state in loading not-running no-peers relayed direct; do
+  cp "$root/packaging/macos/KarstStatus/Resources/menu-$state.png" \
+    "$app/Contents/Resources/menu-$state.png"
+done
+
 # ── signing the binaries ────────────────────────────────────────────────────
 # The policy argument is not decoration. `-p codesigning` lists only identities
 # valid for signing *code*, and a Developer ID Installer certificate is not one
