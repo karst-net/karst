@@ -61,5 +61,24 @@
         <key>NSExtensionPrincipalClass</key>
         <string>KarstPacketTunnel.PacketTunnelProvider</string>
     </dict>
+    <!--
+      Found on real hardware (#159), not anticipated: `sysextd` rejects
+      activation outright — "invalid NetworkExtension key in its Info.plist:
+      The value of the NetworkExtension key must be a non-empty dictionary"
+      — without this. It is a separate requirement from `NSExtension` above,
+      not a duplicate of it: `NSExtension`/`NSExtensionPrincipalClass` is the
+      generic app-extension-point declaration (still required, satisfies a
+      different check), while `NetworkExtension`/`NEProviderClasses` is what
+      `sysextd` itself specifically validates for a System Extension-hosted
+      `NEPacketTunnelProvider`, as opposed to the older `.appex`-hosted one.
+    -->
+    <key>NetworkExtension</key>
+    <dict>
+        <key>NEProviderClasses</key>
+        <dict>
+            <key>com.apple.networkextension.packet-tunnel</key>
+            <string>KarstPacketTunnel.PacketTunnelProvider</string>
+        </dict>
+    </dict>
 </dict>
 </plist>
