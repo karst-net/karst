@@ -43,6 +43,28 @@
 #   KARST_NOTARY_KEY           path to the App Store Connect .p8 private key
 #   KARST_NOTARY_KEY_ID        its key id
 #   KARST_NOTARY_ISSUER        the issuer UUID
+#   KARST_PROVISION_PROFILE_KARSTSTATUS    path to Karst.app's "Developer ID"
+#                                           .provisionprofile (dev.karst.karststatus)
+#   KARST_PROVISION_PROFILE_PACKETTUNNEL   path to the system extension's
+#                                           "Developer ID" .provisionprofile
+#                                           (dev.karst.packettunnel)
+#
+# The two provisioning-profile variables exist because Karst.app and the
+# packet-tunnel system extension both carry *restricted* entitlements
+# (com.apple.developer.system-extension.install,
+# com.apple.developer.networking.vpn.api,
+# com.apple.developer.networking.networkextension) — unlike an ordinary
+# Developer ID app, restricted entitlements are not validated by signing and
+# notarization alone. Discovered the hard way on a real Mac: a build signed
+# with real Developer ID certificates AND successfully notarized still would
+# not launch, refused by AMFI with "No matching profile found" — notarization
+# answers Gatekeeper's question ("is this trustworthy code"), not AMFI's
+# separate one ("is this specific restricted capability authorized for this
+# specific App ID"), and only an embedded provisioning profile answers that
+# second question. Each `.provisionprofile` here is the "Developer ID" profile
+# type (not "Mac App Distribution", which is for the App Store) generated in
+# the Developer Portal for the matching App ID, after enabling its
+# capabilities there.
 #
 # Either identity may be left unset and will then be looked up in the keychain.
 # Notarization runs only if all three notary variables are set: it is slow and
@@ -279,6 +301,19 @@ if [ -n "$codesign_identity" ]; then
       --sign "$codesign_identity" "$stage/usr/local/bin/$binary"
     codesign --verify --strict --verbose=2 "$stage/usr/local/bin/$binary"
   done
+  # A provisioning profile must land inside Contents/ *before* `codesign`
+  # runs, same reasoning as the signing order comment below: codesign seals
+  # whatever is already present, so embedding it after signing would leave
+  # the profile outside what the signature covers, and AMFI would reject the
+  # bundle exactly as if no profile were embedded at all.
+  if [ -n "${KARST_PROVISION_PROFILE_PACKETTUNNEL:-}" ]; then
+    echo "==> embedding KarstPacketTunnel.systemextension's provisioning profile"
+    cp "$KARST_PROVISION_PROFILE_PACKETTUNNEL" "$systemextension/Contents/embedded.provisionprofile"
+  else
+    echo "==> no KARST_PROVISION_PROFILE_PACKETTUNNEL: the system extension's" \
+      "restricted entitlements (com.apple.developer.networking.networkextension)" \
+      "will not validate — AMFI refuses to launch it even fully signed and notarized"
+  fi
   # The system extension first, Karst.app last: `codesign` on a bundle seals
   # everything already inside Contents/ at the moment it runs, so a nested
   # bundle signed *after* its container would leave the container's
@@ -290,6 +325,14 @@ if [ -n "$codesign_identity" ]; then
     --entitlements "$root/packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements" \
     --sign "$codesign_identity" "$systemextension"
   codesign --verify --strict --verbose=2 "$systemextension"
+  if [ -n "${KARST_PROVISION_PROFILE_KARSTSTATUS:-}" ]; then
+    echo "==> embedding Karst.app's provisioning profile"
+    cp "$KARST_PROVISION_PROFILE_KARSTSTATUS" "$app/Contents/embedded.provisionprofile"
+  else
+    echo "==> no KARST_PROVISION_PROFILE_KARSTSTATUS: Karst.app's restricted" \
+      "entitlements (system-extension.install, networking.vpn.api) will not" \
+      "validate — AMFI refuses to launch it even fully signed and notarized"
+  fi
   echo "==> codesign Karst.app"
   # Signs the whole bundle in one pass, karst-setup resource and the
   # already-signed system extension both included — `codesign` seals

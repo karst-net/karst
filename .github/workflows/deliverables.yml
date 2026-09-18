@@ -574,6 +574,31 @@ jobs:
           chmod 600 "$key"
           echo "KARST_NOTARY_KEY=$key" >> "$GITHUB_ENV"
 
+      # Not tag-gated like notarization above: unlike notarization (which
+      # only answers Gatekeeper's "is this trustworthy code" question),
+      # Karst.app and the packet-tunnel extension's *restricted* entitlements
+      # (system-extension.install, networking.vpn.api, networkextension)
+      # fail AMFI validation and refuse to launch at all without an embedded
+      # profile — a real, on-device finding (#159), not a theoretical
+      # gap — regardless of whether the build is notarized. So every signed
+      # build needs one, push or tag, the same as `codesign_identity` itself.
+      - name: Provisioning profiles
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          APPLE_PROVISION_PROFILE_KARSTSTATUS: ${{ secrets.APPLE_PROVISION_PROFILE_KARSTSTATUS }}
+          APPLE_PROVISION_PROFILE_PACKETTUNNEL: ${{ secrets.APPLE_PROVISION_PROFILE_PACKETTUNNEL }}
+        run: |
+          if [ -n "$APPLE_PROVISION_PROFILE_KARSTSTATUS" ]; then
+            profile="$RUNNER_TEMP/karststatus.provisionprofile"
+            echo "$APPLE_PROVISION_PROFILE_KARSTSTATUS" | base64 --decode > "$profile"
+            echo "KARST_PROVISION_PROFILE_KARSTSTATUS=$profile" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$APPLE_PROVISION_PROFILE_PACKETTUNNEL" ]; then
+            profile="$RUNNER_TEMP/packettunnel.provisionprofile"
+            echo "$APPLE_PROVISION_PROFILE_PACKETTUNNEL" | base64 --decode > "$profile"
+            echo "KARST_PROVISION_PROFILE_PACKETTUNNEL=$profile" >> "$GITHUB_ENV"
+          fi
+
       - name: Build the package
         env:
           KARST_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}

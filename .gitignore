@@ -8,6 +8,7 @@
 *.key
 *.p12
 *.pfx
+*.provisionprofile
 priv_key*
 .env
 .env.*

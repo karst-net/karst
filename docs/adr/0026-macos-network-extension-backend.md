@@ -124,6 +124,28 @@ step actually gated on Apple's queue is treated as gating:
    profile or interactive user approval). Budget it the way phase-5 §7 budgeted
    signing generally: expect the first activation attempt to fail and plan for
    two rounds.
+
+   **Verified on real hardware (#159), and it took more than signing and
+   notarization to get there.** Item 1's entitlements
+   (`com.apple.developer.system-extension.install`,
+   `com.apple.developer.networking.vpn.api`,
+   `com.apple.developer.networking.networkextension`) turned out to be
+   self-service in the current Developer Portal for this account — no
+   special request needed, contrary to this item's own original assumption.
+   But a build signed with real Developer ID certificates *and* successfully
+   notarized still refused to launch on the actual Mac, rejected by AMFI with
+   "No matching profile found": restricted entitlements need a **provisioning
+   profile** embedded in the bundle (`Contents/embedded.provisionprofile`),
+   generated in the Developer Portal per App ID as the "Developer ID" profile
+   type (not "Mac App Distribution", which is for the App Store) — a
+   requirement independent of, and in addition to, signing and notarization.
+   `scripts/build-macos-pkg.sh` now embeds one for `Karst.app` and one for the
+   packet-tunnel system extension when `KARST_PROVISION_PROFILE_KARSTSTATUS`/
+   `KARST_PROVISION_PROFILE_PACKETTUNNEL` are set (`APPLE_PROVISION_PROFILE_*`
+   in CI, decoded the same way `APPLE_CERT_P12`/`APPLE_NOTARY_KEY` already
+   are). Unlike notarization, profile embedding is not tag-gated: it applies
+   to every signed build, because AMFI's rejection has nothing to do with
+   whether the build was notarized.
 8. **Ship both, indefinitely, not just during a transition.** The LaunchDaemon
    `.pkg` stays the default for direct/enterprise installs: it carries no
    entitlement risk, and it is the only path that backs Bedrock's
