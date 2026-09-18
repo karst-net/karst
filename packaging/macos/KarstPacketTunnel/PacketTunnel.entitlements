@@ -17,6 +17,15 @@
   to a Developer ID-signed System Extension, which is
   docs/adr/0026-macos-network-extension-backend.md's own choice over an app
   extension — see that ADR's Decision item 5.
+
+  `com.apple.application-identifier` / `com.apple.developer.team-identifier`
+  added alongside Karst.entitlements' own copy of this fix (#159):
+  `NETunnelProviderSession.sendProviderMessage` failed with `nesessionmanager`
+  reporting the calling process not entitled to establish IPC, and neither
+  entitlement was actually embedded in either signed bundle — Xcode injects
+  them automatically from the provisioning profile; this project's manual
+  codesign's own entitlements flag pointed at this file does not. Values match
+  `packettunnel.provisionprofile`'s own `Entitlements` dict.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -25,5 +34,9 @@
     <array>
         <string>packet-tunnel-provider-systemextension</string>
     </array>
+    <key>com.apple.application-identifier</key>
+    <string>WJ3MJC4KV7.dev.karst.packettunnel</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>WJ3MJC4KV7</string>
 </dict>
 </plist>

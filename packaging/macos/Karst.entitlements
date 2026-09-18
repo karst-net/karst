@@ -34,6 +34,20 @@
   hardened-runtime-gated capability, and adding entitlements nothing in the
   app uses is exactly the kind of unreviewed scope creep a signed bundle
   should not carry silently.
+
+  `com.apple.application-identifier` / `com.apple.developer.team-identifier`
+  added after a further real failure (#159): even with the entitlements
+  above and a matching provisioning profile, `NETunnelProviderSession.
+  sendProviderMessage` failed with `nesessionmanager` logging "process ...
+  is not entitled to establish IPC with plugins of type
+  dev.karst.karststatus". Xcode normally injects these two entitlements
+  automatically from the provisioning profile at sign time; this project
+  signs manually with codesign's own entitlements flag pointed at this file
+  (`scripts/build-macos-pkg.sh`), which embeds only what is written here,
+  confirmed via codesign's own entitlements-dump flag on the actual
+  installed binary, which had neither. Values match
+  `karststatus.provisionprofile`'s own `Entitlements` dict exactly, not
+  invented.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -44,5 +58,9 @@
     <array>
         <string>packet-tunnel-provider-systemextension</string>
     </array>
+    <key>com.apple.application-identifier</key>
+    <string>WJ3MJC4KV7.dev.karst.karststatus</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>WJ3MJC4KV7</string>
 </dict>
 </plist>
