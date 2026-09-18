@@ -214,12 +214,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    /// "Setup…" is always present, running or not: it is also how an
+    /// "Enrollment…" is always present, running or not: it is also how an
     /// already-enrolled device recovers from a config `--resume` cannot use
     /// (packaging/macos/karst-setup's `ask_recovery`/"Start Over"), not only
-    /// how first enrollment happens.
+    /// how first enrollment happens. Named "Enrollment…", not "Setup…", to
+    /// read distinctly from `addNetworkExtensionSetupItem`'s own menu entry
+    /// once both are in the same menu — "Setup…" and "Setup (Network
+    /// Extension)…" side by side read as two variants of the same action,
+    /// which they are not: this one is the `LaunchDaemon` build's guided
+    /// enrollment, unrelated to the other's system-extension activation.
     private func addSetupItem(to menu: NSMenu) {
-        let item = NSMenuItem(title: "Setup…", action: #selector(runSetup), keyEquivalent: "")
+        let item = NSMenuItem(title: "Enrollment…", action: #selector(runSetup), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
     }

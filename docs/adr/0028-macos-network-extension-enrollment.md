@@ -73,7 +73,7 @@ launch, exactly as `karstd` already does.
 ## Decision
 
 1. **The `NETunnelProviderManager` is created and saved before enrollment can
-   begin at all.** `Karst.app`'s "Setup…" flow, on the NE build, first builds
+   begin at all.** `Karst.app`'s "Setup (Network Extension)…" flow first builds
    a minimal `NETunnelProviderProtocol` — `providerBundleIdentifier` naming
    the extension, `serverAddress` and a `providerConfiguration` carrying only
    non-secret bootstrap fields (the control-plane URL; nothing else needs to
