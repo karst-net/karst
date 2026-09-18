@@ -18,6 +18,31 @@ enum NetworkExtensionEnrollmentError: Error {
     case providerRefused(String)
 }
 
+/// Without this, `AppDelegate.showAlert`'s message comes from Swift's
+/// default `Error`-to-`NSError` bridging — the generic, useless "The
+/// operation couldn't be completed. (KarstStatus.NetworkExtensionEnrollmentError
+/// error 0.)" this project's own real-device testing (#159) actually hit,
+/// which hid the real underlying `NEVPNErrorDomain`/`NEConfigurationErrorDomain`
+/// text behind a case index. Surfacing the wrapped error's own description
+/// costs nothing and is exactly the diagnostic this file's cases exist to
+/// carry.
+extension NetworkExtensionEnrollmentError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .saveFailed(let error):
+            return "Could not save the VPN configuration: \(error.localizedDescription)"
+        case .sessionUnavailable:
+            return "No VPN session is available for the network extension."
+        case .sendFailed(let error):
+            return "Could not reach the network extension: \(error.localizedDescription)"
+        case .invalidResponseEncoding:
+            return "The network extension's response was not valid UTF-8 JSON."
+        case .providerRefused(let message):
+            return message
+        }
+    }
+}
+
 /// Creates and saves the `NETunnelProviderManager` `NetworkExtensionStatusClient`
 /// polls, and carries one enrollment invitation to the extension over the
 /// same `sendProviderMessage` channel —

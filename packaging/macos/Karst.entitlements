@@ -12,7 +12,24 @@
   gates whether the *extension's* own NetworkExtension entitlement is
   trusted, not whether the host app may ask to install it).
 
-  Scoped to this one entitlement rather than merged into a broader
+  `com.apple.developer.networking.networkextension` added after a real,
+  documented failure (#159): `NETunnelProviderManager.saveToPreferences`
+  failed on real hardware with `NEVPNErrorDomain Code=5 "permission
+  denied"` / `nehelper`'s "Failed to obtain authorization right... no
+  authorization provided" — even though the host app's provisioning
+  profile granted "Personal VPN" (`com.apple.developer.networking.vpn.api`).
+  Per Apple DTS (developer.apple.com/forums/thread/807080): "Personal VPN"
+  is for the built-in IKEv2/IPsec transports, not for
+  `NEPacketTunnelProvider`'s custom-transport VPN, which Karst uses — mixing
+  the two causes exactly this conflict. The fix is the *same*
+  `networkextension` entitlement the extension itself carries
+  (`PacketTunnel.entitlements`), on **both** the host app and the extension,
+  not Personal VPN on the host app at all. `karststatus.provisionprofile`
+  needs regenerating to match (Network Extension capability on
+  `dev.karst.karststatus`'s App ID, Personal VPN removed) — this file alone
+  is not sufficient without that.
+
+  Scoped to these two entitlements rather than merged into a broader
   "Karst.app capabilities" file: KarstStatus does not otherwise touch any
   hardened-runtime-gated capability, and adding entitlements nothing in the
   app uses is exactly the kind of unreviewed scope creep a signed bundle
@@ -23,5 +40,9 @@
 <dict>
     <key>com.apple.developer.system-extension.install</key>
     <true/>
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>packet-tunnel-provider-systemextension</string>
+    </array>
 </dict>
 </plist>
