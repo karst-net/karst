@@ -44,6 +44,16 @@
     <string>13.0</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright the Karst contributors. MIT OR Apache-2.0.</string>
+    <!--
+      Added alongside KarstStatus/Info.plist's own copy of this key (#159):
+      the host app already carries it, but activation on real hardware
+      still failed with the same "requires NSSystemExtensionUsageDescription"
+      error afterward. Apple's own documentation does not say which bundle
+      this key belongs on — host app, extension, or both — so it goes on
+      both rather than guessing further from a single failed attempt.
+    -->
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Karst uses a system extension to route your network traffic through its encrypted mesh tunnel.</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>
