@@ -3,6 +3,7 @@
 
 import Foundation
 import NetworkExtension
+import os.log
 
 /// Everything that can go wrong turning an invitation into a saved
 /// NetworkExtension configuration and a reply from the extension.
@@ -58,6 +59,8 @@ extension NetworkExtensionEnrollmentError: LocalizedError {
 /// what "run" would even mean here (nothing has activated a real signed
 /// extension and driven this call for real).
 enum NetworkExtensionEnrollment {
+    private static let log = OSLog(subsystem: "dev.karst.karststatus", category: "enrollment")
+
     /// Create the `NETunnelProviderManager` if none exists yet for
     /// `providerBundleIdentifier`, or return the existing one.
     ///
@@ -150,9 +153,14 @@ enum NetworkExtensionEnrollment {
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         guard let session = manager.connection as? NETunnelProviderSession else {
+            os_log("KARST-TRACE host enroll: manager.connection is not a NETunnelProviderSession", log: Self.log, type: .default)
             completion(.failure(NetworkExtensionEnrollmentError.sessionUnavailable))
             return
         }
+        os_log(
+            "KARST-TRACE host enroll: session.status=%{public}@ before sendProviderMessage",
+            log: Self.log, type: .default, String(describing: session.status)
+        )
 
         let payload: [String: Any] = ["verb": "enroll", "invitation": invitation]
         guard let requestData = try? JSONSerialization.data(withJSONObject: payload) else {
@@ -160,12 +168,30 @@ enum NetworkExtensionEnrollment {
             return
         }
 
+        let sentAt = Date()
         do {
             try session.sendProviderMessage(requestData) { responseData in
-                guard let responseData, let text = String(data: responseData, encoding: .utf8) else {
+                let elapsed = Date().timeIntervalSince(sentAt)
+                guard let responseData else {
+                    os_log(
+                        "KARST-TRACE host enroll: response after %{public}.2fs was nil",
+                        log: Self.log, type: .default, elapsed
+                    )
                     completion(.failure(NetworkExtensionEnrollmentError.invalidResponseEncoding))
                     return
                 }
+                guard let text = String(data: responseData, encoding: .utf8) else {
+                    os_log(
+                        "KARST-TRACE host enroll: response after %{public}.2fs was %{public}d bytes, not valid UTF-8: %{public}@",
+                        log: Self.log, type: .default, elapsed, responseData.count, responseData as NSData
+                    )
+                    completion(.failure(NetworkExtensionEnrollmentError.invalidResponseEncoding))
+                    return
+                }
+                os_log(
+                    "KARST-TRACE host enroll: response after %{public}.2fs: %{public}@",
+                    log: Self.log, type: .default, elapsed, text
+                )
                 // The provider answers a refusal in the same shape
                 // `status-json`'s own fallback uses — `{"error": "..."}` —
                 // rather than a distinct enrollment-specific error format.
@@ -182,7 +208,12 @@ enum NetworkExtensionEnrollment {
                 }
                 completion(.success(()))
             }
+            os_log("KARST-TRACE host enroll: sendProviderMessage call returned (async reply pending)", log: Self.log, type: .default)
         } catch {
+            os_log(
+                "KARST-TRACE host enroll: sendProviderMessage threw synchronously: %{public}@",
+                log: Self.log, type: .default, error.localizedDescription
+            )
             completion(.failure(NetworkExtensionEnrollmentError.sendFailed(error)))
         }
     }

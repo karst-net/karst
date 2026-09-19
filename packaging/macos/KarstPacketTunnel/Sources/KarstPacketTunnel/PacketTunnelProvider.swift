@@ -337,17 +337,33 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // confirmed on disk, while the host app had already been told
             // the response was invalid). Freeing this thread immediately
             // is the fix, not making the network call itself faster.
+            os_log("KARST-TRACE enroll: received, dispatching to background queue", log: Self.log, type: .default)
             DispatchQueue.global(qos: .userInitiated).async {
+                os_log("KARST-TRACE enroll: calling enrollInvitation", log: Self.log, type: .default)
+                let start = Date()
                 do {
                     try enrollInvitation(
                         invitation: invitation,
                         configPath: Self.configPath,
                         stateDir: Self.stateDir
                     )
+                    os_log(
+                        "KARST-TRACE enroll: enrollInvitation succeeded after %{public}.2fs, calling completionHandler",
+                        log: Self.log, type: .default, Date().timeIntervalSince(start)
+                    )
                     completionHandler(Self.okResponse())
+                    os_log("KARST-TRACE enroll: completionHandler(okResponse) returned", log: Self.log, type: .default)
                 } catch let error as FfiError {
+                    os_log(
+                        "KARST-TRACE enroll: enrollInvitation threw FfiError after %{public}.2fs: %{public}@",
+                        log: Self.log, type: .default, Date().timeIntervalSince(start), Self.message(from: error)
+                    )
                     completionHandler(Self.errorResponse(Self.message(from: error)))
                 } catch {
+                    os_log(
+                        "KARST-TRACE enroll: enrollInvitation threw after %{public}.2fs: %{public}@",
+                        log: Self.log, type: .default, Date().timeIntervalSince(start), error.localizedDescription
+                    )
                     completionHandler(Self.errorResponse("enrollment failed: \(error.localizedDescription)"))
                 }
             }
