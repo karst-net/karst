@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"gorm.io/driver/sqlite"
@@ -68,6 +69,10 @@ const (
 	consoleFixtureDomainID       = "console-domain"
 	consoleFixtureDoomedDomainID = "console-domain-doomed"
 	consoleFixtureBindingID      = "console-binding"
+
+	// A device invitation, for the same reason: revoking it needs a row
+	// that already exists (see the comment on consoleMutations).
+	consoleFixtureInvitationID = "console-invitation"
 )
 
 type consoleCase struct {
@@ -97,9 +102,17 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusOK}, template: "/karst/v1/invitations",
 		},
 		{
+			// Not "unknown-invitation": /karst/v1/invitations* is exempt
+			// from the blanket KarstControl gate (ADR-0032, so a
+			// domain-delegated admin can reach it), so a member's request
+			// reaches RevokeDeviceInvitation's own existence lookup before
+			// its permission check runs -- same reasoning as the mesh-domain
+			// fixtures above, and an unknown id would 404 a member here
+			// instead of the 403 TestConsoleMutationsAreRefusedForAMember
+			// requires.
 			name: "revoke a device invitation", method: http.MethodPost,
-			path: "/karst/v1/invitations/unknown-invitation/revoke", body: "",
-			want: []int{http.StatusNotFound}, template: "/karst/v1/invitations/{id}/revoke",
+			path: "/karst/v1/invitations/" + consoleFixtureInvitationID + "/revoke", body: "",
+			want: []int{http.StatusOK}, template: "/karst/v1/invitations/{id}/revoke",
 		},
 		{
 			name: "rename a node", method: http.MethodPatch,
@@ -266,6 +279,15 @@ func consoleRouter(t *testing.T) *mux.Router {
 	// member is refused.
 	if err := s.CreateDomainRoleBinding(context.Background(), &meshdomain.DomainRoleBinding{ID: consoleFixtureBindingID, AccountID: consoleAccountID, DomainID: consoleFixtureDomainID, DomainPath: consoleFixtureDomainID, UserID: consoleAdminID}); err != nil {
 		t.Fatalf("fixture domain binding: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	if err := s.SaveSetupKey(context.Background(), &types.SetupKey{
+		Id: consoleFixtureInvitationID, AccountID: consoleAccountID, InvitationIssuerID: consoleAdminID,
+		Key: "console-invitation-fixture-secret", KeySecret: "cnsl", Name: "console-fixture-device",
+		Type: types.SetupKeyOneOff, UsageLimit: 1, AutoGroups: []string{"console-invited"},
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), ExpiresAt: &expiresAt,
+	}); err != nil {
+		t.Fatalf("fixture invitation: %v", err)
 	}
 
 	// A private DSN per test: the shared in-memory name is process-wide, and a

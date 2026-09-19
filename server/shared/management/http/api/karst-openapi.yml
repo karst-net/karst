@@ -442,6 +442,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 100}
         groups: {type: array, minItems: 1, maxItems: 100, items: {type: string}}
+        domain_id: {type: string, description: 'Places the enrolling device into this mesh domain (ADR-0032) rather than the account root.'}
     DeviceInvitation:
       type: object
       required: [id, name, groups, state, expires_at, created_at]
@@ -454,6 +455,7 @@ components:
         created_at: {type: string, format: date-time}
         redeemed_at: {type: string, format: date-time}
         credential: {type: string, description: Bearer credential returned only by creation. Never included in list or revocation responses.}
+        domain_id: {type: string, description: 'The mesh domain (ADR-0032) the enrolling device will be placed in, or absent for the account root.'}
     Error:
       type: object
       required: [code, message]
@@ -464,13 +466,15 @@ components:
       properties: {next_cursor: {type: string, nullable: true}}
     Node:
       type: object
-      required: [handle, name, platform, user_id, tags, enabled, created_at, posture]
+      required: [handle, name, platform, user_id, tags, dns_label, enabled, created_at, posture]
       properties:
         handle: {type: string, readOnly: true}
         name: {type: string}
         platform: {type: string}
         user_id: {type: string}
         tags: {type: array, items: {type: string}}
+        domain_id: {type: string, description: 'The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.'}
+        dns_label: {type: string, description: 'The peer''s actual resolvable mesh name -- already domain-qualified when domain_id is set.'}
         enabled: {type: boolean}
         expires_at: {type: string, nullable: true, format: date-time}
         created_at: {type: string, format: date-time}
@@ -479,7 +483,7 @@ components:
     NodeUpdate:
       type: object
       additionalProperties: false
-      properties: {name: {type: string}, tags: {type: array, items: {type: string}}, expires_at: {type: string, nullable: true, format: date-time}, enabled: {type: boolean}}
+      properties: {name: {type: string}, domain_id: {type: string}, tags: {type: array, items: {type: string}}, expires_at: {type: string, nullable: true, format: date-time}, enabled: {type: boolean}}
     MyDevice:
       type: object
       required: [handle, name, platform, last_seen_at]

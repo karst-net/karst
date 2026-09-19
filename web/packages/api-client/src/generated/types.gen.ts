@@ -9,6 +9,10 @@ export type ClientOptions = {
 export type DeviceInvitationDraft = {
     name: string;
     groups: Array<string>;
+    /**
+     * Places the enrolling device into this mesh domain (ADR-0032) rather than the account root.
+     */
+    domain_id?: string;
 };
 
 export type DeviceInvitation = {
@@ -23,6 +27,10 @@ export type DeviceInvitation = {
      * Bearer credential returned only by creation. Never included in list or revocation responses.
      */
     credential?: string;
+    /**
+     * The mesh domain (ADR-0032) the enrolling device will be placed in, or absent for the account root.
+     */
+    domain_id?: string;
 };
 
 export type Error = {
@@ -41,6 +49,14 @@ export type Node = {
     platform: string;
     user_id: string;
     tags: Array<string>;
+    /**
+     * The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.
+     */
+    domain_id?: string;
+    /**
+     * The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+     */
+    dns_label: string;
     enabled: boolean;
     expires_at?: string | null;
     created_at: string;
@@ -50,6 +66,7 @@ export type Node = {
 
 export type NodeUpdate = {
     name?: string;
+    domain_id?: string;
     tags?: Array<string>;
     expires_at?: string | null;
     enabled?: boolean;
@@ -377,6 +394,14 @@ export type NodeWritable = {
     platform: string;
     user_id: string;
     tags: Array<string>;
+    /**
+     * The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.
+     */
+    domain_id?: string;
+    /**
+     * The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+     */
+    dns_label: string;
     enabled: boolean;
     expires_at?: string | null;
     created_at: string;

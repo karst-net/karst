@@ -414,17 +414,19 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// must not be checked against KarstControl: that module intentionally
 			// denies Members every administrative operation.
 			//
-			// Mesh-domain routes (ADR-0032) are the same shape of exception:
-			// a domain-scoped delegated admin deliberately has no
-			// account-wide KarstControl grant, so this blanket gate would
-			// reject them before their handler's own
-			// ValidateDomainScopedPermission check ever ran. The domains
-			// package's manager (meshdomain/manager) re-derives and enforces
-			// its own permission on every call, so skipping the blanket
-			// check here is not skipping authorization, only the wrong
-			// (account-wide-only) authorization for this surface.
+			// Mesh-domain routes (ADR-0032), and device invitations for the
+			// same reason, are the same shape of exception: a domain-scoped
+			// delegated admin deliberately has no account-wide KarstControl
+			// grant, so this blanket gate would reject them before their
+			// handler's own ValidateDomainScopedPermission check ever ran.
+			// invitations' own manager methods (ListDeviceInvitations,
+			// RevokeDeviceInvitation, CreateDeviceInvitation) and the
+			// domains package's manager (meshdomain/manager) each re-derive
+			// and enforce their own permission on every call, so skipping
+			// the blanket check here is not skipping authorization, only
+			// the wrong (account-wide-only) authorization for this surface.
 			path := strings.TrimPrefix(r.URL.Path, "/api")
-			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") {
+			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") {
 				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return
@@ -2420,11 +2422,18 @@ func containsHandle(nodes []nodeResponse, handle string) bool {
 // key. Handles are stable identifiers, not key material, and are the only
 // identity value this REST surface returns.
 type nodeResponse struct {
-	Handle     string      `json:"handle"`
-	Name       string      `json:"name"`
-	Platform   string      `json:"platform"`
-	UserID     string      `json:"user_id"`
-	Tags       []string    `json:"tags"`
+	Handle   string   `json:"handle"`
+	Name     string   `json:"name"`
+	Platform string   `json:"platform"`
+	UserID   string   `json:"user_id"`
+	Tags     []string `json:"tags"`
+	// DomainID is the mesh domain (ADR-0032) this peer is placed in, or ""
+	// for the account's implicit root.
+	DomainID string `json:"domain_id,omitempty"`
+	// DNSLabel is the peer's actual resolvable mesh name -- already
+	// domain-qualified when DomainID is set (e.g. "device1.engineering"),
+	// so a caller never needs a second lookup to show or use it.
+	DNSLabel   string      `json:"dns_label"`
 	Enabled    bool        `json:"enabled"`
 	ExpiresAt  *time.Time  `json:"expires_at"`
 	CreatedAt  time.Time   `json:"created_at"`
@@ -2543,6 +2552,7 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	var request struct {
 		Name      *string    `json:"name"`
+		DomainID  *string    `json:"domain_id"`
 		Tags      []string   `json:"tags"`
 		ExpiresAt *time.Time `json:"expires_at"`
 		Enabled   *bool      `json:"enabled"`
@@ -2551,8 +2561,8 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	if request.Name == nil || request.Tags != nil || request.ExpiresAt != nil || request.Enabled != nil {
-		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "only name is currently mutable for a Karst node"), w)
+	if (request.Name == nil && request.DomainID == nil) || request.Tags != nil || request.ExpiresAt != nil || request.Enabled != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "only name and domain_id are currently mutable for a Karst node"), w)
 		return
 	}
 	peerRecord, err := h.lookupAuthorizedPeer(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["handle"])
@@ -2564,7 +2574,16 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "peer manager is not configured"), w)
 		return
 	}
-	peerRecord.Name = *request.Name
+	if request.Name != nil {
+		peerRecord.Name = *request.Name
+	}
+	// DomainID (ADR-0032) placement is enforced by UpdatePeer itself
+	// (ValidateDomainScopedPermission against both the peer's current and
+	// requested domain) -- this handler does not need its own check beyond
+	// the account-wide/domain-scoped one already gating this whole route.
+	if request.DomainID != nil {
+		peerRecord.DomainID = *request.DomainID
+	}
 	if _, err := h.peerWriter.UpdatePeer(r.Context(), user.AccountId, user.UserId, peerRecord); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2674,6 +2693,7 @@ func toNodeResponse(p *peer.Peer, identity *node.Identity, posture nodePosture) 
 	}
 	return nodeResponse{
 		Handle: p.Key, Name: p.Name, Platform: peerPlatform(p), UserID: p.UserID, Tags: []string{},
+		DomainID: p.DomainID, DNSLabel: p.DNSLabel,
 		Enabled: true, CreatedAt: identity.CreatedAt.UTC(), LastSeenAt: lastSeen,
 		Posture: posture,
 	}

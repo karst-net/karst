@@ -191,11 +191,25 @@ func (h *Handler) updatePeer(ctx context.Context, accountID, userID, peerID stri
 		return
 	}
 
+	// This contract has no domain_id field (ADR-0032's mesh domains are a
+	// Karst-only concept, exposed through /karst/v1/nodes instead) and never
+	// will -- so a PUT here must leave a peer's domain placement exactly as
+	// it was, never reset it to the account root by omission. Fetching the
+	// existing peer just for its DomainID, rather than teaching this handler
+	// about domains, keeps that guarantee without coupling this generic fork
+	// endpoint to a Karst-specific concept.
+	existing, err := h.accountManager.GetPeer(ctx, accountID, peerID, userID)
+	if err != nil {
+		util.WriteError(ctx, err, w)
+		return
+	}
+
 	update := &nbpeer.Peer{
 		ID:                     peerID,
 		SSHEnabled:             req.SshEnabled,
 		Name:                   req.Name,
 		LoginExpirationEnabled: req.LoginExpirationEnabled,
+		DomainID:               existing.DomainID,
 
 		InactivityExpirationEnabled: req.InactivityExpirationEnabled,
 	}

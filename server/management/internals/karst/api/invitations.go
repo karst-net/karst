@@ -18,9 +18,13 @@ import (
 
 type invitationManager interface {
 	CreateDeviceInvitation(context.Context, string, string, string, []string, string) (*types.SetupKey, error)
-	ListSetupKeys(context.Context, string, string) ([]*types.SetupKey, error)
-	GetSetupKey(context.Context, string, string, string) (*types.SetupKey, error)
-	SaveSetupKey(context.Context, string, *types.SetupKey, string) (*types.SetupKey, error)
+	// ListDeviceInvitations and RevokeDeviceInvitation are deliberately not
+	// ListSetupKeys/GetSetupKey/SaveSetupKey: this route is exempt from the
+	// blanket KarstControl gate (see karstAuthorization) so a mesh-domain
+	// delegated admin (ADR-0032) can reach it with no account-wide grant,
+	// and the generic setup-key methods only ever check one.
+	ListDeviceInvitations(context.Context, string, string) ([]*types.SetupKey, error)
+	RevokeDeviceInvitation(context.Context, string, string, string) (*types.SetupKey, error)
 }
 
 type invitationResponse struct {
@@ -63,16 +67,14 @@ func (h *handler) invitations(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodGet {
-		keys, err := manager.ListSetupKeys(r.Context(), user.AccountId, user.UserId)
+		keys, err := manager.ListDeviceInvitations(r.Context(), user.AccountId, user.UserId)
 		if err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
 		}
-		result := make([]invitationResponse, 0)
+		result := make([]invitationResponse, 0, len(keys))
 		for _, key := range keys {
-			if key.InvitationIssuerID != "" {
-				result = append(result, invitationView(key))
-			}
+			result = append(result, invitationView(key))
 		}
 		util.WriteJSONObject(r.Context(), w, result)
 		return
@@ -109,17 +111,7 @@ func (h *handler) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "device invitations are not configured"), w)
 		return
 	}
-	key, err := manager.GetSetupKey(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["id"])
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
-	}
-	if key.InvitationIssuerID == "" {
-		util.WriteError(r.Context(), status.Errorf(status.NotFound, "invitation not found"), w)
-		return
-	}
-	key.Revoked = true
-	key, err = manager.SaveSetupKey(r.Context(), user.AccountId, key, user.UserId)
+	key, err := manager.RevokeDeviceInvitation(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["id"])
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return

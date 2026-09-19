@@ -9,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	nbdns "github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/server/activity"
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
@@ -450,6 +451,7 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 		key.AccountID = accountID
 		key.InvitationIssuerID = userID
 		key.DomainID = domainID
+		key.DomainPath = domainPath
 		return tx.SaveSetupKey(ctx, key)
 	})
 	if err != nil {
@@ -458,5 +460,99 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 	// Do not include even a partial bearer credential in invitation audit data.
 	am.StoreEvent(ctx, userID, key.Id, accountID, activity.SetupKeyCreated, map[string]any{"name": key.Name, "type": "device-invitation", "groups": key.AutoGroups})
 	key.Key = plain
+	return key, nil
+}
+
+func visibleToBindings(bindings []*meshdomain.DomainRoleBinding, domainPath string) bool {
+	for _, b := range bindings {
+		if b.Covers(domainPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// ListDeviceInvitations is CreateDeviceInvitation's read counterpart, kept
+// separate from the fork's own ListSetupKeys (used far more broadly, for
+// reusable "Auth keys" credentials a domain-delegated admin has no business
+// seeing at all) rather than teaching that generic method about domains.
+//
+// An account-wide SetupKeys:Read grant sees every device invitation, exactly
+// as before domains existed. A caller with only mesh-domain delegations
+// (ADR-0032) instead sees the subset placed in a domain their own bindings
+// cover -- their own delegated domain(s) plus descendants -- the same
+// posture meshdomain/manager.ListDomains already has, and for the same
+// reason: without it, a delegated admin could create an invitation into
+// their domain but never see it again through this list.
+func (am *DefaultAccountManager) ListDeviceInvitations(ctx context.Context, accountID, userID string) ([]*types.SetupKey, error) {
+	keys, err := am.Store.GetAccountSetupKeys(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return nil, err
+	}
+	invitations := make([]*types.SetupKey, 0, len(keys))
+	for _, key := range keys {
+		if key.InvitationIssuerID != "" {
+			invitations = append(invitations, key)
+		}
+	}
+
+	allowed, ctxOut, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.SetupKeys, operations.Read)
+	if err != nil {
+		return nil, status.NewPermissionValidationError(err)
+	}
+	if allowed {
+		return invitations, nil
+	}
+	ctx = ctxOut
+
+	bindings, err := am.Store.GetUserDomainRoleBindings(ctx, accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) == 0 {
+		return nil, status.NewPermissionDeniedError()
+	}
+	visible := make([]*types.SetupKey, 0, len(invitations))
+	for _, key := range invitations {
+		if key.DomainPath != "" && visibleToBindings(bindings, key.DomainPath) {
+			visible = append(visible, key)
+		}
+	}
+	return visible, nil
+}
+
+// RevokeDeviceInvitation is CreateDeviceInvitation's revocation counterpart.
+// Deliberately not routed through the generic SaveSetupKey -- that method's
+// own account-wide-only permission check would refuse a domain-delegated
+// admin a second time even after this one already approved them, and its
+// generality (any field a caller passes) is more surface than a revocation
+// needs.
+func (am *DefaultAccountManager) RevokeDeviceInvitation(ctx context.Context, accountID, userID, invitationID string) (*types.SetupKey, error) {
+	key, err := am.Store.GetSetupKeyByID(ctx, store.LockingStrengthUpdate, accountID, invitationID)
+	if err != nil {
+		return nil, err
+	}
+	if key.InvitationIssuerID == "" {
+		return nil, status.Errorf(status.NotFound, "invitation not found")
+	}
+
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, key.DomainPath, modules.SetupKeys, operations.Update)
+	if err != nil {
+		return nil, status.NewPermissionValidationError(err)
+	}
+	if !allowed {
+		return nil, status.NewPermissionDeniedError()
+	}
+	if key.Revoked {
+		return key, nil
+	}
+
+	key = key.Copy()
+	key.Revoked = true
+	key.UpdatedAt = time.Now().UTC()
+	if err := am.Store.SaveSetupKey(ctx, key); err != nil {
+		return nil, err
+	}
+	am.StoreEvent(ctx, userID, key.Id, accountID, activity.SetupKeyRevoked, key.EventMeta())
 	return key, nil
 }

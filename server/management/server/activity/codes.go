@@ -282,6 +282,13 @@ const (
 	MeshDomainCreated Activity = 142
 	// MeshDomainDeleted indicates that a user deleted a mesh domain or subdomain
 	MeshDomainDeleted Activity = 143
+	// PeerDomainChanged indicates that a user moved a peer into a different
+	// mesh domain (ADR-0032), or into/out of the account's implicit root.
+	// Distinct from PeerRenamed: the peer's own name may not have changed at
+	// all, only its domain placement -- and a domain move is exactly the
+	// kind of action a domain-scoped delegated admin can take without ever
+	// holding the account-wide Peers grant PeerRenamed otherwise implies.
+	PeerDomainChanged Activity = 144
 
 	AccountDeleted Activity = 99999
 )
@@ -460,6 +467,7 @@ var activityMap = map[Activity]Code{
 
 	MeshDomainCreated: {"Mesh domain created", "mesh_domain.create"},
 	MeshDomainDeleted: {"Mesh domain deleted", "mesh_domain.delete"},
+	PeerDomainChanged: {"Peer domain changed", "peer.domain_change"},
 }
 
 // StringCode returns a string code of the activity

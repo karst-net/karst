@@ -154,6 +154,35 @@ test("a machine can be renamed", async ({ page }) => {
   await expect(page.locator("tbody tr").filter({ hasText: "alice-laptop" })).toBeVisible();
 });
 
+// ADR-0032: sre-laptop is seeded already placed in engineering.acme
+// (fixtures/karst-api.mjs), so this exercises both directions of the move,
+// not just the empty-to-domain case.
+test("a machine's mesh domain can be shown and changed", async ({ page }) => {
+  await page.goto("/#/machines");
+  const row = page.locator("tbody tr").filter({ hasText: "sre-laptop" });
+  await expect(row).toContainText("engineering.acme");
+  await expect(row).toContainText("sre-laptop.engineering.acme");
+
+  await row.getByRole("button", { name: "Move" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("reachable as");
+  await expect(dialog.locator("code")).toHaveText("sre-laptop.engineering.acme");
+  await page.getByLabel("Domain", { exact: true }).selectOption({ label: "acme" });
+  await expect(dialog.locator("code")).toHaveText("sre-laptop.acme");
+  await dialog.getByRole("button", { name: "Move", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("is now in acme");
+  await expect(row).toContainText("sre-laptop.acme");
+  await expect(row).not.toContainText("engineering.acme");
+
+  // Move it back out to the account root entirely.
+  await row.getByRole("button", { name: "Move" }).click();
+  await page.getByLabel("Domain", { exact: true }).selectOption({ label: "Account root (no domain)" });
+  await dialog.getByRole("button", { name: "Move", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("is now in the account root");
+  await expect(row).toContainText("Account root");
+  await expect(row.locator("code").first()).toHaveText("sre-laptop");
+});
+
 test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();

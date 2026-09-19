@@ -347,6 +347,154 @@ func TestDeviceInvitationDelegatedSubdomainAdmin(t *testing.T) {
 	require.Error(t, err, "delegation to engineering must not reach the sibling sales domain")
 }
 
+func TestDeviceInvitationDelegatedAdminListsAndRevokesOwnDomainOnly(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "listing-devices", AccountID: member.AccountID, Name: "Listing devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	domainManager := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	root, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+
+	// A pre-existing root invitation the delegated admin has no relation to.
+	unrelated, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "root-device", []string{group.ID}, "")
+	require.NoError(t, err)
+
+	_, err = am.ListDeviceInvitations(ctx, member.AccountID, member.Id)
+	require.Error(t, err, "no account-wide grant and no delegation yet: refused outright")
+
+	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
+	require.NoError(t, err)
+
+	own, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "own-device", []string{group.ID}, engineering.ID)
+	require.NoError(t, err)
+
+	visible, err := am.ListDeviceInvitations(ctx, member.AccountID, member.Id)
+	require.NoError(t, err)
+	ids := make([]string, len(visible))
+	for i, key := range visible {
+		ids[i] = key.Id
+	}
+	require.Contains(t, ids, own.Id)
+	require.NotContains(t, ids, unrelated.Id, "a delegated admin must not see an invitation outside their domain")
+
+	revoked, err := am.RevokeDeviceInvitation(ctx, member.AccountID, member.Id, own.Id)
+	require.NoError(t, err)
+	require.True(t, revoked.Revoked)
+
+	_, err = am.RevokeDeviceInvitation(ctx, member.AccountID, member.Id, unrelated.Id)
+	require.Error(t, err, "a delegated admin must not revoke an invitation outside their domain")
+
+	// The owner is unaffected: sees and can act on everything regardless of
+	// domain delegation.
+	all, err := am.ListDeviceInvitations(ctx, member.AccountID, "owner")
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+}
+
+func TestUpdatePeer_MovesBetweenDomainsAndRequalifiesLabel(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "move-devices", AccountID: member.AccountID, Name: "Move devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	domainManager := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	root, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+	sales, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "sales")
+	require.NoError(t, err)
+
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "movable", []string{group.ID}, engineering.ID)
+	require.NoError(t, err)
+	device, err := enrollPeer(am, key.Key, "irrelevant-hostname")
+	require.NoError(t, err)
+	require.Equal(t, "movable.engineering.acme", device.DNSLabel)
+
+	// Same name, different domain: the label is fully requalified, not just
+	// appended to.
+	update := device.Copy()
+	update.DomainID = sales.ID
+	moved, err := am.UpdatePeer(ctx, member.AccountID, "owner", update)
+	require.NoError(t, err)
+	require.Equal(t, sales.ID, moved.DomainID)
+	require.Equal(t, "movable.sales.acme", moved.DNSLabel)
+
+	// Moving back out to the account root drops the domain qualifier
+	// entirely.
+	update = moved.Copy()
+	update.DomainID = ""
+	backToRoot, err := am.UpdatePeer(ctx, member.AccountID, "owner", update)
+	require.NoError(t, err)
+	require.Equal(t, "", backToRoot.DomainID)
+	require.Equal(t, "movable", backToRoot.DNSLabel)
+
+	// A PUT that never mentions domain at all -- Copy() carries the current
+	// DomainID forward unchanged, the same contract the fork's own generic
+	// /api/peers/{id} handler relies on (peers_handler.go) so an edit to an
+	// unrelated field can never silently reset a peer's domain.
+	update = backToRoot.Copy()
+	update.DomainID = engineering.ID
+	inEngineering, err := am.UpdatePeer(ctx, member.AccountID, "owner", update)
+	require.NoError(t, err)
+	untouched := inEngineering.Copy()
+	untouched.SSHEnabled = !untouched.SSHEnabled
+	stillInEngineering, err := am.UpdatePeer(ctx, member.AccountID, "owner", untouched)
+	require.NoError(t, err)
+	require.Equal(t, engineering.ID, stillInEngineering.DomainID)
+	require.Equal(t, "movable.engineering.acme", stillInEngineering.DNSLabel)
+}
+
+func TestUpdatePeer_DomainMoveRequiresAuthorizationOnBothEnds(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "scoped-move-devices", AccountID: member.AccountID, Name: "Scoped move devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	domainManager := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	root, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+	sales, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "sales")
+	require.NoError(t, err)
+	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
+	require.NoError(t, err)
+
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "scoped-device", []string{group.ID}, engineering.ID)
+	require.NoError(t, err)
+	device, err := enrollPeer(am, key.Key, "irrelevant-hostname")
+	require.NoError(t, err)
+
+	// The delegated admin can edit a peer already in their own domain...
+	update := device.Copy()
+	update.SSHEnabled = true
+	edited, err := am.UpdatePeer(ctx, member.AccountID, member.Id, update)
+	require.NoError(t, err)
+	require.True(t, edited.SSHEnabled)
+
+	// ...but cannot move it into a domain they do not also administer...
+	update = edited.Copy()
+	update.DomainID = sales.ID
+	_, err = am.UpdatePeer(ctx, member.AccountID, member.Id, update)
+	require.Error(t, err, "moving into sales requires authorization over the destination too")
+
+	// ...nor move a peer already in sales into their own domain: the source
+	// end needs authorization just as much as the destination does.
+	salesKey, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "sales-device", []string{group.ID}, sales.ID)
+	require.NoError(t, err)
+	salesDevice, err := enrollPeer(am, salesKey.Key, "another-irrelevant-hostname")
+	require.NoError(t, err)
+	update = salesDevice.Copy()
+	update.DomainID = engineering.ID
+	_, err = am.UpdatePeer(ctx, member.AccountID, member.Id, update)
+	require.Error(t, err, "moving out of sales requires authorization over the source too, not just the destination")
+}
+
 func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	am, member := enrollmentFixture(t)
 	ctx := context.Background()
@@ -387,6 +535,61 @@ func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	require.NotContains(t, revoked.Body.String(), grant.Credential)
 	_, err = enrollPeer(am, grant.Credential, "revoked-invited-device")
 	require.Error(t, err)
+}
+
+// /karst/v1/invitations* is exempt from the blanket KarstControl gate
+// (ADR-0032) so a domain-delegated admin, who by definition has no
+// account-wide grant, can still create, list and revoke a device invitation
+// over real HTTP -- not just through DefaultAccountManager directly.
+func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "http-delegated", AccountID: member.AccountID, Name: "Delegated", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
+	require.NoError(t, err)
+
+	domainManager := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	root, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+	sales, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "sales")
+	require.NoError(t, err)
+	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
+	require.NoError(t, err)
+
+	router := mux.NewRouter()
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, router)
+	request := func(method, path, body, user string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Create into the delegated domain: no account-wide grant needed.
+	inDomain := request(http.MethodPost, "/karst/v1/invitations", `{"name":"eng-box","groups":["http-delegated"],"domain_id":"`+engineering.ID+`"}`, member.Id)
+	require.Equal(t, http.StatusOK, inDomain.Code, inDomain.Body.String())
+	var grant struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(inDomain.Body.Bytes(), &grant))
+
+	// The unrelated sales domain is out of reach.
+	outOfScope := request(http.MethodPost, "/karst/v1/invitations", `{"name":"sales-box","groups":["http-delegated"],"domain_id":"`+sales.ID+`"}`, member.Id)
+	require.Equal(t, http.StatusForbidden, outOfScope.Code, outOfScope.Body.String())
+
+	// The delegated admin sees their own invitation when listing.
+	listed := request(http.MethodGet, "/karst/v1/invitations", "", member.Id)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	require.Contains(t, listed.Body.String(), grant.ID)
+
+	// ...and can revoke it.
+	revoked := request(http.MethodPost, "/karst/v1/invitations/"+grant.ID+"/revoke", "", member.Id)
+	require.Equal(t, http.StatusOK, revoked.Code, revoked.Body.String())
+	require.Contains(t, revoked.Body.String(), `"state":"revoked"`)
 }
 
 func TestDeviceInvitationConcurrentRedemptionAndExpiry(t *testing.T) {

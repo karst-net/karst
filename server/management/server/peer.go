@@ -16,6 +16,7 @@ import (
 	"golang.org/x/exp/maps"
 
 	nbdns "github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/server/idp"
 	routerTypes "github.com/netbirdio/netbird/management/server/networks/routers/types"
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
@@ -246,8 +247,50 @@ func (am *DefaultAccountManager) resolvePeerLocation(ctx context.Context, peer *
 }
 
 // UpdatePeer updates peer. Only Peer.Name, Peer.SSHEnabled, Peer.LoginExpirationEnabled and Peer.InactivityExpirationEnabled can be updated.
+// domainPath resolves domainID to its mesh domain Path (ADR-0032), or ""
+// for domainID == "" (the account's implicit root) -- the shared shape every
+// ValidateDomainScopedPermission call needs.
+func (am *DefaultAccountManager) domainPath(ctx context.Context, accountID, domainID string) (string, error) {
+	if domainID == "" {
+		return "", nil
+	}
+	d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)
+	if err != nil {
+		return "", err
+	}
+	return d.Path, nil
+}
+
+// peerDomainScopeAllowed checks Peers:Update against a peer's current domain
+// and, when this update also moves it, the destination domain too -- a
+// domain-scoped delegated admin (ADR-0032) can manage a peer already in
+// their domain, and can move it to another domain only if they also
+// administer the destination. Moving a peer is as much a grant into the
+// destination as a release from the source, so both ends need the caller's
+// authorization, not just one.
+func (am *DefaultAccountManager) peerDomainScopeAllowed(ctx context.Context, accountID, userID, fromDomainID, toDomainID string) (bool, context.Context, error) {
+	fromPath, err := am.domainPath(ctx, accountID, fromDomainID)
+	if err != nil {
+		return false, ctx, err
+	}
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, fromPath, modules.Peers, operations.Update)
+	if err != nil || !allowed || toDomainID == fromDomainID {
+		return allowed, ctx, err
+	}
+	toPath, err := am.domainPath(ctx, accountID, toDomainID)
+	if err != nil {
+		return false, ctx, err
+	}
+	return am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, toPath, modules.Peers, operations.Update)
+}
+
 func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, userID string, update *nbpeer.Peer) (*nbpeer.Peer, error) {
-	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Peers, operations.Update)
+	existing, err := am.Store.GetPeerByID(ctx, store.LockingStrengthNone, accountID, update.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	allowed, ctx, err := am.peerDomainScopeAllowed(ctx, accountID, userID, existing.DomainID, update.DomainID)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -258,7 +301,8 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 	var peer *nbpeer.Peer
 	var settings *types.Settings
 	var peerGroupList []string
-	var peerLabelChanged bool
+	var peerNameChanged bool
+	var peerDomainChanged bool
 	var sshChanged bool
 	var loginExpirationChanged bool
 	var inactivityExpirationChanged bool
@@ -291,23 +335,28 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 			return err
 		}
 
-		if peer.Name != update.Name {
-			var newLabel string
+		if peer.Name != update.Name || peer.DomainID != update.DomainID {
+			peerNameChanged = peer.Name != update.Name
+			peerDomainChanged = peer.DomainID != update.DomainID
+			// The label is re-derived against the *target* domain
+			// (update.DomainID) whether this call is renaming the peer,
+			// moving it to a different domain, or both at once -- either
+			// change alone requires exactly the same requalify-then-dedup
+			// work as the other.
+			var targetDomain *meshdomain.Domain
+			if update.DomainID != "" {
+				targetDomain, err = transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, update.DomainID)
+				if err != nil {
+					return fmt.Errorf("failed to look up target domain: %w", err)
+				}
+			}
 
+			var newLabel string
 			newLabel, err = nbdns.GetParsedDomainLabel(update.Name)
 			if err != nil {
 				newLabel = ""
 			} else {
-				// Rename never changes a peer's mesh domain (ADR-0032), so
-				// re-qualify with its existing one before checking
-				// collision -- otherwise a rename could silently collide
-				// with, or free up, the wrong domain's namesake label.
-				qualified := newLabel
-				if peer.DomainID != "" {
-					if d, derr := transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peer.DomainID); derr == nil {
-						qualified = d.QualifyLabel(newLabel)
-					}
-				}
+				qualified := targetDomain.QualifyLabel(newLabel)
 				_, err := transaction.GetPeerIdByLabel(ctx, store.LockingStrengthNone, accountID, qualified)
 				if err == nil {
 					newLabel = ""
@@ -321,15 +370,11 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 				if err != nil {
 					return fmt.Errorf("failed to get free DNS label: %w", err)
 				}
-				if peer.DomainID != "" {
-					if d, derr := transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peer.DomainID); derr == nil {
-						newLabel = d.QualifyLabel(newLabel)
-					}
-				}
+				newLabel = targetDomain.QualifyLabel(newLabel)
 			}
 			peer.Name = update.Name
+			peer.DomainID = update.DomainID
 			peer.DNSLabel = newLabel
-			peerLabelChanged = true
 		}
 
 		if peer.SSHEnabled != update.SSHEnabled {
@@ -371,8 +416,11 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 		am.StoreEvent(ctx, userID, peer.IP.String(), accountID, event, peer.EventMeta(dnsDomain))
 	}
 
-	if peerLabelChanged {
+	if peerNameChanged {
 		am.StoreEvent(ctx, userID, peer.ID, accountID, activity.PeerRenamed, peer.EventMeta(dnsDomain))
+	}
+	if peerDomainChanged {
+		am.StoreEvent(ctx, userID, peer.ID, accountID, activity.PeerDomainChanged, peer.EventMeta(dnsDomain))
 	}
 
 	if loginExpirationChanged {

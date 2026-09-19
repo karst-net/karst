@@ -374,13 +374,23 @@ const server = http.createServer((request, response) => {
     if (method === "GET" && nodeMatch[2] === "paths") return json(response, 200, { observed_at: fixture.asOf, paths: [{ peer_handle: fixture.nodes[1].handle, kind: "relay", endpoint: null, relay_id: fixture.relays[0]?.id ?? null, since: null, observed_at: fixture.asOf, tx_bytes: 1_234_567, rx_bytes: 7_654_321 }] });
     if (method === "GET" && nodeMatch[2] === "posture") return json(response, 200, node.posture);
     if (method === "GET") return json(response, 200, node);
-    // Name and nothing else, exactly as the contract's updateNode enforces: a
-    // console that offered tags here would pass against a lenient mock and fail
-    // against the server.
+    // Name and domain_id (ADR-0032), nothing else, exactly as the contract's
+    // updateNode enforces: a console that offered tags here would pass
+    // against a lenient mock and fail against the server.
     if (method === "PATCH") return readBody(request).then((body) => {
-      if (typeof body.name !== "string" || !body.name.trim()) return error(response, 400, "invalid_argument", "name is required");
-      if (body.tags !== undefined || body.enabled !== undefined || body.expires_at !== undefined) return error(response, 422, "invalid_argument", "only name is currently mutable for a Karst node");
-      node.name = body.name.trim();
+      if (body.name === undefined && body.domain_id === undefined) return error(response, 422, "invalid_argument", "only name and domain_id are currently mutable for a Karst node");
+      if (body.tags !== undefined || body.enabled !== undefined || body.expires_at !== undefined) return error(response, 422, "invalid_argument", "only name and domain_id are currently mutable for a Karst node");
+      if (body.name !== undefined) {
+        if (typeof body.name !== "string" || !body.name.trim()) return error(response, 400, "invalid_argument", "name is required");
+        node.name = body.name.trim();
+      }
+      if (body.domain_id !== undefined) {
+        if (body.domain_id && !domains.some(d => d.id === body.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
+        if (body.domain_id) node.domain_id = body.domain_id;
+        else delete node.domain_id;
+      }
+      const domain = node.domain_id && domains.find(d => d.id === node.domain_id);
+      node.dns_label = domain ? `${node.name}.${domain.path}` : node.name;
       return json(response, 200, node);
     });
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }

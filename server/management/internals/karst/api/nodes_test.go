@@ -445,13 +445,13 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		if err != nil || !strings.HasPrefix(template, "/karst/v1/") || strings.HasPrefix(template, "/karst/v1/me/") {
 			return nil
 		}
-		// Mesh-domain routes (ADR-0032) are the same shape of exception as
-		// /me/: a domain-scoped delegated admin has no account-wide
-		// KarstControl grant, so they must not be blanket-rejected here.
-		// Their own scoped authorization is covered separately
-		// (meshdomain/manager's own tests), not by this blanket,
-		// account-wide-only assertion.
-		if strings.HasPrefix(template, "/karst/v1/domains") {
+		// Mesh-domain routes (ADR-0032), and device invitations for the same
+		// reason, are the same shape of exception as /me/: a domain-scoped
+		// delegated admin has no account-wide KarstControl grant, so they
+		// must not be blanket-rejected here. Their own scoped authorization
+		// is covered separately (setupkey_test.go, meshdomain/manager's own
+		// tests), not by this blanket, account-wide-only assertion.
+		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
 			return nil
 		}
 		methods, err := route.GetMethods()

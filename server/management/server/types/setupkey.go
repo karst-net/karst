@@ -42,7 +42,12 @@ type SetupKey struct {
 	// (ADR-0032) rather than the account's implicit root. Empty is the
 	// overwhelming common case and behaves exactly as before this field
 	// existed.
-	DomainID           string `gorm:"index"`
+	DomainID string `gorm:"index"`
+	// DomainPath is DomainID's mesh domain Path, copied at issuance the same
+	// way DomainRoleBinding.DomainPath is -- it is what a domain-scoped
+	// delegated admin's subtree-containment check runs against for this
+	// invitation, without a second lookup for every key in a list.
+	DomainPath         string
 	Key                string
 	KeySecret          string `gorm:"index"`
 	Name               string
@@ -80,6 +85,7 @@ func (key *SetupKey) Copy() *SetupKey {
 		OwnerUserID:         key.OwnerUserID,
 		InvitationIssuerID:  key.InvitationIssuerID,
 		DomainID:            key.DomainID,
+		DomainPath:          key.DomainPath,
 		Key:                 key.Key,
 		KeySecret:           key.KeySecret,
 		Name:                key.Name,

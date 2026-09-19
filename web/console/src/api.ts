@@ -156,11 +156,13 @@ export const api = {
   nodes: () => request<NodePage>("/nodes?limit=100"),
   node: (handle: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`),
   nodePaths: (handle: string) => request<{ observed_at: string; paths: Array<{ peer_handle: string; kind: string; endpoint: string | null; relay_id: string | null; since: string | null; observed_at: string; tx_bytes: number; rx_bytes: number }> }>(`/nodes/${encodeURIComponent(handle)}/paths`),
-  // Only the name. The contract rejects a PATCH carrying tags, expiry or
-  // enabled with "only name is currently mutable for a Karst node", so the
-  // console offers exactly what the server accepts rather than a form that
-  // fails on save.
+  // Only name and domain_id (ADR-0032). The contract rejects a PATCH
+  // carrying tags, expiry or enabled with "only name and domain_id are
+  // currently mutable for a Karst node", so the console offers exactly
+  // what the server accepts rather than a form that fails on save.
   renameNode: (handle: string, name: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`, { method: "PATCH", body: body({ name }) }),
+  // domainId "" moves the machine back to the account root.
+  setNodeDomain: (handle: string, domainId: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`, { method: "PATCH", body: body({ domain_id: domainId }) }),
   deprovision: (handle: string) => request<void>(`/nodes/${encodeURIComponent(handle)}`, { method: "DELETE" }),
 
   // ── access policy ──────────────────────────────────────────────────────────
