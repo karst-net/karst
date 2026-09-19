@@ -22,20 +22,13 @@ enum NetworkExtensionStatusError: Error {
 
 /// Talks to the NetworkExtension build's `PacketTunnelProvider` over
 /// `NETunnelProviderSession.sendProviderMessage` —
-/// docs/adr/0027-macos-system-extension-host-app-ipc.md's decision — the way
-/// `StatusClient` talks to the LaunchDaemon build's status socket.
+/// docs/adr/0027-macos-system-extension-host-app-ipc.md's decision.
 ///
-/// **Still not wired into `AppDelegate`**, unlike `NetworkExtensionEnrollment`
-/// (ADR-0026 items 5-7's packaging work now gives that one a real
-/// `providerBundleIdentifier` — `AppDelegate`'s "Setup (Network
-/// Extension)…" item). What's missing here specifically is a UI decision,
-/// not a packaging one: whether the menu bar shows the `LaunchDaemon`
-/// build's status, the `NetworkExtension` build's, or both — GitHub issue
-/// #159 left that open rather than guessing at it. Written at the same
-/// confidence this package's Swift originally shipped at
-/// (plans/phase-6/13-macos-status-indicators.md): reviewed line by line
-/// against Apple's published `NETunnelProviderSession`/`NETunnelProviderManager`
-/// API, not compiled or run against a real System Extension.
+/// Wired into `AppDelegate` as the sole status source (#159, once
+/// NetworkExtension became the only macOS backend — the `LaunchDaemon`
+/// status socket this used to sit beside no longer exists). Verified end
+/// to end on real hardware, not just reviewed against Apple's published
+/// `NETunnelProviderSession`/`NETunnelProviderManager` API.
 struct NetworkExtensionStatusClient {
     /// The `providerBundleIdentifier` the extension's `NETunnelProviderProtocol`
     /// was saved under — see `NetworkExtensionEnrollment.ensureConfiguration`.
@@ -44,15 +37,12 @@ struct NetworkExtensionStatusClient {
     /// signed, and has a bundle identifier that is not this file's guess.
     let providerBundleIdentifier: String
 
-    /// Ask the running extension for `status-json`'s body — the same JSON
-    /// `Command::StatusJson` produces on the LaunchDaemon build
-    /// (`bins/karstd/src/run.rs`'s `status_json`) — over the one
-    /// `NETunnelProviderManager` saved for `providerBundleIdentifier`.
+    /// Ask the running extension for `status-json`'s body — the same shape
+    /// `bins/karstd/src/run.rs`'s `status_json` produces, now served by
+    /// `PacketTunnelProvider.handleAppMessage`'s `"status"` verb — over the
+    /// one `NETunnelProviderManager` saved for `providerBundleIdentifier`.
     ///
-    /// Feeds `StatusParser.parseJSON(_:)` on success, exactly as
-    /// `StatusClient.fetchStatus()`'s text feeds `StatusParser.parse(_:)` —
-    /// the two clients differ in transport, not in what `AppDelegate` does
-    /// with the result.
+    /// Feeds `StatusParser.parseJSON(_:)` on success.
     func fetchStatusJSON(completion: @escaping (Result<String, Error>) -> Void) {
         NETunnelProviderManager.loadAllFromPreferences { managers, error in
             if let error {

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Copyright the Karst contributors.
 #
-# Stop any already-running Karst.app before its binary is replaced —
-# the same ordering dev.karst.karstd's own preinstall uses, for the same
-# reason.
+# Stop any already-running Karst.app before its binary is replaced, so the
+# old binary is never left running against files about to be overwritten
+# underneath it.
 #
 # Not `set -e`. Every command here legitimately fails on a first install —
 # there is no LaunchAgent loaded yet, and there may be no console user at

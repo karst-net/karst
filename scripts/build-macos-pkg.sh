@@ -150,30 +150,23 @@ bundle_version="$(date -u +%Y%m%d%H%M%S)"
 # dist/macos, rather than each build wiping the directory: building both
 # architectures in sequence (as a developer running `just macos-package`
 # would) must leave both .pkg files behind, not just the second one.
+#
+# One component root, not two: the `karstd` LaunchDaemon component this
+# used to build alongside Karst.app is gone (ADR-0026's amended decision —
+# NetworkExtension is the sole macOS backend now, not one of two shipped
+# "indefinitely"). Real device testing this session found no gap in
+# Bedrock's actual cryptographic guarantee from making that switch — it
+# runs in the same shared Rust engine either way — only in full-tunnel
+# routing lockdown, tracked as its own follow-up rather than blocking this.
 dist="$root/dist/macos"
-stage="$dist/root-$arch"
 stage_status="$dist/root-status-$arch"
-rm -rf "$stage" "$stage_status"
+rm -rf "$stage_status"
 mkdir -p "$dist" \
-  "$stage/usr/local/bin" "$stage/Library/LaunchDaemons" "$stage/etc/karst" \
-  "$stage_status/Applications" "$stage_status/Library/LaunchAgents"
+  "$stage_status/Applications" "$stage_status/Library/LaunchAgents" \
+  "$stage_status/usr/local/bin"
 
-# ── the native binaries ─────────────────────────────────────────────────────
-echo "==> building $rust_target"
-rustup target add "$rust_target" >/dev/null
-(cd "$root" && cargo build --locked --release --target "$rust_target" \
-    --package karstd --package karst-cli)
-
-for binary in karstd karst; do
-  install -m 0755 "$root/target/$rust_target/release/$binary" "$stage/usr/local/bin/$binary"
-done
-lipo -info "$stage/usr/local/bin/karstd"
-
-cp "$root/packaging/macos/dev.karst.karstd.plist" "$stage/Library/LaunchDaemons/"
-chmod 0644 "$stage/Library/LaunchDaemons/dev.karst.karstd.plist"
-cp "$root/docs/karstd-example.toml" "$stage/etc/karst/karstd.toml.example"
-cp "$root/packaging/macos/uninstall.sh" "$stage/usr/local/bin/karst-uninstall"
-chmod 0755 "$stage/usr/local/bin/karst-uninstall"
+cp "$root/packaging/macos/uninstall.sh" "$stage_status/usr/local/bin/karst-uninstall"
+chmod 0755 "$stage_status/usr/local/bin/karst-uninstall"
 
 # ── the menu-bar status app (Swift) ─────────────────────────────────────────
 #
@@ -211,10 +204,10 @@ chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
 # ADR-0026 item 7. A system extension ships embedded inside its host app's
 # bundle — Apple's own distribution requirement, not a Karst layout choice —
 # at Contents/Library/SystemExtensions/<bundle-id>.systemextension/, which is
-# why this stages into $app rather than a component of its own the way
-# karstd/karst-cli get a top-level /usr/local/bin. Built and staged the same
-# way KarstStatus is above: single-`--arch` swift build, `--show-bin-path` for
-# the binary, the Info.plist template version-patched with `plutil -replace`.
+# why this stages into $app rather than a component of its own. Built and
+# staged the same way KarstStatus is above: single-`--arch` swift build,
+# `--show-bin-path` for the binary, the Info.plist template version-patched
+# with `plutil -replace`.
 #
 # `karst-ffi` first (ADR-0029/ADR-0030): KarstPacketTunnel's own Package.swift
 # links `libkarst_ffi.a` via `KARST_FFI_LIB_DIR`
@@ -282,25 +275,14 @@ done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 rm -rf "$iconset"
 
-# ── the guided-enrollment prompt (shell + osascript) ────────────────────────
-#
-# Karst's Linux counterpart, packaging/desktop/karst-setup, is a regular file
-# on $PATH launched by a .desktop entry; this one instead ships as a resource
-# inside Karst.app, run by AppDelegate.swift's "Enrollment…" menu item
-# (Process + /bin/bash) rather than opened directly — a plain resource file
-# needs no Info.plist, no CFBundleExecutable, and no second `pkgutil` receipt
-# of its own the way a standalone Karst Setup.app once did.
-echo "==> staging Karst Setup"
-cp "$root/packaging/macos/karst-setup" "$app/Contents/Resources/karst-setup"
-chmod 0755 "$app/Contents/Resources/karst-setup"
-
 # ── the menu-bar state icons ─────────────────────────────────────────────
 #
 # One flat PNG per `AppDelegate.swift` `MarkState` case
-# (`Bundle.main.path(forResource: "menu-<state>", ofType: "png")`), staged
-# the same way as karst-setup above — plain bundled resources, not a
-# SwiftPM `resources:` entry, for the same `Bundle.module` reason. Hand-
-# designed assets, not something this script or AppDelegate.swift
+# (`Bundle.main.path(forResource: "menu-<state>", ofType: "png")`) — a
+# plain bundled resource, not a SwiftPM `resources:` entry: `Bundle.module`'s
+# lookup differs depending on whether this is running from inside an .app
+# bundle or a bare `swift build` binary, and this sidesteps that entirely.
+# Hand-designed assets, not something this script or AppDelegate.swift
 # generates: a composited/vector-drawn menu bar icon was tried and
 # rejected on real hardware for reading poorly at menu bar size.
 echo "==> staging menu bar state icons"
@@ -327,16 +309,6 @@ codesign_identity="${KARST_CODESIGN_IDENTITY:-$(find_identity 'Developer ID Appl
 installer_identity="${KARST_INSTALLER_IDENTITY:-$(find_identity 'Developer ID Installer' basic || true)}"
 
 if [ -n "$codesign_identity" ]; then
-  for binary in karstd karst; do
-    echo "==> codesign $binary"
-    # `--options runtime` is the hardened runtime, and notarization rejects a
-    # binary without it. `--timestamp` gets a secure timestamp from Apple, and
-    # notarization rejects a binary without that too. Both are the first
-    # rejections to expect, which is why neither is optional here.
-    codesign --force --options runtime --timestamp \
-      --sign "$codesign_identity" "$stage/usr/local/bin/$binary"
-    codesign --verify --strict --verbose=2 "$stage/usr/local/bin/$binary"
-  done
   # A provisioning profile must land inside Contents/ *before* `codesign`
   # runs, same reasoning as the signing order comment below: codesign seals
   # whatever is already present, so embedding it after signing would leave
@@ -370,13 +342,11 @@ if [ -n "$codesign_identity" ]; then
       "validate — AMFI refuses to launch it even fully signed and notarized"
   fi
   echo "==> codesign Karst.app"
-  # Signs the whole bundle in one pass, karst-setup resource and the
-  # already-signed system extension both included — `codesign` seals
-  # everything under Contents/ into one bundle signature; a plain
-  # (non-executable-Mach-O) resource file needs no signature of its own to
-  # be covered by it, and the extension's own nested signature (above)
-  # survives being sealed into the outer one, the same as any other signed
-  # nested bundle would.
+  # Signs the whole bundle in one pass, the already-signed system extension
+  # included — `codesign` seals everything under Contents/ into one bundle
+  # signature, and the extension's own nested signature (above) survives
+  # being sealed into the outer one, the same as any other signed nested
+  # bundle would.
   codesign --force --options runtime --timestamp \
     --entitlements "$root/packaging/macos/Karst.entitlements" \
     --sign "$codesign_identity" "$app"
@@ -386,38 +356,24 @@ else
   [ "$require_signing" -eq 0 ] || { echo "error: --require-signing" >&2; exit 1; }
 fi
 
-# ── the packages ─────────────────────────────────────────────────────────────
+# ── the package ──────────────────────────────────────────────────────────────
 #
-# Two `pkgbuild` components from the two staging roots, one `productbuild`
-# distribution over both — plans/phase-6/13-macos-status-indicators.md:
-# users should not have to download two files for one feature. Separate
-# components rather than one merged root because they need different
-# install scripts (status-scripts/ never touches /etc/karst or the daemon's
-# config) and because separate `pkgutil` receipts mean either can be
-# inspected, upgraded or removed without the other — see uninstall.sh, which
-# removes both from one place but treats them as two things throughout.
+# One `pkgbuild` component from the one staging root now that `karstd`'s
+# own component is gone — still wrapped in a `productbuild`/`Distribution.xml`
+# rather than shipping this `pkgbuild` output directly, since that costs
+# nothing and keeps re-adding a second component (e.g. a real App Store
+# variant) cheap later.
 #
-# The component files themselves keep the plain names `Distribution.xml`
-# refers to (`karst-component.pkg`, `karst-status-component.pkg`) — that XML
-# is shared across both architectures rather than templated per-arch — so
-# they are staged in an arch-namespaced directory instead of being renamed;
-# `productbuild --package-path` just points at that directory.
+# The component file itself keeps the plain name `Distribution.xml` refers
+# to (`karst-status-component.pkg`) — that XML is shared across both
+# architectures rather than templated per-arch — so it is staged in an
+# arch-namespaced directory instead of being renamed; `productbuild
+# --package-path` just points at that directory.
 component_dir="$dist/components-$arch"
 rm -rf "$component_dir"
 mkdir -p "$component_dir"
-component="$component_dir/karst-component.pkg"
 status_component="$component_dir/karst-status-component.pkg"
 product="$dist/karst-client-macos-$arch.pkg"
-
-echo "==> pkgbuild (karstd, $arch)"
-pkgbuild \
-  --root "$stage" \
-  --identifier dev.karst.karstd \
-  --version "$pkg_version" \
-  --scripts "$root/packaging/macos/scripts" \
-  --install-location / \
-  --ownership recommended \
-  "$component"
 
 echo "==> pkgbuild (Karst, $arch)"
 echo "==> staged tree before pkgbuild:"

@@ -3,12 +3,12 @@
 
 import Foundation
 
-/// One `[[peer]]` table from `karstd`'s status text.
+/// One peer entry from `status_json`'s `peers` array.
 ///
 /// Field names and shapes mirror `PeerStatus`
-/// (`bins/karstd/src/engine.rs`) and its rendering in `run.rs`'s `report`
-/// deliberately, not coincidentally — this struct exists to stay a mechanical
-/// translation of that output, not to reinterpret it.
+/// (`bins/karstd/src/engine.rs`) and its JSON form in `run.rs`'s
+/// `PeerJson` deliberately, not coincidentally — this struct exists to stay
+/// a mechanical translation of that output, not to reinterpret it.
 struct PeerStatus {
     var name = ""
     var hint = ""
@@ -27,119 +27,35 @@ struct PeerStatus {
     var rxBytes: UInt64 = 0
 }
 
-/// Everything from one `karst status`-shaped reply that this app reads.
+/// Everything from one `status_json`-shaped reply that this app reads.
 ///
-/// Deliberately not a full model of the format: `[portmap]`, `[stats]` and
-/// `[policy]` all appear in the real text and are parsed past, not into
+/// Deliberately not a full model of the format: `portmap`, `stats` and
+/// `policy` all appear in the real JSON and are ignored, not parsed into
 /// anything, because nothing here shows them yet. Add fields as the UI grows
 /// rather than up front.
 struct DaemonStatus {
     var interface = ""
     var mtu = 0
     var peers: [PeerStatus] = []
-    /// Set when the daemon answered but refused the request — the
-    /// unprivileged socket's answer to anything but `status`
-    /// (`ipc.rs`'s module note). Should never actually appear here, since
-    /// this client only ever sends `status`; kept as a visible signal rather
-    /// than a silently empty `DaemonStatus` in case it ever does.
+    /// Set when the extension answered but refused the request — the
+    /// `{"error": "..."}` shape `status_json`'s own `Serialize`-failure
+    /// fallback uses, and the same shape `PacketTunnelProvider.handleAppMessage`
+    /// falls back to when the tunnel is not running at all (`engine == nil`)
+    /// — the far more common way this actually gets set in practice, since
+    /// enrollment alone does not start the tunnel.
     var refusal: String?
 }
 
-/// A hand-written line parser for `karstd`'s status output, not a TOML
-/// library.
-///
-/// The format is intentionally simple — `writeln!`-built, one `key = value`
-/// per line, blank-line-separated `[section]`/`[[peer]]` headers, and never
-/// nested more than one level (`run.rs`'s `report` function is the producer
-/// and the ground truth) — so a general TOML parser would be a dependency
-/// bought for generality this client does not need. If `karstd`'s output
-/// format ever grows real nesting or multi-line values, this needs to grow
-/// with it or be replaced; it is not meant to be a permanent bet against
-/// TOML.
+/// Parses `karst status --json`'s body (`ipc::Command::StatusJson`,
+/// `bins/karstd/src/run.rs`'s `status_json`) — the same JSON
+/// `PacketTunnelProvider.handleAppMessage`'s `"status"` verb answers with
+/// on the NetworkExtension build, which is what `NetworkExtensionStatusClient`
+/// actually calls this on. Verified end to end on real hardware (#159), not
+/// just reviewed against the Rust `Serialize` impl — a text/TOML-ish parser
+/// for the LaunchDaemon build's now-removed status socket protocol used to
+/// live here too; dropped once NetworkExtension became the sole macOS
+/// backend and nothing called it anymore.
 enum StatusParser {
-    static func parse(_ text: String) -> DaemonStatus {
-        var status = DaemonStatus()
-        var current: PeerStatus?
-        var inPeerTable = false
-
-        func closeCurrentPeer() {
-            if let peer = current {
-                status.peers.append(peer)
-            }
-            current = nil
-        }
-
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-
-            if line == "[[peer]]" {
-                closeCurrentPeer()
-                current = PeerStatus()
-                inPeerTable = true
-                continue
-            }
-            if line.hasPrefix("[") {
-                // Any other section header ends the peer table currently
-                // being built, if there is one — peers are the last thing in
-                // the real output, but nothing here assumes that ordering.
-                closeCurrentPeer()
-                inPeerTable = false
-                continue
-            }
-            guard let eq = line.firstIndex(of: "=") else { continue }
-            let key = line[line.startIndex..<eq].trimmingCharacters(in: .whitespaces)
-            var value = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
-            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
-                value = String(value.dropFirst().dropLast())
-            }
-
-            if key == "error" {
-                status.refusal = value
-                continue
-            }
-
-            if inPeerTable {
-                switch key {
-                case "name": current?.name = value
-                case "hint": current?.hint = value
-                case "endpoint": current?.endpoint = value
-                case "state": current?.state = value
-                case "psk_fallback": current?.pskFallback = (value == "true")
-                case "transport": current?.transport = value
-                case "tx_bytes": current?.txBytes = UInt64(value) ?? 0
-                case "rx_bytes": current?.rxBytes = UInt64(value) ?? 0
-                default: break
-                }
-            } else {
-                switch key {
-                case "interface": status.interface = value
-                case "mtu": status.mtu = Int(value) ?? 0
-                default: break
-                }
-            }
-        }
-        closeCurrentPeer()
-        return status
-    }
-
-    /// As `parse(_:)`, for `karst status --json`'s body
-    /// (`ipc::Command::StatusJson`, `run.rs`'s `status_json`) instead of the
-    /// TOML-ish text form — docs/adr/0027-macos-system-extension-host-app-ipc.md,
-    /// which is why this exists at all: the NetworkExtension build's
-    /// `handleAppMessage` answers with this JSON body, not the text one, so
-    /// `NetworkExtensionStatusClient` needs a parser for it. Deliberately
-    /// produces the *same* `DaemonStatus`/`PeerStatus` this file already
-    /// has, so `AppDelegate`'s rendering code does not need to know which
-    /// transport supplied the value — only `NetworkExtensionStatusClient`
-    /// versus `StatusClient` differ.
-    ///
-    /// **Unverified beyond visual review against the Rust `Serialize` impl
-    /// (`bins/karstd/src/run.rs`'s `StatusJson`/`PeerJson` structs) — there is
-    /// no NetworkExtension build to run this against yet.** Same posture
-    /// this package's Swift shipped under originally
-    /// (plans/phase-6/13-macos-status-indicators.md): reviewed line by line,
-    /// not run.
     static func parseJSON(_ text: String) -> DaemonStatus {
         var status = DaemonStatus()
         guard

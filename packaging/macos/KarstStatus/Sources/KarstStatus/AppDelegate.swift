@@ -3,24 +3,37 @@
 
 import AppKit
 import Foundation
+import NetworkExtension
+import os.log
 
 /// The whole app: one `NSStatusItem`, refreshed on a timer.
 ///
 /// No window, no Dock icon — `main.swift` sets `.accessory` activation
 /// policy — because this exists to be glanced at, not opened.
+///
+/// NetworkExtension is the sole macOS backend (ADR-0026's amended
+/// decision, #159): there used to be a second, independent `karstd`
+/// LaunchDaemon backend here too, with its own separate "Enrollment…" menu
+/// item — dropped once real device testing verified the NetworkExtension
+/// path end to end (activation, entitlements, enrollment) and confirmed
+/// Bedrock's actual cryptographic guarantee (peering trust,
+/// `spec/bedrock-v1.md`) already runs identically on both, since
+/// `EngineHandle`/`run_with_adopted_fd` (ADR-0030) reuses the same shared
+/// Rust engine either way — the only real gap was full-tunnel routing
+/// lockdown, tracked as its own follow-up rather than blocking this.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Where `karstd --status-socket` was told to listen —
-    /// `ipc::DEFAULT_STATUS_SOCKET` on the Rust side (its macOS variant:
-    /// `/run` does not exist on macOS at all — the root volume is a
-    /// read-only sealed system volume — `/var/run` is Darwin's equivalent).
-    /// Hardcoded rather than configurable: the two must agree, and a
-    /// mismatched pair fails as "not running" rather than something a user
-    /// can debug from this app alone.
-    private static let socketPath = "/var/run/karst-status/karstd.sock"
+    private static let log = OSLog(subsystem: "dev.karst.karststatus", category: "app")
     private static let pollInterval: TimeInterval = 2.0
 
+    /// The `NEPacketTunnelProvider` system extension's own bundle
+    /// identifier — `KarstPacketTunnel/Info.plist`'s `CFBundleIdentifier`,
+    /// the same value `SystemExtensionActivator`/`NetworkExtensionEnrollment`/
+    /// `NetworkExtensionStatusClient` all take as a parameter rather than
+    /// hardcoding themselves.
+    private static let networkExtensionIdentifier = "dev.karst.packettunnel"
+
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let client = StatusClient(socketPath: AppDelegate.socketPath)
+    private let client = NetworkExtensionStatusClient(providerBundleIdentifier: AppDelegate.networkExtensionIdentifier)
     private var timer: Timer?
 
     /// Previous poll's totals per peer hint, so throughput can be shown as a
@@ -38,18 +51,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+
+        // Activation and VPN-configuration registration are one-time,
+        // idempotent, invitation-independent steps (#159) — running them
+        // here, silently, at every launch means a user who opens "Enroll…"
+        // usually finds both already done, rather than needing a menu
+        // item to do them first. Can't move this into the .pkg's
+        // `postinstall` instead: `OSSystemExtensionRequest` must be
+        // submitted by a live GUI app process tied to the console user's
+        // session, which a root-context installer script never has. The
+        // one OS-level "Allow" prompt this triggers is unavoidable and
+        // shows itself; nothing else here should surprise a user who
+        // hasn't clicked anything yet, so failures are logged, not alerted.
+        ensureNetworkExtensionReady { result in
+            switch result {
+            case .success:
+                os_log("network extension ready at launch", log: Self.log, type: .info)
+            case .failure(let error):
+                os_log(
+                    "network extension not ready at launch (will retry from the menu): %{public}@",
+                    log: Self.log, type: .info, error.localizedDescription
+                )
+            }
+        }
     }
 
-    /// Fetches off the main thread — a slow or hung daemon must not freeze
-    /// the menu bar, which is the one thing this app exists to keep
-    /// responsive.
+    /// `NetworkExtensionStatusClient`'s completion is not guaranteed to
+    /// fire on any particular queue (the underlying `NETunnelProviderManager`/
+    /// `sendProviderMessage` APIs do not document one), so `render` is
+    /// always dispatched to the main queue explicitly rather than assumed.
     private func refresh() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        client.fetchStatusJSON { [weak self] result in
             guard let self else { return }
             let status: DaemonStatus?
-            do {
-                status = StatusParser.parse(try self.client.fetchStatus())
-            } catch {
+            switch result {
+            case .success(let json):
+                status = StatusParser.parseJSON(json)
+            case .failure:
                 status = nil
             }
             DispatchQueue.main.async {
@@ -111,16 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The five menu-bar states. Each names a bundled
     /// `Contents/Resources/menu-<state>.png` (`scripts/build-macos-pkg.sh`
-    /// stages them, the same as `karst-setup` — not a SwiftPM `resources:`
-    /// entry, since `Bundle.module`'s lookup differs depending on whether
-    /// this is running from inside an .app bundle or a bare `swift build`
-    /// binary, and this way sidesteps that entirely). A code-drawn version
-    /// of these (composited SF Symbols, then hand-built vector shapes) was
-    /// tried and rejected on real hardware — neither read cleanly at menu
-    /// bar size — so this is deliberately dumb: five flat image files, each
-    /// a hand-designed asset rather than something this code generates.
-    /// Every file starts as an identical copy of the mark this replaced, a
-    /// placeholder for manual per-state editing, not a finished design.
+    /// stages them — not a SwiftPM `resources:` entry, since
+    /// `Bundle.module`'s lookup differs depending on whether this is
+    /// running from inside an .app bundle or a bare `swift build` binary,
+    /// and this way sidesteps that entirely). A code-drawn version of these
+    /// (composited SF Symbols, then hand-built vector shapes) was tried and
+    /// rejected on real hardware — neither read cleanly at menu bar size —
+    /// so this is deliberately dumb: five flat image files, each a
+    /// hand-designed asset rather than something this code generates.
     private enum MarkState: String {
         case loading = "menu-loading"
         case notRunning = "menu-not-running"
@@ -189,13 +225,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         guard let status else {
             menu.addItem(
-                withTitle: "karstd is not running, or was not started with --status-socket",
+                withTitle: "Karst tunnel is not running — not yet enrolled, or not connected",
                 action: nil,
                 keyEquivalent: ""
             )
             menu.addItem(NSMenuItem.separator())
-            addSetupItem(to: menu)
-            addNetworkExtensionSetupItem(to: menu)
+            addEnrollItem(to: menu)
             menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return menu
@@ -213,119 +248,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(NSMenuItem.separator())
-        addSetupItem(to: menu)
-        addNetworkExtensionSetupItem(to: menu)
+        addEnrollItem(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
 
-    /// "Enrollment…" is always present, running or not: it is also how an
-    /// already-enrolled device recovers from a config `--resume` cannot use
-    /// (packaging/macos/karst-setup's `ask_recovery`/"Start Over"), not only
-    /// how first enrollment happens. Named "Enrollment…", not "Setup…", to
-    /// read distinctly from `addNetworkExtensionSetupItem`'s own menu entry
-    /// once both are in the same menu — "Setup…" and "Setup (Network
-    /// Extension)…" side by side read as two variants of the same action,
-    /// which they are not: this one is the `LaunchDaemon` build's guided
-    /// enrollment, unrelated to the other's system-extension activation.
-    private func addSetupItem(to menu: NSMenu) {
-        let item = NSMenuItem(title: "Enrollment…", action: #selector(runSetup), keyEquivalent: "")
+    /// Always present, running or not: it is also how an already-enrolled
+    /// device recovers from a config a resume path can't use, not only how
+    /// first enrollment happens.
+    private func addEnrollItem(to menu: NSMenu) {
+        let item = NSMenuItem(title: "Enroll…", action: #selector(runEnroll), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
     }
 
-    /// Runs the guided-enrollment flow this used to be a second app for
-    /// (Karst Setup.app). Its dialogs and privileged-enrollment logic
-    /// (packaging/macos/karst-setup, bundled here as a resource rather than
-    /// reimplemented in Swift) are unchanged; only how it is reached changed,
-    /// from a separate Launchpad entry to this menu item. Launched detached
-    /// — its own `display dialog` calls are independent windows with nothing
-    /// here worth blocking the status item on while they run.
-    @objc private func runSetup() {
-        guard let script = Bundle.main.path(forResource: "karst-setup", ofType: nil) else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [script]
-        try? process.run()
-    }
-
-    /// The `NEPacketTunnelProvider` system extension's own bundle
-    /// identifier — `KarstPacketTunnel/Info.plist`'s `CFBundleIdentifier`,
-    /// the same value `SystemExtensionActivator`/`NetworkExtensionEnrollment`/
-    /// `NetworkExtensionStatusClient` all take as a parameter rather than
-    /// hardcoding themselves (each one's own doc comment says whoever wires
-    /// the flow in decides it). This is that call site.
-    private static let networkExtensionIdentifier = "dev.karst.packettunnel"
-
-    /// A second, separate setup path from `addSetupItem`'s own item —
-    /// ADR-0026 ships both the `LaunchDaemon` and `NetworkExtension` builds
-    /// "indefinitely, not just during a transition" (item 8), so this is
-    /// additive, not a replacement that would hide which mechanism a click
-    /// actually invokes.
-    private func addNetworkExtensionSetupItem(to menu: NSMenu) {
-        let item = NSMenuItem(
-            title: "Setup (Network Extension)…",
-            action: #selector(runNetworkExtensionSetup),
-            keyEquivalent: ""
-        )
-        item.target = self
-        menu.addItem(item)
-    }
-
-    /// Activates the system extension, creates its `NETunnelProviderManager`
-    /// if one does not already exist, asks for an invitation, and enrolls —
-    /// the first place `SystemExtensionActivator`,
-    /// `NetworkExtensionEnrollment.ensureConfiguration`, and
-    /// `NetworkExtensionEnrollment.enroll` are actually called in sequence,
-    /// closing the gap each of their own doc comments named ("not wired
-    /// into `AppDelegate` yet"). Whether this is the *right* place for a
-    /// user to find this — a menu item at all, versus automatic on first
-    /// launch, or gated behind a preference — is unresolved; this makes the
-    /// mechanism work, not the UX decision GitHub issue #159 left open.
-    ///
-    /// Each step reports its own failure by name, since the three-call
-    /// chain has three independently-shaped ways to fail (an activation the
-    /// user must separately approve in System Settings, a
-    /// `NETunnelProviderManager` save, and the enrollment handshake
-    /// itself) — collapsing them into one generic error would leave an
-    /// operator guessing which step to retry.
-    @objc private func runNetworkExtensionSetup() {
-        SystemExtensionActivator.activate(extensionIdentifier: Self.networkExtensionIdentifier) { [weak self] result in
-            guard let self else { return }
+    /// Activates the system extension and ensures its `NETunnelProviderManager`
+    /// configuration is saved — the two one-time, invitation-independent
+    /// steps `applicationDidFinishLaunching` already runs silently at every
+    /// launch. Called again here, idempotently, as the natural retry path
+    /// if launch-time setup did not finish (denied, or not yet approved) —
+    /// in the common case this resolves near-instantly since both steps
+    /// are already done by the time a user opens this menu at all.
+    private func ensureNetworkExtensionReady(
+        completion: @escaping (Result<NETunnelProviderManager, Error>) -> Void
+    ) {
+        SystemExtensionActivator.activate(extensionIdentifier: Self.networkExtensionIdentifier) { result in
             switch result {
             case .failure(let error):
-                self.showAlert(
-                    title: "Could Not Activate the Network Extension",
-                    message: error.localizedDescription
-                )
+                completion(.failure(error))
             case .success:
-                self.ensureConfigurationAndEnroll()
+                // `controlURL` is a placeholder empty string:
+                // `NETunnelProviderProtocol.serverAddress` is System
+                // Settings' own VPN-list display field, not something the
+                // enrollment handshake itself reads — the invitation
+                // pasted into `askInvitation` carries the real
+                // control-plane address, inside the Rust enrollment logic
+                // `enrollInvitation` runs — see
+                // `NetworkExtensionEnrollment.ensureConfiguration`'s own
+                // doc comment. Parsing the invitation client-side in Swift
+                // just to populate a display string before the user has
+                // pasted one yet is not worth doing until something other
+                // than System Settings' own list actually reads it.
+                NetworkExtensionEnrollment.ensureConfiguration(
+                    providerBundleIdentifier: Self.networkExtensionIdentifier,
+                    controlURL: "",
+                    completion: completion
+                )
             }
         }
     }
 
-    /// `controlURL` is a placeholder empty string:
-    /// `NETunnelProviderProtocol.serverAddress` is System Settings' own
-    /// VPN-list display field, not something the enrollment handshake
-    /// itself reads — the invitation pasted into `askInvitation` below
-    /// carries the real control-plane address, inside the Rust enrollment
-    /// logic `enrollInvitation` runs — see
-    /// `NetworkExtensionEnrollment.ensureConfiguration`'s own doc comment.
-    /// Parsing the invitation client-side in Swift just to populate a
-    /// display string before the user has pasted one yet is not worth
-    /// doing until something other than System Settings' own list actually
-    /// reads it.
-    private func ensureConfigurationAndEnroll() {
-        NetworkExtensionEnrollment.ensureConfiguration(
-            providerBundleIdentifier: Self.networkExtensionIdentifier,
-            controlURL: ""
-        ) { [weak self] result in
+    /// The one remaining user-facing action: pasting an invitation. Each
+    /// step reports its own failure by name, since the chain has
+    /// independently-shaped ways to fail (an activation the user must
+    /// separately approve in System Settings, a `NETunnelProviderManager`
+    /// save, and the enrollment handshake itself) — collapsing them into
+    /// one generic error would leave an operator guessing which step to
+    /// retry.
+    @objc private func runEnroll() {
+        ensureNetworkExtensionReady { [weak self] result in
             guard let self else { return }
             switch result {
             case .failure(let error):
                 self.showAlert(
-                    title: "Could Not Configure the Network Extension",
+                    title: "Could Not Prepare the Network Extension",
                     message: error.localizedDescription
                 )
             case .success(let manager):
@@ -336,25 +323,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     case .failure(let error):
                         self.showAlert(title: "Enrollment Failed", message: error.localizedDescription)
                     case .success:
-                        self.showAlert(
-                            title: "Enrolled",
-                            message: "This device is now enrolled through the Network Extension build."
-                        )
+                        self.showAlert(title: "Enrolled", message: "This device is now enrolled.")
                     }
                 }
             }
         }
     }
 
-    /// A roomy paste field for an invitation — native `AppKit`, not
-    /// `packaging/macos/karst-setup`'s JXA (`osascript -l JavaScript`)
-    /// version of this identical `NSAlert`/`NSTextView`/`NSScrollView`
-    /// construction. That script runs as a detached, unprivileged child
-    /// process invoked via `Process`, which is why it exists as a separate
-    /// script at all — `karst setup` needs `do shell script ... with
-    /// administrator privileges`, a privilege boundary this flow never
-    /// crosses (nothing here runs as a different user), so there is no
-    /// reason to shell out to a second script for it.
+    /// A roomy paste field for an invitation — native `AppKit`.
     private func askInvitation() -> String? {
         let alert = NSAlert()
         alert.messageText = "Paste the enrollment invitation from your administrator."
