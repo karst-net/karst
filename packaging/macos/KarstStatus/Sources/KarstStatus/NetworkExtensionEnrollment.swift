@@ -111,7 +111,25 @@ enum NetworkExtensionEnrollment {
                     completion(.failure(NetworkExtensionEnrollmentError.saveFailed(error)))
                     return
                 }
-                completion(.success(manager))
+                // Found on real hardware (#159), not anticipated: calling
+                // `sendProviderMessage` on this same in-memory `manager`
+                // immediately after `saveToPreferences` failed with
+                // `NEVPNErrorDomain` error 1 (`configurationInvalid`) — a
+                // known NetworkExtension gotcha, not unique to this app.
+                // `manager`'s own `connection` was built before the
+                // configuration existed in the system's store; saving does
+                // not retroactively fix it up. `loadFromPreferences`
+                // re-fetches the manager from that store, with a
+                // `connection` actually tied to the persisted
+                // configuration, which is what a caller needs before using
+                // it at all.
+                manager.loadFromPreferences { error in
+                    if let error {
+                        completion(.failure(NetworkExtensionEnrollmentError.saveFailed(error)))
+                        return
+                    }
+                    completion(.success(manager))
+                }
             }
         }
     }
