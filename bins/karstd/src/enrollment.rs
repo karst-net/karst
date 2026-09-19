@@ -190,6 +190,51 @@ pub fn enroll_invitation(
     enroll_bundle(parse_invitation(invitation)?, config_path, state_dir)
 }
 
+/// As [`enroll_invitation`], but explicitly replaces an existing
+/// `config_path` instead of refusing — the "explicitly remove it" half of
+/// [`enroll_bundle`]'s own guard, for a caller (a UI's "Re-enroll…" action)
+/// that means to do exactly that, not a script that might be running by
+/// accident against a device someone forgot was already set up.
+///
+/// The invitation is validated *before* anything on disk is touched, and
+/// the existing config is moved aside rather than deleted outright: if
+/// `enroll_bundle` fails past that point (control plane unreachable, wrong
+/// pins, revoked setup key), the working config is restored rather than
+/// left destroyed by a re-enrollment attempt that didn't pan out.
+/// `node.key`/`identity.key` are never touched either way — re-enrollment
+/// replaces which config this device runs under, not the identity the
+/// control plane already knows it by.
+///
+/// # Errors
+/// As [`enroll_invitation`], plus filesystem errors moving the existing
+/// config aside or restoring it.
+pub fn re_enroll_invitation(
+    invitation: &str,
+    config_path: &Path,
+    state_dir: &Path,
+) -> Result<(), String> {
+    let bundle = parse_invitation(invitation)?;
+    let backup = config_path.with_extension("toml.re-enroll-bak");
+    let had_existing = config_path.symlink_metadata().is_ok();
+    if had_existing {
+        fs::rename(config_path, &backup).map_err(|e| e.to_string())?;
+    }
+    match enroll_bundle(bundle, config_path, state_dir) {
+        Ok(()) => {
+            if had_existing {
+                let _ = fs::remove_file(&backup);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if had_existing {
+                let _ = fs::rename(&backup, config_path);
+            }
+            Err(error)
+        }
+    }
+}
+
 fn enroll_bundle(bundle: Bundle, config_path: &Path, state_dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     if !config_path.is_absolute() || !state_dir.is_absolute() {
@@ -366,5 +411,65 @@ mod tests {
         publish_config(&path, "setup_key = \"SECRET\" broken").unwrap();
         let error = load_bundle(&path).err().unwrap();
         assert!(!error.contains("SECRET"));
+    }
+
+    /// A fresh `config_path` never existed to move aside, so `re_enroll_invitation`
+    /// must behave exactly like `enroll_invitation` rather than looking for a
+    /// backup that was never made.
+    #[test]
+    fn re_enroll_behaves_like_enroll_when_nothing_exists_yet() {
+        let dir = Scratch::new("re-enroll-fresh");
+        let config_path = dir.join("config.toml");
+        let state_dir = dir.join("state");
+
+        let invitation = unreachable_server_invitation();
+        let error = re_enroll_invitation(&invitation, &config_path, &state_dir).unwrap_err();
+        assert!(!error.contains("already exists"), "{error}");
+        assert!(!config_path.exists());
+        assert!(!dir.join("config.toml.re-enroll-bak").exists());
+    }
+
+    /// The actual point of `re_enroll_invitation` over deleting and calling
+    /// `enroll_invitation`: a re-enrollment attempt that fails past invitation
+    /// parsing (here, an unreachable control plane) must not leave the device
+    /// worse off than before the attempt — the working config a real device
+    /// was actually running under comes back, not a hole where it used to be.
+    #[test]
+    fn re_enroll_restores_the_existing_config_when_enrollment_fails() {
+        let dir = Scratch::new("re-enroll-restore");
+        let config_path = dir.join("config.toml");
+        let state_dir = dir.join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        publish_config(&config_path, "existing = true").unwrap();
+
+        let invitation = unreachable_server_invitation();
+        let error = re_enroll_invitation(&invitation, &config_path, &state_dir).unwrap_err();
+        assert!(!error.is_empty());
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            "existing = true",
+            "a failed re-enroll must restore the previous config"
+        );
+        assert!(
+            !dir.join("config.toml.re-enroll-bak").exists(),
+            "the backup must not be left behind once restored"
+        );
+    }
+
+    /// A syntactically valid invitation naming a control-plane address
+    /// nothing listens on, so `enroll_bundle`'s network round trip fails
+    /// fast and deterministically without needing real network access.
+    fn unreachable_server_invitation() -> String {
+        let payload = serde_json::json!({
+            "server": "https://127.0.0.1:1",
+            "server_kem_pin": "01".repeat(1184),
+            "server_verify_pin": "02".repeat(2592),
+            "setup_key": "fixture",
+            "control_minimum_version": 1,
+        });
+        format!(
+            "{INVITATION_PREFIX}{}",
+            Base64UrlUnpadded::encode_string(payload.to_string().as_bytes())
+        )
     }
 }

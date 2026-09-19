@@ -205,6 +205,32 @@ impl Identity {
     pub fn handle(&self) -> String {
         karst_control_client::handle(&self.public)
     }
+
+    /// Load an existing identity — never create one.
+    ///
+    /// [`Self::load_or_create`] exists for a daemon bringing itself up,
+    /// where "no key yet" and "make one" are the same event. A caller
+    /// asking what identity, if any, this device is already enrolled
+    /// with is asking a different question: generating a fresh identity
+    /// as a side effect of answering it would be a bug, not a fallback,
+    /// so this returns [`Error::Io`] with `ErrorKind::NotFound` instead.
+    ///
+    /// # Errors
+    /// [`Error::Io`] if `path` does not exist or cannot be read,
+    /// [`Error::Permissions`] if it is readable beyond its owner, and
+    /// [`Error::Key`] if its contents are not a valid seed.
+    pub fn load(path: &Path) -> Result<Self, Error> {
+        let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+        check_permissions(path)?;
+        let seed = decode_hex(text.trim(), IDENTITY_SEED_LEN)?;
+        let seed: [u8; IDENTITY_SEED_LEN] = seed
+            .try_into()
+            .map_err(|_| Error::Key("identity seed is the wrong length".to_owned()))?;
+        Ok(Self::from_seed(&seed))
+    }
 }
 
 impl Drop for Identity {
@@ -1457,6 +1483,37 @@ mod tests {
             second.handle(),
             "the node's handle changed across a restart"
         );
+    }
+
+    /// `identity_handle`'s FFI wrapper (`crates/karst-ffi`) depends on this
+    /// distinguishing "never enrolled" from every other failure by error
+    /// kind rather than by message text.
+    #[test]
+    fn load_refuses_to_create_and_reports_not_found() {
+        let dir = Scratch::new("load-missing");
+        let path = dir.join("identity.key");
+        let _ = std::fs::remove_file(&path);
+
+        let error = Identity::load(&path).expect_err("must not create one");
+        assert!(
+            matches!(&error, Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound),
+            "{error:?}"
+        );
+        assert!(!path.exists(), "load must not have created a file");
+    }
+
+    /// The read-only counterpart to `an_identity_is_created_once_and_reused`
+    /// — `load` must see exactly what `load_or_create` wrote, not a
+    /// second, independently derived identity.
+    #[test]
+    fn load_sees_what_load_or_create_wrote() {
+        let dir = Scratch::new("load-existing");
+        let path = dir.join("identity.key");
+        let _ = std::fs::remove_file(&path);
+
+        let created = Identity::load_or_create(&path).expect("create");
+        let loaded = Identity::load(&path).expect("load");
+        assert_eq!(created.handle(), loaded.handle());
     }
 
     /// And it is created unreadable by anyone else, from the moment it exists.

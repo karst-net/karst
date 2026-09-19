@@ -10,22 +10,26 @@
 //! against — ADR-0022's "not built yet" gap, ADR-0029's tool and scope
 //! decision.
 //!
-//! Two slices so far:
+//! Three slices so far:
 //!
-//! - [`enroll_invitation`] (ADR-0029) — a thin wrapper, not a
-//!   reimplementation: it calls [`karstd::enrollment::enroll_invitation`]
+//! - [`enroll_invitation`]/[`re_enroll_invitation`] (ADR-0029) — thin
+//!   wrappers, not a reimplementation: they call
+//!   [`karstd::enrollment::enroll_invitation`]/`re_enroll_invitation`
 //!   verbatim, so the bundle parsing, control-plane handshake and
 //!   config-publishing behavior an operator already gets from
 //!   `karst-setup`'s bash script is exactly what a linked extension gets
 //!   too, not a second, divergent path.
+//! - [`identity_handle`] — reads this device's own identity fingerprint
+//!   without needing a running engine, for `Karst.app`'s "what am I
+//!   enrolled as" display and its choice between "Enroll…" and
+//!   "Re-enroll…".
 //! - [`engine::EngineHandle`] (ADR-0030) — engine lifecycle and status over
 //!   an adopted `packetFlow` fd, macOS-`network-extension`-only. Closes the
-//!   other three `TODO(karst-ffi)` sites in
+//!   `startTunnel`/`stopTunnel`/`"status"` `TODO(karst-ffi)` sites
 //!   `packaging/macos/KarstPacketTunnel/Sources/KarstPacketTunnel/PacketTunnelProvider.swift`
-//!   (`startTunnel`'s engine bring-up, `stopTunnel`'s teardown, and the
-//!   `"status"` app-message verb) that ADR-0029 explicitly deferred rather
-//!   than guessed at. Track remaining wiring under
-//!   <https://github.com/karst-net/karst/issues/158>.
+//!   used to carry (#158, closed) — what remains is verifying that wiring
+//!   on real hardware, tracked under
+//!   <https://github.com/karst-net/karst/issues/161>.
 
 pub mod engine;
 
@@ -50,17 +54,26 @@ pub enum FfiError {
     /// `Enrollment` above: the message travels verbatim, not reformatted.
     #[error("{0}")]
     Engine(String),
+    /// [`identity_handle`]'s failures — a distinct case rather than folding
+    /// into `Enrollment`/`Engine` because "no identity file yet" (this
+    /// device has never been enrolled) is a normal, expected outcome a
+    /// caller needs to tell apart from a real failure, not a variant named
+    /// after a concept (enrollment, the engine) this operation doesn't
+    /// touch.
+    #[error("{0}")]
+    Identity(String),
 }
 
 /// Provision this device from a pasted administrator invitation —
-/// ADR-0028 item 3's `"enroll"` app-message verb, once
-/// `PacketTunnelProvider.handleAppMessage` is wired to call through this
-/// boundary instead of answering its current honest
-/// "not yet linked" refusal.
+/// ADR-0028 item 3's `"enroll"` app-message verb,
+/// `PacketTunnelProvider.handleAppMessage`'s call through this boundary.
 ///
 /// `config_path` and `state_dir` are plain strings at this boundary because
 /// `UniFFI` has no native `Path`/`PathBuf` type; both must be absolute, the
 /// same requirement `karstd::enrollment::enroll_bundle` already enforces.
+/// Refuses if `config_path` already exists — this device is already
+/// enrolled — see [`re_enroll_invitation`] for the explicit-replace
+/// version.
 ///
 /// # Errors
 /// Invitation, filesystem, credential and control-plane authentication
@@ -82,6 +95,57 @@ pub fn enroll_invitation(
         std::path::Path::new(&state_dir),
     )
     .map_err(FfiError::Enrollment)
+}
+
+/// As [`enroll_invitation`], but explicitly replaces an existing
+/// configuration instead of refusing — `Karst.app`'s "Re-enroll…" item.
+/// See `karstd::enrollment::re_enroll_invitation`'s own doc comment for
+/// what "replace" does and does not touch on disk.
+///
+/// # Errors
+/// As [`enroll_invitation`], plus filesystem errors moving the existing
+/// configuration aside or restoring it.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+pub fn re_enroll_invitation(
+    invitation: String,
+    config_path: String,
+    state_dir: String,
+) -> Result<(), FfiError> {
+    karstd::enrollment::re_enroll_invitation(
+        &invitation,
+        std::path::Path::new(&config_path),
+        std::path::Path::new(&state_dir),
+    )
+    .map_err(FfiError::Enrollment)
+}
+
+/// This device's identity handle, if it has ever been enrolled — the same
+/// 44-character fingerprint `status_json`'s `[control]` section would
+/// report from a running engine, computed here directly from the local
+/// ML-DSA-87 identity key so `Karst.app` can show it without a tunnel
+/// running. `identity_key_path` is `PacketTunnelProvider`'s own
+/// `identityPath`, not a value the host app chooses.
+///
+/// Returns `Ok(None)`, not an error, when `identity_key_path` does not
+/// exist: "never enrolled" is this function's normal, expected outcome for
+/// a fresh install, not a failure a caller needs to handle specially.
+///
+/// # Errors
+/// [`FfiError::Identity`] if the file exists but cannot be read, is
+/// readable beyond its owner, or is not a valid seed.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+pub fn identity_handle(identity_key_path: String) -> Result<Option<String>, FfiError> {
+    match karstd::control::Identity::load(std::path::Path::new(&identity_key_path)) {
+        Ok(identity) => Ok(Some(identity.handle())),
+        Err(karstd::control::Error::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(FfiError::Identity(error.to_string())),
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +206,45 @@ mod tests {
             unreachable!("enroll_invitation only ever returns FfiError::Enrollment")
         };
         assert!(message.contains("absolute"), "{message}");
+    }
+
+    /// A short-lived directory this module owns, distinct per test run —
+    /// `karstd`'s own `Scratch` fixture is `pub(crate)` to that crate and
+    /// not reachable from here, so this crate gets its own minimal version
+    /// rather than widening that visibility for two tests.
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!("karst-ffi-{tag}-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch directory");
+        dir
+    }
+
+    /// `Ok(None)`, not an error, is the contract a caller deciding between
+    /// "Enroll…" and "Re-enroll…" depends on for a fresh, never-enrolled
+    /// install.
+    #[test]
+    fn identity_handle_is_none_when_never_enrolled() {
+        let dir = scratch_dir("identity-missing");
+        let path = dir.join("identity.key").to_string_lossy().into_owned();
+        assert_eq!(identity_handle(path).expect("must not error"), None);
+    }
+
+    /// Once enrolled, the handle this returns must be the same one
+    /// `karstd::control::Identity::handle()` would report for the same key
+    /// — this wrapper reads, it does not re-derive.
+    #[test]
+    fn identity_handle_matches_the_underlying_identity_once_enrolled() {
+        let dir = scratch_dir("identity-present");
+        let path = dir.join("identity.key");
+        let identity =
+            karstd::control::Identity::load_or_create(&path).expect("create a fixture identity");
+
+        let handle = identity_handle(path.to_string_lossy().into_owned())
+            .expect("must not error")
+            .expect("must find the identity just created");
+        assert_eq!(handle, identity.handle());
     }
 }
