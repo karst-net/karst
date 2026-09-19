@@ -19,15 +19,19 @@ import os.log
 /// platform (ADR-0029).
 ///
 /// **What is wired and what is still unverified.** `handleAppMessage`'s
-/// `"enroll"` verb is now verified end-to-end on a signed, notarized,
-/// activated extension (#159): activation, entitlements (self-service,
-/// #156), and a real enrollment round trip all confirmed on real hardware.
-/// `startTunnel`/`packetFlow` and `networkSettings(fromStatusJSON:)`'s
-/// AllowedIPs-as-routes mapping remain unverified past compiling — the
-/// mapping is the same one every WireGuard-shaped client uses, not an
-/// invented scheme, but it has not yet carried real peer traffic — that is
-/// the next piece of #159, tracked separately from the enrollment chain
-/// already fixed and verified above. DNS is deliberately left unset —
+/// `"enroll"`/`"re-enroll"`/`"identity"` verbs are verified end-to-end on
+/// a signed, notarized, activated extension (#159, closed): activation,
+/// entitlements (self-service, #156), and real enroll/re-enroll/identity
+/// round trips all confirmed on real hardware. `startTunnel` itself is
+/// real progress, not placeholder code, but still not a confirmed success
+/// (#161, open): on the one real test rig available so far — itself an
+/// Apple Virtual Machine, not real hardware — `packetFlow`'s private fd
+/// never resolves even after a bounded retry, for reasons that may be
+/// specific to running inside a VM rather than a bug in this file. Real
+/// peer traffic, and therefore `networkSettings(fromStatusJSON:)`'s
+/// AllowedIPs/exit-route-as-routes mapping (#160) actually taking effect,
+/// remain unverified past compiling until #161's real-hardware test
+/// happens. DNS is deliberately left unset —
 /// `plans/phase-5/06-macos-client.md` §5's KarstDNS search-list gap is a
 /// known, already-accepted limitation, not new scope for this file.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
@@ -212,13 +216,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// (`bins/karstd/src/run.rs`'s `StatusJson`). Assigns this device's own
     /// `addresses`, then routes every peer's `allowed_ips` through the
     /// tunnel — the standard AllowedIPs-as-routes mapping every
-    /// WireGuard-shaped client uses, not a scheme invented for this file.
-    /// Exit-node full-default-route handling (`RoutingJson.exit_route_active`,
-    /// only present under `StatusJson.control`) is out of scope here: that
-    /// needs its own verification once a real exit peer exists to route
-    /// through, not a guess bundled into this pass. DNS is left unset —
-    /// `plans/phase-5/06-macos-client.md` §5's KarstDNS search-list gap is
-    /// an already-accepted limitation.
+    /// WireGuard-shaped client uses, not a scheme invented for this file —
+    /// plus, if this device currently has a live exit route (#160,
+    /// `RoutingJson.exit_route_active`/`.routes`, only present under
+    /// `StatusJson.control`, which `EngineHandle.status_json()` always has:
+    /// it is both ends of its own admin socket), the same full-default-route
+    /// prefix (`0.0.0.0/0`/`::/0`) an exit offer already carries literally,
+    /// not a scheme this file invents from `exit_route_active` alone.
+    ///
+    /// **What this does not do.** Routes are a snapshot from the single
+    /// `statusJson()` call `startTunnel` makes — nothing here re-calls
+    /// `setTunnelNetworkSettings` if the exit route's `active` state
+    /// changes later in the same tunnel session (the exit peer drops, a
+    /// different one takes over, or the route is explicitly released).
+    /// That is a real, known gap — the mid-session route-churn gap
+    /// `docs/adr/0030-embedded-engine-lifecycle.md` already documents
+    /// (`NetworkDevice::add_route`/`remove_route` are no-ops under
+    /// `network-extension`) applies here specifically: this file currently
+    /// has no callback path from the engine back into
+    /// `setTunnelNetworkSettings`, so once an exit route is installed it
+    /// stays installed (routing traffic nowhere, not falling open to the
+    /// direct interface) even after the engine itself would have withdrawn
+    /// it — fail-static, not a chosen kill-switch or fail-open behavior.
+    /// DNS is left unset — `plans/phase-5/06-macos-client.md` §5's
+    /// KarstDNS search-list gap is an already-accepted limitation.
     private static func networkSettings(fromStatusJSON json: String) throws -> NEPacketTunnelNetworkSettings {
         let status = try JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8))
 
@@ -241,19 +262,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var ipv6Routes: [NEIPv6Route] = []
         for peer in status.peers {
             for allowed in peer.allowedIps {
-                guard let parsed = splitCIDR(allowed) else { continue }
-                if parsed.address.contains(":") {
-                    ipv6Routes.append(NEIPv6Route(
-                        destinationAddress: parsed.address,
-                        networkPrefixLength: NSNumber(value: parsed.prefixLength)
-                    ))
-                } else {
-                    ipv4Routes.append(NEIPv4Route(
-                        destinationAddress: parsed.address,
-                        subnetMask: ipv4SubnetMask(prefixLength: parsed.prefixLength)
-                    ))
-                }
+                addRoute(allowed, toIPv4: &ipv4Routes, ipv6: &ipv6Routes)
             }
+        }
+        // An exit offer's own `prefix` is already the literal
+        // `0.0.0.0/0`/`::/0` this route needs — `route_offer.rs` requires
+        // a zero-length prefix to construct `Kind::Exit` at all, so there
+        // is nothing to derive here beyond reading it and checking `active`.
+        // `role == "recipient"` is not redundant with that: `active` is
+        // also `true` for a `role == "gateway"` entry (`routing_json`,
+        // `run.rs`) when *this* node is itself relaying exit traffic for
+        // others, which must never fold into this node's own default
+        // route — that is the inbound side of the exact opposite
+        // relationship.
+        for route in status.control?.routing.routes ?? []
+        where route.kind == "exit" && route.role == "recipient" && route.active {
+            addRoute(route.prefix, toIPv4: &ipv4Routes, ipv6: &ipv6Routes)
         }
 
         // A non-empty string is required even though a full mesh has no
@@ -275,6 +299,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             settings.ipv6Settings = ipv6Settings
         }
         return settings
+    }
+
+    /// Parses one CIDR route and appends it to whichever of `ipv4Routes`/
+    /// `ipv6Routes` matches its family — the one construction path every
+    /// route source (`allowed_ips`, an active exit offer's `prefix`) goes
+    /// through, so a `0.0.0.0/0` from either place is handled identically
+    /// rather than by two copies of the same six lines.
+    private static func addRoute(
+        _ cidr: String,
+        toIPv4 ipv4Routes: inout [NEIPv4Route],
+        ipv6 ipv6Routes: inout [NEIPv6Route]
+    ) {
+        guard let parsed = splitCIDR(cidr) else { return }
+        if parsed.address.contains(":") {
+            ipv6Routes.append(NEIPv6Route(
+                destinationAddress: parsed.address,
+                networkPrefixLength: NSNumber(value: parsed.prefixLength)
+            ))
+        } else {
+            ipv4Routes.append(NEIPv4Route(
+                destinationAddress: parsed.address,
+                subnetMask: ipv4SubnetMask(prefixLength: parsed.prefixLength)
+            ))
+        }
     }
 
     /// Splits `"100.64.0.1/16"` into its address and prefix length.
@@ -522,7 +570,39 @@ private struct EngineStatus: Decodable {
         }
     }
 
+    /// Mirrors `ControlJson` (`run.rs`) — `nil` only on the unprivileged
+    /// status socket, which `EngineHandle.status_json()` never uses (it is
+    /// both ends of its own admin socket, per that method's own doc
+    /// comment), so this is `Optional` to match the Rust type honestly
+    /// rather than because this file ever expects to see it absent.
+    struct Control: Decodable {
+        let routing: Routing
+    }
+
+    /// Mirrors `RoutingJson`. Only `routes` is read here — `offers`,
+    /// `selected_exit`, `gateway_active`/`gateway_error` describe *why*
+    /// routing is in its current state, which belongs in a status display,
+    /// not in what `setTunnelNetworkSettings` needs to act on.
+    struct Routing: Decodable {
+        let routes: [Route]
+    }
+
+    /// Mirrors `RouteJson`. `prefix` for a `kind == "exit"` route is
+    /// already a literal `0.0.0.0/0`/`::/0` (`route_offer.rs` requires a
+    /// zero-length prefix to construct `Kind::Exit` at all — not a
+    /// placeholder this file needs to special-case into one), so an active
+    /// exit route folds into the same `splitCIDR`/`NEIPv4Route`/
+    /// `NEIPv6Route` construction every peer's `allowed_ips` already goes
+    /// through, not a second route-building path.
+    struct Route: Decodable {
+        let prefix: String
+        let kind: String
+        let role: String
+        let active: Bool
+    }
+
     let addresses: [String]
     let mtu: Int
     let peers: [Peer]
+    let control: Control?
 }
