@@ -105,6 +105,18 @@ case "$arch" in
     ;;
 esac
 
+# `swift build` defaults to Apple's newer "Swift Build" backend on a recent
+# enough toolchain (`swift build --help` shows it as the `--build-system`
+# default). Found on real hardware, not anticipated (#159): that backend
+# fails linking `CKarstFFI` — a header-only C target, no `.c` source at
+# all — with "Build input file cannot be found: '.../CKarstFFI.o'", since
+# it expects an object file a header-only target never produces. `native`
+# (the classic SwiftPM/llbuild backend, deprecated but still functional)
+# does not have this bug. CI's pinned runner toolchains predate the new
+# backend's default flip entirely, so this only bites a local build on a
+# newer Xcode/Swift install — exactly this VM's case.
+swift_build_flags=(--build-system native)
+
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "error: this builds a macOS package and needs macOS — pkgbuild," >&2
   echo "       productbuild, codesign and lipo have no Linux equivalents." >&2
@@ -117,6 +129,22 @@ version="${VERSION:-0.0.0+git.$(git -C "$root" rev-parse --short HEAD 2>/dev/nul
 # git metadata or pre-release label (e.g. "0.1.0-rc.1") goes in the filename
 # and in `karst --version`, which is where anyone actually looks for it.
 pkg_version="${version%%[-+]*}"
+
+# `pkg_version` above is the human-readable marketing version
+# pkgbuild/productbuild need in their own strict plain-dotted-number
+# format — it collapses to a fixed "0.0.0" on every non-tag build, since
+# the git-sha suffix that would otherwise vary it is exactly what that
+# strict format can't hold. `CFBundleVersion` has a different job:
+# it's what `sysextd` itself compares to decide whether an
+# already-activated system extension needs replacing at all. Found on
+# real hardware, not anticipated (#159): a `CFBundleVersion` that never
+# changes build to build means sysextd treats every rebuild as "the same
+# version, nothing to do" and keeps running the *first* build it ever
+# staged — no error, just silently stale code, until the extension is
+# fully removed and the Mac rebooted. A build timestamp is monotonically
+# increasing and numeric-only (`CFBundleVersion`'s own safe format),
+# independent of `pkg_version`'s own intentional stability.
+bundle_version="$(date -u +%Y%m%d%H%M%S)"
 
 # Everything below is namespaced by $arch and lives under one shared
 # dist/macos, rather than each build wiping the directory: building both
@@ -155,8 +183,8 @@ chmod 0755 "$stage/usr/local/bin/karst-uninstall"
 # `--show-bin-path` asks SwiftPM for that directory directly instead of this
 # script hardcoding a path that is a SwiftPM implementation detail.
 echo "==> building KarstStatus ($arch)"
-(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch")
-status_bin_dir="$(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch" --show-bin-path)"
+(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch" "${swift_build_flags[@]}")
+status_bin_dir="$(cd "$root/packaging/macos/KarstStatus" && swift build -c release --arch "$arch" "${swift_build_flags[@]}" --show-bin-path)"
 status_bin="$status_bin_dir/KarstStatus"
 [ -x "$status_bin" ] \
   || { echo "error: KarstStatus build did not produce $status_bin" >&2; exit 1; }
@@ -167,12 +195,13 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$status_bin" "$app/Contents/MacOS/KarstStatus"
 chmod 0755 "$app/Contents/MacOS/KarstStatus"
 cp "$root/packaging/macos/KarstStatus/Info.plist" "$app/Contents/Info.plist"
-# The template ships "0.0.0" — see its own comment. Both keys, because
-# Gatekeeper and Spotlight read `CFBundleShortVersionString` but some
-# tooling (and a `defaults read`) expects `CFBundleVersion` too, and a
-# mismatch between them is worse than redundancy.
+# The template ships "0.0.0" — see its own comment.
+# CFBundleShortVersionString is the human-readable marketing version
+# (Gatekeeper/Spotlight read this one); CFBundleVersion is the
+# always-increasing build identifier sysextd's own replace-logic needs —
+# see bundle_version's own comment for why these can't share a value.
 plutil -replace CFBundleShortVersionString -string "$pkg_version" "$app/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$pkg_version" "$app/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$bundle_version" "$app/Contents/Info.plist"
 
 cp "$root/packaging/macos/dev.karst.karststatus.plist" "$stage_status/Library/LaunchAgents/"
 chmod 0644 "$stage_status/Library/LaunchAgents/dev.karst.karststatus.plist"
@@ -214,8 +243,8 @@ echo "==> building karst-ffi ($arch)"
 export KARST_FFI_LIB_DIR="$root/target/$rust_target/release"
 
 echo "==> building KarstPacketTunnel ($arch)"
-(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch")
-packettunnel_bin_dir="$(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" --show-bin-path)"
+(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" "${swift_build_flags[@]}")
+packettunnel_bin_dir="$(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" "${swift_build_flags[@]}" --show-bin-path)"
 packettunnel_bin="$packettunnel_bin_dir/KarstPacketTunnel"
 [ -x "$packettunnel_bin" ] \
   || { echo "error: KarstPacketTunnel build did not produce $packettunnel_bin" >&2; exit 1; }
@@ -231,7 +260,7 @@ cp "$packettunnel_bin" "$systemextension/Contents/MacOS/KarstPacketTunnel"
 chmod 0755 "$systemextension/Contents/MacOS/KarstPacketTunnel"
 cp "$root/packaging/macos/KarstPacketTunnel/Info.plist" "$systemextension/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$pkg_version" "$systemextension/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$pkg_version" "$systemextension/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$bundle_version" "$systemextension/Contents/Info.plist"
 
 # ── the app icon ─────────────────────────────────────────────────────────
 #
