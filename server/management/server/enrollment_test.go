@@ -248,6 +248,47 @@ func TestDeviceInvitationNeedsNoRecipientAccount(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDeviceInvitationNameBecomesPeerIdentity(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "named-devices", AccountID: member.AccountID, Name: "Named devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "Adrian's MacBook Pro!", []string{group.ID})
+	require.NoError(t, err)
+
+	// The client's self-reported hostname must be ignored in favor of the
+	// admin's invitation name: this is the whole point of #163.
+	device, err := enrollPeer(am, key.Key, "some-clients-own-hostname")
+	require.NoError(t, err)
+	require.Equal(t, "Adrian's MacBook Pro!", device.Name, "peer.Name keeps the admin's literal invitation text")
+	require.Equal(t, "adrian-s-macbook-pro-", device.DNSLabel, "DNSLabel is the same grammar-sanitized parse hostnames already get")
+	require.NotContains(t, device.DNSLabel, "some-clients-own-hostname")
+}
+
+func TestDeviceInvitationRejectsUnnameableLabel(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "unnameable", AccountID: member.AccountID, Name: "Unnameable", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	_, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "!!!", []string{group.ID})
+	require.Error(t, err, "a name with no letters or digits cannot become a DNS label")
+}
+
+func TestEnrollmentKeyPortalPlaceholderNameStaysOffPeers(t *testing.T) {
+	am, user := enrollmentFixture(t)
+	ctx := context.Background()
+
+	key, err := am.CreateEnrollmentKey(ctx, user.AccountID, user.Id)
+	require.NoError(t, err)
+	require.Equal(t, "portal device", storedEnrollment(t, am, key.Key).Name, "sanity: the portal key really does carry a fixed placeholder name")
+
+	device, err := enrollPeer(am, key.Key, "my-real-laptop")
+	require.NoError(t, err)
+	require.Equal(t, "my-real-laptop", device.Name, "the portal key's placeholder name must never become a peer's identity")
+}
+
 func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	am, member := enrollmentFixture(t)
 	ctx := context.Background()

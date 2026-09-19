@@ -764,12 +764,19 @@ func peerWillHaveIPv6(settings *types.Settings, groupsToAdd []string, allGroupID
 }
 
 type peerAddAuthConfig struct {
-	AccountID           string
-	SetupKeyID          string
-	SetupKeyName        string
-	GroupsToAdd         []string
-	AllowExtraDNSLabels bool
-	Ephemeral           bool
+	AccountID    string
+	SetupKeyID   string
+	SetupKeyName string
+	// SetupKeyIsInvitation is true only for a key created by
+	// CreateDeviceInvitation, where Name is an admin's explicit, one-time
+	// choice for this specific device. Every other one-off key (e.g. the
+	// self-service enrollment portal's key, CreateEnrollmentKey) carries a
+	// fixed placeholder Name ("portal device") that must never become a
+	// peer's identity.
+	SetupKeyIsInvitation bool
+	GroupsToAdd          []string
+	AllowExtraDNSLabels  bool
+	Ephemeral            bool
 }
 
 func (am *DefaultAccountManager) processPeerAddAuth(ctx context.Context, accountID, userID, encodedHashedKey string, peer *nbpeer.Peer, temporary, addedByUser, addedBySetupKey bool, opEvent *activity.Event) (*peerAddAuthConfig, error) {
@@ -850,6 +857,7 @@ func (am *DefaultAccountManager) handleSetupKeyAddedPeer(ctx context.Context, en
 	config.Ephemeral = sk.Ephemeral
 	config.SetupKeyID = sk.Id
 	config.SetupKeyName = sk.Name
+	config.SetupKeyIsInvitation = sk.InvitationIssuerID != ""
 	config.AllowExtraDNSLabels = sk.AllowExtraDNSLabels
 	config.AccountID = sk.AccountID
 
@@ -951,13 +959,24 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		return nil, nil, nil, false, status.Errorf(status.InvalidArgument, "invalid extra DNS labels: %v", err)
 	}
 
+	// A device invitation's Name is the admin's explicit, one-time choice for
+	// this specific device (CreateDeviceInvitation) -- it becomes the peer's
+	// real name and mesh DNS label instead of the client-reported hostname.
+	// Every other setup key -- reusable keys (one Name shared by every device
+	// enrolled with it) and the self-service enrollment portal's one-off key
+	// (a fixed placeholder Name) -- keeps the hostname-derived identity.
+	peerHostname := peer.Meta.Hostname
+	if peerAddConfig.SetupKeyIsInvitation && peerAddConfig.SetupKeyName != "" {
+		peerHostname = peerAddConfig.SetupKeyName
+	}
+
 	registrationTime := time.Now().UTC()
 	newPeer = &nbpeer.Peer{
 		ID:                          xid.New().String(),
 		AccountID:                   accountID,
 		Key:                         peer.Key,
 		Meta:                        peer.Meta,
-		Name:                        peer.Meta.Hostname,
+		Name:                        peerHostname,
 		UserID:                      userID,
 		Status:                      &nbpeer.PeerStatus{Connected: false, LastSeen: registrationTime},
 		SSHEnabled:                  false,
@@ -1008,12 +1027,12 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 
 		var freeLabel string
 		if ephemeral || attempt > 1 {
-			freeLabel, err = getPeerIPDNSLabel(freeIP, peer.Meta.Hostname)
+			freeLabel, err = getPeerIPDNSLabel(freeIP, peerHostname)
 			if err != nil {
 				return nil, nil, nil, false, fmt.Errorf("failed to get free DNS label: %w", err)
 			}
 		} else {
-			freeLabel, err = nbdns.GetParsedDomainLabel(peer.Meta.Hostname)
+			freeLabel, err = nbdns.GetParsedDomainLabel(peerHostname)
 			if err != nil {
 				return nil, nil, nil, false, fmt.Errorf("failed to get free DNS label: %w", err)
 			}

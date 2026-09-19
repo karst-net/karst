@@ -8,6 +8,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	nbdns "github.com/netbirdio/netbird/dns"
 	"github.com/netbirdio/netbird/management/server/activity"
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
@@ -394,6 +395,14 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 || len(groups) == 0 || len(groups) > 100 {
 		return nil, status.Errorf(status.InvalidArgument, "provide a device label and 1 to 100 access groups")
+	}
+	// A device invitation is always one-off (SetupKeyOneOff below), so this
+	// name becomes the enrolling device's real mesh DNS label -- not just
+	// console bookkeeping (see LoginPeer / handleSetupKeyAddedPeer). Reject it
+	// early, at the point where the admin can still correct it, rather than
+	// silently handing back a mangled or meaningless label at enrollment.
+	if label, err := nbdns.GetParsedDomainLabel(name); err != nil || strings.Trim(label, "-") == "" {
+		return nil, status.Errorf(status.InvalidArgument, "device name must contain at least one letter or digit valid in a DNS label")
 	}
 	var key *types.SetupKey
 	var plain string
