@@ -323,17 +323,33 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // verbatim — bundle parsing, the control-plane handshake, and
             // config publishing, all reused, not reimplemented
             // (docs/adr/0028-macos-network-extension-enrollment.md item 3).
-            do {
-                try enrollInvitation(
-                    invitation: invitation,
-                    configPath: Self.configPath,
-                    stateDir: Self.stateDir
-                )
-                completionHandler(Self.okResponse())
-            } catch let error as FfiError {
-                completionHandler(Self.errorResponse(Self.message(from: error)))
-            } catch {
-                completionHandler(Self.errorResponse("enrollment failed: \(error.localizedDescription)"))
+            //
+            // Dispatched to a background queue rather than called directly
+            // on `handleAppMessage`'s own thread — found on real hardware
+            // (#159), not anticipated: this call blocks on a real
+            // control-plane network round trip (several seconds, not
+            // milliseconds), and running it synchronously here left that
+            // thread unresponsive long enough that `nesessionmanager`'s own
+            // watchdog gave up and reported failure to the host app before
+            // this method's `completionHandler` was ever invoked — even
+            // though enrollment itself went on to succeed moments later
+            // (`identity.key`/`enrollment.toml` were written correctly,
+            // confirmed on disk, while the host app had already been told
+            // the response was invalid). Freeing this thread immediately
+            // is the fix, not making the network call itself faster.
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try enrollInvitation(
+                        invitation: invitation,
+                        configPath: Self.configPath,
+                        stateDir: Self.stateDir
+                    )
+                    completionHandler(Self.okResponse())
+                } catch let error as FfiError {
+                    completionHandler(Self.errorResponse(Self.message(from: error)))
+                } catch {
+                    completionHandler(Self.errorResponse("enrollment failed: \(error.localizedDescription)"))
+                }
             }
         default:
             completionHandler(Self.errorResponse("unknown app message verb \(verb)"))
