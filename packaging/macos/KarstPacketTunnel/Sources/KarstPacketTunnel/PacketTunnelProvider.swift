@@ -324,21 +324,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // config publishing, all reused, not reimplemented
             // (docs/adr/0028-macos-network-extension-enrollment.md item 3).
             //
-            // Dispatched to a background queue rather than called directly
-            // on `handleAppMessage`'s own thread — found on real hardware
-            // (#159), not anticipated: this call blocks on a real
-            // control-plane network round trip (several seconds, not
-            // milliseconds), and running it synchronously here left that
-            // thread unresponsive long enough that `nesessionmanager`'s own
-            // watchdog gave up and reported failure to the host app before
-            // this method's `completionHandler` was ever invoked — even
-            // though enrollment itself went on to succeed moments later
-            // (`identity.key`/`enrollment.toml` were written correctly,
-            // confirmed on disk, while the host app had already been told
-            // the response was invalid). Freeing this thread immediately
-            // is the fix, not making the network call itself faster.
-            os_log("KARST-TRACE enroll: received, dispatching to background queue", log: Self.log, type: .default)
-            DispatchQueue.global(qos: .userInitiated).async {
+            // Run on an explicit `Thread` with a generous stack, not
+            // `DispatchQueue.global` — found on real hardware via an actual
+            // crash report, not inferred from timing (#159): GCD's global
+            // queues hand out worker threads with a small, fixed default
+            // stack (documented around 512KB), and the post-quantum
+            // identity key generation this call reaches
+            // (`karstd::control::Identity::from_seed`, deep under
+            // `enroll_bundle`) needs more than that — it overflowed the
+            // guard page and crashed the whole extension process with
+            // `EXC_BAD_ACCESS`/`SIGBUS`, confirmed from the real crash
+            // report's backtrace. That crash, not a slow response, is what
+            // `sendProviderMessage` was actually seeing as "not valid UTF-8
+            // JSON" on the host side: the process died mid-call, so no
+            // response — valid or otherwise — was ever coming. A plain
+            // `Thread` lets stack size be set explicitly, which GCD's
+            // queues do not expose.
+            os_log("KARST-TRACE enroll: received, spawning worker thread", log: Self.log, type: .default)
+            let worker = Thread {
                 os_log("KARST-TRACE enroll: calling enrollInvitation", log: Self.log, type: .default)
                 let start = Date()
                 do {
@@ -367,6 +370,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     completionHandler(Self.errorResponse("enrollment failed: \(error.localizedDescription)"))
                 }
             }
+            // 8MB — the same default `pthread`/the main thread already gets
+            // on Darwin, comfortably above whatever `Identity::from_seed`
+            // actually needs; GCD's worker default (~512KB) is the reason
+            // this crashed at all.
+            worker.stackSize = 8 << 20
+            worker.start()
         default:
             completionHandler(Self.errorResponse("unknown app message verb \(verb)"))
         }
