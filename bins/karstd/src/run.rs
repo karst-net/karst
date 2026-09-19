@@ -306,6 +306,7 @@ pub fn run_with_control(
         control_client,
         status_socket_path,
         DeviceOrigin::Create,
+        None,
     )
 }
 
@@ -316,6 +317,22 @@ pub fn run_with_control(
 /// here: nothing inside the same sandboxed process needs a *second*,
 /// unprivileged listener the way an external per-user client does — the one
 /// `socket_path` given is reached only from within this process either way.
+///
+/// `ready`, if given, is sent exactly once — right after `socket_path` is
+/// bound and ready to accept connections, well before the engine has
+/// finished the rest of its own startup. **Found on real hardware
+/// (#161), not anticipated**: `EngineHandle::start` (`crates/karst-ffi`)
+/// returns to its caller as soon as this function is handed its own
+/// thread, deliberately not waiting for the engine's whole lifetime — but
+/// `PacketTunnelProvider.startTunnel` calls `statusJson()` immediately
+/// after, over the very socket this function has not bound yet at that
+/// point. The connect side of that race fails fast (`ENOENT`/
+/// `ConnectionRefused`, not a slow timeout — `socket_path` simply does
+/// not exist as a file yet), which read on real hardware as `startTunnel`
+/// failing near-instantly, tearing the just-created `utun` back down
+/// within milliseconds. `ready` closes that window: `EngineHandle::start`
+/// waits on it, bounded, before ever handing a caller a handle whose
+/// socket might not exist yet.
 ///
 /// # Safety
 /// As [`karst_tun::Tun::from_fd`], forwarded verbatim: `fd` must be a live
@@ -330,12 +347,19 @@ pub fn run_with_control(
 /// As [`run`].
 #[cfg(all(target_os = "macos", feature = "network-extension"))]
 #[allow(unsafe_code)]
+// `ready` must stay by-value: `EngineHandle::start` moves its sender into
+// the thread that calls this, and that thread outlives `start`'s own stack
+// frame — a borrow could not, so this is not the needless case the lint
+// otherwise catches, the same reasoning `config_path`/`socket_path`/`fd`
+// already have on the FFI functions that hand them into a spawned thread.
+#[allow(clippy::needless_pass_by_value)]
 pub unsafe fn run_with_adopted_fd(
     config: &Arc<Config>,
     shutdown: &Shutdown,
     fd: std::os::fd::RawFd,
     socket_path: &std::path::Path,
     control_client: Option<crate::control::Client>,
+    ready: Option<std::sync::mpsc::SyncSender<()>>,
 ) -> io::Result<()> {
     run_engine(
         config,
@@ -344,6 +368,7 @@ pub unsafe fn run_with_adopted_fd(
         control_client,
         None,
         DeviceOrigin::AdoptFd(fd),
+        ready.as_ref(),
     )
 }
 
@@ -356,6 +381,7 @@ pub unsafe fn run_with_adopted_fd(
 /// # Errors
 /// As [`run`].
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn run_engine(
     config: &Arc<Config>,
     shutdown: &Shutdown,
@@ -363,6 +389,7 @@ fn run_engine(
     control_client: Option<crate::control::Client>,
     status_socket_path: Option<&std::path::Path>,
     attachment: DeviceOrigin,
+    ready: Option<&std::sync::mpsc::SyncSender<()>>,
 ) -> io::Result<()> {
     let control_endpoint = control_client
         .as_ref()
@@ -505,6 +532,15 @@ fn run_engine(
     // request; a blocking accept would hold the daemon open until someone
     // connected.
     control.set_nonblocking(true)?;
+    // `run_with_adopted_fd`'s own doc comment has the reasoning. `try_send`
+    // on a capacity-1 channel, not `send`: the receiver either is waiting
+    // (common case, succeeds) or has already given up and moved on (its own
+    // timeout elapsed) or was never sent at all (`run_with_control`'s
+    // `None`) — none of those should block this thread for even an instant
+    // on something the caller stopped caring about.
+    if let Some(ready) = ready {
+        let _ = ready.try_send(());
+    }
 
     // The unprivileged status listener — absent unless `--status-socket` named
     // a path. Bound here, alongside the admin socket, so both fail startup

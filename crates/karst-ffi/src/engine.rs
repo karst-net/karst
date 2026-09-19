@@ -47,10 +47,25 @@ impl EngineHandle {
     /// both ends of that socket (see [`Self::status_json`]), so it needs
     /// nowhere else to live.
     ///
-    /// Returns once the engine has been handed its own thread — it does not
-    /// wait for the engine to finish starting, since `run_with_adopted_fd`
-    /// blocks for the tunnel's entire lifetime, which is the opposite of
-    /// what a synchronous `startTunnel` call needs.
+    /// Waits for `socket_path` to actually be bound before returning — not
+    /// for the engine's entire startup, and nowhere close to its whole
+    /// lifetime (`run_with_adopted_fd` blocks for that, which is the
+    /// opposite of what a synchronous `startTunnel` call needs), but past
+    /// the one specific point [`Self::status_json`] depends on.
+    ///
+    /// **Found on real hardware (#161), not anticipated**: this used to
+    /// return as soon as the engine was merely handed its own thread, with
+    /// no wait at all. `PacketTunnelProvider.startTunnel` calls
+    /// `status_json()` immediately after `start` returns, and on a real
+    /// device that consistently raced `run_with_adopted_fd`'s own startup
+    /// sequence — DNS, datapath sockets, routing state, several other
+    /// things — all of which run *before* it binds the control socket
+    /// `status_json()` needs. The connect side of that race fails fast
+    /// (the socket path does not exist as a file yet), which looked like
+    /// `startTunnel` failing near-instantly and tearing the just-created
+    /// `utun` back down within milliseconds. See
+    /// `karstd::run::run_with_adopted_fd`'s own doc comment for the
+    /// `ready` channel that closes the window from the other side.
     ///
     /// # Safety
     /// `fd` must be a live tunnel descriptor — the extension's own
@@ -60,21 +75,41 @@ impl EngineHandle {
     /// where the raw value first enters this crate as untrusted data.
     ///
     /// # Errors
-    /// Any failure loading `config_path` — see
-    /// `karstd::control::load_config`. Nothing past that point is fallible
-    /// here: the engine itself runs on its own thread, and a failure there
-    /// surfaces as a `tracing::error!` log line, not through this return —
-    /// there is no synchronous caller left by then to hand a `Result` to.
+    /// Any failure loading `config_path` — see `karstd::control::load_config`
+    /// — or the engine not signaling readiness within a few seconds, which
+    /// almost always means it failed somewhere before binding the control
+    /// socket (the sender is dropped when its thread exits, so this is
+    /// usually immediate, not a several-second wait for real). The
+    /// underlying cause, either way, is only in the `tracing::error!` log
+    /// line the spawned thread itself writes — there is no return value
+    /// left to carry it once the thread is running independently.
     #[uniffi::constructor]
     #[allow(clippy::needless_pass_by_value)]
     #[allow(unsafe_code)]
     pub fn start(config_path: String, socket_path: String, fd: i32) -> Result<Self, FfiError> {
+        let socket_path = PathBuf::from(socket_path);
+        // `karstd::init_tracing` writes to stderr, which a System Extension
+        // has no terminal to show — every `tracing::*!` call inside
+        // `run_with_adopted_fd`'s ~1000-line body had no subscriber and
+        // went nowhere, until #161's real-hardware testing needed to see
+        // where the engine's own startup was actually spending its time.
+        // Writes beside the socket this same call is about to bind, so
+        // both land in the one directory this extension already owns.
+        if let Some(state_dir) = socket_path.parent() {
+            init_tracing_once(state_dir);
+        }
+
         let (config, _source, control_client) =
             karstd::control::load_config(Path::new(&config_path))
                 .map_err(|error| FfiError::Engine(error.to_string()))?;
         let config = Arc::new(config);
         let shutdown = Arc::new(karstd::run::Shutdown::default());
-        let socket_path = PathBuf::from(socket_path);
+
+        // Capacity 1, not 0: `run_engine`'s `try_send` must succeed whether
+        // or not this thread has reached `recv_timeout` yet by the time it
+        // fires — a rendezvous channel would make that ordering matter, and
+        // it must not.
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
         let thread_config = Arc::clone(&config);
         let thread_shutdown = Arc::clone(&shutdown);
@@ -89,12 +124,30 @@ impl EngineHandle {
                     fd,
                     &thread_socket_path,
                     control_client,
+                    Some(ready_tx),
                 )
             };
             if let Err(error) = result {
                 tracing::error!(%error, "karst-ffi: embedded engine exited with an error");
             }
         });
+
+        // A dropped sender (the thread exited, with or without an error,
+        // before ever binding the socket) reports `Disconnected` here
+        // immediately, not after the full timeout — this is the fast path
+        // for the common failure shape, not just the slow one.
+        if ready_rx.recv_timeout(std::time::Duration::from_secs(5)).is_err() {
+            // The thread is still running detached rather than joined
+            // here — same reasoning `Drop` already has: whoever is
+            // waiting on `start`'s `Result` did not ask to block further,
+            // and requesting shutdown is enough to make sure it does not
+            // run forever unsupervised.
+            shutdown.request();
+            return Err(FfiError::Engine(
+                "engine did not become ready in time; see the extension's own log for why"
+                    .to_owned(),
+            ));
+        }
 
         Ok(Self {
             shutdown,
@@ -133,6 +186,36 @@ impl EngineHandle {
             let _ = thread.join();
         }
     }
+}
+
+/// As `bins/karstd/src/main.rs`'s own `init_tracing`, but to a file
+/// (`<state_dir>/engine.log`) instead of stderr, and callable more than
+/// once safely — `EngineHandle::start` runs on every `startTunnel`, which
+/// can happen more than once per extension process across a stop/start or
+/// re-enroll cycle, and `tracing::subscriber::set_global_default` errors
+/// on a second call instead of being a no-op.
+fn init_tracing_once(state_dir: &std::path::Path) {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        use tracing_subscriber::EnvFilter;
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(state_dir.join("engine.log"))
+        else {
+            // No subscriber beats a panic here: `start` has real work left
+            // to do, and losing diagnostic output is a strictly smaller
+            // problem than failing the whole tunnel over it.
+            return;
+        };
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .try_init();
+    });
 }
 
 impl Drop for EngineHandle {

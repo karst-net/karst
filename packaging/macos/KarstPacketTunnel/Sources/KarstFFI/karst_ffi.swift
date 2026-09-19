@@ -558,10 +558,25 @@ open class EngineHandle: EngineHandleProtocol, @unchecked Sendable {
      * both ends of that socket (see [`Self::status_json`]), so it needs
      * nowhere else to live.
      *
-     * Returns once the engine has been handed its own thread — it does not
-     * wait for the engine to finish starting, since `run_with_adopted_fd`
-     * blocks for the tunnel's entire lifetime, which is the opposite of
-     * what a synchronous `startTunnel` call needs.
+     * Waits for `socket_path` to actually be bound before returning — not
+     * for the engine's entire startup, and nowhere close to its whole
+     * lifetime (`run_with_adopted_fd` blocks for that, which is the
+     * opposite of what a synchronous `startTunnel` call needs), but past
+     * the one specific point [`Self::status_json`] depends on.
+     *
+     * **Found on real hardware (#161), not anticipated**: this used to
+     * return as soon as the engine was merely handed its own thread, with
+     * no wait at all. `PacketTunnelProvider.startTunnel` calls
+     * `status_json()` immediately after `start` returns, and on a real
+     * device that consistently raced `run_with_adopted_fd`'s own startup
+     * sequence — DNS, datapath sockets, routing state, several other
+     * things — all of which run *before* it binds the control socket
+     * `status_json()` needs. The connect side of that race fails fast
+     * (the socket path does not exist as a file yet), which looked like
+     * `startTunnel` failing near-instantly and tearing the just-created
+     * `utun` back down within milliseconds. See
+     * `karstd::run::run_with_adopted_fd`'s own doc comment for the
+     * `ready` channel that closes the window from the other side.
      *
      * # Safety
      * `fd` must be a live tunnel descriptor — the extension's own
@@ -571,11 +586,14 @@ open class EngineHandle: EngineHandleProtocol, @unchecked Sendable {
      * where the raw value first enters this crate as untrusted data.
      *
      * # Errors
-     * Any failure loading `config_path` — see
-     * `karstd::control::load_config`. Nothing past that point is fallible
-     * here: the engine itself runs on its own thread, and a failure there
-     * surfaces as a `tracing::error!` log line, not through this return —
-     * there is no synchronous caller left by then to hand a `Result` to.
+     * Any failure loading `config_path` — see `karstd::control::load_config`
+     * — or the engine not signaling readiness within a few seconds, which
+     * almost always means it failed somewhere before binding the control
+     * socket (the sender is dropped when its thread exits, so this is
+     * usually immediate, not a several-second wait for real). The
+     * underlying cause, either way, is only in the `tracing::error!` log
+     * line the spawned thread itself writes — there is no return value
+     * left to carry it once the thread is running independently.
      */
 public static func start(configPath: String, socketPath: String, fd: Int32)throws  -> EngineHandle  {
     return try  FfiConverterTypeEngineHandle_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -915,7 +933,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_karst_ffi_checksum_method_enginehandle_stop() != 24853) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_karst_ffi_checksum_constructor_enginehandle_start() != 37671) {
+    if (uniffi_karst_ffi_checksum_constructor_enginehandle_start() != 1871) {
         return InitializationResult.apiChecksumMismatch
     }
 

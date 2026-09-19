@@ -102,7 +102,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        guard let fd = Self.adoptedFileDescriptor(from: packetFlow) else {
+        guard let fd = Self.adoptedFileDescriptorRetrying(from: packetFlow) else {
             completionHandler(PacketTunnelProviderError.noPacketFlowDescriptor)
             return
         }
@@ -164,14 +164,46 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// ADR-0022 (`docs/adr/0022-mobile-tun-backend.md`) already documents
     /// for iOS's identical situation (WireGuard's and Tailscale's own iOS
     /// apps rely on the same lookup), applied here for macOS's own
-    /// packet-tunnel path for the first time. Not verified against a real
-    /// activated extension yet — see this file's own header comment.
+    /// packet-tunnel path. Verified working end to end on real hardware
+    /// (#161) — but not on the very first call: see
+    /// `adoptedFileDescriptorRetrying(from:)`, the caller this exists for.
     private static func adoptedFileDescriptor(from packetFlow: NEPacketTunnelFlow) -> Int32? {
         guard let number = packetFlow.value(forKeyPath: "socket.fileDescriptor") as? NSNumber else {
             return nil
         }
         let fd = number.int32Value
         return fd >= 0 ? fd : nil
+    }
+
+    /// **Found on real hardware (#161), not anticipated**: `packetFlow`'s
+    /// `socket.fileDescriptor` reliably returns `nil` on the very first
+    /// access inside `startTunnel`, then resolves to a real descriptor a
+    /// few hundred milliseconds later — confirmed on real hardware by
+    /// `com.apple.networkextension`'s own log: it goes on to create the
+    /// backing `NEVirtualInterface` shortly after `startTunnel` had
+    /// already reported failure and returned, with nothing left listening
+    /// for it. This is not this app's own race (the [`EngineHandle::start`]
+    /// readiness fix next to this one is that); it is `packetFlow` itself
+    /// not being fully live the instant `startTunnel` is called, the same
+    /// class of "give the platform a moment" issue this private API is
+    /// already known for in other tunnel providers. Retried, not fixed
+    /// with a single longer wait: the property becomes valid at some
+    /// point during that window, not predictably at its start or end, so
+    /// polling is the correct shape here, not a fixed delay.
+    private static func adoptedFileDescriptorRetrying(
+        from packetFlow: NEPacketTunnelFlow,
+        attempts: Int = 30,
+        interval: TimeInterval = 0.1
+    ) -> Int32? {
+        for attempt in 1...attempts {
+            if let fd = adoptedFileDescriptor(from: packetFlow) {
+                return fd
+            }
+            if attempt < attempts {
+                Thread.sleep(forTimeInterval: interval)
+            }
+        }
+        return nil
     }
 
     /// Builds the settings `setTunnelNetworkSettings` needs from

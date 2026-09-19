@@ -27,7 +27,11 @@ cli = ["uniffi/cli"]
 # ADR-0030: enables `engine::EngineHandle`, which calls
 # `karstd::run::run_with_adopted_fd` — itself only compiled under
 # `karstd`'s own identically-named feature, hence the forward.
-network-extension = ["karstd/network-extension"]
+# `dep:tracing-subscriber` too: `engine.rs` is this crate's only consumer
+# of it (#161 — a System Extension process has no terminal for `karstd`'s
+# own stderr-based `init_tracing` to write to, and until this, its
+# `tracing::*!` calls simply had no subscriber and went nowhere).
+network-extension = ["karstd/network-extension", "dep:tracing-subscriber"]
 
 [[bin]]
 # Regenerates Swift/Kotlin bindings from the compiled library — UniFFI's
@@ -41,6 +45,7 @@ required-features = ["cli"]
 karstd.workspace = true
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 uniffi = "0.29"
 
 [dev-dependencies]
