@@ -152,17 +152,44 @@ enum NetworkExtensionEnrollment {
         manager: NETunnelProviderManager,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        sendInvitation(verb: "enroll", invitation: invitation, manager: manager, completion: completion)
+    }
+
+    /// As [`enroll`], but for a device that is already enrolled — sends the
+    /// `"re-enroll"` verb `PacketTunnelProvider.handleAppMessage` maps to
+    /// `reEnrollInvitation`, which explicitly replaces the existing saved
+    /// config instead of refusing. `AppDelegate`'s "Re-enroll…" item is the
+    /// only caller; ordinary first-time setup still goes through [`enroll`].
+    static func reEnroll(
+        invitation: String,
+        manager: NETunnelProviderManager,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        sendInvitation(verb: "re-enroll", invitation: invitation, manager: manager, completion: completion)
+    }
+
+    /// Shared body for [`enroll`] and [`reEnroll`] — they differ only in
+    /// which verb string the extension dispatches on
+    /// (`PacketTunnelProvider.handleAppMessage`'s `"enroll"` vs.
+    /// `"re-enroll"` cases), not in how the round trip itself is sent,
+    /// logged, or its response interpreted.
+    private static func sendInvitation(
+        verb: String,
+        invitation: String,
+        manager: NETunnelProviderManager,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
         guard let session = manager.connection as? NETunnelProviderSession else {
-            os_log("KARST-TRACE host enroll: manager.connection is not a NETunnelProviderSession", log: Self.log, type: .default)
+            os_log("KARST-TRACE host %{public}@: manager.connection is not a NETunnelProviderSession", log: Self.log, type: .default, verb)
             completion(.failure(NetworkExtensionEnrollmentError.sessionUnavailable))
             return
         }
         os_log(
-            "KARST-TRACE host enroll: session.status=%{public}@ before sendProviderMessage",
-            log: Self.log, type: .default, String(describing: session.status)
+            "KARST-TRACE host %{public}@: session.status=%{public}@ before sendProviderMessage",
+            log: Self.log, type: .default, verb, String(describing: session.status)
         )
 
-        let payload: [String: Any] = ["verb": "enroll", "invitation": invitation]
+        let payload: [String: Any] = ["verb": verb, "invitation": invitation]
         guard let requestData = try? JSONSerialization.data(withJSONObject: payload) else {
             completion(.failure(NetworkExtensionEnrollmentError.invalidResponseEncoding))
             return
@@ -174,23 +201,23 @@ enum NetworkExtensionEnrollment {
                 let elapsed = Date().timeIntervalSince(sentAt)
                 guard let responseData else {
                     os_log(
-                        "KARST-TRACE host enroll: response after %{public}.2fs was nil",
-                        log: Self.log, type: .default, elapsed
+                        "KARST-TRACE host %{public}@: response after %{public}.2fs was nil",
+                        log: Self.log, type: .default, verb, elapsed
                     )
                     completion(.failure(NetworkExtensionEnrollmentError.invalidResponseEncoding))
                     return
                 }
                 guard let text = String(data: responseData, encoding: .utf8) else {
                     os_log(
-                        "KARST-TRACE host enroll: response after %{public}.2fs was %{public}d bytes, not valid UTF-8: %{public}@",
-                        log: Self.log, type: .default, elapsed, responseData.count, responseData as NSData
+                        "KARST-TRACE host %{public}@: response after %{public}.2fs was %{public}d bytes, not valid UTF-8: %{public}@",
+                        log: Self.log, type: .default, verb, elapsed, responseData.count, responseData as NSData
                     )
                     completion(.failure(NetworkExtensionEnrollmentError.invalidResponseEncoding))
                     return
                 }
                 os_log(
-                    "KARST-TRACE host enroll: response after %{public}.2fs: %{public}@",
-                    log: Self.log, type: .default, elapsed, text
+                    "KARST-TRACE host %{public}@: response after %{public}.2fs: %{public}@",
+                    log: Self.log, type: .default, verb, elapsed, text
                 )
                 // The provider answers a refusal in the same shape
                 // `status-json`'s own fallback uses — `{"error": "..."}` —
@@ -210,8 +237,8 @@ enum NetworkExtensionEnrollment {
             }
         } catch {
             os_log(
-                "KARST-TRACE host enroll: sendProviderMessage threw synchronously: %{public}@",
-                log: Self.log, type: .default, error.localizedDescription
+                "KARST-TRACE host %{public}@: sendProviderMessage threw synchronously: %{public}@",
+                log: Self.log, type: .default, verb, error.localizedDescription
             )
             completion(.failure(NetworkExtensionEnrollmentError.sendFailed(error)))
         }

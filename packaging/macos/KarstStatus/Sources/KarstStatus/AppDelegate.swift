@@ -42,6 +42,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// daemon's (plans/phase-6/13-macos-status-indicators.md §1).
     private var previous: [String: (txBytes: UInt64, rxBytes: UInt64, at: Date)] = [:]
 
+    /// The status `render` last drew the menu from — kept so
+    /// `rebuildMenu()` can redraw the menu on its own (after an identity
+    /// refresh) without waiting for the next `refresh()` tick to hand it a
+    /// fresh one.
+    private var lastStatus: DaemonStatus?
+
+    /// This device's own identity handle, if enrolled — the 44-character
+    /// fingerprint `identity_handle` (`crates/karst-ffi`) derives from the
+    /// local ML-DSA-87 key. `nil` means "not enrolled" exactly as often as
+    /// it means "haven't checked yet"; both draw the same "Enroll…" menu,
+    /// which is the only place this distinction would matter and it
+    /// doesn't. Fetched once at launch and again after a successful
+    /// enroll/re-enroll, not polled every tick like peer status: unlike
+    /// that, it does not change on its own between enrollments.
+    private var identityHandle: String?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.imagePosition = .imageLeft
         statusItem.button?.image = Self.karstMarkIcon(.loading, accessibilityDescription: "karst: loading")
@@ -63,10 +79,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // one OS-level "Allow" prompt this triggers is unavoidable and
         // shows itself; nothing else here should surprise a user who
         // hasn't clicked anything yet, so failures are logged, not alerted.
-        ensureNetworkExtensionReady { result in
+        ensureNetworkExtensionReady { [weak self] result in
             switch result {
             case .success:
                 os_log("network extension ready at launch", log: Self.log, type: .info)
+                // A device enrolled in an earlier launch already has an
+                // identity on disk the extension can report without
+                // needing another invitation — check now so the menu
+                // shows "Re-enroll…" from the start rather than "Enroll…"
+                // until the next status poll happens to notice.
+                self?.refreshIdentity()
             case .failure(let error):
                 os_log(
                     "network extension not ready at launch (will retry from the menu): %{public}@",
@@ -105,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// AppKit — not this code — handles light/dark menu bar and the
     /// selected-item tint.
     private func render(_ status: DaemonStatus?) {
+        lastStatus = status
         guard let status, !status.interface.isEmpty else {
             statusItem.button?.image = Self.karstMarkIcon(.notRunning, accessibilityDescription: "karst: not running")
             statusItem.button?.title = "karst: not running"
@@ -230,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keyEquivalent: ""
             )
             menu.addItem(NSMenuItem.separator())
-            addEnrollItem(to: menu)
+            addIdentityAndEnrollItems(to: menu)
             menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return menu
@@ -248,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(NSMenuItem.separator())
-        addEnrollItem(to: menu)
+        addIdentityAndEnrollItems(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
@@ -257,10 +280,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Always present, running or not: it is also how an already-enrolled
     /// device recovers from a config a resume path can't use, not only how
     /// first enrollment happens.
-    private func addEnrollItem(to menu: NSMenu) {
-        let item = NSMenuItem(title: "Enroll…", action: #selector(runEnroll), keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
+    ///
+    /// `identityHandle == nil` covers both "never enrolled" and "haven't
+    /// checked yet" (its own doc comment) — either way "Enroll…" is the
+    /// right item, since re-enrollment only makes sense once this device
+    /// is known to already have an identity to replace.
+    private func addIdentityAndEnrollItems(to menu: NSMenu) {
+        guard let identityHandle else {
+            let item = NSMenuItem(title: "Enroll…", action: #selector(runEnroll), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            return
+        }
+        let identityItem = NSMenuItem(
+            title: "Enrolled as \(Self.truncatedHandle(identityHandle))",
+            action: nil,
+            keyEquivalent: ""
+        )
+        identityItem.toolTip = identityHandle
+        menu.addItem(identityItem)
+        let reEnrollItem = NSMenuItem(title: "Re-enroll…", action: #selector(runReEnroll), keyEquivalent: "")
+        reEnrollItem.target = self
+        menu.addItem(reEnrollItem)
+    }
+
+    /// The full 44-character handle is exact but not glanceable in a menu
+    /// item; the full value stays reachable via `toolTip` above rather than
+    /// dropped, since an operator comparing it against the admin console's
+    /// own device list needs the whole thing at least once.
+    private static func truncatedHandle(_ handle: String) -> String {
+        guard handle.count > 16 else { return handle }
+        let start = handle.prefix(8)
+        let end = handle.suffix(8)
+        return "\(start)…\(end)"
+    }
+
+    /// Fetches this device's identity handle over the same
+    /// `sendProviderMessage` channel `refresh()` uses for status, and
+    /// redraws the menu once it lands — see `identityHandle`'s own doc
+    /// comment for why this is called explicitly rather than folded into
+    /// the periodic poll.
+    private func refreshIdentity() {
+        client.fetchIdentityHandle { [weak self] result in
+            guard let self else { return }
+            let handle: String?
+            switch result {
+            case .success(let json):
+                handle = Self.parseIdentityHandle(json)
+            case .failure:
+                // Indistinguishable here from "not enrolled" (both draw
+                // "Enroll…"), which is the correct fallback for a
+                // transient failure too: retrying enrollment is always
+                // safe, and re-enrollment is never offered on a guess.
+                handle = nil
+            }
+            DispatchQueue.main.async {
+                self.identityHandle = handle
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    /// Parses `{"handle": "..."}` / `{"handle": null}` —
+    /// `PacketTunnelProvider.handleAppMessage`'s `"identity"` verb's own
+    /// response shape, distinct from `StatusParser.parseJSON`'s
+    /// `{"error": "..."}` convention because this is not a refusal, only
+    /// ever a present-or-absent fact.
+    private static func parseIdentityHandle(_ json: String) -> String? {
+        guard
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object["handle"] as? String
+    }
+
+    /// Redraws the menu from `lastStatus` without waiting for the next
+    /// `refresh()` tick — `refreshIdentity()`'s own reason for existing:
+    /// an operator who just finished pasting an invitation should see
+    /// "Enrolled as …" appear immediately, not up to `pollInterval` later.
+    private func rebuildMenu() {
+        statusItem.menu = menu(for: lastStatus)
     }
 
     /// Activates the system extension and ensures its `NETunnelProviderManager`
@@ -323,7 +422,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     case .failure(let error):
                         self.showAlert(title: "Enrollment Failed", message: error.localizedDescription)
                     case .success:
+                        self.refreshIdentity()
                         self.showAlert(title: "Enrolled", message: "This device is now enrolled.")
+                    }
+                }
+            }
+        }
+    }
+
+    /// As `runEnroll`, but for a device `identityHandle` already shows as
+    /// enrolled — the "Re-enroll…" item's action, going through
+    /// `NetworkExtensionEnrollment.reEnroll` (the `"re-enroll"` verb,
+    /// `reEnrollInvitation` on the Rust side) rather than `enroll`, which
+    /// would refuse: this device's `config.toml` already exists.
+    @objc private func runReEnroll() {
+        ensureNetworkExtensionReady { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.showAlert(
+                    title: "Could Not Prepare the Network Extension",
+                    message: error.localizedDescription
+                )
+            case .success(let manager):
+                guard let invitation = self.askInvitation() else { return }
+                NetworkExtensionEnrollment.reEnroll(invitation: invitation, manager: manager) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .failure(let error):
+                        self.showAlert(title: "Re-enrollment Failed", message: error.localizedDescription)
+                    case .success:
+                        self.refreshIdentity()
+                        self.showAlert(title: "Re-enrolled", message: "This device is now enrolled under the new invitation.")
                     }
                 }
             }

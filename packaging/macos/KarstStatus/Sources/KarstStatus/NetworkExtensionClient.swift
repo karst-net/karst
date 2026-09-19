@@ -44,6 +44,27 @@ struct NetworkExtensionStatusClient {
     ///
     /// Feeds `StatusParser.parseJSON(_:)` on success.
     func fetchStatusJSON(completion: @escaping (Result<String, Error>) -> Void) {
+        sendVerb("{\"verb\":\"status\"}", completion: completion)
+    }
+
+    /// Ask the running extension for this device's own identity handle —
+    /// `PacketTunnelProvider.handleAppMessage`'s `"identity"` verb — as the
+    /// raw `{"handle": "..." | null}` JSON text. `AppDelegate` parses the
+    /// `"handle"` field itself rather than this client returning
+    /// `String?` directly: a malformed/empty response and "not enrolled"
+    /// (`null`) are different failure shapes, and collapsing them here
+    /// would hide which one a caller actually got.
+    func fetchIdentityHandle(completion: @escaping (Result<String, Error>) -> Void) {
+        sendVerb("{\"verb\":\"identity\"}", completion: completion)
+    }
+
+    /// Common plumbing every verb over this channel needs: find the saved
+    /// manager, get its session, send the (already-JSON) payload, decode
+    /// the reply as UTF-8 text. What differs per verb is only the request
+    /// body and what the caller does with the response text — extracted
+    /// here once `fetchIdentityHandle` needed to repeat everything
+    /// `fetchStatusJSON` already did except the literal verb string.
+    private func sendVerb(_ requestJSON: String, completion: @escaping (Result<String, Error>) -> Void) {
         NETunnelProviderManager.loadAllFromPreferences { managers, error in
             if let error {
                 completion(.failure(error))
@@ -67,7 +88,7 @@ struct NetworkExtensionStatusClient {
             // line the way the Unix-socket protocol has one. See
             // `PacketTunnelProvider.handleAppMessage`'s matching doc comment
             // on the other side of this channel.
-            guard let request = "{\"verb\":\"status\"}".data(using: .utf8) else {
+            guard let request = requestJSON.data(using: .utf8) else {
                 completion(.failure(NetworkExtensionStatusError.invalidResponseEncoding))
                 return
             }

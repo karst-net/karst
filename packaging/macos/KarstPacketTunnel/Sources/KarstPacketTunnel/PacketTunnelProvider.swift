@@ -264,12 +264,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return [24, 16, 8, 0].map { String((mask >> $0) & 0xFF) }.joined(separator: ".")
     }
 
-    /// Both `FfiError` cases carry their message the same way — one
+    /// Every `FfiError` case carries its message the same way — one
     /// extraction point rather than repeating this `switch` at every call
     /// site that catches one.
     private static func message(from error: FfiError) -> String {
         switch error {
-        case .Enrollment(let message), .Engine(let message):
+        case .Enrollment(let message), .Engine(let message), .Identity(let message):
             return message
         }
     }
@@ -370,6 +370,61 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // on Darwin, comfortably above whatever `Identity::from_seed`
             // actually needs; GCD's worker default (~512KB) is the reason
             // this crashed at all.
+            worker.stackSize = 8 << 20
+            worker.start()
+        case "re-enroll":
+            guard let invitation = object["invitation"] as? String, !invitation.isEmpty else {
+                completionHandler(Self.errorResponse("re-enroll message carried no invitation"))
+                return
+            }
+            // As `"enroll"` above — same `enrollInvitation`/`from_seed`
+            // path once `reEnrollInvitation` gets past its own
+            // config-replacement step, so it needs the same big-stack
+            // `Thread`, not just the same Rust call.
+            os_log("KARST-TRACE re-enroll: received, spawning worker thread", log: Self.log, type: .default)
+            let worker = Thread {
+                do {
+                    try reEnrollInvitation(
+                        invitation: invitation,
+                        configPath: Self.configPath,
+                        stateDir: Self.stateDir
+                    )
+                    completionHandler(Self.okResponse())
+                } catch let error as FfiError {
+                    completionHandler(Self.errorResponse(Self.message(from: error)))
+                } catch {
+                    completionHandler(Self.errorResponse("re-enrollment failed: \(error.localizedDescription)"))
+                }
+            }
+            worker.stackSize = 8 << 20
+            worker.start()
+        case "identity":
+            // `identityHandle` calls `Identity::load`, which — when
+            // `identityPath` exists — runs the same `Identity::from_seed`
+            // ML-DSA-87 key expansion `"enroll"`'s own comment names as
+            // needing an explicit big-stack `Thread`, not GCD's default.
+            // Only the "never enrolled" fast path skips it, and this
+            // branch cannot tell which case it is in without running the
+            // call — so it always pays for the safe thread.
+            let worker = Thread {
+                do {
+                    // `JSONSerialization` does not reliably turn a bare
+                    // `Optional<String>.none` into JSON `null` when boxed
+                    // as `Any` in a dictionary — handled explicitly rather
+                    // than relying on that bridging.
+                    guard let handle = try identityHandle(identityKeyPath: Self.identityPath) else {
+                        completionHandler(Data("{\"handle\":null}".utf8))
+                        return
+                    }
+                    let data = (try? JSONSerialization.data(withJSONObject: ["handle": handle]))
+                        ?? Data("{\"handle\":null}".utf8)
+                    completionHandler(data)
+                } catch let error as FfiError {
+                    completionHandler(Self.errorResponse(Self.message(from: error)))
+                } catch {
+                    completionHandler(Self.errorResponse("identity lookup failed: \(error.localizedDescription)"))
+                }
+            }
             worker.stackSize = 8 << 20
             worker.start()
         default:
