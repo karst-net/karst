@@ -18,27 +18,26 @@ import os.log
 /// needed no such wait: `enrollInvitation` compiles the same on every
 /// platform (ADR-0029).
 ///
-/// **What is wired and what is still unverified.** Every call below
-/// compiles against the real `EngineHandle`/`enrollInvitation` bindings and
-/// is not a placeholder, but none of it has been exercised against a
-/// signed, notarized, activated extension yet — that needs #156's still-
-/// pending entitlement and real code signing, not just a compiling build.
-/// `networkSettings(fromStatusJSON:)`'s AllowedIPs-as-routes mapping is the
-/// same one every WireGuard-shaped client uses, not an invented scheme, but
-/// it has not carried real peer traffic. DNS is deliberately left unset —
+/// **What is wired and what is still unverified.** `handleAppMessage`'s
+/// `"enroll"` verb is now verified end-to-end on a signed, notarized,
+/// activated extension (#159): activation, entitlements (self-service,
+/// #156), and a real enrollment round trip all confirmed on real hardware.
+/// `startTunnel`/`packetFlow` and `networkSettings(fromStatusJSON:)`'s
+/// AllowedIPs-as-routes mapping remain unverified past compiling — the
+/// mapping is the same one every WireGuard-shaped client uses, not an
+/// invented scheme, but it has not yet carried real peer traffic — that is
+/// the next piece of #159, tracked separately from the enrollment chain
+/// already fixed and verified above. DNS is deliberately left unset —
 /// `plans/phase-5/06-macos-client.md` §5's KarstDNS search-list gap is a
 /// known, already-accepted limitation, not new scope for this file.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let log = OSLog(subsystem: "dev.karst.packettunnel", category: "provider")
 
-    /// Where this extension keeps its own state — never `/etc/karst`,
-    /// which is the `LaunchDaemon` build's namespace, running as a
-    /// different process this extension shares a machine with, not a
-    /// predecessor it replaces (ADR-0026 item 8 ships both "indefinitely,
-    /// not just during a transition"). Reusing `/etc/karst` would mean
-    /// enrolling one build silently corrupts the other's config the moment
-    /// both are ever present on the same machine — a distinct root-owned
-    /// directory costs nothing and removes the collision entirely.
+    /// Where this extension keeps its own state — never `/etc/karst`, the
+    /// now-removed `LaunchDaemon` build's namespace (ADR-0026 item 8,
+    /// amended: NetworkExtension is the sole macOS backend now, but the
+    /// distinct root-owned directory this chose while both builds still
+    /// coexisted costs nothing to keep).
     ///
     /// **Why a plain root-owned path, not an App Group container.** A
     /// System Extension and its host app run as different users — root and
@@ -53,13 +52,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// shared file — so there is nothing an App Group would actually buy
     /// here. `PacketTunnel.entitlements` carries no
     /// `com.apple.security.app-sandbox` entitlement, so this process is
-    /// confined by what its own (root) UID can reach, the same as the
-    /// `LaunchDaemon` build already is for `/etc/karst` — not confined to
-    /// a container the way a fully App-Sandboxed process would be.
-    /// Checked against public developer-forum reports of this exact
-    /// app/extension split (root vs. console user, App Groups not
-    /// bridging them) during this session, not verified end-to-end on a
-    /// real machine — flag if a real activation finds this wrong.
+    /// confined by what its own (root) UID can reach — not confined to a
+    /// container the way a fully App-Sandboxed process would be. Checked
+    /// against public developer-forum reports of this exact app/extension
+    /// split (root vs. console user, App Groups not bridging them), and
+    /// since confirmed correct end-to-end on real hardware (#159).
     private static let stateDir = "/Library/Application Support/dev.karst.packettunnel"
 
     /// The identity file a completed enrollment leaves behind —
