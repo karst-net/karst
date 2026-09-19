@@ -951,15 +951,19 @@ Pending invitations can be revoked from the same screen; history is retained.
 On the Linux desktop, install the client package with the distribution's graphical
 package installer, then open **Karst Setup** from the applications menu. On macOS,
 run the signed `.pkg` installer, then open **Karst** from Launchpad, Spotlight, or
-the Applications folder and choose **Enrollment…** from its menu-bar item — Karst itself
+the Applications folder and choose **Enroll…** from its menu-bar item — Karst itself
 is not in the Dock and does not open a window automatically, but the menu bar icon
-is always present once installed. Either way: paste the invitation and click
+is always present once installed. On macOS, the first launch also silently
+activates the `PacketTunnelProvider` System Extension and registers its
+NetworkExtension VPN configuration in the background (an unavoidable one-time
+"Allow" system prompt aside); **Enroll…** does not need to wait for or repeat
+that step. Either way: paste the invitation and click
 **Connect**. Approve the operating-system
 permission prompt (`pkexec` on Linux, an administrator-password prompt on macOS).
-Setup creates the local identity, verifies the server, registers the device, saves
-its configuration, and enables and starts the service automatically. The recipient
-needs no portal account or identity-provider login, and does not edit configuration,
-manage a bundle file, or run a service command.
+Setup creates the local identity, verifies the server, registers the device, and
+saves its configuration; on Linux this also enables and starts the service
+automatically. The recipient needs no portal account or identity-provider login,
+and does not edit configuration, manage a bundle file, or run a service command.
 
 The invitation includes the control address, both public server pins, and a
 single-use bearer credential. The administrative console must be served over
@@ -976,11 +980,11 @@ policy still determines access. A running service and control connection do not
 promise that a particular resource is permitted by policy.
 
 If the network or service startup fails, reopen **Karst Setup** (the applications
-menu on Linux; **Enrollment…** in Karst's menu bar on macOS) and choose **Retry**. Once
+menu on Linux; **Enroll…** in Karst's menu bar on macOS) and choose **Retry**. Once
 registration is saved, retry uses the same local identity without another
-invitation. Private keys remain under `/var/lib/karst` on Linux, `/var/db/karst`
-on macOS, and the saved
-`/etc/karst/karstd.toml` contains no enrollment credential. The `.enrolled` identity
+invitation. Private keys remain under `/var/lib/karst` on Linux, under
+`/Library/Application Support/dev.karst.packettunnel` on macOS, and the saved
+config in either location contains no enrollment credential. The `.enrolled` identity
 receipt survives netmap-cache loss. Device revocation never silently triggers
 re-enrollment.
 

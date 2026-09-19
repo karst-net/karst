@@ -253,6 +253,17 @@ Linux-only.
 
 ## 3. The decision that saves the phase: LaunchDaemon, not NetworkExtension
 
+> **This decision has since been reversed, not just reconsidered.**
+> `docs/adr/0026-macos-network-extension-backend.md` originally added
+> NetworkExtension as a second, additional backend beside the LaunchDaemon
+> here; its item 8 was amended 2026-09-19 to drop the LaunchDaemon entirely
+> once the NetworkExtension build was verified working end-to-end on real
+> hardware (#159) and the Bedrock-parity concern that justified keeping both
+> turned out not to apply. The rest of this section is retained as
+> historical context for why LaunchDaemon was the right call in Phase 5,
+> which it was — the entitlement-timeline risk it avoided was real at the
+> time, and turned out to be avoidable, not permanent.
+
 §9 lists macOS as "`utun`, LaunchDaemon, signed+notarized pkg; App Store
 NetworkExtension variant later".
 

@@ -1,16 +1,17 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# ADR-0026: macOS NetworkExtension backend — a second `Tun` behind a build feature, not a replacement
+# ADR-0026: macOS NetworkExtension backend — now the sole macOS backend, not a second `Tun` behind a build feature
 
 - **Status:** Proposed
-- **Date:** 2026-09-16
+- **Date:** 2026-09-16 (item 8 amended 2026-09-19 — see below)
 - **Deciders:** Adrian Anderson (project owner)
 - **Related:** ADR-0022 (mobile TUN backend — the fd-adoption shape and
   `macos_wire` framing this extends), ADR-0003 (`unsafe` confined to `sys*`
   modules), ADR-0017 (Windows TUN provider — precedent for a platform ADR
   living beside the phase plan rather than only in it),
   `plans/phase-5/06-macos-client.md` §3 (the LaunchDaemon-not-NetworkExtension
-  decision this reconsiders, not reverses), `plans/phase-6/13-macos-status-indicators.md`
-  (`Karst.app`/`KarstStatus`), GitHub issues #111, #113
+  decision this originally only reconsidered — item 8's amendment below now
+  actually reverses it), `plans/phase-6/13-macos-status-indicators.md`
+  (`Karst.app`/`KarstStatus`), GitHub issues #111, #113, #159
 
 ---
 
@@ -146,23 +147,41 @@ step actually gated on Apple's queue is treated as gating:
    are). Unlike notarization, profile embedding is not tag-gated: it applies
    to every signed build, because AMFI's rejection has nothing to do with
    whether the build was notarized.
-8. **Ship both, indefinitely, not just during a transition.** The LaunchDaemon
-   `.pkg` stays the default for direct/enterprise installs: it carries no
-   entitlement risk, and it is the only path that backs Bedrock's
-   cryptographically enforced network lock unconditionally — NetworkExtension's
-   `includeAllNetworks` is real and relevant, but it is a routing feature, not
-   a replacement for Bedrock's guarantee, which is the pasted suggestion's own
-   correct point. The NE variant is additive, aimed at unblocking
-   `scripts/appstore-submit-macos.sh` and at fleets that specifically want
-   native VPN-On-Demand / Jamf-managed VPN state instead of the current
-   process-health inference.
+8. **Amended 2026-09-19: drop the LaunchDaemon, ship NetworkExtension as the
+   sole macOS backend.** This item originally said to ship both,
+   indefinitely, reasoning that only the LaunchDaemon backed Bedrock's
+   cryptographically enforced network lock. That premise turned out to be
+   wrong: Bedrock's actual guarantee (nodes refuse to peer outside a
+   quorum-signed trust chain, `spec/bedrock-v1.md`) is enforced inside the
+   shared Rust engine (`run_engine`) that `EngineHandle`/`run_with_adopted_fd`
+   (ADR-0030) already reuses verbatim for the NE build — both backends have
+   always had it equally, so keeping the LaunchDaemon around bought no
+   parity it didn't already have. The one thing that *is* still
+   LaunchDaemon-only is full-tunnel routing lockdown
+   (`includeAllNetworks`/kill-switch behavior), which
+   `PacketTunnelProvider.swift` already flags in its own code as deferred —
+   tracked as its own follow-up issue rather than a reason to keep two
+   backends.
+
+   With that parity question settled and the NetworkExtension build verified
+   working end-to-end on real hardware (#159 — activation, entitlements,
+   enrollment all confirmed working), keeping both backends bought nothing
+   but a second, confusingly-named menu item in `Karst.app` and a second
+   packaging/signing path to maintain. The LaunchDaemon `.pkg`, its
+   `preinstall`/`postinstall` scripts, `dev.karst.karstd.plist`, and the
+   `macos::Tun`/address-and-routing code path it depended on are removed;
+   `scripts/build-macos-pkg.sh` now produces a single-component package
+   around `Karst.app` and its `PacketTunnelProvider` extension.
 
 ### Alternatives rejected
 
-- **Replacing the LaunchDaemon once NE ships.** Rejected: it would reintroduce
-  the exact risk §3 avoided — Apple's review queue on the critical path — for
-  every install, forever, not only for the App Store SKU that actually needs
-  it.
+- **Replacing the LaunchDaemon once NE ships.** Rejected at the time: it
+  would reintroduce the exact risk §3 avoided — Apple's review queue on the
+  critical path — for every install, forever, not only for the App Store
+  SKU that actually needs it. **Superseded by item 8's 2026-09-19
+  amendment**: the entitlements this worried about turned out to be
+  self-service (item 7's own "Verified on real hardware" note), so the risk
+  this bullet was rejecting never materialized.
 - **Re-deriving fd-adoption/framing independently for macOS** instead of
   extending `mobile.rs`. Rejected for the same reason ADR-0022 rejected it for
   iOS versus `macos_wire`: it is the same kernel primitive carrying the same
