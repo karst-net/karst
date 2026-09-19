@@ -14,20 +14,14 @@ import SystemExtensions
 /// Settings ("System Settings > Privacy & Security > *Allow*") prompt
 /// themselves.
 ///
-/// Wired into `AppDelegate`'s "Setup (Network Extension)…" item
-/// (`runNetworkExtensionSetup`) as the first of the three calls a real
-/// "turn on the NetworkExtension build" flow needs — this, then
-/// `NetworkExtensionEnrollment.ensureConfiguration`, then
-/// `NetworkExtensionEnrollment.enroll`. A menu item is a real decision,
-/// not a placeholder, but not necessarily the *last* word on the UX either
-/// — automatic-on-first-launch or a preference-gated toggle both remain
-/// open, GitHub issue #159's own text on this.
-/// Written and reviewed against Apple's published
-/// `SystemExtensions`/`OSSystemExtensionRequest` API, not run: nothing has
-/// submitted a real request against a signed, notarized extension bundle,
-/// which is the only way any of this is actually exercised — ADR-0026
-/// item 1's still-pending entitlement application (#156) and real
-/// notarization are what that needs.
+/// Wired into `AppDelegate.ensureNetworkExtensionReady` as the first of
+/// the two calls that need to succeed before "Enroll…" can do anything —
+/// this, then `NetworkExtensionEnrollment.ensureConfiguration`. Runs
+/// silently at every launch (not only from the menu) — see
+/// `AppDelegate.applicationDidFinishLaunching`'s own reasoning for why.
+/// Verified end to end on real hardware (#159): a signed, notarized
+/// extension bundle activating for real, not just reviewed against
+/// Apple's published `SystemExtensions`/`OSSystemExtensionRequest` API.
 final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate {
     /// Held for the request's lifetime — `OSSystemExtensionManager` does
     /// not retain its delegate, and this class's only owner today would
@@ -67,10 +61,12 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
         OSSystemExtensionManager.shared.submitRequest(request)
     }
 
-    /// As `activate`, in reverse — `karst-setup`'s "Start Over" recovery
-    /// path (`AppDelegate.swift`'s `addSetupItem` doc comment) will need
-    /// this once the NetworkExtension build has its own equivalent, so it
-    /// exists now rather than being bolted on asymmetrically later.
+    /// As `activate`, in reverse. Nothing calls this yet — `uninstall.sh`
+    /// already documents that full deactivation isn't reliably scriptable
+    /// from a root shell (needs SIP disabled), and no in-app "start over"
+    /// action has needed to deactivate the extension itself rather than
+    /// just re-enrolling — kept so a future one does not have to add this
+    /// asymmetrically.
     static func deactivate(
         extensionIdentifier: String,
         completion: @escaping (Result<OSSystemExtensionRequest.Result, Error>) -> Void
@@ -99,11 +95,14 @@ final class SystemExtensionActivator: NSObject, OSSystemExtensionRequestDelegate
     }
 
     /// Fires once macOS has queued the request and is waiting on the user
-    /// (or an MDM profile) to approve it in System Settings — this call
-    /// does not itself resolve the request. Nothing to do here beyond what
-    /// the type's own doc comment already says: whoever wires this in
-    /// decides how to reflect "pending approval" in the UI, since today
-    /// nothing calls `activate` at all for there to be a UI state for yet.
+    /// (or an MDM profile — this is the actual, documented MDM mechanism
+    /// for system extension approval, `com.apple.system-extension-policy`,
+    /// distinct from and unrelated to #162's VPN-configuration question)
+    /// to approve it in System Settings — this call does not itself
+    /// resolve the request. No UI action needed here either way: the
+    /// pending state resolves into `didFinishWithResult`/`didFailWithError`
+    /// on its own once approved or declined, and the one OS-level prompt
+    /// this triggers is not something this app's own UI needs to echo.
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {}
 
     /// Only ever asked when a *different* version of this same extension is

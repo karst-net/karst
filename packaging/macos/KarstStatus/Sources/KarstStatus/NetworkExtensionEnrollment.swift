@@ -82,10 +82,41 @@ enum NetworkExtensionEnrollment {
                 completion(.failure(error))
                 return
             }
-            if let existing = managers?.first(where: {
+            let matching = (managers ?? []).filter {
                 ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
                     == providerBundleIdentifier
-            }) {
+            }
+            // Never save, remove, or otherwise mutate a manager this app
+            // did not just create in the branch below — deliberately, not
+            // an oversight. There is no supported API to tell "this app
+            // created it" apart from "an MDM profile pushed it" (#162,
+            // researched, not assumed: no documented property, no
+            // documented error from a management call against one, and
+            // even Tailscale's own macOS client has an open, unresolved
+            // issue over exactly this). Whatever is already here — ours
+            // from an earlier launch, or someone else's entirely — is
+            // used as-is; only its absence is this app's cue to create
+            // one of its own.
+            if let existing = matching.first {
+                if matching.count > 1 {
+                    // Two configurations for the same provider bundle
+                    // identifier is a real, reachable state this app
+                    // cannot resolve on its own (self-created earlier,
+                    // then MDM-pushed later, or the reverse) — the order
+                    // `loadAllFromPreferences` returns them in is not
+                    // documented as stable or meaningful, so picking
+                    // deterministic over arbitrary is the most this can
+                    // do: prefer one already enabled, so a disabled
+                    // leftover never silently wins over a live one.
+                    let chosen = matching.first(where: \.isEnabled) ?? existing
+                    os_log(
+                        "KARST-TRACE ensureConfiguration: %{public}d configurations found for %{public}@, choosing the %{public}@ one",
+                        log: Self.log, type: .default, matching.count, providerBundleIdentifier,
+                        chosen.isEnabled ? "enabled" : "first"
+                    )
+                    completion(.success(chosen))
+                    return
+                }
                 completion(.success(existing))
                 return
             }
