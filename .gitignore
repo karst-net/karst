@@ -8,7 +8,9 @@
 *.key
 *.p12
 *.pfx
+*.p8
 *.provisionprofile
+apple-signing.tgz
 priv_key*
 .env
 .env.*
