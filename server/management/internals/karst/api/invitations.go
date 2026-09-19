@@ -17,7 +17,7 @@ import (
 )
 
 type invitationManager interface {
-	CreateDeviceInvitation(context.Context, string, string, string, []string) (*types.SetupKey, error)
+	CreateDeviceInvitation(context.Context, string, string, string, []string, string) (*types.SetupKey, error)
 	ListSetupKeys(context.Context, string, string) ([]*types.SetupKey, error)
 	GetSetupKey(context.Context, string, string, string) (*types.SetupKey, error)
 	SaveSetupKey(context.Context, string, *types.SetupKey, string) (*types.SetupKey, error)
@@ -32,6 +32,9 @@ type invitationResponse struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
 	Credential string     `json:"credential,omitempty"`
+	// DomainID is the mesh domain (ADR-0032) the enrolling device will be
+	// placed in, or "" for the account's implicit root.
+	DomainID string `json:"domain_id,omitempty"`
 }
 
 func invitationView(key *types.SetupKey) invitationResponse {
@@ -44,7 +47,7 @@ func invitationView(key *types.SetupKey) invitationResponse {
 	case key.IsExpired():
 		state = "expired"
 	}
-	return invitationResponse{ID: key.Id, Name: key.Name, Groups: key.AutoGroups, State: state, ExpiresAt: key.GetExpiresAt(), CreatedAt: key.CreatedAt, RedeemedAt: key.LastUsed}
+	return invitationResponse{ID: key.Id, Name: key.Name, Groups: key.AutoGroups, State: state, ExpiresAt: key.GetExpiresAt(), CreatedAt: key.CreatedAt, RedeemedAt: key.LastUsed, DomainID: key.DomainID}
 }
 
 func (h *handler) invitations(w http.ResponseWriter, r *http.Request) {
@@ -75,8 +78,9 @@ func (h *handler) invitations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name   string   `json:"name"`
-		Groups []string `json:"groups"`
+		Name     string   `json:"name"`
+		Groups   []string `json:"groups"`
+		DomainID string   `json:"domain_id"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -84,7 +88,7 @@ func (h *handler) invitations(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "invalid invitation request"), w)
 		return
 	}
-	key, err := manager.CreateDeviceInvitation(r.Context(), user.AccountId, user.UserId, request.Name, request.Groups)
+	key, err := manager.CreateDeviceInvitation(r.Context(), user.AccountId, user.UserId, request.Name, request.Groups, request.DomainID)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return

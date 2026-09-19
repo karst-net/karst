@@ -97,6 +97,7 @@ type handler struct {
 	chain      bedrockLogReader
 	peerWriter peerWriter
 	accounts   accountUpdater
+	domainMgr  domainManager
 }
 
 // relayHealth is deliberately separate from relayreg.StoredRelay. Registry
@@ -258,8 +259,8 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -275,6 +276,15 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	}
 	karstRouter.HandleFunc("/invitations", h.invitations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/invitations/{id}/revoke", h.revokeInvitation).Methods(http.MethodPost, http.MethodOptions)
+	// Mesh domains (ADR-0032). Deliberately exempted from the blanket
+	// KarstControl gate below (see karstAuthorization) -- a domain-scoped
+	// delegated admin has no account-wide grant, and each handler's
+	// underlying manager call re-derives and enforces its own permission.
+	karstRouter.HandleFunc("/domains", h.domains).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/domains/{id}", h.getDomain).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/domains/{id}", h.deleteDomain).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/domains/{id}/delegations", h.domainDelegations).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/domains/delegations/{bindingId}", h.revokeDomainDelegation).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes", h.listNodes).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}", h.getNode).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/nodes/{handle}", h.updateNode).Methods(http.MethodPatch, http.MethodOptions)
@@ -403,7 +413,18 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// Member portal routes have their own, subject-derived scope. They
 			// must not be checked against KarstControl: that module intentionally
 			// denies Members every administrative operation.
-			if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, "/api"), "/karst/v1/me/") {
+			//
+			// Mesh-domain routes (ADR-0032) are the same shape of exception:
+			// a domain-scoped delegated admin deliberately has no
+			// account-wide KarstControl grant, so this blanket gate would
+			// reject them before their handler's own
+			// ValidateDomainScopedPermission check ever ran. The domains
+			// package's manager (meshdomain/manager) re-derives and enforces
+			// its own permission on every call, so skipping the blanket
+			// check here is not skipping authorization, only the wrong
+			// (account-wide-only) authorization for this surface.
+			path := strings.TrimPrefix(r.URL.Path, "/api")
+			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") {
 				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0032: Admin-assigned names as the real mesh identity; hierarchical domains with delegated sub-administration
 
-- **Status:** Proposed
+- **Status:** Accepted, with an implementation update below
 - **Date:** 2026-09-19
 - **Deciders:** TBD
 - **Related:** ADR-0010 (naming convention this ADR follows: "standard
@@ -258,3 +258,63 @@ does not add new capability at the top.
   peer now carries a domain path, not a bare label) becomes a real
   performance problem — would justify a depth cap or a more compact wire
   encoding than "full label path per peer."
+
+---
+
+## Implementation update (2026-09-19)
+
+Phases 1–2 of the Decision above are implemented. Three things came out
+different from what the Decision section predicted, each because
+implementation surfaced a fact the design pass didn't have:
+
+- **Label uniqueness stayed per-account, not per-domain.** `DNSLabel`
+  already carries a real, enforced-by-index per-account uniqueness
+  constraint (`idx_account_dnslabel`). Moving it to per-domain would have
+  meant a live index migration for a property nobody actually asked for —
+  the reopened issue wanted a domain hierarchy and delegation, not label
+  reuse across domains. Instead, a domain's Path is spliced directly into
+  `DNSLabel` itself (`my-laptop` under domain path `engineering.acme`
+  becomes `my-laptop.engineering.acme`), so the existing per-account
+  index keeps working unmodified and still does exactly the deduplication
+  job it always did. A peer's `DomainID` is a separate, new, nullable
+  column recording *which* domain contributed that prefix.
+- **The netmap/wire protocol needed zero changes.** The Decision section
+  flagged this as "nontrivial... scoped as implementation work following
+  this ADR." It wasn't: `KarstLoginResponse.dns_name` and the netmap's
+  per-peer `DnsName` were already free-form strings, and the Rust
+  resolver (`crates/karst-dns`'s `MeshZone`/`canonical_name`) already
+  validates and matches names label-by-label with no assumption that a
+  name is exactly one label. A domain-qualified `DNSLabel` like
+  `build-box.engineering.acme` flows through every existing code path —
+  server FQDN construction (`Peer.FQDN`), netmap projection, and the
+  client resolver — with no changes to any of them. Domains are naming
+  structure the server maintains; peers and the wire protocol never need
+  to know a hierarchy exists at all.
+- **The existing `/karst/v1` HTTP surface required one authorization
+  exception.** Every route under it (`karstAuthorization` in
+  `management/internals/karst/api/nodes.go`) was gated by a single
+  blanket account-wide `KarstControl` permission check, run before any
+  handler — including the pre-existing `/invitations` route. A
+  domain-scoped delegated admin, by design, never holds that account-wide
+  grant, so without an exception this blanket gate would silently defeat
+  delegation for every HTTP caller (Go-level callers of
+  `DefaultAccountManager.CreateDeviceInvitation` were unaffected, since
+  that gate is HTTP middleware, not part of the business logic). Domain
+  routes (`/karst/v1/domains*`) are now exempted from that blanket check
+  the same way `/karst/v1/me/*` already was, and rely on
+  `meshdomain/manager.Manager` re-deriving and enforcing its own
+  `ValidateDomainScopedPermission` check on every call instead. The
+  pre-existing `/karst/v1/invitations` route was deliberately *not*
+  given the same exemption in this pass — a delegated admin can issue a
+  device invitation into their subtree via `DefaultAccountManager`
+  directly (proven by `TestDeviceInvitationDelegatedSubdomainAdmin`), but
+  cannot yet do so over HTTP through the existing invitations endpoint.
+  Closing that gap (making `/invitations` domain-aware the same way
+  `/domains` now is) is left as explicit follow-up, not silently assumed
+  done.
+
+Not implemented in this pass, unchanged from the original Decision's
+scope: console UI for any of this (domain management, delegation,
+domain-targeted invitations all exist only as Go APIs and a
+`/karst/v1/domains*` HTTP surface so far), and the HTTP-level invitations
+gap just above.

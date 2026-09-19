@@ -38,6 +38,11 @@ type SetupKey struct {
 	OwnerUserID string `json:"-"`
 	// InvitationIssuerID identifies administrator-issued device invitations.
 	InvitationIssuerID string `json:"-" gorm:"index"`
+	// DomainID places a device enrolled with this key into a mesh domain
+	// (ADR-0032) rather than the account's implicit root. Empty is the
+	// overwhelming common case and behaves exactly as before this field
+	// existed.
+	DomainID           string `gorm:"index"`
 	Key                string
 	KeySecret          string `gorm:"index"`
 	Name               string
@@ -74,6 +79,7 @@ func (key *SetupKey) Copy() *SetupKey {
 		AccountID:           key.AccountID,
 		OwnerUserID:         key.OwnerUserID,
 		InvitationIssuerID:  key.InvitationIssuerID,
+		DomainID:            key.DomainID,
 		Key:                 key.Key,
 		KeySecret:           key.KeySecret,
 		Name:                key.Name,

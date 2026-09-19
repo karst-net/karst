@@ -35,6 +35,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain"
 
 	agentNetworkTypes "github.com/netbirdio/netbird/management/internals/modules/agentnetwork/types"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/proxy"
 	rpservice "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/service"
 	"github.com/netbirdio/netbird/management/internals/modules/zones"
@@ -138,6 +139,7 @@ func NewSqlStore(ctx context.Context, db *gorm.DB, storeEngine types.Engine, met
 		&installation{}, &types.ExtraSettings{}, &posture.Checks{}, &nbpeer.NetworkAddress{},
 		&networkTypes.Network{}, &routerTypes.NetworkRouter{}, &resourceTypes.NetworkResource{}, &types.AccountOnboarding{},
 		&types.Job{}, &zones.Zone{}, &records.Record{}, &rpservice.Service{}, &rpservice.Target{}, &domain.Domain{},
+		&meshdomain.Domain{}, &meshdomain.DomainRoleBinding{},
 		&accesslogs.AccessLogEntry{}, &proxy.Proxy{},
 		&agentNetworkTypes.Provider{}, &agentNetworkTypes.Policy{}, &agentNetworkTypes.Guardrail{}, &agentNetworkTypes.Settings{},
 		&agentNetworkTypes.Consumption{}, &agentNetworkTypes.AccountBudgetRule{},
@@ -5078,6 +5080,124 @@ func (s *SqlStore) GetAccountZones(ctx context.Context, lockStrength LockingStre
 	}
 
 	return zones, nil
+}
+
+func (s *SqlStore) CreateDomain(ctx context.Context, domain *meshdomain.Domain) error {
+	result := s.db.Create(domain)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to create mesh domain to store: %v", result.Error)
+		return status.Errorf(status.Internal, "failed to create mesh domain to store")
+	}
+	return nil
+}
+
+func (s *SqlStore) DeleteDomain(ctx context.Context, accountID, domainID string) error {
+	result := s.db.Delete(&meshdomain.Domain{}, accountAndIDQueryCondition, accountID, domainID)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to delete mesh domain from store: %v", result.Error)
+		return status.Errorf(status.Internal, "failed to delete mesh domain from store")
+	}
+	if result.RowsAffected == 0 {
+		return status.NewMeshDomainNotFoundError(domainID)
+	}
+	return nil
+}
+
+func (s *SqlStore) GetDomainByID(ctx context.Context, lockStrength LockingStrength, accountID, domainID string) (*meshdomain.Domain, error) {
+	tx := s.db
+	if lockStrength != LockingStrengthNone {
+		tx = tx.Clauses(clause.Locking{Strength: string(lockStrength)})
+	}
+
+	var d *meshdomain.Domain
+	result := tx.Take(&d, accountAndIDQueryCondition, accountID, domainID)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, status.NewMeshDomainNotFoundError(domainID)
+		}
+		log.WithContext(ctx).Errorf("failed to get mesh domain from store: %v", result.Error)
+		return nil, status.Errorf(status.Internal, "failed to get mesh domain from store")
+	}
+	return d, nil
+}
+
+func (s *SqlStore) GetAccountDomains(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*meshdomain.Domain, error) {
+	tx := s.db
+	if lockStrength != LockingStrengthNone {
+		tx = tx.Clauses(clause.Locking{Strength: string(lockStrength)})
+	}
+
+	var domains []*meshdomain.Domain
+	result := tx.Find(&domains, accountIDCondition, accountID)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to get mesh domains from the store: %s", result.Error)
+		return nil, status.Errorf(status.Internal, "failed to get mesh domains from store")
+	}
+	return domains, nil
+}
+
+func (s *SqlStore) GetDomainMemberCount(ctx context.Context, accountID, domainID string) (int64, error) {
+	var count int64
+	result := s.db.Model(&nbpeer.Peer{}).Where("account_id = ? AND domain_id = ?", accountID, domainID).Count(&count)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to count mesh domain members: %v", result.Error)
+		return 0, status.Errorf(status.Internal, "failed to count mesh domain members")
+	}
+	return count, nil
+}
+
+func (s *SqlStore) CreateDomainRoleBinding(ctx context.Context, binding *meshdomain.DomainRoleBinding) error {
+	result := s.db.Create(binding)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to create domain role binding to store: %v", result.Error)
+		return status.Errorf(status.Internal, "failed to create domain role binding to store")
+	}
+	return nil
+}
+
+func (s *SqlStore) DeleteDomainRoleBinding(ctx context.Context, accountID, bindingID string) error {
+	result := s.db.Delete(&meshdomain.DomainRoleBinding{}, accountAndIDQueryCondition, accountID, bindingID)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to delete domain role binding from store: %v", result.Error)
+		return status.Errorf(status.Internal, "failed to delete domain role binding from store")
+	}
+	if result.RowsAffected == 0 {
+		return status.NewDomainRoleBindingNotFoundError(bindingID)
+	}
+	return nil
+}
+
+func (s *SqlStore) GetDomainRoleBindingByID(ctx context.Context, accountID, bindingID string) (*meshdomain.DomainRoleBinding, error) {
+	var b *meshdomain.DomainRoleBinding
+	result := s.db.Take(&b, accountAndIDQueryCondition, accountID, bindingID)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, status.NewDomainRoleBindingNotFoundError(bindingID)
+		}
+		log.WithContext(ctx).Errorf("failed to get domain role binding from store: %v", result.Error)
+		return nil, status.Errorf(status.Internal, "failed to get domain role binding from store")
+	}
+	return b, nil
+}
+
+func (s *SqlStore) GetDomainRoleBindingsByDomain(ctx context.Context, accountID, domainID string) ([]*meshdomain.DomainRoleBinding, error) {
+	var bindings []*meshdomain.DomainRoleBinding
+	result := s.db.Where("account_id = ? AND domain_id = ?", accountID, domainID).Find(&bindings)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to get domain role bindings from the store: %s", result.Error)
+		return nil, status.Errorf(status.Internal, "failed to get domain role bindings from store")
+	}
+	return bindings, nil
+}
+
+func (s *SqlStore) GetUserDomainRoleBindings(ctx context.Context, accountID, userID string) ([]*meshdomain.DomainRoleBinding, error) {
+	var bindings []*meshdomain.DomainRoleBinding
+	result := s.db.Where("account_id = ? AND user_id = ?", accountID, userID).Find(&bindings)
+	if result.Error != nil {
+		log.WithContext(ctx).Errorf("failed to get user's domain role bindings from the store: %s", result.Error)
+		return nil, status.Errorf(status.Internal, "failed to get user's domain role bindings from store")
+	}
+	return bindings, nil
 }
 
 func (s *SqlStore) CreateDNSRecord(ctx context.Context, record *records.Record) error {

@@ -44,7 +44,15 @@ type Peer struct {
 	Name string `gorm:"index"`
 	// DNSLabel is the parsed peer name for domain resolution. It is used to form an FQDN by appending the account's
 	// domain to the peer label. e.g. peer-dns-label.netbird.cloud
+	// When DomainID is set, DNSLabel already has that mesh domain's Path
+	// spliced in ahead of the account's DNS domain (ADR-0032) -- e.g.
+	// "my-laptop.engineering" rather than "my-laptop" -- so no other code
+	// needs to know about domains to resolve or display a peer correctly.
 	DNSLabel string // uniqueness index per accountID (check migrations)
+	// DomainID is the mesh domain (ADR-0032) this peer was placed in, or
+	// empty for the account's implicit root domain -- the overwhelming
+	// majority of peers, unaffected by this feature.
+	DomainID string `gorm:"index"`
 	// Status peer's management connection status
 	Status *PeerStatus `gorm:"embedded;embeddedPrefix:peer_status_"`
 	// The user ID that registered the peer
@@ -289,6 +297,7 @@ func (p *Peer) Copy() *Peer {
 		Meta:                        p.Meta,
 		Name:                        p.Name,
 		DNSLabel:                    p.DNSLabel,
+		DomainID:                    p.DomainID,
 		Status:                      peerStatus,
 		UserID:                      p.UserID,
 		SSHKey:                      p.SSHKey,

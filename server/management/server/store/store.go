@@ -25,6 +25,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/accesslogs"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/proxy"
@@ -253,6 +254,27 @@ type Store interface {
 	GetZoneByID(ctx context.Context, lockStrength LockingStrength, accountID, zoneID string) (*zones.Zone, error)
 	GetZoneByDomain(ctx context.Context, accountID, domain string) (*zones.Zone, error)
 	GetAccountZones(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*zones.Zone, error)
+
+	// Mesh domains (ADR-0032): an account-scoped naming/administration tree,
+	// deliberately separate from zones.Zone (custom split-DNS records).
+	CreateDomain(ctx context.Context, domain *meshdomain.Domain) error
+	DeleteDomain(ctx context.Context, accountID, domainID string) error
+	GetDomainByID(ctx context.Context, lockStrength LockingStrength, accountID, domainID string) (*meshdomain.Domain, error)
+	GetAccountDomains(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*meshdomain.Domain, error)
+	// GetDomainMemberCount counts peers directly placed in domainID -- used
+	// only to refuse deleting a non-empty domain, so an exact count with no
+	// locking requirement is enough.
+	GetDomainMemberCount(ctx context.Context, accountID, domainID string) (int64, error)
+
+	CreateDomainRoleBinding(ctx context.Context, binding *meshdomain.DomainRoleBinding) error
+	DeleteDomainRoleBinding(ctx context.Context, accountID, bindingID string) error
+	GetDomainRoleBindingByID(ctx context.Context, accountID, bindingID string) (*meshdomain.DomainRoleBinding, error)
+	GetDomainRoleBindingsByDomain(ctx context.Context, accountID, domainID string) ([]*meshdomain.DomainRoleBinding, error)
+	// GetUserDomainRoleBindings is permissions.Manager's read path for
+	// ValidateDomainScopedPermission -- every delegated subtree a user
+	// administers, account-wide (there are normally few enough per user that
+	// filtering by subtree containment in Go, rather than in SQL, is fine).
+	GetUserDomainRoleBindings(ctx context.Context, accountID, userID string) ([]*meshdomain.DomainRoleBinding, error)
 
 	CreateDNSRecord(ctx context.Context, record *records.Record) error
 	UpdateDNSRecord(ctx context.Context, record *records.Record) error

@@ -298,9 +298,21 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 			if err != nil {
 				newLabel = ""
 			} else {
-				_, err := transaction.GetPeerIdByLabel(ctx, store.LockingStrengthNone, accountID, newLabel)
+				// Rename never changes a peer's mesh domain (ADR-0032), so
+				// re-qualify with its existing one before checking
+				// collision -- otherwise a rename could silently collide
+				// with, or free up, the wrong domain's namesake label.
+				qualified := newLabel
+				if peer.DomainID != "" {
+					if d, derr := transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peer.DomainID); derr == nil {
+						qualified = d.QualifyLabel(newLabel)
+					}
+				}
+				_, err := transaction.GetPeerIdByLabel(ctx, store.LockingStrengthNone, accountID, qualified)
 				if err == nil {
 					newLabel = ""
+				} else {
+					newLabel = qualified
 				}
 			}
 
@@ -308,6 +320,11 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 				newLabel, err = getPeerIPDNSLabel(peer.IP, update.Name)
 				if err != nil {
 					return fmt.Errorf("failed to get free DNS label: %w", err)
+				}
+				if peer.DomainID != "" {
+					if d, derr := transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peer.DomainID); derr == nil {
+						newLabel = d.QualifyLabel(newLabel)
+					}
 				}
 			}
 			peer.Name = update.Name
@@ -774,9 +791,16 @@ type peerAddAuthConfig struct {
 	// fixed placeholder Name ("portal device") that must never become a
 	// peer's identity.
 	SetupKeyIsInvitation bool
-	GroupsToAdd          []string
-	AllowExtraDNSLabels  bool
-	Ephemeral            bool
+	// SetupKeyDomainID places the enrolling peer into a mesh domain
+	// (ADR-0032) rather than the account's implicit root. Unlike
+	// SetupKeyIsInvitation-gated naming, this applies to any setup key type
+	// that carries one -- placing a reusable key's whole enrolled batch into
+	// a domain is a legitimate, common case a single-device invitation isn't
+	// the only way to reach.
+	SetupKeyDomainID    string
+	GroupsToAdd         []string
+	AllowExtraDNSLabels bool
+	Ephemeral           bool
 }
 
 func (am *DefaultAccountManager) processPeerAddAuth(ctx context.Context, accountID, userID, encodedHashedKey string, peer *nbpeer.Peer, temporary, addedByUser, addedBySetupKey bool, opEvent *activity.Event) (*peerAddAuthConfig, error) {
@@ -858,6 +882,7 @@ func (am *DefaultAccountManager) handleSetupKeyAddedPeer(ctx context.Context, en
 	config.SetupKeyID = sk.Id
 	config.SetupKeyName = sk.Name
 	config.SetupKeyIsInvitation = sk.InvitationIssuerID != ""
+	config.SetupKeyDomainID = sk.DomainID
 	config.AllowExtraDNSLabels = sk.AllowExtraDNSLabels
 	config.AccountID = sk.AccountID
 
@@ -970,6 +995,25 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		peerHostname = peerAddConfig.SetupKeyName
 	}
 
+	// A mesh domain (ADR-0032) inserts its Path ahead of the peer's own DNS
+	// label below. Resolved once here, not re-checked per retry attempt:
+	// domains are append-only (no re-parenting), so a Path fetched now
+	// cannot go stale before this peer is saved.
+	var peerDomainID, domainPath string
+	if peerAddConfig.SetupKeyDomainID != "" {
+		d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peerAddConfig.SetupKeyDomainID)
+		if err != nil {
+			// Best-effort: a domain deleted between invitation and
+			// enrollment must not fail enrollment, only fall back to the
+			// account's implicit root -- the same posture as the geo lookup
+			// below.
+			log.WithContext(ctx).Warnf("mesh domain %s no longer exists, enrolling peer into account root instead: %v", peerAddConfig.SetupKeyDomainID, err)
+		} else {
+			peerDomainID = d.ID
+			domainPath = d.Path
+		}
+	}
+
 	registrationTime := time.Now().UTC()
 	newPeer = &nbpeer.Peer{
 		ID:                          xid.New().String(),
@@ -977,6 +1021,7 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		Key:                         peer.Key,
 		Meta:                        peer.Meta,
 		Name:                        peerHostname,
+		DomainID:                    peerDomainID,
 		UserID:                      userID,
 		Status:                      &nbpeer.PeerStatus{Connected: false, LastSeen: registrationTime},
 		SSHEnabled:                  false,
@@ -1036,6 +1081,15 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 			if err != nil {
 				return nil, nil, nil, false, fmt.Errorf("failed to get free DNS label: %w", err)
 			}
+		}
+		if domainPath != "" {
+			// Splice the mesh domain's Path in ahead of the account's DNS
+			// domain (appended later by Peer.FQDN) rather than sanitizing it
+			// as part of the label itself -- GetParsedDomainLabel/
+			// getPeerIPDNSLabel above only ever look at the first label of
+			// whatever they're given, so a dotted string passed in would
+			// silently lose everything after its first dot.
+			freeLabel += "." + domainPath
 		}
 		newPeer.DNSLabel = freeLabel
 		newPeer.IP = freeIP

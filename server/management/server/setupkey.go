@@ -384,8 +384,24 @@ func (am *DefaultAccountManager) RotateBootstrapKey(ctx context.Context, account
 
 // CreateDeviceInvitation authorizes one device without requiring a recipient
 // account or IdP interaction. Scope and bounded lifetime are server-controlled.
-func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, accountID, userID, name string, groups []string) (*types.SetupKey, error) {
-	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.SetupKeys, operations.Create)
+//
+// domainID places the enrolling device into a mesh domain (ADR-0032) rather
+// than the account's implicit root; "" preserves prior behavior exactly. A
+// domain-scoped delegated admin (permissions.Manager.ValidateDomainScopedPermission)
+// may issue an invitation into their own delegated subtree even without the
+// account-wide SetupKeys grant -- that delegation is the whole point of
+// having subdomains at all.
+func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, accountID, userID, name string, groups []string, domainID string) (*types.SetupKey, error) {
+	domainPath := ""
+	if domainID != "" {
+		d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)
+		if err != nil {
+			return nil, err
+		}
+		domainPath = d.Path
+	}
+
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.SetupKeys, operations.Create)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -433,6 +449,7 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 		key, plain = types.GenerateSetupKey(name, types.SetupKeyOneOff, 24*time.Hour, groups, 1, false, false)
 		key.AccountID = accountID
 		key.InvitationIssuerID = userID
+		key.DomainID = domainID
 		return tx.SaveSetupKey(ctx, key)
 	})
 	if err != nil {

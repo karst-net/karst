@@ -14,6 +14,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 	dns "github.com/netbirdio/netbird/dns"
 	types "github.com/netbirdio/netbird/management/internals/modules/agentnetwork/types"
+	meshdomain "github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	accesslogs "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/accesslogs"
 	domain "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain"
 	proxy "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/proxy"
@@ -311,6 +312,34 @@ func (mr *MockStoreMockRecorder) CreateDNSRecord(ctx, record interface{}) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateDNSRecord", reflect.TypeOf((*MockStore)(nil).CreateDNSRecord), ctx, record)
 }
 
+// CreateDomain mocks base method.
+func (m *MockStore) CreateDomain(ctx context.Context, domain *meshdomain.Domain) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateDomain", ctx, domain)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateDomain indicates an expected call of CreateDomain.
+func (mr *MockStoreMockRecorder) CreateDomain(ctx, domain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateDomain", reflect.TypeOf((*MockStore)(nil).CreateDomain), ctx, domain)
+}
+
+// CreateDomainRoleBinding mocks base method.
+func (m *MockStore) CreateDomainRoleBinding(ctx context.Context, binding *meshdomain.DomainRoleBinding) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateDomainRoleBinding", ctx, binding)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateDomainRoleBinding indicates an expected call of CreateDomainRoleBinding.
+func (mr *MockStoreMockRecorder) CreateDomainRoleBinding(ctx, binding interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateDomainRoleBinding", reflect.TypeOf((*MockStore)(nil).CreateDomainRoleBinding), ctx, binding)
+}
+
 // CreateGroup mocks base method.
 func (m *MockStore) CreateGroup(ctx context.Context, group *types3.Group) error {
 	m.ctrl.T.Helper()
@@ -519,6 +548,34 @@ func (m *MockStore) DeleteDNSRecord(ctx context.Context, accountID, zoneID, reco
 func (mr *MockStoreMockRecorder) DeleteDNSRecord(ctx, accountID, zoneID, recordID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDNSRecord", reflect.TypeOf((*MockStore)(nil).DeleteDNSRecord), ctx, accountID, zoneID, recordID)
+}
+
+// DeleteDomain mocks base method.
+func (m *MockStore) DeleteDomain(ctx context.Context, accountID, domainID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteDomain", ctx, accountID, domainID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteDomain indicates an expected call of DeleteDomain.
+func (mr *MockStoreMockRecorder) DeleteDomain(ctx, accountID, domainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDomain", reflect.TypeOf((*MockStore)(nil).DeleteDomain), ctx, accountID, domainID)
+}
+
+// DeleteDomainRoleBinding mocks base method.
+func (m *MockStore) DeleteDomainRoleBinding(ctx context.Context, accountID, bindingID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteDomainRoleBinding", ctx, accountID, bindingID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteDomainRoleBinding indicates an expected call of DeleteDomainRoleBinding.
+func (mr *MockStoreMockRecorder) DeleteDomainRoleBinding(ctx, accountID, bindingID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDomainRoleBinding", reflect.TypeOf((*MockStore)(nil).DeleteDomainRoleBinding), ctx, accountID, bindingID)
 }
 
 // DeleteGroup mocks base method.
@@ -1099,6 +1156,21 @@ func (m *MockStore) GetAccountDomainAndCategory(ctx context.Context, lockStrengt
 func (mr *MockStoreMockRecorder) GetAccountDomainAndCategory(ctx, lockStrength, accountID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountDomainAndCategory", reflect.TypeOf((*MockStore)(nil).GetAccountDomainAndCategory), ctx, lockStrength, accountID)
+}
+
+// GetAccountDomains mocks base method.
+func (m *MockStore) GetAccountDomains(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*meshdomain.Domain, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAccountDomains", ctx, lockStrength, accountID)
+	ret0, _ := ret[0].([]*meshdomain.Domain)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAccountDomains indicates an expected call of GetAccountDomains.
+func (mr *MockStoreMockRecorder) GetAccountDomains(ctx, lockStrength, accountID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountDomains", reflect.TypeOf((*MockStore)(nil).GetAccountDomains), ctx, lockStrength, accountID)
 }
 
 // GetAccountGroupPeers mocks base method.
@@ -1892,6 +1964,66 @@ func (m *MockStore) GetDNSRecordByID(ctx context.Context, lockStrength LockingSt
 func (mr *MockStoreMockRecorder) GetDNSRecordByID(ctx, lockStrength, accountID, zoneID, recordID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDNSRecordByID", reflect.TypeOf((*MockStore)(nil).GetDNSRecordByID), ctx, lockStrength, accountID, zoneID, recordID)
+}
+
+// GetDomainByID mocks base method.
+func (m *MockStore) GetDomainByID(ctx context.Context, lockStrength LockingStrength, accountID, domainID string) (*meshdomain.Domain, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDomainByID", ctx, lockStrength, accountID, domainID)
+	ret0, _ := ret[0].(*meshdomain.Domain)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDomainByID indicates an expected call of GetDomainByID.
+func (mr *MockStoreMockRecorder) GetDomainByID(ctx, lockStrength, accountID, domainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDomainByID", reflect.TypeOf((*MockStore)(nil).GetDomainByID), ctx, lockStrength, accountID, domainID)
+}
+
+// GetDomainMemberCount mocks base method.
+func (m *MockStore) GetDomainMemberCount(ctx context.Context, accountID, domainID string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDomainMemberCount", ctx, accountID, domainID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDomainMemberCount indicates an expected call of GetDomainMemberCount.
+func (mr *MockStoreMockRecorder) GetDomainMemberCount(ctx, accountID, domainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDomainMemberCount", reflect.TypeOf((*MockStore)(nil).GetDomainMemberCount), ctx, accountID, domainID)
+}
+
+// GetDomainRoleBindingByID mocks base method.
+func (m *MockStore) GetDomainRoleBindingByID(ctx context.Context, accountID, bindingID string) (*meshdomain.DomainRoleBinding, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDomainRoleBindingByID", ctx, accountID, bindingID)
+	ret0, _ := ret[0].(*meshdomain.DomainRoleBinding)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDomainRoleBindingByID indicates an expected call of GetDomainRoleBindingByID.
+func (mr *MockStoreMockRecorder) GetDomainRoleBindingByID(ctx, accountID, bindingID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDomainRoleBindingByID", reflect.TypeOf((*MockStore)(nil).GetDomainRoleBindingByID), ctx, accountID, bindingID)
+}
+
+// GetDomainRoleBindingsByDomain mocks base method.
+func (m *MockStore) GetDomainRoleBindingsByDomain(ctx context.Context, accountID, domainID string) ([]*meshdomain.DomainRoleBinding, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDomainRoleBindingsByDomain", ctx, accountID, domainID)
+	ret0, _ := ret[0].([]*meshdomain.DomainRoleBinding)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDomainRoleBindingsByDomain indicates an expected call of GetDomainRoleBindingsByDomain.
+func (mr *MockStoreMockRecorder) GetDomainRoleBindingsByDomain(ctx, accountID, domainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDomainRoleBindingsByDomain", reflect.TypeOf((*MockStore)(nil).GetDomainRoleBindingsByDomain), ctx, accountID, domainID)
 }
 
 // GetEmbeddedProxyPeerIDsByCluster mocks base method.
@@ -2775,6 +2907,21 @@ func (m *MockStore) GetUserByUserID(ctx context.Context, lockStrength LockingStr
 func (mr *MockStoreMockRecorder) GetUserByUserID(ctx, lockStrength, userID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserByUserID", reflect.TypeOf((*MockStore)(nil).GetUserByUserID), ctx, lockStrength, userID)
+}
+
+// GetUserDomainRoleBindings mocks base method.
+func (m *MockStore) GetUserDomainRoleBindings(ctx context.Context, accountID, userID string) ([]*meshdomain.DomainRoleBinding, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserDomainRoleBindings", ctx, accountID, userID)
+	ret0, _ := ret[0].([]*meshdomain.DomainRoleBinding)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserDomainRoleBindings indicates an expected call of GetUserDomainRoleBindings.
+func (mr *MockStoreMockRecorder) GetUserDomainRoleBindings(ctx, accountID, userID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserDomainRoleBindings", reflect.TypeOf((*MockStore)(nil).GetUserDomainRoleBindings), ctx, accountID, userID)
 }
 
 // GetUserIDByPeerKey mocks base method.

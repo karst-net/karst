@@ -23,6 +23,8 @@ import (
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
+	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -59,6 +61,13 @@ const (
 	// it rather than minting a member through an IdP mock keeps this test about
 	// authorization instead of about user creation.
 	consoleMemberID = "f4f6d672-63fb-11ec-90d6-0242ac120003"
+
+	// Mesh-domain fixture rows (ADR-0032), seeded by consoleRouter and
+	// referenced by consoleMutations -- see the comment there for why these
+	// must already exist rather than being "unknown-*" placeholders.
+	consoleFixtureDomainID       = "console-domain"
+	consoleFixtureDoomedDomainID = "console-domain-doomed"
+	consoleFixtureBindingID      = "console-binding"
 )
 
 type consoleCase struct {
@@ -200,6 +209,37 @@ func consoleMutations() []consoleCase {
 			// It answered 500 before finding 66.
 			want: []int{http.StatusOK, http.StatusPreconditionFailed}, template: "/karst/v1/bedrock/audit-anchor/export",
 		},
+		// Mesh domains (ADR-0032). Deliberately exercised against fixture
+		// rows that already exist (consoleFixtureDomainID,
+		// consoleFixtureDoomedDomainID, consoleFixtureBindingID, seeded by
+		// consoleRouter) rather than "unknown-*" placeholders: these routes
+		// are exempt from the blanket KarstControl gate (see
+		// karstAuthorization), so a member's request reaches the handler's
+		// own store lookup before its permission check. An unknown ID would
+		// 404 a member here instead of the 403
+		// TestConsoleMutationsAreRefusedForAMember requires -- correct
+		// per-route behavior, but the wrong fixture for proving a member is
+		// refused rather than merely missing something that isn't there.
+		{
+			name: "create a mesh domain", method: http.MethodPost,
+			path: "/karst/v1/domains", body: `{"label":"engineering"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/domains",
+		},
+		{
+			name: "delete a mesh domain", method: http.MethodDelete,
+			path: "/karst/v1/domains/" + consoleFixtureDoomedDomainID, body: "",
+			want: []int{http.StatusNoContent}, template: "/karst/v1/domains/{id}",
+		},
+		{
+			name: "delegate mesh domain admin", method: http.MethodPost,
+			path: "/karst/v1/domains/" + consoleFixtureDomainID + "/delegations", body: `{"user_id":"` + consoleMemberID + `"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/domains/{id}/delegations",
+		},
+		{
+			name: "revoke a mesh domain delegation", method: http.MethodDelete,
+			path: "/karst/v1/domains/delegations/" + consoleFixtureBindingID, body: "",
+			want: []int{http.StatusNoContent}, template: "/karst/v1/domains/delegations/{bindingId}",
+		},
 	}
 }
 
@@ -210,6 +250,22 @@ func consoleRouter(t *testing.T) *mux.Router {
 	am, s, _ := realAccountManager(t)
 	if err := s.CreateGroup(context.Background(), &types.Group{ID: "console-invited", AccountID: consoleAccountID, Name: "Invited devices", Issued: "api"}); err != nil {
 		t.Fatalf("invitation group: %v", err)
+	}
+	if err := s.CreateDomain(context.Background(), &meshdomain.Domain{ID: consoleFixtureDomainID, AccountID: consoleAccountID, Label: consoleFixtureDomainID, Path: consoleFixtureDomainID}); err != nil {
+		t.Fatalf("fixture domain: %v", err)
+	}
+	if err := s.CreateDomain(context.Background(), &meshdomain.Domain{ID: consoleFixtureDoomedDomainID, AccountID: consoleAccountID, Label: consoleFixtureDoomedDomainID, Path: consoleFixtureDoomedDomainID}); err != nil {
+		t.Fatalf("fixture doomed domain: %v", err)
+	}
+	// Deliberately bound to the admin identity, not consoleMemberID: this
+	// fixture exists so a delete/revoke case has a real row to act on (see
+	// the comment on consoleMutations), not to give the ordinary member any
+	// standing of their own -- that would make
+	// TestConsoleMutationsAreRefusedForAMember pass by accident, for the
+	// wrong reason (a real delegation) instead of proving an undelegated
+	// member is refused.
+	if err := s.CreateDomainRoleBinding(context.Background(), &meshdomain.DomainRoleBinding{ID: consoleFixtureBindingID, AccountID: consoleAccountID, DomainID: consoleFixtureDomainID, DomainPath: consoleFixtureDomainID, UserID: consoleAdminID}); err != nil {
+		t.Fatalf("fixture domain binding: %v", err)
 	}
 
 	// A private DSN per test: the shared in-memory name is process-wide, and a
@@ -256,9 +312,12 @@ func consoleRouter(t *testing.T) *mux.Router {
 		t.Fatalf("bedrock log: %v", err)
 	}
 
+	permissionsManager := permissions.NewManager(s)
+	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
+
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
-		bedrockStore, bedrockLog, am, permissions.NewManager(s), router)
+		bedrockStore, bedrockLog, am, permissionsManager, domainManager, router)
 	return router
 }
 

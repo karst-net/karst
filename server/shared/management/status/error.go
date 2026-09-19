@@ -297,6 +297,18 @@ func NewDNSRecordNotFoundError(recordID string) error {
 	return Errorf(NotFound, "dns record: %s not found", recordID)
 }
 
+// NewMeshDomainNotFoundError creates a new Error with NotFound type for a
+// missing mesh domain (ADR-0032).
+func NewMeshDomainNotFoundError(domainID string) error {
+	return Errorf(NotFound, "mesh domain: %s not found", domainID)
+}
+
+// NewDomainRoleBindingNotFoundError creates a new Error with NotFound type
+// for a missing mesh-domain delegation binding (ADR-0032).
+func NewDomainRoleBindingNotFoundError(bindingID string) error {
+	return Errorf(NotFound, "domain delegation: %s not found", bindingID)
+}
+
 func NewResourceInUseError(resourceID string, proxyID string) error {
 	return Errorf(PreconditionFailed, "resource %s is in use by proxy %s", resourceID, proxyID)
 }

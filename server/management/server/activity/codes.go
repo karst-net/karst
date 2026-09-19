@@ -276,6 +276,13 @@ const (
 	// AccountMetricsPushDisabled indicates that a user disabled metrics push for the account
 	AccountMetricsPushDisabled Activity = 141
 
+	// MeshDomainCreated indicates that a user created a mesh domain or subdomain
+	// (ADR-0032). Named distinctly from DomainAdded, which is the unrelated
+	// account-linking domain concept.
+	MeshDomainCreated Activity = 142
+	// MeshDomainDeleted indicates that a user deleted a mesh domain or subdomain
+	MeshDomainDeleted Activity = 143
+
 	AccountDeleted Activity = 99999
 )
 
@@ -450,6 +457,9 @@ var activityMap = map[Activity]Code{
 	DomainAdded:     {"Domain added", "domain.add"},
 	DomainDeleted:   {"Domain deleted", "domain.delete"},
 	DomainValidated: {"Domain validated", "domain.validate"},
+
+	MeshDomainCreated: {"Mesh domain created", "mesh_domain.create"},
+	MeshDomainDeleted: {"Mesh domain deleted", "mesh_domain.delete"},
 }
 
 // StringCode returns a string code of the activity
