@@ -208,7 +208,6 @@ enum NetworkExtensionEnrollment {
                 }
                 completion(.success(()))
             }
-            os_log("KARST-TRACE host enroll: sendProviderMessage call returned (async reply pending)", log: Self.log, type: .default)
         } catch {
             os_log(
                 "KARST-TRACE host enroll: sendProviderMessage threw synchronously: %{public}@",

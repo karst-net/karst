@@ -355,7 +355,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                         log: Self.log, type: .default, Date().timeIntervalSince(start)
                     )
                     completionHandler(Self.okResponse())
-                    os_log("KARST-TRACE enroll: completionHandler(okResponse) returned", log: Self.log, type: .default)
                 } catch let error as FfiError {
                     os_log(
                         "KARST-TRACE enroll: enrollInvitation threw FfiError after %{public}.2fs: %{public}@",
