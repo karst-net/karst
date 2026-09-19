@@ -838,6 +838,26 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     }
 }
 /**
+ * This device's control-plane-assigned name, if it has ever logged in —
+ * `KarstLoginResponse.dns_name`, derived server-side from this node's own
+ * reported hostname and written once by `Client::login`. A human-readable
+ * complement to [`identity_handle`]'s opaque fingerprint for `Karst.app`'s
+ * menu (#163) — **not** the admin-typed invitation label, which is
+ * account-console bookkeeping the device never receives.
+ *
+ * `None`, not an error, covers both "never logged in" and "logged in
+ * before this was ever written" — a caller has exactly one thing to do
+ * either way, so unlike [`identity_handle`] this has no error case of its
+ * own to distinguish them with.
+ */
+public func deviceName(identityKeyPath: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_karst_ffi_fn_func_device_name(
+        FfiConverterString.lower(identityKeyPath),$0
+    )
+})
+}
+/**
  * Provision this device from a pasted administrator invitation —
  * ADR-0028 item 3's `"enroll"` app-message verb,
  * `PacketTunnelProvider.handleAppMessage`'s call through this boundary.
@@ -917,6 +937,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_karst_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_karst_ffi_checksum_func_device_name() != 29690) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_karst_ffi_checksum_func_enroll_invitation() != 12341) {
         return InitializationResult.apiChecksumMismatch

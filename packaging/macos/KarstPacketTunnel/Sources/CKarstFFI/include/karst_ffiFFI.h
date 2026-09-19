@@ -276,6 +276,11 @@ RustBuffer uniffi_karst_ffi_fn_method_enginehandle_status_json(void*_Nonnull ptr
 void uniffi_karst_ffi_fn_method_enginehandle_stop(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KARST_FFI_FN_FUNC_DEVICE_NAME
+#define UNIFFI_FFIDEF_UNIFFI_KARST_FFI_FN_FUNC_DEVICE_NAME
+RustBuffer uniffi_karst_ffi_fn_func_device_name(RustBuffer identity_key_path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KARST_FFI_FN_FUNC_ENROLL_INVITATION
 #define UNIFFI_FFIDEF_UNIFFI_KARST_FFI_FN_FUNC_ENROLL_INVITATION
 void uniffi_karst_ffi_fn_func_enroll_invitation(RustBuffer invitation, RustBuffer config_path, RustBuffer state_dir, RustCallStatus *_Nonnull out_status
@@ -569,6 +574,12 @@ void ffi_karst_ffi_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_KARST_FFI_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_KARST_FFI_RUST_FUTURE_COMPLETE_VOID
 void ffi_karst_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KARST_FFI_CHECKSUM_FUNC_DEVICE_NAME
+#define UNIFFI_FFIDEF_UNIFFI_KARST_FFI_CHECKSUM_FUNC_DEVICE_NAME
+uint16_t uniffi_karst_ffi_checksum_func_device_name(void
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KARST_FFI_CHECKSUM_FUNC_ENROLL_INVITATION

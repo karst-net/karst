@@ -233,6 +233,33 @@ impl Identity {
     }
 }
 
+/// Where [`Client::login`] writes `KarstLoginResponse.dns_name`, and where
+/// [`device_name`] reads it back from — a sibling of `identity_key_file`,
+/// the same convention [`Identity::load`]'s own caller in [`Client::new`]
+/// already uses for `enrollment_file`.
+fn device_name_file(identity_key_file: &Path) -> PathBuf {
+    let mut path = identity_key_file.as_os_str().to_owned();
+    path.push(".dns_name");
+    PathBuf::from(path)
+}
+
+/// This device's control-plane-assigned name (`KarstLoginResponse.dns_name`),
+/// if this device has ever completed a login — a human-readable complement
+/// to [`Identity::handle`]'s opaque fingerprint, derived server-side from
+/// this node's own reported hostname, not from anything an administrator
+/// typed when creating the enrollment invitation (#163 — that label is
+/// account-console bookkeeping and is never sent back to the device).
+///
+/// `None` covers "never logged in" and "logged in before this was written"
+/// alike — a caller deciding what to show has exactly one thing to do
+/// either way, so this does not distinguish them with an error type of
+/// its own the way [`Identity::load`] distinguishes "never enrolled" from
+/// a real read failure.
+#[must_use]
+pub fn device_name(identity_key_file: &Path) -> Option<String> {
+    std::fs::read_to_string(device_name_file(identity_key_file)).ok()
+}
+
 impl Drop for Identity {
     fn drop(&mut self) {
         use zeroize::Zeroize as _;
@@ -318,6 +345,11 @@ pub struct Client {
     setup_key: Option<String>,
     enrollment_file: PathBuf,
     enrollment_binding: String,
+    /// Where [`login`](Client::login) writes `KarstLoginResponse.dns_name`
+    /// — see [`device_name_file`] and [`device_name`] for the read side a
+    /// caller with no live `Client` (an NE build showing it before a
+    /// tunnel has ever started, #163) uses instead.
+    dns_name_file: PathBuf,
     cache_file: Option<PathBuf>,
     seal: Option<SealKey>,
     /// Held across many [`sync`](Client::sync) calls rather than reopened per
@@ -432,6 +464,7 @@ impl Client {
         let mut enrollment_file = resolve(&section.identity_key_file, config_dir).into_os_string();
         enrollment_file.push(".enrolled");
         let enrollment_file = PathBuf::from(enrollment_file);
+        let dns_name_file = device_name_file(&resolve(&section.identity_key_file, config_dir));
         // Bind the receipt to this deployment and local identity, not to a
         // disposable topology cache. Changing pins requires explicit repair.
         let binding = format!(
@@ -489,6 +522,7 @@ impl Client {
             identity,
             enrollment_file,
             enrollment_binding,
+            dns_name_file,
             setup_key: if registered {
                 None
             } else {
@@ -931,6 +965,14 @@ impl Client {
             )));
         }
         write_secret(&self.enrollment_file, &self.enrollment_binding)?;
+        // Best-effort, deliberately: this is inventory data for a menu bar
+        // to show, not load-bearing the way the enrollment receipt above
+        // is. A write failure here (a full disk, say) should not fail an
+        // otherwise-successful login over a value nothing but a UI
+        // convenience reads back.
+        if !resp.dns_name.is_empty() {
+            let _ = write_secret(&self.dns_name_file, &resp.dns_name);
+        }
         if let Some(mut key) = self.setup_key.take() {
             key.zeroize();
         }
@@ -1514,6 +1556,29 @@ mod tests {
         let created = Identity::load_or_create(&path).expect("create");
         let loaded = Identity::load(&path).expect("load");
         assert_eq!(created.handle(), loaded.handle());
+    }
+
+    /// `device_name`'s "never logged in" case — the common one, since most
+    /// enrolled devices in this test suite's fixtures never actually call
+    /// `Client::login` against a real server.
+    #[test]
+    fn device_name_is_none_before_any_login() {
+        let dir = Scratch::new("device-name-missing");
+        let path = dir.join("identity.key");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(device_name(&path), None);
+    }
+
+    /// `device_name` reads exactly what was written beside the identity
+    /// key, at the `.dns_name` sibling path `login` writes to — this is
+    /// the read half; `login` itself needs a real server to test the
+    /// write half against, so it is not exercised here.
+    #[test]
+    fn device_name_reads_what_was_written_beside_the_identity() {
+        let dir = Scratch::new("device-name-present");
+        let path = dir.join("identity.key");
+        write_secret(&device_name_file(&path), "kestrel").expect("write");
+        assert_eq!(device_name(&path).as_deref(), Some("kestrel"));
     }
 
     /// And it is created unreadable by anyone else, from the moment it exists.

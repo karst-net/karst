@@ -47,13 +47,14 @@ struct NetworkExtensionStatusClient {
         sendVerb("{\"verb\":\"status\"}", completion: completion)
     }
 
-    /// Ask the running extension for this device's own identity handle —
+    /// Ask the running extension for this device's own identity — handle
+    /// and, if it has ever logged in, control-plane-assigned name (#163) —
     /// `PacketTunnelProvider.handleAppMessage`'s `"identity"` verb — as the
-    /// raw `{"handle": "..." | null}` JSON text. `AppDelegate` parses the
-    /// `"handle"` field itself rather than this client returning
-    /// `String?` directly: a malformed/empty response and "not enrolled"
-    /// (`null`) are different failure shapes, and collapsing them here
-    /// would hide which one a caller actually got.
+    /// raw `{"handle": "..." | null, "name": "..." | null}` JSON text.
+    /// `AppDelegate` parses both fields itself rather than this client
+    /// returning them directly: a malformed/empty response and "not
+    /// enrolled" (`null`) are different failure shapes, and collapsing
+    /// them here would hide which one a caller actually got.
     func fetchIdentityHandle(completion: @escaping (Result<String, Error>) -> Void) {
         sendVerb("{\"verb\":\"identity\"}", completion: completion)
     }

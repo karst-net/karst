@@ -148,6 +148,24 @@ pub fn identity_handle(identity_key_path: String) -> Result<Option<String>, FfiE
     }
 }
 
+/// This device's control-plane-assigned name, if it has ever logged in —
+/// `KarstLoginResponse.dns_name`, derived server-side from this node's own
+/// reported hostname and written once by `Client::login`. A human-readable
+/// complement to [`identity_handle`]'s opaque fingerprint for `Karst.app`'s
+/// menu (#163) — **not** the admin-typed invitation label, which is
+/// account-console bookkeeping the device never receives.
+///
+/// `None`, not an error, covers both "never logged in" and "logged in
+/// before this was ever written" — a caller has exactly one thing to do
+/// either way, so unlike [`identity_handle`] this has no error case of its
+/// own to distinguish them with.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+#[must_use]
+pub fn device_name(identity_key_path: String) -> Option<String> {
+    karstd::control::device_name(std::path::Path::new(&identity_key_path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +264,27 @@ mod tests {
             .expect("must not error")
             .expect("must find the identity just created");
         assert_eq!(handle, identity.handle());
+    }
+
+    #[test]
+    fn device_name_is_none_before_any_login() {
+        let dir = scratch_dir("device-name-missing");
+        let path = dir.join("identity.key");
+        assert_eq!(device_name(path.to_string_lossy().into_owned()), None);
+    }
+
+    /// `device_name`'s own doc comment on why this has no `Result` to
+    /// unwrap, unlike `identity_handle` — this crosses the FFI boundary
+    /// with the same `Option<String>`-only shape `karstd::control::device_name`
+    /// already has.
+    #[test]
+    fn device_name_reads_what_login_would_have_written() {
+        let dir = scratch_dir("device-name-present");
+        let path = dir.join("identity.key");
+        std::fs::write(dir.join("identity.key.dns_name"), "kestrel").expect("write fixture");
+        assert_eq!(
+            device_name(path.to_string_lossy().into_owned()).as_deref(),
+            Some("kestrel")
+        );
     }
 }

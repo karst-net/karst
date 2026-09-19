@@ -443,13 +443,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     // `JSONSerialization` does not reliably turn a bare
                     // `Optional<String>.none` into JSON `null` when boxed
                     // as `Any` in a dictionary — handled explicitly rather
-                    // than relying on that bridging.
+                    // than relying on that bridging, for both fields below.
                     guard let handle = try identityHandle(identityKeyPath: Self.identityPath) else {
-                        completionHandler(Data("{\"handle\":null}".utf8))
+                        completionHandler(Data("{\"handle\":null,\"name\":null}".utf8))
                         return
                     }
-                    let data = (try? JSONSerialization.data(withJSONObject: ["handle": handle]))
-                        ?? Data("{\"handle\":null}".utf8)
+                    // `deviceName` (#163) is a plain file read, not a
+                    // `from_seed`-derived value like `handle` — cheap
+                    // regardless of the big-stack `Thread` this already
+                    // pays for, and folded into the same round trip
+                    // rather than a second `"device-name"` verb, since a
+                    // caller showing one always wants both.
+                    let name = deviceName(identityKeyPath: Self.identityPath)
+                    let object: [String: Any] = ["handle": handle, "name": name ?? NSNull()]
+                    let data = (try? JSONSerialization.data(withJSONObject: object))
+                        ?? Data("{\"handle\":null,\"name\":null}".utf8)
                     completionHandler(data)
                 } catch let error as FfiError {
                     completionHandler(Self.errorResponse(Self.message(from: error)))

@@ -58,6 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that, it does not change on its own between enrollments.
     private var identityHandle: String?
 
+    /// This device's control-plane-assigned name (#163) — `deviceName`
+    /// (`crates/karst-ffi`), derived server-side from this node's own
+    /// hostname at login, **not** the admin-typed invitation label (that
+    /// one is account-console bookkeeping and never reaches the device).
+    /// `nil` whenever `identityHandle` is, plus one more case that one
+    /// doesn't have: a device enrolled before this field existed, or one
+    /// whose one login attempt failed to persist it — the menu falls back
+    /// to showing the handle alone rather than treating either as an
+    /// error.
+    private var identityName: String?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.imagePosition = .imageLeft
         statusItem.button?.image = Self.karstMarkIcon(.loading, accessibilityDescription: "karst: loading")
@@ -292,12 +303,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
             return
         }
+        // The friendly `identityName` when there is one (#163); the
+        // truncated handle alone otherwise — a device enrolled before
+        // #163 shipped, or one whose login never persisted a name, still
+        // gets a real menu item, not a blank or an error.
         let identityItem = NSMenuItem(
-            title: "Enrolled as \(Self.truncatedHandle(identityHandle))",
+            title: identityName.map { "Enrolled as \($0)" }
+                ?? "Enrolled as \(Self.truncatedHandle(identityHandle))",
             action: nil,
             keyEquivalent: ""
         )
-        identityItem.toolTip = identityHandle
+        identityItem.toolTip = identityName.map { "\($0)\n\(identityHandle)" } ?? identityHandle
         menu.addItem(identityItem)
         let reEnrollItem = NSMenuItem(title: "Re-enroll…", action: #selector(runReEnroll), keyEquivalent: "")
         reEnrollItem.target = self
@@ -324,34 +340,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         client.fetchIdentityHandle { [weak self] result in
             guard let self else { return }
             let handle: String?
+            let name: String?
             switch result {
             case .success(let json):
-                handle = Self.parseIdentityHandle(json)
+                (handle, name) = Self.parseIdentity(json)
             case .failure:
                 // Indistinguishable here from "not enrolled" (both draw
                 // "Enroll…"), which is the correct fallback for a
                 // transient failure too: retrying enrollment is always
                 // safe, and re-enrollment is never offered on a guess.
-                handle = nil
+                (handle, name) = (nil, nil)
             }
             DispatchQueue.main.async {
                 self.identityHandle = handle
+                self.identityName = name
                 self.rebuildMenu()
             }
         }
     }
 
-    /// Parses `{"handle": "..."}` / `{"handle": null}` —
+    /// Parses `{"handle": "..."|null, "name": "..."|null}` —
     /// `PacketTunnelProvider.handleAppMessage`'s `"identity"` verb's own
     /// response shape, distinct from `StatusParser.parseJSON`'s
     /// `{"error": "..."}` convention because this is not a refusal, only
-    /// ever a present-or-absent fact.
-    private static func parseIdentityHandle(_ json: String) -> String? {
+    /// ever a present-or-absent pair of facts. `name` is only ever
+    /// present alongside a non-nil `handle` on the provider side, but
+    /// read independently here anyway rather than assumed, since nothing
+    /// about this parser's own contract depends on that being true.
+    private static func parseIdentity(_ json: String) -> (handle: String?, name: String?) {
         guard
             let data = json.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return object["handle"] as? String
+        else { return (nil, nil) }
+        return (object["handle"] as? String, object["name"] as? String)
     }
 
     /// Redraws the menu from `lastStatus` without waiting for the next
