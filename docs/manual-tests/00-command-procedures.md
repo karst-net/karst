@@ -274,6 +274,40 @@ local `nc -lk` equivalent and record its implementation.
    black-hole default route, recreate it, and confirm recovery. Restore the
    forwarding sysctl to its prior value.
 
+## NET-08 through NET-10: macOS managed-device mode and kill switch
+
+See docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md and
+docs/operations/macos-managed-device-mdm.md for background.
+
+1. On a personal/non-managed macOS test device, exercise ordinary Enroll…/
+   Re-enroll… via `Karst.app`'s menu first — this must not regress before
+   testing the managed path at all.
+2. On a separate test device, install the sample profile and confirm
+   `Karst.app` recognizes it does not own the configuration:
+
+   ```sh
+   sudo profiles install -type configuration -path dev.karst.packettunnel.example.mobileconfig
+   ```
+
+   Reopen the menu bar item; confirm "VPN configuration managed by your
+   organization" appears, and check System Settings → Network →
+   [profile] for a greyed-out or password-gated removal control.
+3. With that device's tunnel connected, kill the engine mid-session (stop
+   the `KarstPacketTunnel` process, or corrupt its state directory's
+   `config.toml`/`control.sock`) and from a separate app try:
+
+   ```sh
+   curl -4 --max-time 5 https://ifconfig.me/ip
+   ```
+
+   No response (not a fallback via the physical interface) is the
+   expected result.
+4. Toggle Wi-Fi off/on and confirm the tunnel reconnects without manual
+   intervention. Separately, with the tunnel connected, toggle an exit
+   route active/inactive from another enrolled peer and confirm routing
+   updates within a few polling intervals (~2-10s), without a full
+   tunnel restart.
+
 ## ADM-01 through ADM-11: Console and portal
 
 Use a separate private browser window for each role; preserve no bearer tokens.

@@ -92,6 +92,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `startTunnel` call that creates it.
     private var engine: EngineHandle?
 
+    /// Polls `engine.statusJson()` on a fixed interval so routing reflects
+    /// live state instead of the one-time snapshot `startTunnel` took —
+    /// closes the mid-session gap `networkSettings(fromStatusJSON:)`'s own
+    /// doc comment names (#158/docs/adr/0030-embedded-engine-lifecycle.md
+    /// item 4) and, per
+    /// docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md, is what
+    /// makes an MDM-set `includeAllNetworks` mean something in practice:
+    /// this timer's unhealthy branch (`pollHealth()`) never tears the
+    /// session down, so a fallback route outside the tunnel never reopens.
+    /// `EngineHandleProtocol` (`Sources/KarstFFI/karst_ffi.swift`) exposes
+    /// only `statusJson()`/`stop()` — confirmed by reading the generated
+    /// FFI bindings, not assumed — so polling is the only mechanism
+    /// available today; there is no callback to react to instead.
+    private var healthTimer: Timer?
+
+    /// The routing-relevant fingerprint (`routeSignature`) of whatever was
+    /// last actually handed to `setTunnelNetworkSettings` — lets
+    /// `pollHealth()` skip re-applying settings that have not changed,
+    /// rather than touching the routing table every poll unconditionally.
+    private var lastAppliedRouteSignature: String?
+
+    private static let healthPollInterval: TimeInterval = 2.0
+
     override func startTunnel(
         options: [String: NSObject]?,
         completionHandler: @escaping (Error?) -> Void
@@ -131,9 +154,28 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         engine = handle
 
+        // Captured once and reused for both the initial settings and the
+        // health timer's baseline signature below, rather than calling
+        // `statusJson()` twice for what is, at this instant, the same
+        // status.
+        let statusJSON: String
+        do {
+            statusJSON = try handle.statusJson()
+        } catch let error as FfiError {
+            handle.stop()
+            engine = nil
+            completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
+            return
+        } catch {
+            handle.stop()
+            engine = nil
+            completionHandler(error)
+            return
+        }
+
         let settings: NEPacketTunnelNetworkSettings
         do {
-            settings = try Self.networkSettings(fromStatusJSON: handle.statusJson())
+            settings = try Self.networkSettings(fromStatusJSON: statusJSON)
         } catch {
             handle.stop()
             engine = nil
@@ -142,9 +184,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         setTunnelNetworkSettings(settings) { [weak self] error in
+            guard let self else {
+                completionHandler(error)
+                return
+            }
             if error != nil {
-                self?.engine?.stop()
-                self?.engine = nil
+                self.engine?.stop()
+                self.engine = nil
+            } else {
+                self.lastAppliedRouteSignature = Self.routeSignature(fromStatusJSON: statusJSON)
+                self.startHealthTimer()
             }
             completionHandler(error)
         }
@@ -155,12 +204,111 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         os_log("stopTunnel: %{public}@", log: Self.log, type: .info, String(describing: reason))
+        healthTimer?.invalidate()
+        healthTimer = nil
         // `EngineHandle.stop()` both requests shutdown and joins (that
         // method's own doc comment on why `Drop` alone does not) — exactly
         // what a caller waiting to report "fully stopped" needs.
         engine?.stop()
         engine = nil
         completionHandler()
+    }
+
+    /// Starts `healthTimer` — split out of `startTunnel` only so its own
+    /// doc comment has somewhere to live next to the `RunLoop` detail it's
+    /// actually about.
+    ///
+    /// **Open risk, not yet verified on real hardware**: whether a
+    /// `Timer` scheduled here actually fires reliably for the lifetime of
+    /// a `NEPacketTunnelProvider` extension process, which has a tighter
+    /// resource/lifecycle budget than an ordinary app — flagged in
+    /// docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md's
+    /// Negative consequences rather than assumed benign.
+    private func startHealthTimer() {
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.healthPollInterval, repeats: true) { [weak self] _ in
+            self?.pollHealth()
+        }
+        // This extension has no AppKit event loop driving `.default` mode
+        // the way `Karst.app`'s own polling timer rides on — `.common`
+        // is what keeps a repeating `Timer` firing regardless of whatever
+        // run-loop mode this process's own machinery is in.
+        RunLoop.current.add(timer, forMode: .common)
+        healthTimer = timer
+    }
+
+    /// `healthTimer`'s tick. Two outcomes, both documented in
+    /// `healthTimer`'s own doc comment as the point of this method
+    /// existing at all:
+    ///
+    /// - `engine.statusJson()` throws (or `engine` is already `nil`): the
+    ///   engine is unreachable. Sets `reasserting = true` and returns —
+    ///   routing is left exactly as last applied. This method must never
+    ///   call `stopTunnel`/`cancelTunnelWithError`/
+    ///   `setTunnelNetworkSettings(nil)` from this branch: any of those
+    ///   would end the session and let the OS fall back to a route outside
+    ///   the tunnel, which is precisely the fail-open outcome
+    ///   docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md exists
+    ///   to avoid.
+    /// - It succeeds: `reasserting = false`, and if the routing-relevant
+    ///   fields have actually changed since `lastAppliedRouteSignature`,
+    ///   settings are recomputed and reapplied — the same mechanism also
+    ///   closes the pre-existing mid-session route-churn gap this file's
+    ///   `networkSettings(fromStatusJSON:)` already documented (#158).
+    ///
+    /// **What this does not do.** It does not itself discard in-flight
+    /// packets — this method has no access to `packetFlow` once
+    /// `EngineHandle.start` took exclusive ownership of its file
+    /// descriptor (that method's own `# Safety` doc comment), so active
+    /// packet-level black-holing is out of reach from here today. Whatever
+    /// blocking actually happens when the engine is unhealthy is an
+    /// emergent property of "no fallback route exists (an MDM profile's
+    /// `includeAllNetworks`) plus a dead/degraded engine," not new
+    /// packet-dropping code in this method — stated plainly rather than
+    /// implying a stronger guarantee than this file provides.
+    private func pollHealth() {
+        guard let engine else { return }
+        let json: String
+        do {
+            json = try engine.statusJson()
+        } catch {
+            os_log(
+                "KARST-TRACE health poll: engine unreachable, reasserting: %{public}@",
+                log: Self.log, type: .default, error.localizedDescription
+            )
+            reasserting = true
+            return
+        }
+        reasserting = false
+
+        let signature = Self.routeSignature(fromStatusJSON: json)
+        guard signature != lastAppliedRouteSignature else { return }
+        guard let settings = try? Self.networkSettings(fromStatusJSON: json) else { return }
+        lastAppliedRouteSignature = signature
+        setTunnelNetworkSettings(settings) { error in
+            if let error {
+                os_log(
+                    "KARST-TRACE health poll: setTunnelNetworkSettings failed: %{public}@",
+                    log: Self.log, type: .default, error.localizedDescription
+                )
+            }
+        }
+    }
+
+    /// A cheap, order-independent fingerprint of the routing-relevant
+    /// fields `networkSettings(fromStatusJSON:)` derives its output from —
+    /// addresses and routes, not the full status body — so `pollHealth()`
+    /// can tell "nothing routing-relevant changed" from "something did"
+    /// without giving `NEPacketTunnelNetworkSettings` an `Equatable`
+    /// conformance Apple's own type does not have.
+    private static func routeSignature(fromStatusJSON json: String) -> String? {
+        guard let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)) else {
+            return nil
+        }
+        var routes = status.peers.flatMap(\.allowedIps)
+        routes += (status.control?.routing.routes ?? [])
+            .filter { $0.kind == "exit" && $0.role == "recipient" && $0.active }
+            .map(\.prefix)
+        return (status.addresses.sorted() + ["|"] + routes.sorted()).joined(separator: ",")
     }
 
     /// `packetFlow`'s underlying `utun` socket descriptor — the private,
@@ -224,22 +372,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// prefix (`0.0.0.0/0`/`::/0`) an exit offer already carries literally,
     /// not a scheme this file invents from `exit_route_active` alone.
     ///
-    /// **What this does not do.** Routes are a snapshot from the single
-    /// `statusJson()` call `startTunnel` makes — nothing here re-calls
-    /// `setTunnelNetworkSettings` if the exit route's `active` state
-    /// changes later in the same tunnel session (the exit peer drops, a
-    /// different one takes over, or the route is explicitly released).
-    /// That is a real, known gap — the mid-session route-churn gap
-    /// `docs/adr/0030-embedded-engine-lifecycle.md` already documents
-    /// (`NetworkDevice::add_route`/`remove_route` are no-ops under
-    /// `network-extension`) applies here specifically: this file currently
-    /// has no callback path from the engine back into
-    /// `setTunnelNetworkSettings`, so once an exit route is installed it
-    /// stays installed (routing traffic nowhere, not falling open to the
-    /// direct interface) even after the engine itself would have withdrawn
-    /// it — fail-static, not a chosen kill-switch or fail-open behavior.
-    /// DNS is left unset — `plans/phase-5/06-macos-client.md` §5's
-    /// KarstDNS search-list gap is an already-accepted limitation.
+    /// **What this does, beyond the single call `startTunnel` makes.**
+    /// This function itself only ever builds settings from whichever JSON
+    /// it is handed — it does not re-poll anything on its own. The
+    /// mid-session route-churn gap this comment used to describe as
+    /// entirely open (the exit peer drops, a different one takes over, or
+    /// the route is explicitly released, none of it reflected until the
+    /// next full tunnel restart) is now mostly closed one call site up, by
+    /// `healthTimer`/`pollHealth()`: that timer re-derives this same
+    /// output on each poll and reapplies it when it changes, which is what
+    /// `docs/adr/0030-embedded-engine-lifecycle.md`'s
+    /// `NetworkDevice::add_route`/`remove_route`-are-no-ops gap (#158)
+    /// actually needed. What remains genuinely unresolved — see
+    /// `pollHealth()`'s own doc comment — is that neither this function
+    /// nor its caller can discard in-flight packets while the engine is
+    /// unhealthy; not falling open to a route outside the tunnel is the
+    /// guarantee that exists today, not active blocking. DNS is left
+    /// unset — `plans/phase-5/06-macos-client.md` §5's KarstDNS
+    /// search-list gap is an already-accepted limitation.
     private static func networkSettings(fromStatusJSON json: String) throws -> NEPacketTunnelNetworkSettings {
         let status = try JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8))
 

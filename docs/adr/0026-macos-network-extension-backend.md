@@ -161,7 +161,10 @@ step actually gated on Apple's queue is treated as gating:
    (`includeAllNetworks`/kill-switch behavior), which
    `PacketTunnelProvider.swift` already flags in its own code as deferred —
    tracked as its own follow-up issue rather than a reason to keep two
-   backends.
+   backends. **Update 2026-09-19**: addressed for the managed-device case
+   by docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md, which
+   also closes `PacketTunnelProvider.swift`'s mid-session route-churn gap
+   as a side effect of the same polling mechanism.
 
    With that parity question settled and the NetworkExtension build verified
    working end-to-end on real hardware (#159 — activation, entitlements,

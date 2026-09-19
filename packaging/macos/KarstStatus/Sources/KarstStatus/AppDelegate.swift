@@ -69,6 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// error.
     private var identityName: String?
 
+    /// `nil` until the first `NetworkExtensionEnrollment.currentOwnership`
+    /// check resolves — deliberately distinct from `.unknownOrForeign`
+    /// (unlike `identityHandle`'s `nil`, which doubles as "not enrolled")
+    /// so the very first render, before that async check has ever run,
+    /// shows nothing rather than incorrectly claiming a personal install
+    /// is organization-managed.
+    private var managerOwnership: NetworkExtensionEnrollment.ManagerOwnership?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.imagePosition = .imageLeft
         statusItem.button?.image = Self.karstMarkIcon(.loading, accessibilityDescription: "karst: loading")
@@ -100,11 +108,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // shows "Re-enroll…" from the start rather than "Enroll…"
                 // until the next status poll happens to notice.
                 self?.refreshIdentity()
+                self?.refreshManagerOwnership()
             case .failure(let error):
                 os_log(
                     "network extension not ready at launch (will retry from the menu): %{public}@",
                     log: Self.log, type: .info, error.localizedDescription
                 )
+            }
+        }
+    }
+
+    /// As `refreshIdentity()`, but for the UI-only "does this look like a
+    /// managed configuration" heuristic
+    /// (`NetworkExtensionEnrollment.currentOwnership`, #162) rather than
+    /// enrollment identity — same trigger points (launch, after enroll/
+    /// re-enroll), since either can change who owns the current
+    /// `NETunnelProviderManager`.
+    private func refreshManagerOwnership() {
+        NetworkExtensionEnrollment.currentOwnership(providerBundleIdentifier: Self.networkExtensionIdentifier) { [weak self] ownership in
+            DispatchQueue.main.async {
+                self?.managerOwnership = ownership
+                self?.rebuildMenu()
             }
         }
     }
@@ -297,6 +321,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// right item, since re-enrollment only makes sense once this device
     /// is known to already have an identity to replace.
     private func addIdentityAndEnrollItems(to menu: NSMenu) {
+        // Informational only — Enroll/Re-enroll below stay fully
+        // functional either way. #162 considered hiding them outright for
+        // a detected-managed configuration and rejected it as too risky on
+        // a weaker heuristic than `managerOwnership`'s own (see its doc
+        // comment): a false "foreign" reading must never cost a real
+        // self-service user their only way to (re-)enroll.
+        if managerOwnership == .unknownOrForeign {
+            menu.addItem(
+                withTitle: "VPN configuration managed by your organization",
+                action: nil,
+                keyEquivalent: ""
+            )
+        }
         guard let identityHandle else {
             let item = NSMenuItem(title: "Enroll…", action: #selector(runEnroll), keyEquivalent: "")
             item.target = self
@@ -444,6 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.showAlert(title: "Enrollment Failed", message: error.localizedDescription)
                     case .success:
                         self.refreshIdentity()
+                        self.refreshManagerOwnership()
                         self.showAlert(title: "Enrolled", message: "This device is now enrolled.")
                     }
                 }
@@ -474,6 +512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.showAlert(title: "Re-enrollment Failed", message: error.localizedDescription)
                     case .success:
                         self.refreshIdentity()
+                        self.refreshManagerOwnership()
                         self.showAlert(title: "Re-enrolled", message: "This device is now enrolled under the new invitation.")
                     }
                 }

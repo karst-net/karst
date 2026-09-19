@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Reference MDM configuration profile for managed-device mode —
+  docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md and
+  docs/operations/macos-managed-device-mdm.md. This is a *template*, not a
+  ready-to-push profile: replace every REPLACE_ME placeholder, generate
+  fresh PayloadUUID values (this file's are illustrative, not meant to be
+  reused verbatim across deployments), and push it through your own MDM
+  console rather than distributing this XML directly.
+
+  Written and reviewed against Apple's published Configuration Profile
+  Reference, not verified end to end against a real MDM push on real
+  hardware — the same posture this codebase already holds itself to for
+  NetworkExtension behavior generally (docs/adr/0026's entire fix chain).
+  Two things here specifically still need that real-hardware check before
+  this ships as a customer-facing guarantee, per ADR-0031's Negative
+  consequences:
+
+    1. Whether `IncludeAllNetworks` is actually honored for a third-party
+       `VPNSubType` provider (as opposed to a built-in IKEv2/L2TP type) on
+       the macOS version you're deploying to.
+    2. Whether a profile installed this way behaves identically to one
+       pushed via real DEP/ABM supervision, versus a profile installed
+       for local testing via `sudo profiles install -type configuration
+       -path this-file.mobileconfig` (which is not itself proof of
+       supervised-device behavior — see the deployment doc's test
+       procedure).
+
+  `ProviderBundleIdentifier`/team identifier below match
+  `packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements`'s own
+  values (`dev.karst.packettunnel`, team `WJ3MJC4KV7`) — keep them in sync
+  if either ever changes.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadDisplayName</key>
+    <string>Karst VPN (Managed Device)</string>
+    <key>PayloadIdentifier</key>
+    <string>REPLACE_ME.dev.karst.managed-device</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>REPLACE-ME-TOP-LEVEL-UUID-0000-000000000000</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadOrganization</key>
+    <string>REPLACE_ME</string>
+    <!-- Removal requires the profile-removal password an admin sets when
+         pushing this via MDM (many MDM consoles manage this separately
+         from the profile XML itself, e.g. by requiring the device's
+         MDM-enrollment password) — a non-admin device user has neither,
+         which is the actual mechanism blocking self-service removal. -->
+    <key>PayloadRemovalDisallowed</key>
+    <true/>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDisplayName</key>
+            <string>Karst VPN</string>
+            <key>PayloadIdentifier</key>
+            <string>REPLACE_ME.dev.karst.managed-device.vpn</string>
+            <key>PayloadType</key>
+            <string>com.apple.vpn.managed</string>
+            <key>PayloadUUID</key>
+            <string>REPLACE-ME-VPN-PAYLOAD-UUID-000000000000</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>UserDefinedName</key>
+            <string>Karst</string>
+            <!-- "VPN", not "IKEv2"/"L2TP"/etc — the value used for a
+                 third-party NetworkExtension provider, paired with
+                 VPNSubType naming the provider's bundle identifier. -->
+            <key>VPNType</key>
+            <string>VPN</string>
+            <key>VPNSubType</key>
+            <string>dev.karst.packettunnel</string>
+            <key>VPN</key>
+            <dict>
+                <!-- Display-only, mirrors NetworkExtensionEnrollment.ensureConfiguration's
+                     own use of `NEVPNProtocol.serverAddress` — not read by
+                     the enrollment handshake itself, which the pasted
+                     invitation carries separately. -->
+                <key>RemoteAddress</key>
+                <string>REPLACE_ME.control.example.com</string>
+                <!-- Equivalent to `proto.providerConfiguration` in
+                     NetworkExtensionEnrollment.swift — passed through to
+                     NETunnelProviderProtocol.providerConfiguration
+                     verbatim. -->
+                <key>VendorConfig</key>
+                <dict>
+                    <key>controlURL</key>
+                    <string>REPLACE_ME.control.example.com</string>
+                </dict>
+                <!-- The kill switch: routes all traffic into the tunnel,
+                     no fallback route. See this file's own header comment
+                     on why this is the one key that most needs
+                     real-hardware verification before relying on it. -->
+                <key>IncludeAllNetworks</key>
+                <true/>
+                <!-- Only the routes this profile/tunnel supplies are
+                     used — macOS 11+. -->
+                <key>EnforceRoutes</key>
+                <true/>
+                <!-- Leave local-subnet traffic (printers, LAN NAS, etc.)
+                     inside the tunnel too, matching the literal "all
+                     traffic must go through Karst" requirement this
+                     profile exists to satisfy. Set to <true/> instead if
+                     your deployment wants LAN access to bypass the
+                     tunnel — that is a real, common trade-off other MDM
+                     VPN deployments make, just not the default this
+                     template ships. -->
+                <key>ExcludeLocalNetworks</key>
+                <false/>
+                <key>OnDemandEnabled</key>
+                <integer>1</integer>
+                <key>OnDemandRules</key>
+                <array>
+                    <dict>
+                        <key>Action</key>
+                        <string>Connect</string>
+                    </dict>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>PayloadDisplayName</key>
+            <string>Karst System Extension (pre-approved)</string>
+            <key>PayloadIdentifier</key>
+            <string>REPLACE_ME.dev.karst.managed-device.system-extensions</string>
+            <key>PayloadType</key>
+            <string>com.apple.system-extension-policy</string>
+            <key>PayloadUUID</key>
+            <string>REPLACE-ME-SYSEXT-PAYLOAD-UUID-00000000000</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <!-- Pre-approves the extension so activation needs no
+                 interactive "Allow" click from the device's daily user —
+                 required on a managed device precisely because that user
+                 may have no admin rights to grant it manually. -->
+            <key>AllowedSystemExtensions</key>
+            <dict>
+                <key>WJ3MJC4KV7</key>
+                <array>
+                    <string>dev.karst.packettunnel</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

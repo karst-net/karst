@@ -61,6 +61,65 @@ extension NetworkExtensionEnrollmentError: LocalizedError {
 enum NetworkExtensionEnrollment {
     private static let log = OSLog(subsystem: "dev.karst.karststatus", category: "enrollment")
 
+    /// A UI-only heuristic for whether *this* app created the current
+    /// `NETunnelProviderManager` — never wired into `ensureConfiguration`'s
+    /// own mutation boundary below, which stays ownership-agnostic on
+    /// purpose (#162). See `currentOwnership(providerBundleIdentifier:completion:)`.
+    enum ManagerOwnership: Equatable {
+        case createdByThisApp
+        case unknownOrForeign
+    }
+
+    /// Written only inside `ensureConfiguration`'s create-new-manager
+    /// branch, once, right after a successful save — the one moment this
+    /// app actually knows it just created the configuration in question.
+    private static func selfCreatedMarkerKey(_ providerBundleIdentifier: String) -> String {
+        "dev.karst.karststatus.selfCreatedManager.\(providerBundleIdentifier)"
+    }
+
+    /// #162's own research concluded there is no reliable, documented way
+    /// to ask the OS "did this app create this configuration?" — the
+    /// closest available signal ("a manager already existed at launch,
+    /// with no `ensureConfiguration` call from this app yet") was tried
+    /// and rejected there as too risky to gate real functionality on: a
+    /// stale/ambiguous read would incorrectly treat a normal self-service
+    /// user's own configuration as foreign.
+    ///
+    /// This persists a marker across launches instead of relying on
+    /// in-memory call history, which resolves the specific ambiguity #162
+    /// hit — but a marker can still go missing (app data reset, a
+    /// migration) while the `NETunnelProviderManager` itself persists at
+    /// the OS level, so absence is still treated as "don't know," not as
+    /// "foreign." That is why this is UI-only: `AppDelegate` uses it only
+    /// to add an informational line, never to hide or disable Enroll/
+    /// Re-enroll, which is the stronger move #162 already judged too
+    /// risky on a weaker version of this same heuristic.
+    static func currentOwnership(
+        providerBundleIdentifier: String,
+        completion: @escaping (ManagerOwnership) -> Void
+    ) {
+        NETunnelProviderManager.loadAllFromPreferences { managers, error in
+            guard error == nil else {
+                completion(.unknownOrForeign)
+                return
+            }
+            let matching = (managers ?? []).filter {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
+                    == providerBundleIdentifier
+            }
+            // Ambiguous the same way `ensureConfiguration` already treats
+            // it below (#162): more than one candidate means this cannot
+            // say which one is "the" configuration, so this defaults to
+            // the safe answer rather than guessing.
+            guard matching.count == 1 else {
+                completion(.unknownOrForeign)
+                return
+            }
+            let marked = UserDefaults.standard.bool(forKey: selfCreatedMarkerKey(providerBundleIdentifier))
+            completion(marked ? .createdByThisApp : .unknownOrForeign)
+        }
+    }
+
     /// Create the `NETunnelProviderManager` if none exists yet for
     /// `providerBundleIdentifier`, or return the existing one.
     ///
@@ -140,11 +199,27 @@ enum NetworkExtensionEnrollment {
             manager.protocolConfiguration = proto
             manager.localizedDescription = "Karst"
             manager.isEnabled = true
+            // Personal/self-service configs only — a managed config's
+            // on-demand behavior comes entirely from its MDM profile
+            // (docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md),
+            // and this branch never runs against one anyway (it only
+            // executes when no configuration exists yet). A bare
+            // `NEOnDemandRuleConnect()` (default `interfaceTypeMatch =
+            // .any`) is reconnect-for-convenience only: no
+            // `includeAllNetworks`, so it changes nothing about who can
+            // disable this device's tunnel, only how quickly it comes back
+            // after sleep/network changes.
+            manager.isOnDemandEnabled = true
+            manager.onDemandRules = [NEOnDemandRuleConnect()]
             manager.saveToPreferences { error in
                 if let error {
                     completion(.failure(NetworkExtensionEnrollmentError.saveFailed(error)))
                     return
                 }
+                // The one moment this app knows for certain it just
+                // created this configuration — see `currentOwnership`'s
+                // own doc comment for why this is recorded at all.
+                UserDefaults.standard.set(true, forKey: selfCreatedMarkerKey(providerBundleIdentifier))
                 // Found on real hardware (#159), not anticipated: calling
                 // `sendProviderMessage` on this same in-memory `manager`
                 // immediately after `saveToPreferences` failed with
