@@ -129,10 +129,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case direct = "menu-direct"
     }
 
+    /// The height every menu-bar icon renders at, in points. Deliberately
+    /// set explicitly rather than left at `NSImage`'s own default: loading a
+    /// PNG with `NSImage(contentsOfFile:)` sizes it from the file's raw
+    /// pixel dimensions (256×226 for these assets) with no DPI-aware
+    /// scaling, so an unmodified load reports itself as 256×226 *points* —
+    /// enormous next to an actual ~22pt menu bar. `NSStatusBarButton` does
+    /// not scale a custom image down to fit; it draws at the image's own
+    /// reported size and lets the bar clip whatever does not fit, which is
+    /// what "zoomed in too far" (#159) actually was: a small, cropped
+    /// corner of a huge image, not a rendering bug in the assets themselves.
+    private static let menuBarIconHeight: CGFloat = 18
+
     private static func karstMarkIcon(_ state: MarkState, accessibilityDescription: String) -> NSImage? {
         guard let path = Bundle.main.path(forResource: state.rawValue, ofType: "png"),
               let image = NSImage(contentsOfFile: path)
         else { return nil }
+        let aspect = image.size.width / image.size.height
+        image.size = NSSize(width: menuBarIconHeight * aspect, height: menuBarIconHeight)
         image.isTemplate = true
         image.accessibilityDescription = accessibilityDescription
         return image
