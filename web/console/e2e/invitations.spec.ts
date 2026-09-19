@@ -31,7 +31,7 @@ test("administrator creates one complete invitation, dismisses its secret, and r
     await route.fulfill({ response });
   });
   await page.goto("https://console.example.test/#/setup");
-  await page.getByLabel("Device label").fill("invitation-browser-laptop");
+  await page.getByLabel("Device name").fill("invitation-browser-laptop");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
   await page.getByRole("button", { name: "Create invitation", exact: true }).click();
   const value = await page.getByLabel("Enrollment invitation", { exact: true }).inputValue();

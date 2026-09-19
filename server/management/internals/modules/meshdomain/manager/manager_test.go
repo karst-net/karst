@@ -102,6 +102,68 @@ func TestCreateDomain_RejectsInvalidLabel(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestListDomains_DelegatedAdminSeesOnlyTheirSubtree(t *testing.T) {
+	mgr, _, cleanup := setupTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	root, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := mgr.CreateDomain(ctx, testAccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+	backend, err := mgr.CreateDomain(ctx, testAccountID, "owner", engineering.ID, "backend")
+	require.NoError(t, err)
+	sales, err := mgr.CreateDomain(ctx, testAccountID, "owner", root.ID, "sales")
+	require.NoError(t, err)
+
+	// No account-wide grant and no delegation at all: refused outright, not
+	// just handed an empty list -- those are different facts to a caller.
+	_, err = mgr.ListDomains(ctx, testAccountID, "member")
+	require.Error(t, err)
+
+	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "owner", engineering.ID, "member")
+	require.NoError(t, err)
+
+	visible, err := mgr.ListDomains(ctx, testAccountID, "member")
+	require.NoError(t, err)
+	ids := make([]string, len(visible))
+	for i, d := range visible {
+		ids[i] = d.ID
+	}
+	require.ElementsMatch(t, []string{engineering.ID, backend.ID}, ids, "sees its own delegated domain and its descendant, not its parent or its unrelated sibling")
+	require.NotContains(t, ids, root.ID)
+	require.NotContains(t, ids, sales.ID)
+
+	// The owner is unaffected by any of this: always the full list.
+	all, err := mgr.ListDomains(ctx, testAccountID, "owner")
+	require.NoError(t, err)
+	require.Len(t, all, 4)
+}
+
+func TestGetDomain_DelegatedAdminCanReadTheirOwnSubtree(t *testing.T) {
+	mgr, _, cleanup := setupTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	root, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := mgr.CreateDomain(ctx, testAccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+
+	_, err = mgr.GetDomain(ctx, testAccountID, "member", engineering.ID)
+	require.Error(t, err)
+
+	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "owner", engineering.ID, "member")
+	require.NoError(t, err)
+
+	got, err := mgr.GetDomain(ctx, testAccountID, "member", engineering.ID)
+	require.NoError(t, err)
+	require.Equal(t, engineering.ID, got.ID)
+
+	_, err = mgr.GetDomain(ctx, testAccountID, "member", root.ID)
+	require.Error(t, err, "a delegated admin cannot read their own parent domain")
+}
+
 func TestDeleteDomain_RefusesWithChildrenOrMembers(t *testing.T) {
 	mgr, testStore, cleanup := setupTest(t)
 	defer cleanup()

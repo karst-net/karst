@@ -100,26 +100,61 @@ func (m *managerImpl) CreateDomain(ctx context.Context, accountID, userID, paren
 	return newDomain, nil
 }
 
+// ListDomains returns every domain for an account-wide reader. A caller with
+// only a domain-scoped delegation (no account-wide Domains grant) instead
+// gets the subset their own bindings cover -- their own delegated domain(s)
+// plus descendants -- rather than being refused outright. Without this, a
+// delegated admin could act on a subdomain they already knew the ID of, but
+// the console's domain list (which is how they'd discover it, or pick it for
+// a new invitation) would 403 them for the one thing delegation exists to
+// let them do.
 func (m *managerImpl) ListDomains(ctx context.Context, accountID, userID string) ([]*meshdomain.Domain, error) {
-	allowed, ctx, err := m.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Domains, operations.Read)
+	all, err := m.store.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	allowed, ctxOut, err := m.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Domains, operations.Read)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
-	if !allowed {
+	if allowed {
+		return all, nil
+	}
+	ctx = ctxOut
+
+	bindings, err := m.store.GetUserDomainRoleBindings(ctx, accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) == 0 {
 		return nil, status.NewPermissionDeniedError()
 	}
-	return m.store.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
+	visible := make([]*meshdomain.Domain, 0, len(all))
+	for _, d := range all {
+		for _, b := range bindings {
+			if b.Covers(d.Path) {
+				visible = append(visible, d)
+				break
+			}
+		}
+	}
+	return visible, nil
 }
 
 func (m *managerImpl) GetDomain(ctx context.Context, accountID, userID, domainID string) (*meshdomain.Domain, error) {
-	allowed, ctx, err := m.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Domains, operations.Read)
+	target, err := m.store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)
+	if err != nil {
+		return nil, err
+	}
+	allowed, _, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.Path, modules.Domains, operations.Read)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
 	if !allowed {
 		return nil, status.NewPermissionDeniedError()
 	}
-	return m.store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)
+	return target, nil
 }
 
 func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domainID string) error {

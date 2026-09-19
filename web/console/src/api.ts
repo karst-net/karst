@@ -73,7 +73,19 @@ export type DeviceInvitation = {
   id: string; name: string; groups: string[];
   state: "pending" | "redeemed" | "expired" | "revoked";
   expires_at: string; created_at: string; redeemed_at?: string; credential?: string;
+  /** The mesh domain (ADR-0032) the enrolling device will be placed in, or absent for the account root. */
+  domain_id?: string;
 };
+
+// A mesh domain (ADR-0032) an admin can place devices into, and organize
+// into subdomains. Deliberately not called "zone" (the fork's own DNS zones
+// are a different, unrelated feature) or "aquifer" (the relay's own,
+// unrelated tenant-isolation concept) — see the ADR for why.
+export type MeshDomain = { id: string; parent_id?: string; label: string; path: string };
+// Grants user_id delegated admin rights over domain_id and everything under
+// it, without any account-wide role. domain_path is included so the console
+// can show what subtree a delegation covers without a second lookup.
+export type DomainDelegation = { id: string; domain_id: string; domain_path: string; user_id: string };
 
 export type SetupKeyType = "one-off" | "reusable";
 export type SetupKey = {
@@ -125,8 +137,19 @@ export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string
 
 export const api = {
   invitations: () => request<DeviceInvitation[]>("/invitations"),
-  createInvitation: (name: string, groups: string[]) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups }) }),
+  // domainId places the enrolling device in that mesh domain (ADR-0032)
+  // rather than the account's implicit root; omit it for prior behavior.
+  createInvitation: (name: string, groups: string[], domainId?: string) => request<DeviceInvitation>("/invitations", { method: "POST", body: body({ name, groups, domain_id: domainId || undefined }) }),
   revokeInvitation: (id: string) => request<DeviceInvitation>(`/invitations/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
+
+  // ── mesh domains ───────────────────────────────────────────────────────────
+  domains: () => request<MeshDomain[]>("/domains"),
+  // parentId "" creates a top-level domain.
+  createDomain: (parentId: string, label: string) => request<MeshDomain>("/domains", { method: "POST", body: body({ parent_id: parentId, label }) }),
+  deleteDomain: (id: string) => request<void>(`/domains/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  domainDelegations: (domainId: string) => request<DomainDelegation[]>(`/domains/${encodeURIComponent(domainId)}/delegations`),
+  delegateDomain: (domainId: string, userId: string) => request<DomainDelegation>(`/domains/${encodeURIComponent(domainId)}/delegations`, { method: "POST", body: body({ user_id: userId }) }),
+  revokeDomainDelegation: (bindingId: string) => request<void>(`/domains/delegations/${encodeURIComponent(bindingId)}`, { method: "DELETE" }),
   enrollmentMetadata: () => request<EnrollmentMetadata>("/me/enrollment"),
   enroll: () => request<EnrollmentGrant>("/me/devices/enroll", { method: "POST" }),
   // ── machines ───────────────────────────────────────────────────────────────

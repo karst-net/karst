@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["setup", "machines", "access", "keys", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "settings"];
+const routes = ["setup", "domains", "machines", "access", "keys", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -96,7 +96,7 @@ test("policy syntax errors surface their line number", async ({ page }) => {
 test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
  await page.goto("/#/setup");
  await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
- await page.getByLabel("Device label").fill("Laptop");
+ await page.getByLabel("Device name").fill("Laptop");
  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
  await page.getByRole("button", { name: "Create invitation" }).click();
  await expect(page.getByRole("alert")).toContainText("HTTPS");
@@ -158,7 +158,7 @@ test("adding a machine opens the invitation flow", async ({ page }) => {
   await page.goto("/#/machines");
   await page.getByRole("button", { name: "Add machine" }).click();
   await expect(page.getByRole("heading", { name: "Add device", exact: true })).toBeVisible();
-  await expect(page.getByLabel("Device label")).toBeVisible();
+  await expect(page.getByLabel("Device name")).toBeVisible();
   await expect(page.getByText("No account or identity-provider login is needed.", { exact: false })).toBeVisible();
 });
 
@@ -202,6 +202,49 @@ test("the signed-in user cannot deprovision themselves", async ({ page }) => {
   const self = page.locator("tbody tr").filter({ hasText: "(you)" });
   await expect(self).toContainText("Current user");
   await expect(self.getByRole("button", { name: "Deprovision" })).toHaveCount(0);
+});
+
+// ADR-0032: domains organize devices into a naming hierarchy, and a domain's
+// admin can delegate a subtree of it without an account-wide role.
+test("a subdomain can be created, delegated, revoked and deleted", async ({ page }) => {
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.goto("/#/domains");
+  // Seeded by the mock: acme (top-level) and engineering (under acme).
+  await expect(page.locator("tbody tr").filter({ hasText: "acme" }).first()).toBeVisible();
+  const engineeringRow = page.locator("tbody tr").filter({ hasText: "engineering" });
+  await expect(engineeringRow).toContainText("engineering.acme");
+
+  // Create a subdomain of engineering.
+  await engineeringRow.getByRole("button", { name: "Add subdomain" }).click();
+  await page.getByLabel("Domain label").fill("backend");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("was created");
+  const backendRow = page.locator("tbody tr").filter({ hasText: "backend.engineering.acme" });
+  await expect(backendRow).toBeVisible();
+
+  // Delegate the new subdomain to a seeded user, then revoke it.
+  await backendRow.getByRole("button", { name: "Delegations" }).click();
+  await expect(page.getByText("No one is delegated for this domain.")).toBeVisible();
+  await page.getByLabel("Delegate to").selectOption({ label: "SRE operator (sre@example.test)" });
+  await page.getByRole("button", { name: "Delegate", exact: true }).click();
+  const delegationRow = page.locator("tbody tr").filter({ hasText: "SRE operator" });
+  await expect(delegationRow).toBeVisible();
+  await delegationRow.getByRole("button", { name: "Revoke" }).click();
+  await expect(page.getByText("No one is delegated for this domain.")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+
+  // An empty leaf domain can be deleted; its now-childless parent can too.
+  await backendRow.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("status")).toContainText("was deleted");
+  await expect(page.locator("tbody tr").filter({ hasText: "backend.engineering.acme" })).toHaveCount(0);
+});
+
+test("the setup invitation form can target a device at a domain", async ({ page }) => {
+  await page.goto("/#/setup");
+  await page.getByLabel("Device name").fill("domain-device");
+  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+  await page.getByLabel("Domain").selectOption({ label: "engineering.acme" });
+  await expect(page.getByText("It will resolve as")).toContainText("domain-device.engineering.acme");
 });
 
 test("groups can be created and renamed, and provider groups cannot", async ({ page }) => {

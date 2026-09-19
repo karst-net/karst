@@ -8,6 +8,7 @@ import "./styles.css";
 import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
 import { bootstrap, loadConfig, login, logout, type AuthConfig, type AuthState } from "./auth";
 import { Setup } from "./views/setup";
+import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
 import { Access } from "./views/access";
 import { Keys } from "./views/keys";
@@ -22,10 +23,10 @@ import { Relays } from "./views/relays";
 import { Turns } from "./views/turns";
 import { Settings } from "./views/settings";
 
-type Route = "setup" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "settings";
+type Route = "setup" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "settings";
 
 const nav: Array<[Route, string]> = [
-  ["setup", "First-run setup"], ["machines", "Machines"], ["access", "Access controls"], ["keys", "Auth keys"],
+  ["setup", "First-run setup"], ["domains", "Domains"], ["machines", "Machines"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
   ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["settings", "Settings"],
 ];
@@ -46,6 +47,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     <main id="main">
       <header><p>Account: <strong>Karst</strong></p>{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "setup" && <Setup go={navigate} />}
+      {route === "domains" && <Domains />}
       {route === "machines" && <Machines />}
       {route === "access" && <Access />}
       {route === "keys" && <Keys />}

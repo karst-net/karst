@@ -28,6 +28,14 @@ const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deplo
 let fixture = buildFixture();
 let setupKeys = [];
 let invitations = [];
+// ADR-0032. Seeded with one small tree so the Domains view and the setup
+// invitation form's picker both have something to show without the "empty"
+// fixture path.
+let domains = [
+  { id: "domain-acme", label: "acme", path: "acme" },
+  { id: "domain-engineering", parent_id: "domain-acme", label: "engineering", path: "engineering.acme" },
+];
+let domainBindings = [];
 let users = seedUsers();
 let groups = seedGroups();
 let sinks = [];
@@ -172,6 +180,11 @@ const server = http.createServer((request, response) => {
       fixture = buildFixture({ empty });
       setupKeys = [];
       invitations = [];
+      domains = empty ? [] : [
+        { id: "domain-acme", label: "acme", path: "acme" },
+        { id: "domain-engineering", parent_id: "domain-acme", label: "engineering", path: "engineering.acme" },
+      ];
+      domainBindings = [];
       users = empty ? [] : seedUsers();
       groups = empty ? [] : seedGroups();
       sinks = [];
@@ -302,12 +315,46 @@ const server = http.createServer((request, response) => {
   if (method === "GET" && karst === "/invitations") return json(response, 200, invitations);
   if (method === "POST" && karst === "/invitations") return readBody(request).then(draft => {
     if (!draft.name?.trim() || !draft.groups?.length) return error(response, 400, "invalid_argument", "Device label and groups are required");
-    const item = { id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
+    if (draft.domain_id && !domains.some(d => d.id === draft.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
+    const item = { id: id("invitation"), name: draft.name, groups: draft.groups, state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString(), ...(draft.domain_id ? { domain_id: draft.domain_id } : {}) };
     invitations.push(item);
     return json(response, 200, { ...item, credential: "invitation-fixture-secret" });
   });
   const revokeInvitation = karst.match(/^\/invitations\/([^/]+)\/revoke$/);
   if (method === "POST" && revokeInvitation) return replace(invitations, revokeInvitation[1], { state: "revoked" }, response);
+
+  // ── mesh domains (ADR-0032) ───────────────────────────────────────────────
+  if (method === "GET" && karst === "/domains") return json(response, 200, domains);
+  if (method === "POST" && karst === "/domains") return readBody(request).then(draft => {
+    const label = draft.label?.trim();
+    if (!label) return error(response, 400, "invalid_argument", "label is required");
+    const parentId = draft.parent_id || "";
+    const parent = parentId ? domains.find(d => d.id === parentId) : undefined;
+    if (parentId && !parent) return error(response, 400, "invalid_argument", "unknown parent_id");
+    if (domains.some(d => (d.parent_id || "") === parentId && d.label === label)) return error(response, 409, "already_exists", `a domain named "${label}" already exists at this level`);
+    const path = parent ? `${label}.${parent.path}` : label;
+    const item = { id: id("domain"), ...(parentId ? { parent_id: parentId } : {}), label, path };
+    domains.push(item);
+    return json(response, 200, item);
+  });
+  const domainMatch = karst.match(/^\/domains\/([^/]+)$/);
+  if (domainMatch && method === "DELETE") {
+    const domainId = domainMatch[1];
+    if (domains.some(d => d.parent_id === domainId)) return error(response, 412, "precondition_failed", "domain has subdomains; delete them first");
+    return remove(domains, domainId, response);
+  }
+  const delegationsMatch = karst.match(/^\/domains\/([^/]+)\/delegations$/);
+  if (delegationsMatch && method === "GET") return json(response, 200, domainBindings.filter(b => b.domain_id === delegationsMatch[1]));
+  if (delegationsMatch && method === "POST") return readBody(request).then(draft => {
+    const domain = domains.find(d => d.id === delegationsMatch[1]);
+    if (!domain) return error(response, 404, "not_found", "domain not found");
+    if (!draft.user_id) return error(response, 400, "invalid_argument", "user_id is required");
+    const binding = { id: id("binding"), domain_id: domain.id, domain_path: domain.path, user_id: draft.user_id };
+    domainBindings.push(binding);
+    return json(response, 200, binding);
+  });
+  const revokeDelegation = karst.match(/^\/domains\/delegations\/([^/]+)$/);
+  if (revokeDelegation && method === "DELETE") return remove(domainBindings, revokeDelegation[1], response);
   if (method === "GET" && karst === "/me/enrollment") return json(response, 200, { server_kem_pin: "ab".repeat(1184), server_verify_pin: "cd".repeat(2592), control_minimum_version: 1 });
   if (method === "POST" && karst === "/me/devices/enroll") return json(response, 201, { key: "member-one-time-key", expires_at: "2026-08-22T20:47:00Z" });
   if (method === "GET" && karst === "/me/access") return json(response, 200, memberAccess);
