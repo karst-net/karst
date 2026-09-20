@@ -28,8 +28,13 @@ The bootstrap publishes only these protected GitHub Environment variables:
 - `KARST_CI_UDP_HOST` and `KARST_CI_UDP_PORT` — overlay UDP echo endpoint.
 
 The `macos-network-extension-lab` Environment must hold the signing identity,
-installer identity, and both provisioning profiles. It must not be available
-to fork pull requests.
+installer identity, and both provisioning profiles. Before adding them, give
+that Environment an approval/branch policy that admits only trusted `main`
+and manually dispatched runs; it must not be available to fork pull requests.
+The repository-level `KARST_MACOS_NE_LAB_ENABLED` variable is deliberately
+`false` until this provisioning is complete. It is the switch that permits
+the scheduled run; the Environment holds the runtime-only values after a job
+has been admitted.
 
 ## What the job proves
 
