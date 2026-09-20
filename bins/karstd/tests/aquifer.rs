@@ -4362,12 +4362,27 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
         Duration::from_secs(30),
         || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
     );
+    // Peer transport can establish before the netmap that carries a route
+    // offer arrives. In particular, gateway eligibility includes a separate
+    // control-plane liveness round trip, so `established` is not the
+    // precondition that makes an exit selectable. This mirrors the explicit
+    // offer wait in the subnet-route row above.
+    wait_for(
+        &net,
+        "node B's netmap to actually carry the exit offer",
+        Duration::from_secs(10),
+        || field(&status(&net, "b", NS_B), "offers").as_deref() != Some("0"),
+    );
 
+    // Keep serving while the restarted peer's first authenticated packets
+    // converge. A one-shot listener turns a successful but slow first TCP
+    // attempt into a false failure in the actual post-consent assertion.
     let listener = format!(
         "import socket\n\
          s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n\
-         s.bind(('{DEST_HOST}',22)); s.listen(1)\n\
-         c,_=s.accept(); c.sendall(b'via the exit'); c.close()\n"
+         s.bind(('{DEST_HOST}',22)); s.listen(5)\n\
+         while True:\n\
+         \x20   c,_=s.accept(); c.sendall(b'via the exit'); c.close()\n"
     );
     net.spawn_service(NS_DEST, "python3", &["-c", &listener], "listener.log");
     std::thread::sleep(Duration::from_millis(500));
@@ -4401,27 +4416,28 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
         String::from_utf8_lossy(&use_out.stderr),
     );
 
-    let probe = format!(
-        "import socket,sys\n\
-         s=socket.create_connection(('{DEST_HOST}',22),timeout=15)\n\
-         sys.stdout.write(s.recv(64).decode())\n"
+    wait_for(
+        &net,
+        "the selected exit route to become active",
+        Duration::from_secs(15),
+        || field(&status(&net, "b", NS_B), "exit_route_active").as_deref() == Some("true"),
     );
-    let out = Command::new("ip")
-        .args(["netns", "exec", NS_B, "python3", "-c", &probe])
-        .output()
-        .expect("run the post-consent probe");
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("via the exit"),
-        "the recipient could not reach the destination after consenting to the \
-         exit route: {} {}\n── node A ──\n{}\n── node B ──\n{}\n── a.log ──\n{}\n\
-         ── b.log ──\n{}\n── server log ──\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-        status(&net, "a", NS_A),
-        status(&net, "b", NS_B),
-        net.log("a.log"),
-        net.log("b.log"),
-        net.log("server.log"),
+    let probe = || {
+        let script = format!(
+            "import socket,sys\n\
+             s=socket.create_connection(('{DEST_HOST}',22),timeout=5)\n\
+             sys.exit(0 if s.recv(64) == b'via the exit' else 1)\n"
+        );
+        Command::new("ip")
+            .args(["netns", "exec", NS_B, "python3", "-c", &script])
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    wait_for(
+        &net,
+        "the recipient to reach the destination after consenting to the exit route",
+        Duration::from_secs(15),
+        probe,
     );
 }
 
