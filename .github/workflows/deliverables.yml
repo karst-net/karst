@@ -620,21 +620,16 @@ jobs:
       - name: Install, verify layout, uninstall
         run: |
           sudo installer -pkg "dist/macos/karst-client-macos-${{ matrix.arch }}.pkg" -target /
-          test -x /usr/local/bin/karstd
-          test -x /usr/local/bin/karst
-          test -f /Library/LaunchDaemons/dev.karst.karstd.plist
-          test -f /etc/karst/karstd.toml.example
-          test -d /var/log/karst
-          # Thin, not fat: this package carries one architecture, and it must
-          # be the one the matrix asked for — not the runner's host arch,
-          # which is how a silently-wrong cross-build would otherwise pass.
-          got="$(lipo -archs /usr/local/bin/karstd)"
-          [ "$got" = "${{ matrix.arch }}" ] || {
-            echo "::error::karstd is '$got', expected ${{ matrix.arch }}"; exit 1;
-          }
-          # The second component — plans/phase-6/13-macos-status-indicators.md
-          # §2 item 1 — installed by the same .pkg, same install. Explicit
-          # `ls`/diagnostics on failure rather than a bare `test`, which
+          # NetworkExtension is the sole macOS backend (ADR-0026), so this
+          # package must contain the host app and its LaunchAgent, but none
+          # of the retired karstd LaunchDaemon layout.
+          test -x /usr/local/bin/karst-uninstall
+          test ! -e /usr/local/bin/karstd
+          test ! -e /usr/local/bin/karst
+          test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
+          test ! -e /etc/karst/karstd.toml.example
+          test ! -e /var/log/karst
+          # Explicit diagnostics on failure rather than a bare `test`, which
           # fails silently under `bash -e` and leaves only "exit code 1" —
           # exactly what happened chasing the first version of this check.
           test -x "/Applications/Karst.app/Contents/MacOS/KarstStatus" || {
@@ -660,20 +655,6 @@ jobs:
           plutil -extract CFBundleIdentifier raw \
             "/Applications/Karst.app/Contents/Info.plist" \
             | tee /dev/stderr | grep -q '^dev\.karst\.karststatus$'
-          # Karst Setup used to be a second .app riding in the same
-          # component/staging root as Karst Status (scripts/build-macos-pkg.sh's
-          # own comment says why), which is exactly the shape that let one
-          # .app silently go unplaced the first time this job caught it — see
-          # the --analyze loop's comment in that script. Now it is a resource
-          # inside the one merged Karst.app instead, reached from its "Setup…"
-          # menu item; checking it here is what would catch a regression back
-          # to that class of bug, or a build that simply forgot to stage it.
-          test -x "/Applications/Karst.app/Contents/Resources/karst-setup" || {
-            echo "::error::karst-setup resource missing from Karst.app"
-            ls -la /Applications/ 2>&1 || true
-            ls -laR "/Applications/Karst.app" 2>&1 || true
-            exit 1
-          }
           # The packet-tunnel system extension (ADR-0026 item 7) — staged
           # inside Karst.app, not installed separately, so this is the one
           # place a build that forgot to embed it, or embedded it under the
@@ -695,81 +676,13 @@ jobs:
           # and done nothing — this only proves the app installed cleanly,
           # not that it runs. See the plan doc for what a real on-host run
           # would still need to confirm.
-          # Both binaries run at all.
-          /usr/local/bin/karstd --help > /dev/null
-          /usr/local/bin/karst --help > /dev/null
-          # KARST_VERSION (scripts/release-version.sh's third output line,
-          # set by the "Compute release version" step above) is what
-          # bins/karstd/build.rs embeds. Checking it here is what would catch
-          # a build that silently fell back to "dev" — the exact "which
-          # build is this actually" question that motivated adding it.
-          got_daemon_version="$(/usr/local/bin/karstd --version)"
-          [ "$got_daemon_version" = "karstd $KARST_VERSION" ] || {
-            echo "::error::karstd --version printed '$got_daemon_version', expected 'karstd $KARST_VERSION'"
-            exit 1
-          }
-          got_cli_version="$(/usr/local/bin/karst --version)"
-          [ "$got_cli_version" = "karst $KARST_VERSION" ] || {
-            echo "::error::karst --version printed '$got_cli_version', expected 'karst $KARST_VERSION'"
-            exit 1
-          }
-          # `genkey` is the first thing a new node runs, and it is the one
-          # command that exercises the crypto in the installed binary rather
-          # than just its argument parser.
-          #
-          # Not `karstd check` on the example config: that file is
-          # documentation, its peer keys are placeholders, and it is *meant*
-          # to fail validation until an operator fills them in.
-          #
-          # Checked with `[ -n "$key" ]`, not a pipe through `wc -c`. A
-          # pipeline's status is its last command's, since Actions runs
-          # `bash -e` without `pipefail` — a check written that way passes
-          # whether `genkey` produced a key or crashed.
-          key=$(sudo /usr/local/bin/karstd genkey 2>/dev/null)
-          [ -n "$key" ] \
-            || { echo "::error::genkey produced no key"; exit 1; }
-          # Verified by round-tripping through `pubkey` rather than by
-          # asserting a hex length here: the seed's byte count is a property
-          # of whichever KEM karst-crypto currently ships, and a length
-          # hardcoded in this workflow is exactly what went stale and broke
-          # this job when the CNSA-only migration shrank the seed from 96 to
-          # 64 bytes. Feeding genkey's output back through pubkey instead
-          # checks the thing that actually matters — that the two agree on
-          # the seed's shape — so a future algorithm swap that changes the
-          # length needs no edit here.
-          keydir=$(mktemp -d)
-          trap 'sudo rm -rf "$keydir"' EXIT
-          printf '%s' "$key" | sudo tee "$keydir/node.key" > /dev/null
-          sudo chmod 600 "$keydir/node.key"
-          printf '[node]\nprivate_key_file = "%s"\n' "$keydir/node.key" \
-            | sudo tee "$keydir/karstd.toml" > /dev/null
-          pubkey_out=$(sudo /usr/local/bin/karstd pubkey --config "$keydir/karstd.toml" 2>&1) \
-            || { echo "::error::pubkey rejected the key genkey produced: $pubkey_out"; exit 1; }
-          echo "$pubkey_out" | grep -q '^kem_public_key = "[0-9a-f]\+"$' \
-            || { echo "::error::pubkey did not print a kem_public_key: $pubkey_out"; exit 1; }
-          # `karst setup --resume` is new cross-platform code (bins/karstd/src/setup.rs
-          # was Linux-only) and Karst.app's "Setup…" menu item's whole reason
-          # to exist is calling it, so it gets its own exercise here rather than trusting
-          # `cargo check` alone: no config exists yet, so this must fail with
-          # the specific "enroll first" message, not hang, crash, or — worse —
-          # report success by accident.
-          setup_out=$(/usr/local/bin/karst setup --resume 2>&1) && {
-            echo "::error::karst setup --resume succeeded with no configuration: $setup_out"
-            exit 1
-          }
-          echo "$setup_out" | grep -q '^No usable saved device configuration' \
-            || { echo "::error::unexpected karst setup --resume message: $setup_out"; exit 1; }
-          # No config was installed, so the daemon must not be loaded — see the
-          # postinstall script for why that is the intended outcome.
-          if launchctl print system/dev.karst.karstd >/dev/null 2>&1; then
-            echo "::error::the daemon was started with no configuration"
-            exit 1
-          fi
           sudo /usr/local/bin/karst-uninstall
           test ! -e /usr/local/bin/karstd
+          test ! -e /usr/local/bin/karst
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
           test ! -e "/Applications/Karst.app"
           test ! -e /Library/LaunchAgents/dev.karst.karststatus.plist
+          test ! -e /usr/local/bin/karst-uninstall
 
       # `installer` reports only "a script failed," never which one or why —
       # the detail is always in this log. Kept as a permanent step, not a
