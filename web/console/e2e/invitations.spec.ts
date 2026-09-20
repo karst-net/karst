@@ -28,7 +28,8 @@ test("administrator creates one complete invitation, dismisses its secret, and r
       await route.fulfill({ json: invitations[0] }); return;
     }
     const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
-    await route.fulfill({ response });
+    const body = await response.body();
+    await route.fulfill({ response, body });
   });
   await page.goto("https://console.example.test/#/setup");
   await page.getByLabel("Device name").fill("invitation-browser-laptop");
