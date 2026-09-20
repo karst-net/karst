@@ -235,7 +235,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let dir = std::env::temp_dir().join(format!("karst-ffi-{tag}-{}-{unique}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("karst-ffi-{tag}-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create scratch directory");
         dir
     }

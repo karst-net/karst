@@ -579,7 +579,10 @@ type DeviceInvitation struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Credential Bearer credential returned only by creation. Never included in list or revocation responses.
-	Credential *string               `json:"credential,omitempty"`
+	Credential *string `json:"credential,omitempty"`
+
+	// DomainId The mesh domain (ADR-0032) the enrolling device will be placed in, or absent for the account root.
+	DomainId   *string               `json:"domain_id,omitempty"`
 	ExpiresAt  time.Time             `json:"expires_at"`
 	Groups     []string              `json:"groups"`
 	Id         string                `json:"id"`
@@ -593,8 +596,10 @@ type DeviceInvitationState string
 
 // DeviceInvitationDraft defines model for DeviceInvitationDraft.
 type DeviceInvitationDraft struct {
-	Groups []string `json:"groups"`
-	Name   string   `json:"name"`
+	// DomainId Places the enrolling device into this mesh domain (ADR-0032) rather than the account root.
+	DomainId *string  `json:"domain_id,omitempty"`
+	Groups   []string `json:"groups"`
+	Name     string   `json:"name"`
 }
 
 // DeviceRename defines model for DeviceRename.
@@ -661,7 +666,13 @@ type MySession struct {
 
 // Node defines model for Node.
 type Node struct {
-	CreatedAt  time.Time   `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// DnsLabel The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+	DnsLabel string `json:"dns_label"`
+
+	// DomainId The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.
+	DomainId   *string     `json:"domain_id,omitempty"`
 	Enabled    bool        `json:"enabled"`
 	ExpiresAt  *time.Time  `json:"expires_at,omitempty"`
 	Handle     *string     `json:"handle,omitempty"`
@@ -699,6 +710,7 @@ type NodePostureStatus string
 
 // NodeUpdate defines model for NodeUpdate.
 type NodeUpdate struct {
+	DomainId  *string    `json:"domain_id,omitempty"`
 	Enabled   *bool      `json:"enabled,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Name      *string    `json:"name,omitempty"`

@@ -136,7 +136,10 @@ impl EngineHandle {
         // before ever binding the socket) reports `Disconnected` here
         // immediately, not after the full timeout — this is the fast path
         // for the common failure shape, not just the slow one.
-        if ready_rx.recv_timeout(std::time::Duration::from_secs(5)).is_err() {
+        if ready_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_err()
+        {
             // The thread is still running detached rather than joined
             // here — same reasoning `Drop` already has: whoever is
             // waiting on `start`'s `Result` did not ask to block further,
