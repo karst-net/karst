@@ -28,6 +28,13 @@ let package = Package(
         .executableTarget(
             name: "KarstStatus",
             path: "Sources/KarstStatus"
+        ),
+        // A CI-only command-line driver. It is deliberately a separate
+        // target and is never staged by build-macos-pkg.sh, so release
+        // Karst.app has no test command or invitation-file interface.
+        .executableTarget(
+            name: "KarstConnectivityCI",
+            path: "Sources/KarstConnectivityCI"
         )
     ]
 )

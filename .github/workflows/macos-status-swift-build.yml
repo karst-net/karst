@@ -29,5 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
-      - run: swift build
+      - run: swift build --product KarstStatus
+      # The physical-runner workflow builds this again before execution, but
+      # compile it here on GitHub-hosted macOS for every change. That keeps
+      # the CI-only NetworkExtension API usage type-checked without claiming
+      # this VM can exercise a System Extension at runtime.
+      - run: swift build --product KarstConnectivityCI
         working-directory: packaging/macos/KarstStatus

@@ -11,6 +11,7 @@ enum NetworkExtensionEnrollmentError: Error {
     case saveFailed(Error)
     case sessionUnavailable
     case sendFailed(Error)
+    case startFailed(Error)
     case invalidResponseEncoding
     /// The extension answered with its own `{"error": "..."}` — carries the
     /// message verbatim, the same "never re-derive, never paraphrase a
@@ -36,6 +37,8 @@ extension NetworkExtensionEnrollmentError: LocalizedError {
             return "No VPN session is available for the network extension."
         case .sendFailed(let error):
             return "Could not reach the network extension: \(error.localizedDescription)"
+        case .startFailed(let error):
+            return "Could not start the VPN tunnel: \(error.localizedDescription)"
         case .invalidResponseEncoding:
             return "The network extension's response was not valid UTF-8 JSON."
         case .providerRefused(let message):
@@ -339,7 +342,26 @@ enum NetworkExtensionEnrollment {
                     completion(.failure(NetworkExtensionEnrollmentError.providerRefused(errorMessage)))
                     return
                 }
-                completion(.success(()))
+                // Enrollment persists the identity and configuration in the
+                // provider, but it does not itself make NetworkExtension
+                // start a VPN session. On-demand reconnect is deliberately
+                // only a recovery mechanism: waiting for its next network
+                // transition made a successful first enrollment look like it
+                // had completed while no packet path existed yet. Start the
+                // self-service tunnel explicitly once the provider confirms
+                // enrollment, while leaving an already-connected session
+                // alone (the normal re-enrollment case).
+                switch session.status {
+                case .connected, .connecting, .reasserting:
+                    completion(.success(()))
+                default:
+                    do {
+                        try session.startVPNTunnel()
+                        completion(.success(()))
+                    } catch {
+                        completion(.failure(NetworkExtensionEnrollmentError.startFailed(error)))
+                    }
+                }
             }
         } catch {
             os_log(

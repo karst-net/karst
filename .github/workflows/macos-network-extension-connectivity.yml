@@ -1,0 +1,129 @@
+name: macOS Network Extension connectivity
+
+# This is deliberately opt-in until a physical, MDM-pre-approved lab Mac and
+# its disposable control/peer service exist. GitHub-hosted macOS runners can
+# compile and package Karst but cannot be used as evidence that the shipped
+# System Extension carries packetFlow traffic.
+on:
+  workflow_dispatch:
+    inputs:
+      run_lab_test:
+        description: Run against the protected physical macOS lab runner
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-network-extension-lab
+  cancel-in-progress: false
+
+jobs:
+  connectivity:
+    name: Packaged Network Extension traffic
+    # The repository variable is deliberately false/missing until the runner
+    # has been commissioned. This prevents a scheduled workflow from queuing
+    # forever on a label that a fork or a fresh checkout does not have.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.run_lab_test) ||
+      (github.event_name == 'schedule' && vars.KARST_MACOS_NE_LAB_ENABLED == 'true')
+    runs-on: [self-hosted, macos, karst-network-extension]
+    timeout-minutes: 20
+    environment: macos-network-extension-lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: '${{ secrets.GITHUB_TOKEN }}' }
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_CERT_P12:?the protected lab Environment needs APPLE_CERT_P12}"
+          keychain="$RUNNER_TEMP/karst-ne-test.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 1800 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" -k "$keychain" -P "$APPLE_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/certs.p12"
+
+      - name: Materialize provisioning profiles
+        env:
+          APPLE_PROVISION_PROFILE_KARSTSTATUS: ${{ secrets.APPLE_PROVISION_PROFILE_KARSTSTATUS }}
+          APPLE_PROVISION_PROFILE_PACKETTUNNEL: ${{ secrets.APPLE_PROVISION_PROFILE_PACKETTUNNEL }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_PROVISION_PROFILE_KARSTSTATUS:?missing Karst.app provisioning profile}"
+          : "${APPLE_PROVISION_PROFILE_PACKETTUNNEL:?missing packet-tunnel provisioning profile}"
+          status_profile="$RUNNER_TEMP/karststatus.provisionprofile"
+          tunnel_profile="$RUNNER_TEMP/packettunnel.provisionprofile"
+          echo "$APPLE_PROVISION_PROFILE_KARSTSTATUS" | base64 --decode > "$status_profile"
+          echo "$APPLE_PROVISION_PROFILE_PACKETTUNNEL" | base64 --decode > "$tunnel_profile"
+          chmod 600 "$status_profile" "$tunnel_profile"
+          echo "KARST_PROVISION_PROFILE_KARSTSTATUS=$status_profile" >> "$GITHUB_ENV"
+          echo "KARST_PROVISION_PROFILE_PACKETTUNNEL=$tunnel_profile" >> "$GITHUB_ENV"
+
+      - name: Verify the lab handoff
+        env:
+          KARST_CI_INVITATION_FILE: ${{ vars.KARST_CI_INVITATION_FILE }}
+          KARST_CI_PROBE_URL: ${{ vars.KARST_CI_PROBE_URL }}
+          KARST_CI_UDP_HOST: ${{ vars.KARST_CI_UDP_HOST }}
+          KARST_CI_UDP_PORT: ${{ vars.KARST_CI_UDP_PORT }}
+        run: |
+          set -euo pipefail
+          : "${KARST_CI_INVITATION_FILE:?lab bootstrap did not provide an invitation file}"
+          : "${KARST_CI_PROBE_URL:?lab bootstrap did not provide an overlay probe URL}"
+          : "${KARST_CI_UDP_HOST:?lab bootstrap did not provide an overlay UDP host}"
+          : "${KARST_CI_UDP_PORT:?lab bootstrap did not provide an overlay UDP port}"
+          test -r "$KARST_CI_INVITATION_FILE"
+          test "$(stat -f '%Lp' "$KARST_CI_INVITATION_FILE")" -le 600
+          case "$KARST_CI_PROBE_URL" in http://*|https://*) ;; *) exit 1;; esac
+          case "$KARST_CI_UDP_PORT" in *[!0-9]*|'') exit 1;; esac
+
+      - name: Build and install the signed test package
+        run: |
+          set -euo pipefail
+          ./scripts/build-macos-pkg.sh --arch "$(uname -m)" --require-signing
+          sudo installer -pkg "dist/macos/karst-client-macos-$(uname -m).pkg" -target /
+          open -gj /Applications/Karst.app
+
+      - name: Enroll, connect, and carry overlay traffic
+        env:
+          KARST_CI_INVITATION_FILE: ${{ vars.KARST_CI_INVITATION_FILE }}
+          KARST_CI_PROBE_URL: ${{ vars.KARST_CI_PROBE_URL }}
+          KARST_CI_UDP_HOST: ${{ vars.KARST_CI_UDP_HOST }}
+          KARST_CI_UDP_PORT: ${{ vars.KARST_CI_UDP_PORT }}
+        run: |
+          set -euo pipefail
+          (cd packaging/macos/KarstStatus && swift build -c release --product KarstConnectivityCI)
+          harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
+          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" --timeout 90
+
+      - name: Collect redacted diagnostics
+        if: always()
+        run: |
+          mkdir -p macos-network-extension-diagnostics
+          scutil --nc list > macos-network-extension-diagnostics/vpn-status.txt || true
+          netstat -rn > macos-network-extension-diagnostics/routes.txt || true
+          sudo log show --last 20m --style compact --predicate 'subsystem == "dev.karst.packettunnel" OR subsystem == "dev.karst.karststatus"' \
+            | sed -E 's/karst-invite-v1:[^[:space:]]+/[REDACTED_INVITATION]/g' \
+            > macos-network-extension-diagnostics/karst.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-network-extension-diagnostics-${{ github.run_id }}
+          path: macos-network-extension-diagnostics/
+          if-no-files-found: warn
