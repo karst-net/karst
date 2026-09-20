@@ -75,6 +75,52 @@ func (am *DefaultAccountManager) GetPeers(ctx context.Context, accountID, userID
 	return am.Store.GetUserPeers(ctx, store.LockingStrengthNone, accountID, userID)
 }
 
+// GetAdminPeers returns peers an administrator may manage. Unlike GetPeers,
+// it never falls back to a regular user's own devices: callers use this for
+// administrative routes, where a domain delegation is the only alternative
+// to an account-wide Peers:Read grant.
+func (am *DefaultAccountManager) GetAdminPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*nbpeer.Peer, error) {
+	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Peers, operations.Read)
+	if err != nil {
+		return nil, status.NewPermissionValidationError(err)
+	}
+	if allowed {
+		return am.Store.GetAccountPeers(ctx, store.LockingStrengthNone, accountID, nameFilter, ipFilter)
+	}
+
+	bindings, err := am.Store.GetUserDomainRoleBindings(ctx, accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) == 0 {
+		return nil, status.NewPermissionDeniedError()
+	}
+
+	allPeers, err := am.Store.GetAccountPeers(ctx, store.LockingStrengthNone, accountID, nameFilter, ipFilter)
+	if err != nil {
+		return nil, err
+	}
+
+	delegatedPeers := make([]*nbpeer.Peer, 0, len(allPeers))
+	for _, candidate := range allPeers {
+		if candidate.DomainID == "" {
+			continue
+		}
+		domainPath, err := am.domainPath(ctx, accountID, candidate.DomainID)
+		if err != nil {
+			return nil, err
+		}
+		allowed, _, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.Peers, operations.Read)
+		if err != nil {
+			return nil, status.NewPermissionValidationError(err)
+		}
+		if allowed {
+			delegatedPeers = append(delegatedPeers, candidate)
+		}
+	}
+	return delegatedPeers, nil
+}
+
 // PortalPeers returns the account peer graph only to the Karst portal's
 // server-side compiler. It is not an end-user listing: callers must reduce it
 // to destinations already permitted by a compiled filter before responding.
@@ -650,9 +696,23 @@ func (am *DefaultAccountManager) GetPeerJobByID(ctx context.Context, accountID, 
 
 // DeletePeer removes peer from the account by its IP
 func (am *DefaultAccountManager) DeletePeer(ctx context.Context, accountID, peerID, userID string) error {
+	peer, err := am.Store.GetPeerByID(ctx, store.LockingStrengthNone, accountID, peerID)
+	if err != nil {
+		return err
+	}
 	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.Peers, operations.Delete)
 	if err != nil {
 		return status.NewPermissionValidationError(err)
+	}
+	if !allowed && peer.DomainID != "" {
+		domainPath, err := am.domainPath(ctx, accountID, peer.DomainID)
+		if err != nil {
+			return err
+		}
+		allowed, ctx, err = am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.Peers, operations.Delete)
+		if err != nil {
+			return status.NewPermissionValidationError(err)
+		}
 	}
 	if !allowed {
 		return status.NewPermissionDeniedError()
@@ -1801,7 +1861,6 @@ func (am *DefaultAccountManager) GetPeer(ctx context.Context, accountID, peerID,
 	if allowed {
 		return peer, nil
 	}
-
 	user, err := am.Store.GetUserByUserID(ctx, store.LockingStrengthNone, userID)
 	if err != nil {
 		return nil, err

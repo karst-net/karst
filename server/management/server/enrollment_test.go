@@ -347,6 +347,64 @@ func TestDeviceInvitationDelegatedSubdomainAdmin(t *testing.T) {
 	require.Error(t, err, "delegation to engineering must not reach the sibling sales domain")
 }
 
+func TestGetAdminPeers_DelegatedAdminSeesOnlyDomainSubtree(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "admin-peer-scope", AccountID: member.AccountID, Name: "Admin peer scope", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+
+	domainManager := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	root, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", "", "acme")
+	require.NoError(t, err)
+	engineering, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "engineering")
+	require.NoError(t, err)
+	backend, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", engineering.ID, "backend")
+	require.NoError(t, err)
+	sales, err := domainManager.CreateDomain(ctx, member.AccountID, "owner", root.ID, "sales")
+	require.NoError(t, err)
+
+	// A member's own peer must not turn them into an administrator.
+	personalKey, err := am.CreateEnrollmentKey(ctx, member.AccountID, member.Id)
+	require.NoError(t, err)
+	_, err = enrollPeer(am, personalKey.Key, "members-laptop")
+	require.NoError(t, err)
+	_, err = am.GetAdminPeers(ctx, member.AccountID, member.Id, "", "")
+	require.Error(t, err)
+
+	for _, item := range []struct {
+		name, domainID string
+	}{
+		{"engineering-node", engineering.ID},
+		{"backend-node", backend.ID},
+		{"sales-node", sales.ID},
+	} {
+		key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", item.name, []string{group.ID}, item.domainID)
+		require.NoError(t, err)
+		_, err = enrollPeer(am, key.Key, item.name+"-client")
+		require.NoError(t, err)
+	}
+
+	_, err = domainManager.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
+	require.NoError(t, err)
+	visible, err := am.GetAdminPeers(ctx, member.AccountID, member.Id, "", "")
+	require.NoError(t, err)
+	names := make([]string, 0, len(visible))
+	byName := make(map[string]*nbpeer.Peer, len(visible))
+	for _, p := range visible {
+		names = append(names, p.Name)
+		byName[p.Name] = p
+	}
+	require.ElementsMatch(t, []string{"engineering-node", "backend-node"}, names)
+
+	// The same boundary applies to destructive node management: delegation to
+	// engineering reaches its descendant backend but never the sibling sales.
+	salesPeers, err := am.Store.GetAccountPeers(ctx, store.LockingStrengthNone, member.AccountID, "sales-node", "")
+	require.NoError(t, err)
+	require.Len(t, salesPeers, 1)
+	require.Error(t, am.DeletePeer(ctx, member.AccountID, salesPeers[0].ID, member.Id))
+	require.NoError(t, am.DeletePeer(ctx, member.AccountID, byName["backend-node"].ID, member.Id))
+}
+
 func TestDeviceInvitationDelegatedAdminListsAndRevokesOwnDomainOnly(t *testing.T) {
 	am, member := enrollmentFixture(t)
 	ctx := context.Background()

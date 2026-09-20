@@ -75,6 +75,7 @@ type sessionCloser interface {
 // boundary for the peer half of the join.
 type peerReader interface {
 	GetPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*peer.Peer, error)
+	GetAdminPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*peer.Peer, error)
 }
 
 // accountUpdater triggers a netmap push. Karst's own policy writes are the
@@ -414,19 +415,17 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// must not be checked against KarstControl: that module intentionally
 			// denies Members every administrative operation.
 			//
-			// Mesh-domain routes (ADR-0032), and device invitations for the
-			// same reason, are the same shape of exception: a domain-scoped
-			// delegated admin deliberately has no account-wide KarstControl
-			// grant, so this blanket gate would reject them before their
-			// handler's own ValidateDomainScopedPermission check ever ran.
-			// invitations' own manager methods (ListDeviceInvitations,
-			// RevokeDeviceInvitation, CreateDeviceInvitation) and the
-			// domains package's manager (meshdomain/manager) each re-derive
-			// and enforce their own permission on every call, so skipping
-			// the blanket check here is not skipping authorization, only
-			// the wrong (account-wide-only) authorization for this surface.
+			// Mesh-domain routes (ADR-0032), device invitations, and node
+			// management for delegated domains are exceptions: a delegated
+			// admin has no account-wide KarstControl grant, so this blanket
+			// gate would reject them before their scoped authorization runs.
+			// The domain and invitation managers each re-derive their own
+			// permission; /nodes does so through GetAdminPeers, which never
+			// grants access merely because a member owns a device. Skipping
+			// this gate is therefore skipping only the wrong account-wide
+			// authorization for these resource-scoped surfaces.
 			path := strings.TrimPrefix(r.URL.Path, "/api")
-			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") {
+			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") || strings.HasPrefix(path, "/karst/v1/nodes") {
 				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return
@@ -2341,7 +2340,7 @@ func (h *handler) getNodePaths(w http.ResponseWriter, r *http.Request) {
 	}
 	handle := mux.Vars(r)["handle"]
 	found := false
-	nodes, err := h.authorizedNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
+	nodes, err := h.adminNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2392,7 +2391,7 @@ func (h *handler) getNodePosture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handle := mux.Vars(r)["handle"]
-	nodes, err := h.authorizedNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
+	nodes, err := h.adminNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2465,7 +2464,7 @@ func (h *handler) listNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := h.authorizedNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
+	nodes, err := h.adminNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2529,7 +2528,7 @@ func (h *handler) getNode(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	nodes, err := h.authorizedNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
+	nodes, err := h.adminNodes(r.Context(), userAuth.AccountId, userAuth.UserId)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2565,7 +2564,7 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "only name and domain_id are currently mutable for a Karst node"), w)
 		return
 	}
-	peerRecord, err := h.lookupAuthorizedPeer(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["handle"])
+	peerRecord, err := h.lookupAdminPeer(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["handle"])
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2607,7 +2606,7 @@ func (h *handler) deleteNode(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	peerRecord, err := h.lookupAuthorizedPeer(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["handle"])
+	peerRecord, err := h.lookupAdminPeer(r.Context(), user.AccountId, user.UserId, mux.Vars(r)["handle"])
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2641,12 +2640,24 @@ func (h *handler) deleteNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) lookupAuthorizedPeer(ctx context.Context, accountID, userID, handle string) (*peer.Peer, error) {
+	return h.lookupPeer(ctx, accountID, userID, handle, h.peers.GetPeers)
+}
+
+// lookupAdminPeer resolves a peer in the administrative node view. It differs
+// from lookupAuthorizedPeer because an ordinary member may manage their own
+// device through /me, but must never gain administrative /nodes access merely
+// by owning one.
+func (h *handler) lookupAdminPeer(ctx context.Context, accountID, userID, handle string) (*peer.Peer, error) {
+	return h.lookupPeer(ctx, accountID, userID, handle, h.peers.GetAdminPeers)
+}
+
+func (h *handler) lookupPeer(ctx context.Context, accountID, userID, handle string, list func(context.Context, string, string, string, string) ([]*peer.Peer, error)) (*peer.Peer, error) {
 	decoded, err := url.PathUnescape(handle)
 	if err != nil {
 		return nil, status.Errorf(status.InvalidArgument, "invalid node handle")
 	}
 	handle = decoded
-	peers, err := h.peers.GetPeers(ctx, accountID, userID, "", "")
+	peers, err := list(ctx, accountID, userID, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -2666,6 +2677,21 @@ func (h *handler) authorizedNodes(ctx context.Context, accountID, userID string)
 	if err != nil {
 		return nil, err
 	}
+	return h.nodesForPeers(peers)
+}
+
+// adminNodes is the node view for /nodes. Unlike authorizedNodes, it never
+// falls back to a member's own devices: GetAdminPeers returns only an
+// account-wide administrator's peers or a delegated admin's domain subtree.
+func (h *handler) adminNodes(ctx context.Context, accountID, userID string) ([]nodeResponse, error) {
+	peers, err := h.peers.GetAdminPeers(ctx, accountID, userID, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return h.nodesForPeers(peers)
+}
+
+func (h *handler) nodesForPeers(peers []*peer.Peer) ([]nodeResponse, error) {
 	result := make([]nodeResponse, 0, len(peers))
 	for _, p := range peers {
 		identity, err := h.nodes.Get(p.Key)

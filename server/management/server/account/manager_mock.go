@@ -602,6 +602,21 @@ func (mr *MockManagerMockRecorder) GetAccountSettings(ctx, accountID, userID int
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountSettings", reflect.TypeOf((*MockManager)(nil).GetAccountSettings), ctx, accountID, userID)
 }
 
+// GetAdminPeers mocks base method.
+func (m *MockManager) GetAdminPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*peer.Peer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAdminPeers", ctx, accountID, userID, nameFilter, ipFilter)
+	ret0, _ := ret[0].([]*peer.Peer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAdminPeers indicates an expected call of GetAdminPeers.
+func (mr *MockManagerMockRecorder) GetAdminPeers(ctx, accountID, userID, nameFilter, ipFilter interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdminPeers", reflect.TypeOf((*MockManager)(nil).GetAdminPeers), ctx, accountID, userID, nameFilter, ipFilter)
+}
+
 // GetAllGroups mocks base method.
 func (m *MockManager) GetAllGroups(ctx context.Context, accountID, userID string) ([]*types.Group, error) {
 	m.ctrl.T.Helper()

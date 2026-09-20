@@ -166,6 +166,19 @@ func (f fakePeers) GetPeers(_ context.Context, _, _, _, _ string) ([]*peer.Peer,
 	return f, nil
 }
 
+func (f fakePeers) GetAdminPeers(_ context.Context, _, _, _, _ string) ([]*peer.Peer, error) {
+	return f, nil
+}
+
+// deniedAdminPeers models a member with neither an account-wide peer grant
+// nor a mesh-domain delegation. It still exposes ordinary peer reads so the
+// test proves the /nodes route uses the stricter admin-only view.
+type deniedAdminPeers struct{ fakePeers }
+
+func (deniedAdminPeers) GetAdminPeers(context.Context, string, string, string, string) ([]*peer.Peer, error) {
+	return nil, status.NewPermissionDeniedError()
+}
+
 type fakeOwnDevices struct{ peers fakePeers }
 
 func (f fakeOwnDevices) GetPeers(_ context.Context, _, userID, _, _ string) ([]*peer.Peer, error) {
@@ -176,6 +189,10 @@ func (f fakeOwnDevices) GetPeers(_ context.Context, _, userID, _, _ string) ([]*
 		}
 	}
 	return owned, nil
+}
+
+func (f fakeOwnDevices) GetAdminPeers(_ context.Context, _, _, _, _ string) ([]*peer.Peer, error) {
+	return nil, status.NewPermissionDeniedError()
 }
 
 func (f fakeOwnDevices) UpdatePeer(_ context.Context, _, _ string, p *peer.Peer) (*peer.Peer, error) {
@@ -427,7 +444,7 @@ func TestGetNode_HidesNodesOutsideAuthorizedPeerSet(t *testing.T) {
 
 func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, router)
+	RegisterEndpoints(fakeNodes{}, deniedAdminPeers{}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, router)
 	req := httptest.NewRequest(http.MethodGet, "/karst/v1/nodes", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
@@ -439,18 +456,18 @@ func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
 // newly-added admin route therefore cannot silently become usable by Members.
 func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 	router := mux.NewRouter()
-	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}}, fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, router)
+	RegisterEndpoints(fakeNodes{"handle-a": {Handle: "handle-a"}}, fakeOwnDevices{peers: fakePeers{{ID: "peer-a", Key: "handle-a", Name: "mine", UserID: "user-a"}}}, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, router)
 	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		template, err := route.GetPathTemplate()
 		if err != nil || !strings.HasPrefix(template, "/karst/v1/") || strings.HasPrefix(template, "/karst/v1/me/") {
 			return nil
 		}
 		// Mesh-domain routes (ADR-0032), and device invitations for the same
-		// reason, are the same shape of exception as /me/: a domain-scoped
-		// delegated admin has no account-wide KarstControl grant, so they
-		// must not be blanket-rejected here. Their own scoped authorization
-		// is covered separately (setupkey_test.go, meshdomain/manager's own
-		// tests), not by this blanket, account-wide-only assertion.
+		// reason, are exceptions: a domain-scoped delegated admin has no
+		// account-wide KarstControl grant, so they must not be blanket-rejected
+		// here. /nodes is deliberately not exempt: GetAdminPeers is its scoped
+		// authorization boundary and fakeOwnDevices proves it rejects a regular
+		// member even when that member owns a device.
 		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
 			return nil
 		}
@@ -463,7 +480,13 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 				continue
 			}
 			path := strings.NewReplacer("{handle}", "handle-a", "{version}", "1", "{relayId}", "relay-a", "{turnId}", "turn-a").Replace(template)
-			req := httptest.NewRequest(method, path, strings.NewReader(`{}`))
+			body := `{}`
+			if method == http.MethodPatch && strings.HasPrefix(template, "/karst/v1/nodes/") {
+				// A syntactically valid node update reaches GetAdminPeers rather
+				// than being rejected by input validation first.
+				body = `{"name":"member-cannot-rename"}`
+			}
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, req)
