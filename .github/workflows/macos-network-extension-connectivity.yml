@@ -18,6 +18,11 @@ on:
         default: direct
         type: choice
         options: [direct, relay]
+      run_route_churn:
+        description: Also mutate and verify a subnet route on the physical lab
+        required: true
+        default: false
+        type: boolean
   schedule:
     - cron: '17 4 * * *'
 
@@ -84,16 +89,27 @@ jobs:
       - name: Verify the lab handoff
         env:
           KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
+          KARST_CI_ROUTE_CHURN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_route_churn || false }}
         run: |
           set -euo pipefail
           control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
           test -x "$control"
           env_file="$RUNNER_TEMP/karst-ne-lab.env"
-          sudo "$control" prepare --scenario "$KARST_CI_EXPECTED_TRANSPORT" --env-file "$env_file"
+          prepare_args=(prepare --scenario "$KARST_CI_EXPECTED_TRANSPORT" --env-file "$env_file")
+          if [[ "$KARST_CI_ROUTE_CHURN" == true ]]; then
+            prepare_args+=(--route-churn)
+          fi
+          sudo "$control" "${prepare_args[@]}"
           test "$(stat -f '%Lp' "$env_file")" -le 600
           while IFS= read -r line; do
             case "$line" in
               KARST_CI_INVITATION_FILE=*|KARST_CI_PROBE_URL=*|KARST_CI_UDP_HOST=*|KARST_CI_UDP_PORT=*)
+                export "$line"
+                echo "$line" >> "$GITHUB_ENV" ;;
+              KARST_CI_SUBNET_PROBE_URL=*|KARST_CI_SUBNET_ROUTE_PREFIX=*)
+                if [[ "$KARST_CI_ROUTE_CHURN" != true ]]; then
+                  echo "unexpected route-churn environment entry" >&2; exit 1
+                fi
                 export "$line"
                 echo "$line" >> "$GITHUB_ENV" ;;
               *) echo "unexpected lab environment entry" >&2; exit 1 ;;
@@ -108,6 +124,12 @@ jobs:
           test "$(stat -f '%Lp' "$KARST_CI_INVITATION_FILE")" -le 600
           case "$KARST_CI_PROBE_URL" in http://*|https://*) ;; *) exit 1;; esac
           case "$KARST_CI_UDP_PORT" in *[!0-9]*|'') exit 1;; esac
+          if [[ "$KARST_CI_ROUTE_CHURN" == true ]]; then
+            : "${KARST_CI_SUBNET_PROBE_URL:?lab bootstrap did not provide a subnet probe URL}"
+            : "${KARST_CI_SUBNET_ROUTE_PREFIX:?lab bootstrap did not provide a subnet route prefix}"
+            case "$KARST_CI_SUBNET_PROBE_URL" in http://*|https://*) ;; *) exit 1;; esac
+            case "$KARST_CI_SUBNET_ROUTE_PREFIX" in */*) ;; *) exit 1;; esac
+          fi
 
       - name: Build and install the signed test package
         run: |
@@ -126,6 +148,24 @@ jobs:
           "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-transport "$KARST_CI_EXPECTED_TRANSPORT" --timeout 90
+
+      - name: Reconcile a dynamic subnet route
+        if: github.event_name == 'workflow_dispatch' && inputs.run_route_churn
+        run: |
+          set -euo pipefail
+          control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
+          harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
+          sudo "$control" mutate --route subnet --state add
+          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
+            --expect-route "$KARST_CI_SUBNET_ROUTE_PREFIX" --expect-route-state present --timeout 30
+          bytes="$(curl --fail --silent --show-error --noproxy '*' --max-time 30 --output /dev/null \
+            --write-out '%{size_download}' "$KARST_CI_SUBNET_PROBE_URL")"
+          test "$bytes" -ge 65536
+          sudo "$control" mutate --route subnet --state remove
+          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
+            --expect-route "$KARST_CI_SUBNET_ROUTE_PREFIX" --expect-route-state absent --timeout 30
 
       - name: Collect redacted diagnostics
         if: always()

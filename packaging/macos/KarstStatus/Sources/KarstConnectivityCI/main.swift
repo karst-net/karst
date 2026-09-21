@@ -24,6 +24,8 @@ private struct Arguments {
     let udpPort: UInt16
     let providerBundleIdentifier: String
     let expectedTransport: String?
+    let expectedRoute: String?
+    let expectedRouteState: Bool
     let timeout: TimeInterval
 
     init() throws {
@@ -33,6 +35,8 @@ private struct Arguments {
         var udpPort: UInt16?
         var providerBundleIdentifier = defaultProviderBundleIdentifier
         var expectedTransport: String?
+        var expectedRoute: String?
+        var expectedRouteState = true
         var timeout: TimeInterval = 90
         var iterator = Array(CommandLine.arguments.dropFirst()).makeIterator()
         while let argument = iterator.next() {
@@ -43,6 +47,13 @@ private struct Arguments {
             case "--udp-port": udpPort = UInt16(iterator.next() ?? "")
             case "--provider-bundle-id": providerBundleIdentifier = iterator.next() ?? providerBundleIdentifier
             case "--expect-transport": expectedTransport = iterator.next()
+            case "--expect-route": expectedRoute = iterator.next()
+            case "--expect-route-state":
+                switch iterator.next() {
+                case "present": expectedRouteState = true
+                case "absent": expectedRouteState = false
+                default: throw Failure("--expect-route-state must be present or absent")
+                }
             case "--timeout": timeout = TimeInterval(iterator.next() ?? "") ?? timeout
             default: throw Failure("unknown argument \(argument)")
             }
@@ -55,12 +66,17 @@ private struct Arguments {
         guard expectedTransport == nil || ["direct", "relay"].contains(expectedTransport) else {
             throw Failure("--expect-transport must be direct or relay")
         }
+        guard expectedRoute == nil || expectedRoute!.contains("/") else {
+            throw Failure("--expect-route must be a CIDR")
+        }
         self.invitationFile = URL(fileURLWithPath: invitationPath)
         self.probeURL = probeURL
         self.udpHost = udpHost
         self.udpPort = udpPort
         self.providerBundleIdentifier = providerBundleIdentifier
         self.expectedTransport = expectedTransport
+        self.expectedRoute = expectedRoute
+        self.expectedRouteState = expectedRouteState
         self.timeout = timeout
     }
 }
@@ -145,6 +161,30 @@ private func waitForEstablishedPeer(
     throw Failure("no\(description) before timeout")
 }
 
+/// Wait for the engine to report a route offer in the requested state. The
+/// route list is the same live `statusJson` body the provider turns into
+/// `NEPacketTunnelNetworkSettings`; this check intentionally does not enroll,
+/// restart, or otherwise perturb the already-running tunnel between a lab
+/// control-plane mutation and the subsequent application traffic probe.
+private func waitForRoute(
+    _ session: NETunnelProviderSession,
+    route: String,
+    expectedPresent: Bool,
+    deadline: Date
+) throws {
+    while Date() < deadline {
+        let status = try providerMessage(session, ["verb": "status"], timeout: 10)
+        let routes = (((status["control"] as? [String: Any])?["routing"] as? [String: Any])?["routes"] as? [[String: Any]]) ?? []
+        let present = routes.contains { candidate in
+            candidate["prefix"] as? String == route && candidate["active"] as? Bool == true
+        }
+        if present == expectedPresent { return }
+        Thread.sleep(forTimeInterval: 1)
+    }
+    let state = expectedPresent ? "active" : "withdrawn"
+    throw Failure("route \(route) was not \(state) before timeout")
+}
+
 private func fetchProbe(_ url: URL, timeout: TimeInterval) throws -> Int {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = timeout
@@ -214,6 +254,17 @@ do {
     let vpnManager = try manager(providerBundleIdentifier: arguments.providerBundleIdentifier, deadline: deadline)
     guard let session = vpnManager.connection as? NETunnelProviderSession else {
         throw Failure("Karst configuration does not expose an NETunnelProviderSession")
+    }
+    if let expectedRoute = arguments.expectedRoute {
+        try waitForRoute(
+            session,
+            route: expectedRoute,
+            expectedPresent: arguments.expectedRouteState,
+            deadline: deadline
+        )
+        let state = arguments.expectedRouteState ? "present" : "absent"
+        print("{\"result\":\"ok\",\"route\":\"\(expectedRoute)\",\"route_state\":\"\(state)\"}")
+        exit(0)
     }
     _ = try providerMessage(session, ["verb": "enroll", "invitation": invitation], timeout: arguments.timeout)
     switch session.status {

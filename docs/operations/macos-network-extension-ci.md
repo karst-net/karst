@@ -31,6 +31,19 @@ It writes a mode-0600 environment file containing only:
   fixture.
 - `KARST_CI_UDP_HOST` and `KARST_CI_UDP_PORT` — overlay UDP echo endpoint.
 
+For a manual `run_route_churn=true` dispatch, `prepare` additionally receives
+`--route-churn` and returns exactly these two extra, non-secret entries:
+
+- `KARST_CI_SUBNET_PROBE_URL` — a 64 KiB HTTP fixture inside the initially
+  withdrawn subnet.
+- `KARST_CI_SUBNET_ROUTE_PREFIX` — its offered CIDR.
+
+The runner controller must keep that fixture available, while
+`mutate --route subnet --state add|remove` changes the disposable control
+plane. The workflow waits for the extension’s live route status after each
+mutation and performs HTTP traffic after the add. Both mutations must be
+idempotent.
+
 The workflow copies those non-secret paths/endpoints into its job environment,
 then deletes the file. The invitation itself never enters GitHub variables or
 logs. The `macos-network-extension-lab` Environment must hold the signing identity,
@@ -65,3 +78,13 @@ candidate while leaving the disposable relay reachable. The harness checks the
 peer's live `transport` value *and* carries the TCP and UDP probes, so a status
 display alone cannot satisfy either scenario. Reset the peer and create a fresh
 invitation between the direct and relay runs.
+
+## Route-churn scenario
+
+Use the manual `run_route_churn=true` dispatch after direct connectivity is
+stable. It adds a subnet route, waits for the provider’s embedded engine to
+report the active offer, fetches at least 64 KiB through the newly routed
+subnet without a proxy, then removes the offer and waits for the status to
+show withdrawal. This is separate from the scheduled direct run until the lab
+controller implements the mutation contract and repeated hardware runs
+establish its reliability.
