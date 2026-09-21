@@ -18,6 +18,11 @@ on:
         default: direct
         type: choice
         options: [direct, relay]
+      run_exit_route:
+        description: Activate and withdraw a disposable exit route on the physical lab
+        required: true
+        default: false
+        type: boolean
       run_route_churn:
         description: Also mutate and verify a subnet route on the physical lab
         required: true
@@ -90,6 +95,7 @@ jobs:
         env:
           KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
           KARST_CI_ROUTE_CHURN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_route_churn || false }}
+          KARST_CI_EXIT_ROUTE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_exit_route || false }}
         run: |
           set -euo pipefail
           control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
@@ -98,6 +104,9 @@ jobs:
           prepare_args=(prepare --scenario "$KARST_CI_EXPECTED_TRANSPORT" --env-file "$env_file")
           if [[ "$KARST_CI_ROUTE_CHURN" == true ]]; then
             prepare_args+=(--route-churn)
+          fi
+          if [[ "$KARST_CI_EXIT_ROUTE" == true ]]; then
+            prepare_args+=(--exit-route)
           fi
           sudo "$control" "${prepare_args[@]}"
           ./scripts/macos-network-extension-lab-handoff.sh "$env_file"
@@ -137,6 +146,29 @@ jobs:
           "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_SUBNET_ROUTE_PREFIX" --expect-route-state absent --timeout 30
+
+      - name: Reconcile an exit route without looping control traffic
+        if: github.event_name == 'workflow_dispatch' && inputs.run_exit_route
+        run: |
+          set -euo pipefail
+          control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
+          harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
+          sudo "$control" mutate --route exit --state active
+          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
+            --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state present --timeout 30
+          bytes="$(curl --fail --silent --show-error --noproxy '*' --max-time 30 --output /dev/null \
+            --write-out '%{size_download}' "$KARST_CI_EXIT_PROBE_URL")"
+          test "$bytes" -ge 65536
+          native_interface() { /sbin/route -n get "$1" | awk '/interface:/{print $2; exit}'; }
+          test "$(native_interface "$KARST_CI_CONTROL_PLANE_HOST")" = "$KARST_CI_CONTROL_PLANE_INTERFACE"
+          test "$(native_interface "$KARST_CI_RELAY_HOST")" = "$KARST_CI_RELAY_INTERFACE"
+          curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_CONTROL_PLANE_PROBE_URL"
+          curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_RELAY_PROBE_URL"
+          sudo "$control" mutate --route exit --state withdrawn
+          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
+            --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state absent --timeout 30
 
       - name: Collect redacted diagnostics
         if: always()

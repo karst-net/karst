@@ -91,3 +91,18 @@ subnet without a proxy, then removes the offer and waits for the status to
 show withdrawal. This is separate from the scheduled direct run until the lab
 controller implements the mutation contract and repeated hardware runs
 establish its reliability.
+
+## Exit-route scenario
+
+Use the manual `run_exit_route=true` dispatch only after direct connectivity is
+stable. `prepare --exit-route` must additionally supply a 64 KiB
+`KARST_CI_EXIT_PROBE_URL`, `KARST_CI_EXIT_ROUTE_PREFIX`, and control-plane and
+relay probe URL, host, and expected native-interface triples:
+`KARST_CI_CONTROL_PLANE_{PROBE_URL,HOST,INTERFACE}` and
+`KARST_CI_RELAY_{PROBE_URL,HOST,INTERFACE}`. The exit probe must be reachable
+only through the disposable exit. After `mutate --route exit --state active`,
+the job verifies the active default route, transfers the exit probe with no
+proxy, verifies both control/relay hosts still select their supplied native
+interfaces and remain reachable, then withdraws the route and waits for live
+status to report its absence. The controller must make both exit mutations
+idempotent.
