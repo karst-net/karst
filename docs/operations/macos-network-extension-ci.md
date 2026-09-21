@@ -52,3 +52,12 @@ Keep the workflow opt-in until the lab has passed repeated dispatch runs. Set
 `KARST_MACOS_NE_LAB_ENABLED=true` only after that, enabling the nightly run.
 Promote it to a required, path-filtered PR gate after its flake rate and reset
 behavior are understood.
+
+## Transport scenarios
+
+The scheduled run verifies the direct path. Run a second manual dispatch with
+`expected_transport=relay` only after the lab bootstrap has prevented a direct
+candidate while leaving the disposable relay reachable. The harness checks the
+peer's live `transport` value *and* carries the TCP and UDP probes, so a status
+display alone cannot satisfy either scenario. Reset the peer and create a fresh
+invitation between the direct and relay runs.

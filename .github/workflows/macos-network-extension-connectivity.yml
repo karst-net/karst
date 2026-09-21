@@ -12,6 +12,12 @@ on:
         required: true
         default: false
         type: boolean
+      expected_transport:
+        description: Path the isolated lab has prepared for the peer traffic
+        required: true
+        default: direct
+        type: choice
+        options: [direct, relay]
   schedule:
     - cron: '17 4 * * *'
 
@@ -105,13 +111,14 @@ jobs:
           KARST_CI_PROBE_URL: ${{ vars.KARST_CI_PROBE_URL }}
           KARST_CI_UDP_HOST: ${{ vars.KARST_CI_UDP_HOST }}
           KARST_CI_UDP_PORT: ${{ vars.KARST_CI_UDP_PORT }}
+          KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
         run: |
           set -euo pipefail
           (cd packaging/macos/KarstStatus && swift build -c release --product KarstConnectivityCI)
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
           "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
-            --expect-transport direct --timeout 90
+            --expect-transport "$KARST_CI_EXPECTED_TRANSPORT" --timeout 90
 
       - name: Collect redacted diagnostics
         if: always()
