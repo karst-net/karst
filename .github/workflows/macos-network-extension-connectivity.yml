@@ -83,12 +83,23 @@ jobs:
 
       - name: Verify the lab handoff
         env:
-          KARST_CI_INVITATION_FILE: ${{ vars.KARST_CI_INVITATION_FILE }}
-          KARST_CI_PROBE_URL: ${{ vars.KARST_CI_PROBE_URL }}
-          KARST_CI_UDP_HOST: ${{ vars.KARST_CI_UDP_HOST }}
-          KARST_CI_UDP_PORT: ${{ vars.KARST_CI_UDP_PORT }}
+          KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
         run: |
           set -euo pipefail
+          control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
+          test -x "$control"
+          env_file="$RUNNER_TEMP/karst-ne-lab.env"
+          sudo "$control" prepare --scenario "$KARST_CI_EXPECTED_TRANSPORT" --env-file "$env_file"
+          test "$(stat -f '%Lp' "$env_file")" -le 600
+          while IFS= read -r line; do
+            case "$line" in
+              KARST_CI_INVITATION_FILE=*|KARST_CI_PROBE_URL=*|KARST_CI_UDP_HOST=*|KARST_CI_UDP_PORT=*)
+                export "$line"
+                echo "$line" >> "$GITHUB_ENV" ;;
+              *) echo "unexpected lab environment entry" >&2; exit 1 ;;
+            esac
+          done < "$env_file"
+          rm -f "$env_file"
           : "${KARST_CI_INVITATION_FILE:?lab bootstrap did not provide an invitation file}"
           : "${KARST_CI_PROBE_URL:?lab bootstrap did not provide an overlay probe URL}"
           : "${KARST_CI_UDP_HOST:?lab bootstrap did not provide an overlay UDP host}"
@@ -107,10 +118,6 @@ jobs:
 
       - name: Enroll, connect, and carry overlay traffic
         env:
-          KARST_CI_INVITATION_FILE: ${{ vars.KARST_CI_INVITATION_FILE }}
-          KARST_CI_PROBE_URL: ${{ vars.KARST_CI_PROBE_URL }}
-          KARST_CI_UDP_HOST: ${{ vars.KARST_CI_UDP_HOST }}
-          KARST_CI_UDP_PORT: ${{ vars.KARST_CI_UDP_PORT }}
           KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
         run: |
           set -euo pipefail

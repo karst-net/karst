@@ -16,20 +16,24 @@ relay, and peer service on an isolated network. The Mac needs a persistent
 console-user session and MDM pre-approval for Karst's System Extension. Do
 not use a GitHub-hosted macOS VM for this gate.
 
-Before each run, the lab bootstrap must create a fresh, single-use invitation
-and 64 KiB HTTP plus UDP-echo fixtures reachable only at the enrolled peer's
+Before each run, the root-owned runner-local control program
+`/usr/local/libexec/karst-ne-lab` must accept `prepare --scenario direct|relay
+--env-file PATH`. It must create a fresh, single-use invitation and 64 KiB
+HTTP plus UDP-echo fixtures reachable only at the enrolled peer's
 overlay address. The initial scenario must leave the peers able to establish a
 direct path; the harness rejects a merely-established relay path. It writes
 the invitation to a mode-0600 file owned by the runner,
 deletes it after the run, and resets the Mac's test account or APFS snapshot.
-The bootstrap publishes only these protected GitHub Environment variables:
+It writes a mode-0600 environment file containing only:
 
 - `KARST_CI_INVITATION_FILE` — absolute path to the fresh invitation file.
 - `KARST_CI_PROBE_URL` — `http` or `https` URL at the overlay peer's 64 KiB
   fixture.
 - `KARST_CI_UDP_HOST` and `KARST_CI_UDP_PORT` — overlay UDP echo endpoint.
 
-The `macos-network-extension-lab` Environment must hold the signing identity,
+The workflow copies those non-secret paths/endpoints into its job environment,
+then deletes the file. The invitation itself never enters GitHub variables or
+logs. The `macos-network-extension-lab` Environment must hold the signing identity,
 installer identity, and both provisioning profiles. Before adding them, give
 that Environment an approval/branch policy that admits only trusted `main`
 and manually dispatched runs; it must not be available to fork pull requests.
