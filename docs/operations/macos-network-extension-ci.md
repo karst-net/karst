@@ -44,6 +44,9 @@ plane. The workflow waits for the extension’s live route status after each
 mutation and performs HTTP traffic after the add. Both mutations must be
 idempotent.
 
+The checked-in `scripts/macos-network-extension-lab-handoff.sh` is the sole
+parser for that handoff; its portable contract test exercises both ordinary
+and route-churn manifests, plus rejected unexpected entries.
 The workflow copies those non-secret paths/endpoints into its job environment,
 then deletes the file. The invitation itself never enters GitHub variables or
 logs. The `macos-network-extension-lab` Environment must hold the signing identity,

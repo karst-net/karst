@@ -97,6 +97,11 @@ let package = Package(
                 .linkedFramework("CoreFoundation"),
             ]
         ),
+        .testTarget(
+            name: "KarstPacketTunnelTests",
+            dependencies: ["KarstPacketTunnel"],
+            path: "Tests/KarstPacketTunnelTests"
+        ),
         .executableTarget(
             name: "KarstPacketTunnel",
             dependencies: ["KarstFFI"],

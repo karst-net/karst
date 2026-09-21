@@ -54,5 +54,5 @@ jobs:
           # whatever SDK version this runner's Xcode defaults to.
           MACOSX_DEPLOYMENT_TARGET: "13.0"
       - run: swift --version
-      - run: swift build
+      - run: swift test
         working-directory: packaging/macos/KarstPacketTunnel

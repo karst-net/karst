@@ -300,7 +300,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// can tell "nothing routing-relevant changed" from "something did"
     /// without giving `NEPacketTunnelNetworkSettings` an `Equatable`
     /// conformance Apple's own type does not have.
-    private static func routeSignature(fromStatusJSON json: String) -> String? {
+    static func routeSignature(fromStatusJSON json: String) -> String? {
         guard let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)) else {
             return nil
         }
@@ -390,7 +390,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// guarantee that exists today, not active blocking. DNS is left
     /// unset — `plans/phase-5/06-macos-client.md` §5's KarstDNS
     /// search-list gap is an already-accepted limitation.
-    private static func networkSettings(fromStatusJSON json: String) throws -> NEPacketTunnelNetworkSettings {
+    static func networkSettings(fromStatusJSON json: String) throws -> NEPacketTunnelNetworkSettings {
         let status = try JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8))
 
         var ipv4Addresses: [String] = []
@@ -480,16 +480,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `IpNet::to_string()` output (`bins/karstd/src/run.rs`) — always
     /// address-slash-prefix — so a `nil` here means genuinely malformed
     /// input, not a valid shape this just doesn't handle yet.
-    private static func splitCIDR(_ cidr: String) -> (address: String, prefixLength: Int)? {
+    static func splitCIDR(_ cidr: String) -> (address: String, prefixLength: Int)? {
         let parts = cidr.split(separator: "/", maxSplits: 1)
         guard parts.count == 2, let prefixLength = Int(parts[1]) else { return nil }
-        return (String(parts[0]), prefixLength)
+        let address = String(parts[0])
+        let maximumPrefixLength = address.contains(":") ? 128 : 32
+        guard (0...maximumPrefixLength).contains(prefixLength) else { return nil }
+        return (address, prefixLength)
     }
 
     /// `NEIPv4Settings.subnetMasks` wants dotted-decimal, not a prefix
     /// length — the conversion Apple's API has needed since before CIDR
     /// notation was how anything else here expresses a range.
-    private static func ipv4SubnetMask(prefixLength: Int) -> String {
+    static func ipv4SubnetMask(prefixLength: Int) -> String {
         let mask: UInt32 = prefixLength == 0 ? 0 : ~UInt32(0) << (32 - prefixLength)
         return [24, 16, 8, 0].map { String((mask >> $0) & 0xFF) }.joined(separator: ".")
     }
