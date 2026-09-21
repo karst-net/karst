@@ -305,6 +305,24 @@ find_identity() {
     | grep "$1" | head -1 | sed 's/.*"\(.*\)"/\1/'
 }
 
+# A Developer ID signature must carry a secure timestamp. The timestamp
+# authority is remote, so retry a transient runner or service failure without
+# weakening the signature with --timestamp=none.
+codesign_with_timestamp() {
+  local attempt=1
+  local maximum_attempts=3
+
+  while ! codesign --force --options runtime --timestamp "$@"; do
+    if [ "$attempt" -ge "$maximum_attempts" ]; then
+      echo "error: codesign could not obtain a secure timestamp after $attempt attempts" >&2
+      return 1
+    fi
+    echo "warning: codesign timestamp attempt $attempt failed; retrying" >&2
+    attempt=$((attempt + 1))
+    sleep 5
+  done
+}
+
 codesign_identity="${KARST_CODESIGN_IDENTITY:-$(find_identity 'Developer ID Application' codesigning || true)}"
 installer_identity="${KARST_INSTALLER_IDENTITY:-$(find_identity 'Developer ID Installer' basic || true)}"
 
@@ -329,7 +347,7 @@ if [ -n "$codesign_identity" ]; then
   # `--entitlements` grant would never take effect (Apple's own signing
   # order requirement, not a Karst convention).
   echo "==> codesign KarstPacketTunnel.systemextension"
-  codesign --force --options runtime --timestamp \
+  codesign_with_timestamp \
     --entitlements "$root/packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements" \
     --sign "$codesign_identity" "$systemextension"
   codesign --verify --strict --verbose=2 "$systemextension"
@@ -347,7 +365,7 @@ if [ -n "$codesign_identity" ]; then
   # signature, and the extension's own nested signature (above) survives
   # being sealed into the outer one, the same as any other signed nested
   # bundle would.
-  codesign --force --options runtime --timestamp \
+  codesign_with_timestamp \
     --entitlements "$root/packaging/macos/Karst.entitlements" \
     --sign "$codesign_identity" "$app"
   codesign --verify --strict --verbose=2 "$app"
