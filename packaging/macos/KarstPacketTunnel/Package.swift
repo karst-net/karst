@@ -10,14 +10,12 @@
 //
 // Written the same way packaging/macos/KarstStatus originally was: on a
 // Linux machine with no Xcode and no macOS to develop against directly,
-// reviewed line by line against real Darwin/NetworkExtension API signatures
-// (checked against Apple's published documentation this session, not
-// recalled alone), not typed against a compiler. Whether it compiles is
-// unknown until .github/workflows/macos-packettunnel-swift-build.yml runs on
-// a real macos-14 runner. Runtime behavior is unverified at every level
-// beyond that — nothing has loaded this as a real System Extension or sent
-// it a provider message. See PacketTunnelProvider.swift for exactly which
-// calls are placeholders and why.
+// compiled by .github/workflows/macos-packettunnel-swift-build.yml on a real
+// macos-14 runner. A signed, activated extension has also completed its
+// enrollment/provider-message path on real hardware (#159). That does not
+// prove packet traffic: startTunnel, packetFlow fd adoption, and the route
+// settings must still carry real peer traffic on a physical device (#161).
+// See PacketTunnelProvider.swift for the current, narrower runtime boundary.
 //
 // macOS 13 (Ventura), matching packaging/macos/Distribution.xml's
 // <allowed-os-versions> floor and KarstStatus's own Package.swift.
