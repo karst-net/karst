@@ -206,8 +206,13 @@ mod tests {
             let mut s = TcpStream::connect(addr).expect("connect");
             let _ = s.write_all(&sent);
             let _ = s.flush();
-            // Read whatever the server said back, then let it close.
-            s.set_read_timeout(Some(Duration::from_millis(300))).ok();
+            // Read whatever the server said back, then let it close. On a
+            // loaded Windows hosted runner, the client worker can consume its
+            // former 300 ms budget before the accept-side test thread gets a
+            // time slice; that races the protocol reply rather than testing
+            // it. This remains bounded, but gives the peer a real scheduling
+            // interval on every supported platform.
+            s.set_read_timeout(Some(Duration::from_secs(2))).ok();
             let mut out = Vec::new();
             let mut buf = [0u8; 64];
             while let Ok(n) = s.read(&mut buf) {
