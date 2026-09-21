@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -534,6 +535,20 @@ func TestMemberPortalCanRenameAndRevokeOnlyOwnDevice(t *testing.T) {
 		router.ServeHTTP(response, req)
 		require.Equal(t, tc.want, response.Code, tc.method+" "+tc.path)
 	}
+}
+
+func TestMemberPortalRevokeAcceptsEscapedHandle(t *testing.T) {
+	handle := "base64/handle+="
+	device := &peer.Peer{ID: "mine", Key: handle, UserID: "user-a"}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{handle: {Handle: handle}}, fakeOwnDevices{peers: fakePeers{device}}, fakeOwnDevices{peers: fakePeers{device}}, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleUser}, nil, router)
+
+	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/me/devices/"+url.PathEscape(handle), nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
 }
 
 func TestMemberAccessExplainsCompiledDestinationWithRuleAndGroup(t *testing.T) {
