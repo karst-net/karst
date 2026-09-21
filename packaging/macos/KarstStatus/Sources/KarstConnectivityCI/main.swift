@@ -23,6 +23,7 @@ private struct Arguments {
     let udpHost: String
     let udpPort: UInt16
     let providerBundleIdentifier: String
+    let expectedTransport: String?
     let timeout: TimeInterval
 
     init() throws {
@@ -31,6 +32,7 @@ private struct Arguments {
         var udpHost: String?
         var udpPort: UInt16?
         var providerBundleIdentifier = defaultProviderBundleIdentifier
+        var expectedTransport: String?
         var timeout: TimeInterval = 90
         var iterator = Array(CommandLine.arguments.dropFirst()).makeIterator()
         while let argument = iterator.next() {
@@ -40,20 +42,25 @@ private struct Arguments {
             case "--udp-host": udpHost = iterator.next()
             case "--udp-port": udpPort = UInt16(iterator.next() ?? "")
             case "--provider-bundle-id": providerBundleIdentifier = iterator.next() ?? providerBundleIdentifier
+            case "--expect-transport": expectedTransport = iterator.next()
             case "--timeout": timeout = TimeInterval(iterator.next() ?? "") ?? timeout
             default: throw Failure("unknown argument \(argument)")
             }
         }
         guard let invitationPath, let probeURLText, let probeURL = URL(string: probeURLText),
               let udpHost, let udpPort else {
-            throw Failure("usage: KarstConnectivityCI --invitation-file PATH --probe-url URL --udp-host HOST --udp-port PORT [--timeout SECONDS]")
+            throw Failure("usage: KarstConnectivityCI --invitation-file PATH --probe-url URL --udp-host HOST --udp-port PORT [--expect-transport direct|relay] [--timeout SECONDS]")
         }
         guard timeout > 0 else { throw Failure("--timeout must be positive") }
+        guard expectedTransport == nil || ["direct", "relay"].contains(expectedTransport) else {
+            throw Failure("--expect-transport must be direct or relay")
+        }
         self.invitationFile = URL(fileURLWithPath: invitationPath)
         self.probeURL = probeURL
         self.udpHost = udpHost
         self.udpPort = udpPort
         self.providerBundleIdentifier = providerBundleIdentifier
+        self.expectedTransport = expectedTransport
         self.timeout = timeout
     }
 }
@@ -117,17 +124,25 @@ private func providerMessage(_ session: NETunnelProviderSession, _ object: [Stri
     return object
 }
 
-private func waitForEstablishedPeer(_ session: NETunnelProviderSession, deadline: Date) throws -> [String: Any] {
+private func waitForEstablishedPeer(
+    _ session: NETunnelProviderSession,
+    expectedTransport: String?,
+    deadline: Date
+) throws -> [String: Any] {
     while Date() < deadline {
         let status = try providerMessage(session, ["verb": "status"], timeout: 10)
         let peers = status["peers"] as? [[String: Any]] ?? []
-        if !((status["interface"] as? String) ?? "").isEmpty,
-           peers.contains(where: { $0["established"] as? Bool == true }) {
+        let matchingPeer = peers.contains { peer in
+            peer["established"] as? Bool == true
+                && (expectedTransport == nil || peer["transport"] as? String == expectedTransport)
+        }
+        if !((status["interface"] as? String) ?? "").isEmpty, matchingPeer {
             return status
         }
         Thread.sleep(forTimeInterval: 1)
     }
-    throw Failure("no established peer before timeout")
+    let description = expectedTransport.map { " established \($0) peer" } ?? " established peer"
+    throw Failure("no\(description) before timeout")
 }
 
 private func fetchProbe(_ url: URL, timeout: TimeInterval) throws -> Int {
@@ -207,11 +222,16 @@ do {
     default:
         try session.startVPNTunnel()
     }
-    let status = try waitForEstablishedPeer(session, deadline: deadline)
+    let status = try waitForEstablishedPeer(
+        session,
+        expectedTransport: arguments.expectedTransport,
+        deadline: deadline
+    )
     let bytes = try fetchProbe(arguments.probeURL, timeout: min(30, arguments.timeout))
     let udpBytes = try probeUDP(host: arguments.udpHost, port: arguments.udpPort, timeout: min(30, arguments.timeout))
     let peerCount = (status["peers"] as? [[String: Any]] ?? []).count
-    print("{\"result\":\"ok\",\"established_peers\":\(peerCount),\"tcp_probe_bytes\":\(bytes),\"udp_probe_bytes\":\(udpBytes)}")
+    let expectedTransport = arguments.expectedTransport.map { "\"\($0)\"" } ?? "null"
+    print("{\"result\":\"ok\",\"expected_transport\":\(expectedTransport),\"established_peers\":\(peerCount),\"tcp_probe_bytes\":\(bytes),\"udp_probe_bytes\":\(udpBytes)}")
 } catch {
     fputs("KarstConnectivityCI: \(error)\n", stderr)
     exit(1)

@@ -18,7 +18,9 @@ not use a GitHub-hosted macOS VM for this gate.
 
 Before each run, the lab bootstrap must create a fresh, single-use invitation
 and 64 KiB HTTP plus UDP-echo fixtures reachable only at the enrolled peer's
-overlay address. It writes the invitation to a mode-0600 file owned by the runner,
+overlay address. The initial scenario must leave the peers able to establish a
+direct path; the harness rejects a merely-established relay path. It writes
+the invitation to a mode-0600 file owned by the runner,
 deletes it after the run, and resets the Mac's test account or APFS snapshot.
 The bootstrap publishes only these protected GitHub Environment variables:
 
@@ -41,7 +43,7 @@ has been admitted.
 The CI-only `KarstConnectivityCI` executable is a separate SwiftPM target and
 is never included in `Karst.app`. It uses the saved
 `NETunnelProviderManager` to send the fresh invitation, starts a disconnected
-session, waits for an interface and established peer, then fetches at least
+session, waits for an interface and a peer with the requested transport, then fetches at least
 64 KiB over TCP and verifies a UDP echo through the peer's overlay address.
 It emits only counts and status;
 logs and artifacts redact invitations.

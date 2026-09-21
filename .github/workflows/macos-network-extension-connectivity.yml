@@ -110,7 +110,8 @@ jobs:
           (cd packaging/macos/KarstStatus && swift build -c release --product KarstConnectivityCI)
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
           "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
-            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" --timeout 90
+            --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
+            --expect-transport direct --timeout 90
 
       - name: Collect redacted diagnostics
         if: always()
