@@ -72,6 +72,19 @@ func (s *Store) Configuration(ctx context.Context, accountID string) (*Configura
 	return &c, nil
 }
 
+// EnabledAccounts returns the account IDs whose Bedrock mode is not ModeOff
+// — ADR-0033 §2, what a Fleet needs to decide which accounts get a running
+// Scheduler. Unordered: the caller reconciles against a set, not a list.
+func (s *Store) EnabledAccounts(ctx context.Context) ([]string, error) {
+	var ids []string
+	if err := s.db.WithContext(ctx).Model(&Configuration{}).
+		Where("mode <> ?", ModeOff).
+		Pluck("account_id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("bedrock: enabled accounts: %w", err)
+	}
+	return ids, nil
+}
+
 // SetMode requires an exact acknowledgment set when moving to enforcing.
 // Exactness matters: accepting a superset makes a stale console confirmation
 // appear valid after a new uncovered node joins; accepting a subset hides a

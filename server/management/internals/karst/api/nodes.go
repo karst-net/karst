@@ -2065,6 +2065,12 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 		cursor := strconv.Itoa(offset + limit)
 		next = cursor
 	}
+	// seq is the deployment-wide audit log's current sequence (ADR-0033's
+	// "Scoping note") — the log itself is not partitioned by account, so
+	// entries_since_anchor below is a deployment-wide count wherever it's
+	// derived from seq, not this account's own activity alone. Named
+	// explicitly rather than left implicit, since it reads as per-account at
+	// the call sites below.
 	seq, _, headErr := h.audit.Head(r.Context())
 	if headErr != nil && !errors.Is(headErr, audit.ErrEmpty) {
 		util.WriteError(r.Context(), headErr, w)

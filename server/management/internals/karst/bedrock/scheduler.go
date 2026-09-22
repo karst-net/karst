@@ -58,10 +58,10 @@ func endSpan(span oteltrace.Span, err error) {
 // Scheduler periodically anchors one account's audit log with a locally held
 // AnchorKey, when AnchorDue says it is time.
 //
-// One account, not every account with Bedrock enabled: Karst's server-side
-// account model is single-tenant per deployment in the intended use (PLAN.md
-// §0), and a scheduler wired to a specific accountID is the honest shape of
-// that rather than a multi-account loop nothing self-hosted needs yet.
+// One account per Scheduler, deliberately — a deployment with more than one
+// account with Bedrock enabled runs one Scheduler per account, managed by
+// Fleet (ADR-0033 §2), rather than teaching this type about multiple
+// accounts itself.
 type Scheduler struct {
 	Log       *Log
 	Audit     AuditHead

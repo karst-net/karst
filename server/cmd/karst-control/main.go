@@ -43,7 +43,6 @@ import (
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/telemetry"
-	"github.com/netbirdio/netbird/shared/auth"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -206,7 +205,7 @@ func main() {
 		}
 		startRosterRefresher(ctx, k)
 		writeBootstrapKey(ctx, s.AccountManager())
-		startBedrockAnchorScheduler(ctx, k, s.AccountManager())
+		startBedrockAnchorScheduler(ctx, k)
 		return s
 	})
 
@@ -303,11 +302,21 @@ func writeBootstrapKey(ctx context.Context, accounts account.Manager) {
 // **Fatal on a bad key, quiet forever after that.** An operator who set the
 // path meant this key to sign; a seed that will not load is a configuration
 // mistake worth stopping on, the same call startRosterRefresher makes. Once
-// loaded, though, the key not yet being in the chain's anchor list is not a
-// mistake — it is the ordinary gap between starting the server and running
-// the root ceremony that enables it — so the scheduler itself only logs
-// that, once, and keeps ticking.
-func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst, accounts account.Manager) {
+// loaded, though, a given account's key not yet being in that account's
+// chain anchor list is not a mistake — it is the ordinary gap between an
+// account enabling Bedrock and running the root ceremony that enables it —
+// so each account's scheduler only logs that once, and keeps ticking.
+//
+// One shared key drives every account's scheduler — ADR-0033 §2 — via
+// bedrock.Fleet, which starts and stops a Scheduler per account as
+// bedrock.Configuration.Mode changes, with no restart needed. There used to
+// be exactly one account resolved here, once, at startup; any account past
+// the first got no anchoring at all. See ADR-0033's "Scoping note" for what
+// this does and does not fix: what an anchor commits to
+// (bootstrap.Karst.Audit) is still one audit log shared by the whole
+// deployment, not partitioned per account — a materially larger, explicitly
+// deferred change tracked separately.
+func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst) {
 	path := os.Getenv(karstBedrockAnchorKeyEnv)
 	if path == "" {
 		return
@@ -338,24 +347,11 @@ func startBedrockAnchorScheduler(ctx context.Context, k *bootstrap.Karst, accoun
 		minEntries = parsed
 	}
 
-	// Single-account mode's resolution, the same one MintBootstrapKey uses:
-	// an empty domain with any user ID routes to the one account a
-	// self-hosted deployment has. See enroll.go's comment on why that is
-	// also correct for a multi-account deployment, which routes an unknown
-	// user to a fresh account of their own rather than this one.
-	accountID, _, err := accounts.GetAccountIDFromUserAuth(ctx, auth.UserAuth{UserId: bootstrap.BootstrapUserID})
-	if err != nil {
-		log.Fatalf("karst: %s: resolve account: %v", karstBedrockAnchorKeyEnv, err)
-	}
-
-	s := &bedrock.Scheduler{
-		Log: k.Chain, Audit: k.Audit, AccountID: accountID, Key: key,
-		MinEntries: minEntries, MaxAge: maxAge, Metrics: k.Chain.Metrics,
-	}
-	log.Infof("karst: bedrock anchor scheduler enabled for %s: checking every %s, "+
-		"anchoring after %d entries or %s, whichever comes first",
-		accountID, karstBedrockAnchorPollInterval, minEntries, maxAge)
-	go s.Run(ctx, karstBedrockAnchorPollInterval)
+	fleet := bedrock.NewFleet(k.Chain, k.Audit, key, minEntries, maxAge, k.Chain.Metrics, k.Store)
+	log.Infof("karst: bedrock anchor scheduler fleet enabled: checking every %s for accounts with "+
+		"Bedrock enabled, anchoring each after %d entries or %s, whichever comes first",
+		karstBedrockAnchorPollInterval, minEntries, maxAge)
+	go fleet.Run(ctx, karstBedrockAnchorPollInterval, karstBedrockAnchorPollInterval)
 }
 
 // loadRelays reads the relay registry a node is told about — §4.2.

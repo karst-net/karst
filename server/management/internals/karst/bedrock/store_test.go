@@ -103,3 +103,25 @@ func TestASubstitutedKeyCountsAsUncovered(t *testing.T) {
 func TestUncoveredWithNoLogIsEveryone(t *testing.T) {
 	require.Equal(t, []string{"node-a", "node-b"}, bedrock.UncoveredAt(nil, enrolled(), 1000))
 }
+
+// EnabledAccounts is what bedrock.Fleet reconciles against (ADR-0033 §2) —
+// only accounts whose mode is not ModeOff, regardless of which non-off mode.
+func TestEnabledAccountsExcludesOffAndIncludesEveryOtherMode(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	// account-off never leaves the default ModeOff FirstOrCreate sets.
+	_, err := store.Configuration(ctx, "account-off")
+	require.NoError(t, err)
+
+	_, err = store.SetMode(ctx, "account-advisory", bedrock.ModeAdvisory, nil, nil, nil, 1000)
+	require.NoError(t, err)
+
+	state := &bedrock.State{Covered: map[string]bedrock.NodeCoverage{}, Revoked: map[string]int64{}}
+	_, err = store.SetMode(ctx, "account-enforcing", bedrock.ModeEnforcing, nil, state, nil, 1000)
+	require.NoError(t, err)
+
+	got, err := store.EnabledAccounts(ctx)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"account-advisory", "account-enforcing"}, got)
+}
