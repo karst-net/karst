@@ -642,6 +642,14 @@ impl Client {
     /// # Errors
     ///
     /// [`Error::Server`] if the server refuses or cannot be reached.
+    ///
+    /// GitHub issue #170: one of the three client-side spans — the direct
+    /// counterpart of `karst-control`'s own `karst.control.session_handshake`
+    /// span (`docs/observability.md` §2), from this node's vantage point.
+    /// Fires fast and does no I/O on the overwhelmingly common tick where a
+    /// connection is already held open (`self.conn.is_some()` below); real
+    /// duration only shows up on an actual (re)connect.
+    #[tracing::instrument(skip_all, name = "karst.control.session_handshake")]
     async fn ensure_connected(&mut self) -> Result<(), Error> {
         if self.conn.is_some() {
             return Ok(());
@@ -1002,6 +1010,14 @@ impl Client {
         self.sessions = sessions;
     }
 
+    /// GitHub issue #170: the second of the three client-side spans — the
+    /// direct counterpart of `karst-control`'s own `karst.netmap.push` span,
+    /// covering the round trip and this node's local
+    /// [`Netmap::apply`](crate::netmap::Netmap::apply) in one span, the same
+    /// way the server's span and its `netmap.push.duration.ms` histogram
+    /// sample share one boundary so the two can never disagree about what
+    /// "the push" means.
+    #[tracing::instrument(skip_all, name = "karst.control.netmap_apply")]
     async fn fetch(&mut self, conn: &mut Connection) -> Result<Outcome, Error> {
         use prost::Message as _;
 
@@ -1208,6 +1224,9 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         userspace_publish: file.node.userspace_publish.clone(),
         nat64,
         metrics_listen: file.metrics.listen,
+        tracing_collector: file.tracing.collector,
+        tracing_collector_server_name: file.tracing.collector_server_name.clone(),
+        tracing_collector_pin_hex: file.tracing.collector_pin_hex.clone(),
         datapath_workers: file.node.datapath_workers,
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.

@@ -99,6 +99,7 @@ fn node(own: u8, peer: u8, own_range: &str, peer_range: &'static str) -> Node {
         relay_ca_file: None,
         prefer_quic_relay: false,
         metrics_listen: None,
+        tracing_collector: None,
         keys: keys(own),
         listen: "[::]:0".parse().expect("listen"),
         port_mapping: false,

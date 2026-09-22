@@ -86,6 +86,7 @@ fn config_for(
         relay_ca_file: None,
         prefer_quic_relay: false,
         metrics_listen: None,
+        tracing_collector: None,
         peers: vec![Peer {
             name: "peer".to_owned(),
             node_id: Vec::new(),

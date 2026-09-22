@@ -155,6 +155,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         relay_ca_file: None,
         prefer_quic_relay: false,
         metrics_listen: None,
+        tracing_collector: None,
         route_offers: Vec::new(),
         exit_node_state_file: None,
         keys: keys(own),
