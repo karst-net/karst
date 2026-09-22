@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -13,6 +14,8 @@ const (
 	InvalidNameServerType NameServerType = iota
 	// UDPNameServerType udp nameserver type
 	UDPNameServerType
+	// DoTNameServerType DNS-over-TLS (RFC 7858) nameserver type — ADR-0034.
+	DoTNameServerType
 )
 
 const (
@@ -22,6 +25,8 @@ const (
 	InvalidNameServerTypeString = "invalid"
 	// UDPNameServerTypeString udp nameserver type as string
 	UDPNameServerTypeString = "udp"
+	// DoTNameServerTypeString dot nameserver type as string
+	DoTNameServerTypeString = "dot"
 )
 
 // NameServerType nameserver type
@@ -32,6 +37,8 @@ func (n NameServerType) String() string {
 	switch n {
 	case UDPNameServerType:
 		return UDPNameServerTypeString
+	case DoTNameServerType:
+		return DoTNameServerTypeString
 	default:
 		return InvalidNameServerTypeString
 	}
@@ -42,6 +49,8 @@ func ToNameServerType(typeString string) NameServerType {
 	switch typeString {
 	case UDPNameServerTypeString:
 		return UDPNameServerType
+	case DoTNameServerTypeString:
+		return DoTNameServerType
 	default:
 		return InvalidNameServerType
 	}
@@ -80,6 +89,14 @@ type NameServer struct {
 	NSType NameServerType
 	// Port nameserver listening port
 	Port int
+	// TLSServerName is the SNI / certificate name checked for a DoT
+	// nameserver, distinct from IP — ADR-0034. Required when NSType is
+	// DoTNameServerType; unused otherwise.
+	TLSServerName string
+	// SPKIPin optionally pins a DoT nameserver's certificate: the SHA-256
+	// hash of its leaf certificate's SubjectPublicKeyInfo. Empty trusts the
+	// system CA store instead — ADR-0034's trust model.
+	SPKIPin []byte
 }
 
 // EventMeta returns activity event meta related to the nameserver group
@@ -90,9 +107,11 @@ func (g *NameServerGroup) EventMeta() map[string]any {
 // Copy copies a nameserver object
 func (n *NameServer) Copy() *NameServer {
 	return &NameServer{
-		IP:     n.IP,
-		NSType: n.NSType,
-		Port:   n.Port,
+		IP:            n.IP,
+		NSType:        n.NSType,
+		Port:          n.Port,
+		TLSServerName: n.TLSServerName,
+		SPKIPin:       append([]byte(nil), n.SPKIPin...),
 	}
 }
 
@@ -100,7 +119,9 @@ func (n *NameServer) Copy() *NameServer {
 func (n *NameServer) IsEqual(other *NameServer) bool {
 	return other.IP == n.IP &&
 		other.NSType == n.NSType &&
-		other.Port == n.Port
+		other.Port == n.Port &&
+		other.TLSServerName == n.TLSServerName &&
+		bytes.Equal(other.SPKIPin, n.SPKIPin)
 }
 
 // AddrPort returns the nameserver as a netip.AddrPort
@@ -152,7 +173,12 @@ func (g *NameServerGroup) Copy() *NameServerGroup {
 		SearchDomainsEnabled: g.SearchDomainsEnabled,
 	}
 
-	copy(nsGroup.NameServers, g.NameServers)
+	// Not a plain copy(): NameServer now carries SPKIPin, a byte slice, and
+	// copy() on a slice of structs only copies each struct's slice header —
+	// the caller's copy would still alias the original's pin bytes.
+	for i, ns := range g.NameServers {
+		nsGroup.NameServers[i] = *ns.Copy()
+	}
 	copy(nsGroup.Groups, g.Groups)
 	copy(nsGroup.Domains, g.Domains)
 

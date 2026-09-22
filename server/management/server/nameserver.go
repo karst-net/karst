@@ -269,6 +269,29 @@ func validateNSList(list []nbdns.NameServer) error {
 	if nsListLength == 0 || nsListLength > 3 {
 		return status.Errorf(status.InvalidArgument, "the list of nameservers should be 1 or 3, got %d", len(list))
 	}
+	for _, ns := range list {
+		if err := validateNS(ns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNS checks the fields a DoT nameserver requires — ADR-0034.
+// TLSServerName has no equivalent for a plain UDP entry, so it is required
+// only for DoT; SPKIPin is optional there too (an empty pin trusts the
+// system CA store) but must be a full SHA-256 hash when set at all.
+func validateNS(ns nbdns.NameServer) error {
+	if ns.NSType != nbdns.DoTNameServerType {
+		return nil
+	}
+	if ns.TLSServerName == "" {
+		return status.Errorf(status.InvalidArgument, "a dot nameserver requires a TLS server name")
+	}
+	if len(ns.SPKIPin) != 0 && len(ns.SPKIPin) != 32 {
+		return status.Errorf(status.InvalidArgument,
+			"a dot nameserver's SPKI pin must be a 32-byte SHA-256 hash, got %d bytes", len(ns.SPKIPin))
+	}
 	return nil
 }
 

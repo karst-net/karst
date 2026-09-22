@@ -1962,12 +1962,20 @@ components:
         ns_type:
           description: Nameserver Type
           type: string
-          enum: [ "udp" ]
+          enum: [ "udp", "dot" ]
           example: udp
         port:
           description: Nameserver Port
           type: integer
           example: 53
+        tls_server_name:
+          description: TLS server name (SNI / certificate name) for a "dot" nameserver, distinct from ip. Required when ns_type is "dot".
+          type: string
+          example: dns.example.com
+        spki_pin:
+          description: Optional SHA-256 hash of a "dot" nameserver's leaf certificate SubjectPublicKeyInfo, base64-encoded. Omitted trusts the system CA store instead.
+          type: string
+          format: byte
       required:
         - ip
         - ns_type
