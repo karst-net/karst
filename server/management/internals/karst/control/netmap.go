@@ -869,10 +869,20 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	for _, domain := range dns.GetSearchDomains() {
 		writeField(h, []byte(domain))
 	}
+	// Structured upstreams — ADR-0034. An old netmap never populates this
+	// field, so an empty list here writes zero bytes and every version
+	// computed before it existed still hashes identically, the same
+	// backward-compatibility property dst_cidrs established above.
+	for _, upstream := range dns.GetUpstreams() {
+		writeDNSUpstream(h, upstream)
+	}
 	for _, route := range dns.GetRoutes() {
 		writeField(h, []byte(route.GetMatchDomain()))
 		for _, resolver := range route.GetResolvers() {
 			writeField(h, []byte(resolver))
+		}
+		for _, upstream := range route.GetUpstreams() {
+			writeDNSUpstream(h, upstream)
 		}
 	}
 	// The Bedrock head, so a server that advances its log cannot answer
@@ -907,6 +917,17 @@ func writePorts(h hash.Hash, ports []*proto.KarstPortRange) {
 		binary.BigEndian.PutUint32(pr[4:], p.GetLast())
 		writeField(h, pr[:])
 	}
+}
+
+// writeDNSUpstream hashes one structured resolver — ADR-0034. Shared by
+// KarstDNSConfig.upstreams and KarstDNSRoute.upstreams.
+func writeDNSUpstream(h hash.Hash, upstream *proto.KarstDNSUpstream) {
+	writeField(h, []byte(upstream.GetAddress()))
+	var t [4]byte
+	binary.BigEndian.PutUint32(t[:], uint32(upstream.GetTransport()))
+	h.Write(t[:])
+	writeField(h, []byte(upstream.GetTlsServerName()))
+	writeField(h, upstream.GetSpkiPin())
 }
 
 func writeField(h hash.Hash, field []byte) {

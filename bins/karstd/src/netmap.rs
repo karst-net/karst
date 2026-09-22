@@ -31,8 +31,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use karst_control_client::netmap::{
-    netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, FilterRuleView,
-    NetmapContent, PeerEntry, RelayView,
+    netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, DNSUpstreamView,
+    FilterRuleView, NetmapContent, PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -52,12 +52,72 @@ pub struct DNSConfig {
     pub routes: Vec<DNSRoute>,
     pub zone: String,
     pub magic_dns: bool,
+    /// Structured global upstreams, additive alongside `nameservers` —
+    /// ADR-0034.
+    pub upstreams: Vec<DNSUpstream>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DNSRoute {
     pub match_domain: String,
     pub resolvers: Vec<String>,
+    /// Structured route-scoped upstreams, additive alongside `resolvers` —
+    /// see [`DNSConfig::upstreams`].
+    pub upstreams: Vec<DNSUpstream>,
+}
+
+/// How a query reaches a [`DNSUpstream`] — ADR-0034, the wire's
+/// `KarstDNSTransport` enum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DNSTransport {
+    #[default]
+    Plain,
+    Dot,
+}
+
+impl DNSTransport {
+    fn from_wire(v: i32) -> Self {
+        if v == 1 {
+            Self::Dot
+        } else {
+            Self::Plain
+        }
+    }
+
+    fn as_wire(self) -> i32 {
+        i32::from(matches!(self, Self::Dot))
+    }
+}
+
+/// One structured resolver — ADR-0034. Unparsed at this layer, matching
+/// [`DNSRoute::resolvers`]'s existing not-yet-a-`SocketAddr` convention:
+/// parsing into a validated `karst_dns::Upstream` happens in `dns.rs`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DNSUpstream {
+    pub address: String,
+    pub transport: DNSTransport,
+    pub tls_server_name: String,
+    pub spki_pin: Vec<u8>,
+}
+
+impl DNSUpstream {
+    fn from_wire(upstream: pb::KarstDnsUpstream) -> Self {
+        Self {
+            address: upstream.address,
+            transport: DNSTransport::from_wire(upstream.transport),
+            tls_server_name: upstream.tls_server_name,
+            spki_pin: upstream.spki_pin,
+        }
+    }
+
+    fn to_wire(&self) -> pb::KarstDnsUpstream {
+        pb::KarstDnsUpstream {
+            address: self.address.clone(),
+            transport: self.transport.as_wire(),
+            tls_server_name: self.tls_server_name.clone(),
+            spki_pin: self.spki_pin.clone(),
+        }
+    }
 }
 
 /// The tip of the Bedrock log the server reported — `bedrock-v1.md` §5.
@@ -134,10 +194,20 @@ impl DNSConfig {
                 .map(|route| DNSRoute {
                     match_domain: route.match_domain,
                     resolvers: route.resolvers,
+                    upstreams: route
+                        .upstreams
+                        .into_iter()
+                        .map(DNSUpstream::from_wire)
+                        .collect(),
                 })
                 .collect(),
             zone: config.zone,
             magic_dns: config.magic_dns,
+            upstreams: config
+                .upstreams
+                .into_iter()
+                .map(DNSUpstream::from_wire)
+                .collect(),
         }
     }
 
@@ -151,10 +221,12 @@ impl DNSConfig {
                 .map(|route| pb::KarstDnsRoute {
                     match_domain: route.match_domain.clone(),
                     resolvers: route.resolvers.clone(),
+                    upstreams: route.upstreams.iter().map(DNSUpstream::to_wire).collect(),
                 })
                 .collect(),
             zone: self.zone.clone(),
             magic_dns: self.magic_dns,
+            upstreams: self.upstreams.iter().map(DNSUpstream::to_wire).collect(),
         }
     }
 }
@@ -716,6 +788,18 @@ fn port_pairs_of<T: HasPorts>(rules: &[T]) -> Vec<Vec<(u32, u32)>> {
         .collect()
 }
 
+fn dns_upstream_views(upstreams: &[DNSUpstream]) -> Vec<DNSUpstreamView<'_>> {
+    upstreams
+        .iter()
+        .map(|u| DNSUpstreamView {
+            address: &u.address,
+            transport: u32::from(matches!(u.transport, DNSTransport::Dot)),
+            tls_server_name: &u.tls_server_name,
+            spki_pin: &u.spki_pin,
+        })
+        .collect()
+}
+
 impl Netmap {
     /// A node that holds nothing.
     #[must_use]
@@ -899,6 +983,11 @@ impl Netmap {
     /// in `karst_control_client` beside the digest and is pinned by
     /// `spec/vectors/karst-control-v1.json`.
     #[must_use]
+    // One view struct built per hashed field, so length tracks the netmap
+    // schema directly rather than any avoidable complexity — same shape as
+    // `netmap_version` itself, which stays under the threshold only by
+    // whichever field was added last.
+    #[allow(clippy::too_many_lines)]
     pub fn content_version(&self) -> u64 {
         // `NetmapContent` borrows, and deliberately has no field for the PSK
         // bytes — they are not in the struct to be passed by mistake.
@@ -963,13 +1052,22 @@ impl Netmap {
             .iter()
             .map(crate::route_offer::Offer::view)
             .collect();
+        let dns_upstreams = dns_upstream_views(&self.dns_config.upstreams);
+        let route_upstreams: Vec<Vec<DNSUpstreamView<'_>>> = self
+            .dns_config
+            .routes
+            .iter()
+            .map(|route| dns_upstream_views(&route.upstreams))
+            .collect();
         let dns_routes: Vec<DNSRouteView<'_>> = self
             .dns_config
             .routes
             .iter()
-            .map(|route| DNSRouteView {
+            .zip(route_upstreams.iter())
+            .map(|(route, upstreams)| DNSRouteView {
                 match_domain: &route.match_domain,
                 resolvers: &route.resolvers,
+                upstreams,
             })
             .collect();
 
@@ -989,6 +1087,7 @@ impl Netmap {
                 nameservers: &self.dns_config.nameservers,
                 search_domains: &self.dns_config.search_domains,
                 routes: &dns_routes,
+                upstreams: &dns_upstreams,
                 zone: &self.dns_config.zone,
                 magic_dns: self.dns_config.magic_dns,
             },
@@ -1572,6 +1671,7 @@ mod tests {
             nameservers: vec!["1.1.1.1:53".to_owned()],
             search_domains: vec![],
             routes: vec![],
+            upstreams: vec![],
         });
         with.apply(sealed(response, &with)).expect("apply");
         assert_ne!(without.version, with.version);
