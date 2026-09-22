@@ -627,9 +627,13 @@ KARST_RELAY_ROSTER_FILE=/etc/karst/roster.toml
 KARST_RELAY_REGISTRY_FILE=/etc/karst/relays.json
 # Absent means an empty filter, which is DEFAULT DENY.
 KARST_POLICY_FILE=/etc/karst/policy.json
-# Scopes relay forwarding. One value for a single-tenant deployment; it is what
-# stops a relay becoming a message bus between any two keys it has heard of.
-KARST_AQUIFER=default
+# Each node's relay-forwarding scope (§5.4) is derived from its own account
+# automatically (ADR-0033) -- this stops a relay becoming a message bus
+# between any two keys it has heard of, including across accounts, with no
+# operator action required. Leave KARST_AQUIFER unset; it is now only an
+# optional prefix for an operator running more than one karst-control
+# deployment against a shared relay pool.
+KARST_AQUIFER=
 # The first enrollment key, minted at startup and written here (§8.1). Without
 # it, a deployment with no identity provider can enroll nothing at all.
 KARST_BOOTSTRAP_SETUP_KEY_FILE=/var/lib/karst/bootstrap.key

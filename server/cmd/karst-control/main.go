@@ -62,7 +62,13 @@ const karstPolicyEnv = "KARST_POLICY_FILE"
 // membership changed, because the relay's admission lease is refreshed by the
 // file's modification time and expires after ninety seconds.
 const (
-	karstRosterFileEnv     = "KARST_RELAY_ROSTER_FILE"
+	karstRosterFileEnv = "KARST_RELAY_ROSTER_FILE"
+	// karstRosterAquiferEnv is an optional deployment-wide prefix, not a
+	// required fixed aquifer value — ADR-0033. Each node's real aquifer is
+	// derived from its own account (roster.NodeSource), which is what scopes
+	// forwarding per tenant instead of resting on an operator's promise that
+	// a shared relay only ever serves one account. Unset is fine and common:
+	// bare account IDs are already unique per deployment.
 	karstRosterAquiferEnv  = "KARST_AQUIFER"
 	karstRosterIntervalEnv = "KARST_RELAY_ROSTER_INTERVAL"
 )
@@ -229,10 +235,10 @@ func startRosterRefresher(ctx context.Context, k *bootstrap.Karst) {
 		}
 		interval = parsed
 	}
-	r, err := roster.New(k.Nodes, roster.Config{
-		Path:     path,
-		Aquifer:  os.Getenv(karstRosterAquiferEnv),
-		Interval: interval,
+	r, err := roster.New(roster.NodeSource{Nodes: k.Nodes}, roster.Config{
+		Path:          path,
+		AquiferPrefix: os.Getenv(karstRosterAquiferEnv),
+		Interval:      interval,
 	}, log.Warnf)
 	if err != nil {
 		log.Fatalf("karst: relay roster: %v", err)

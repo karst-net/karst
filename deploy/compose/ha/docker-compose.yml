@@ -29,11 +29,12 @@ services:
       KARST_REPLICA_ID: ${KARST_REPLICA_ID:?stable unique host ID}
       KARST_HA_NOTIFY_CHANNEL: ${KARST_HA_NOTIFY_CHANNEL:-karst_ha}
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
-      # main.go's roster refresher fatals at startup without an aquifer name
-      # (§5.4) the moment KARST_RELAY_ROSTER_FILE is set — found by actually
-      # starting this overlay's control service, which the checked-in file
-      # never had before this fix, and crash-looped unconditionally.
-      KARST_AQUIFER: ${KARST_AQUIFER:-default}
+      # Optional deployment-namespace prefix on top of the per-account
+      # aquifer ADR-0033 now derives automatically (§5.4) — unset is fine.
+      # Previously a required fixed value the roster refresher fatalled
+      # without at startup; that requirement is gone now that the aquifer
+      # boundary is per-account rather than per-deployment.
+      KARST_AQUIFER: ${KARST_AQUIFER:-}
       KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
       KARST_POLICY_FILE: /var/lib/karst/policy.json
       # Unset (the default) means no bootstrap key is ever minted on this

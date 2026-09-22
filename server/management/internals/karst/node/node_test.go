@@ -483,3 +483,118 @@ func TestHandleMatchesTheSpecifiedConstruction(t *testing.T) {
 		t.Fatal("handle is a bare hash: the domain label is not being used")
 	}
 }
+
+// withPeersTable creates a minimal stand-in for the forked server's `peers`
+// table on the same database a Store already holds — just the two columns
+// AccountsByHandle actually reads. A raw table rather than the real
+// nbpeer.Peer model: what is under test is the join, not the upstream
+// schema, and a hand-rolled table keeps this package's tests from taking on
+// the whole account/peer model as a dependency.
+func withPeersTable(t *testing.T, db *gorm.DB, rows map[string]string) {
+	t.Helper()
+	if err := db.Exec("DROP TABLE IF EXISTS peers").Error; err != nil {
+		t.Fatalf("drop peers: %v", err)
+	}
+	if err := db.Exec("CREATE TABLE peers (key TEXT, account_id TEXT)").Error; err != nil {
+		t.Fatalf("create peers: %v", err)
+	}
+	for key, accountID := range rows {
+		if err := db.Exec("INSERT INTO peers (key, account_id) VALUES (?, ?)", key, accountID).Error; err != nil {
+			t.Fatalf("insert peer: %v", err)
+		}
+	}
+}
+
+// storeWithDB is newStore, but also hands back the underlying *gorm.DB so a
+// test can set up a peers table alongside it — ADR-0033.
+func storeWithDB(t *testing.T) (*node.Store, *gorm.DB) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_node_identities").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	s, err := node.NewStore(db)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	return s, db
+}
+
+func TestAccountsByHandleJoinsAgainstThePeersTable(t *testing.T) {
+	s, db := storeWithDB(t)
+	withPeersTable(t, db, map[string]string{
+		"handle-a": "acct-1",
+		"handle-b": "acct-2",
+	})
+
+	got, err := s.AccountsByHandle([]string{"handle-a", "handle-b"})
+	if err != nil {
+		t.Fatalf("accounts by handle: %v", err)
+	}
+	want := map[string]string{"handle-a": "acct-1", "handle-b": "acct-2"}
+	if len(got) != len(want) || got["handle-a"] != "acct-1" || got["handle-b"] != "acct-2" {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A handle with no live peer -- its peer row was deleted, or it was never
+// created -- must be simply absent, not present with an empty string. The
+// roster renderer's own skip logic (ADR-0033) depends on "absent" and "empty
+// string" being distinguishable at this layer... but since Go's zero value
+// for a missing map key is also "", the real contract this pins is narrower
+// and just as important: an untracked handle must not silently acquire some
+// *other* handle's account.
+func TestAccountsByHandleOmitsHandlesWithNoLivePeer(t *testing.T) {
+	s, db := storeWithDB(t)
+	withPeersTable(t, db, map[string]string{"handle-a": "acct-1"})
+
+	got, err := s.AccountsByHandle([]string{"handle-a", "handle-orphaned"})
+	if err != nil {
+		t.Fatalf("accounts by handle: %v", err)
+	}
+	if _, present := got["handle-orphaned"]; present {
+		t.Fatalf("an untracked handle got an account entry: %v", got)
+	}
+	if got["handle-a"] != "acct-1" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestAccountsByHandleWithNoPeersTableReturnsEmpty(t *testing.T) {
+	// A database with no peers table at all (a fixture, or bootstrap running
+	// out of order) must not error the roster renderer out of existence --
+	// see roster.Once's own comment on why a failure here is worse than an
+	// empty result.
+	//
+	// Explicitly dropped rather than relying on a fresh database: this
+	// package's tests share one process-wide sqlite cache (newStore's own
+	// comment), so an earlier test's withPeersTable call would otherwise
+	// leak a table into this one regardless of source order.
+	s, db := storeWithDB(t)
+	if err := db.Exec("DROP TABLE IF EXISTS peers").Error; err != nil {
+		t.Fatalf("drop peers: %v", err)
+	}
+	got, err := s.AccountsByHandle([]string{"handle-a"})
+	if err != nil {
+		t.Fatalf("accounts by handle: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+func TestAccountsByHandleWithNoHandlesDoesNotQuery(t *testing.T) {
+	s := newStore(t)
+	got, err := s.AccountsByHandle(nil)
+	if err != nil {
+		t.Fatalf("accounts by handle: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}

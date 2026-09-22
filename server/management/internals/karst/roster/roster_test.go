@@ -31,17 +31,25 @@ func key(seed byte) []byte {
 }
 
 type fixed struct {
-	rows []node.Identity
+	rows []Entry
 	err  error
 }
 
-func (f fixed) All() ([]node.Identity, error) { return f.rows, f.err }
+func (f fixed) All() ([]Entry, error) { return f.rows, f.err }
+
+// entry is a small constructor for tests that don't care about account
+// scoping — it exists so most tests read the way they did before ADR-0033
+// added AccountID, rather than spelling out Entry{Identity: ..., ...} inline
+// throughout this file.
+func entry(handle string, pub []byte, accountID string) Entry {
+	return Entry{Identity: node.Identity{Handle: handle, PublicKey: pub}, AccountID: accountID}
+}
 
 func TestRenderIsTheFormatTheRelayParses(t *testing.T) {
-	out := string(Render([]node.Identity{
-		{Handle: "b", PublicKey: key(2)},
-		{Handle: "a", PublicKey: key(1)},
-	}, "t1"))
+	out := string(Render([]Entry{
+		entry("b", key(2), "t1"),
+		entry("a", key(1), "t1"),
+	}, ""))
 
 	// Field names are the relay's, not ours: bins/karst-relay/src/roster.rs
 	// deserializes `[[client]]` rows of `identity_pk` and `aquifer`. A
@@ -69,14 +77,14 @@ func TestRenderIsOrderedRegardlessOfInput(t *testing.T) {
 	// The relay reloads on any change and a shuffled file changes on every
 	// write, so unordered output would swap the admission table several times
 	// a minute for no reason.
-	forward := Render([]node.Identity{
-		{Handle: "a", PublicKey: key(1)},
-		{Handle: "b", PublicKey: key(2)},
-	}, "t1")
-	backward := Render([]node.Identity{
-		{Handle: "b", PublicKey: key(2)},
-		{Handle: "a", PublicKey: key(1)},
-	}, "t1")
+	forward := Render([]Entry{
+		entry("a", key(1), "t1"),
+		entry("b", key(2), "t1"),
+	}, "")
+	backward := Render([]Entry{
+		entry("b", key(2), "t1"),
+		entry("a", key(1), "t1"),
+	}, "")
 	if string(forward) != string(backward) {
 		t.Fatal("render depends on the order rows arrive in")
 	}
@@ -86,12 +94,46 @@ func TestARowWithNoKeyIsSkippedRatherThanEmitted(t *testing.T) {
 	// One unusable row must not take the rest of the deployment down with it:
 	// the relay rejects a file it cannot parse *in full* and then runs on its
 	// previous roster until the lease expires.
-	out := string(Render([]node.Identity{
-		{Handle: "a", PublicKey: nil},
-		{Handle: "b", PublicKey: key(2)},
-	}, "t1"))
+	out := string(Render([]Entry{
+		entry("a", nil, "t1"),
+		entry("b", key(2), "t1"),
+	}, ""))
 	if strings.Count(out, "[[client]]") != 1 {
 		t.Fatalf("want the one usable row, got:\n%s", out)
+	}
+}
+
+func TestARowWithNoAccountIsSkippedRatherThanEmitted(t *testing.T) {
+	// ADR-0033: an identity with no live peer owning it must not be admitted
+	// into some fallback aquifer — there is no safe value to place it in.
+	out := string(Render([]Entry{
+		entry("a", key(1), ""),
+		entry("b", key(2), "t1"),
+	}, ""))
+	if strings.Count(out, "[[client]]") != 1 {
+		t.Fatalf("want only the accounted-for row, got:\n%s", out)
+	}
+	if strings.Contains(out, base64.StdEncoding.EncodeToString(key(1))) {
+		t.Fatalf("the ownerless identity was admitted anyway:\n%s", out)
+	}
+}
+
+func TestEachAccountGetsItsOwnAquifer(t *testing.T) {
+	// The whole point of ADR-0033: two nodes in different accounts must not
+	// land in the same aquifer just because they share a relay.
+	out := string(Render([]Entry{
+		entry("a", key(1), "acct-1"),
+		entry("b", key(2), "acct-2"),
+	}, ""))
+	if !strings.Contains(out, "aquifer = \"acct-1\"") || !strings.Contains(out, "aquifer = \"acct-2\"") {
+		t.Fatalf("expected two distinct account-derived aquifers, got:\n%s", out)
+	}
+}
+
+func TestAquiferPrefixNamespacesTheAccountID(t *testing.T) {
+	out := string(Render([]Entry{entry("a", key(1), "acct-1")}, "dep1"))
+	if !strings.Contains(out, "aquifer = \"dep1:acct-1\"") {
+		t.Fatalf("expected a prefixed aquifer, got:\n%s", out)
 	}
 }
 
@@ -180,20 +222,20 @@ func TestNoPathMeansNoRefresher(t *testing.T) {
 	r.Run(context.Background())
 }
 
-func TestAnAquiferIsRequired(t *testing.T) {
-	// §5.4 scopes forwarding by aquifer. Defaulting it would put every node in
-	// one namespace silently, which is the multi-tenant failure this rule
-	// exists to prevent.
-	if _, err := New(fixed{}, Config{Path: "/tmp/x"}, nil); err == nil {
-		t.Fatal("an empty aquifer was accepted")
+func TestAnEmptyAquiferPrefixIsAccepted(t *testing.T) {
+	// ADR-0033: the aquifer is derived per-account now, so there is no longer
+	// a single fixed value the caller must supply — an empty prefix is the
+	// common case (a bare account ID), not a misconfiguration.
+	if _, err := New(fixed{}, Config{Path: "/tmp/x"}, nil); err != nil {
+		t.Fatalf("an empty aquifer prefix was rejected: %v", err)
 	}
 }
 
 func TestOnceWritesWhatTheSourceHas(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "roster.toml")
-	r, err := New(fixed{rows: []node.Identity{{Handle: "a", PublicKey: key(7)}}},
-		Config{Path: path, Aquifer: "t1"}, nil)
+	r, err := New(fixed{rows: []Entry{entry("a", key(7), "t1")}},
+		Config{Path: path}, nil)
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
@@ -213,7 +255,7 @@ func TestAFailingSourceIsReportedAndNotWritten(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "roster.toml")
 	r, err := New(fixed{err: errors.New("database is down")},
-		Config{Path: path, Aquifer: "t1"}, nil)
+		Config{Path: path}, nil)
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
@@ -237,7 +279,7 @@ func TestRunKeepsGoingAfterAFailure(t *testing.T) {
 	path := filepath.Join(dir, "roster.toml")
 	var logged int
 	r, err := New(fixed{err: errors.New("nope")},
-		Config{Path: path, Aquifer: "t1", Interval: time.Millisecond},
+		Config{Path: path, Interval: time.Millisecond},
 		func(string, ...any) { logged++ })
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -265,10 +307,10 @@ func TestRosterVector(t *testing.T) {
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..",
 		"spec", "vectors", "relay-roster-v1.toml")
 
-	encoded := Render([]node.Identity{
-		{Handle: "second", PublicKey: key(0x22)},
-		{Handle: "first", PublicKey: key(0x11)},
-	}, "vector-aquifer")
+	encoded := Render([]Entry{
+		entry("second", key(0x22), "vector-aquifer"),
+		entry("first", key(0x11), "vector-aquifer"),
+	}, "")
 
 	if os.Getenv("UPDATE_VECTORS") == "1" {
 		if err := os.WriteFile(path, encoded, 0o644); err != nil {
