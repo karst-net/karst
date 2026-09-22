@@ -439,6 +439,49 @@
         "packet_filter": null,
         "egress_filter": null,
         "relays": null,
+        "routes": null,
+        "dns": {
+          "routes": [
+            {
+              "match_domain": "internal.example",
+              "resolvers": [],
+              "upstreams": [
+                {
+                  "address": "100.64.0.53:853",
+                  "transport": 1,
+                  "tls_server_name": "resolver.internal"
+                }
+              ]
+            }
+          ],
+          "zone": "aquifer.karst.",
+          "magic_dns": true,
+          "upstreams": [
+            {
+              "address": "1.1.1.1:853",
+              "transport": 1,
+              "tls_server_name": "cloudflare-dns.com",
+              "spki_pin": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef"
+            },
+            {
+              "address": "9.9.9.9:53"
+            }
+          ]
+        },
+        "bedrock": {},
+        "version": 16479505950656867587
+      },
+      {
+        "psk_epoch": 9,
+        "node_id": "6e6f64652d6f6e65",
+        "dns_name": "alpha",
+        "addresses": [
+          "100.64.0.1"
+        ],
+        "peers": null,
+        "packet_filter": null,
+        "egress_filter": null,
+        "relays": null,
         "routes": [
           {
             "route_id": "route-one",

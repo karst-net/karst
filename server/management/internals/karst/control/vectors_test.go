@@ -93,16 +93,27 @@ type versionBedrock struct {
 }
 
 type versionDNS struct {
-	Nameservers   []string          `json:"nameservers,omitempty"`
-	SearchDomains []string          `json:"search_domains,omitempty"`
-	Routes        []versionDNSRoute `json:"routes,omitempty"`
-	Zone          string            `json:"zone,omitempty"`
-	MagicDNS      bool              `json:"magic_dns,omitempty"`
+	Nameservers   []string             `json:"nameservers,omitempty"`
+	SearchDomains []string             `json:"search_domains,omitempty"`
+	Routes        []versionDNSRoute    `json:"routes,omitempty"`
+	Zone          string               `json:"zone,omitempty"`
+	MagicDNS      bool                 `json:"magic_dns,omitempty"`
+	Upstreams     []versionDNSUpstream `json:"upstreams,omitempty"`
 }
 
 type versionDNSRoute struct {
-	MatchDomain string   `json:"match_domain"`
-	Resolvers   []string `json:"resolvers"`
+	MatchDomain string               `json:"match_domain"`
+	Resolvers   []string             `json:"resolvers"`
+	Upstreams   []versionDNSUpstream `json:"upstreams,omitempty"`
+}
+
+// versionDNSUpstream is one structured resolver as the version hash sees it —
+// ADR-0034. Shared by KarstDNSConfig.upstreams and KarstDNSRoute.upstreams.
+type versionDNSUpstream struct {
+	Address       string `json:"address"`
+	Transport     uint32 `json:"transport,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
+	SPKIPin       string `json:"spki_pin,omitempty"`
 }
 
 // versionRelay is the relay registry as the version hash sees it.
@@ -242,6 +253,17 @@ func relayFor(address, serverName string, seed byte, region string) *proto.Karst
 		RelayId:       relayreg.RelayID(key),
 		IdentityKey:   key,
 		Region:        region,
+	}
+}
+
+// versionDNSUpstreamOf converts one wire KarstDNSUpstream into its vector
+// form. Shared by the top-level and route-scoped cases in the builder loop.
+func versionDNSUpstreamOf(upstream *proto.KarstDNSUpstream) versionDNSUpstream {
+	return versionDNSUpstream{
+		Address:       upstream.GetAddress(),
+		Transport:     uint32(upstream.GetTransport()),
+		TLSServerName: upstream.GetTlsServerName(),
+		SPKIPin:       hex.EncodeToString(upstream.GetSpkiPin()),
 	}
 }
 
@@ -590,6 +612,51 @@ func TestVectors(t *testing.T) {
 			},
 		},
 		{
+			// KarstDNSUpstream is the structured form ADR-0034 added for an
+			// encrypted (or explicitly plain) upstream that a bare address
+			// string cannot express: a TLS server name distinct from the
+			// connect address, and an optional pin. Two top-level entries pin
+			// the order they are folded in, the same reason "two relays"
+			// exists below; the route-scoped one exercises the identical
+			// shape nested a second time.
+			name: "a netmap with DoT upstreams",
+			resp: &proto.KarstNetmapResponse{
+				PskEpoch:  9,
+				NodeId:    []byte("node-one"),
+				DnsName:   "alpha",
+				Addresses: []string{"100.64.0.1"},
+				DnsConfig: &proto.KarstDNSConfig{
+					Zone:     "aquifer.karst.",
+					MagicDns: true,
+					Upstreams: []*proto.KarstDNSUpstream{
+						{
+							Address:       "1.1.1.1:853",
+							Transport:     proto.KarstDNSTransport_KARST_DNS_TRANSPORT_DOT,
+							TlsServerName: "cloudflare-dns.com",
+							SpkiPin:       pattern(32, 0xD0),
+						},
+						{
+							Address:   "9.9.9.9:53",
+							Transport: proto.KarstDNSTransport_KARST_DNS_TRANSPORT_PLAIN,
+						},
+					},
+					Routes: []*proto.KarstDNSRoute{{
+						MatchDomain: "internal.example",
+						// A DoT-only route names no plain resolvers at all —
+						// explicitly empty rather than nil, so the vector
+						// carries "[]" and not "null" for a field every
+						// other case leaves non-empty.
+						Resolvers: []string{},
+						Upstreams: []*proto.KarstDNSUpstream{{
+							Address:       "100.64.0.53:853",
+							Transport:     proto.KarstDNSTransport_KARST_DNS_TRANSPORT_DOT,
+							TlsServerName: "resolver.internal",
+						}},
+					}},
+				},
+			},
+		},
+		{
 			// One route with every non-default field. This pins the authenticated
 			// offer contract independently of protobuf encoding and catches either
 			// implementation omitting or reordering a field in the content hash.
@@ -778,9 +845,16 @@ func TestVectors(t *testing.T) {
 			})
 		}
 		for _, route := range tc.resp.GetDnsConfig().GetRoutes() {
-			vc.DNS.Routes = append(vc.DNS.Routes, versionDNSRoute{
+			vr := versionDNSRoute{
 				MatchDomain: route.GetMatchDomain(), Resolvers: route.GetResolvers(),
-			})
+			}
+			for _, upstream := range route.GetUpstreams() {
+				vr.Upstreams = append(vr.Upstreams, versionDNSUpstreamOf(upstream))
+			}
+			vc.DNS.Routes = append(vc.DNS.Routes, vr)
+		}
+		for _, upstream := range tc.resp.GetDnsConfig().GetUpstreams() {
+			vc.DNS.Upstreams = append(vc.DNS.Upstreams, versionDNSUpstreamOf(upstream))
 		}
 		vc.DNS.Nameservers = tc.resp.GetDnsConfig().GetNameservers()
 		vc.DNS.SearchDomains = tc.resp.GetDnsConfig().GetSearchDomains()

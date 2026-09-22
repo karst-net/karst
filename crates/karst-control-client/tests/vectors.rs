@@ -22,8 +22,8 @@ use karst_control_client::{
     channel::{derive_keys, hello_signing_input, init_signing_input, Record, KEY_LEN},
     handle::handle,
     netmap::{
-        netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, FilterRuleView,
-        NetmapContent, PeerEntry, RelayView, RouteView,
+        netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, DNSUpstreamView,
+        FilterRuleView, NetmapContent, PeerEntry, RelayView, RouteView,
     },
     psk::{pair, PSK_LEN},
 };
@@ -98,12 +98,28 @@ struct VersionDNS {
     zone: String,
     #[serde(default)]
     magic_dns: bool,
+    #[serde(default)]
+    upstreams: Vec<VersionDNSUpstream>,
+}
+
+/// One structured resolver as the version hash sees it — ADR-0034.
+#[derive(Deserialize, Debug, Clone, Default)]
+struct VersionDNSUpstream {
+    address: String,
+    #[serde(default)]
+    transport: u32,
+    #[serde(default)]
+    tls_server_name: String,
+    #[serde(default)]
+    spki_pin: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 struct VersionDNSRoute {
     match_domain: String,
     resolvers: Vec<String>,
+    #[serde(default)]
+    upstreams: Vec<VersionDNSUpstream>,
 }
 
 /// The relay registry, as the version hash sees it.
@@ -534,11 +550,51 @@ fn routes_of(c: &VersionCase) -> &[VersionRoute] {
     c.routes.as_deref().unwrap_or_default()
 }
 
-fn dns_config<'a>(c: &'a VersionCase, routes: &'a [DNSRouteView<'a>]) -> DNSConfigView<'a> {
+fn filter_views<'a>(
+    nodes: &'a [Vec<String>],
+    ports: &'a [Vec<(u32, u32)>],
+) -> Vec<FilterRuleView<'a>> {
+    nodes
+        .iter()
+        .zip(ports.iter())
+        .map(|(nodes, ports)| FilterRuleView {
+            nodes,
+            dst_cidrs: &[],
+            ports,
+        })
+        .collect()
+}
+
+fn upstream_pins(items: &[VersionDNSUpstream]) -> Vec<Vec<u8>> {
+    items.iter().map(|u| unhex(&u.spki_pin)).collect()
+}
+
+fn dns_upstreams<'a>(
+    items: &'a [VersionDNSUpstream],
+    pins: &'a [Vec<u8>],
+) -> Vec<DNSUpstreamView<'a>> {
+    items
+        .iter()
+        .zip(pins.iter())
+        .map(|(u, pin)| DNSUpstreamView {
+            address: &u.address,
+            transport: u.transport,
+            tls_server_name: &u.tls_server_name,
+            spki_pin: pin,
+        })
+        .collect()
+}
+
+fn dns_config<'a>(
+    c: &'a VersionCase,
+    routes: &'a [DNSRouteView<'a>],
+    upstreams: &'a [DNSUpstreamView<'a>],
+) -> DNSConfigView<'a> {
     DNSConfigView {
         nameservers: &c.dns.nameservers,
         search_domains: &c.dns.search_domains,
         routes,
+        upstreams,
         zone: &c.dns.zone,
         magic_dns: c.dns.magic_dns,
     }
@@ -568,34 +624,10 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         .collect();
     let inbound_nodes = rule_nodes(c.packet_filter.as_deref().unwrap_or_default());
     let outbound_nodes = rule_nodes(c.egress_filter.as_deref().unwrap_or_default());
-    let rules: Vec<FilterRuleView<'_>> = inbound_nodes
-        .iter()
-        .zip(held.ports.iter())
-        .map(|(nodes, ports)| FilterRuleView {
-            nodes,
-            dst_cidrs: &[],
-            ports,
-        })
-        .collect();
-    let egress: Vec<FilterRuleView<'_>> = outbound_nodes
-        .iter()
-        .zip(held.egress_ports.iter())
-        .map(|(nodes, ports)| FilterRuleView {
-            nodes,
-            dst_cidrs: &[],
-            ports,
-        })
-        .collect();
     let ssh_nodes = rule_nodes(c.ssh_filter.as_deref().unwrap_or_default());
-    let ssh: Vec<FilterRuleView<'_>> = ssh_nodes
-        .iter()
-        .zip(held.ssh_ports.iter())
-        .map(|(nodes, ports)| FilterRuleView {
-            nodes,
-            dst_cidrs: &[],
-            ports,
-        })
-        .collect();
+    let rules = filter_views(&inbound_nodes, &held.ports);
+    let egress = filter_views(&outbound_nodes, &held.egress_ports);
+    let ssh = filter_views(&ssh_nodes, &held.ssh_ports);
 
     let relays: Vec<RelayView<'_>> = relays_of(c)
         .iter()
@@ -628,13 +660,31 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         })
         .collect();
 
+    let config_upstream_pins = upstream_pins(&c.dns.upstreams);
+    let config_upstreams = dns_upstreams(&c.dns.upstreams, &config_upstream_pins);
+
+    let route_upstream_pins: Vec<Vec<Vec<u8>>> = c
+        .dns
+        .routes
+        .iter()
+        .map(|route| upstream_pins(&route.upstreams))
+        .collect();
+    let route_upstreams: Vec<Vec<DNSUpstreamView<'_>>> = c
+        .dns
+        .routes
+        .iter()
+        .zip(route_upstream_pins.iter())
+        .map(|(route, pins)| dns_upstreams(&route.upstreams, pins))
+        .collect();
     let dns_routes: Vec<DNSRouteView<'_>> = c
         .dns
         .routes
         .iter()
-        .map(|route| DNSRouteView {
+        .zip(route_upstreams.iter())
+        .map(|(route, upstreams)| DNSRouteView {
             match_domain: &route.match_domain,
             resolvers: &route.resolvers,
+            upstreams,
         })
         .collect();
 
@@ -652,7 +702,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         ssh_filter_present: c.ssh_filter_present,
         relays: &relays,
         routes: &routes,
-        dns: dns_config(c, &dns_routes),
+        dns: dns_config(c, &dns_routes, &config_upstreams),
         bedrock_head: bedrock_head(c, &bedrock_hash),
     })
 }

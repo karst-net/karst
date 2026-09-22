@@ -5729,9 +5729,11 @@ mod route_tests {
             routes: vec![crate::netmap::DNSRoute {
                 match_domain: "internal.example".to_owned(),
                 resolvers: vec!["100.64.0.2:53".to_owned()],
+                upstreams: vec![],
             }],
             zone: "aquifer.karst".to_owned(),
             magic_dns: true,
+            upstreams: vec![],
         };
         let report = dns_report(
             &cfg,
@@ -5774,9 +5776,11 @@ mod route_tests {
             routes: vec![crate::netmap::DNSRoute {
                 match_domain: "internal.example".to_owned(),
                 resolvers: vec!["100.64.0.53:53".to_owned()],
+                upstreams: vec![],
             }],
             zone: "aquifer.karst".to_owned(),
             magic_dns: true,
+            upstreams: vec![],
         };
         let authoritative = dns_query_report(&cfg, "atlas.aquifer.karst");
         assert!(authoritative.contains("path = \"authoritative\""));

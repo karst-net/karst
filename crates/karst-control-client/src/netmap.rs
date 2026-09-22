@@ -207,11 +207,24 @@ pub struct RouteView<'a> {
     pub role: u32,
 }
 
+/// One structured resolver, as the version hash sees it — ADR-0034. Shared by
+/// [`DNSConfigView::upstreams`] and [`DNSRouteView::upstreams`].
+#[derive(Debug, Default)]
+pub struct DNSUpstreamView<'a> {
+    pub address: &'a str,
+    /// The wire `KarstDNSTransport` enum's numeric value.
+    pub transport: u32,
+    pub tls_server_name: &'a str,
+    pub spki_pin: &'a [u8],
+}
+
 /// One split-DNS suffix and the mesh-reachable resolvers for it.
 #[derive(Debug, Default)]
 pub struct DNSRouteView<'a> {
     pub match_domain: &'a str,
     pub resolvers: &'a [String],
+    /// Structured upstreams, additive alongside `resolvers` — ADR-0034.
+    pub upstreams: &'a [DNSUpstreamView<'a>],
 }
 
 /// The DNS portion of a netmap, as the version hash sees it.
@@ -224,6 +237,9 @@ pub struct DNSConfigView<'a> {
     pub nameservers: &'a [String],
     pub search_domains: &'a [String],
     pub routes: &'a [DNSRouteView<'a>],
+    /// Structured global upstreams, additive alongside `nameservers` —
+    /// ADR-0034.
+    pub upstreams: &'a [DNSUpstreamView<'a>],
     pub zone: &'a str,
     pub magic_dns: bool,
 }
@@ -362,10 +378,21 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     for domain in content.dns.search_domains {
         push(&mut h, domain.as_bytes());
     }
+    // Structured upstreams — ADR-0034. An old netmap never populates this
+    // field, so an empty list here writes zero bytes and every version
+    // computed before it existed still hashes identically — the same
+    // backward-compatibility property `dst_cidrs` established for the
+    // egress filter above.
+    for upstream in content.dns.upstreams {
+        push_dns_upstream(&mut h, upstream);
+    }
     for route in content.dns.routes {
         push(&mut h, route.match_domain.as_bytes());
         for resolver in route.resolvers {
             push(&mut h, resolver.as_bytes());
+        }
+        for upstream in route.upstreams {
+            push_dns_upstream(&mut h, upstream);
         }
     }
     // The Bedrock head, so a server that advances its log cannot answer
@@ -403,6 +430,15 @@ fn push_rules(h: &mut Sha256, rules: &[FilterRuleView<'_>]) {
             push(h, &pr);
         }
     }
+}
+
+/// Hashes one structured resolver — ADR-0034. Shared by
+/// `DNSConfigView::upstreams` and `DNSRouteView::upstreams`.
+fn push_dns_upstream(h: &mut Sha256, upstream: &DNSUpstreamView<'_>) {
+    push(h, upstream.address.as_bytes());
+    h.update(upstream.transport.to_be_bytes());
+    push(h, upstream.tls_server_name.as_bytes());
+    push(h, upstream.spki_pin);
 }
 
 /// The leading 8 bytes of a digest, without slicing.
