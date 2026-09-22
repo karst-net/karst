@@ -41,10 +41,15 @@ services:
       # time and expires after 90 seconds, so without this the relay stops
       # admitting nodes a minute and a half after it starts (GitHub issue [#47](https://github.com/karst-net/karst/issues/47)).
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
-      # §5.4 scopes relay forwarding by aquifer. One value here, because this
-      # deployment is single-tenant; it is what stops a relay becoming a
-      # message bus between any two keys it has heard of.
-      KARST_AQUIFER: ${KARST_AQUIFER:-default}
+      # §5.4 scopes relay forwarding by aquifer. Each node's aquifer is now
+      # derived from its own account (ADR-0033), which is what actually stops
+      # a relay becoming a message bus between any two keys it has heard of
+      # once a deployment has more than one account. This variable is now
+      # only an optional deployment-namespace prefix on top of that — leave
+      # it unset unless you're running more than one karst-control
+      # deployment against a shared relay pool and want relay-side logs
+      # legible by deployment.
+      KARST_AQUIFER: ${KARST_AQUIFER:-}
       # Which relays every node is told about (§4.2). Without it the netmap
       # carries no relays and nodes that cannot connect directly cannot
       # connect at all — silently (GitHub issue [#48](https://github.com/karst-net/karst/issues/48)).

@@ -28,7 +28,9 @@ services:
     restart: unless-stopped
     environment:
       KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
-      KARST_AQUIFER: ${KARST_AQUIFER:-default}
+      # Optional deployment-namespace prefix on top of the per-account aquifer
+      # ADR-0033 now derives automatically — see deploy/compose/README.md.
+      KARST_AQUIFER: ${KARST_AQUIFER:-}
       KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
       KARST_POLICY_FILE: /var/lib/karst/policy.json
       KARST_BOOTSTRAP_SETUP_KEY_FILE: /var/lib/karst/bootstrap.key

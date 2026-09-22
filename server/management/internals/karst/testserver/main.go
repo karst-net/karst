@@ -37,9 +37,33 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
+
+// fixtureRosterSource stands in for roster.NodeSource, the same way
+// memoryAccount stands in for the real account manager: this binary's account
+// layer is a stub with no `peers` table for roster.NodeSource to join
+// against (see buildNetmapServer's own comment), so every identity this
+// fixture registers is placed under one fixed fixture account instead of a
+// real per-node account lookup — ADR-0033.
+type fixtureRosterSource struct {
+	nodes     *node.Store
+	accountID string
+}
+
+func (f fixtureRosterSource) All() ([]roster.Entry, error) {
+	identities, err := f.nodes.All()
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]roster.Entry, len(identities))
+	for i := range identities {
+		entries[i] = roster.Entry{Identity: identities[i], AccountID: f.accountID}
+	}
+	return entries, nil
+}
 
 type pins struct {
 	Address   string `json:"address"`
@@ -82,7 +106,8 @@ func main() {
 		// identities. Use the production refresher to admit them to its relay.
 		for i, arg := range os.Args {
 			if arg == "--roster" && i+1 < len(os.Args) {
-				refresher, err := roster.New(r.nodes, roster.Config{Path: os.Args[i+1], Aquifer: "fixture-account", Interval: time.Second}, log.Printf)
+				refresher, err := roster.New(fixtureRosterSource{nodes: r.nodes, accountID: "fixture-account"},
+					roster.Config{Path: os.Args[i+1], Interval: time.Second}, log.Printf)
 				if err != nil {
 					fail("roster fixture: %v", err)
 				}

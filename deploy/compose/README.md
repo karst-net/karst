@@ -122,7 +122,7 @@ PLAN.md §4.3.
 | `KARST_RELAY_PORT` | `443` | Host port for the relay; must match what nodes dial |
 | `KARST_RELAY_SERVER_NAME` | `relay.karst.local` | TLS name and certificate subject |
 | `KARST_CONTROL_PORT` | `33073` | Host port for the coordination server |
-| `KARST_AQUIFER` | `default` | Forwarding scope (§5.4) |
+| `KARST_AQUIFER` | *(unset)* | Optional deployment-namespace prefix on the per-account forwarding scope (§5.4, ADR-0033) — not required for isolation itself |
 | `KARST_REGION` | `default` | Relay region (§8, §9) |
 | `KARST_TURN_PORT` | `3478` | coturn's listening port, only relevant with `--turn` |
 

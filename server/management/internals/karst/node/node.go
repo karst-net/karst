@@ -436,6 +436,48 @@ func (s *Store) All() ([]Identity, error) {
 	return recs, nil
 }
 
+// AccountsByHandle returns the owning account ID for each of the given
+// handles that currently has a live peer — ADR-0033. A handle is looked up
+// by joining against the forked server's own `peers` table, on the same
+// column identity (`peers.key`) node.go's own package doc explains: a
+// handle *is* the value stored in `Peer.Key`.
+//
+// A handle absent from the result has no live peer right now — most often
+// because its peer was since deleted, orphaning the Karst-owned identity row
+// that outlives it. That is not "account unknown, guess a default"; the
+// caller (the roster renderer) must treat it as "this identity is not
+// currently enrolled anywhere" and admit it nowhere, which is exactly what
+// an identity with no live peer should get.
+func (s *Store) AccountsByHandle(handles []string) (map[string]string, error) {
+	if len(handles) == 0 {
+		return map[string]string{}, nil
+	}
+	if !s.db.Migrator().HasTable("peers") {
+		// Not an error: a database genuinely missing the peers table has no
+		// accounts to report, and the roster's own fail-safe is an empty
+		// roster (admits nobody), not a hard failure that takes the relay's
+		// admission down entirely over what may be a fixture or a bootstrap
+		// ordering quirk rather than real misconfiguration.
+		return map[string]string{}, nil
+	}
+	type row struct {
+		Key       string
+		AccountID string
+	}
+	var rows []row
+	if err := s.db.Table("peers").
+		Select("key, account_id").
+		Where("key IN ?", handles).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("node: accounts by handle: %w", err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.Key] = r.AccountID
+	}
+	return out, nil
+}
+
 // Lookup returns the stored public key for a handle, or ErrUnknownNode.
 func (s *Store) Lookup(handle string) ([]byte, error) {
 	var rec Identity

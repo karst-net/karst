@@ -57,26 +57,69 @@ const DefaultInterval = 25 * time.Second
 // rather than 0600: the relay must be able to read it as its own user.
 const FileMode os.FileMode = 0o640
 
-// Source is the set of enrolled identities to admit.
+// Entry is one enrolled identity together with the account it belongs to.
 //
-// An interface rather than *node.Store so this package can be tested without a
-// database, and so a future multi-tenant server can supply a filtered view
-// without this package learning what a tenant is.
+// AccountID is what makes an aquifer a real per-tenant boundary instead of a
+// single operator-fixed string (ADR-0033): Render places each entry in an
+// aquifer derived from its AccountID, not a value shared by the whole
+// roster. AccountID == "" means "no live peer owns this identity right now"
+// (see node.Store.AccountsByHandle) and Render skips such an entry — there
+// is no safe aquifer to place it in.
+type Entry struct {
+	node.Identity
+	AccountID string
+}
+
+// Source is the set of enrolled identities to admit, each paired with the
+// account that owns it.
+//
+// An interface rather than *node.Store so this package can be tested without
+// a database. NodeSource is the production implementation.
 type Source interface {
-	All() ([]node.Identity, error)
+	All() ([]Entry, error)
+}
+
+// NodeSource adapts a *node.Store into a Source, resolving each identity's
+// owning account by joining against the forked server's peers table
+// (node.Store.AccountsByHandle) — ADR-0033.
+type NodeSource struct {
+	Nodes *node.Store
+}
+
+// All implements Source.
+func (s NodeSource) All() ([]Entry, error) {
+	identities, err := s.Nodes.All()
+	if err != nil {
+		return nil, fmt.Errorf("roster: list identities: %w", err)
+	}
+	handles := make([]string, len(identities))
+	for i := range identities {
+		handles[i] = identities[i].Handle
+	}
+	accounts, err := s.Nodes.AccountsByHandle(handles)
+	if err != nil {
+		return nil, fmt.Errorf("roster: resolve accounts: %w", err)
+	}
+	entries := make([]Entry, len(identities))
+	for i := range identities {
+		entries[i] = Entry{Identity: identities[i], AccountID: accounts[identities[i].Handle]}
+	}
+	return entries, nil
 }
 
 // Config is what a co-located relay needs to be told.
 type Config struct {
 	// Path to the roster file. Empty disables the refresher entirely.
 	Path string
-	// Aquifer every node is placed in.
+	// AquiferPrefix optionally namespaces every derived aquifer value as
+	// "{prefix}:{account-id}" instead of a bare "{account-id}" (ADR-0033).
 	//
-	// Single-valued because the first deployment target is single-tenant
-	// (PLAN.md §0). §5.4 scopes forwarding per aquifer, so this is what stops
-	// a relay being a message bus between any two keys it has heard of; a
-	// multi-tenant server replaces this field rather than adding to it.
-	Aquifer string
+	// Meant for an operator running more than one karst-control deployment
+	// against a shared relay pool who wants relay-side logs legible by
+	// deployment — not required for tenant isolation itself, since account
+	// IDs are already unique per deployment. Empty (the common case) is
+	// fine and produces a bare account ID.
+	AquiferPrefix string
 	// Interval between rewrites. Zero means DefaultInterval.
 	Interval time.Duration
 }
@@ -99,9 +142,6 @@ func New(source Source, cfg Config, logf func(string, ...any)) (*Refresher, erro
 	}
 	if source == nil {
 		return nil, fmt.Errorf("roster: no identity source")
-	}
-	if cfg.Aquifer == "" {
-		return nil, fmt.Errorf("roster: an aquifer name is required; §5.4 scopes forwarding by it")
 	}
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
@@ -142,11 +182,11 @@ func (r *Refresher) Run(ctx context.Context) {
 
 // Once renders the current membership and replaces the file.
 func (r *Refresher) Once() error {
-	identities, err := r.source.All()
+	entries, err := r.source.All()
 	if err != nil {
 		return fmt.Errorf("roster: list identities: %w", err)
 	}
-	return WriteFile(r.cfg.Path, Render(identities, r.cfg.Aquifer))
+	return WriteFile(r.cfg.Path, Render(entries, r.cfg.AquiferPrefix))
 }
 
 // Render returns the TOML the relay parses.
@@ -154,9 +194,9 @@ func (r *Refresher) Once() error {
 // The format derives rather than repeats: an entry carries the identity key and
 // the aquifer, and the relay computes the node id from the key (§5.1). Writing
 // an id here as well would make a silent mismatch a typo away.
-func Render(identities []node.Identity, aquifer string) []byte {
-	sorted := make([]node.Identity, len(identities))
-	copy(sorted, identities)
+func Render(entries []Entry, aquiferPrefix string) []byte {
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Handle < sorted[j].Handle })
 
 	var b strings.Builder
@@ -172,13 +212,29 @@ func Render(identities []node.Identity, aquifer string) []byte {
 			// other node down with it.
 			continue
 		}
+		if sorted[i].AccountID == "" {
+			// No live peer owns this identity right now (ADR-0033) — most
+			// often an identity row that outlived its peer's deletion. There
+			// is no safe aquifer to place it in, and a deleted peer must not
+			// stay relay-admitted regardless of what a fallback value would
+			// have been.
+			continue
+		}
 		b.WriteString("\n[[client]]\nidentity_pk = \"")
 		b.WriteString(base64.StdEncoding.EncodeToString(sorted[i].PublicKey))
 		b.WriteString("\"\naquifer = \"")
-		b.WriteString(aquifer)
+		b.WriteString(aquiferValue(aquiferPrefix, sorted[i].AccountID))
 		b.WriteString("\"\n")
 	}
 	return []byte(b.String())
+}
+
+// aquiferValue derives the wire aquifer identity for an account — ADR-0033.
+func aquiferValue(prefix, accountID string) string {
+	if prefix == "" {
+		return accountID
+	}
+	return prefix + ":" + accountID
 }
 
 // WriteFile replaces path atomically.
