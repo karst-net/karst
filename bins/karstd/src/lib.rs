@@ -50,6 +50,7 @@ mod scratch;
 pub mod service_windows;
 pub mod setup;
 mod socks5;
+pub mod trace_export;
 pub mod turn;
 pub mod wake;
 

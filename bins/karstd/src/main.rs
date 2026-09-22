@@ -156,18 +156,41 @@ fn load(args: &[&str]) -> Result<(Config, Source), String> {
 /// Bedrock equivocation, route/gateway state transitions, session
 /// establishment/loss) have moved onto this transport so far; the rest are
 /// tracked in GitHub issue [#101](https://github.com/karst-net/karst/issues/101) rather than left silently half-migrated.
-fn init_tracing() {
+///
+/// Also installs a second, empty layer slot behind a
+/// [`karstd::trace_export::ReloadHandle`] — GitHub issue #170. It starts as
+/// a no-op and stays one for the rest of the process unless `command_run`
+/// finds `[tracing] collector` set, because **this function runs before any
+/// configuration is read.** Building the whole subscriber here rather than
+/// after config load is deliberate: `karstd::control::load_config` itself
+/// logs through `tracing::` (a stale netmap cache, a failed Bedrock fetch),
+/// and those calls must not go to a subscriber that does not exist yet.
+fn init_tracing() -> karstd::trace_export::ReloadHandle {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
     use tracing_subscriber::EnvFilter;
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let (otel_layer, reload_handle) =
+        tracing_subscriber::reload::Layer::new(None::<karstd::trace_export::BoxedLayer>);
+    // `otel_layer` goes first: `reload::Layer<L, S>`'s `S` is fixed to
+    // whatever subscriber it is applied to, and `BoxedLayer`/`ReloadHandle`
+    // fix that to bare `Registry` — so it must be the first `.with()` call
+    // after `registry()`, before anything (`filter`, `fmt_layer`) changes
+    // the accumulated subscriber type. `EnvFilter` applied via `.with()`
+    // filters globally regardless of position in the chain, so this does
+    // not change what `fmt_layer` prints.
+    tracing_subscriber::registry()
+        .with(otel_layer)
+        .with(filter)
+        .with(fmt_layer)
         .init();
+    reload_handle
 }
 
 fn command_run(args: &[&str]) -> ExitCode {
-    init_tracing();
+    let trace_reload = init_tracing();
     // First line out, ahead of anything that can fail — a config load error
     // logged one line down is useless for "is this even the build I think
     // it is" without this one above it to answer that first.
@@ -208,13 +231,37 @@ fn command_run(args: &[&str]) -> ExitCode {
         }
     };
     describe(&source);
-    match karstd::run::run_with_control(
+    // GitHub issue #170. `None` unless `[tracing] collector` is set — see
+    // `init_tracing`'s doc comment for why this can only happen here, after
+    // configuration has been read, and not any earlier. The daemon's very
+    // first `client.sync()` inside `load_config` above therefore never gets
+    // a span exported, only every one after it; that is an acceptable,
+    // inherent gap (a span about reading the config that names the
+    // collector cannot itself reach that collector) rather than a defect to
+    // work around.
+    let trace_export =
+        config.tracing_collector.as_ref().and_then(
+            |collector| match karstd::trace_export::install(collector, &trace_reload) {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    eprintln!("karstd: trace export did not start: {error}");
+                    None
+                }
+            },
+        );
+    let result = karstd::run::run_with_control(
         &std::sync::Arc::new(config),
         &Shutdown::default(),
         &socket,
         client,
         status_socket.as_deref(),
-    ) {
+    );
+    // Flush whatever spans are still queued before the process exits —
+    // best-effort, matching the rest of this feature's failure posture.
+    if let Some(handle) = trace_export {
+        handle.shutdown();
+    }
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("karstd: {e}");

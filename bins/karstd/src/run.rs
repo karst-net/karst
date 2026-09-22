@@ -680,6 +680,16 @@ fn run_engine(
         userspace_publish: config.userspace_publish.clone(),
         nat64: config.nat64,
         metrics_listen: config.metrics_listen,
+        tracing_collector: config.tracing_collector.as_ref().map(|c| c.address),
+        tracing_collector_server_name: config
+            .tracing_collector
+            .as_ref()
+            .map(|c| c.server_name.clone()),
+        tracing_collector_pin_hex: config
+            .tracing_collector
+            .as_ref()
+            .and_then(|c| c.pin)
+            .map(|pin| crate::config::encode_hex(&pin)),
         relay_ca_file: config.relay_ca_file.clone(),
         prefer_quic_relay: config.prefer_quic_relay,
         exit_node_state_file: config.exit_node_state_file.clone(),
@@ -5312,43 +5322,54 @@ fn refresh_netmap(
         // Routes before the roster: a peer that becomes reachable should have
         // somewhere for its packets to go by the time the datapath will accept
         // them.
-        let selected_exit = exit_node.and_then(|selection| {
-            selection
+        //
+        // GitHub issue #170: the third client-side span, covering the local
+        // reconciliation this node runs once a netmap actually changed — the
+        // "what's opaque today" the plan's server-side spans do not reach,
+        // since none of this happens on `karst-control`.
+        let report = {
+            let _span = tracing::info_span!("karst.route.reconcile").entered();
+            let selected_exit = exit_node.and_then(|selection| {
+                selection
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .active()
+                    .map(str::to_owned)
+            });
+            if let Err(error) = reconcile_exit(
+                routes,
+                exit_policy,
+                tun,
+                &updated,
+                Some(engine),
+                control_endpoint,
+                selected_exit.as_deref(),
+            ) {
+                tracing::warn!("karstd: exit selection is dormant after netmap refresh: {error}");
+            }
+
+            // Gateway grants are derived from the same verified snapshot. A
+            // failed update removes stale Karst-owned grants and records
+            // failed readiness.
+            apply_gateway(gateway, gateway_error, &updated);
+
+            // **The whole roster swap happens under the discovery lock**,
+            // and the ordering inside it is load-bearing. A roster index
+            // names a different peer after `reconfigure`, so endpoints
+            // discovery installed are withdrawn first, while the indices
+            // still mean what they meant when they were written. Holding
+            // the lock across all three steps is what stops the timer
+            // thread from applying a path in the middle and pointing one
+            // peer's traffic at another's address.
+            let mut discovery = disco
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .active()
-                .map(str::to_owned)
-        });
-        if let Err(error) = reconcile_exit(
-            routes,
-            exit_policy,
-            tun,
-            &updated,
-            Some(engine),
-            control_endpoint,
-            selected_exit.as_deref(),
-        ) {
-            tracing::warn!("karstd: exit selection is dormant after netmap refresh: {error}");
-        }
-
-        // Gateway grants are derived from the same verified snapshot. A failed
-        // update removes stale Karst-owned grants and records failed readiness.
-        apply_gateway(gateway, gateway_error, &updated);
-
-        // **The whole roster swap happens under the discovery lock**, and the
-        // ordering inside it is load-bearing. A roster index names a different
-        // peer after `reconfigure`, so endpoints discovery installed are
-        // withdrawn first, while the indices still mean what they meant when
-        // they were written. Holding the lock across all three steps is what
-        // stops the timer thread from applying a path in the middle and
-        // pointing one peer's traffic at another's address.
-        let mut discovery = disco
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        apply_path_changes(&discovery.release_all(), engine);
-        let report = engine.reconfigure(&updated);
-        discovery.reconcile(&updated, now_ms(started));
-        drop(discovery);
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            apply_path_changes(&discovery.release_all(), engine);
+            let report = engine.reconfigure(&updated);
+            discovery.reconcile(&updated, now_ms(started));
+            drop(discovery);
+            report
+        };
         tracing::info!(
             outcome = ?outcome,
             added = report.added,
@@ -5691,6 +5712,7 @@ mod route_tests {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
+            tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
@@ -6402,6 +6424,7 @@ mod probe_tests {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
+            tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
@@ -6916,6 +6939,7 @@ mod probe_tests {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
+            tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),

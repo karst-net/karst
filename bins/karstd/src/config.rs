@@ -193,6 +193,42 @@ pub struct File {
     /// plans/phase-6/08-observability.md §3.1/§5 W6 item 2.
     #[serde(default)]
     pub metrics: MetricsSection,
+    /// The opt-in OTLP/HTTP trace-export destination — GitHub issue #170.
+    #[serde(default)]
+    pub tracing: TracingSection,
+}
+
+/// The `[tracing]` TOML table.
+///
+/// Unset (the default) means the daemon originates no trace-export
+/// connection at all — the same default-off posture [`MetricsSection`]
+/// established for the metrics listener, for the same reason: a capability
+/// that makes the node dial somewhere new needs an explicit, narrow opt-in,
+/// not a default-on flip or an ambient environment variable. Unlike
+/// `karst-control`'s own OTLP exporter (which does key off the `OTel` SDK's
+/// standard `OTEL_EXPORTER_OTLP*` environment variables — see
+/// `docs/observability.md` §2), this section is the *only* way to turn this
+/// on: a stray environment variable in a process this daemon's operator does
+/// not fully control must not silently start it exporting telemetry.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TracingSection {
+    /// The collector to export spans to. Always TLS — there is no plaintext
+    /// option, unlike `[dns] upstream` vs. `dot_upstream`'s pair, because
+    /// there is no lower-sensitivity default this could fall back to.
+    pub collector: Option<SocketAddr>,
+    /// TLS server name presented for SNI and matched against the collector's
+    /// certificate, validated against the system trust store —
+    /// [`validate_tracing_collector`]'s own doc comment has the trust-model
+    /// reasoning. Required whenever `collector` is set.
+    pub collector_server_name: Option<String>,
+    /// 64 hex characters (a 32-byte SHA-256 SPKI hash) pinning the
+    /// collector's certificate instead of validating it against the system
+    /// trust store — the same option and the same reason
+    /// [`DotUpstreamSection::spki_pin_hex`] has one: a self-hosted collector
+    /// with no public CA certificate is exactly the case pinning exists
+    /// for. Omitted trusts the system CA store instead.
+    pub collector_pin_hex: Option<String>,
 }
 
 /// The `[metrics]` TOML table.
@@ -571,6 +607,90 @@ fn validate_metrics_listen(listen: Option<SocketAddr>) -> Result<(), ConfigError
         Some(_) | None => Ok(()),
     }
 }
+
+/// A validated `[tracing]` collector — GitHub issue #170.
+///
+/// TLS authenticates the collector by conventional `WebPKI` chain validation
+/// against `server_name`, the same "ordinary HTTPS" posture Ponor's relay
+/// TLS (`relay_tls.rs`) and the unpinned `[[dns.dot_upstream]]` path already
+/// take for a third-party endpoint. Unlike the control channel
+/// (`control::tls::AcceptAny`, authenticated independently by ADR-0011's
+/// ML-KEM/ML-DSA pins), there is no second, protocol-level check behind this
+/// one — the certificate *is* the trust boundary here — so an operator's
+/// collector is trusted the way any other HTTPS endpoint would be, not
+/// pinned. That is the deliberate answer to the open question GitHub issue
+/// #170 left: plain TLS 1.3 to an operator-chosen collector, not the control
+/// channel's pinned/PQ-hybrid posture, because this is telemetry to a
+/// sidecar the operator chose, not a channel PHREATIC itself depends on.
+#[derive(Debug, Clone)]
+pub struct TracingCollector {
+    /// Where to dial.
+    pub address: SocketAddr,
+    /// TLS SNI/certificate name.
+    pub server_name: String,
+    /// A SHA-256 SPKI pin, if configured — see
+    /// [`TracingSection::collector_pin_hex`]. `None` means ordinary `WebPKI`
+    /// chain validation against the system trust store.
+    pub pin: Option<[u8; 32]>,
+}
+
+/// Validate `[tracing]`: `collector` and `collector_server_name` are set
+/// together or not at all. `None` means what the module doc requires — the
+/// daemon originates no trace-export connection.
+///
+/// Takes the two raw values rather than a [`TracingSection`] so
+/// [`Config::from_netmap_enforced`] can call it against [`LocalSettings`]'s
+/// own copies without constructing a throwaway section, the same way
+/// [`validate_metrics_listen`] takes a bare `Option<SocketAddr>`.
+fn validate_tracing_collector(
+    collector: Option<SocketAddr>,
+    server_name: Option<&str>,
+    pin_hex: Option<&str>,
+) -> Result<Option<TracingCollector>, ConfigError> {
+    let collector = match (collector, server_name) {
+        (None, None) => None,
+        (Some(address), Some(server_name)) => Some((address, server_name)),
+        (Some(_), None) => {
+            return Err(ConfigError::Unusable(
+                "tracing.collector is set but tracing.collector_server_name is not; TLS needs \
+                 a name to validate the collector's certificate against"
+                    .to_owned(),
+            ))
+        }
+        (None, Some(_)) => {
+            return Err(ConfigError::Unusable(
+                "tracing.collector_server_name is set but tracing.collector is not, so there \
+                 is nothing to export to"
+                    .to_owned(),
+            ))
+        }
+    };
+    match (collector, pin_hex) {
+        (None, Some(_)) => Err(ConfigError::Unusable(
+            "tracing.collector_pin_hex is set but tracing.collector is not, so there is \
+             nothing to pin"
+                .to_owned(),
+        )),
+        (None, None) => Ok(None),
+        (Some((address, server_name)), pin_hex) => {
+            let pin = pin_hex
+                .map(|hex| decode_hex_public(hex, 32))
+                .transpose()?
+                .map(|bytes| {
+                    // `decode_hex_public(_, 32)` returns exactly 32 bytes on
+                    // `Ok`, so this copy cannot see a length mismatch.
+                    let mut pin = [0_u8; 32];
+                    pin.copy_from_slice(&bytes);
+                    pin
+                });
+            Ok(Some(TracingCollector {
+                address,
+                server_name: server_name.to_owned(),
+                pin,
+            }))
+        }
+    }
+}
 const fn default_port_mapping() -> bool {
     true
 }
@@ -739,6 +859,10 @@ pub struct Config {
     /// Already validated loopback-only by the time it reaches here; see
     /// `validate_metrics_listen`.
     pub metrics_listen: Option<SocketAddr>,
+    /// The opt-in OTLP trace-export destination — see [`TracingSection`].
+    /// Already validated (collector and server name set together or not at
+    /// all) by the time it reaches here; see [`validate_tracing_collector`].
+    pub tracing_collector: Option<TracingCollector>,
     /// Interface addresses — host addresses, not networks. See
     /// [`InterfaceAddress`].
     pub addresses: Vec<InterfaceAddress>,
@@ -811,6 +935,7 @@ impl fmt::Debug for Config {
             .field("userspace_publish", &self.userspace_publish)
             .field("nat64", &self.nat64)
             .field("metrics_listen", &self.metrics_listen)
+            .field("tracing_collector", &self.tracing_collector)
             .field("addresses", &self.addresses)
             .field("psk_epoch", &self.psk_epoch)
             .field("skipped", &self.skipped)
@@ -898,6 +1023,11 @@ impl Config {
             &file.node.userspace_publish,
         )?;
         validate_metrics_listen(file.metrics.listen)?;
+        let tracing_collector = validate_tracing_collector(
+            file.tracing.collector,
+            file.tracing.collector_server_name.as_deref(),
+            file.tracing.collector_pin_hex.as_deref(),
+        )?;
         validate_datapath_workers(file.node.datapath_workers)?;
         Ok(Self {
             keys,
@@ -910,6 +1040,7 @@ impl Config {
             userspace_socks5_listen: file.node.userspace_socks5_listen,
             userspace_publish: file.node.userspace_publish,
             metrics_listen: file.metrics.listen,
+            tracing_collector,
             // Left unresolved here on purpose: settling it means a DNS query,
             // and `Config::from_file` is called by tests and by `karst
             // showconf`, neither of which should touch the network. The daemon
@@ -982,6 +1113,11 @@ impl Config {
             &local.userspace_publish,
         )?;
         validate_metrics_listen(local.metrics_listen)?;
+        let tracing_collector = validate_tracing_collector(
+            local.tracing_collector,
+            local.tracing_collector_server_name.as_deref(),
+            local.tracing_collector_pin_hex.as_deref(),
+        )?;
         validate_datapath_workers(local.datapath_workers)?;
         // The node's own addresses carry the *on-link* prefix, so peers are
         // reachable over the interface. A bare address parses as a /32 here,
@@ -1102,6 +1238,7 @@ impl Config {
             userspace_publish: local.userspace_publish,
             nat64: local.nat64,
             metrics_listen: local.metrics_listen,
+            tracing_collector,
             addresses,
             psk_epoch: netmap.psk_epoch,
             node_id: netmap.node_id.clone(),
@@ -1198,6 +1335,16 @@ pub struct LocalSettings {
     pub nat64: Option<karst_transport::Nat64Prefix>,
     /// The opt-in loopback Prometheus listener — see [`MetricsSection`].
     pub metrics_listen: Option<SocketAddr>,
+    /// The opt-in OTLP trace-export destination — see [`TracingSection`].
+    /// Raw and re-validated by [`Config::from_netmap_enforced`], the same
+    /// division of labor `metrics_listen` has with `validate_metrics_listen`.
+    pub tracing_collector: Option<SocketAddr>,
+    /// TLS server name paired with `tracing_collector` — see
+    /// [`TracingSection::collector_server_name`].
+    pub tracing_collector_server_name: Option<String>,
+    /// SPKI pin paired with `tracing_collector` — see
+    /// [`TracingSection::collector_pin_hex`].
+    pub tracing_collector_pin_hex: Option<String>,
     /// Extra trust anchors for relay TLS — see [`Config::relay_ca_file`].
     pub relay_ca_file: Option<PathBuf>,
     /// See [`ControlSection::prefer_quic_relay`].
@@ -1222,6 +1369,7 @@ impl fmt::Debug for LocalSettings {
             .field("userspace_publish", &self.userspace_publish)
             .field("nat64", &self.nat64)
             .field("metrics_listen", &self.metrics_listen)
+            .field("tracing_collector", &self.tracing_collector)
             .field("datapath_workers", &self.datapath_workers)
             .field("prefer_quic_relay", &self.prefer_quic_relay)
             .finish_non_exhaustive()
@@ -2340,6 +2488,9 @@ mod netmap_tests {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
+            tracing_collector: None,
+            tracing_collector_server_name: None,
+            tracing_collector_pin_hex: None,
             exit_node_state_file: None,
             keys: Arc::new(StaticKeys::from_seed(&[0x11; 64])),
             listen: "0.0.0.0:51820".parse().expect("addr"),

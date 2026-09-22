@@ -381,6 +381,7 @@ mod tests {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
+            tracing_collector: None,
             route_offers: Vec::new(),
             exit_node_state_file: None,
             keys: std::sync::Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),

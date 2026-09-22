@@ -93,13 +93,64 @@ instrumentation pass:
   `.import`) so a slow anchor cycle is diagnosable from the trace alone,
   without reading the scheduler's source to guess which step is slow.
 
-## 3. `karstd`'s metrics surface
+## 3. `karstd`'s trace spans — GitHub issue #170
+
+Off by default, and off a different way than `karst-control`'s exporter
+above: there is no environment-variable trigger. `karstd` originates a
+trace-export connection only when `karstd.toml` names a collector
+explicitly:
+
+```toml
+[tracing]
+collector = "10.0.0.5:4318"
+collector_server_name = "otel.internal.example"
+# Optional. A 64-hex-character SHA-256 SPKI pin, for a self-hosted collector
+# with no public CA certificate — the same option `[[dns.dot_upstream]]`
+# has for the identical reason. Omitted validates against the system trust
+# store instead.
+collector_pin_hex = "…"
+```
+
+TLS is always on for this connection — there is no plaintext option.
+Unlike the control channel's pinned, post-quantum-hybrid handshake, this is
+ordinary WebPKI validation (or a bare SPKI pin, if configured): the
+certificate is the trust boundary here, because this is telemetry to an
+operator-chosen collector, not a channel PHREATIC itself depends on.
+
+Exports over OTLP/HTTP (protobuf) using a hand-rolled HTTP client on the
+same blocking rustls stack `relay_tls.rs`/`dot.rs` already use, not a
+bundled `reqwest`/`hyper` stack — one dependency addition, not two. Built on
+`opentelemetry_sdk`'s batch span processor: spans queue in a bounded
+channel, and a full queue (or an unreachable collector) drops the newest
+span rather than blocking anything — never the datapath, never the
+control-refresh thread that calls `sync()` below.
+
+Three spans, the client-side counterparts of §2's server-side three:
+
+- **`karst.control.session_handshake`** — this node's own control-channel
+  (re)connect. Fires fast and does no I/O on the common case where a
+  connection is already held open; real duration only shows up on an
+  actual reconnect.
+- **`karst.control.netmap_apply`** — one netmap round trip and this node's
+  local `Netmap::apply`, in one span, the direct counterpart of
+  `karst.netmap.push` above.
+- **`karst.route.reconcile`** — the local reconciliation a changed netmap
+  triggers: exit-route selection, gateway grants, and endpoint/path
+  discovery. This one has no server-side counterpart — none of it happens
+  on `karst-control`.
+
+Note the very first `session_handshake`/`netmap_apply` pair at daemon
+startup is never exported: trace export cannot start until `karstd.toml`
+has been read, and that same read is what names the collector. Every sync
+after the first (every `REFRESH` tick, ordinarily every 60s) is covered.
+
+## 4. `karstd`'s metrics surface
 
 Two ways to reach the same numbers — deliberately: a new network-facing
 listener is an opt-in capability, not a default, matching the same posture
 `06-subnet-routers-and-exit-nodes.md` §3.2 requires for default routes.
 
-### 3.1 `karst metrics` (always available)
+### 4.1 `karst metrics` (always available)
 
 ```
 $ karst metrics
@@ -136,7 +187,7 @@ A node-exporter `textfile` collector or a cron job wrapping `karst metrics`
 is enough for most deployments — see `06-subnet-routers-and-exit-nodes.md`'s
 own `[routing]` block for the sibling pattern this follows.
 
-### 3.2 The opt-in loopback HTTP listener
+### 4.2 The opt-in loopback HTTP listener
 
 For an operator who wants a normal Prometheus scrape target instead of a
 textfile collector:
@@ -155,7 +206,7 @@ address rather than silently binding one. Front it with your own reverse
 proxy or scrape it directly from `127.0.0.1` — it never listens on a
 network-facing interface on its own.
 
-## 4. `karst bugreport`'s new sections
+## 5. `karst bugreport`'s new sections
 
 Three sections added to the existing report, all under the same
 redaction discipline the header comment has always promised — no PSKs, no
@@ -178,7 +229,7 @@ every field name, old sections and new alike.
   current state). Only relays and TURN servers this node has actually
   attempted to reach appear; one that was never dialled has no entry.
 
-## 5. Redaction
+## 6. Redaction
 
 Every field above is checked by `tests/leakscan.rs`'s
 `no_bugreport_field_name_suggests_key_material` test, which scans every

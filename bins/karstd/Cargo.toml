@@ -81,6 +81,27 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc
 # accepts a QUIC connection. Same `rustls-aws-lc-rs` backend as `tokio-rustls`
 # above, for the same reason: `ring` has no X25519MLKEM768.
 quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+# GitHub issue #170: opt-in client-side OTLP/HTTP trace export. `http-proto`
+# (protobuf over plain HTTP, not `grpc-tonic`) so this does not pull in tonic;
+# no bundled HTTP-client feature (`reqwest-*`/`hyper-client`) either — a
+# hand-rolled `opentelemetry_http::HttpClient` in `trace_export.rs` reuses the
+# same blocking rustls stack `dot.rs`/`relay_tls.rs` already use instead of a
+# second TLS backend and async HTTP client stack.
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "trace"] }
+opentelemetry-http = { version = "0.32", default-features = false }
+# 0.33 is not a typo: `tracing-opentelemetry`'s own version numbering has
+# drifted from the `opentelemetry` crates' — 0.33.0 is the release that pairs
+# with `opentelemetry` 0.32, confirmed against its published `Cargo.toml`.
+tracing-opentelemetry = "0.33"
+async-trait = "0.1"
+http = "1"
+# SPKI pin hashing for `[tracing] collector_pin_hex` — the same construction
+# `crates/karst-dns/src/forward/tls.rs` already uses for DoT's own pin
+# option, reimplemented here rather than shared because that module is
+# crate-private to `karst-dns`.
+x509-cert = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs"] }
@@ -108,4 +129,9 @@ karst-noise.workspace = true
 # testing what a relay's certificate does needs a certificate.
 rcgen = "0.14"
 hickory-proto = { version = "0.26.1", default-features = false }
+# Drives `trace_export::Client::send_bytes` synchronously in its own tests —
+# the same executor `opentelemetry_sdk`'s batch processor itself uses to
+# drive the trait's `async fn` from a plain `std::thread`, not a Tokio
+# runtime.
+futures-executor = "0.3"
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }

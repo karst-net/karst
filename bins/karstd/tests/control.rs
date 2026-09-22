@@ -278,6 +278,9 @@ fn local(seed: u8) -> LocalSettings {
         userspace_publish: Vec::new(),
         nat64: None,
         metrics_listen: None,
+        tracing_collector: None,
+        tracing_collector_server_name: None,
+        tracing_collector_pin_hex: None,
         datapath_workers: 1,
     }
 }
