@@ -110,12 +110,16 @@ rather than gaps:
   signatures over RRsets, so there is nothing for DNSSEC to add to a mesh
   answer. A forwarded answer is not validated either; it is passed through
   exactly as the configured upstream returned it (see Resolution policy).
-- **Encrypted upstream transport (DoH/DoT).** Forwarded queries go out in
-  plain DNS over the resolvers `KarstDNSConfig` names, whether that is the
-  open internet or, for a split route, a resolver reachable only over the
-  mesh. Both are defensible extensions for a later version; neither is
-  required for the mesh zone's own authentication, which is what this
-  version's threat model depends on.
+- **Encrypted upstream transport.** No longer an open non-goal — see
+  [ADR-0034](../docs/adr/0034-karstdns-encrypted-upstream-transport.md),
+  which decides DoT (RFC 7858) only, system-trust-store verification with
+  optional admin-configured SPKI pinning, and fail-closed (SERVFAIL, never
+  a silent plaintext retry) on upstream failure. Not yet implemented as of
+  this version: forwarded queries still go out in plain DNS over the
+  resolvers `KarstDNSConfig` names today, whether that is the open internet
+  or, for a split route, a resolver reachable only over the mesh. Neither
+  this nor plaintext forwarding affects the mesh zone's own authentication,
+  which is what this version's threat model depends on.
 - **Domain/category content filtering.** KarstDNS is a policy resolver for
   the mesh zone and configured forwarding, not a general-purpose DNS server,
   and blocklist curation is a different, ongoing-maintenance product that
