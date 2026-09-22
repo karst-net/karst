@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright the Karst contributors.
 
@@ -17,16 +18,22 @@ ENV GOTOOLCHAIN=auto
 WORKDIR /src
 
 # Dependencies first, so editing server code does not re-download the module
-# graph. This fork's graph is large enough for that to matter.
+# graph. This fork's graph is large enough for that to matter. The module
+# cache mount survives across CI runs via the workflow's `cache-from:
+# type=gha`; go build's own output goes to an ordinary path (/out), not a
+# cache mount, so unlike the Rust Dockerfiles there is nothing to copy out.
 COPY server/go.mod server/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    go mod download
 
 COPY server/ ./
 # CGO on, deliberately. The SQLite store is go-sqlite3, which is a cgo binding:
 # built with CGO_ENABLED=0 it compiles and links into a working-looking binary
 # that dies at first use with "Binary was compiled with 'CGO_ENABLED=0' ... This
 # is a stub". The runtime image below is glibc-based for the same reason.
-RUN CGO_ENABLED=1 go build -trimpath -o /out/karst-control ./cmd/karst-control
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -o /out/karst-control ./cmd/karst-control
 
 FROM debian:bookworm-slim
 RUN apt-get update \
