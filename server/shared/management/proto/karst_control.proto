@@ -236,6 +236,10 @@ message KarstDNSConfig {
   repeated KarstDNSRoute routes = 3;
   string zone = 4;
   bool magic_dns = 5;
+  // Structured global upstreams, additive alongside `nameservers` — ADR-0034.
+  // `nameservers` keeps naming plain-transport upstreams as bare "ip:port"
+  // strings; this is the only way to name an encrypted one.
+  repeated KarstDNSUpstream upstreams = 6;
 }
 
 // KarstDNSRoute sends a suffix's questions only to resolvers reachable through
@@ -243,6 +247,30 @@ message KarstDNSConfig {
 message KarstDNSRoute {
   string match_domain = 1;
   repeated string resolvers = 2;
+  // Structured route-scoped upstreams, additive alongside `resolvers` — see
+  // `KarstDNSConfig.upstreams`.
+  repeated KarstDNSUpstream upstreams = 3;
+}
+
+// KarstDNSTransport is how a query reaches a KarstDNSUpstream — ADR-0034.
+enum KarstDNSTransport {
+  KARST_DNS_TRANSPORT_PLAIN = 0;
+  KARST_DNS_TRANSPORT_DOT = 1;
+}
+
+// KarstDNSUpstream is one resolver, structured — ADR-0034. Additive alongside
+// KarstDNSConfig.nameservers / KarstDNSRoute.resolvers, which keep naming
+// plain-transport upstreams as bare "ip:port" strings; this message is the
+// only way to express an encrypted one.
+message KarstDNSUpstream {
+  string address = 1; // "ip:port"
+  KarstDNSTransport transport = 2;
+  // SNI / certificate name, distinct from address since a bare IP rarely
+  // appears in a certificate. Required when transport is DOT.
+  string tls_server_name = 3;
+  // SHA-256 of the resolver's leaf certificate's SubjectPublicKeyInfo. Empty
+  // trusts the system CA store instead — ADR-0034's trust model.
+  bytes spki_pin = 4;
 }
 
 // KarstBedrockHead names the tip of the Bedrock log the server is serving —

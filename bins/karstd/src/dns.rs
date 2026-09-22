@@ -541,8 +541,8 @@ pub enum Error {
     Resolver { value: String },
     #[error("netmap peer {peer:?} has invalid mesh address {value:?}")]
     Address { peer: String, value: String },
-    #[error("dot_upstream {address}'s spki_pin_hex {value:?} is not 64 hex characters (32 bytes)")]
-    SpkiPin { address: SocketAddr, value: String },
+    #[error("DoT upstream {address}'s SPKI pin is invalid: {reason}")]
+    SpkiPin { address: SocketAddr, reason: String },
     #[error(transparent)]
     Config(#[from] karst_dns::Error),
 }
@@ -800,14 +800,21 @@ pub fn reconcile(
 /// leave no stale mesh zone behind.
 pub fn from_netmap(netmap: &Netmap) -> Result<Resolver, Error> {
     let config = &netmap.dns_config;
-    let nameservers = parse_upstreams(&config.nameservers)?;
+    let mut nameservers = parse_upstreams(&config.nameservers)?;
+    for upstream in &config.upstreams {
+        nameservers.push(wire_upstream(upstream)?);
+    }
     let routes = config
         .routes
         .iter()
         .map(|route| {
+            let mut resolvers = parse_upstreams(&route.resolvers)?;
+            for upstream in &route.upstreams {
+                resolvers.push(wire_upstream(upstream)?);
+            }
             Ok(Route {
                 match_domain: route.match_domain.clone(),
-                resolvers: parse_upstreams(&route.resolvers)?,
+                resolvers,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -946,7 +953,7 @@ fn dot_upstream(entry: &crate::config::DotUpstreamSection) -> Result<Upstream, E
         .map(|hex| {
             parse_spki_pin(hex).ok_or_else(|| Error::SpkiPin {
                 address: entry.address,
-                value: hex.to_owned(),
+                reason: format!("{hex:?} is not 64 hex characters (32 bytes)"),
             })
         })
         .transpose()?;
@@ -957,6 +964,35 @@ fn dot_upstream(entry: &crate::config::DotUpstreamSection) -> Result<Upstream, E
             pin,
         },
     })
+}
+
+/// Convert one netmap-sourced `KarstDNSUpstream` (already decoded into
+/// [`crate::netmap::DNSUpstream`]) into an [`Upstream`] — ADR-0034 / #177.
+fn wire_upstream(upstream: &crate::netmap::DNSUpstream) -> Result<Upstream, Error> {
+    let addr = upstream.address.parse().map_err(|_| Error::Resolver {
+        value: upstream.address.clone(),
+    })?;
+    let transport = match upstream.transport {
+        crate::netmap::DNSTransport::Plain => Transport::Plain,
+        crate::netmap::DNSTransport::Dot => Transport::Dot {
+            server_name: upstream.tls_server_name.clone(),
+            pin: match upstream.spki_pin.len() {
+                0 => None,
+                32 => {
+                    let mut pin = [0u8; 32];
+                    pin.copy_from_slice(&upstream.spki_pin);
+                    Some(pin)
+                }
+                len => {
+                    return Err(Error::SpkiPin {
+                        address: addr,
+                        reason: format!("{len} bytes, expected 32"),
+                    })
+                }
+            },
+        },
+    };
+    Ok(Upstream { addr, transport })
 }
 
 fn parse_spki_pin(hex: &str) -> Option<[u8; 32]> {
@@ -1330,6 +1366,71 @@ mod tests {
         assert!(matches!(
             resolver.resolve("beta.aquifer.karst", karst_dns::RecordType::A, true),
             Ok(karst_dns::Resolution::Authoritative(_))
+        ));
+    }
+
+    #[test]
+    fn netmap_dot_upstream_produces_a_transport_dot_entry() {
+        let mut netmap = Netmap::new();
+        netmap.dns_config = DNSConfig {
+            zone: "aquifer.karst".to_owned(),
+            magic_dns: true,
+            upstreams: vec![crate::netmap::DNSUpstream {
+                address: "1.1.1.1:853".to_owned(),
+                transport: crate::netmap::DNSTransport::Dot,
+                tls_server_name: "cloudflare-dns.com".to_owned(),
+                spki_pin: vec![],
+            }],
+            routes: vec![crate::netmap::DNSRoute {
+                match_domain: "internal.example".to_owned(),
+                resolvers: vec![],
+                upstreams: vec![crate::netmap::DNSUpstream {
+                    address: "100.64.0.53:853".to_owned(),
+                    transport: crate::netmap::DNSTransport::Dot,
+                    tls_server_name: "resolver.internal".to_owned(),
+                    spki_pin: vec![0xab; 32],
+                }],
+            }],
+            ..DNSConfig::default()
+        };
+        let resolver = from_netmap(&netmap).expect("resolver");
+        let config = resolver.config();
+        assert_eq!(
+            config.nameservers,
+            vec![Upstream {
+                addr: "1.1.1.1:853".parse().expect("address"),
+                transport: Transport::Dot {
+                    server_name: "cloudflare-dns.com".to_owned(),
+                    pin: None,
+                },
+            }]
+        );
+        assert_eq!(
+            config.routes,
+            vec![Route {
+                match_domain: "internal.example".to_owned(),
+                resolvers: vec![Upstream {
+                    addr: "100.64.0.53:853".parse().expect("address"),
+                    transport: Transport::Dot {
+                        server_name: "resolver.internal".to_owned(),
+                        pin: Some([0xab; 32]),
+                    },
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn wire_upstream_rejects_a_malformed_pin_length() {
+        let upstream = crate::netmap::DNSUpstream {
+            address: "1.1.1.1:853".to_owned(),
+            transport: crate::netmap::DNSTransport::Dot,
+            tls_server_name: "cloudflare-dns.com".to_owned(),
+            spki_pin: vec![0xab; 10],
+        };
+        assert!(matches!(
+            wire_upstream(&upstream),
+            Err(Error::SpkiPin { .. })
         ));
     }
 
