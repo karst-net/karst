@@ -239,3 +239,81 @@ Consequences.
   multi-aquifer membership model per node, a real broadening of §5.4 the
   spec does not have today, and should not be backed into via this ADR's
   single-aquifer-per-account shape.
+
+---
+
+## Scoping note (2026-09-22): the audit log this ADR's §2 anchors is global, not per-account
+
+Written while scoping the Bedrock-scheduler implementation this ADR's §2
+described. §2's own text — *"`bedrock.Configuration`... is already correctly
+account-scoped... The *scheduler bootstrap* does [have a gap]"* — undersold
+the problem. Checked directly, rather than assumed from that framing:
+
+- `bootstrap.Karst.Audit` is a single `*audit.Log` instance, constructed once
+  per deployment, not once per account. `audit.Entry` (`audit/audit.go`)
+  carries no `AccountID` column at all — `Seq`, `Actor`, `Action`, `Target`,
+  `Detail`, and the hash-chain fields, nothing else. `Log.Head(ctx)` and
+  `Log.VerifyFrom(ctx, ...)` (the two methods `bedrock.AuditHead` requires)
+  take no account parameter and operate over the one shared, deployment-wide
+  chain.
+- `bedrock.Log` (`s.Log` in Scheduler, backing `karst_bedrock_configuration`'s
+  sibling `karst_bedrock_log` table) genuinely *is* per-account, exactly as §2
+  said — each account's own chain of `anchor`/`node-sign`/etc. entries is
+  independently stored and verified.
+- What an `anchor` entry commits to, though, is a `(AuditSeq, AuditHash)` pair
+  read from that one shared `audit.Log` (`PrepareAnchor` → `s.Audit.Head(ctx)`
+  → `anchor.go`'s `Anchor{AuditHead, AuditSeq}`). Confirmed live in the
+  console-facing path that already exists: `api/nodes.go`'s
+  `EntriesSinceAnchor` is `seq - state.Anchor.AuditSeq`, where `seq` comes
+  from the same shared `h.audit.Head(ctx)` every account's handler calls.
+  **An account with no activity of its own, sharing a deployment with a busy
+  one, would see `entries_since_anchor` climb from other tenants' actions —
+  today, in the single console handler that already ships**, not a
+  hypothetical multi-account consequence.
+
+### What this does and does not break
+
+This is not a security hole in the sense of one tenant forging or reading
+another's data: the shared chain is a single hash-linked sequence, so an
+account's anchor arguably *does* still prove "everything up to this point,
+across the whole shared log, is unmodified" — if anything, one tenant
+enabling Bedrock enforcement incidentally strengthens tamper-evidence for the
+whole shared log, since truncating the tail invalidates every account's
+verification, not just the anchoring account's. What breaks is the
+**framing**: Bedrock's mode/enforcement is a per-account operator choice
+(`Configuration.Mode`), but what gets anchored and reported is a
+deployment-wide quantity dressed as a per-account one, and the console
+surface above already leaks that seam as confusing (not exploitable) numbers.
+
+### Decision: fix the scheduler now; treat per-tenant audit partitioning as separate, larger, and explicitly deferred
+
+The scheduler-bootstrap fix this ADR's §2 described is still correct and
+worth shipping on its own: an account with Bedrock explicitly enabled
+getting *zero* automated anchoring (today's actual behavior past the first
+account) is strictly worse than getting anchoring against a shared log with
+an honestly-scoped caveat. Splitting the audit log itself into per-account
+partitions is a materially bigger change — a schema change to `audit.Entry`
+(every write site needs an `AccountID` to tag, and some existing audit
+actions are not obviously attributable to one account at all, e.g.
+deployment-level IdP-sync or startup events) — and is out of scope for this
+pass. §2's implementation proceeds as designed (dynamic per-account scheduler
+management, one shared online anchor-signer key), with two additions:
+
+- `EntriesSinceAnchor` and any equivalent per-account-looking Bedrock metric
+  gets a one-line clarification in its console/API doc comment that the
+  audit sequence it counts from is deployment-wide, not this account's own —
+  a documentation fix, shippable immediately, independent of the scheduler
+  work.
+- This scoping note's finding is carried forward as a named "Reconsider if"
+  trigger below rather than silently dropped once the scheduler fix ships.
+
+### Reconsider if (added)
+
+- Per-tenant confidentiality or a stronger tamper-evidence framing is ever
+  required for the audit trail itself (not just Bedrock's enable/enforce
+  toggle) — would need `audit.Entry` partitioned by account, a real schema
+  and write-path change touching every audit call site, and deserves its own
+  ADR given the size. Whether cross-account system-level events (IdP sync,
+  startup, deployment-wide config changes) get a null/sentinel account or
+  their own separate log is exactly the kind of question that ADR would need
+  to answer, not this one.

@@ -91,12 +91,16 @@ type Karst struct {
 	// roster can be rendered from it (PLAN.md §5, GitHub issue [#47](https://github.com/karst-net/karst/issues/47)). Read-only
 	// as far as that caller is concerned; the handlers above own the writes.
 	Nodes *node.Store
-	// Chain and Audit are exposed so an optional bedrock.Scheduler can be
-	// wired up outside this package — ADR-0016, GitHub issue [#61](https://github.com/karst-net/karst/issues/61). Env-var
+	// Chain, Audit, and Store are exposed so an optional bedrock.Fleet can be
+	// wired up outside this package — ADR-0016, ADR-0033 §2, GitHub issues
+	// [#61](https://github.com/karst-net/karst/issues/61) and #166. Env-var
 	// parsing belongs in main.go alongside every other KARST_* variable, not
 	// in this package, which stays agnostic of how it is configured.
 	Chain *bedrock.Log
 	Audit *audit.Log
+	// Store is the account-scoped Bedrock configuration store (mode, quorum)
+	// — Fleet.Reconcile reads which accounts have Bedrock enabled from it.
+	Store *bedrock.Store
 }
 
 // Install registers KarstControlService on the daemon's gRPC server.
@@ -333,6 +337,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		Nodes:     nodes,
 		Chain:     bedrockLog,
 		Audit:     auditLog,
+		Store:     bedrockStore,
 	}
 
 	// The pins are public and must reach operators; the seeds never appear.
