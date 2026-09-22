@@ -243,6 +243,20 @@ pub enum HostIntegration {
     None,
 }
 
+/// One `[[dns.dot_upstream]]` entry — a `DoT` upstream configured locally
+/// rather than projected from the netmap, ADR-0034. Additive alongside
+/// `DnsSection::upstream`: an existing `upstream = ["1.1.1.1:53"]` config
+/// keeps working unmodified.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DotUpstreamSection {
+    pub address: SocketAddr,
+    pub tls_server_name: String,
+    /// 64 hex characters (a 32-byte SHA-256 SPKI hash). Omitted trusts the
+    /// system CA store instead — see ADR-0034's trust model.
+    pub spki_pin_hex: Option<String>,
+}
+
 /// The `[dns]` TOML table.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -251,6 +265,7 @@ pub struct DnsSection {
     pub stub_address: Option<SocketAddr>,
     pub accept_netmap_config: bool,
     pub upstream: Vec<SocketAddr>,
+    pub dot_upstream: Vec<DotUpstreamSection>,
     pub host_integration: HostIntegration,
 }
 
@@ -261,6 +276,7 @@ impl Default for DnsSection {
             stub_address: None,
             accept_netmap_config: true,
             upstream: Vec::new(),
+            dot_upstream: Vec::new(),
             host_integration: HostIntegration::Auto,
         }
     }
@@ -273,6 +289,7 @@ pub struct DnsSettings {
     pub stub_address: SocketAddr,
     pub accept_netmap_config: bool,
     pub upstream: Vec<SocketAddr>,
+    pub dot_upstream: Vec<DotUpstreamSection>,
     pub host_integration: HostIntegration,
 }
 
@@ -285,6 +302,7 @@ impl From<DnsSection> for DnsSettings {
                 .unwrap_or_else(|| SocketAddr::new(karst_dns::STUB_ADDRESS, 53)),
             accept_netmap_config: section.accept_netmap_config,
             upstream: section.upstream,
+            dot_upstream: section.dot_upstream,
             host_integration: section.host_integration,
         }
     }
@@ -1703,6 +1721,38 @@ allowed_ips = ["10.99.0.2/32"]
             vec!["1.1.1.1:53".parse().expect("upstream")]
         );
         assert_eq!(cfg.dns.host_integration, HostIntegration::None);
+    }
+
+    /// ADR-0034: additive alongside `upstream`, and an omitted `spki_pin_hex`
+    /// must parse to `None` rather than requiring the key be present.
+    #[test]
+    fn parses_dot_upstream_entries() {
+        let dir = Scratch::new("cfg-dot-upstream");
+        let path = roster(dir.path(), "");
+        let source = std::fs::read_to_string(&path).expect("read roster");
+        std::fs::write(
+            &path,
+            format!(
+                "{source}\n[dns]\nupstream = [\"9.9.9.9:53\"]\n\n[[dns.dot_upstream]]\naddress = \"1.1.1.1:853\"\ntls_server_name = \"cloudflare-dns.com\"\nspki_pin_hex = \"{}\"\n\n[[dns.dot_upstream]]\naddress = \"9.9.9.9:853\"\ntls_server_name = \"dns.quad9.net\"\n",
+                "ab".repeat(32)
+            ),
+        )
+        .expect("write roster");
+        let cfg = Config::load(&path).expect("DNS settings load");
+        assert_eq!(
+            cfg.dns.upstream,
+            vec!["9.9.9.9:53".parse().expect("plain upstream")]
+        );
+        assert_eq!(cfg.dns.dot_upstream.len(), 2);
+        let pinned = cfg.dns.dot_upstream.first().expect("first entry");
+        assert_eq!(pinned.address, "1.1.1.1:853".parse().expect("address"));
+        assert_eq!(pinned.tls_server_name, "cloudflare-dns.com");
+        assert_eq!(
+            pinned.spki_pin_hex.as_deref(),
+            Some("ab".repeat(32)).as_deref()
+        );
+        let unpinned = cfg.dns.dot_upstream.get(1).expect("second entry");
+        assert_eq!(unpinned.spki_pin_hex, None);
     }
 
     /// `karst dns revert` reads this instead of [`Config::load`] specifically

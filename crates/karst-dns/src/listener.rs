@@ -4,7 +4,6 @@
 //! Socket adapters for the DNS wire handler.
 
 use std::io;
-use std::io::{Read, Write};
 use std::net::{TcpListener, UdpSocket};
 
 use crate::service;
@@ -41,11 +40,7 @@ pub fn serve_tcp_once(listener: &TcpListener, resolver: &Resolver) -> io::Result
     // dropped — intermittently, and only there. Asked for explicitly so both
     // platforms answer DNS the same way.
     stream.set_nonblocking(false)?;
-    let mut prefix = [0u8; 2];
-    stream.read_exact(&mut prefix)?;
-    let length = usize::from(u16::from_be_bytes(prefix));
-    let mut request = vec![0u8; length];
-    stream.read_exact(&mut request)?;
+    let request = crate::message::read_framed(&mut stream)?;
     let response = match service::handle_wire(resolver, &request) {
         Ok(response) => response,
         Err(_) => match service::servfail_wire(&request) {
@@ -53,18 +48,16 @@ pub fn serve_tcp_once(listener: &TcpListener, resolver: &Resolver) -> io::Result
             None => return Ok(()),
         },
     };
-    let length = u16::try_from(response.len())
-        .map_err(|_| io::Error::other("DNS TCP response exceeds RFC 7766 framing"))?;
-    stream.write_all(&length.to_be_bytes())?;
-    stream.write_all(&response)
+    crate::message::write_framed(&mut stream, &response)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Config;
+    use crate::{Config, Upstream};
     use hickory_proto::op::{Message, MessageType, OpCode, Query};
     use hickory_proto::rr::{Name, RecordType};
+    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::thread;
 
@@ -143,11 +136,11 @@ mod tests {
         let address = listener.local_addr().expect("address");
         let resolver = Resolver::new(
             Config::new(
-                vec!["192.0.2.53:53".parse().expect("global")],
+                vec![Upstream::plain("192.0.2.53:53".parse().expect("global"))],
                 vec![],
                 vec![crate::Route {
                     match_domain: "internal.example".to_owned(),
-                    resolvers: vec!["127.0.0.1:9".parse().expect("down")],
+                    resolvers: vec![Upstream::plain("127.0.0.1:9".parse().expect("down"))],
                 }],
                 "aquifer.karst",
                 true,

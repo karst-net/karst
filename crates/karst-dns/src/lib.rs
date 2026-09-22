@@ -18,6 +18,7 @@
 #![doc = "KarstDNS resolver policy, authoritative mesh zone, and split-DNS routing."]
 
 mod split;
+mod upstream;
 mod zone;
 
 pub mod cache;
@@ -30,10 +31,11 @@ pub mod message;
 pub mod host;
 
 use std::collections::VecDeque;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
 pub use split::{Route, RoutingTable};
+pub use upstream::{Transport, Upstream};
 pub use zone::{MeshPeer, MeshZone, Record, RecordType, Response, ResponseKind};
 
 /// The address exposed to host resolver integrations. It is deliberately not
@@ -44,7 +46,7 @@ pub const STUB_ADDRESS: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(100, 100, 10
 /// so every lookup compares case-insensitively without depending on callers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub nameservers: Vec<SocketAddr>,
+    pub nameservers: Vec<Upstream>,
     pub search_domains: Vec<String>,
     pub routes: Vec<Route>,
     pub zone: String,
@@ -54,13 +56,16 @@ pub struct Config {
 impl Config {
     /// Validate configuration before it reaches a forwarding socket.
     pub fn new(
-        nameservers: Vec<SocketAddr>,
+        nameservers: Vec<Upstream>,
         search_domains: Vec<String>,
         routes: Vec<Route>,
         zone: impl AsRef<str>,
         magic_dns: bool,
     ) -> Result<Self, Error> {
-        if nameservers.iter().any(|server| server.ip() == STUB_ADDRESS) {
+        if nameservers
+            .iter()
+            .any(|server| server.addr.ip() == STUB_ADDRESS)
+        {
             return Err(Error::UpstreamLoop);
         }
         let zone = canonical_name(zone.as_ref())?;
@@ -75,7 +80,7 @@ impl Config {
         if routes
             .iter()
             .flat_map(|route| route.resolvers.iter())
-            .any(|server| server.ip() == STUB_ADDRESS)
+            .any(|server| server.addr.ip() == STUB_ADDRESS)
         {
             return Err(Error::UpstreamLoop);
         }
@@ -198,7 +203,7 @@ impl Resolver {
 pub enum Resolution {
     Authoritative(Response),
     Forward {
-        resolvers: Vec<SocketAddr>,
+        resolvers: Vec<Upstream>,
         split: bool,
     },
     Refused,
@@ -240,11 +245,11 @@ pub(crate) fn canonical_name(raw: &str) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     fn config(routes: Vec<Route>) -> Config {
         Config::new(
-            vec!["1.1.1.1:53".parse().expect("address")],
+            vec![Upstream::plain("1.1.1.1:53".parse().expect("address"))],
             vec![],
             routes,
             "aquifer.karst.",
@@ -289,7 +294,7 @@ mod tests {
     fn rejects_upstream_loop() {
         assert_eq!(
             Config::new(
-                vec![SocketAddr::new(STUB_ADDRESS, 53)],
+                vec![Upstream::plain(SocketAddr::new(STUB_ADDRESS, 53))],
                 vec![],
                 vec![],
                 "aquifer.karst",
@@ -307,7 +312,7 @@ mod tests {
                 vec![],
                 vec![Route {
                     match_domain: "internal.example".to_owned(),
-                    resolvers: vec![SocketAddr::new(STUB_ADDRESS, 53)],
+                    resolvers: vec![Upstream::plain(SocketAddr::new(STUB_ADDRESS, 53))],
                 }],
                 "aquifer.karst",
                 true

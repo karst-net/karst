@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-use std::net::SocketAddr;
-
-use crate::{canonical_name, Error};
+use crate::{canonical_name, Error, Upstream};
 
 /// One split-DNS suffix and its mesh-reachable resolvers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Route {
     pub match_domain: String,
-    pub resolvers: Vec<SocketAddr>,
+    pub resolvers: Vec<Upstream>,
 }
 
 /// Longest-suffix split-DNS routing table.
@@ -70,11 +68,11 @@ mod tests {
             vec![
                 Route {
                     match_domain: "internal.example".to_owned(),
-                    resolvers: vec!["100.64.0.2:53".parse().expect("address")],
+                    resolvers: vec![Upstream::plain("100.64.0.2:53".parse().expect("address"))],
                 },
                 Route {
                     match_domain: "db.internal.example".to_owned(),
-                    resolvers: vec!["100.64.0.3:53".parse().expect("address")],
+                    resolvers: vec![Upstream::plain("100.64.0.3:53".parse().expect("address"))],
                 },
             ],
             "aquifer.karst",

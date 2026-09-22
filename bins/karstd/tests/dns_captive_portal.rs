@@ -21,7 +21,7 @@ use std::time::Duration;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::A;
 use hickory_proto::rr::{Name, RData, Record, RecordType};
-use karst_dns::{Config, MeshPeer, Resolver};
+use karst_dns::{Config, MeshPeer, Resolver, Upstream};
 
 fn query(name: &str) -> Message {
     let mut request = Message::new(53, MessageType::Query, OpCode::Query);
@@ -81,7 +81,14 @@ fn captive_portal() -> std::net::SocketAddr {
 fn captive_portal_leaves_mesh_names_unaffected() {
     let portal = captive_portal();
     let resolver = Resolver::new(
-        Config::new(vec![portal], vec![], vec![], "aquifer.karst", true).expect("config"),
+        Config::new(
+            vec![Upstream::plain(portal)],
+            vec![],
+            vec![],
+            "aquifer.karst",
+            true,
+        )
+        .expect("config"),
         [MeshPeer::new("atlas", [Ipv4Addr::new(100, 64, 0, 9)], [])],
     );
 
@@ -113,7 +120,14 @@ fn captive_portal_leaves_mesh_names_unaffected() {
 fn captive_portal_answers_pass_through_unmodified() {
     let portal = captive_portal();
     let resolver = Resolver::new(
-        Config::new(vec![portal], vec![], vec![], "aquifer.karst", true).expect("config"),
+        Config::new(
+            vec![Upstream::plain(portal)],
+            vec![],
+            vec![],
+            "aquifer.karst",
+            true,
+        )
+        .expect("config"),
         [],
     );
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RecordType};
-use karst_dns::{Config, MeshPeer, Resolver, Route};
+use karst_dns::{Config, MeshPeer, Resolver, Route, Upstream};
 
 fn query(name: &str) -> Vec<u8> {
     let mut request = Message::new(19, MessageType::Query, OpCode::Query);
@@ -47,7 +47,14 @@ fn hostile_upstream() -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
 fn mesh_name_never_reaches_a_logging_upstream() {
     let (hostile, received) = hostile_upstream();
     let resolver = Resolver::new(
-        Config::new(vec![hostile], vec![], vec![], "aquifer.karst", true).expect("config"),
+        Config::new(
+            vec![Upstream::plain(hostile)],
+            vec![],
+            vec![],
+            "aquifer.karst",
+            true,
+        )
+        .expect("config"),
         [MeshPeer::new("atlas", [Ipv4Addr::new(100, 64, 0, 2)], [])],
     );
     let answer = karst_dns::service::handle_wire(&resolver, &query("missing.aquifer.karst."))
@@ -68,11 +75,11 @@ fn failed_split_route_never_falls_back_to_a_logging_global_upstream() {
     let unavailable: SocketAddr = "127.0.0.1:9".parse().expect("discard port");
     let resolver = Resolver::new(
         Config::new(
-            vec![hostile],
+            vec![Upstream::plain(hostile)],
             vec![],
             vec![Route {
                 match_domain: "internal.example".to_owned(),
-                resolvers: vec![unavailable],
+                resolvers: vec![Upstream::plain(unavailable)],
             }],
             "aquifer.karst",
             true,
