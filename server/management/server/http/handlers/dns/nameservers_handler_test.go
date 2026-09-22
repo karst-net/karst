@@ -136,6 +136,32 @@ func TestNameserversHandlers(t *testing.T) {
 			},
 		},
 		{
+			name:        "POST DoT nameserver round-trips its TLS server name and pin",
+			requestType: http.MethodPost,
+			requestPath: "/api/dns/nameservers",
+			requestBody: bytes.NewBuffer(
+				[]byte(`{"name":"name","Description":"Post","nameservers":[{"ip":"1.1.1.1","ns_type":"dot","port":853,"tls_server_name":"resolver.internal","spki_pin":"AQIDBA=="}],"groups":["group"],"enabled":true,"primary":true}`)),
+			expectedStatus: http.StatusOK,
+			expectedBody:   true,
+			expectedNSGroup: &api.NameserverGroup{
+				Id:          existingNSGroupID,
+				Name:        "name",
+				Description: "Post",
+				Nameservers: []api.Nameserver{
+					{
+						Ip:            "1.1.1.1",
+						NsType:        "dot",
+						Port:          853,
+						TlsServerName: strPtr("resolver.internal"),
+						SpkiPin:       bytesPtr([]byte{1, 2, 3, 4}),
+					},
+				},
+				Groups:  []string{"group"},
+				Enabled: true,
+				Primary: true,
+			},
+		},
+		{
 			name:        "POST Invalid Nameserver",
 			requestType: http.MethodPost,
 			requestPath: "/api/dns/nameservers",
@@ -265,5 +291,34 @@ func TestToServerNSList_IPv6(t *testing.T) {
 				assert.Equal(t, 53, result[0].Port)
 			}
 		})
+	}
+}
+
+func strPtr(s string) *string   { return &s }
+func bytesPtr(b []byte) *[]byte { return &b }
+
+func TestToServerNSList_DoT(t *testing.T) {
+	result, err := toServerNSList([]api.Nameserver{
+		{Ip: "1.1.1.1", NsType: "dot", Port: 853, TlsServerName: strPtr("cloudflare-dns.com"), SpkiPin: bytesPtr([]byte{1, 2, 3})},
+	})
+	assert.NoError(t, err)
+	if assert.Len(t, result, 1) {
+		assert.Equal(t, nbdns.DoTNameServerType, result[0].NSType)
+		assert.Equal(t, "cloudflare-dns.com", result[0].TLSServerName)
+		assert.Equal(t, []byte{1, 2, 3}, result[0].SPKIPin)
+	}
+}
+
+// A plain UDP entry must round-trip with both new fields omitted (nil), not
+// present-but-empty — an admin console reading the response should not see
+// a spurious tls_server_name/spki_pin on an ordinary resolver.
+func TestToNameserverGroupResponse_UDPOmitsDoTFields(t *testing.T) {
+	group := &nbdns.NameServerGroup{
+		NameServers: []nbdns.NameServer{{IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.UDPNameServerType, Port: 53}},
+	}
+	resp := toNameserverGroupResponse(group)
+	if assert.Len(t, resp.Nameservers, 1) {
+		assert.Nil(t, resp.Nameservers[0].TlsServerName)
+		assert.Nil(t, resp.Nameservers[0].SpkiPin)
 	}
 }

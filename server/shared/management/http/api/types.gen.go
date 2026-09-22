@@ -700,12 +700,15 @@ func (e JobResponseStatus) Valid() bool {
 
 // Defines values for NameserverNsType.
 const (
+	NameserverNsTypeDot NameserverNsType = "dot"
 	NameserverNsTypeUdp NameserverNsType = "udp"
 )
 
 // Valid indicates whether the value is a known member of the NameserverNsType enum.
 func (e NameserverNsType) Valid() bool {
 	switch e {
+	case NameserverNsTypeDot:
+		return true
 	case NameserverNsTypeUdp:
 		return true
 	default:
@@ -3575,6 +3578,12 @@ type Nameserver struct {
 
 	// Port Nameserver Port
 	Port int `json:"port"`
+
+	// SpkiPin Optional SHA-256 hash of a "dot" nameserver's leaf certificate SubjectPublicKeyInfo, base64-encoded. Omitted trusts the system CA store instead.
+	SpkiPin *[]byte `json:"spki_pin,omitempty"`
+
+	// TlsServerName TLS server name (SNI / certificate name) for a "dot" nameserver, distinct from ip. Required when ns_type is "dot".
+	TlsServerName *string `json:"tls_server_name,omitempty"`
 }
 
 // NameserverNsType Nameserver Type

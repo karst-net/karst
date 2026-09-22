@@ -212,6 +212,15 @@ func toServerNSList(apiNSList []api.Nameserver) ([]nbdns.NameServer, error) {
 		if err != nil {
 			return nil, err
 		}
+		// TLSServerName/SPKIPin are ADR-0034 fields with no place in the
+		// "<type>://<ip>:<port>" URL ParseNameServerURL parses — the
+		// connect address stays IP-only there, same as a plain nameserver.
+		if apiNS.TlsServerName != nil {
+			parsed.TLSServerName = *apiNS.TlsServerName
+		}
+		if apiNS.SpkiPin != nil {
+			parsed.SPKIPin = *apiNS.SpkiPin
+		}
 		nsList = append(nsList, parsed)
 	}
 
@@ -237,6 +246,14 @@ func toNameserverGroupResponse(serverNSGroup *nbdns.NameServerGroup) *api.Namese
 			Ip:     ns.IP.String(),
 			NsType: api.NameserverNsType(ns.NSType.String()),
 			Port:   ns.Port,
+		}
+		// Pointer fields: a plain UDP entry round-trips with both omitted,
+		// not present-but-empty.
+		if ns.TLSServerName != "" {
+			apiNS.TlsServerName = &ns.TLSServerName
+		}
+		if len(ns.SPKIPin) != 0 {
+			apiNS.SpkiPin = &ns.SPKIPin
 		}
 		nsList = append(nsList, apiNS)
 	}

@@ -965,6 +965,59 @@ func TestValidateDomain(t *testing.T) {
 
 }
 
+func TestValidateNSList(t *testing.T) {
+	testCases := []struct {
+		name    string
+		list    []nbdns.NameServer
+		errFunc require.ErrorAssertionFunc
+	}{
+		{
+			name: "Plain UDP nameserver needs no TLS server name",
+			list: []nbdns.NameServer{{
+				IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.UDPNameServerType, Port: 53,
+			}},
+			errFunc: require.NoError,
+		},
+		{
+			name: "DoT nameserver with a TLS server name and no pin",
+			list: []nbdns.NameServer{{
+				IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.DoTNameServerType, Port: 853,
+				TLSServerName: "cloudflare-dns.com",
+			}},
+			errFunc: require.NoError,
+		},
+		{
+			name: "DoT nameserver with a valid 32-byte pin",
+			list: []nbdns.NameServer{{
+				IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.DoTNameServerType, Port: 853,
+				TLSServerName: "resolver.internal", SPKIPin: make([]byte, 32),
+			}},
+			errFunc: require.NoError,
+		},
+		{
+			name: "DoT nameserver without a TLS server name is rejected",
+			list: []nbdns.NameServer{{
+				IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.DoTNameServerType, Port: 853,
+			}},
+			errFunc: require.Error,
+		},
+		{
+			name: "DoT nameserver with a malformed pin length is rejected",
+			list: []nbdns.NameServer{{
+				IP: netip.MustParseAddr("1.1.1.1"), NSType: nbdns.DoTNameServerType, Port: 853,
+				TLSServerName: "resolver.internal", SPKIPin: make([]byte, 10),
+			}},
+			errFunc: require.Error,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.errFunc(t, validateNSList(testCase.list))
+		})
+	}
+}
+
 func TestNameServerAccountPeersUpdate(t *testing.T) {
 	manager, updateManager, account, peer1, peer2, peer3 := setupNetworkMapTest(t)
 

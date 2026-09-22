@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	nbdns "github.com/netbirdio/netbird/dns"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -46,22 +47,39 @@ func (h *NetmapHandler) dnsConfig(ctx context.Context, accountID, peerID string)
 			continue
 		}
 		resolvers := make([]string, 0, len(group.NameServers))
+		var upstreams []*proto.KarstDNSUpstream
 		for _, nameserver := range group.NameServers {
 			if !nameserver.IP.IsValid() || nameserver.Port <= 0 || nameserver.Port > 65535 {
 				return nil, fmt.Errorf("nameserver group %q has invalid resolver", id)
 			}
+			// A DoT entry goes only into upstreams, never into the plain
+			// string list — ADR-0034. Projecting it as a bare "ip:port"
+			// string too would let any reader that only understands that
+			// list query it in cleartext, silently defeating the whole
+			// point of choosing DoT for it.
+			if nameserver.NSType == nbdns.DoTNameServerType {
+				upstreams = append(upstreams, &proto.KarstDNSUpstream{
+					Address:       nameserver.AddrPort().String(),
+					Transport:     proto.KarstDNSTransport_KARST_DNS_TRANSPORT_DOT,
+					TlsServerName: nameserver.TLSServerName,
+					SpkiPin:       nameserver.SPKIPin,
+				})
+				continue
+			}
 			resolvers = append(resolvers, nameserver.AddrPort().String())
 		}
-		if len(resolvers) == 0 {
+		if len(resolvers) == 0 && len(upstreams) == 0 {
 			continue
 		}
 		if group.Primary {
 			config.Nameservers = append(config.Nameservers, resolvers...)
+			config.Upstreams = append(config.Upstreams, upstreams...)
 		} else {
 			for _, domain := range group.Domains {
 				config.Routes = append(config.Routes, &proto.KarstDNSRoute{
 					MatchDomain: domain,
 					Resolvers:   append([]string(nil), resolvers...),
+					Upstreams:   append([]*proto.KarstDNSUpstream(nil), upstreams...),
 				})
 			}
 		}
