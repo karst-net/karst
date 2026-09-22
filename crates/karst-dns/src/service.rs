@@ -3,14 +3,13 @@
 
 //! Conversion between KarstDNS policy and DNS wire messages.
 
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, PTR};
 use hickory_proto::rr::{Name, RData, Record as WireRecord, RecordType as WireRecordType};
 
-use crate::{Record, RecordType, Resolution, Resolver, Response, ResponseKind};
+use crate::{Record, RecordType, Resolution, Resolver, Response, ResponseKind, Upstream};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -29,7 +28,7 @@ pub enum Error {
 pub enum Decision {
     Respond(Message),
     Forward {
-        resolvers: Vec<SocketAddr>,
+        resolvers: Vec<Upstream>,
         split: bool,
     },
 }
@@ -73,7 +72,7 @@ pub fn handle_wire(resolver: &Resolver, request: &[u8]) -> Result<Vec<u8>, Error
 fn forward(
     resolver: &Resolver,
     request: &Message,
-    resolvers: &[SocketAddr],
+    resolvers: &[Upstream],
 ) -> Result<Vec<u8>, Error> {
     let Some(question) = request.queries.first() else {
         return response(request, ResponseCode::FormErr, false, None)
@@ -102,7 +101,7 @@ fn forward(
     let wire = request
         .to_vec()
         .map_err(|error| Error::Response(error.to_string()))?;
-    let response = match crate::forward::udp(&wire, resolvers) {
+    let response = match crate::forward::query(&wire, resolvers) {
         Ok(response) => response,
         Err(error) => {
             resolver.record_failure(&key.name, &error);
@@ -257,7 +256,7 @@ mod tests {
     #[test]
     fn unknown_mesh_name_never_becomes_a_forward() {
         let config = Config::new(
-            vec!["192.0.2.53:53".parse().expect("upstream")],
+            vec![Upstream::plain("192.0.2.53:53".parse().expect("upstream"))],
             vec![],
             vec![],
             "aquifer.karst",
@@ -281,11 +280,11 @@ mod tests {
     #[test]
     fn split_route_cannot_fall_back_to_global() {
         let config = Config::new(
-            vec!["192.0.2.53:53".parse().expect("upstream")],
+            vec![Upstream::plain("192.0.2.53:53".parse().expect("upstream"))],
             vec![],
             vec![crate::Route {
                 match_domain: "internal.example".to_owned(),
-                resolvers: vec!["100.64.0.53:53".parse().expect("route")],
+                resolvers: vec![Upstream::plain("100.64.0.53:53".parse().expect("route"))],
             }],
             "aquifer.karst",
             true,
@@ -299,7 +298,10 @@ mod tests {
             panic!("split query was not forwarded");
         };
         assert!(split);
-        assert_eq!(resolvers, vec!["100.64.0.53:53".parse().expect("route")]);
+        assert_eq!(
+            resolvers,
+            vec![Upstream::plain("100.64.0.53:53".parse().expect("route"))]
+        );
     }
 
     #[test]
@@ -310,7 +312,7 @@ mod tests {
             .set_read_timeout(Some(std::time::Duration::from_millis(50)))
             .expect("timeout");
         let config = Config::new(
-            vec![hostile.local_addr().expect("address")],
+            vec![Upstream::plain(hostile.local_addr().expect("address"))],
             vec![],
             vec![],
             "aquifer.karst",
@@ -360,7 +362,14 @@ mod tests {
                 .expect("respond");
         });
         let resolver = Resolver::new(
-            Config::new(vec![address], vec![], vec![], "aquifer.karst", true).expect("config"),
+            Config::new(
+                vec![Upstream::plain(address)],
+                vec![],
+                vec![],
+                "aquifer.karst",
+                true,
+            )
+            .expect("config"),
             [],
         );
         let first = request("www.example.test.", WireRecordType::A);
@@ -397,7 +406,9 @@ mod tests {
     fn retains_only_the_five_most_recent_upstream_failures() {
         let resolver = Resolver::new(
             Config::new(
-                vec!["127.0.0.1:9".parse().expect("unavailable upstream")],
+                vec![Upstream::plain(
+                    "127.0.0.1:9".parse().expect("unavailable upstream"),
+                )],
                 vec![],
                 vec![],
                 "aquifer.karst",

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use karst_dns::{Config, MeshPeer, Resolver, Route};
+use karst_dns::{Config, MeshPeer, Resolver, Route, Transport, Upstream};
 
 use crate::netmap::Netmap;
 
@@ -541,6 +541,8 @@ pub enum Error {
     Resolver { value: String },
     #[error("netmap peer {peer:?} has invalid mesh address {value:?}")]
     Address { peer: String, value: String },
+    #[error("dot_upstream {address}'s spki_pin_hex {value:?} is not 64 hex characters (32 bytes)")]
+    SpkiPin { address: SocketAddr, value: String },
     #[error(transparent)]
     Config(#[from] karst_dns::Error),
 }
@@ -723,12 +725,22 @@ fn userspace_forward(
     stack: &karst_tun::Userspace,
     socket: karst_tun::UdpHandle,
     request: &[u8],
-    resolvers: &[SocketAddr],
+    resolvers: &[Upstream],
 ) -> std::io::Result<Vec<u8>> {
     let _ = karst_dns::message::decode(request).map_err(std::io::Error::other)?;
     let mut last_error = None;
-    for resolver in resolvers {
-        if let Err(error) = stack.udp_send(socket, request, *resolver) {
+    for upstream in resolvers {
+        // The userspace overlay stack has no TLS-over-its-own-TCP adapter
+        // (ADR-0034's DoT client is a blocking `std::net::TcpStream`, which
+        // this poll-based handle API is not) — a DoT upstream here fails
+        // closed rather than being sent in plaintext or silently skipped.
+        let Transport::Plain = &upstream.transport else {
+            last_error = Some(std::io::Error::other(
+                "userspace mode does not support DoT upstreams",
+            ));
+            continue;
+        };
+        if let Err(error) = stack.udp_send(socket, request, upstream.addr) {
             last_error = Some(std::io::Error::other(error.to_string()));
             continue;
         }
@@ -736,7 +748,7 @@ fn userspace_forward(
         let mut response = Vec::new();
         while Instant::now() < deadline {
             if let Some(source) = stack.udp_recv(socket, &mut response) {
-                if source != *resolver {
+                if source != upstream.addr {
                     response.clear();
                     continue;
                 }
@@ -788,14 +800,14 @@ pub fn reconcile(
 /// leave no stale mesh zone behind.
 pub fn from_netmap(netmap: &Netmap) -> Result<Resolver, Error> {
     let config = &netmap.dns_config;
-    let nameservers = parse_resolvers(&config.nameservers)?;
+    let nameservers = parse_upstreams(&config.nameservers)?;
     let routes = config
         .routes
         .iter()
         .map(|route| {
             Ok(Route {
                 match_domain: route.match_domain.clone(),
-                resolvers: parse_resolvers(&route.resolvers)?,
+                resolvers: parse_upstreams(&route.resolvers)?,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -838,15 +850,25 @@ pub fn from_config(config: &crate::config::Config) -> Result<Option<Resolver>, E
     if !config.dns.enabled || !config.netmap_dns.magic_dns || config.netmap_dns.zone.is_empty() {
         return Ok(None);
     }
-    let nameservers = if config.dns.upstream.is_empty() {
-        let netmap = parse_resolvers(&config.netmap_dns.nameservers)?;
+    let nameservers = if config.dns.upstream.is_empty() && config.dns.dot_upstream.is_empty() {
+        let netmap = parse_upstreams(&config.netmap_dns.nameservers)?;
         if netmap.is_empty() {
-            host_resolvers()?
+            host_resolvers()?.into_iter().map(Upstream::plain).collect()
         } else {
             netmap
         }
     } else {
-        config.dns.upstream.clone()
+        let mut combined: Vec<Upstream> = config
+            .dns
+            .upstream
+            .iter()
+            .copied()
+            .map(Upstream::plain)
+            .collect();
+        for entry in &config.dns.dot_upstream {
+            combined.push(dot_upstream(entry)?);
+        }
+        combined
     };
     let routes = if config.dns.accept_netmap_config {
         config
@@ -856,7 +878,7 @@ pub fn from_config(config: &crate::config::Config) -> Result<Option<Resolver>, E
             .map(|route| {
                 Ok(Route {
                     match_domain: route.match_domain.clone(),
-                    resolvers: parse_resolvers(&route.resolvers)?,
+                    resolvers: parse_upstreams(&route.resolvers)?,
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?
@@ -902,15 +924,50 @@ pub fn from_config(config: &crate::config::Config) -> Result<Option<Resolver>, E
     )))
 }
 
-fn parse_resolvers(values: &[String]) -> Result<Vec<SocketAddr>, Error> {
+fn parse_upstreams(values: &[String]) -> Result<Vec<Upstream>, Error> {
     values
         .iter()
         .map(|value| {
-            value.parse().map_err(|_| Error::Resolver {
-                value: value.clone(),
-            })
+            value
+                .parse()
+                .map(Upstream::plain)
+                .map_err(|_| Error::Resolver {
+                    value: value.clone(),
+                })
         })
         .collect()
+}
+
+/// Convert one local TOML `[[dns.dot_upstream]]` entry into an [`Upstream`].
+fn dot_upstream(entry: &crate::config::DotUpstreamSection) -> Result<Upstream, Error> {
+    let pin = entry
+        .spki_pin_hex
+        .as_deref()
+        .map(|hex| {
+            parse_spki_pin(hex).ok_or_else(|| Error::SpkiPin {
+                address: entry.address,
+                value: hex.to_owned(),
+            })
+        })
+        .transpose()?;
+    Ok(Upstream {
+        addr: entry.address,
+        transport: Transport::Dot {
+            server_name: entry.tls_server_name.clone(),
+            pin,
+        },
+    })
+}
+
+fn parse_spki_pin(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut pin = [0u8; 32];
+    for (byte, chunk) in pin.iter_mut().zip(0..32) {
+        *byte = u8::from_str_radix(&hex[chunk * 2..chunk * 2 + 2], 16).ok()?;
+    }
+    Some(pin)
 }
 
 /// Read normal host upstreams before a bare-file integration replaces them.
@@ -945,6 +1002,72 @@ fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
 mod tests {
     use super::*;
     use crate::netmap::{DNSConfig, Netmap, Peer};
+
+    #[test]
+    fn dot_upstream_parses_a_valid_pin() {
+        let entry = crate::config::DotUpstreamSection {
+            address: "1.1.1.1:853".parse().expect("address"),
+            tls_server_name: "cloudflare-dns.com".to_owned(),
+            spki_pin_hex: Some("ab".repeat(32)),
+        };
+        let upstream = dot_upstream(&entry).expect("convert");
+        assert_eq!(upstream.addr, entry.address);
+        let Transport::Dot { server_name, pin } = upstream.transport else {
+            unreachable!("dot_upstream always produces Transport::Dot");
+        };
+        assert_eq!(server_name, "cloudflare-dns.com");
+        assert_eq!(pin, Some([0xab; 32]));
+    }
+
+    #[test]
+    fn dot_upstream_without_a_pin_trusts_the_system_store() {
+        let entry = crate::config::DotUpstreamSection {
+            address: "9.9.9.9:853".parse().expect("address"),
+            tls_server_name: "dns.quad9.net".to_owned(),
+            spki_pin_hex: None,
+        };
+        let Transport::Dot { pin, .. } = dot_upstream(&entry).expect("convert").transport else {
+            unreachable!("dot_upstream always produces Transport::Dot");
+        };
+        assert_eq!(pin, None);
+    }
+
+    #[test]
+    fn dot_upstream_rejects_a_malformed_pin() {
+        let entry = crate::config::DotUpstreamSection {
+            address: "1.1.1.1:853".parse().expect("address"),
+            tls_server_name: "cloudflare-dns.com".to_owned(),
+            spki_pin_hex: Some("not-hex".to_owned()),
+        };
+        assert!(matches!(dot_upstream(&entry), Err(Error::SpkiPin { .. })));
+    }
+
+    /// The userspace overlay stack has no TLS-over-its-own-TCP adapter (see
+    /// `userspace_forward`'s own comment) — a DoT upstream must fail closed
+    /// rather than being sent in plaintext.
+    #[test]
+    fn userspace_forward_fails_closed_on_a_dot_upstream() {
+        use hickory_proto::op::{Message, MessageType, OpCode};
+
+        let stack = karst_tun::Userspace::create(&karst_tun::TunConfig::default()).expect("stack");
+        stack
+            .set_address("100.64.0.1".parse().expect("address"), 24)
+            .expect("set address");
+        let socket = stack.listen_udp(49_154).expect("socket");
+        let dot = Upstream {
+            addr: "9.9.9.9:853".parse().expect("address"),
+            transport: Transport::Dot {
+                server_name: "dns.quad9.net".to_owned(),
+                pin: None,
+            },
+        };
+        let request = Message::new(1, MessageType::Query, OpCode::Query)
+            .to_vec()
+            .expect("wire query");
+        let error = userspace_forward(&stack, socket, &request, std::slice::from_ref(&dot))
+            .expect_err("DoT is not supported in userspace mode");
+        assert!(error.to_string().contains("DoT"), "{error}");
+    }
 
     fn relay(from: &karst_tun::Userspace, to: &karst_tun::Userspace) {
         let mut buffer = vec![0; karst_proto::consts::TUNNEL_MTU];
@@ -1417,11 +1540,15 @@ mod tests {
         }
         let resolver = Resolver::new(
             Config::new(
-                vec!["127.0.0.1:9".parse().expect("host-only global")],
+                vec![Upstream::plain(
+                    "127.0.0.1:9".parse().expect("host-only global"),
+                )],
                 vec![],
                 vec![Route {
                     match_domain: "internal.example".to_owned(),
-                    resolvers: vec!["100.64.0.3:53".parse().expect("overlay resolver")],
+                    resolvers: vec![Upstream::plain(
+                        "100.64.0.3:53".parse().expect("overlay resolver"),
+                    )],
                 }],
                 "aquifer.karst",
                 true,
