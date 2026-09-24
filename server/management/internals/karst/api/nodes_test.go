@@ -264,15 +264,17 @@ type scanAudit struct{}
 func (scanAudit) Append(context.Context, string, string, string, string) (*audit.Entry, error) {
 	return &audit.Entry{}, nil
 }
-func (scanAudit) Head(context.Context) (uint64, string, error)          { return 0, "", audit.ErrEmpty }
-func (scanAudit) Verify(context.Context) (uint64, error)                { return 0, nil }
-func (scanAudit) List(context.Context, int, int) ([]audit.Entry, error) { return nil, nil }
-func (scanAudit) ListFiltered(context.Context, string, string, int, int) ([]audit.Entry, error) {
+func (scanAudit) AccountHead(context.Context, string) (uint64, string, error) {
+	return 0, "", audit.ErrEmpty
+}
+func (scanAudit) Verify(context.Context) (uint64, error) { return 0, nil }
+func (scanAudit) ListFilteredForAccount(context.Context, string, string, string, int, int) ([]audit.Entry, error) {
 	return nil, nil
 }
-func (scanAudit) ListBefore(context.Context, uint64, int) ([]audit.Entry, error) {
+func (scanAudit) ListBeforeForAccount(context.Context, string, uint64, int) ([]audit.Entry, error) {
 	return nil, nil
 }
+func (scanAudit) CountSince(context.Context, string, uint64) (uint64, error) { return 0, nil }
 func (scanAudit) AddSink(context.Context, string, string) (*audit.Sink, error) {
 	return &audit.Sink{ID: "sink"}, nil
 }
@@ -284,19 +286,21 @@ type exportAudit struct{ entries []audit.Entry }
 func (exportAudit) Append(context.Context, string, string, string, string) (*audit.Entry, error) {
 	return &audit.Entry{}, nil
 }
-func (a exportAudit) Head(context.Context) (uint64, string, error) { return 1, "head", nil }
-func (a exportAudit) Verify(context.Context) (uint64, error)       { return 1, nil }
-func (a exportAudit) List(context.Context, int, int) ([]audit.Entry, error) {
+func (a exportAudit) AccountHead(context.Context, string) (uint64, string, error) {
+	return 1, "head", nil
+}
+func (a exportAudit) Verify(context.Context) (uint64, error) { return 1, nil }
+func (a exportAudit) ListFilteredForAccount(context.Context, string, string, string, int, int) ([]audit.Entry, error) {
 	return a.entries, nil
 }
-func (a exportAudit) ListFiltered(context.Context, string, string, int, int) ([]audit.Entry, error) {
-	return a.entries, nil
-}
-func (a exportAudit) ListBefore(_ context.Context, before uint64, _ int) ([]audit.Entry, error) {
+func (a exportAudit) ListBeforeForAccount(_ context.Context, _ string, before uint64, _ int) ([]audit.Entry, error) {
 	if before != 0 {
 		return nil, nil
 	}
 	return a.entries, nil
+}
+func (a exportAudit) CountSince(context.Context, string, uint64) (uint64, error) {
+	return uint64(len(a.entries)), nil
 }
 func (exportAudit) AddSink(context.Context, string, string) (*audit.Sink, error) {
 	return &audit.Sink{ID: "sink"}, nil
@@ -1208,6 +1212,47 @@ func TestAuditSinkListAndDelete(t *testing.T) {
 	router.ServeHTTP(afterDelete, authed(httptest.NewRequest(http.MethodGet, "/karst/v1/audit/sinks", nil)))
 	require.Equal(t, http.StatusOK, afterDelete.Code, afterDelete.Body.String())
 	require.JSONEq(t, `[]`, afterDelete.Body.String())
+}
+
+// #172 / ADR-0035: before this fix, GET /karst/v1/audit had no account
+// filter at all — any authenticated user with audit-read access could list
+// every tenant's activity in a deployment with more than one account, not
+// merely see a leaked count. Two accounts' real mutations, through the real
+// auditMutations middleware and a real *audit.Log, must not cross.
+func TestAuditListIsScopedToTheAskingAccount(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:audit-list-scoped?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	auditLog, err := audit.New(db)
+	require.NoError(t, err)
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, router)
+
+	mutate := func(accountID string) {
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/audit/sinks",
+			strings.NewReader(`{"kind":"webhook","endpoint":"https://siem.example.test/ingest"}`))
+		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: accountID, UserId: "admin"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	}
+	mutate("account-a")
+	mutate("account-b")
+
+	listReq := httptest.NewRequest(http.MethodGet, "/karst/v1/audit?limit=10", nil)
+	listReq = nbcontext.SetUserAuthInRequest(listReq, auth.UserAuth{AccountId: "account-b", UserId: "admin"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, listReq)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var page struct {
+		Items  []map[string]any `json:"items"`
+		Anchor struct {
+			EntriesSinceAnchor int `json:"entries_since_anchor"`
+		} `json:"anchor"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	require.Len(t, page.Items, 1, "account-b must only see its own entry, not account-a's")
+	require.Equal(t, 1, page.Anchor.EntriesSinceAnchor, "entries_since_anchor must count account-b's own entries only")
 }
 
 // Every Karst route is discovered from mux rather than copied into this test.

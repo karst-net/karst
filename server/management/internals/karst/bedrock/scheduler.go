@@ -151,7 +151,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) error {
 	}
 	s.loggedNotEnabled = false
 
-	auditSeq, _, err := s.Audit.Head(ctx)
+	auditSeq, _, err := s.Audit.AccountHead(ctx, s.AccountID)
 	if err != nil {
 		log.WithContext(ctx).Debugf("karst: bedrock anchor scheduler: audit head: %v", err)
 		return nil

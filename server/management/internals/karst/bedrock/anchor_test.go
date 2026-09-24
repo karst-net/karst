@@ -21,7 +21,7 @@ type fakeAudit struct {
 	truncatedTo uint64
 }
 
-func (f *fakeAudit) Head(context.Context) (uint64, string, error) {
+func (f *fakeAudit) AccountHead(context.Context, string) (uint64, string, error) {
 	return f.seq, f.hash, nil
 }
 

@@ -235,7 +235,7 @@ func TestVerifyEmptyLog(t *testing.T) {
 // Modifying any field must break the chain, and the break must be reported at
 // the entry that was modified rather than somewhere downstream.
 func TestModificationIsDetected(t *testing.T) {
-	for _, field := range []string{"actor", "action", "target", "detail"} {
+	for _, field := range []string{"account_id", "actor", "action", "target", "detail"} {
 		t.Run(field, func(t *testing.T) {
 			l, db := newLog(t)
 			appendN(t, l, 10)
@@ -419,6 +419,108 @@ func TestListFilteredHonorsActorAndAction(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Actor != "alice" || entries[0].Action != "policy.write" {
 		t.Fatalf("unexpected filtered entries: %#v", entries)
+	}
+}
+
+// ADR-0035: an entry is tagged with whichever account is in its Append
+// context, and one with none gets the empty (unscoped) account rather than
+// an error — an audit outage must not be a new way for a mutation to fail.
+func TestAppendTagsEntryWithAccountFromContext(t *testing.T) {
+	l, _ := newLog(t)
+	a := audit.WithAccount(context.Background(), "account-a")
+	unscoped := context.Background()
+
+	entryA, err := l.Append(a, "alice", "peer.login", "node-1", "")
+	if err != nil {
+		t.Fatalf("append scoped: %v", err)
+	}
+	if entryA.AccountID != "account-a" {
+		t.Fatalf("account id = %q, want account-a", entryA.AccountID)
+	}
+
+	entryNone, err := l.Append(unscoped, "system", "startup", "-", "")
+	if err != nil {
+		t.Fatalf("append unscoped: %v", err)
+	}
+	if entryNone.AccountID != "" {
+		t.Fatalf("account id = %q, want empty", entryNone.AccountID)
+	}
+}
+
+// ADR-0035: AccountHead, the *ForAccount reads, and CountSince all exclude
+// another account's entries from what one account can see — the actual
+// confidentiality leak #172 found, not just the entries_since_anchor metric.
+func TestAccountScopedReadsExcludeOtherAccounts(t *testing.T) {
+	l, _ := newLog(t)
+	a := audit.WithAccount(context.Background(), "account-a")
+	b := audit.WithAccount(context.Background(), "account-b")
+
+	if _, err := l.Append(a, "alice", "policy.write", "node", ""); err != nil {
+		t.Fatalf("append a: %v", err)
+	}
+	entryB, err := l.Append(b, "mallory", "node.delete", "node", "")
+	if err != nil {
+		t.Fatalf("append b: %v", err)
+	}
+	if _, err := l.Append(a, "alice", "node.delete", "node", ""); err != nil {
+		t.Fatalf("append a: %v", err)
+	}
+
+	seq, hash, err := l.AccountHead(context.Background(), "account-b")
+	if err != nil {
+		t.Fatalf("account head: %v", err)
+	}
+	if seq != entryB.Seq || hash != entryB.Hash {
+		t.Fatalf("account-b head = (%d, %q), want (%d, %q)", seq, hash, entryB.Seq, entryB.Hash)
+	}
+
+	entriesB, err := l.ListFilteredForAccount(context.Background(), "account-b", "", "", 0, 10)
+	if err != nil {
+		t.Fatalf("list filtered for account: %v", err)
+	}
+	if len(entriesB) != 1 || entriesB[0].Seq != entryB.Seq {
+		t.Fatalf("account-b's filtered entries leaked account-a's: %#v", entriesB)
+	}
+
+	pageB, err := l.ListBeforeForAccount(context.Background(), "account-b", 0, 10)
+	if err != nil {
+		t.Fatalf("list before for account: %v", err)
+	}
+	if len(pageB) != 1 || pageB[0].Seq != entryB.Seq {
+		t.Fatalf("account-b's paged entries leaked account-a's: %#v", pageB)
+	}
+
+	countA, err := l.CountSince(context.Background(), "account-a", 0)
+	if err != nil {
+		t.Fatalf("count since: %v", err)
+	}
+	if countA != 2 {
+		t.Fatalf("account-a count = %d, want 2 (account-b's entry must not be counted)", countA)
+	}
+}
+
+// A count taken from partway through the shared chain must not include
+// entries written before that point, even when they belong to the account
+// asking — this is what entries_since_anchor is built on.
+func TestCountSinceExcludesEntriesAtOrBeforeTheGivenSequence(t *testing.T) {
+	l, _ := newLog(t)
+	ctx := audit.WithAccount(context.Background(), "account-a")
+	var anchorSeq uint64
+	for i := 0; i < 4; i++ {
+		entry, err := l.Append(ctx, "alice", "peer.login", "node", "")
+		if err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+		if i == 1 {
+			anchorSeq = entry.Seq
+		}
+	}
+	count, err := l.CountSince(context.Background(), "account-a", anchorSeq)
+	if err != nil {
+		t.Fatalf("count since: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count since anchor = %d, want 2", count)
 	}
 }
 

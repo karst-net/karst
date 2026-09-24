@@ -78,6 +78,12 @@ func accountFromContext(ctx context.Context) (string, error) {
 type Entry struct {
 	Seq       uint64    `gorm:"primaryKey;autoIncrement:false"`
 	CreatedAt time.Time `gorm:"index"`
+	// AccountID is the account this entry belongs to, empty for an entry
+	// written with no account in context (ADR-0035). It does not change the
+	// chain's ordering or its single deployment-wide sequence — only which
+	// account-scoped views (AccountHead, *ForAccount, CountSince) an entry
+	// appears in.
+	AccountID string `gorm:"index"`
 	// Actor is who did it: a node handle, a user ID, or "system".
 	Actor string `gorm:"index"`
 	// Action is what happened, as a stable machine-readable verb.
@@ -215,6 +221,7 @@ func chainHash(prev string, e *Entry) string {
 	binary.BigEndian.PutUint64(ts[:], uint64(e.CreatedAt.UTC().UnixNano()))
 	writeField(h, ts[:])
 
+	writeField(h, []byte(e.AccountID))
 	writeField(h, []byte(e.Actor))
 	writeField(h, []byte(e.Action))
 	writeField(h, []byte(e.Target))
@@ -241,6 +248,9 @@ func (l *Log) List(ctx context.Context, offset, limit int) ([]Entry, error) {
 // ListFiltered returns a stable, newest-first page narrowed by the documented
 // actor and action filters. Empty filters deliberately mean "any", so callers
 // can compose either dimension without broadening the other.
+//
+// This reads across every account (ADR-0035) — a console-facing caller wants
+// ListFilteredForAccount instead.
 func (l *Log) ListFiltered(ctx context.Context, actor, action string, offset, limit int) ([]Entry, error) {
 	query := l.db.WithContext(ctx).Order("seq DESC").Offset(offset).Limit(limit)
 	if actor != "" {
@@ -256,10 +266,30 @@ func (l *Log) ListFiltered(ctx context.Context, actor, action string, offset, li
 	return entries, nil
 }
 
+// ListFilteredForAccount is ListFiltered narrowed to one account's own
+// entries (ADR-0035) — what a console-facing audit listing should call.
+func (l *Log) ListFilteredForAccount(ctx context.Context, accountID, actor, action string, offset, limit int) ([]Entry, error) {
+	query := l.db.WithContext(ctx).Where("account_id = ?", accountID).Order("seq DESC").Offset(offset).Limit(limit)
+	if actor != "" {
+		query = query.Where("actor = ?", actor)
+	}
+	if action != "" {
+		query = query.Where("action = ?", action)
+	}
+	var entries []Entry
+	if err := query.Find(&entries).Error; err != nil {
+		return nil, fmt.Errorf("audit: list for account: %w", err)
+	}
+	return entries, nil
+}
+
 // ListBefore returns a newest-first page strictly below before. A zero cursor
 // starts at the current head. Sequence numbers are immutable, so this remains
 // stable while new entries are appended; offset pagination would otherwise
 // duplicate or skip entries as the head moves between pages.
+//
+// This reads across every account (ADR-0035) — a console-facing caller wants
+// ListBeforeForAccount instead.
 func (l *Log) ListBefore(ctx context.Context, before uint64, limit int) ([]Entry, error) {
 	query := l.db.WithContext(ctx).Order("seq DESC").Limit(limit)
 	if before != 0 {
@@ -268,6 +298,20 @@ func (l *Log) ListBefore(ctx context.Context, before uint64, limit int) ([]Entry
 	var entries []Entry
 	if err := query.Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("audit: list before: %w", err)
+	}
+	return entries, nil
+}
+
+// ListBeforeForAccount is ListBefore narrowed to one account's own entries
+// (ADR-0035).
+func (l *Log) ListBeforeForAccount(ctx context.Context, accountID string, before uint64, limit int) ([]Entry, error) {
+	query := l.db.WithContext(ctx).Where("account_id = ?", accountID).Order("seq DESC").Limit(limit)
+	if before != 0 {
+		query = query.Where("seq < ?", before)
+	}
+	var entries []Entry
+	if err := query.Find(&entries).Error; err != nil {
+		return nil, fmt.Errorf("audit: list before for account: %w", err)
 	}
 	return entries, nil
 }
@@ -290,8 +334,20 @@ func New(db *gorm.DB) (*Log, error) {
 // produce two entries claiming the same position, and a chain that forks is a
 // chain that proves nothing.
 func (l *Log) Append(ctx context.Context, actor, action, target, detail string) (*Entry, error) {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		if !errors.Is(err, ErrNoAccount) {
+			return nil, fmt.Errorf("audit: %w", err)
+		}
+		// No account in context (ADR-0035): only package-level tests take
+		// this path today. The entry is still written — an audit outage must
+		// never be how a caller loses the ability to log a mutation — just
+		// with no account to scope it into later.
+		accountID = ""
+	}
+
 	var written Entry
-	err := l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var last Entry
 		err := tx.Order("seq DESC").First(&last).Error
 		switch {
@@ -305,6 +361,7 @@ func (l *Log) Append(ctx context.Context, actor, action, target, detail string) 
 		e := Entry{
 			Seq:       last.Seq + 1,
 			CreatedAt: time.Now().UTC(),
+			AccountID: accountID,
 			Actor:     actor,
 			Action:    action,
 			Target:    target,
@@ -354,7 +411,9 @@ func (l *Log) enqueueDeliveries(ctx context.Context, entry Entry) error {
 	return nil
 }
 
-// Head returns the sequence and hash of the newest entry.
+// Head returns the sequence and hash of the newest entry across every
+// account (ADR-0035). A caller anchoring or reporting for one account wants
+// AccountHead instead.
 //
 // This is the value to anchor externally. A hash chain cannot detect truncation
 // of its own tail; a published head can.
@@ -367,6 +426,40 @@ func (l *Log) Head(ctx context.Context) (uint64, string, error) {
 		return 0, "", fmt.Errorf("audit: head: %w", err)
 	}
 	return last.Seq, last.Hash, nil
+}
+
+// AccountHead returns the sequence and hash of the newest entry belonging to
+// accountID (ADR-0035).
+//
+// The returned seq/hash are still a position in the one deployment-wide
+// chain, not a separate counter starting at 1 for this account — two
+// AccountHead calls for the same account do not differ by the number of
+// entries that account wrote in between, because other accounts' entries can
+// fall between them. Use CountSince to count an account's own entries.
+func (l *Log) AccountHead(ctx context.Context, accountID string) (uint64, string, error) {
+	var last Entry
+	if err := l.db.WithContext(ctx).Where("account_id = ?", accountID).Order("seq DESC").First(&last).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, "", ErrEmpty
+		}
+		return 0, "", fmt.Errorf("audit: account head: %w", err)
+	}
+	return last.Seq, last.Hash, nil
+}
+
+// CountSince returns how many of accountID's own entries have Seq > sinceSeq
+// (ADR-0035). This is the per-account replacement for subtracting an anchor's
+// sequence from a head's sequence, which only produces a meaningful count
+// when every entry in between belongs to the same account — untrue of the one
+// shared, deployment-wide chain.
+func (l *Log) CountSince(ctx context.Context, accountID string, sinceSeq uint64) (uint64, error) {
+	var count int64
+	if err := l.db.WithContext(ctx).Model(&Entry{}).
+		Where("account_id = ? AND seq > ?", accountID, sinceSeq).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("audit: count since: %w", err)
+	}
+	return uint64(count), nil
 }
 
 // Verify walks the chain and reports the first entry that does not hold.
