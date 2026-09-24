@@ -111,6 +111,33 @@ func TestSchedulerAnchorsWhenDue(t *testing.T) {
 	}
 }
 
+// ADR-0035: the scheduler must ask for *this account's* audit head, not a
+// deployment-wide one — a busy account sharing the deployment must not
+// change when a quiet account's own chain becomes due for anchoring.
+func TestSchedulerAsksForThisAccountsAuditHead(t *testing.T) {
+	ctx := context.Background()
+	f := newSchedulerFixture(t, true)
+	audit := &accountRecordingAudit{fakeAudit: fakeAudit{seq: 500, hash: "head-at-500"}}
+	s := f.scheduler(audit)
+
+	if err := s.Tick(ctx, time.Unix(2000, 0)); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if audit.gotAccountID != acct {
+		t.Fatalf("AccountHead called with account %q, want %q", audit.gotAccountID, acct)
+	}
+}
+
+type accountRecordingAudit struct {
+	fakeAudit
+	gotAccountID string
+}
+
+func (a *accountRecordingAudit) AccountHead(ctx context.Context, accountID string) (uint64, string, error) {
+	a.gotAccountID = accountID
+	return a.fakeAudit.AccountHead(ctx, accountID)
+}
+
 // A key nobody has enabled for this account yet — the ordinary state between
 // generating one with `karst-bedrock init anchor` and running the root
 // ceremony that adds it — must not error and must not anchor.
@@ -213,7 +240,7 @@ func TestSchedulerDoesNothingWithNoBedrockChain(t *testing.T) {
 // than surfaced: there is nothing actionable to do about it besides wait.
 type erroringAudit struct{}
 
-func (erroringAudit) Head(context.Context) (uint64, string, error) {
+func (erroringAudit) AccountHead(context.Context, string) (uint64, string, error) {
 	return 0, "", errAuditNotReady
 }
 func (erroringAudit) VerifyFrom(context.Context, uint64, string) (uint64, error) {

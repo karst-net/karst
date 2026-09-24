@@ -374,7 +374,7 @@ export type AuditAnchor = {
     last_anchored_sequence: number | null;
     last_anchored_at?: string | null;
     /**
-     * Counted against the deployment-wide audit log sequence (ADR-0033), not this account alone — in a deployment with more than one account, activity in another account advances this number too.
+     * The caller's own entries since the anchor (ADR-0035). The audit log is one deployment-wide hash chain, but this count is scoped to the caller's account and unaffected by other tenants' activity.
      */
     entries_since_anchor: number;
     /**

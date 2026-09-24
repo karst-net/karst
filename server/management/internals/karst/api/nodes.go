@@ -197,17 +197,17 @@ type policyReader interface {
 
 type auditReader interface {
 	Append(context.Context, string, string, string, string) (*audit.Entry, error)
-	Head(context.Context) (uint64, string, error)
+	AccountHead(context.Context, string) (uint64, string, error)
 	Verify(context.Context) (uint64, error)
-	List(context.Context, int, int) ([]audit.Entry, error)
-	ListFiltered(context.Context, string, string, int, int) ([]audit.Entry, error)
-	ListBefore(context.Context, uint64, int) ([]audit.Entry, error)
+	ListFilteredForAccount(context.Context, string, string, string, int, int) ([]audit.Entry, error)
+	ListBeforeForAccount(context.Context, string, uint64, int) ([]audit.Entry, error)
+	CountSince(context.Context, string, uint64) (uint64, error)
 	AddSink(context.Context, string, string) (*audit.Sink, error)
 	ListSinks(context.Context) ([]audit.Sink, error)
 	RemoveSink(context.Context, string) error
 }
 type auditAnchorReader interface {
-	Head(context.Context) (uint64, string, error)
+	AccountHead(context.Context, string) (uint64, string, error)
 	VerifyFrom(context.Context, uint64, string) (uint64, error)
 }
 type relayReader interface {
@@ -359,7 +359,8 @@ func (h *handler) auditMutations(next http.Handler) http.Handler {
 			return
 		}
 		path := strings.TrimPrefix(strings.TrimPrefix(r.URL.EscapedPath(), "/api"), "/karst/v1/")
-		if _, err := h.audit.Append(r.Context(), user.UserId, "karst."+strings.ToLower(r.Method), path, ""); err != nil {
+		ctx := audit.WithAccount(r.Context(), user.AccountId)
+		if _, err := h.audit.Append(ctx, user.UserId, "karst."+strings.ToLower(r.Method), path, ""); err != nil {
 			log.WithContext(r.Context()).Errorf("append Karst audit event: %v", err)
 		}
 	})
@@ -1462,7 +1463,8 @@ func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) auditExport(w http.ResponseWriter, r *http.Request) {
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
@@ -1476,20 +1478,20 @@ func (h *handler) auditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if format == "json" {
-		h.streamAuditJSON(w, r)
+		h.streamAuditJSON(w, r, user.AccountId)
 		return
 	}
-	h.streamAuditCSV(w, r)
+	h.streamAuditCSV(w, r, user.AccountId)
 }
 
-func (h *handler) streamAuditJSON(w http.ResponseWriter, r *http.Request) {
+func (h *handler) streamAuditJSON(w http.ResponseWriter, r *http.Request, accountID string) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("["))
 	cursor := uint64(0)
 	first := true
 	for {
-		page, err := h.audit.ListBefore(r.Context(), cursor, 200)
+		page, err := h.audit.ListBeforeForAccount(r.Context(), accountID, cursor, 200)
 		if err != nil {
 			return // the response has begun; do not append an unrelated error body
 		}
@@ -1512,7 +1514,7 @@ func (h *handler) streamAuditJSON(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("]"))
 }
 
-func (h *handler) streamAuditCSV(w http.ResponseWriter, r *http.Request) {
+func (h *handler) streamAuditCSV(w http.ResponseWriter, r *http.Request, accountID string) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=karst-audit.csv")
 	writer := csv.NewWriter(w)
@@ -1521,7 +1523,7 @@ func (h *handler) streamAuditCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	cursor := uint64(0)
 	for {
-		page, err := h.audit.ListBefore(r.Context(), cursor, 200)
+		page, err := h.audit.ListBeforeForAccount(r.Context(), accountID, cursor, 200)
 		if err != nil {
 			return
 		}
@@ -2045,7 +2047,8 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAudit(w, r) {
 		return
 	}
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
@@ -2054,7 +2057,7 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	entries, err := h.audit.ListFiltered(r.Context(), r.URL.Query().Get("actor"), r.URL.Query().Get("action"), offset, limit+1)
+	entries, err := h.audit.ListFilteredForAccount(r.Context(), user.AccountId, r.URL.Query().Get("actor"), r.URL.Query().Get("action"), offset, limit+1)
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
@@ -2065,29 +2068,22 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 		cursor := strconv.Itoa(offset + limit)
 		next = cursor
 	}
-	// seq is the deployment-wide audit log's current sequence (ADR-0033's
-	// "Scoping note") — the log itself is not partitioned by account, so
-	// entries_since_anchor below is a deployment-wide count wherever it's
-	// derived from seq, not this account's own activity alone. Named
-	// explicitly rather than left implicit, since it reads as per-account at
-	// the call sites below.
-	seq, _, headErr := h.audit.Head(r.Context())
-	if headErr != nil && !errors.Is(headErr, audit.ErrEmpty) {
-		util.WriteError(r.Context(), headErr, w)
-		return
-	}
 	var cursor *string
 	if next != nil {
 		value := next.(string)
 		cursor = &value
 	}
-	anchor := karstcontract.AuditAnchor{EntriesSinceAnchor: int(seq)}
+	// entries_since_anchor is this account's own entry count (ADR-0035), not
+	// a deployment-wide sequence delta (ADR-0033's "Scoping note", now fixed).
+	// Defaults to every entry the account has ever written, narrowed below
+	// once an anchor is found.
+	totalCount, countErr := h.audit.CountSince(r.Context(), user.AccountId, 0)
+	if countErr != nil {
+		util.WriteError(r.Context(), countErr, w)
+		return
+	}
+	anchor := karstcontract.AuditAnchor{EntriesSinceAnchor: int(totalCount)}
 	if h.chain != nil {
-		user, userErr := nbcontext.GetUserAuthFromContext(r.Context())
-		if userErr != nil {
-			util.WriteError(r.Context(), userErr, w)
-			return
-		}
 		chainEntries, chainErr := h.chain.All(r.Context(), user.AccountId)
 		if chainErr != nil && !errors.Is(chainErr, bedrock.ErrNoLog) {
 			util.WriteError(r.Context(), chainErr, w)
@@ -2102,18 +2098,17 @@ func (h *handler) auditList(w http.ResponseWriter, r *http.Request) {
 			if state.Anchor != nil {
 				anchoredSequence := int(state.Anchor.AuditSeq)
 				anchor.LastAnchoredSequence = &anchoredSequence
-				if seq >= state.Anchor.AuditSeq {
-					anchor.EntriesSinceAnchor = int(seq - state.Anchor.AuditSeq)
+				sinceAnchor, sinceErr := h.audit.CountSince(r.Context(), user.AccountId, state.Anchor.AuditSeq)
+				if sinceErr != nil {
+					util.WriteError(r.Context(), sinceErr, w)
+					return
 				}
+				anchor.EntriesSinceAnchor = int(sinceAnchor)
 				if at, ok := bedrock.LastAnchoredAt(chainEntries, state); ok {
 					anchor.LastAnchoredAt = &at
 				}
 				// ADR-0016's payoff: report a log that contradicts its own
 				// anchor rather than only counting entries since it.
-				// `entries_since_anchor` above stays accurate for a log the
-				// server has quietly truncated — both `seq` and the anchor
-				// came from the same (possibly rewound) store — so this is
-				// the one check here that is not fooled by that.
 				if auditHead, ok := h.audit.(auditAnchorReader); ok {
 					if _, verifyAnchorErr := bedrock.VerifyAnchored(r.Context(), state, auditHead); verifyAnchorErr != nil {
 						anchor.ContradictsAnchor = true
@@ -2155,11 +2150,12 @@ func (h *handler) auditHead(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAudit(w, r) {
 		return
 	}
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	seq, hash, err := h.audit.Head(r.Context())
+	seq, hash, err := h.audit.AccountHead(r.Context(), user.AccountId)
 	if errors.Is(err, audit.ErrEmpty) {
 		util.WriteJSONObject(r.Context(), w, map[string]any{"sequence": 0, "hash": ""})
 		return
@@ -2175,13 +2171,18 @@ func (h *handler) auditVerify(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAudit(w, r) {
 		return
 	}
-	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
+	// Verify walks the whole deployment-wide chain (ADR-0035) — a stronger
+	// check than one scoped to this account alone, and the correct one:
+	// truncating any account's tail breaks every account's verification.
+	// Only the reported head below is scoped to this account.
 	bad, err := h.audit.Verify(r.Context())
 	valid := err == nil
-	seq, hash, headErr := h.audit.Head(r.Context())
+	seq, hash, headErr := h.audit.AccountHead(r.Context(), user.AccountId)
 	if errors.Is(headErr, audit.ErrEmpty) {
 		seq, hash, headErr = 0, "", nil
 	}

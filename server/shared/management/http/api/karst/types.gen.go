@@ -453,7 +453,7 @@ type AuditAnchor struct {
 	// ContradictsAnchor true when the audit log no longer matches its recorded anchor (ADR-0016 VerifyAnchored) — the server has truncated or rewritten history since it was last anchored. False both when the log is intact and when there is no anchor to contradict.
 	ContradictsAnchor bool `json:"contradicts_anchor"`
 
-	// EntriesSinceAnchor Counted against the deployment-wide audit log sequence (ADR-0033), not this account alone — in a deployment with more than one account, activity in another account advances this number too.
+	// EntriesSinceAnchor The caller's own entries since the anchor (ADR-0035). The audit log is one deployment-wide hash chain, but this count is scoped to the caller's account and unaffected by other tenants' activity.
 	EntriesSinceAnchor   int        `json:"entries_since_anchor"`
 	LastAnchoredAt       *time.Time `json:"last_anchored_at,omitempty"`
 	LastAnchoredSequence *int       `json:"last_anchored_sequence"`

@@ -51,8 +51,13 @@ import (
 // An interface for the same reason the control package's dependencies are:
 // bedrock must not acquire ownership of audit storage to read two fields from
 // it.
+//
+// AccountHead scopes to one account (ADR-0035); VerifyFrom does not, and
+// checks the whole deployment-wide chain still contains the given anchor
+// point — a stronger check than an account-scoped one would be, and
+// unaffected by which account's entries happen to sit at that position.
 type AuditHead interface {
-	Head(ctx context.Context) (uint64, string, error)
+	AccountHead(ctx context.Context, accountID string) (uint64, string, error)
 	VerifyFrom(ctx context.Context, anchorSeq uint64, anchorHash string) (uint64, error)
 }
 
@@ -76,7 +81,7 @@ var ErrNotAnchored = errors.New("bedrock: the chain contains no audit anchor")
 // conversion on the verification path, which is where they would eventually
 // disagree.
 func (l *Log) PrepareAnchor(ctx context.Context, accountID string, audit AuditHead, at time.Time) (*Entry, []byte, error) {
-	seq, hash, err := audit.Head(ctx)
+	seq, hash, err := audit.AccountHead(ctx, accountID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bedrock: audit head: %w", err)
 	}
