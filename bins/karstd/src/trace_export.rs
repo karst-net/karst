@@ -426,10 +426,15 @@ mod tests {
             };
             let conn = rustls::ServerConnection::new(Arc::new(server_config)).expect("server conn");
             let mut tls = StreamOwned { conn, sock };
-            let mut buf = [0_u8; 4096];
-            // Read whatever the client sent; this fixture does not need to
-            // parse it, only to drain it before replying.
-            let _ = tls.read(&mut buf);
+            // Drain the full request (headers + `Content-Length` body)
+            // before responding. The client's writes land as more than one
+            // TLS record, so a single `read()` can return before later
+            // records arrive; closing the socket with those bytes still
+            // sitting unread in the kernel receive buffer is exactly what
+            // makes the OS answer with a RST instead of a graceful FIN —
+            // surfacing to the client as `ConnectionReset` rather than a
+            // clean EOF. See GitHub issue #187.
+            read_full_request(&mut tls);
             let _ = write!(
                 tls,
                 "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -438,6 +443,37 @@ mod tests {
             let _ = tls.write_all(body);
         });
         FakeCollector { address, spki_pin }
+    }
+
+    /// Read from `tls` until the full HTTP/1.1 request — headers plus the
+    /// body its `Content-Length` header promises — has arrived, rather than
+    /// trusting a single `read()` call to have collected it all in one go.
+    fn read_full_request(tls: &mut StreamOwned<rustls::ServerConnection, TcpStream>) {
+        let mut buf = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            if remaining_body_bytes(&buf) == Some(0) {
+                return;
+            }
+            match tls.read(&mut chunk) {
+                Ok(0) | Err(_) => return,
+                Ok(n) => buf.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+            }
+        }
+    }
+
+    /// `None` until `buf` holds the header/body separator; `Some(0)` once it
+    /// also holds as many body bytes as `Content-Length` promised.
+    fn remaining_body_bytes(buf: &[u8]) -> Option<usize> {
+        let separator = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+        let head = std::str::from_utf8(buf.get(..separator)?).ok()?;
+        let content_length = head
+            .split("\r\n")
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let body_len = buf.len() - (separator + 4);
+        Some(content_length.saturating_sub(body_len))
     }
 
     fn request() -> Request<Bytes> {
