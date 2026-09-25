@@ -105,7 +105,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// only `statusJson()`/`stop()` — confirmed by reading the generated
     /// FFI bindings, not assumed — so polling is the only mechanism
     /// available today; there is no callback to react to instead.
-    private var healthTimer: Timer?
+    private var healthTimer: DispatchSourceTimer?
+
+    /// Where `healthTimer` fires. A dispatch timer on its own queue, not a
+    /// `Timer`: see `startHealthTimer`.
+    private let healthQueue = DispatchQueue(label: "dev.karst.packettunnel.health")
 
     /// The routing-relevant fingerprint (`routeSignature`) of whatever was
     /// last actually handed to `setTunnelNetworkSettings` — lets
@@ -205,7 +209,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         os_log("stopTunnel: %{public}@", log: Self.log, type: .info, String(describing: reason))
-        healthTimer?.invalidate()
+        healthTimer?.cancel()
         healthTimer = nil
         // `EngineHandle.stop()` both requests shutdown and joins (that
         // method's own doc comment on why `Drop` alone does not) — exactly
@@ -226,14 +230,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// docs/adr/0031-managed-device-mode-reconsiders-adr-0024.md's
     /// Negative consequences rather than assumed benign.
     private func startHealthTimer() {
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.healthPollInterval, repeats: true) { [weak self] _ in
+        // A dispatch timer, not `Timer.scheduledTimer` + `RunLoop.current`:
+        // this runs inside `setTunnelNetworkSettings`' completion handler,
+        // on a NetworkExtension dispatch-queue thread whose run loop nobody
+        // runs, so a `Timer` added there was scheduled and never fired.
+        // Found on real hardware: the poll never ran, so a subnet route
+        // added mid-session reached the engine's netmap but never the
+        // kernel, and nothing this poll exists for (route churn, exit
+        // activation/withdrawal, reasserting) could happen.
+        let timer = DispatchSource.makeTimerSource(queue: healthQueue)
+        timer.schedule(deadline: .now() + Self.healthPollInterval, repeating: Self.healthPollInterval)
+        timer.setEventHandler { [weak self] in
             self?.pollHealth()
         }
-        // This extension has no AppKit event loop driving `.default` mode
-        // the way `Karst.app`'s own polling timer rides on — `.common`
-        // is what keeps a repeating `Timer` firing regardless of whatever
-        // run-loop mode this process's own machinery is in.
-        RunLoop.current.add(timer, forMode: .common)
+        timer.resume()
         healthTimer = timer
     }
 
@@ -305,7 +315,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)) else {
             return nil
         }
-        var routes = status.peers.flatMap(\.allowedIps)
+        var routes = status.peers.flatMap(\.allowedIps).filter { !isDefaultRoute($0) }
         routes += (status.control?.routing.routes ?? [])
             .filter { $0.kind == "exit" && $0.role == "recipient" && $0.active }
             .map(\.prefix)
@@ -471,6 +481,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return nil
     }
 
+    /// Whether `cidr` is a whole address family (`0.0.0.0/0`, `::/0`).
+    ///
+    /// A peer's `allowed_ips` carries an exit offer's default prefix as soon
+    /// as the offer exists — karstd keeps a cryptokey next hop for it before
+    /// any local consent — so mapping every allowed IP into an included
+    /// route steered this device's default route into a tunnel whose engine
+    /// refuses to forward it: an unconsented exit offer black-holed the
+    /// Mac's internet (found on the lab hardware). A default route enters
+    /// these settings only through the active recipient exit route below.
+    static func isDefaultRoute(_ cidr: String) -> Bool {
+        splitCIDR(cidr)?.prefixLength == 0
+    }
+
     /// Builds the settings `setTunnelNetworkSettings` needs from
     /// `EngineHandle.statusJson()`'s body — the same JSON `karst status
     /// --json` reports on the `LaunchDaemon` build
@@ -524,7 +547,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var ipv4Routes: [NEIPv4Route] = []
         var ipv6Routes: [NEIPv6Route] = []
         for peer in status.peers {
-            for allowed in peer.allowedIps {
+            for allowed in peer.allowedIps where !isDefaultRoute(allowed) {
                 addRoute(allowed, toIPv4: &ipv4Routes, ipv6: &ipv6Routes)
             }
         }

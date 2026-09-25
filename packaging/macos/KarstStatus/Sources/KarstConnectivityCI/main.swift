@@ -210,6 +210,24 @@ private func waitForEstablishedPeer(
     throw Failure("no\(description) before timeout")
 }
 
+/// Whether the kernel sends `prefix`'s network address through a `utun`
+/// interface — i.e. the provider has applied it via setTunnelNetworkSettings.
+private func kernelRoutesThroughTunnel(_ prefix: String) -> Bool {
+    guard let network = prefix.split(separator: "/").first else { return false }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/sbin/route")
+    process.arguments = ["-n", "get", String(network)]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    guard (try? process.run()) != nil else { return false }
+    process.waitUntilExit()
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return output.split(separator: "\n").contains { line in
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("interface: utun")
+    }
+}
+
 /// Wait for the engine to report a route offer in the requested state. The
 /// route list is the same live `statusJson` body the provider turns into
 /// `NEPacketTunnelNetworkSettings`; this check intentionally does not enroll,
@@ -226,9 +244,22 @@ private func waitForRoute(
             continue
         }
         let routes = (((status["control"] as? [String: Any])?["routing"] as? [String: Any])?["routes"] as? [[String: Any]]) ?? []
+        // karstd's routing_json reports `active` only for a live gateway or
+        // a selected, installed exit route; a subnet route this device
+        // receives is never "active" on any platform. For those the signal
+        // is the provider having applied it: the kernel routes the prefix
+        // through the tunnel. The offer alone is not enough — the provider
+        // applies it on its next health-poll tick, and a traffic probe sent
+        // in between fails although nothing is wrong.
         let present = routes.contains { candidate in
-            candidate["prefix"] as? String == route && candidate["active"] as? Bool == true
+            guard candidate["prefix"] as? String == route else { return false }
+            if candidate["kind"] as? String == "subnet", candidate["role"] as? String == "recipient" {
+                return kernelRoutesThroughTunnel(route)
+            }
+            return candidate["active"] as? Bool == true
         }
+            // Withdrawal likewise is not done until the kernel route is gone.
+            || (!expectedPresent && kernelRoutesThroughTunnel(route))
         if present == expectedPresent { return }
         Thread.sleep(forTimeInterval: 1)
     }

@@ -51,6 +51,37 @@ final class PacketTunnelRouteTests: XCTestCase {
         XCTAssertEqual(ipv6Routes(settings), ["::/0", "fd00::/64"])
     }
 
+    /// Found on the lab hardware: an exit offer's default prefix appears in
+    /// the gateway peer's `allowed_ips` before any consent. Mapped into an
+    /// included route it captured the Mac's default route and black-holed
+    /// its internet. Only an *active* recipient exit may add one.
+    func testUnconsentedExitOfferInAllowedIPsDoesNotCaptureTheDefaultRoute() throws {
+        let offered = try status(
+            addresses: ["100.64.0.1/10", "fd00::1/64"],
+            allowedIPs: [["100.64.0.2/32", "10.203.0.0/24", "0.0.0.0/0", "::/0"]],
+            routes: [
+                ["prefix": "0.0.0.0/0", "kind": "exit", "role": "recipient", "active": false],
+                ["prefix": "::/0", "kind": "exit", "role": "recipient", "active": false],
+            ]
+        )
+        let settings = try PacketTunnelProvider.networkSettings(fromStatusJSON: offered)
+
+        XCTAssertEqual(
+            ipv4Routes(settings),
+            ["10.203.0.0/255.255.255.0", "100.64.0.2/255.255.255.255"]
+        )
+        XCTAssertEqual(ipv6Routes(settings), [])
+
+        let withoutOffer = try status(
+            addresses: ["100.64.0.1/10", "fd00::1/64"],
+            allowedIPs: [["100.64.0.2/32", "10.203.0.0/24"]]
+        )
+        XCTAssertEqual(
+            PacketTunnelProvider.routeSignature(fromStatusJSON: offered),
+            PacketTunnelProvider.routeSignature(fromStatusJSON: withoutOffer)
+        )
+    }
+
     func testRouteSignatureIgnoresOrderButChangesOnWithdrawal() throws {
         let active = try status(
             addresses: ["fd00::1/64", "100.64.0.1/10"],

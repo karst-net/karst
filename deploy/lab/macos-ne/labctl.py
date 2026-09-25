@@ -180,7 +180,7 @@ def set_direct_blocked(blocked):
 
 
 def ensure_policy(api):
-    """Publish state/policy.json as the account's first policy version.
+    """Publish state/policy.json as the account's current policy version.
 
     With a policy store configured, karst-control compiles node filters from
     the store's current version only; KARST_POLICY_FILE is loaded (and
@@ -191,11 +191,12 @@ def ensure_policy(api):
         current = api("GET", "/api/karst/v1/policy")
     except SystemExit:
         current = None
-    if current and current.get("version"):
-        return current["version"]
     with open(os.path.join(STATE, "policy.json")) as f:
         document = f.read()
-    published = api("PUT", "/api/karst/v1/policy", {"document": document}, headers={"If-Match": "0"})
+    version = (current or {}).get("version") or 0
+    if version and json.loads(current["document"]) == json.loads(document):
+        return version
+    published = api("PUT", "/api/karst/v1/policy", {"document": document}, headers={"If-Match": str(version)})
     log(f"published lab policy as version {published.get('version')}")
     return published.get("version")
 
