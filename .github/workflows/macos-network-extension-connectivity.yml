@@ -91,6 +91,22 @@ jobs:
           echo "KARST_PROVISION_PROFILE_KARSTSTATUS=$status_profile" >> "$GITHUB_ENV"
           echo "KARST_PROVISION_PROFILE_PACKETTUNNEL=$tunnel_profile" >> "$GITHUB_ENV"
 
+      # sysextd refuses to activate an un-notarized Developer ID System
+      # Extension even when the package is installed locally, unquarantined
+      # ("Error checking with notarization daemon" -> "failed to validate"),
+      # found on the lab hardware. So every lab run notarizes, and
+      # --require-signing below fails the job if it did not.
+      - name: Notarization credentials
+        env:
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_NOTARY_KEY:?the protected lab Environment needs APPLE_NOTARY_KEY}"
+          key="$RUNNER_TEMP/notary.p8"
+          echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key"
+          chmod 600 "$key"
+          echo "KARST_NOTARY_KEY=$key" >> "$GITHUB_ENV"
+
       - name: Verify the lab handoff
         env:
           KARST_CI_EXPECTED_TRANSPORT: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_transport || 'direct' }}
@@ -112,6 +128,9 @@ jobs:
           ./scripts/macos-network-extension-lab-handoff.sh "$env_file"
 
       - name: Build and install the signed test package
+        env:
+          KARST_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          KARST_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
         run: |
           set -euo pipefail
           ./scripts/build-macos-pkg.sh --arch "$(uname -m)" --require-signing
