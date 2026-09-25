@@ -121,6 +121,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         os_log("startTunnel", log: Self.log, type: .info)
 
+        if let error = Self.enrollFromPendingInvitation() {
+            completionHandler(error)
+            return
+        }
+
         guard FileManager.default.fileExists(atPath: Self.identityPath) else {
             // Mirrors `bins/karstd/src/setup.rs`'s `from_stdin`'s own
             // `resume` branch: never invent a tunnel out of a device that
@@ -314,18 +319,72 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// (SIGBUS in the stack guard) — the same reason `handleAppMessage`'s
     /// enroll verbs already run on their own `stackSize = 8 << 20` thread.
     private static func startEngineOnLargeStack(fd: Int32) throws -> EngineHandle {
-        var result: Result<EngineHandle, Error>!
+        try onLargeStack {
+            try EngineHandle.start(configPath: Self.configPath, socketPath: Self.socketPath, fd: fd)
+        }
+    }
+
+    /// Run `body` on an 8 MiB worker thread and wait for it — see
+    /// `startEngineOnLargeStack` for why the Rust calls need one.
+    private static func onLargeStack<T>(_ body: @escaping () throws -> T) throws -> T {
+        var result: Result<T, Error>!
         let done = DispatchSemaphore(value: 0)
         let worker = Thread {
-            result = Result {
-                try EngineHandle.start(configPath: Self.configPath, socketPath: Self.socketPath, fd: fd)
-            }
+            result = Result { try body() }
             done.signal()
         }
         worker.stackSize = 8 << 20
         worker.start()
         done.wait()
         return try result.get()
+    }
+
+    /// Where a root-run provisioning step may leave one invitation for the
+    /// next `startTunnel` to enroll from — see `enrollFromPendingInvitation`.
+    private static let pendingInvitationPath = "\(stateDir)/pending-invitation"
+
+    /// Enroll (or re-enroll) from `pendingInvitationPath` if a root-owned
+    /// provisioning step left one there, deleting it before use.
+    ///
+    /// The unattended counterpart to Karst.app's Enroll…: the lab's CI job,
+    /// or an administrator's script, has root but is not Karst.app, and
+    /// macOS lets only a configuration's owning app reach the provider via
+    /// `sendProviderMessage`. The trust boundary is the file itself — a
+    /// regular, root-owned, mode-0600 file in this root-only directory, the
+    /// same shape `enrollment.rs::load_bundle` demands of a bundle — so
+    /// nothing below root can plant one. Single use: removed before
+    /// enrolling, whatever the outcome.
+    ///
+    /// - Returns: `nil` when there is nothing to do or enrollment succeeded;
+    ///   otherwise the error `startTunnel` should fail with.
+    private static func enrollFromPendingInvitation() -> Error? {
+        var info = stat()
+        guard lstat(pendingInvitationPath, &info) == 0 else { return nil }
+        defer { unlink(pendingInvitationPath) }
+        guard (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == 0, info.st_mode & 0o077 == 0,
+              (1...65_536).contains(info.st_size)
+        else {
+            return PacketTunnelProviderError.engine(
+                "pending invitation refused: it must be a regular, root-owned, mode-0600 file of at most 64 KiB"
+            )
+        }
+        guard let invitation = try? String(contentsOfFile: pendingInvitationPath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines), !invitation.isEmpty
+        else {
+            return PacketTunnelProviderError.engine("pending invitation could not be read")
+        }
+        unlink(pendingInvitationPath)
+        os_log("startTunnel: enrolling from a pending invitation", log: Self.log, type: .default)
+        do {
+            try onLargeStack {
+                try reEnrollInvitation(invitation: invitation, configPath: Self.configPath, stateDir: Self.stateDir)
+            }
+            return nil
+        } catch let error as FfiError {
+            return PacketTunnelProviderError.engine(Self.message(from: error))
+        } catch {
+            return error
+        }
     }
 
     /// `packetFlow`'s underlying `utun` socket descriptor — the private,
