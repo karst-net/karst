@@ -3,26 +3,35 @@
 
 // CI-only integration driver for a *packaged* Karst Network Extension.
 //
-// This target is intentionally absent from build-macos-pkg.sh. It accepts a
-// short-lived invitation only from a root-owned CI file, sends it through the
-// same NETunnelProviderSession app-message interface Karst.app uses, waits for
-// an established peer, and fetches a known-size HTTP response through the
-// overlay. It needs a physical, pre-approved macOS runner; it is not useful on
-// GitHub-hosted macOS VMs, which cannot prove System Extension packet flow.
+// This target is intentionally absent from build-macos-pkg.sh. It runs as
+// root on the lab runner: it hands a short-lived invitation to the provider
+// as the root-only pending-invitation file `startTunnel` enrolls from, starts
+// the saved Karst configuration with scutil, reads the embedded engine's live
+// status from its root-only admin socket, and then pushes a known-size HTTP
+// response and a UDP echo through the overlay. It needs a physical,
+// pre-approved macOS runner; it is not useful on GitHub-hosted macOS VMs,
+// which cannot prove System Extension packet flow.
+//
+// Why not NETunnelProviderSession.sendProviderMessage, as Karst.app does:
+// macOS delivers provider messages only from the configuration's owning app
+// (dev.karst.karststatus). Found on real hardware — messages from this
+// separate binary are dropped without an error, so the harness only ever
+// timed out.
 
 import Foundation
-import NetworkExtension
 import Darwin
 import Network
 
-private let defaultProviderBundleIdentifier = "dev.karst.packettunnel"
+private let stateDirectory = "/Library/Application Support/dev.karst.packettunnel"
+private let controlSocketPath = "\(stateDirectory)/control.sock"
+private let pendingInvitationPath = "\(stateDirectory)/pending-invitation"
 
 private struct Arguments {
     let invitationFile: URL
     let probeURL: URL
     let udpHost: String
     let udpPort: UInt16
-    let providerBundleIdentifier: String
+    let serviceName: String
     let expectedTransport: String?
     let expectedRoute: String?
     let expectedRouteState: Bool
@@ -33,7 +42,7 @@ private struct Arguments {
         var probeURLText: String?
         var udpHost: String?
         var udpPort: UInt16?
-        var providerBundleIdentifier = defaultProviderBundleIdentifier
+        var serviceName = "Karst"
         var expectedTransport: String?
         var expectedRoute: String?
         var expectedRouteState = true
@@ -45,7 +54,7 @@ private struct Arguments {
             case "--probe-url": probeURLText = iterator.next()
             case "--udp-host": udpHost = iterator.next()
             case "--udp-port": udpPort = UInt16(iterator.next() ?? "")
-            case "--provider-bundle-id": providerBundleIdentifier = iterator.next() ?? providerBundleIdentifier
+            case "--service-name": serviceName = iterator.next() ?? serviceName
             case "--expect-transport": expectedTransport = iterator.next()
             case "--expect-route": expectedRoute = iterator.next()
             case "--expect-route-state":
@@ -73,7 +82,7 @@ private struct Arguments {
         self.probeURL = probeURL
         self.udpHost = udpHost
         self.udpPort = udpPort
-        self.providerBundleIdentifier = providerBundleIdentifier
+        self.serviceName = serviceName
         self.expectedTransport = expectedTransport
         self.expectedRoute = expectedRoute
         self.expectedRouteState = expectedRouteState
@@ -99,54 +108,94 @@ private func wait<T>(_ timeout: TimeInterval, _ start: (@escaping (Result<T, Err
     return try result!.get()
 }
 
-private func manager(providerBundleIdentifier: String, deadline: Date) throws -> NETunnelProviderManager {
-    while Date() < deadline {
-        let loaded: [NETunnelProviderManager] = try wait(10) { completion in
-            NETunnelProviderManager.loadAllFromPreferences { managers, error in
-                if let error { completion(.failure(error)) }
-                else { completion(.success(managers ?? [])) }
-            }
-        }
-        if let manager = loaded.first(where: {
-            ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerBundleIdentifier
-        }) {
-            return manager
-        }
-        Thread.sleep(forTimeInterval: 1)
+/// The engine's live status — the same `status-json` body the provider turns
+/// into `NEPacketTunnelNetworkSettings` — read from its root-only admin socket.
+/// `nil` while the tunnel (and so the engine) is not running.
+private func engineStatus() -> [String: Any]? {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let capacity = MemoryLayout.size(ofValue: address.sun_path)
+    guard controlSocketPath.utf8.count < capacity else { return nil }
+    withUnsafeMutablePointer(to: &address.sun_path) {
+        $0.withMemoryRebound(to: CChar.self, capacity: capacity) { _ = strcpy($0, controlSocketPath) }
     }
-    throw Failure("Karst VPN configuration did not appear; launch Karst.app and approve its System Extension first")
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard connected == 0 else { return nil }
+    let request = Array("status-json\n".utf8)
+    guard write(fd, request, request.count) == request.count else { return nil }
+    shutdown(fd, SHUT_WR)
+    var response = Data()
+    var buffer = [UInt8](repeating: 0, count: 65_536)
+    while true {
+        let n = read(fd, &buffer, buffer.count)
+        if n <= 0 { break }
+        response.append(contentsOf: buffer[0..<n])
+    }
+    return (try? JSONSerialization.jsonObject(with: response)) as? [String: Any]
 }
 
-private func providerMessage(_ session: NETunnelProviderSession, _ object: [String: Any], timeout: TimeInterval) throws -> [String: Any] {
-    let request = try JSONSerialization.data(withJSONObject: object)
-    let response: Data = try wait(timeout) { completion in
-        do {
-            try session.sendProviderMessage(request) { data in
-                guard let data else {
-                    completion(.failure(Failure("network extension returned no response")))
-                    return
-                }
-                completion(.success(data))
-            }
-        } catch {
-            completion(.failure(error))
-        }
+/// `scutil --nc <verb> <service>`: starting and stopping a saved VPN
+/// configuration needs no ownership of it, unlike provider messages.
+@discardableResult
+private func networkConnection(_ verb: String, _ serviceName: String) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/scutil")
+    process.arguments = ["--nc", verb, serviceName]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    if output.contains("No service") {
+        throw Failure("no \(serviceName) VPN configuration; launch Karst.app and approve its configuration first")
     }
-    let json = try JSONSerialization.jsonObject(with: response)
-    guard let object = json as? [String: Any] else {
-        throw Failure("network extension returned a non-object response")
+    return output
+}
+
+private func waitForStatus(_ serviceName: String, _ wanted: String, deadline: Date) throws {
+    while Date() < deadline {
+        if try networkConnection("status", serviceName).hasPrefix(wanted) { return }
+        Thread.sleep(forTimeInterval: 1)
     }
-    if let error = object["error"] as? String { throw Failure("network extension refused request: \(error)") }
-    return object
+    throw Failure("\(serviceName) did not reach \(wanted) before timeout")
+}
+
+/// Leave `invitation` where the provider's next `startTunnel` enrolls from
+/// it: a root-owned, mode-0600 file, published by rename so the provider
+/// never sees a partial one.
+private func placePendingInvitation(_ invitation: String) throws {
+    try FileManager.default.createDirectory(
+        atPath: stateDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
+    )
+    let staged = "\(pendingInvitationPath).\(getpid())"
+    let fd = open(staged, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+    guard fd >= 0 else { throw Failure("cannot stage the pending invitation") }
+    let bytes = Array(invitation.utf8)
+    let written = write(fd, bytes, bytes.count)
+    close(fd)
+    guard written == bytes.count, rename(staged, pendingInvitationPath) == 0 else {
+        unlink(staged)
+        throw Failure("cannot publish the pending invitation")
+    }
 }
 
 private func waitForEstablishedPeer(
-    _ session: NETunnelProviderSession,
     expectedTransport: String?,
     deadline: Date
 ) throws -> [String: Any] {
     while Date() < deadline {
-        let status = try providerMessage(session, ["verb": "status"], timeout: 10)
+        guard let status = engineStatus() else {
+            Thread.sleep(forTimeInterval: 1)
+            continue
+        }
         let peers = status["peers"] as? [[String: Any]] ?? []
         let matchingPeer = peers.contains { peer in
             peer["established"] as? Bool == true
@@ -167,13 +216,15 @@ private func waitForEstablishedPeer(
 /// restart, or otherwise perturb the already-running tunnel between a lab
 /// control-plane mutation and the subsequent application traffic probe.
 private func waitForRoute(
-    _ session: NETunnelProviderSession,
     route: String,
     expectedPresent: Bool,
     deadline: Date
 ) throws {
     while Date() < deadline {
-        let status = try providerMessage(session, ["verb": "status"], timeout: 10)
+        guard let status = engineStatus() else {
+            Thread.sleep(forTimeInterval: 1)
+            continue
+        }
         let routes = (((status["control"] as? [String: Any])?["routing"] as? [String: Any])?["routes"] as? [[String: Any]]) ?? []
         let present = routes.contains { candidate in
             candidate["prefix"] as? String == route && candidate["active"] as? Bool == true
@@ -250,14 +301,10 @@ do {
     let arguments = try Arguments()
     let invitation = try String(contentsOf: arguments.invitationFile, encoding: .utf8)
     guard invitation.hasPrefix("karst-invite-v1:") else { throw Failure("invitation file does not contain a Karst invitation") }
+    guard geteuid() == 0 else { throw Failure("run as root: the pending invitation and the engine's admin socket are root-only") }
     let deadline = Date().addingTimeInterval(arguments.timeout)
-    let vpnManager = try manager(providerBundleIdentifier: arguments.providerBundleIdentifier, deadline: deadline)
-    guard let session = vpnManager.connection as? NETunnelProviderSession else {
-        throw Failure("Karst configuration does not expose an NETunnelProviderSession")
-    }
     if let expectedRoute = arguments.expectedRoute {
         try waitForRoute(
-            session,
             route: expectedRoute,
             expectedPresent: arguments.expectedRouteState,
             deadline: deadline
@@ -266,19 +313,15 @@ do {
         print("{\"result\":\"ok\",\"route\":\"\(expectedRoute)\",\"route_state\":\"\(state)\"}")
         exit(0)
     }
-    // "re-enroll", not "enroll": every lab run brings a fresh invitation to
-    // a Mac that may still hold the previous run's identity, and "enroll"
-    // refuses an existing configuration. On a fresh device the two verbs
-    // behave identically (enrollment.rs's re_enroll_invitation).
-    _ = try providerMessage(session, ["verb": "re-enroll", "invitation": invitation], timeout: arguments.timeout)
-    switch session.status {
-    case .connected, .connecting, .reasserting:
-        break
-    default:
-        try session.startVPNTunnel()
-    }
+    // Every run enrolls afresh: the provider only reads a pending invitation
+    // in startTunnel, so stop whatever is running first. It re-enrolls, which
+    // replaces a previous run's identity and behaves like enroll on a fresh
+    // device (enrollment.rs's re_enroll_invitation).
+    try networkConnection("stop", arguments.serviceName)
+    try waitForStatus(arguments.serviceName, "Disconnected", deadline: deadline)
+    try placePendingInvitation(invitation)
+    try networkConnection("start", arguments.serviceName)
     let status = try waitForEstablishedPeer(
-        session,
         expectedTransport: arguments.expectedTransport,
         deadline: deadline
     )
