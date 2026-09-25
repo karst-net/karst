@@ -205,6 +205,14 @@ pub fn enroll_invitation(
 /// replaces which config this device runs under, not the identity the
 /// control plane already knows it by.
 ///
+/// The identity's enrollment receipt (`identity.key.enrolled`) *is* moved
+/// aside, and restored on failure like the config. While it matches, the
+/// control client treats the device as registered and never presents a
+/// setup key — so without this a re-enrollment against the same server
+/// silently skipped registration: a device an administrator had deleted
+/// stayed "node is not registered" forever, and the new invitation's name,
+/// groups and domain were never applied. Found on the macOS NE lab hardware.
+///
 /// # Errors
 /// As [`enroll_invitation`], plus filesystem errors moving the existing
 /// config aside or restoring it.
@@ -219,16 +227,35 @@ pub fn re_enroll_invitation(
     if had_existing {
         fs::rename(config_path, &backup).map_err(|e| e.to_string())?;
     }
+    // `enroll_bundle` names the identity `state_dir/identity.key`, and the
+    // control client keeps its receipt alongside as `identity.key.enrolled`.
+    let receipt = state_dir.join("identity.key.enrolled");
+    let receipt_backup = state_dir.join("identity.key.enrolled.re-enroll-bak");
+    let had_receipt = receipt.symlink_metadata().is_ok();
+    if had_receipt {
+        if let Err(error) = fs::rename(&receipt, &receipt_backup) {
+            if had_existing {
+                let _ = fs::rename(&backup, config_path);
+            }
+            return Err(error.to_string());
+        }
+    }
     match enroll_bundle(bundle, config_path, state_dir) {
         Ok(()) => {
             if had_existing {
                 let _ = fs::remove_file(&backup);
+            }
+            if had_receipt {
+                let _ = fs::remove_file(&receipt_backup);
             }
             Ok(())
         }
         Err(error) => {
             if had_existing {
                 let _ = fs::rename(&backup, config_path);
+            }
+            if had_receipt {
+                let _ = fs::rename(&receipt_backup, &receipt);
             }
             Err(error)
         }
@@ -427,6 +454,27 @@ mod tests {
         assert!(!error.contains("already exists"), "{error}");
         assert!(!config_path.exists());
         assert!(!dir.join("config.toml.re-enroll-bak").exists());
+    }
+
+    /// The receipt is set aside so a re-enrollment really re-registers, but
+    /// a failed attempt must put it back: the device keeps working as the
+    /// registered node it was.
+    #[test]
+    fn re_enroll_restores_the_enrollment_receipt_when_enrollment_fails() {
+        let dir = Scratch::new("re-enroll-receipt");
+        let config_path = dir.join("config.toml");
+        let state_dir = dir.join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        publish_config(&config_path, "existing = true").unwrap();
+        let receipt = state_dir.join("identity.key.enrolled");
+        publish_config(&receipt, "receipt").unwrap();
+
+        let invitation = unreachable_server_invitation();
+        re_enroll_invitation(&invitation, &config_path, &state_dir).unwrap_err();
+        assert_eq!(fs::read_to_string(&receipt).unwrap(), "receipt");
+        assert!(!state_dir
+            .join("identity.key.enrolled.re-enroll-bak")
+            .exists());
     }
 
     /// The actual point of `re_enroll_invitation` over deleting and calling

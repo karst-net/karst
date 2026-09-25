@@ -140,11 +140,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // here — `karst_tun::Tun::from_fd`'s contract, carried across
             // this boundary rather than re-derived (`EngineHandle.start`'s
             // own `# Safety` doc comment).
-            handle = try EngineHandle.start(
-                configPath: Self.configPath,
-                socketPath: Self.socketPath,
-                fd: fd
-            )
+            handle = try Self.startEngineOnLargeStack(fd: fd)
         } catch let error as FfiError {
             completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
@@ -311,6 +307,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return (status.addresses.sorted() + ["|"] + routes.sorted()).joined(separator: ",")
     }
 
+    /// `EngineHandle.start` on an 8 MiB worker thread, waited for
+    /// synchronously. Found on real hardware (#161): called directly on
+    /// `startTunnel`'s NSXPC callout thread it overflows that thread's
+    /// stack inside `Identity::from_seed`'s post-quantum key derivation
+    /// (SIGBUS in the stack guard) — the same reason `handleAppMessage`'s
+    /// enroll verbs already run on their own `stackSize = 8 << 20` thread.
+    private static func startEngineOnLargeStack(fd: Int32) throws -> EngineHandle {
+        var result: Result<EngineHandle, Error>!
+        let done = DispatchSemaphore(value: 0)
+        let worker = Thread {
+            result = Result {
+                try EngineHandle.start(configPath: Self.configPath, socketPath: Self.socketPath, fd: fd)
+            }
+            done.signal()
+        }
+        worker.stackSize = 8 << 20
+        worker.start()
+        done.wait()
+        return try result.get()
+    }
+
     /// `packetFlow`'s underlying `utun` socket descriptor — the private,
     /// undocumented-but-stable `socket.fileDescriptor` KVC lookup
     /// ADR-0022 (`docs/adr/0022-mobile-tun-backend.md`) already documents
@@ -320,11 +337,48 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// (#161) — but not on the very first call: see
     /// `adoptedFileDescriptorRetrying(from:)`, the caller this exists for.
     private static func adoptedFileDescriptor(from packetFlow: NEPacketTunnelFlow) -> Int32? {
+        if let fd = utunControlSocketDescriptor() {
+            return fd
+        }
         guard let number = packetFlow.value(forKeyPath: "socket.fileDescriptor") as? NSNumber else {
             return nil
         }
         let fd = number.int32Value
         return fd >= 0 ? fd : nil
+    }
+
+    /// The `utun` kernel-control socket NetworkExtension opened in this
+    /// process for `packetFlow`, found by scanning this process's own
+    /// descriptors — WireGuard-apple's `tunnelFileDescriptor`, which does
+    /// not depend on any private property. Found on real hardware (#161,
+    /// macOS 26.6, Intel): the `socket.fileDescriptor` KVC lookup below
+    /// never resolved there, not only in the VM first suspected.
+    ///
+    /// A provider process owns exactly one such socket, so the first
+    /// descriptor whose peer is the `com.apple.net.utun_control` kernel
+    /// control is the one.
+    private static func utunControlSocketDescriptor() -> Int32? {
+        var info = ctl_info()
+        withUnsafeMutablePointer(to: &info.ctl_name) {
+            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) {
+                _ = strcpy($0, "com.apple.net.utun_control")
+            }
+        }
+        // _IOWR('N', 3, struct ctl_info): the macro does not import into Swift.
+        let ctliocginfo: UInt = 0xc064_4e03
+        for fd: Int32 in 0...1024 {
+            var address = sockaddr_ctl()
+            var length = socklen_t(MemoryLayout.size(ofValue: address))
+            let peer = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(fd, $0, &length) }
+            }
+            guard peer == 0, address.sc_family == AF_SYSTEM else { continue }
+            if info.ctl_id == 0, ioctl(fd, ctliocginfo, &info) != 0 { continue }
+            if address.sc_id == info.ctl_id {
+                return fd
+            }
+        }
+        return nil
     }
 
     /// **Found on real hardware (#161), not anticipated**: `packetFlow`'s

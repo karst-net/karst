@@ -266,7 +266,11 @@ do {
         print("{\"result\":\"ok\",\"route\":\"\(expectedRoute)\",\"route_state\":\"\(state)\"}")
         exit(0)
     }
-    _ = try providerMessage(session, ["verb": "enroll", "invitation": invitation], timeout: arguments.timeout)
+    // "re-enroll", not "enroll": every lab run brings a fresh invitation to
+    // a Mac that may still hold the previous run's identity, and "enroll"
+    // refuses an existing configuration. On a fresh device the two verbs
+    // behave identically (enrollment.rs's re_enroll_invitation).
+    _ = try providerMessage(session, ["verb": "re-enroll", "invitation": invitation], timeout: arguments.timeout)
     switch session.status {
     case .connected, .connecting, .reasserting:
         break

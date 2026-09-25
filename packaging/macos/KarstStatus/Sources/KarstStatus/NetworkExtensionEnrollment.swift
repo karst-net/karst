@@ -212,7 +212,15 @@ enum NetworkExtensionEnrollment {
             // `includeAllNetworks`, so it changes nothing about who can
             // disable this device's tunnel, only how quickly it comes back
             // after sleep/network changes.
-            manager.isOnDemandEnabled = true
+            //
+            // Saved with on-demand *off*: found on real hardware, an
+            // on-demand rule on a not-yet-enrolled configuration makes
+            // NetworkExtension start the tunnel at once, `startTunnel`
+            // refuses with `notEnrolled`, and the provider process exits —
+            // taking the very `enroll` message this configuration exists to
+            // carry with it, every ~2s, forever. `enableOnDemandAfterEnrollment`
+            // switches it on once the provider has confirmed enrollment.
+            manager.isOnDemandEnabled = false
             manager.onDemandRules = [NEOnDemandRuleConnect()]
             manager.saveToPreferences { error in
                 if let error {
@@ -275,6 +283,37 @@ enum NetworkExtensionEnrollment {
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         sendInvitation(verb: "re-enroll", invitation: invitation, manager: manager, completion: completion)
+    }
+
+    /// Turn on the reconnect-for-convenience on-demand rule
+    /// `ensureConfiguration` deliberately saved switched off, now that the
+    /// provider has an identity to start with.
+    ///
+    /// This is the one place the self-created marker gates a mutation
+    /// rather than only UI (see `currentOwnership`), and only in the safe
+    /// direction: a missing marker leaves on-demand off, which costs
+    /// automatic reconnection and nothing else; a configuration already
+    /// on-demand (every MDM-managed one sets its own, ADR-0031) is never
+    /// touched. Best-effort — a failed save leaves a working, connected
+    /// tunnel without auto-reconnect, so it is logged, not surfaced.
+    private static func enableOnDemandAfterEnrollment(_ manager: NETunnelProviderManager) {
+        guard
+            !manager.isOnDemandEnabled,
+            let identifier = (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier,
+            UserDefaults.standard.bool(forKey: selfCreatedMarkerKey(identifier))
+        else { return }
+        manager.isOnDemandEnabled = true
+        if manager.onDemandRules?.isEmpty ?? true {
+            manager.onDemandRules = [NEOnDemandRuleConnect()]
+        }
+        manager.saveToPreferences { error in
+            if let error {
+                os_log(
+                    "KARST-TRACE enableOnDemandAfterEnrollment: save failed: %{public}@",
+                    log: Self.log, type: .default, error.localizedDescription
+                )
+            }
+        }
     }
 
     /// Shared body for [`enroll`] and [`reEnroll`] — they differ only in
@@ -353,15 +392,17 @@ enum NetworkExtensionEnrollment {
                 // alone (the normal re-enrollment case).
                 switch session.status {
                 case .connected, .connecting, .reasserting:
-                    completion(.success(()))
+                    break
                 default:
                     do {
                         try session.startVPNTunnel()
-                        completion(.success(()))
                     } catch {
                         completion(.failure(NetworkExtensionEnrollmentError.startFailed(error)))
+                        return
                     }
                 }
+                enableOnDemandAfterEnrollment(manager)
+                completion(.success(()))
             }
         } catch {
             os_log(
