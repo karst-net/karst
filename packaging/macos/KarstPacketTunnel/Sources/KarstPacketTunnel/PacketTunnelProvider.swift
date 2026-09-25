@@ -92,6 +92,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `startTunnel` call that creates it.
     private var engine: EngineHandle?
 
+    /// The utun descriptor this session's engine adopted, released from
+    /// `ownedDescriptors` at stop.
+    private var adoptedDescriptor: Int32?
+
+    /// utun descriptors adopted by live engines in this process. A system
+    /// extension's process outlives its sessions, and a new session can start
+    /// while the previous one's socket is still open (found on the lab Mac
+    /// switching between two configurations): scanning for "the" utun socket
+    /// then found the old one first, and the new engine read a dead
+    /// interface. The scan skips descriptors claimed here.
+    private static var ownedDescriptors = Set<Int32>()
+    private static let ownedDescriptorsLock = NSLock()
+
+    private static func releaseDescriptor(_ fd: Int32) {
+        ownedDescriptorsLock.lock()
+        ownedDescriptors.remove(fd)
+        ownedDescriptorsLock.unlock()
+    }
+
     /// Polls `engine.statusJson()` on a fixed interval so routing reflects
     /// live state instead of the one-time snapshot `startTunnel` took —
     /// closes the mid-session gap `networkSettings(fromStatusJSON:)`'s own
@@ -124,9 +143,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping (Error?) -> Void
     ) {
         os_log("startTunnel", log: Self.log, type: .info)
+        // Everything below runs on its own 8 MiB thread and calls
+        // `completionHandler` from there, never on NetworkExtension's callout
+        // thread. Found on the lab Mac: waiting for the utun descriptor with
+        // that thread blocked sometimes starved NetworkExtension's own
+        // creation of the interface, which then appeared just after the wait
+        // gave up (a failed start right after a configuration switch). The
+        // large stack also covers the Rust calls (`onLargeStack`'s reason).
+        let worker = Thread { [self] in
+            startTunnelOnWorker(completionHandler: completionHandler)
+        }
+        worker.stackSize = 8 << 20
+        worker.start()
+    }
 
-        if let error = Self.enrollFromPendingInvitation() {
+    private func startTunnelOnWorker(completionHandler: @escaping (Error?) -> Void) {
+        // Any failure after the descriptor was claimed releases the claim: the
+        // engine (or its failed start) has closed it.
+        let finish: (Error?) -> Void = { [weak self] error in
+            if error != nil, let self, let fd = self.adoptedDescriptor {
+                Self.releaseDescriptor(fd)
+                self.adoptedDescriptor = nil
+            }
             completionHandler(error)
+        }
+        if let error = Self.enrollFromPendingInvitation() {
+            finish(error)
             return
         }
 
@@ -134,14 +176,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // Mirrors `bins/karstd/src/setup.rs`'s `from_stdin`'s own
             // `resume` branch: never invent a tunnel out of a device that
             // was never enrolled.
-            completionHandler(PacketTunnelProviderError.notEnrolled)
+            finish(PacketTunnelProviderError.notEnrolled)
             return
         }
 
         guard let fd = Self.adoptedFileDescriptorRetrying(from: packetFlow) else {
-            completionHandler(PacketTunnelProviderError.noPacketFlowDescriptor)
+            finish(PacketTunnelProviderError.noPacketFlowDescriptor)
             return
         }
+        adoptedDescriptor = fd
 
         let handle: EngineHandle
         do {
@@ -151,10 +194,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // own `# Safety` doc comment).
             handle = try Self.startEngineOnLargeStack(fd: fd)
         } catch let error as FfiError {
-            completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
+            finish(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
         } catch {
-            completionHandler(error)
+            finish(error)
             return
         }
         engine = handle
@@ -169,12 +212,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch let error as FfiError {
             handle.stop()
             engine = nil
-            completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
+            finish(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
         } catch {
             handle.stop()
             engine = nil
-            completionHandler(error)
+            finish(error)
             return
         }
 
@@ -184,13 +227,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             handle.stop()
             engine = nil
-            completionHandler(error)
+            finish(error)
             return
         }
 
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else {
-                completionHandler(error)
+                finish(error)
                 return
             }
             if error != nil {
@@ -200,7 +243,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.lastAppliedRouteSignature = Self.routeSignature(fromStatusJSON: statusJSON)
                 self.startHealthTimer()
             }
-            completionHandler(error)
+            finish(error)
         }
     }
 
@@ -216,6 +259,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // what a caller waiting to report "fully stopped" needs.
         engine?.stop()
         engine = nil
+        if let fd = adoptedDescriptor {
+            Self.releaseDescriptor(fd)
+            adoptedDescriptor = nil
+        }
         completionHandler()
     }
 
@@ -423,10 +470,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// macOS 26.6, Intel): the `socket.fileDescriptor` KVC lookup below
     /// never resolved there, not only in the VM first suspected.
     ///
-    /// A provider process owns exactly one such socket, so the first
-    /// descriptor whose peer is the `com.apple.net.utun_control` kernel
-    /// control is the one.
+    /// A system extension's process outlives its sessions, and a starting
+    /// session can overlap the previous one's socket, so this returns the
+    /// first utun control socket *not already claimed* by a live engine
+    /// (`ownedDescriptors`), and claims it.
     private static func utunControlSocketDescriptor() -> Int32? {
+        ownedDescriptorsLock.lock()
+        defer { ownedDescriptorsLock.unlock() }
         var info = ctl_info()
         withUnsafeMutablePointer(to: &info.ctl_name) {
             $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) {
@@ -443,7 +493,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             guard peer == 0, address.sc_family == AF_SYSTEM else { continue }
             if info.ctl_id == 0, ioctl(fd, ctliocginfo, &info) != 0 { continue }
-            if address.sc_id == info.ctl_id {
+            if address.sc_id == info.ctl_id, !ownedDescriptors.contains(fd) {
+                ownedDescriptors.insert(fd)
                 return fd
             }
         }
@@ -467,7 +518,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// polling is the correct shape here, not a fixed delay.
     private static func adoptedFileDescriptorRetrying(
         from packetFlow: NEPacketTunnelFlow,
-        attempts: Int = 30,
+        attempts: Int = 100,
         interval: TimeInterval = 0.1
     ) -> Int32? {
         for attempt in 1...attempts {
