@@ -643,7 +643,10 @@ jobs:
           # of the retired karstd LaunchDaemon layout.
           test -x /usr/local/bin/karst-uninstall
           test ! -e /usr/local/bin/karstd
-          test ! -e /usr/local/bin/karst
+          # The CLI ships again (ADR-0036) as the admin's exit-consent path
+          # to the extension's engine — a tool, not the retired daemon.
+          test -x /usr/local/bin/karst
+          /usr/local/bin/karst --version
           test ! -e /Library/LaunchDaemons/dev.karst.karstd.plist
           test ! -e /etc/karst/karstd.toml.example
           test ! -e /var/log/karst

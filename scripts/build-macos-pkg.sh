@@ -235,6 +235,16 @@ echo "==> building karst-ffi ($arch)"
     --target "$rust_target" --package karst-ffi --features network-extension)
 export KARST_FFI_LIB_DIR="$root/target/$rust_target/release"
 
+# The `karst` CLI: the local administrator's exit-node consent path, and
+# status/bugreport against the extension's embedded engine (ADR-0036). It
+# talks to the extension's root-only admin socket, so it is only useful under
+# sudo; it is not a daemon and installs no LaunchDaemon.
+echo "==> building karst CLI ($arch)"
+(cd "$root" && MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --locked --release \
+    --target "$rust_target" --package karst-cli)
+cp "$root/target/$rust_target/release/karst" "$stage_status/usr/local/bin/karst"
+chmod 0755 "$stage_status/usr/local/bin/karst"
+
 echo "==> building KarstPacketTunnel ($arch)"
 (cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" "${swift_build_flags[@]}")
 packettunnel_bin_dir="$(cd "$root/packaging/macos/KarstPacketTunnel" && swift build -c release --arch "$arch" "${swift_build_flags[@]}" --show-bin-path)"
@@ -346,6 +356,11 @@ if [ -n "$codesign_identity" ]; then
   # signature covering an unsigned inner one, and the extension's own
   # `--entitlements` grant would never take effect (Apple's own signing
   # order requirement, not a Karst convention).
+  # A plain Mach-O tool: hardened runtime and a timestamp (notarization needs
+  # both), no entitlements.
+  echo "==> codesign karst CLI"
+  codesign_with_timestamp --sign "$codesign_identity" "$stage_status/usr/local/bin/karst"
+  codesign --verify --strict --verbose=2 "$stage_status/usr/local/bin/karst"
   echo "==> codesign KarstPacketTunnel.systemextension"
   codesign_with_timestamp \
     --entitlements "$root/packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements" \

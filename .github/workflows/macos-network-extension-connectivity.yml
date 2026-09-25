@@ -173,6 +173,16 @@ jobs:
           control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
           sudo "$control" mutate --route exit --state active
+          # Consent is local and admin-only (ADR-0024/ADR-0036): the job acts
+          # as the Mac's local administrator with the shipped CLI, never via
+          # the control plane.
+          for _ in $(seq 1 30); do
+            route_id="$(sudo /usr/local/bin/karst exit-node list | awk -F'"' '/^route_id/ { print $2; exit }')"
+            [ -n "$route_id" ] && break
+            sleep 1
+          done
+          : "${route_id:?the exit offer never reached the Mac}"
+          sudo /usr/local/bin/karst exit-node use "$route_id"
           sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state present --timeout 30
@@ -188,6 +198,9 @@ jobs:
           sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state absent --timeout 30
+          # Withdrawn while consented (the route must go, above); now clear the
+          # dormant consent so the next run starts from none.
+          sudo /usr/local/bin/karst exit-node disable
 
       - name: Collect redacted diagnostics
         if: always()

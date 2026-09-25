@@ -37,7 +37,10 @@ USAGE:
 
 OPTIONS:
     -s, --socket PATH   control socket (default: /run/karst/karstd.sock on
-                         Linux, /var/run/karst/karstd.sock on macOS)
+                         Linux; on macOS the Network Extension's
+                         /Library/Application Support/dev.karst.packettunnel/
+                         control.sock when present, else
+                         /var/run/karst/karstd.sock)
     -c, --config PATH   configuration file, for `dns revert` only
                          (default: /etc/karst/karstd.toml)
     -V, --version       this CLI's own version, no daemon needed — for the
@@ -151,25 +154,32 @@ fn main() -> ExitCode {
             print!("{reply}");
             ExitCode::SUCCESS
         }
+        Err(e) => report_request_error(&socket, &e),
+    }
+}
+
+/// Explain a failed control-socket request in terms of what to do about it.
+fn report_request_error(socket: &std::path::Path, e: &std::io::Error) -> ExitCode {
+    match e.kind() {
         // The overwhelmingly common failure is "the daemon is not running", and
         // a bare ENOENT on a socket path does not say that to most people.
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            ) =>
-        {
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
             eprintln!(
                 "karst: no daemon is listening on {} — is karstd running?",
                 socket.display()
             );
-            ExitCode::FAILURE
         }
-        Err(e) => {
-            eprintln!("karst: {}: {e}", socket.display());
-            ExitCode::FAILURE
+        // The admin socket is root-only by design: exit-route consent and the
+        // rest of the admin surface are the local administrator's (ADR-0024).
+        std::io::ErrorKind::PermissionDenied => {
+            eprintln!(
+                "karst: {}: permission denied — this needs an administrator; run it with sudo",
+                socket.display()
+            );
         }
+        _ => eprintln!("karst: {}: {e}", socket.display()),
     }
+    ExitCode::FAILURE
 }
 
 /// Parse `--socket PATH`, rejecting anything else.
@@ -184,7 +194,28 @@ fn socket_arg(args: &[&str]) -> Result<std::path::PathBuf, String> {
             other => return Err(format!("unknown option {other:?}")),
         }
     }
-    Ok(ipc::socket_path(path))
+    Ok(path.map_or_else(default_socket, |p| ipc::socket_path(Some(p))))
+}
+
+/// The macOS client ships only the Network Extension (ADR-0026), whose
+/// embedded engine listens on its own root-only socket in the extension's
+/// state directory. `sudo karst exit-node use …` there is the local
+/// operator's consent path (ADR-0036), so the CLI prefers that socket and
+/// falls back to karstd's own default, which a development `karstd` on the
+/// same Mac still binds.
+#[cfg(target_os = "macos")]
+const NETWORK_EXTENSION_STATE_DIR: &str = "/Library/Application Support/dev.karst.packettunnel";
+
+fn default_socket() -> std::path::PathBuf {
+    // Detected by its state directory, not the socket inside it: the
+    // directory is root-only, so without sudo the socket is invisible and an
+    // existence check on it would send a non-admin to karstd's path with a
+    // misleading "no daemon" instead of the permission error below.
+    #[cfg(target_os = "macos")]
+    if std::path::Path::new(NETWORK_EXTENSION_STATE_DIR).is_dir() {
+        return std::path::Path::new(NETWORK_EXTENSION_STATE_DIR).join("control.sock");
+    }
+    ipc::socket_path(None)
 }
 
 /// Parse `--config PATH`, rejecting anything else.

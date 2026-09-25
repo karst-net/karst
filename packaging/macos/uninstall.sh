@@ -47,6 +47,7 @@ fi
 # 2. Remove what the package installed.
 rm -f "$STATUS_PLIST"
 rm -rf "$STATUS_APP"
+rm -f /usr/local/bin/karst
 rm -f /usr/local/bin/karst-uninstall
 /usr/sbin/pkgutil --forget "$STATUS_LABEL" 2>/dev/null || true
 
