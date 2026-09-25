@@ -111,6 +111,20 @@ launch, exactly as `karstd` already does.
    which has no counterpart here. This is a second enrollment code path to
    maintain, not a portable one — the same already-accepted cost ADR-0026
    item 8 names for shipping two builds indefinitely.
+6. **Unattended enrollment: a root-owned pending invitation, read by
+   `startTunnel`** (added 2026-09-25, after the first physical-hardware
+   run). macOS delivers `sendProviderMessage` only from the configuration's
+   owning app, so a root-run provisioning step — the NE CI lab's harness,
+   or an administrator's script — cannot use item 2's path at all; its
+   messages are dropped without an error. Instead it writes the invitation
+   to `pending-invitation` in the extension's root-only state directory and
+   starts the saved configuration (`scutil --nc start`). `startTunnel`
+   re-enrolls from that file before its identity check, but only from a
+   regular, root-owned, mode-0600 file of at most 64 KiB — the shape
+   `enrollment.rs::load_bundle` already demands of a bundle — and deletes it
+   before enrolling, whatever the outcome. The trust boundary is root, which
+   already controls the extension's state directory; nothing below root can
+   plant a file there. Item 2 stays the only path Karst.app uses.
 
 ### Alternatives rejected
 
