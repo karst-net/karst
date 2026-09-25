@@ -59,6 +59,33 @@ struct NetworkExtensionStatusClient {
         sendVerb("{\"verb\":\"identity\"}", completion: completion)
     }
 
+    /// Consent to exit route `routeID`, or with `nil` withdraw consent
+    /// (ADR-0036 §3) — `PacketTunnelProvider.handleAppMessage`'s
+    /// `"exit-use"`/`"exit-disable"` verbs. `authorization` is an
+    /// `ExitNodeAuthorization.externalForm`, which the extension verifies
+    /// itself. Answers `{}` on success or `{"error": "..."}`.
+    func sendExitCommand(
+        routeID: String?,
+        authorization: String,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        var payload: [String: Any] = [
+            "verb": routeID == nil ? "exit-disable" : "exit-use",
+            "authorization": authorization,
+        ]
+        if let routeID {
+            payload["route_id"] = routeID
+        }
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: payload),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            completion(.failure(NetworkExtensionStatusError.invalidResponseEncoding))
+            return
+        }
+        sendVerb(json, completion: completion)
+    }
+
     /// Common plumbing every verb over this channel needs: find the saved
     /// manager, get its session, send the (already-JSON) payload, decode
     /// the reply as UTF-8 text. What differs per verb is only the request

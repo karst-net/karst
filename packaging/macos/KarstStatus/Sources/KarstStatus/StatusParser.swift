@@ -44,6 +44,25 @@ struct DaemonStatus {
     /// — the far more common way this actually gets set in practice, since
     /// enrollment alone does not start the tunnel.
     var refusal: String?
+    /// Exit routes offered to this device as a recipient, from
+    /// `control.routing.routes` (ADR-0036's Exit node menu).
+    var exitOffers: [ExitOffer] = []
+    /// The route ID the local administrator has consented to, if any
+    /// (`control.routing.selected_exit`) — kept even while that offer is
+    /// withdrawn, which is how consent stays dormant.
+    var selectedExit: String?
+}
+
+/// One exit route offered to this device.
+struct ExitOffer: Equatable {
+    var routeID = ""
+    var prefix = ""
+    /// Whether this device currently routes through it (consented and
+    /// installed).
+    var active = false
+    /// The gateway peer's name, when one of this device's peers carries the
+    /// offer's prefix in its allowed IPs; nil if none does yet.
+    var gatewayName: String?
 }
 
 /// Parses `karst status --json`'s body (`ipc::Command::StatusJson`,
@@ -79,6 +98,9 @@ enum StatusParser {
         status.interface = object["interface"] as? String ?? ""
         status.mtu = object["mtu"] as? Int ?? 0
 
+        // An exit offer's gateway is the peer whose allowed IPs carry the
+        // offer's prefix (karstd routes it there before any consent).
+        var gatewayByPrefix: [String: String] = [:]
         for case let peerObject as [String: Any] in object["peers"] as? [Any] ?? [] {
             var peer = PeerStatus()
             peer.name = peerObject["name"] as? String ?? ""
@@ -104,6 +126,25 @@ enum StatusParser {
             peer.state = !established ? "connecting" : (rekeying ? "established (rekeying)" : "established")
 
             status.peers.append(peer)
+            let allowed = peerObject["allowed_ips"] as? [String] ?? []
+            for prefix in allowed where gatewayByPrefix[prefix] == nil {
+                gatewayByPrefix[prefix] = peer.name
+            }
+        }
+
+        let control = object["control"] as? [String: Any]
+        let routing = control?["routing"] as? [String: Any]
+        status.selectedExit = routing?["selected_exit"] as? String
+        for case let route as [String: Any] in routing?["routes"] as? [Any] ?? [] {
+            guard route["kind"] as? String == "exit", route["role"] as? String == "recipient" else { continue }
+            var offer = ExitOffer()
+            offer.routeID = route["route_id"] as? String ?? ""
+            offer.prefix = route["prefix"] as? String ?? ""
+            offer.active = route["active"] as? Bool ?? false
+            offer.gatewayName = gatewayByPrefix[offer.prefix]
+            if !offer.routeID.isEmpty {
+                status.exitOffers.append(offer)
+            }
         }
         return status
     }
