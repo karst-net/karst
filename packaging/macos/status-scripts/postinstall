@@ -27,6 +27,30 @@ APP="/Applications/Karst.app"
 /usr/sbin/chown root:wheel "$PLIST" 2>/dev/null || true
 /usr/sbin/chown -R root:wheel "$APP" 2>/dev/null || true
 
+# The authorization right Karst.app's Exit node menu requests and the
+# extension re-checks (ADR-0036 §3): an administrator must authenticate,
+# credentials are not shared with other rights, and they stay valid for 5
+# seconds — long enough for the extension's non-interactive check of the
+# app's pre-authorization (tens of milliseconds on the lab Mac), short enough
+# that the next exit change prompts again. At 30 s, a second change right
+# after the first went through without a password. Rewritten on every
+# install so the definition tracks the package.
+/usr/bin/security authorizationdb write dev.karst.exit-node.consent >/dev/null 2>&1 <<'RIGHT' || true
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>class</key><string>user</string>
+    <key>group</key><string>admin</string>
+    <key>authenticate-user</key><true/>
+    <key>shared</key><false/>
+    <key>timeout</key><integer>5</integer>
+    <key>version</key><integer>1</integer>
+    <key>comment</key><string>Karst: change this Mac's exit node (route all traffic through a mesh peer).</string>
+</dict>
+</plist>
+RIGHT
+
 console_user="$(stat -f%Su /dev/console 2>/dev/null)"
 if [ -n "$console_user" ] && [ "$console_user" != "root" ]; then
     console_uid="$(id -u "$console_user" 2>/dev/null)"

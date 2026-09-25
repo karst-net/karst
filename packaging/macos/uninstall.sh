@@ -48,6 +48,7 @@ fi
 rm -f "$STATUS_PLIST"
 rm -rf "$STATUS_APP"
 rm -f /usr/local/bin/karst
+/usr/bin/security authorizationdb remove dev.karst.exit-node.consent >/dev/null 2>&1 || true
 rm -f /usr/local/bin/karst-uninstall
 /usr/sbin/pkgutil --forget "$STATUS_LABEL" 2>/dev/null || true
 

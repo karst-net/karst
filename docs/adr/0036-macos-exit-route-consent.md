@@ -81,7 +81,9 @@ Two constraints decide the shape before preference does:
      existing privacy disclosure ("the exit node sees your traffic's
      destinations", `docs/subnet-routers-and-exit-nodes.md` §3), then
      requests the authorization right `dev.karst.exit-node.consent` (rule:
-     authenticate as an administrator) with Authorization Services. The app
+     authenticate as an administrator, credentials not shared, valid for 5
+     seconds: long enough for the extension's check, short enough that every
+     change prompts) with Authorization Services. The app
      sends the provider an `exit-use`/`exit-disable` message carrying the
      `AuthorizationExternalForm`. **The extension, running as root,
      reconstructs it and checks the right itself** (`AuthorizationCopyRights`

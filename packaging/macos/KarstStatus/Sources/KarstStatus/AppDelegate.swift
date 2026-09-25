@@ -305,11 +305,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.image = Self.symbolImage(stateSymbolName(for: peer), accessibilityDescription: peer.state)
             menu.addItem(item)
         }
+        addExitNodeItem(to: menu, status: status)
         menu.addItem(NSMenuItem.separator())
         addIdentityAndEnrollItems(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
+    }
+
+    /// The Exit node submenu (ADR-0036 §3): the offered exit routes plus Off,
+    /// with the current consent checked. Shown only when there is something
+    /// to choose or to withdraw. Changing it needs an administrator — the
+    /// extension verifies that itself — so any user sees the choice but only
+    /// an administrator can make it.
+    private func addExitNodeItem(to menu: NSMenu, status: DaemonStatus) {
+        guard !status.exitOffers.isEmpty || status.selectedExit != nil else { return }
+        let submenu = NSMenu()
+        let off = NSMenuItem(title: "Off", action: #selector(runExitDisable), keyEquivalent: "")
+        off.target = self
+        off.state = status.selectedExit == nil ? .on : .off
+        submenu.addItem(off)
+        submenu.addItem(NSMenuItem.separator())
+        for offer in status.exitOffers {
+            let via = offer.gatewayName.map { "Via \($0)" } ?? "Exit route"
+            let pending = status.selectedExit == offer.routeID && !offer.active ? " — connecting" : ""
+            let item = NSMenuItem(title: "\(via) (\(offer.prefix))\(pending)", action: #selector(runExitUse(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = offer
+            item.state = status.selectedExit == offer.routeID ? .on : .off
+            submenu.addItem(item)
+        }
+        if let selected = status.selectedExit, !status.exitOffers.contains(where: { $0.routeID == selected }) {
+            submenu.addItem(withTitle: "Chosen exit is not currently offered", action: nil, keyEquivalent: "")
+        }
+        let active = status.exitOffers.first(where: \.active)
+        let title = active.map { "Exit node: \($0.gatewayName ?? $0.prefix)" } ?? "Exit node: Off"
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        parent.submenu = submenu
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(parent)
+    }
+
+    @objc private func runExitUse(_ sender: NSMenuItem) {
+        guard let offer = sender.representedObject as? ExitOffer else { return }
+        // The disclosure docs/subnet-routers-and-exit-nodes.md §3 requires
+        // before consent, in the words that section uses.
+        let alert = NSAlert()
+        alert.messageText = "Send this Mac's traffic through \(offer.gatewayName ?? "the exit node")?"
+        alert.informativeText = """
+            All of this Mac's internet traffic will leave through the exit node, \
+            which can see the destinations it reaches (and the contents of anything \
+            not encrypted). An administrator of this Mac must approve this change.
+            """
+        alert.addButton(withTitle: "Use Exit Node")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        changeExitNode(routeID: offer.routeID)
+    }
+
+    @objc private func runExitDisable() {
+        changeExitNode(routeID: nil)
+    }
+
+    /// Acquire an administrator's authorization, then ask the extension —
+    /// which checks that authorization again, as root — to consent to
+    /// `routeID` or, with `nil`, to withdraw consent.
+    private func changeExitNode(routeID: String?) {
+        let authorization: ExitNodeAuthorization
+        switch ExitNodeAuthorization.request() {
+        case .success(let granted):
+            authorization = granted
+        case .failure(.cancelled):
+            return
+        case .failure(let failure):
+            showAlert(title: "Exit Node Not Changed", message: failure.localizedDescription)
+            return
+        }
+        client.sendExitCommand(routeID: routeID, authorization: authorization.externalForm) { [weak self] result in
+            DispatchQueue.main.async {
+                authorization.invalidate()
+                guard let self else { return }
+                switch result {
+                case .failure(let error):
+                    self.showAlert(title: "Exit Node Not Changed", message: error.localizedDescription)
+                case .success(let text):
+                    if
+                        let data = text.data(using: .utf8),
+                        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                        let refusal = object["error"] as? String
+                    {
+                        self.showAlert(title: "Exit Node Not Changed", message: refusal)
+                    }
+                    self.refresh()
+                }
+            }
+        }
     }
 
     /// Always present, running or not: it is also how an already-enrolled
