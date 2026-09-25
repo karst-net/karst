@@ -88,8 +88,11 @@ if [ ! -f "$state/relays.json" ]; then
 { "relays": [ { "address": "$KARST_LAB_HOST_IP:$KARST_LAB_RELAY_PORT", "tls_server_name": "relay.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
 EOF
 fi
-[ -f "$state/policy.json" ] || cat > "$state/policy.json" <<'EOF'
-{ "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*"] } ] }
+# "*:*" covers mesh nodes only; routed destinations need CIDR grants. The
+# subnet-route fixture and the exit probe (198.18.0.1) are both reachable
+# only through route offers, so the lab grants their networks explicitly.
+cat > "$state/policy.json" <<EOF
+{ "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*", "$KARST_LAB_SUBNET_PREFIX:*", "198.18.0.0/24:*"] } ] }
 EOF
 if [ ! -f "$state/management.json" ]; then
     umask 077

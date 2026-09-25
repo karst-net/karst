@@ -63,12 +63,23 @@ peer's second, bridge attachment carries traffic to control and relay (a
 
 ### Policy
 
-`bootstrap.sh` writes an allow-all `state/policy.json`, and `labctl.py init`
-publishes it as the account's first policy version. The publish step is not
+`bootstrap.sh` writes `state/policy.json`, and `labctl.py init` publishes it
+as the account's current policy version whenever it differs. It allows every
+node to reach every node (`*:*`) and grants the two routed fixture networks
+explicitly: `*:*` covers mesh nodes only, so without the subnet and exit
+CIDRs the route-churn and exit probes are dropped by the sender's egress
+filter even once their routes are installed. The publish step is not
 optional. With a policy store configured, `karst-control` compiles node
 filters only from the store's current version: `KARST_POLICY_FILE` is loaded
 and logged ("loaded policy … (1 rules)") but never consulted, so without a
 published version every node is default deny and the tunnel carries nothing.
+
+### A direct path needs the relay first
+
+Endpoint candidates are exchanged through the relay, so a client that cannot
+reach it never learns the peer's addresses and never attempts a direct path,
+even on the same LAN. A Mac without the lab relay certificate trusted stays
+`connecting` rather than falling back to a direct connection.
 
 `prepare` always resets to a baseline first. It deletes earlier `lab-mac-*`
 peers, revokes pending invitations, withdraws both routes and sets
