@@ -31,8 +31,25 @@ services:
       - ./state/management.json:/etc/netbird/management.json
     ports:
       - "${KARST_LAB_HOST_IP}:${KARST_LAB_CONTROL_PORT}:33073"
+    networks:
+      default: {}
+      # Where the Mac reaches it: an address only its default route (labgw)
+      # leads to, so an active exit route genuinely covers it (ADR-0036 §2).
+      core:
+        ipv4_address: ${KARST_LAB_CORE_CONTROL_IP}
     depends_on:
       - keycloak
+
+  # "Is the control-plane host reachable?" needs an unauthenticated 2xx at
+  # the control plane's own address; karst-control has none, so a responder
+  # shares its network namespace.
+  control-probe:
+    image: karst-ne-lab/karst-peer:${KARST_LAB_TAG}
+    restart: unless-stopped
+    network_mode: service:control
+    entrypoint: ["python3", "-m", "http.server", "8081", "--directory", "/usr/local/libexec"]
+    depends_on:
+      - control
 
   relay:
     image: karst-ne-lab/karst-relay:${KARST_LAB_TAG}
@@ -43,8 +60,40 @@ services:
     ports:
       - "${KARST_LAB_HOST_IP}:${KARST_LAB_RELAY_PORT}:443/tcp"
       - "${KARST_LAB_HOST_IP}:${KARST_LAB_RELAY_PORT}:443/udp"
+    networks:
+      default: {}
+      core:
+        ipv4_address: ${KARST_LAB_CORE_RELAY_IP}
     depends_on:
       - control
+
+  relay-probe:
+    image: karst-ne-lab/karst-peer:${KARST_LAB_TAG}
+    restart: unless-stopped
+    network_mode: service:relay
+    entrypoint: ["python3", "-m", "http.server", "8081", "--directory", "/usr/local/libexec"]
+    depends_on:
+      - relay
+
+  # The lab Mac's default gateway: routes it to the core network (control,
+  # relay) and NATs its general traffic to the LAN's own router. Control and
+  # relay are thereby reachable from the Mac only through its default route,
+  # which is what an active exit route takes over.
+  labgw:
+    image: karst-ne-lab/karst-peer:${KARST_LAB_TAG}
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    entrypoint: ["/bin/sh", "/usr/local/libexec/labgw-entrypoint.sh"]
+    environment:
+      KARST_LAB_GW_LAN_IP: ${KARST_LAB_GW_LAN_IP}
+    networks:
+      lan:
+        ipv4_address: ${KARST_LAB_GW_LAN_IP}
+        gw_priority: 1
+      core:
+        ipv4_address: ${KARST_LAB_CORE_GW_IP}
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.4
@@ -80,6 +129,9 @@ services:
     devices: ["/dev/net/tun:/dev/net/tun"]
     sysctls:
       net.ipv4.ip_forward: "1"
+      # The exit gateway enables forwarding for both families; /proc/sys is
+      # read-only in a container, so it has to be on already.
+      net.ipv6.conf.all.forwarding: "1"
     environment:
       KARST_LAB_HOST_IP: ${KARST_LAB_HOST_IP}
       KARST_LAB_LAN_IF_ADDR: ${KARST_LAB_PEER_LAN_IP}
@@ -93,6 +145,8 @@ services:
         ipv4_address: ${KARST_LAB_PEER_LAN_IP}
         # The default route goes out the LAN, towards the Mac.
         gw_priority: 1
+      # Control and relay's core addresses, which the Mac reaches via labgw.
+      core: {}
     depends_on:
       - control
       - relay
@@ -107,4 +161,9 @@ networks:
       config:
         - subnet: ${KARST_LAB_LAN_SUBNET}
           gateway: ${KARST_LAB_LAN_GATEWAY}
-          ip_range: ${KARST_LAB_PEER_LAN_IP}/32
+          # The peer and labgw's static addresses (a /31 pair).
+          ip_range: ${KARST_LAB_LAN_IP_RANGE}
+  core:
+    ipam:
+      config:
+        - subnet: ${KARST_LAB_CORE_SUBNET}

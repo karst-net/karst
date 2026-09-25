@@ -44,6 +44,37 @@ static LAN address. A macvlan child cannot reach its parent host, so the
 peer's second, bridge attachment carries traffic to control and relay (a
 `/32` route to the host).
 
+### Why control and relay sit behind labgw
+
+An active exit route takes over the Mac's default route. To show that this
+does not capture Karst's own control and relay traffic (ADR-0036 §2), those
+services must be reachable from the Mac **only through its default route**,
+as they are in any real deployment. On the Mac's own LAN they would be
+reached on-link whatever the tunnel did, and the check would prove nothing.
+
+So control and relay also live on an internal `core` network
+(`10.230.0.0/24`: control `.10`, relay `.11`), and the lab Mac's default
+gateway is **labgw**: a small container on its own static LAN address (the
+address after the peer's, the two forming a `/31`). labgw routes the Mac to
+`core` and NATs its other traffic to the LAN's own router. Invitations name
+the control plane's core address, and the relay registry its core address;
+the peer is attached to `core` directly. Unauthenticated HTTP responders
+(`control-probe`, `relay-probe`) share the control and relay containers'
+network namespaces on `:8081`, since neither serves a 2xx of its own.
+
+Point the Mac at labgw once, keeping its address and the LAN's DNS
+(reversible with `networksetup -setdhcp Wi-Fi`):
+
+```sh
+sudo networksetup -setmanual Wi-Fi <mac-ip> 255.255.252.0 <labgw-ip>
+sudo networksetup -setdnsservers Wi-Fi <lan-router>
+```
+
+With the exit active, app traffic to the control and relay hosts goes
+*through* the exit (the peer forwards it onto `core`), while the extension's
+own sockets bypass its tunnel; the lab Mac showed its engine staying
+synchronized, direct and error-free throughout.
+
 ### Scenarios
 
 - **direct**: `LAB-DIRECT` is empty.
@@ -56,19 +87,19 @@ peer's second, bridge attachment carries traffic to control and relay (a
   `skip_auto_apply`). The exit probe `198.18.0.1` is reachable only through
   the tunnel. Control and relay share the lab host, so both native-interface
   checks use the host's Keycloak realm URL, since the relay speaks no HTTP.
-  **Known gap:** a recipient exit route becomes active only with local
-  consent (ADR-0024), and the NE-only macOS package has no CLI or UI to give
-  it. Expect this scenario to fail at `--expect-route-state present` until
-  that is resolved.
+  A recipient exit route becomes active only with local consent (ADR-0024);
+  the workflow gives it as the Mac's administrator with the shipped CLI
+  (`sudo karst exit-node use`, ADR-0036).
 
 ### Policy
 
 `bootstrap.sh` writes `state/policy.json`, and `labctl.py init` publishes it
 as the account's current policy version whenever it differs. It allows every
-node to reach every node (`*:*`) and grants the two routed fixture networks
-explicitly: `*:*` covers mesh nodes only, so without the subnet and exit
-CIDRs the route-churn and exit probes are dropped by the sender's egress
-filter even once their routes are installed. The publish step is not
+node to reach every node (`*:*`) and grants the subnet-route network and the
+whole IPv4 space: `*:*` covers mesh nodes only, and anything reached through
+a route offer — the subnet fixture, and everything behind the exit (the
+internet, and the core addresses as other apps see them with the exit
+active) — is dropped by the sender's egress filter without a CIDR grant. The publish step is not
 optional. With a policy store configured, `karst-control` compiles node
 filters only from the store's current version: `KARST_POLICY_FILE` is loaded
 and logged ("loaded policy … (1 rules)") but never consulted, so without a
