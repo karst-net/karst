@@ -269,7 +269,7 @@ enum NetworkExtensionEnrollment {
         manager: NETunnelProviderManager,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        sendInvitation(verb: "enroll", invitation: invitation, manager: manager, completion: completion)
+        sendInvitation(verb: "enroll", invitation: invitation, manager: manager, restartRunning: false, completion: completion)
     }
 
     /// As [`enroll`], but for a device that is already enrolled — sends the
@@ -277,12 +277,19 @@ enum NetworkExtensionEnrollment {
     /// `reEnrollInvitation`, which explicitly replaces the existing saved
     /// config instead of refusing. `AppDelegate`'s "Re-enroll…" item is the
     /// only caller; ordinary first-time setup still goes through [`enroll`].
+    ///
+    /// A running session is restarted afterwards: the provider only reads
+    /// its configuration when a session starts, and its engine owns that
+    /// session's utun, so it cannot swap in the new one itself. Found on a
+    /// lab VM: the old engine kept running under the replaced configuration
+    /// (a deleted node, an old relay address) and the menu showed its peers
+    /// stuck "connecting" until someone reconnected by hand.
     static func reEnroll(
         invitation: String,
         manager: NETunnelProviderManager,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        sendInvitation(verb: "re-enroll", invitation: invitation, manager: manager, completion: completion)
+        sendInvitation(verb: "re-enroll", invitation: invitation, manager: manager, restartRunning: true, completion: completion)
     }
 
     /// Turn on the reconnect-for-convenience on-demand rule
@@ -320,11 +327,14 @@ enum NetworkExtensionEnrollment {
     /// which verb string the extension dispatches on
     /// (`PacketTunnelProvider.handleAppMessage`'s `"enroll"` vs.
     /// `"re-enroll"` cases), not in how the round trip itself is sent,
-    /// logged, or its response interpreted.
+    /// logged, or its response interpreted. `restartRunning` is what
+    /// happens to a session that is already up: left alone for `enroll`,
+    /// restarted for `reEnroll`.
     private static func sendInvitation(
         verb: String,
         invitation: String,
         manager: NETunnelProviderManager,
+        restartRunning: Bool,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         guard let session = manager.connection as? NETunnelProviderSession else {
@@ -388,11 +398,20 @@ enum NetworkExtensionEnrollment {
                 // transition made a successful first enrollment look like it
                 // had completed while no packet path existed yet. Start the
                 // self-service tunnel explicitly once the provider confirms
-                // enrollment, while leaving an already-connected session
-                // alone (the normal re-enrollment case).
+                // enrollment. A session that is already up is restarted for
+                // a re-enrollment (see `reEnroll`) and left alone otherwise.
                 switch session.status {
                 case .connected, .connecting, .reasserting:
-                    break
+                    guard restartRunning else { break }
+                    restart(session) { error in
+                        if let error {
+                            completion(.failure(NetworkExtensionEnrollmentError.startFailed(error)))
+                            return
+                        }
+                        enableOnDemandAfterEnrollment(manager)
+                        completion(.success(()))
+                    }
+                    return
                 default:
                     do {
                         try session.startVPNTunnel()
@@ -410,6 +429,55 @@ enum NetworkExtensionEnrollment {
                 log: Self.log, type: .default, verb, error.localizedDescription
             )
             completion(.failure(NetworkExtensionEnrollmentError.sendFailed(error)))
+        }
+    }
+
+    /// How long `restart` waits for the old session to go down before
+    /// starting anyway. `stopTunnel` joins the engine, which takes a moment,
+    /// not tens of seconds; NetworkExtension refuses a start while the old
+    /// session is still disconnecting, so this is a backstop, not the path.
+    private static let restartTimeout: TimeInterval = 20
+
+    /// Stop `session`, wait for NetworkExtension to report it disconnected,
+    /// then start it again, calling `completion` once on the main queue.
+    ///
+    /// The wait is for the status notification, not a sleep: starting while
+    /// the old session is still `.disconnecting` is refused or ignored, and
+    /// the old engine must have released its utun before the new one scans
+    /// for a descriptor (`PacketTunnelProvider.adoptedFileDescriptor`).
+    static func restart(_ session: NETunnelProviderSession, completion: @escaping (Error?) -> Void) {
+        var observer: NSObjectProtocol?
+        var finished = false
+        let finish: (Error?) -> Void = { error in
+            guard !finished else { return }
+            finished = true
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            completion(error)
+        }
+        let startIfDown = {
+            guard session.status == .disconnected || session.status == .invalid else { return }
+            do {
+                try session.startVPNTunnel()
+                finish(nil)
+            } catch {
+                finish(error)
+            }
+        }
+        observer = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange, object: session, queue: .main
+        ) { _ in startIfDown() }
+        os_log("KARST-TRACE host: restarting the tunnel for the new enrollment", log: Self.log, type: .default)
+        session.stopVPNTunnel()
+        DispatchQueue.main.async(execute: startIfDown)
+        DispatchQueue.main.asyncAfter(deadline: .now() + restartTimeout) {
+            guard !finished else { return }
+            os_log("KARST-TRACE host: tunnel still %{public}@ after stop; starting anyway", log: Self.log, type: .default, String(describing: session.status))
+            do {
+                try session.startVPNTunnel()
+                finish(nil)
+            } catch {
+                finish(error)
+            }
         }
     }
 }
