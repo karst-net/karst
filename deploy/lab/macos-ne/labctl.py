@@ -127,7 +127,12 @@ def invitation(api, name):
     """A fresh single-use invitation, encoded exactly as the console does."""
     metadata = api("GET", "/api/karst/v1/me/enrollment")
     grant = api("POST", "/api/karst/v1/invitations", {"name": name, "groups": [group_id(api)]})
-    payload = json.dumps({"server": ENROLL_CONTROL, **metadata, "setup_key": grant["credential"]}, separators=(",", ":"))
+    # The relay's self-signed certificate rides in the invitation, so the
+    # Mac trusts it for relay TLS only (enrollment writes relay_ca_file)
+    # instead of needing it in the system trust store.
+    with open(os.path.join(STATE, "tls", "relay.crt")) as f:
+        relay_ca = f.read()
+    payload = json.dumps({"server": ENROLL_CONTROL, **metadata, "setup_key": grant["credential"], "relay_ca": relay_ca}, separators=(",", ":"))
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"karst-invite-v1:{encoded}", metadata, grant
 

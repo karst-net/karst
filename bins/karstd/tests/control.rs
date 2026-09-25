@@ -932,12 +932,17 @@ fn pasted_invitation_enrolls_without_a_credential_file() {
     std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let state = scratch.join("state");
     let config = scratch.join("karstd.toml");
+    let relay_ca = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
+        .unwrap()
+        .cert
+        .pem();
     let payload = serde_json::json!({
         "server": format!("http://{}", server.address),
         "server_kem_pin": server.kem_pin,
         "server_verify_pin": server.verify_pin,
         "setup_key": "fixture",
-        "control_minimum_version": 1
+        "control_minimum_version": 1,
+        "relay_ca": relay_ca,
     });
     let invitation = format!(
         "karst-invite-v1:{}",
@@ -952,6 +957,12 @@ fn pasted_invitation_enrolls_without_a_credential_file() {
     let keys = karstd::config::load_keys(&config).unwrap();
     let value: toml::Value = toml::from_str(&configured).unwrap();
     let section: ControlSection = value["control"].clone().try_into().unwrap();
+    // The invitation's relay anchors land in the state directory, named by
+    // the config, and are exactly what relay TLS then loads.
+    let anchors = state.join("relay-ca.pem");
+    assert_eq!(section.relay_ca_file.as_deref(), Some(anchors.as_path()));
+    assert_eq!(std::fs::read_to_string(&anchors).unwrap(), relay_ca);
+    karstd::relay_tls::client_config(Some(&anchors)).expect("anchors usable for relay TLS");
     let mut client = Client::new(&section, &state, &keys).unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
