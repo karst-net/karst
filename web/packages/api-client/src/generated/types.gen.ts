@@ -93,6 +93,10 @@ export type EnrollmentSettings = {
      */
     server_verify_pin: string;
     control_minimum_version: 1;
+    /**
+     * PEM trust anchors for relay TLS (KARST_RELAY_CA_FILE). Absent unless configured; enrollment trusts them for the relay hop only.
+     */
+    relay_ca?: string;
 };
 
 export type DeviceEnrollment = {

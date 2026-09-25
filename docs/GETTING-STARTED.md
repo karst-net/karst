@@ -625,6 +625,11 @@ KARST_RELAY_ROSTER_FILE=/etc/karst/roster.toml
 # Which relays every node is told about. Without it, nodes that cannot connect
 # directly cannot connect at all — silently.
 KARST_RELAY_REGISTRY_FILE=/etc/karst/relays.json
+# Optional. A self-signed or internal-CA relay certificate: invitations and
+# portal bundles then carry it, and enrollment sets each node's relay_ca_file.
+# Clients older than this setting reject such invitations, so leave it unset
+# until every enrolling client is current.
+# KARST_RELAY_CA_FILE=/etc/karst/relay.crt
 # Absent means an empty filter, which is DEFAULT DENY.
 KARST_POLICY_FILE=/etc/karst/policy.json
 # Each node's relay-forwarding scope (§5.4) is derived from its own account
@@ -1099,7 +1104,7 @@ The failure modes below are the ones that do not announce themselves.
 | Relay logs `roster lease expired`, admits nobody after 90 s | nothing is rewriting `roster.toml` | set `KARST_RELAY_ROSTER_FILE` on the server |
 | Nodes never dial a relay and never go direct | no `relays.json`, so the netmap carries no relays | set `KARST_RELAY_REGISTRY_FILE` |
 | Everything enrolls; no traffic passes | no policy file — an empty filter is **default deny** | set `KARST_POLICY_FILE` |
-| Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt`, or add it to the invitation as `relay_ca` (PEM) so enrollment sets that up |
+| Relay TLS handshake fails on a node | self-signed relay certificate | point `relay_ca_file` at `relay.crt`, or set `KARST_RELAY_CA_FILE` on the control server so new invitations carry it |
 | `karstd` refuses to start over a key file | key is readable by group or other | `chmod 600` — a key readable by anyone is not a key |
 | Coordination server exits with "read-only file system" | `management.json` mounted `:ro` | it writes a generated store key back on first boot |
 | A peer entry fails to load after a profile change | the key's *length* is what says which profile it belongs to, so a stale entry fails loudly rather than quietly | re-run `karstd pubkey` on that node and update every roster entry naming it |

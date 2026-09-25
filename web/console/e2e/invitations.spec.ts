@@ -50,3 +50,36 @@ test("administrator creates one complete invitation, dismisses its secret, and r
   await expect(page.locator("li").filter({ hasText: "invitation-browser-laptop" })).toContainText("revoked");
   await expect(page.getByLabel("Enrollment invitation", { exact: true })).toHaveCount(0);
 });
+
+test("an invitation carries the deployment's relay CA when the server configures one", async ({ page }) => {
+  // KARST_RELAY_CA_FILE on the server: /me/enrollment returns relay_ca, and
+  // the invitation must carry it verbatim for enrollment to write
+  // relay_ca_file. Its absence above is the unconfigured case.
+  const relayCA = "-----BEGIN CERTIFICATE-----\nZml4dHVyZQ==\n-----END CERTIFICATE-----\n";
+  await page.route("https://console.example.test/**", async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/groups") {
+      await route.fulfill({ json: [{ id: "group-sre", name: "sre" }] }); return;
+    }
+    if (url.pathname === "/api/karst/v1/me/enrollment") {
+      await route.fulfill({ json: { server_kem_pin: "ab".repeat(1184), server_verify_pin: "cd".repeat(2592), control_minimum_version: 1, relay_ca: relayCA } }); return;
+    }
+    if (url.pathname === "/api/karst/v1/invitations") {
+      if (route.request().method() === "POST") {
+        const item = { id: "invitation-relay-ca", name: "relay-ca-laptop", groups: ["group-sre"], state: "pending", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 86400000).toISOString() };
+        await route.fulfill({ json: { ...item, credential: "invitation-fixture-secret" } }); return;
+      }
+      await route.fulfill({ json: [] }); return;
+    }
+    const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
+    const body = await response.body();
+    await route.fulfill({ response, body });
+  });
+  await page.goto("https://console.example.test/#/setup");
+  await page.getByLabel("Device name").fill("relay-ca-laptop");
+  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
+  await page.getByRole("button", { name: "Create invitation", exact: true }).click();
+  const value = await page.getByLabel("Enrollment invitation", { exact: true }).inputValue();
+  const payload = JSON.parse(Buffer.from(value.slice("karst-invite-v1:".length), "base64url").toString("utf8"));
+  expect(payload.relay_ca).toBe(relayCA);
+});

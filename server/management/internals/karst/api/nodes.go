@@ -2805,13 +2805,21 @@ func filterNodes(nodes []nodeResponse, keep func(nodeResponse) bool) []nodeRespo
 // RegisterEnrollmentMetadata delivers public control pins through the same
 // authenticated API as member enrollment. The browser supplies its HTTPS
 // origin; no forwarded Host header becomes a trust anchor here.
-func RegisterEnrollmentMetadata(router *mux.Router, kem, verify []byte) {
+//
+// relayCA, when set, is returned as relay_ca for invitations and bundles to
+// carry (KARST_RELAY_CA_FILE). Omitted rather than empty when unset: clients
+// from before the field reject an invitation that names it.
+func RegisterEnrollmentMetadata(router *mux.Router, kem, verify []byte, relayCA string) {
 	router.HandleFunc("/karst/v1/me/enrollment", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		util.WriteJSONObject(r.Context(), w, map[string]any{"server_kem_pin": fmt.Sprintf("%x", kem), "server_verify_pin": fmt.Sprintf("%x", verify), "control_minimum_version": 1})
+		metadata := map[string]any{"server_kem_pin": fmt.Sprintf("%x", kem), "server_verify_pin": fmt.Sprintf("%x", verify), "control_minimum_version": 1}
+		if relayCA != "" {
+			metadata["relay_ca"] = relayCA
+		}
+		util.WriteJSONObject(r.Context(), w, metadata)
 	}).Methods(http.MethodGet)
 }

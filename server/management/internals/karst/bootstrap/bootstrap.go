@@ -118,7 +118,10 @@ type Karst struct {
 // package discovers. Either nil means no TURN configured — see
 // karst/turncred — and produces netmaps with no turn_servers field at all,
 // exactly as before this parameter existed.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter) (*Karst, error) {
+//
+// relayCA is KARST_RELAY_CA_FILE's PEM, handed to enrollment metadata only;
+// empty means invitations carry no relay_ca.
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, relayCA string) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -222,7 +225,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// user session, the same reason RegisterEnrollmentMetadata already sits
 	// outside karstapi's own `/karst/v1` subrouter for its own auth check.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
-		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
+		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public(), relayCA)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)

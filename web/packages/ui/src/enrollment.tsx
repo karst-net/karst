@@ -2,7 +2,7 @@
 // Copyright the Karst contributors.
 import { useEffect, useState } from "react";
 
-export type EnrollmentMetadata = { server_kem_pin: string; server_verify_pin: string; control_minimum_version: number };
+export type EnrollmentMetadata = { server_kem_pin: string; server_verify_pin: string; control_minimum_version: number; relay_ca?: string };
 export type EnrollmentGrant = { key: string; expires_at: string };
 
 export function Enrollment({ metadata, issue }: { metadata: () => Promise<EnrollmentMetadata>; issue: () => Promise<EnrollmentGrant> }) {

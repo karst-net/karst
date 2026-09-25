@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -152,6 +154,22 @@ const (
 // leave a trail of live credentials nobody could revoke by name.
 const karstBootstrapKeyEnv = "KARST_BOOTSTRAP_SETUP_KEY_FILE"
 
+// karstRelayCAEnv names a PEM file of trust anchors for the relays' TLS
+// certificates, for a relay whose certificate is self-signed or from an
+// internal CA.
+//
+// Set, /me/enrollment returns it as relay_ca, so the console's invitations and
+// the portal's bundles carry it and enrollment writes it to the node's
+// [control] relay_ca_file: trusted for the relay hop only, never system-wide.
+// It is enrollment material, not netmap content, for Config::relay_ca_file's
+// reason in karstd: the control plane must not be able to add TLS roots to
+// nodes that already trust it. Unset, invitations carry no relay_ca, which is
+// also what clients from before this setting require.
+const karstRelayCAEnv = "KARST_RELAY_CA_FILE"
+
+// maxRelayCABytes matches karstd's own limit on an invitation's relay_ca.
+const maxRelayCABytes = 32768
+
 func main() {
 	pol, err := loadPolicy()
 	if err != nil {
@@ -164,6 +182,11 @@ func main() {
 		os.Exit(1)
 	}
 	turnServers, turnMinter, err := loadTurn()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
+	relayCA, err := loadRelayCA(os.Getenv(karstRelayCAEnv))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
@@ -196,7 +219,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, relayCA)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -376,6 +399,45 @@ func loadRelays() ([]*proto.KarstRelay, error) {
 	}
 	log.Infof("karst: loaded %d relays from %s", len(relays), path)
 	return relays, nil
+}
+
+// loadRelayCA reads KARST_RELAY_CA_FILE, returning "" when it is unset.
+//
+// Fatal when set and unusable, like the relay registry: every invitation
+// minted afterwards would carry it, and karstd refuses an invitation whose
+// relay_ca holds no usable certificate, so a bad file would silently make
+// the deployment unable to enroll anything.
+func loadRelayCA(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", karstRelayCAEnv, err)
+	}
+	if len(raw) > maxRelayCABytes {
+		return "", fmt.Errorf("%s: %s is larger than %d bytes", karstRelayCAEnv, path, maxRelayCABytes)
+	}
+	rest, count := raw, 0
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return "", fmt.Errorf("%s: %s holds a %q block; only certificates belong there", karstRelayCAEnv, path, block.Type)
+		}
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return "", fmt.Errorf("%s: %s: %w", karstRelayCAEnv, path, err)
+		}
+		count++
+	}
+	if count == 0 || strings.TrimSpace(string(rest)) != "" {
+		return "", fmt.Errorf("%s: %s is not a PEM certificate bundle", karstRelayCAEnv, path)
+	}
+	log.Infof("karst: invitations carry %d relay TLS anchor(s) from %s", count, path)
+	return string(raw), nil
 }
 
 // loadTurn reads ADR-0008 §4's TURN fallback configuration: the server

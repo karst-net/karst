@@ -500,6 +500,7 @@ components:
         server_kem_pin: {type: string, description: Hex ML-KEM-1024 public key}
         server_verify_pin: {type: string, description: Hex ML-DSA-87 verification key}
         control_minimum_version: {type: integer, enum: [1]}
+        relay_ca: {type: string, description: PEM trust anchors for relay TLS (KARST_RELAY_CA_FILE). Absent unless configured; enrollment trusts them for the relay hop only.}
     DeviceEnrollment:
       type: object
       required: [key, expires_at]
