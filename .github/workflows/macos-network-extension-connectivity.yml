@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           (cd packaging/macos/KarstStatus && swift build -c release --product KarstConnectivityCI)
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
-          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+          sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-transport "$KARST_CI_EXPECTED_TRANSPORT" --timeout 90
 
@@ -136,14 +136,14 @@ jobs:
           control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
           sudo "$control" mutate --route subnet --state add
-          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+          sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_SUBNET_ROUTE_PREFIX" --expect-route-state present --timeout 30
           bytes="$(curl --fail --silent --show-error --noproxy '*' --max-time 30 --output /dev/null \
             --write-out '%{size_download}' "$KARST_CI_SUBNET_PROBE_URL")"
           test "$bytes" -ge 65536
           sudo "$control" mutate --route subnet --state remove
-          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+          sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_SUBNET_ROUTE_PREFIX" --expect-route-state absent --timeout 30
 
@@ -154,7 +154,7 @@ jobs:
           control="${KARST_CI_LAB_CONTROL:-/usr/local/libexec/karst-ne-lab}"
           harness="$(cd packaging/macos/KarstStatus && swift build -c release --show-bin-path)/KarstConnectivityCI"
           sudo "$control" mutate --route exit --state active
-          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+          sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state present --timeout 30
           bytes="$(curl --fail --silent --show-error --noproxy '*' --max-time 30 --output /dev/null \
@@ -166,7 +166,7 @@ jobs:
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_CONTROL_PLANE_PROBE_URL"
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_RELAY_PROBE_URL"
           sudo "$control" mutate --route exit --state withdrawn
-          "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
+          sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \
             --expect-route "$KARST_CI_EXIT_ROUTE_PREFIX" --expect-route-state absent --timeout 30
 
