@@ -315,7 +315,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)) else {
             return nil
         }
-        var routes = status.peers.flatMap(\.allowedIps)
+        var routes = status.peers.flatMap(\.allowedIps).filter { !isDefaultRoute($0) }
         routes += (status.control?.routing.routes ?? [])
             .filter { $0.kind == "exit" && $0.role == "recipient" && $0.active }
             .map(\.prefix)
@@ -481,6 +481,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return nil
     }
 
+    /// Whether `cidr` is a whole address family (`0.0.0.0/0`, `::/0`).
+    ///
+    /// A peer's `allowed_ips` carries an exit offer's default prefix as soon
+    /// as the offer exists — karstd keeps a cryptokey next hop for it before
+    /// any local consent — so mapping every allowed IP into an included
+    /// route steered this device's default route into a tunnel whose engine
+    /// refuses to forward it: an unconsented exit offer black-holed the
+    /// Mac's internet (found on the lab hardware). A default route enters
+    /// these settings only through the active recipient exit route below.
+    static func isDefaultRoute(_ cidr: String) -> Bool {
+        splitCIDR(cidr)?.prefixLength == 0
+    }
+
     /// Builds the settings `setTunnelNetworkSettings` needs from
     /// `EngineHandle.statusJson()`'s body — the same JSON `karst status
     /// --json` reports on the `LaunchDaemon` build
@@ -534,7 +547,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var ipv4Routes: [NEIPv4Route] = []
         var ipv6Routes: [NEIPv6Route] = []
         for peer in status.peers {
-            for allowed in peer.allowedIps {
+            for allowed in peer.allowedIps where !isDefaultRoute(allowed) {
                 addRoute(allowed, toIPv4: &ipv4Routes, ipv6: &ipv6Routes)
             }
         }
