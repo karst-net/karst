@@ -804,6 +804,38 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             worker.stackSize = 8 << 20
             worker.start()
+        case "exit-use", "exit-disable":
+            // Karst.app's Exit node menu (ADR-0036 §3). The token is checked
+            // here, as root, before anything reaches the engine: see
+            // `ExitConsent`'s doc comment for why the app's own check is not
+            // enough.
+            guard
+                let token = object["authorization"] as? String,
+                ExitConsent.isAuthorized(externalForm: token)
+            else {
+                completionHandler(Self.errorResponse("an administrator must approve exit-node changes"))
+                return
+            }
+            let line: String
+            if verb == "exit-use" {
+                guard let routeID = object["route_id"] as? String, ExitConsent.isPlausibleRouteID(routeID) else {
+                    completionHandler(Self.errorResponse("exit-use needs a valid route_id"))
+                    return
+                }
+                line = "exit-use \(routeID)"
+            } else {
+                line = "exit-disable"
+            }
+            guard engine != nil, let reply = ExitConsent.engineCommand(line, socketPath: Self.socketPath) else {
+                completionHandler(Self.errorResponse("tunnel is not running"))
+                return
+            }
+            if let failure = reply.split(separator: "\n").first(where: { $0.hasPrefix("error = ") }) {
+                let message = failure.dropFirst("error = ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                completionHandler(Self.errorResponse(message))
+                return
+            }
+            completionHandler(Self.okResponse())
         default:
             completionHandler(Self.errorResponse("unknown app message verb \(verb)"))
         }
