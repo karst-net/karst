@@ -25,7 +25,23 @@ struct Bundle {
     setup_key: String,
     #[serde(default = "minimum_version")]
     control_minimum_version: u32,
+    /// PEM trust anchors for relay TLS, for a deployment whose relay has a
+    /// self-signed or internal-CA certificate. Enrollment writes them to
+    /// [`RELAY_CA_FILE`] and names that as `[control] relay_ca_file`, so the
+    /// node trusts them for the relay hop only, never system-wide. Carried
+    /// here rather than in the netmap for `Config::relay_ca_file`'s reason:
+    /// the administrator's invitation already is this host's trust anchor
+    /// for the control plane, and the control plane itself must not be able
+    /// to add TLS roots. The relay's identity is still its pinned ML-DSA key.
+    #[serde(default)]
+    relay_ca: Option<String>,
 }
+
+/// Where enrollment keeps an invitation's relay trust anchors, inside the
+/// state directory.
+const RELAY_CA_FILE: &str = "relay-ca.pem";
+/// Generous for a chain of a few certificates, small next to the invitation.
+const MAX_RELAY_CA_BYTES: usize = 32768;
 
 /// Pasted invitations use a versioned, URL-safe envelope. The payload includes
 /// the trust anchors; no unauthenticated discovery is needed before enrollment.
@@ -105,7 +121,44 @@ fn validate_bundle(bundle: &Bundle) -> Result<(), String> {
             &hex(&bundle.server_verify_pin)?,
         )
         .map_err(|e| e.to_string())?;
+    if let Some(pem) = &bundle.relay_ca {
+        validate_relay_ca(pem)?;
+    }
     Ok(())
+}
+
+/// At least one certificate, and nothing rustls would skip: a bundle that
+/// parses to nothing is refused here, at enrollment, rather than as
+/// `relay_tls::Error::NoUsableCa` on every relay dial afterwards.
+fn validate_relay_ca(pem: &str) -> Result<(), String> {
+    use rustls::pki_types::{pem::PemObject as _, CertificateDer};
+    const INVALID: &str = "invitation's relay certificate is not a PEM certificate";
+    if pem.len() > MAX_RELAY_CA_BYTES {
+        return Err("invitation's relay certificate is too large".to_owned());
+    }
+    let certs = CertificateDer::pem_slice_iter(pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| INVALID.to_owned())?;
+    let mut roots = rustls::RootCertStore::empty();
+    let (added, invalid) = roots.add_parsable_certificates(certs);
+    if added == 0 || invalid != 0 {
+        return Err(INVALID.to_owned());
+    }
+    Ok(())
+}
+
+/// Replaced, never merged: a new invitation without anchors removes a
+/// previous deployment's, which nothing references any more.
+fn store_relay_ca(path: &Path, pem: Option<&str>) -> Result<(), String> {
+    match pem {
+        Some(pem) => {
+            crate::control::write_secret_bytes(path, pem.as_bytes()).map_err(|e| e.to_string())
+        }
+        None => match fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        },
+    }
 }
 
 #[cfg(unix)]
@@ -329,6 +382,13 @@ fn enroll_bundle(bundle: Bundle, config_path: &Path, state_dir: &Path) -> Result
             .as_ref()
             .into(),
     );
+    let relay_ca_path = state_dir.join(RELAY_CA_FILE);
+    if bundle.relay_ca.is_some() {
+        control.insert(
+            "relay_ca_file".into(),
+            relay_ca_path.to_string_lossy().as_ref().into(),
+        );
+    }
     let mut config = toml::Table::new();
     config.insert("node".into(), node.into());
     config.insert("control".into(), control.clone().into());
@@ -353,6 +413,9 @@ fn enroll_bundle(bundle: Bundle, config_path: &Path, state_dir: &Path) -> Result
             .map_err(|_| "enrollment timed out; retry with the same state directory".to_owned())?
             .map_err(|e| e.to_string())
     })?;
+    // Only once the control plane accepted the device, so a failed
+    // re-enrollment leaves the previous configuration's anchors in place.
+    store_relay_ca(&relay_ca_path, bundle.relay_ca.as_deref())?;
     publish_config(config_path, &text)?;
     let _ = fs::remove_file(staged);
     Ok(())
@@ -403,6 +466,58 @@ mod tests {
         assert_eq!(parsed.setup_key, "fixture");
         *payload.get_mut("server_kem_pin").unwrap() = "01".into();
         assert!(parse_invitation(&encode(&payload)).is_err());
+    }
+
+    #[test]
+    fn invitation_relay_ca_must_be_a_usable_certificate() {
+        let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
+            .unwrap()
+            .cert
+            .pem();
+        let with = |relay_ca: serde_json::Value| {
+            let payload = serde_json::json!({
+                "server": "https://control.example.test",
+                "server_kem_pin": "01".repeat(1184),
+                "server_verify_pin": "02".repeat(2592),
+                "setup_key": "fixture",
+                "relay_ca": relay_ca,
+            });
+            parse_invitation(&format!(
+                "{INVITATION_PREFIX}{}",
+                Base64UrlUnpadded::encode_string(payload.to_string().as_bytes())
+            ))
+        };
+        assert_eq!(
+            with(cert.clone().into()).unwrap().relay_ca,
+            Some(cert.clone())
+        );
+        assert!(with(serde_json::Value::Null).unwrap().relay_ca.is_none());
+        for bad in [
+            String::new(),
+            "not a certificate".to_owned(),
+            "-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n".to_owned(),
+            format!("{cert}{}", "#".repeat(MAX_RELAY_CA_BYTES)),
+        ] {
+            assert!(with(bad.clone().into()).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    /// The anchors are written only after the control plane accepts the
+    /// device, so a failed re-enrollment keeps the ones the restored config
+    /// still names.
+    #[test]
+    fn failed_re_enroll_keeps_the_previous_relay_ca() {
+        let dir = Scratch::new("re-enroll-relay-ca");
+        let config_path = dir.join("config.toml");
+        let state_dir = dir.join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        publish_config(&config_path, "existing = true").unwrap();
+        let anchors = state_dir.join(RELAY_CA_FILE);
+        publish_config(&anchors, "previous").unwrap();
+
+        re_enroll_invitation(&unreachable_server_invitation(), &config_path, &state_dir)
+            .unwrap_err();
+        assert_eq!(fs::read_to_string(&anchors).unwrap(), "previous");
     }
 
     #[test]

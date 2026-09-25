@@ -110,7 +110,10 @@ published version every node is default deny and the tunnel carries nothing.
 Endpoint candidates are exchanged through the relay, so a client that cannot
 reach it never learns the peer's addresses and never attempts a direct path,
 even on the same LAN. A Mac without the lab relay certificate trusted stays
-`connecting` rather than falling back to a direct connection.
+`connecting` rather than falling back to a direct connection. `labctl`
+invitations carry `state/tls/relay.crt` as `relay_ca`, and enrollment writes
+it to the state directory as `[control] relay_ca_file`. A Mac enrolled from
+an older invitation needs the certificate in its system trust store instead.
 
 `prepare` always resets to a baseline first. It deletes earlier `lab-mac-*`
 peers, revokes pending invitations, withdraws both routes and sets
@@ -149,10 +152,9 @@ but cannot create one, and MDM cannot pre-approve this prompt. Every run
 re-enrolls from its own invitation, so the configuration persists.
 
 Through MDM, deliver a profile that allows the System Extension
-(`WJ3MJC4KV7` / `dev.karst.packettunnel`, type `NetworkExtension`) and trusts
-the lab relay's `state/tls/relay.crt` as a root. The extension loads relay
-trust anchors from the system store (`rustls_native_certs`), and an
-enrollment-generated config has no `relay_ca_file`.
+(`WJ3MJC4KV7` / `dev.karst.packettunnel`, type `NetworkExtension`). The lab
+relay's certificate needs no profile: every `labctl` invitation carries it,
+and the extension trusts it for relay TLS only.
 
 The workflow gate also needs the client fixes in #189 and the harness and
 notarization changes in #190. Before those, the harness cannot reach the
