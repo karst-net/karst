@@ -53,6 +53,20 @@ app (a `.pkg` pushed via your MDM's software-distribution mechanism, or
 your existing internal catalog) — this document is only about the VPN
 configuration and System Extension approval, not app distribution.
 
+## Choosing an exit route for managed Macs
+
+Exit-route consent is normally the Mac administrator's (ADR-0024, ADR-0036).
+On a managed device the organization is the operator (ADR-0031), so the
+profile can give it instead: set `ExitNodeAutoConsent` to `true` in the VPN
+payload's `VendorConfig`. The extension then consents to the exit route
+offered to the device, provided exactly one recipient exit is offered; it
+follows that offer if the server recreates it under a new route ID. With
+several offered it chooses none and Karst.app's **Exit node** menu says so.
+While the key is set, the menu shows the exit as "Managed by your
+organization" and offers no change, and the extension refuses the menu's
+change requests. A local administrator's `sudo karst exit-node disable` still
+works, but the extension re-consents on its next health-poll tick.
+
 ## The one problem this does not solve: initial enrollment
 
 Pushing the profile above configures the *tunnel*, but Karst still needs

@@ -47,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// refresh) without waiting for the next `refresh()` tick to hand it a
     /// fresh one.
     private var lastStatus: DaemonStatus?
+    /// Whether an MDM profile manages the exit node (`ExitNodeAutoConsent`,
+    /// ADR-0036 §4): the menu then shows the choice but offers no change.
+    private var exitManaged = false
 
     /// This device's own identity handle, if enrolled — the 44-character
     /// fingerprint `identity_handle` (`crates/karst-ffi`) derives from the
@@ -138,6 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `sendProviderMessage` APIs do not document one), so `render` is
     /// always dispatched to the main queue explicitly rather than assumed.
     private func refresh() {
+        client.fetchExitManaged { [weak self] managed in
+            DispatchQueue.main.async { self?.exitManaged = managed }
+        }
         client.fetchStatusJSON { [weak self] result in
             guard let self else { return }
             let status: DaemonStatus?
@@ -321,7 +327,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func addExitNodeItem(to menu: NSMenu, status: DaemonStatus) {
         guard !status.exitOffers.isEmpty || status.selectedExit != nil else { return }
         let submenu = NSMenu()
-        let off = NSMenuItem(title: "Off", action: #selector(runExitDisable), keyEquivalent: "")
+        if exitManaged {
+            submenu.addItem(withTitle: "Managed by your organization", action: nil, keyEquivalent: "")
+            if status.exitOffers.count > 1, !status.exitOffers.contains(where: { $0.routeID == status.selectedExit }) {
+                submenu.addItem(
+                    withTitle: "Several exits offered — none chosen until exactly one is",
+                    action: nil, keyEquivalent: ""
+                )
+            }
+            submenu.addItem(NSMenuItem.separator())
+        }
+        // Managed: shown, not changeable (no action greys the item out).
+        let off = NSMenuItem(title: "Off", action: exitManaged ? nil : #selector(runExitDisable), keyEquivalent: "")
         off.target = self
         off.state = status.selectedExit == nil ? .on : .off
         submenu.addItem(off)
@@ -329,7 +346,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for offer in status.exitOffers {
             let via = offer.gatewayName.map { "Via \($0)" } ?? "Exit route"
             let pending = status.selectedExit == offer.routeID && !offer.active ? " — connecting" : ""
-            let item = NSMenuItem(title: "\(via) (\(offer.prefix))\(pending)", action: #selector(runExitUse(_:)), keyEquivalent: "")
+            let item = NSMenuItem(
+                title: "\(via) (\(offer.prefix))\(pending)",
+                action: exitManaged ? nil : #selector(runExitUse(_:)),
+                keyEquivalent: ""
+            )
             item.target = self
             item.representedObject = offer
             item.state = status.selectedExit == offer.routeID ? .on : .off

@@ -337,6 +337,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         reasserting = false
+        reconcileManagedExit(statusJSON: json)
 
         let signature = Self.routeSignature(fromStatusJSON: json)
         guard signature != lastAppliedRouteSignature else { return }
@@ -856,6 +857,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             worker.stackSize = 8 << 20
             worker.start()
         case "exit-use", "exit-disable":
+            // A profile-managed exit (ADR-0036 §4) is the organization's
+            // choice, not a local one: the menu offers no change, and this
+            // refuses one regardless.
+            if managedExitAutoConsent {
+                completionHandler(Self.errorResponse("the exit node is managed by your organization"))
+                return
+            }
             // Karst.app's Exit node menu (ADR-0036 §3). The token is checked
             // here, as root, before anything reaches the engine: see
             // `ExitConsent`'s doc comment for why the app's own check is not
@@ -896,6 +904,52 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// falls back to on a `Serialize` failure — one error shape for
     /// `StatusParser.parseJSON` and `NetworkExtensionEnrollment.enroll` to
     /// check on either side of this channel, not a second one invented here.
+    /// `ExitNodeAutoConsent` in the managed profile's `VendorConfig`, which
+    /// NetworkExtension hands this provider as `providerConfiguration`
+    /// (ADR-0036 §4). Absent or false for a self-service configuration.
+    private var managedExitAutoConsent: Bool {
+        let value = (protocolConfiguration as? NETunnelProviderProtocol)?
+            .providerConfiguration?["ExitNodeAutoConsent"]
+        return (value as? Bool) ?? (value as? NSNumber)?.boolValue ?? false
+    }
+
+    /// The offer set last reported as a conflict, so a standing conflict is
+    /// logged once rather than on every health-poll tick.
+    private var reportedExitConflict: [String]?
+
+    /// Apply `ExitNodeAutoConsent` on each health-poll tick: consent to the
+    /// single offered exit, or report — and choose nothing — when several are
+    /// offered. The engine keeps consent durable as usual, so this only acts
+    /// when the offer set or the selection changes.
+    private func reconcileManagedExit(statusJSON json: String) {
+        guard managedExitAutoConsent,
+              let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)),
+              let routing = status.control?.routing
+        else { return }
+        let offers = routing.routes
+            .filter { $0.kind == "exit" && $0.role == "recipient" }
+            .compactMap(\.routeId)
+        switch ExitConsent.managedDecision(offers: offers, selected: routing.selectedExit) {
+        case .none:
+            reportedExitConflict = nil
+        case .use(let routeID):
+            reportedExitConflict = nil
+            guard ExitConsent.isPlausibleRouteID(routeID) else { return }
+            let reply = ExitConsent.engineCommand("exit-use \(routeID)", socketPath: Self.socketPath) ?? "no reply"
+            os_log(
+                "ExitNodeAutoConsent: consented to the offered exit route: %{public}@",
+                log: Self.log, type: .default, reply.split(separator: "\n").first.map(String.init) ?? ""
+            )
+        case .conflict:
+            guard reportedExitConflict != offers.sorted() else { return }
+            reportedExitConflict = offers.sorted()
+            os_log(
+                "ExitNodeAutoConsent: %{public}d exit routes offered; choosing none until exactly one is",
+                log: Self.log, type: .default, offers.count
+            )
+        }
+    }
+
     private static func errorResponse(_ message: String) -> Data {
         let object = ["error": message]
         return (try? JSONSerialization.data(withJSONObject: object))
@@ -957,6 +1011,12 @@ private struct EngineStatus: Decodable {
     /// not in what `setTunnelNetworkSettings` needs to act on.
     struct Routing: Decodable {
         let routes: [Route]
+        let selectedExit: String?
+
+        enum CodingKeys: String, CodingKey {
+            case routes
+            case selectedExit = "selected_exit"
+        }
     }
 
     /// Mirrors `RouteJson`. `prefix` for a `kind == "exit"` route is
@@ -971,6 +1031,12 @@ private struct EngineStatus: Decodable {
         let kind: String
         let role: String
         let active: Bool
+        let routeId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case prefix, kind, role, active
+            case routeId = "route_id"
+        }
     }
 
     let addresses: [String]

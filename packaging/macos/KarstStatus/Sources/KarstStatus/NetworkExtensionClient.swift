@@ -86,6 +86,25 @@ struct NetworkExtensionStatusClient {
         sendVerb(json, completion: completion)
     }
 
+    /// Whether the saved configuration carries `ExitNodeAutoConsent` in its
+    /// `providerConfiguration` — an MDM profile's `VendorConfig` (ADR-0036
+    /// §4). Read from the configuration rather than asked of the extension,
+    /// so the menu knows even while the tunnel is down. An enabled
+    /// configuration wins when there is more than one, as in
+    /// `NetworkExtensionEnrollment.ensureConfiguration`.
+    func fetchExitManaged(completion: @escaping (Bool) -> Void) {
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let matching = (managers ?? []).filter {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
+                    == providerBundleIdentifier
+            }
+            let manager = matching.first(where: \.isEnabled) ?? matching.first
+            let value = (manager?.protocolConfiguration as? NETunnelProviderProtocol)?
+                .providerConfiguration?["ExitNodeAutoConsent"]
+            completion((value as? Bool) ?? (value as? NSNumber)?.boolValue ?? false)
+        }
+    }
+
     /// Common plumbing every verb over this channel needs: find the saved
     /// manager, get its session, send the (already-JSON) payload, decode
     /// the reply as UTF-8 text. What differs per verb is only the request
