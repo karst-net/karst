@@ -1,0 +1,116 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# The runner-local lab controller the macOS NE connectivity workflow calls
+# (docs/operations/macos-network-extension-ci.md). Installed root-owned at
+# /usr/local/libexec/karst-ne-lab and run with sudo by the runner account.
+#
+#   karst-ne-lab prepare --scenario direct|relay --env-file PATH [--route-churn] [--exit-route]
+#   karst-ne-lab mutate --route subnet --state add|remove
+#   karst-ne-lab mutate --route exit --state active|withdrawn
+#
+# The lab host does the work (labctl.py). This end only turns its answer into
+# the two mode-0600, runner-owned files the handoff contract names, so the
+# lab admin's credentials never reach the Mac and the invitation never
+# reaches a command line, an environment variable or a log.
+#
+# Configuration, root-owned, in /usr/local/etc/karst-ne-lab.conf:
+#   LAB_SSH=adrian@192.168.68.101        who to reach
+#   LAB_SSH_KEY=/var/root/.ssh/karst-ne-lab
+set -euo pipefail
+umask 077
+
+# shellcheck disable=SC1091
+. /usr/local/etc/karst-ne-lab.conf
+: "${LAB_SSH:?}" "${LAB_SSH_KEY:?}"
+runner=${SUDO_USER:?run this with sudo from the runner account}
+work=/var/tmp/karst-ne-lab
+
+lab() {
+    ssh -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+        -i "$LAB_SSH_KEY" "$LAB_SSH" "$@"
+}
+
+owned_file() { # PATH — create empty, 0600, runner-owned, refusing symlinks
+    rm -f "$1"
+    : > "$1"
+    chown "$runner" "$1"
+    chmod 600 "$1"
+}
+
+native_interface() {
+    /sbin/route -n get "$1" 2>/dev/null | awk '/interface:/ { print $2; exit }'
+}
+
+cmd=${1:-}
+shift || true
+case "$cmd" in
+prepare)
+    scenario='' env_file='' churn='' exit_route=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --scenario) scenario=$2; shift 2 ;;
+            --env-file) env_file=$2; shift 2 ;;
+            --route-churn) churn=--route-churn; shift ;;
+            --exit-route) exit_route=--exit-route; shift ;;
+            *) echo "karst-ne-lab: unknown argument $1" >&2; exit 2 ;;
+        esac
+    done
+    case "$scenario" in direct|relay) ;; *) echo "karst-ne-lab: --scenario direct|relay" >&2; exit 2 ;; esac
+    case "$env_file" in /*) ;; *) echo "karst-ne-lab: --env-file must be absolute" >&2; exit 2 ;; esac
+
+    # Leftovers from an earlier run are spent invitations; remove them first.
+    rm -rf "$work"
+    mkdir -m 700 "$work"
+    chown "$runner" "$work"
+    invitation_file="$work/invitation"
+    answer="$work/.answer"
+    lab prepare --scenario "$scenario" $churn $exit_route > "$answer"
+
+    owned_file "$invitation_file"
+    owned_file "$env_file"
+    /usr/bin/python3 - "$answer" "$invitation_file" "$env_file" <<'EOF'
+import json, sys
+answer = json.load(open(sys.argv[1]))
+with open(sys.argv[2], "w") as f:
+    f.write(answer["invitation"] + "\n")
+with open(sys.argv[3], "w") as f:
+    f.write(f"KARST_CI_INVITATION_FILE={sys.argv[2]}\n")
+    for key, value in answer["handoff"].items():
+        f.write(f"{key}={value}\n")
+EOF
+    rm -f "$answer"
+    if [ -n "$exit_route" ]; then
+        # The interfaces these hosts use *before* the tunnel exists are the
+        # native ones the exit route must never capture.
+        host=$(awk -F= '$1 == "KARST_CI_CONTROL_PLANE_HOST" { print $2 }' "$env_file")
+        relay=$(awk -F= '$1 == "KARST_CI_RELAY_HOST" { print $2 }' "$env_file")
+        echo "KARST_CI_CONTROL_PLANE_INTERFACE=$(native_interface "$host")" >> "$env_file"
+        echo "KARST_CI_RELAY_INTERFACE=$(native_interface "$relay")" >> "$env_file"
+    fi
+    echo "karst-ne-lab: prepared $scenario${churn:+ +route-churn}${exit_route:+ +exit-route}" >&2
+    ;;
+mutate)
+    route='' state=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --route) route=$2; shift 2 ;;
+            --state) state=$2; shift 2 ;;
+            *) echo "karst-ne-lab: unknown argument $1" >&2; exit 2 ;;
+        esac
+    done
+    case "$route:$state" in
+        subnet:add|subnet:remove|exit:active|exit:withdrawn) ;;
+        *) echo "karst-ne-lab: unsupported mutation $route $state" >&2; exit 2 ;;
+    esac
+    lab mutate --route "$route" --state "$state"
+    ;;
+status)
+    lab status
+    ;;
+*)
+    echo "usage: karst-ne-lab prepare|mutate|status ..." >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# Forced command for the lab Mac's key in the lab host's authorized_keys:
+#
+#   command="/data/karst-ne-lab/lab/labctl-ssh",restrict ssh-ed25519 AAAA… karst-ne-lab
+#
+# Only labctl.py's prepare/mutate/status verbs, with only their own flags.
+set -eu
+# shellcheck disable=SC2086
+set -- ${SSH_ORIGINAL_COMMAND:-}
+case "${1:-}" in prepare|mutate|status) ;; *) echo "labctl-ssh: refused" >&2; exit 1 ;; esac
+for arg in "$@"; do
+    case "$arg" in
+        prepare|mutate|status|--scenario|--route-churn|--exit-route|--route|--state) ;;
+        direct|relay|subnet|exit|add|remove|active|withdrawn) ;;
+        *) echo "labctl-ssh: refused argument" >&2; exit 1 ;;
+    esac
+done
+exec python3 "$(dirname "$0")/labctl.py" "$@"

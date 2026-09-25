@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# The disposable Linux half of the macOS Network Extension CI lab
+# (docs/operations/macos-network-extension-ci.md): a coordination server, a
+# relay, an OIDC provider for the admin API, and one enrolled peer that serves
+# the overlay fixtures the lab Mac probes.
+#
+# Everything here is plaintext HTTP on purpose. The node control channel
+# authenticates itself with the pinned ML-KEM/ML-DSA keys regardless of
+# transport (GETTING-STARTED.md §7.1), and the admin API is only ever driven by
+# labctl.py on this host. Nothing in this file is a production shape — see
+# ../../compose/prod for that.
+#
+# Run ./bootstrap.sh, never `docker compose up` directly: the state directory
+# and .env it writes are what this file substitutes.
+name: karst-ne-lab
+
+services:
+  control:
+    image: karst-ne-lab/karst-control:${KARST_LAB_TAG}
+    restart: unless-stopped
+    environment:
+      NB_DISABLE_GEOLOCATION: "true"
+      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      KARST_RELAY_REGISTRY_FILE: /var/lib/karst/relays.json
+      KARST_POLICY_FILE: /var/lib/karst/policy.json
+    volumes:
+      - ./state:/var/lib/karst
+      - ./state/netbird:/var/lib/netbird
+      - ./state/management.json:/etc/netbird/management.json
+    ports:
+      - "${KARST_LAB_HOST_IP}:${KARST_LAB_CONTROL_PORT}:33073"
+    depends_on:
+      - keycloak
+
+  relay:
+    image: karst-ne-lab/karst-relay:${KARST_LAB_TAG}
+    restart: unless-stopped
+    command: ["--config", "/var/lib/karst/relay.toml"]
+    volumes:
+      - ./state:/var/lib/karst
+    ports:
+      - "${KARST_LAB_HOST_IP}:${KARST_LAB_RELAY_PORT}:443/tcp"
+      - "${KARST_LAB_HOST_IP}:${KARST_LAB_RELAY_PORT}:443/udp"
+    depends_on:
+      - control
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm", "--http-relative-path=/auth"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KARST_LAB_KC_MASTER_PASSWORD}
+      # Tokens must carry the issuer labctl.py and management.json both name,
+      # which is the published address rather than the container's own.
+      KC_HOSTNAME: http://${KARST_LAB_HOST_IP}:${KARST_LAB_KEYCLOAK_PORT}/auth
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./state/keycloak-realm.json:/opt/keycloak/data/import/karst-realm.json:ro
+    ports:
+      - "${KARST_LAB_HOST_IP}:${KARST_LAB_KEYCLOAK_PORT}:8080"
+
+  # The one long-lived enrolled peer. It sits on the LAN through a macvlan
+  # address so its interface candidate is one the Mac can dial directly —
+  # a bridge-networked peer would only ever advertise an unreachable 172.x
+  # address, and the direct scenario must not pass by relay. The second,
+  # bridge attachment is how it reaches control and relay: a macvlan child
+  # cannot talk to its own parent host (peer-entrypoint.sh adds that route).
+  peer:
+    image: karst-ne-lab/karst-peer:${KARST_LAB_TAG}
+    build:
+      context: .
+      dockerfile: peer.Dockerfile
+      args:
+        KARST_LAB_TAG: ${KARST_LAB_TAG}
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      KARST_LAB_HOST_IP: ${KARST_LAB_HOST_IP}
+      KARST_LAB_LAN_IF_ADDR: ${KARST_LAB_PEER_LAN_IP}
+      KARST_LAB_SUBNET_ADDR: ${KARST_LAB_SUBNET_ADDR}
+      KARST_LAB_EXIT_ADDR: ${KARST_LAB_EXIT_ADDR}
+    volumes:
+      - ./state/peer:/etc/karst
+    networks:
+      lab: {}
+      lan:
+        ipv4_address: ${KARST_LAB_PEER_LAN_IP}
+        # The default route goes out the LAN, towards the Mac.
+        gw_priority: 1
+    depends_on:
+      - control
+      - relay
+
+networks:
+  lab: {}
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: ${KARST_LAB_LAN_PARENT}
+    ipam:
+      config:
+        - subnet: ${KARST_LAB_LAN_SUBNET}
+          gateway: ${KARST_LAB_LAN_GATEWAY}
+          ip_range: ${KARST_LAB_PEER_LAN_IP}/32
