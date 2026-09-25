@@ -257,6 +257,7 @@ impl Tun {
                 mtu: self.mtu,
             });
         }
+        wait_readable(self.dev.as_raw_fd())?;
         let mut header = [0u8; AF_HEADER_LEN];
         let n = (&self.dev)
             .read_vectored(&mut [IoSliceMut::new(&mut header), IoSliceMut::new(buf)])
@@ -308,6 +309,34 @@ impl Tun {
             .write_vectored(&[IoSlice::new(&header), IoSlice::new(packet)])
             .map_err(TunError::Io)?;
         Ok(written.saturating_sub(AF_HEADER_LEN))
+    }
+}
+
+/// How long [`wait_readable`] blocks before handing the caller a
+/// `WouldBlock` — short enough that a worker polling its shutdown flag between
+/// reads still stops promptly, long enough that an idle tunnel costs a few
+/// wakeups a second rather than a core.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+const READ_WAIT_MS: libc::c_int = 250;
+
+/// Block until `fd` is readable, or [`READ_WAIT_MS`] passes.
+///
+/// `NetworkExtension` hands over its `utun` socket already `O_NONBLOCK`, so
+/// without this a caller that retries on any error — `karstd`'s
+/// `host_to_tunnel_worker` does — spins on `EAGAIN`. Found on real hardware
+/// (#161): 100% of a core, sustained, and a `cpu_resource` report from macOS.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn wait_readable(fd: RawFd) -> Result<(), TunError> {
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid `pollfd` for the duration of the call.
+    match unsafe { libc::poll(&raw mut pollfd, 1, READ_WAIT_MS) } {
+        0 => Err(TunError::Io(std::io::ErrorKind::WouldBlock.into())),
+        n if n < 0 => Err(TunError::Io(std::io::Error::last_os_error())),
+        _ => Ok(()),
     }
 }
 
