@@ -3209,6 +3209,10 @@ fn apply_gateway(
         .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
 }
 
+#[cfg_attr(
+    all(target_os = "macos", feature = "network-extension"),
+    allow(dead_code)
+)]
 fn underlay_addresses(
     config: &Config,
     engine: Option<&Engine>,
@@ -3308,6 +3312,12 @@ fn url_authority(endpoint: &str) -> io::Result<(&str, u16)> {
     Ok((host, port))
 }
 
+// Infallible on Network Extension builds, where the provider owns routing;
+// the signature stays fallible for Linux policy routing.
+#[cfg_attr(
+    all(target_os = "macos", feature = "network-extension"),
+    allow(clippy::unnecessary_wraps)
+)]
 fn reconcile_exit(
     routes: &Mutex<Routes>,
     policy: &Mutex<crate::exit_policy::Manager>,
@@ -3343,8 +3353,22 @@ fn reconcile_exit(
         policy.disable();
         return Ok(());
     };
-    let escapes = underlay_addresses(config, engine, control_endpoint)?;
-    policy.activate(tun.name(), offer.prefix.base(), escapes)
+    // A Network Extension's provider owns routing: it maps an active
+    // recipient exit into its tunnel's default route, and the system keeps
+    // its own sockets (control, relay, peers) out of that tunnel. So there is
+    // no policy routing to stage — and no `ip` on macOS to stage it with
+    // (ADR-0036).
+    #[cfg(all(target_os = "macos", feature = "network-extension"))]
+    {
+        let _ = (engine, control_endpoint);
+        policy.delegate(offer.prefix.base());
+        Ok(())
+    }
+    #[cfg(not(all(target_os = "macos", feature = "network-extension")))]
+    {
+        let escapes = underlay_addresses(config, engine, control_endpoint)?;
+        policy.activate(tun.name(), offer.prefix.base(), escapes)
+    }
 }
 
 /// Whether `route_id` names a currently offered, eligible exit route.

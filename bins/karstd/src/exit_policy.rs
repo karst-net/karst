@@ -326,6 +326,23 @@ impl Manager {
         self.0.activate(interface, family, escapes)
     }
 
+    /// Mark `exit`'s family active without touching host routing.
+    ///
+    /// For builds whose platform layer owns routing: in a macOS Network
+    /// Extension the provider turns an active recipient exit into its
+    /// tunnel's default route (ADR-0036), and the system keeps the provider's
+    /// own sockets out of that tunnel, so there is neither policy routing to
+    /// stage nor an `ip` to run it with. Nothing is recorded for rollback;
+    /// [`Manager::disable`] simply clears the mark.
+    pub fn delegate(&mut self, exit: IpAddr) {
+        self.0.clear();
+        self.0.active = Some(if exit.is_ipv4() {
+            Family::V4
+        } else {
+            Family::V6
+        });
+    }
+
     pub fn disable(&mut self) {
         self.0.clear();
     }
@@ -502,5 +519,19 @@ mod tests {
             .join(" ");
         assert!(all.contains("2001:db8::10/128"));
         assert!(!all.contains("192.0.2.10/32"));
+    }
+
+    #[test]
+    fn a_delegated_exit_is_active_without_running_anything() {
+        // `Manager` drives the real `Host` backend, so this would fail on any
+        // machine without `ip` (or without root) if delegate or disable ran a
+        // command: the point is that neither does.
+        let mut manager = Manager::default();
+        manager.delegate("0.0.0.0".parse().unwrap());
+        assert!(manager.active());
+        manager.disable();
+        assert!(!manager.active());
+        manager.delegate("::".parse().unwrap());
+        assert!(manager.active());
     }
 }
