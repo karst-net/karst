@@ -86,6 +86,14 @@ but cannot manufacture consent on a client's behalf. Nothing this section
 describes bypasses that gate — routing and privacy exposure begin only after
 the local operator has explicitly opted in.
 
+On macOS (ADR-0036) the local operator is the Mac's administrator, with two
+equivalent ways to give or withdraw consent: `sudo karst exit-node use
+<route-id>` / `disable` (the CLI ships with the package and talks to the
+Network Extension's root-only socket), or Karst.app's **Exit node** menu,
+which shows this section's disclosure and asks for an administrator's
+password; the extension verifies that authorization itself before changing
+anything. A non-administrator can see the current exit but cannot change it.
+
 ## 4. Recovery
 
 | Situation | What restores it |
