@@ -57,7 +57,14 @@ def env():
 
 ENV = env()
 HOST = ENV["KARST_LAB_HOST_IP"]
+# labctl's own admin API calls use the host's published port.
 CONTROL = f"http://{HOST}:{ENV['KARST_LAB_CONTROL_PORT']}"
+# Invitations name the control plane's core address, which the Mac reaches
+# only through labgw (its default gateway), so an active exit route covers
+# it (ADR-0036 §2). Labs from before the core network fall back to CONTROL.
+CORE_CONTROL_IP = ENV.get("KARST_LAB_CORE_CONTROL_IP")
+CORE_RELAY_IP = ENV.get("KARST_LAB_CORE_RELAY_IP")
+ENROLL_CONTROL = f"http://{CORE_CONTROL_IP}:33073" if CORE_CONTROL_IP else CONTROL
 KEYCLOAK = f"http://{HOST}:{ENV['KARST_LAB_KEYCLOAK_PORT']}/auth/realms/karst"
 SUBNET_ADDR = ENV["KARST_LAB_SUBNET_ADDR"]
 SUBNET_PREFIX = ENV["KARST_LAB_SUBNET_PREFIX"]
@@ -120,7 +127,7 @@ def invitation(api, name):
     """A fresh single-use invitation, encoded exactly as the console does."""
     metadata = api("GET", "/api/karst/v1/me/enrollment")
     grant = api("POST", "/api/karst/v1/invitations", {"name": name, "groups": [group_id(api)]})
-    payload = json.dumps({"server": CONTROL, **metadata, "setup_key": grant["credential"]}, separators=(",", ":"))
+    payload = json.dumps({"server": ENROLL_CONTROL, **metadata, "setup_key": grant["credential"]}, separators=(",", ":"))
     encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"karst-invite-v1:{encoded}", metadata, grant
 
@@ -269,16 +276,18 @@ def cmd_prepare(args):
         handoff["KARST_CI_SUBNET_PROBE_URL"] = f"http://{SUBNET_ADDR}:{FIXTURE_HTTP_PORT}/probe"
         handoff["KARST_CI_SUBNET_ROUTE_PREFIX"] = SUBNET_PREFIX
     if args.exit_route:
-        # Control and relay share this host. Keycloak's realm document is the
-        # plain-HTTP endpoint that proves the host is still reachable natively;
-        # the relay speaks no HTTP of its own.
-        probe = f"{KEYCLOAK}"
+        # Control and relay at their core addresses, reachable from the Mac
+        # only through its default route; each has an HTTP responder sharing
+        # its network namespace on :8081, since neither serves an
+        # unauthenticated 2xx itself.
+        control_host = CORE_CONTROL_IP or HOST
+        relay_host = CORE_RELAY_IP or HOST
         handoff["KARST_CI_EXIT_PROBE_URL"] = f"http://{EXIT_ADDR}:{FIXTURE_HTTP_PORT}/probe"
         handoff["KARST_CI_EXIT_ROUTE_PREFIX"] = "0.0.0.0/0"
-        handoff["KARST_CI_CONTROL_PLANE_PROBE_URL"] = probe
-        handoff["KARST_CI_CONTROL_PLANE_HOST"] = HOST
-        handoff["KARST_CI_RELAY_PROBE_URL"] = probe
-        handoff["KARST_CI_RELAY_HOST"] = HOST
+        handoff["KARST_CI_CONTROL_PLANE_PROBE_URL"] = f"http://{control_host}:8081/"
+        handoff["KARST_CI_CONTROL_PLANE_HOST"] = control_host
+        handoff["KARST_CI_RELAY_PROBE_URL"] = f"http://{relay_host}:8081/"
+        handoff["KARST_CI_RELAY_HOST"] = relay_host
     log(f"prepared scenario={args.scenario} route_churn={args.route_churn} exit_route={args.exit_route}")
     json.dump({"invitation": invite, "handoff": handoff}, sys.stdout)
     print()

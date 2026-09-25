@@ -189,11 +189,22 @@ jobs:
           bytes="$(curl --fail --silent --show-error --noproxy '*' --max-time 30 --output /dev/null \
             --write-out '%{size_download}' "$KARST_CI_EXIT_PROBE_URL")"
           test "$bytes" -ge 65536
-          native_interface() { /sbin/route -n get "$1" | awk '/interface:/{print $2; exit}'; }
-          test "$(native_interface "$KARST_CI_CONTROL_PLANE_HOST")" = "$KARST_CI_CONTROL_PLANE_INTERFACE"
-          test "$(native_interface "$KARST_CI_RELAY_HOST")" = "$KARST_CI_RELAY_INTERFACE"
+          # With the exit active, other apps' traffic to the control and relay
+          # hosts rightly goes through the exit — no excludedRoutes (ADR-0036
+          # §2) — so the probes below prove they stay reachable through it,
+          # not that they bypass it. What must bypass the tunnel is the
+          # extension's own traffic: its control session has to stay
+          # synchronized and its peer established throughout.
+          route_via() { /sbin/route -n get "$1" | awk '/interface:/{print $2; exit}'; }
+          echo "control host via $(route_via "$KARST_CI_CONTROL_PLANE_HOST") (was $KARST_CI_CONTROL_PLANE_INTERFACE), relay host via $(route_via "$KARST_CI_RELAY_HOST") (was $KARST_CI_RELAY_INTERFACE)"
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_CONTROL_PLANE_PROBE_URL"
           curl --fail --silent --show-error --noproxy '*' --max-time 15 --output /dev/null "$KARST_CI_RELAY_PROBE_URL"
+          for _ in 1 2 3; do
+            sleep 15
+            status="$(sudo /usr/local/bin/karst status)"
+            grep -q '^control_synchronized = true' <<< "$status" || { echo "::error::control session lost with the exit active"; exit 1; }
+            grep -q '^state = "established"' <<< "$status" || { echo "::error::peer lost with the exit active"; exit 1; }
+          done
           sudo "$control" mutate --route exit --state withdrawn
           sudo "$harness" --invitation-file "$KARST_CI_INVITATION_FILE" --probe-url "$KARST_CI_PROBE_URL" \
             --udp-host "$KARST_CI_UDP_HOST" --udp-port "$KARST_CI_UDP_PORT" \

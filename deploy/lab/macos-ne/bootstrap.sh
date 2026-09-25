@@ -55,6 +55,18 @@ EOF
 else
     sed -i "s/^KARST_LAB_TAG=.*/KARST_LAB_TAG=$KARST_LAB_TAG/" .env
 fi
+# Added after the first labs were stood up, so appended to an existing .env
+# rather than only written into a new one. labgw takes the LAN address after
+# the peer's (the two form a /31); control and relay get fixed core addresses
+# that the Mac can reach only through labgw.
+add_env() { grep -q "^$1=" .env || echo "$1=$2" >> .env; }
+gw_default=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_address(sys.argv[1]) + 1)" "$KARST_LAB_PEER_LAN_IP")
+add_env KARST_LAB_GW_LAN_IP "${KARST_LAB_GW_LAN_IP:-$gw_default}"
+add_env KARST_LAB_LAN_IP_RANGE "${KARST_LAB_LAN_IP_RANGE:-$KARST_LAB_PEER_LAN_IP/31}"
+add_env KARST_LAB_CORE_SUBNET 10.230.0.0/24
+add_env KARST_LAB_CORE_GW_IP 10.230.0.2
+add_env KARST_LAB_CORE_CONTROL_IP 10.230.0.10
+add_env KARST_LAB_CORE_RELAY_IP 10.230.0.11
 set -a
 # shellcheck disable=SC1091
 . ./.env
@@ -85,14 +97,27 @@ if [ ! -f "$state/relays.json" ]; then
         pubkey --config /var/lib/karst/relay.toml | awk '/^identity_pk/ { print $2 }')
     [ -n "$identity" ] || { echo "bootstrap: karst-relay printed no identity" >&2; exit 1; }
     cat > "$state/relays.json" <<EOF
-{ "relays": [ { "address": "$KARST_LAB_HOST_IP:$KARST_LAB_RELAY_PORT", "tls_server_name": "relay.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
+{ "relays": [ { "address": "$KARST_LAB_CORE_RELAY_IP:443", "tls_server_name": "relay.karst-ne-lab", "identity_key": "$identity", "region": "lab" } ] }
 EOF
 fi
+# Nodes dial the relay at its core address: the Mac through labgw, the peer
+# directly (it is attached to core). Rewritten in place for labs whose
+# registry predates the core network; the identity is kept.
+python3 - "$state/relays.json" "$KARST_LAB_CORE_RELAY_IP:443" <<'PY'
+import json, sys
+path, address = sys.argv[1], sys.argv[2]
+registry = json.load(open(path))
+if registry["relays"][0]["address"] != address:
+    registry["relays"][0]["address"] = address
+    json.dump(registry, open(path, "w"))
+PY
 # "*:*" covers mesh nodes only; routed destinations need CIDR grants. The
-# subnet-route fixture and the exit probe (198.18.0.1) are both reachable
-# only through route offers, so the lab grants their networks explicitly.
+# subnet-route fixture is reachable only through its offer, and everything
+# behind the exit route (the exit probe, the control/relay core addresses as
+# other apps see them with the exit active, the internet) only through the
+# exit, so the lab grants the subnet and the whole IPv4 space.
 cat > "$state/policy.json" <<EOF
-{ "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*", "$KARST_LAB_SUBNET_PREFIX:*", "198.18.0.0/24:*"] } ] }
+{ "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*", "$KARST_LAB_SUBNET_PREFIX:*", "0.0.0.0/0:*"] } ] }
 EOF
 if [ ! -f "$state/management.json" ]; then
     umask 077
@@ -121,7 +146,7 @@ if [ ! -f "$state/lab-admin.json" ]; then
     printf '{"username": "lab-admin", "password": "%s"}\n' "$password" > "$state/lab-admin.json"
     # A password-grant client: labctl.py is the only thing that ever logs in.
     python3 - "$password" > "$state/keycloak-realm.json" <<'EOF'
-import json, sys
+import json, sys, uuid
 print(json.dumps({
     "realm": "karst", "enabled": True, "sslRequired": "none",
     "clients": [{
@@ -135,6 +160,11 @@ print(json.dumps({
         }],
     }],
     "users": [{
+        # A fixed ID: Keycloak here keeps no data volume, so every container
+        # recreation re-imports this realm, and with a generated ID the
+        # control plane would see a brand-new user "pending approval" and
+        # refuse labctl.
+        "id": str(uuid.uuid4()),
         "username": "lab-admin", "email": "lab-admin@karst-ne-lab.invalid",
         "firstName": "Lab", "lastName": "Admin", "enabled": True, "emailVerified": True,
         "credentials": [{"type": "password", "value": sys.argv[1], "temporary": False}],
@@ -146,6 +176,6 @@ EOF
 fi
 
 docker compose build peer
-docker compose up -d control relay keycloak
+docker compose up -d control control-probe relay relay-probe keycloak labgw
 python3 "$here/labctl.py" init
 python3 "$here/labctl.py" status
