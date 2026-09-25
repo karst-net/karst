@@ -109,12 +109,21 @@ establish its reliability.
 Use the manual `run_exit_route=true` dispatch only after direct connectivity is
 stable. `prepare --exit-route` must additionally supply a 64 KiB
 `KARST_CI_EXIT_PROBE_URL`, `KARST_CI_EXIT_ROUTE_PREFIX`, and control-plane and
-relay probe URL, host, and expected native-interface triples:
+relay probe URL, host, and pre-tunnel native-interface triples:
 `KARST_CI_CONTROL_PLANE_{PROBE_URL,HOST,INTERFACE}` and
 `KARST_CI_RELAY_{PROBE_URL,HOST,INTERFACE}`. The exit probe must be reachable
-only through the disposable exit. After `mutate --route exit --state active`,
-the job verifies the active default route, transfers the exit probe with no
-proxy, verifies both control/relay hosts still select their supplied native
-interfaces and remain reachable, then withdraws the route and waits for live
-status to report its absence. The controller must make both exit mutations
-idempotent.
+only through the disposable exit, and the control plane and relay must be
+reachable from the Mac only through its default route (off-link), or the
+check proves nothing.
+
+After `mutate --route exit --state active`, the job consents as the Mac's
+local administrator (`sudo karst exit-node use`, ADR-0036), verifies the
+active default route, and transfers the exit probe with no proxy. With the
+exit active, other apps' traffic to the control and relay hosts goes through
+the exit (no `excludedRoutes`, ADR-0036 §2): the job logs which interface they
+now use, requires their probes to stay reachable, and requires the
+extension's own control session to stay synchronized and its peer
+established for 45 seconds. It then withdraws the offer while still
+consented, waits for live status to report the route's absence, and clears
+the dormant consent with `karst exit-node disable`. The controller must make
+both exit mutations idempotent.
