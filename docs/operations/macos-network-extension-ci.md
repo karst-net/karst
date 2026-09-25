@@ -61,10 +61,22 @@ has been admitted.
 ## What the job proves
 
 The CI-only `KarstConnectivityCI` executable is a separate SwiftPM target and
-is never included in `Karst.app`. It uses the saved
-`NETunnelProviderManager` to send the fresh invitation, starts a disconnected
-session, waits for an interface and a peer with the requested transport, then fetches at least
-64 KiB over TCP and verifies a UDP echo through the peer's overlay address.
+is never included in `Karst.app`, and runs as root. macOS delivers provider
+messages only from the configuration's owning app, so the harness does not
+use them: it stops the saved Karst configuration, leaves the fresh invitation
+as the extension's root-only `pending-invitation` file (ADR-0028 item 6),
+starts the configuration with `scutil --nc start`, and reads the embedded
+engine's `status-json` from its root-only admin socket. It waits for a peer
+with the requested transport, then fetches at least 64 KiB over TCP and
+verifies a UDP echo through the peer's overlay address.
+
+The saved configuration itself must already exist: launch `Karst.app` once
+on the runner's console session and approve its "add VPN configurations"
+prompt (MDM cannot pre-approve that one). Every run re-enrolls from its own
+invitation, so the configuration persists across runs. Each run also
+notarizes the package: `sysextd` refuses an un-notarized Developer ID System
+Extension even when installed locally, so the Environment needs
+`APPLE_NOTARY_KEY`, `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER`.
 It emits only counts and status;
 logs and artifacts redact invitations.
 
