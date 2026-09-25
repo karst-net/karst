@@ -320,11 +320,48 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// (#161) — but not on the very first call: see
     /// `adoptedFileDescriptorRetrying(from:)`, the caller this exists for.
     private static func adoptedFileDescriptor(from packetFlow: NEPacketTunnelFlow) -> Int32? {
+        if let fd = utunControlSocketDescriptor() {
+            return fd
+        }
         guard let number = packetFlow.value(forKeyPath: "socket.fileDescriptor") as? NSNumber else {
             return nil
         }
         let fd = number.int32Value
         return fd >= 0 ? fd : nil
+    }
+
+    /// The `utun` kernel-control socket NetworkExtension opened in this
+    /// process for `packetFlow`, found by scanning this process's own
+    /// descriptors — WireGuard-apple's `tunnelFileDescriptor`, which does
+    /// not depend on any private property. Found on real hardware (#161,
+    /// macOS 26.6, Intel): the `socket.fileDescriptor` KVC lookup below
+    /// never resolved there, not only in the VM first suspected.
+    ///
+    /// A provider process owns exactly one such socket, so the first
+    /// descriptor whose peer is the `com.apple.net.utun_control` kernel
+    /// control is the one.
+    private static func utunControlSocketDescriptor() -> Int32? {
+        var info = ctl_info()
+        withUnsafeMutablePointer(to: &info.ctl_name) {
+            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) {
+                _ = strcpy($0, "com.apple.net.utun_control")
+            }
+        }
+        // _IOWR('N', 3, struct ctl_info): the macro does not import into Swift.
+        let ctliocginfo: UInt = 0xc064_4e03
+        for fd: Int32 in 0...1024 {
+            var address = sockaddr_ctl()
+            var length = socklen_t(MemoryLayout.size(ofValue: address))
+            let peer = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(fd, $0, &length) }
+            }
+            guard peer == 0, address.sc_family == AF_SYSTEM else { continue }
+            if info.ctl_id == 0, ioctl(fd, ctliocginfo, &info) != 0 { continue }
+            if address.sc_id == info.ctl_id {
+                return fd
+            }
+        }
+        return nil
     }
 
     /// **Found on real hardware (#161), not anticipated**: `packetFlow`'s
