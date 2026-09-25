@@ -54,6 +54,31 @@ enum ExitConsent {
         }
     }
 
+    /// What `ExitNodeAutoConsent` (ADR-0036 §4) does with the current offers.
+    enum ManagedDecision: Equatable {
+        /// Nothing to change: no offer, or an offered one is already chosen.
+        case none
+        /// Consent to this route.
+        case use(String)
+        /// Several exits are offered and none is chosen: the profile cannot
+        /// say which, so choose none and report it.
+        case conflict
+    }
+
+    /// Consent to the single offered exit route; with several offered, keep
+    /// an existing choice among them but make no new one. With none offered,
+    /// any selection stays dormant, as it does on a self-service Mac.
+    static func managedDecision(offers: [String], selected: String?) -> ManagedDecision {
+        if let selected, offers.contains(selected) {
+            return .none
+        }
+        switch offers.count {
+        case 0: return .none
+        case 1: return .use(offers[0])
+        default: return .conflict
+        }
+    }
+
     /// Route IDs are server-generated tokens; anything else is refused before
     /// it can reach the engine's line-oriented control protocol.
     static func isPlausibleRouteID(_ routeID: String) -> Bool {

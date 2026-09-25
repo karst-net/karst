@@ -72,29 +72,66 @@
             <key>UserDefinedName</key>
             <string>Karst</string>
             <!-- "VPN", not "IKEv2"/"L2TP"/etc — the value used for a
-                 third-party NetworkExtension provider, paired with
-                 VPNSubType naming the provider's bundle identifier. -->
+                 third-party NetworkExtension provider. VPNSubType names
+                 the *containing app* (Karst.app, dev.karst.karststatus,
+                 as Karst.app's own configuration reports it), and
+                 ProviderBundleIdentifier below the extension itself. -->
             <key>VPNType</key>
             <string>VPN</string>
             <key>VPNSubType</key>
-            <string>dev.karst.packettunnel</string>
+            <string>dev.karst.karststatus</string>
+            <!-- Equivalent to `proto.providerConfiguration` in
+                 NetworkExtensionEnrollment.swift — passed through to
+                 NETunnelProviderProtocol.providerConfiguration
+                 verbatim. A key of the payload itself, not of the VPN
+                 dictionary: nested inside VPN it is silently dropped
+                 (found on the lab Mac — the installed configuration had
+                 no providerConfiguration at all). -->
+            <key>VendorConfig</key>
+            <dict>
+                <key>controlURL</key>
+                <string>REPLACE_ME.control.example.com</string>
+                <!-- ADR-0036 §4: consent to the exit route offered to
+                     this device, as the organization. With exactly one
+                     recipient exit offered it is chosen, and follows the
+                     offer if the server recreates it under a new ID;
+                     with several offered none is chosen and the menu
+                     says so. Karst.app then shows the exit as "Managed
+                     by your organization" and offers no change. Omit,
+                     or set false, to leave exit consent to the Mac's
+                     administrator. -->
+                <key>ExitNodeAutoConsent</key>
+                <false/>
+            </dict>
             <key>VPN</key>
             <dict>
+                <key>ProviderBundleIdentifier</key>
+                <string>dev.karst.packettunnel</string>
+                <key>ProviderType</key>
+                <string>packet-tunnel</string>
+                <!-- The provider's code-signing designated requirement, as
+                     `codesign -d -r- <…>/dev.karst.packettunnel.systemextension`
+                     prints it for Karst's Developer ID builds (team
+                     WJ3MJC4KV7). A self-created configuration inherits
+                     this from Karst.app; a profile must state it, or the
+                     configuration installs but never starts: "Cannot create
+                     agent for plugin type dev.karst.karststatus, missing
+                     designated requirement" — found on the lab Mac. -->
+                <key>ProviderDesignatedRequirement</key>
+                <string>identifier &quot;dev.karst.packettunnel&quot; and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = WJ3MJC4KV7</string>
+                <!-- Required even though Karst authenticates itself (its
+                     identity and pinned keys, not a VPN password): without
+                     it the profile fails to install — "unsupported authen
+                     type (null)", then "The VPN service could not be
+                     created" (-319) — found on the lab Mac. Never read. -->
+                <key>AuthenticationMethod</key>
+                <string>Password</string>
                 <!-- Display-only, mirrors NetworkExtensionEnrollment.ensureConfiguration's
                      own use of `NEVPNProtocol.serverAddress` — not read by
                      the enrollment handshake itself, which the pasted
                      invitation carries separately. -->
                 <key>RemoteAddress</key>
                 <string>REPLACE_ME.control.example.com</string>
-                <!-- Equivalent to `proto.providerConfiguration` in
-                     NetworkExtensionEnrollment.swift — passed through to
-                     NETunnelProviderProtocol.providerConfiguration
-                     verbatim. -->
-                <key>VendorConfig</key>
-                <dict>
-                    <key>controlURL</key>
-                    <string>REPLACE_ME.control.example.com</string>
-                </dict>
                 <!-- The kill switch: routes all traffic into the tunnel,
                      no fallback route. See this file's own header comment
                      on why this is the one key that most needs

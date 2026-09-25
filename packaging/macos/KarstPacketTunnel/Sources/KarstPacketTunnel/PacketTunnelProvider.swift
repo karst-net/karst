@@ -92,6 +92,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// `startTunnel` call that creates it.
     private var engine: EngineHandle?
 
+    /// The utun descriptor this session's engine adopted, released from
+    /// `ownedDescriptors` at stop.
+    private var adoptedDescriptor: Int32?
+
+    /// utun descriptors adopted by live engines in this process. A system
+    /// extension's process outlives its sessions, and a new session can start
+    /// while the previous one's socket is still open (found on the lab Mac
+    /// switching between two configurations): scanning for "the" utun socket
+    /// then found the old one first, and the new engine read a dead
+    /// interface. The scan skips descriptors claimed here.
+    private static var ownedDescriptors = Set<Int32>()
+    private static let ownedDescriptorsLock = NSLock()
+
+    private static func releaseDescriptor(_ fd: Int32) {
+        ownedDescriptorsLock.lock()
+        ownedDescriptors.remove(fd)
+        ownedDescriptorsLock.unlock()
+    }
+
     /// Polls `engine.statusJson()` on a fixed interval so routing reflects
     /// live state instead of the one-time snapshot `startTunnel` took —
     /// closes the mid-session gap `networkSettings(fromStatusJSON:)`'s own
@@ -124,9 +143,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping (Error?) -> Void
     ) {
         os_log("startTunnel", log: Self.log, type: .info)
+        // Everything below runs on its own 8 MiB thread and calls
+        // `completionHandler` from there, never on NetworkExtension's callout
+        // thread. Found on the lab Mac: waiting for the utun descriptor with
+        // that thread blocked sometimes starved NetworkExtension's own
+        // creation of the interface, which then appeared just after the wait
+        // gave up (a failed start right after a configuration switch). The
+        // large stack also covers the Rust calls (`onLargeStack`'s reason).
+        let worker = Thread { [self] in
+            startTunnelOnWorker(completionHandler: completionHandler)
+        }
+        worker.stackSize = 8 << 20
+        worker.start()
+    }
 
-        if let error = Self.enrollFromPendingInvitation() {
+    private func startTunnelOnWorker(completionHandler: @escaping (Error?) -> Void) {
+        // Any failure after the descriptor was claimed releases the claim: the
+        // engine (or its failed start) has closed it.
+        let finish: (Error?) -> Void = { [weak self] error in
+            if error != nil, let self, let fd = self.adoptedDescriptor {
+                Self.releaseDescriptor(fd)
+                self.adoptedDescriptor = nil
+            }
             completionHandler(error)
+        }
+        if let error = Self.enrollFromPendingInvitation() {
+            finish(error)
             return
         }
 
@@ -134,14 +176,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // Mirrors `bins/karstd/src/setup.rs`'s `from_stdin`'s own
             // `resume` branch: never invent a tunnel out of a device that
             // was never enrolled.
-            completionHandler(PacketTunnelProviderError.notEnrolled)
+            finish(PacketTunnelProviderError.notEnrolled)
             return
         }
 
         guard let fd = Self.adoptedFileDescriptorRetrying(from: packetFlow) else {
-            completionHandler(PacketTunnelProviderError.noPacketFlowDescriptor)
+            finish(PacketTunnelProviderError.noPacketFlowDescriptor)
             return
         }
+        adoptedDescriptor = fd
 
         let handle: EngineHandle
         do {
@@ -151,10 +194,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // own `# Safety` doc comment).
             handle = try Self.startEngineOnLargeStack(fd: fd)
         } catch let error as FfiError {
-            completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
+            finish(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
         } catch {
-            completionHandler(error)
+            finish(error)
             return
         }
         engine = handle
@@ -169,12 +212,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch let error as FfiError {
             handle.stop()
             engine = nil
-            completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
+            finish(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
         } catch {
             handle.stop()
             engine = nil
-            completionHandler(error)
+            finish(error)
             return
         }
 
@@ -184,13 +227,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             handle.stop()
             engine = nil
-            completionHandler(error)
+            finish(error)
             return
         }
 
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else {
-                completionHandler(error)
+                finish(error)
                 return
             }
             if error != nil {
@@ -200,7 +243,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.lastAppliedRouteSignature = Self.routeSignature(fromStatusJSON: statusJSON)
                 self.startHealthTimer()
             }
-            completionHandler(error)
+            finish(error)
         }
     }
 
@@ -216,6 +259,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // what a caller waiting to report "fully stopped" needs.
         engine?.stop()
         engine = nil
+        if let fd = adoptedDescriptor {
+            Self.releaseDescriptor(fd)
+            adoptedDescriptor = nil
+        }
         completionHandler()
     }
 
@@ -290,6 +337,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         reasserting = false
+        reconcileManagedExit(statusJSON: json)
 
         let signature = Self.routeSignature(fromStatusJSON: json)
         guard signature != lastAppliedRouteSignature else { return }
@@ -423,10 +471,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// macOS 26.6, Intel): the `socket.fileDescriptor` KVC lookup below
     /// never resolved there, not only in the VM first suspected.
     ///
-    /// A provider process owns exactly one such socket, so the first
-    /// descriptor whose peer is the `com.apple.net.utun_control` kernel
-    /// control is the one.
+    /// A system extension's process outlives its sessions, and a starting
+    /// session can overlap the previous one's socket, so this returns the
+    /// first utun control socket *not already claimed* by a live engine
+    /// (`ownedDescriptors`), and claims it.
     private static func utunControlSocketDescriptor() -> Int32? {
+        ownedDescriptorsLock.lock()
+        defer { ownedDescriptorsLock.unlock() }
         var info = ctl_info()
         withUnsafeMutablePointer(to: &info.ctl_name) {
             $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) {
@@ -443,7 +494,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             guard peer == 0, address.sc_family == AF_SYSTEM else { continue }
             if info.ctl_id == 0, ioctl(fd, ctliocginfo, &info) != 0 { continue }
-            if address.sc_id == info.ctl_id {
+            if address.sc_id == info.ctl_id, !ownedDescriptors.contains(fd) {
+                ownedDescriptors.insert(fd)
                 return fd
             }
         }
@@ -467,7 +519,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// polling is the correct shape here, not a fixed delay.
     private static func adoptedFileDescriptorRetrying(
         from packetFlow: NEPacketTunnelFlow,
-        attempts: Int = 30,
+        attempts: Int = 100,
         interval: TimeInterval = 0.1
     ) -> Int32? {
         for attempt in 1...attempts {
@@ -805,6 +857,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             worker.stackSize = 8 << 20
             worker.start()
         case "exit-use", "exit-disable":
+            // A profile-managed exit (ADR-0036 §4) is the organization's
+            // choice, not a local one: the menu offers no change, and this
+            // refuses one regardless.
+            if managedExitAutoConsent {
+                completionHandler(Self.errorResponse("the exit node is managed by your organization"))
+                return
+            }
             // Karst.app's Exit node menu (ADR-0036 §3). The token is checked
             // here, as root, before anything reaches the engine: see
             // `ExitConsent`'s doc comment for why the app's own check is not
@@ -845,6 +904,52 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// falls back to on a `Serialize` failure — one error shape for
     /// `StatusParser.parseJSON` and `NetworkExtensionEnrollment.enroll` to
     /// check on either side of this channel, not a second one invented here.
+    /// `ExitNodeAutoConsent` in the managed profile's `VendorConfig`, which
+    /// NetworkExtension hands this provider as `providerConfiguration`
+    /// (ADR-0036 §4). Absent or false for a self-service configuration.
+    private var managedExitAutoConsent: Bool {
+        let value = (protocolConfiguration as? NETunnelProviderProtocol)?
+            .providerConfiguration?["ExitNodeAutoConsent"]
+        return (value as? Bool) ?? (value as? NSNumber)?.boolValue ?? false
+    }
+
+    /// The offer set last reported as a conflict, so a standing conflict is
+    /// logged once rather than on every health-poll tick.
+    private var reportedExitConflict: [String]?
+
+    /// Apply `ExitNodeAutoConsent` on each health-poll tick: consent to the
+    /// single offered exit, or report — and choose nothing — when several are
+    /// offered. The engine keeps consent durable as usual, so this only acts
+    /// when the offer set or the selection changes.
+    private func reconcileManagedExit(statusJSON json: String) {
+        guard managedExitAutoConsent,
+              let status = try? JSONDecoder().decode(EngineStatus.self, from: Data(json.utf8)),
+              let routing = status.control?.routing
+        else { return }
+        let offers = routing.routes
+            .filter { $0.kind == "exit" && $0.role == "recipient" }
+            .compactMap(\.routeId)
+        switch ExitConsent.managedDecision(offers: offers, selected: routing.selectedExit) {
+        case .none:
+            reportedExitConflict = nil
+        case .use(let routeID):
+            reportedExitConflict = nil
+            guard ExitConsent.isPlausibleRouteID(routeID) else { return }
+            let reply = ExitConsent.engineCommand("exit-use \(routeID)", socketPath: Self.socketPath) ?? "no reply"
+            os_log(
+                "ExitNodeAutoConsent: consented to the offered exit route: %{public}@",
+                log: Self.log, type: .default, reply.split(separator: "\n").first.map(String.init) ?? ""
+            )
+        case .conflict:
+            guard reportedExitConflict != offers.sorted() else { return }
+            reportedExitConflict = offers.sorted()
+            os_log(
+                "ExitNodeAutoConsent: %{public}d exit routes offered; choosing none until exactly one is",
+                log: Self.log, type: .default, offers.count
+            )
+        }
+    }
+
     private static func errorResponse(_ message: String) -> Data {
         let object = ["error": message]
         return (try? JSONSerialization.data(withJSONObject: object))
@@ -906,6 +1011,12 @@ private struct EngineStatus: Decodable {
     /// not in what `setTunnelNetworkSettings` needs to act on.
     struct Routing: Decodable {
         let routes: [Route]
+        let selectedExit: String?
+
+        enum CodingKeys: String, CodingKey {
+            case routes
+            case selectedExit = "selected_exit"
+        }
     }
 
     /// Mirrors `RouteJson`. `prefix` for a `kind == "exit"` route is
@@ -920,6 +1031,12 @@ private struct EngineStatus: Decodable {
         let kind: String
         let role: String
         let active: Bool
+        let routeId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case prefix, kind, role, active
+            case routeId = "route_id"
+        }
     }
 
     let addresses: [String]
