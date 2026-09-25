@@ -140,11 +140,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // here — `karst_tun::Tun::from_fd`'s contract, carried across
             // this boundary rather than re-derived (`EngineHandle.start`'s
             // own `# Safety` doc comment).
-            handle = try EngineHandle.start(
-                configPath: Self.configPath,
-                socketPath: Self.socketPath,
-                fd: fd
-            )
+            handle = try Self.startEngineOnLargeStack(fd: fd)
         } catch let error as FfiError {
             completionHandler(PacketTunnelProviderError.engine(Self.message(from: error)))
             return
@@ -309,6 +305,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             .filter { $0.kind == "exit" && $0.role == "recipient" && $0.active }
             .map(\.prefix)
         return (status.addresses.sorted() + ["|"] + routes.sorted()).joined(separator: ",")
+    }
+
+    /// `EngineHandle.start` on an 8 MiB worker thread, waited for
+    /// synchronously. Found on real hardware (#161): called directly on
+    /// `startTunnel`'s NSXPC callout thread it overflows that thread's
+    /// stack inside `Identity::from_seed`'s post-quantum key derivation
+    /// (SIGBUS in the stack guard) — the same reason `handleAppMessage`'s
+    /// enroll verbs already run on their own `stackSize = 8 << 20` thread.
+    private static func startEngineOnLargeStack(fd: Int32) throws -> EngineHandle {
+        var result: Result<EngineHandle, Error>!
+        let done = DispatchSemaphore(value: 0)
+        let worker = Thread {
+            result = Result {
+                try EngineHandle.start(configPath: Self.configPath, socketPath: Self.socketPath, fd: fd)
+            }
+            done.signal()
+        }
+        worker.stackSize = 8 << 20
+        worker.start()
+        done.wait()
+        return try result.get()
     }
 
     /// `packetFlow`'s underlying `utun` socket descriptor — the private,
