@@ -7,6 +7,7 @@ import "@karst-net/tokens/theme.css";
 import "./styles.css";
 import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
 import { bootstrap, loadConfig, login, logout, type AuthConfig, type AuthState } from "./auth";
+import { api, getActiveAccountOverride, setActiveAccountOverride } from "./api";
 import { Setup } from "./views/setup";
 import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
@@ -45,7 +46,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key}`}>{label}</a>)}</nav>
     </aside>
     <main id="main">
-      <header><p>Account: <strong>Karst</strong></p>{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
+      <header><AccountSwitcher />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "setup" && <Setup go={navigate} />}
       {route === "domains" && <Domains />}
       {route === "machines" && <Machines />}
@@ -63,6 +64,46 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "settings" && <Settings />}
     </main>
   </div>;
+}
+
+// Only the switcher needs to remember the true home account across a
+// switched-into reload -- see AccountSwitcher's own comment for why.
+const homeAccountKey = "karst.homeAccount";
+
+/** ADR-0037: the header's account line, upgraded to a real switcher only
+ *  when the caller has operator-granted access to another account.
+ *  Switching reloads the page rather than trying to invalidate every view's
+ *  own useResource cache -- every view already fetches on mount, so a
+ *  reload is the simplest thing that is actually correct. */
+function AccountSwitcher() {
+  const [home, setHome] = useState<string>();
+  const [accessible, setAccessible] = useState<string[]>([]);
+  useEffect(() => {
+    // api.account() answers for whichever account is currently in effect --
+    // while no override is active that IS the true home, and this is the
+    // only moment it can be told apart from a switched-into one. Cached so
+    // a reload while switched still knows what "yours" means.
+    if (!getActiveAccountOverride()) {
+      api.account().then((account) => {
+        setHome(account.id);
+        try { sessionStorage.setItem(homeAccountKey, account.id); } catch { /* per-viewer convenience only */ }
+      }).catch(() => {});
+    } else {
+      try { setHome(sessionStorage.getItem(homeAccountKey) ?? undefined); } catch { setHome(undefined); }
+    }
+    api.accessibleAccounts().then((rows) => setAccessible(rows.map((row) => row.account_id))).catch(() => {});
+  }, []);
+
+  if (accessible.length === 0) return <p>Account: <strong>{home ?? "…"}</strong></p>;
+  const current = getActiveAccountOverride() ?? home ?? "";
+  return <label>Account <select value={current} onChange={(event) => {
+    const next = event.target.value;
+    setActiveAccountOverride(next === home ? null : next);
+    location.reload();
+  }}>
+    {home && <option value={home}>{home} (yours)</option>}
+    {accessible.map((id) => <option key={id} value={id}>{id}</option>)}
+  </select></label>;
 }
 
 /** A three-state chooser, not a toggle: "system" has to remain reachable, or an

@@ -172,7 +172,7 @@ func TestEnrollmentPortalThroughControl(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, router)
 	req := httptest.NewRequest(http.MethodPost, "/karst/v1/me/devices/enroll", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: user.AccountID, UserId: user.Id})
 	rec := httptest.NewRecorder()
@@ -561,7 +561,7 @@ func TestDeviceInvitationHTTPLifecycle(t *testing.T) {
 	nodes, err := karstnode.NewStore(am.Store.(*store.SqlStore).GetDB())
 	require.NoError(t, err)
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, nil, nil, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})
@@ -618,7 +618,7 @@ func TestDeviceInvitationHTTPDelegatedAdminReachesOwnDomainOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	router := mux.NewRouter()
-	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, router)
+	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, domainManager, nil, router)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: user})

@@ -47,8 +47,35 @@ async function http<T>(url: string, init?: RequestInit, retried = false): Promis
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
-const request = <T>(path: string, init?: RequestInit) => http<T>(`${base}${path}`, init);
-const management = <T>(path: string, init?: RequestInit) => http<T>(`/api${path}`, init);
+// ADR-0037: which account a request should be scoped to, when the caller
+// has switched away from their own. Both APIs ride the fork's shared auth
+// middleware, which reads this same ?account= parameter generically -- it is
+// not a karst-specific mechanism, so both request() and management() apply
+// it. Per-tab, not persisted account-to-account: a stale override surviving
+// into a new session (a different login) would silently scope that
+// session's requests to whatever account a previous user last switched
+// into, which sessionStorage's tab-lifetime avoids.
+const activeAccountKey = "karst.activeAccount";
+
+export function getActiveAccountOverride(): string | null {
+  try { return sessionStorage.getItem(activeAccountKey); } catch { return null; }
+}
+
+export function setActiveAccountOverride(accountId: string | null) {
+  try {
+    if (accountId) sessionStorage.setItem(activeAccountKey, accountId);
+    else sessionStorage.removeItem(activeAccountKey);
+  } catch { /* per-viewer convenience only -- a blocked/unavailable sessionStorage just means no override */ }
+}
+
+function withAccountOverride(path: string): string {
+  const account = getActiveAccountOverride();
+  if (!account) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}account=${encodeURIComponent(account)}`;
+}
+
+const request = <T>(path: string, init?: RequestInit) => http<T>(`${base}${withAccountOverride(path)}`, init);
+const management = <T>(path: string, init?: RequestInit) => http<T>(`/api${withAccountOverride(path)}`, init);
 const body = (value: unknown) => JSON.stringify(value);
 
 function auditExport(format: "json"): Promise<AuditPage["items"]>;
@@ -231,7 +258,15 @@ export const api = {
   // ── organization ───────────────────────────────────────────────────────────
   // The fork's endpoint is plural (`getAllAccounts`) but scopes to the
   // caller's own account and always returns exactly one — see accounts_handler.go.
+  // Whichever account is currently in effect, home or a switched-into one —
+  // withAccountOverride carries it here the same as everywhere else.
   account: () => management<Account[]>("/accounts").then((accounts) => accounts[0]),
+
+  // ── tenancy (ADR-0037) ─────────────────────────────────────────────────────
+  // The caller's own operator-granted accounts — never affected by
+  // withAccountOverride, since /me/tenancy-accounts answers from the JWT
+  // identity, not from whichever account a request happens to be scoped to.
+  accessibleAccounts: () => request<{ account_id: string }[]>("/me/tenancy-accounts"),
 
   // ── groups ─────────────────────────────────────────────────────────────────
   groups: () => management<Group[]>("/groups"),

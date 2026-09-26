@@ -99,6 +99,15 @@ type handler struct {
 	peerWriter peerWriter
 	accounts   accountUpdater
 	domainMgr  domainManager
+	tenancy    tenancyReader
+}
+
+// tenancyReader is ADR-0037's read side: which other accounts the
+// authenticated caller has been operator-granted access to. Deliberately
+// narrower than tenancy.Store -- this package depends on behavior, not on
+// the concrete store, the same convention as domainManager/accountUpdater.
+type tenancyReader interface {
+	AccessibleAccounts(ctx context.Context, userID string) ([]string, error)
 }
 
 // relayHealth is deliberately separate from relayreg.StoredRelay. Registry
@@ -260,8 +269,8 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -336,6 +345,37 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	me.HandleFunc("/devices/{handle}", h.meRevokeDevice).Methods(http.MethodDelete, http.MethodOptions)
 	me.HandleFunc("/sessions", h.meSessions).Methods(http.MethodGet, http.MethodOptions)
 	me.HandleFunc("/access", h.meAccess).Methods(http.MethodGet, http.MethodOptions)
+	// ADR-0037: which accounts the caller may switch into via the fork's
+	// existing ?account= override, regardless of which account is in
+	// effect for *this* request -- subject-derived, same reasoning as
+	// every other /me route above.
+	me.HandleFunc("/tenancy-accounts", h.meTenancyAccounts).Methods(http.MethodGet, http.MethodOptions)
+}
+
+type tenancyAccountResponse struct {
+	AccountID string `json:"account_id"`
+}
+
+func (h *handler) meTenancyAccounts(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.tenancy == nil {
+		util.WriteJSONObject(r.Context(), w, []tenancyAccountResponse{})
+		return
+	}
+	ids, err := h.tenancy.AccessibleAccounts(r.Context(), user.UserId)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	resp := make([]tenancyAccountResponse, len(ids))
+	for i, id := range ids {
+		resp[i] = tenancyAccountResponse{AccountID: id}
+	}
+	util.WriteJSONObject(r.Context(), w, resp)
 }
 
 // auditMutations records successful state changes after their handler has

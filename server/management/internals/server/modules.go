@@ -8,6 +8,8 @@ import (
 
 	"github.com/netbirdio/management-integrations/integrations"
 
+	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
+	"github.com/netbirdio/netbird/management/internals/modules/agentnetwork"
 	"github.com/netbirdio/netbird/management/internals/modules/peers"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain/manager"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/proxy"
@@ -20,7 +22,6 @@ import (
 	recordsManager "github.com/netbirdio/netbird/management/internals/modules/zones/records/manager"
 	"github.com/netbirdio/netbird/management/server"
 	"github.com/netbirdio/netbird/management/server/account"
-	"github.com/netbirdio/netbird/management/internals/modules/agentnetwork"
 	"github.com/netbirdio/netbird/management/server/geolocation"
 	"github.com/netbirdio/netbird/management/server/groups"
 	"github.com/netbirdio/netbird/management/server/idp"
@@ -248,6 +249,30 @@ func (s *BaseServer) ReverseProxyDomainManager() *manager.Manager {
 	})
 }
 
-func (s *BaseServer) IsValidChildAccount(_ context.Context, _, _, _ string) bool {
-	return false
+// TenancyStore is ADR-0037's operator-granted cross-tenant access table. Nil
+// until bootstrap.Install injects it into the container (Server.Inject),
+// which happens before Start ever serves a request -- IsValidChildAccount
+// below is only ever called from inside request handling, so the nil case
+// here is "no karst control service installed at all" (e.g. a unit test),
+// never "not yet ready".
+func (s *BaseServer) TenancyStore() *tenancy.Store {
+	return Create(s, func() *tenancy.Store { return nil })
+}
+
+// IsValidChildAccount backs the fork's ?account= override
+// (http/middleware/auth_middleware.go): userID may view childAccountID's
+// data only if ADR-0037's tenancy store has an explicit grant for that exact
+// pair. accountID (the caller's own, JWT-resolved account) is unused --
+// a grant names the target account, not the caller's home one.
+func (s *BaseServer) IsValidChildAccount(ctx context.Context, userID, _, childAccountID string) bool {
+	store := s.TenancyStore()
+	if store == nil {
+		return false
+	}
+	ok, err := store.HasAccess(ctx, userID, childAccountID)
+	if err != nil {
+		log.WithContext(ctx).Errorf("karst: tenancy access check for user %s -> account %s: %v", userID, childAccountID, err)
+		return false
+	}
+	return ok
 }
