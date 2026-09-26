@@ -32,7 +32,7 @@ flowchart LR
 | `labctl.py` | lab host | admin-API driver: `init` (account, `lab` group, published policy, peer, routes), `prepare`, `mutate`, `status` |
 | `labctl-ssh` | lab host | forced command that admits only `labctl.py`'s own verbs and flags |
 | `peer.Dockerfile`, `peer-entrypoint.sh`, `peer-fixtures.py` | peer container | a 64 KiB HTTP body on `:8080` and a UDP echo on `:7777`, firewalled to arrive only on `karst0`; the subnet (`10.203.0.1`) and exit (`198.18.0.1`) fixture addresses; the `LAB-DIRECT` chain for the relay scenario |
-| `karst-ne-lab` | Mac, `/usr/local/libexec` | turns `labctl.py prepare` output into the runner-owned, mode-0600 invitation and environment files the handoff contract names |
+| `karst-ne-lab` | Mac, `/usr/local/libexec` | turns `labctl.py prepare` output into the runner-owned, mode-0600 invitation and environment files the handoff contract names; `net-setup`/`net-teardown` point the Mac's Wi-Fi at labgw and revert it |
 
 ### Why the peer has a macvlan address
 
@@ -62,12 +62,19 @@ the peer is attached to `core` directly. Unauthenticated HTTP responders
 (`control-probe`, `relay-probe`) share the control and relay containers'
 network namespaces on `:8081`, since neither serves a 2xx of its own.
 
-Point the Mac at labgw once, keeping its address and the LAN's DNS
-(reversible with `networksetup -setdhcp Wi-Fi`):
+Point the Mac at labgw for the session, keeping its address and the LAN's
+DNS:
 
 ```sh
-sudo networksetup -setmanual Wi-Fi <mac-ip> 255.255.252.0 <labgw-ip>
-sudo networksetup -setdnsservers Wi-Fi <lan-router>
+sudo karst-ne-lab net-setup --mac-ip <mac-ip> --labgw-ip <labgw-ip> --dns <lan-router>
+```
+
+and revert it once testing is done — this is not part of `prepare`/`mutate`
+and does not run automatically, so it's easy to forget and leave the Mac
+stuck on a static address (#200):
+
+```sh
+sudo karst-ne-lab net-teardown
 ```
 
 With the exit active, app traffic to the control and relay hosts goes

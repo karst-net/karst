@@ -9,6 +9,8 @@
 #   karst-ne-lab prepare --scenario direct|relay --env-file PATH [--route-churn] [--exit-route]
 #   karst-ne-lab mutate --route subnet --state add|remove
 #   karst-ne-lab mutate --route exit --state active|withdrawn
+#   karst-ne-lab net-setup --mac-ip IP --labgw-ip IP --dns IP
+#   karst-ne-lab net-teardown
 #
 # The lab host does the work (labctl.py). This end only turns its answer into
 # the two mode-0600, runner-owned files the handoff contract names, so the
@@ -109,8 +111,29 @@ mutate)
 status)
     lab status
     ;;
+net-setup)
+    mac_ip='' labgw_ip='' dns=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --mac-ip) mac_ip=$2; shift 2 ;;
+            --labgw-ip) labgw_ip=$2; shift 2 ;;
+            --dns) dns=$2; shift 2 ;;
+            *) echo "karst-ne-lab: unknown argument $1" >&2; exit 2 ;;
+        esac
+    done
+    [ -n "$mac_ip" ] && [ -n "$labgw_ip" ] && [ -n "$dns" ] ||
+        { echo "karst-ne-lab: net-setup needs --mac-ip, --labgw-ip and --dns" >&2; exit 2; }
+    /usr/sbin/networksetup -setmanual Wi-Fi "$mac_ip" 255.255.252.0 "$labgw_ip"
+    /usr/sbin/networksetup -setdnsservers Wi-Fi "$dns"
+    echo "karst-ne-lab: Wi-Fi set to $mac_ip, gateway $labgw_ip, DNS $dns" >&2
+    ;;
+net-teardown)
+    /usr/sbin/networksetup -setdhcp Wi-Fi
+    /usr/sbin/networksetup -setdnsservers Wi-Fi Empty
+    echo "karst-ne-lab: Wi-Fi reverted to DHCP" >&2
+    ;;
 *)
-    echo "usage: karst-ne-lab prepare|mutate|status ..." >&2
+    echo "usage: karst-ne-lab prepare|mutate|status|net-setup|net-teardown ..." >&2
     exit 2
     ;;
 esac
