@@ -39,6 +39,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
+	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -79,6 +80,14 @@ const (
 // A deployment needs both, and having only one is silent — the relay admits
 // nobody who ever arrives, because nobody was told to arrive.
 const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
+
+// karstTenancyGrantsEnv names ADR-0037's operator-granted cross-tenant
+// access file. Unset means what it always has: BaseServer.IsValidChildAccount
+// stays effectively always-false, and the fork's own ?account= override
+// reaches no account but the caller's own. Set, the file is the whole truth
+// of who may view which other account -- reconciled on every boot, the same
+// declarative convention as the relay and TURN registries.
+const karstTenancyGrantsEnv = "KARST_TENANCY_GRANTS_FILE"
 
 // TURN fallback configuration — ADR-0008 §4.
 //
@@ -168,6 +177,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
+	tenancyGrants, err := loadTenancyGrants()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
@@ -196,7 +210,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -376,6 +390,23 @@ func loadRelays() ([]*proto.KarstRelay, error) {
 	}
 	log.Infof("karst: loaded %d relays from %s", len(relays), path)
 	return relays, nil
+}
+
+// loadTenancyGrants reads ADR-0037's operator-granted cross-tenant access
+// file. Unset returns (nil, nil), which bootstrap.Install's Reconcile treats
+// as "revoke everything" -- correct both for a deployment that never
+// configured this and for one that just unset it.
+func loadTenancyGrants() ([]tenancy.Grant, error) {
+	path := os.Getenv(karstTenancyGrantsEnv)
+	if path == "" {
+		return nil, nil
+	}
+	grants, err := tenancy.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	log.Infof("karst: loaded %d tenancy grants from %s", len(grants), path)
+	return grants, nil
 }
 
 // loadTurn reads ADR-0008 §4's TURN fallback configuration: the server

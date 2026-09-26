@@ -39,6 +39,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
@@ -118,7 +119,7 @@ type Karst struct {
 // package discovers. Either nil means no TURN configured — see
 // karst/turncred — and produces netmaps with no turn_servers field at all,
 // exactly as before this parameter existed.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -208,6 +209,21 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: bedrock log: %w", err)
 	}
 	bedrockLog.Metrics = karstMetrics
+	// ADR-0037: operator-granted cross-tenant account access. Reconciled
+	// declaratively against tenancyGrants on every boot -- an empty/nil
+	// slice (KARST_TENANCY_GRANTS_FILE unset) clears any grants a previous
+	// run left, the same "the file is the whole truth" convention the relay
+	// and TURN registries already use. Injected into s's container so
+	// BaseServer.IsValidChildAccount (internals/server/modules.go) can reach
+	// it without this package depending back on that one.
+	tenancyStore, err := tenancy.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: tenancy store: %w", err)
+	}
+	if err := tenancyStore.Reconcile(context.Background(), tenancyGrants); err != nil {
+		return nil, fmt.Errorf("karst: tenancy: reconcile grants: %w", err)
+	}
+	nbserver.Inject(s, tenancyStore)
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -224,7 +240,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
