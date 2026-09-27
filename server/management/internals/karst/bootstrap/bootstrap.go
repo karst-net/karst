@@ -254,9 +254,20 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		Claimer:  s.SessionStore(),
 	}
 
+	// account.Manager (the fork's own, hundred-method interface) does not
+	// declare GetDNSDomain -- control.PeerLoginer deliberately does not
+	// depend on that wide interface (see its own doc comment), so this
+	// asserts down to the narrow one instead of widening account.Manager
+	// itself, which every production AccountManager already satisfies
+	// (DefaultAccountManager.GetDNSDomain).
+	peerLoginer, ok := accounts.(control.PeerLoginer)
+	if !ok {
+		return nil, fmt.Errorf("karst: account manager does not implement control.PeerLoginer")
+	}
+
 	epoch := control.CurrentEpoch(time.Now())
 	router := &handler{
-		login: &control.LoginHandler{Nodes: nodes, Accounts: accounts, OIDC: oidc},
+		login: &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
 		netmap: &control.NetmapHandler{
 			Nodes:       nodes,
 			Peers:       peers,

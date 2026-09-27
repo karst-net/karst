@@ -246,12 +246,17 @@ fn device_name_file(identity_key_file: &Path) -> PathBuf {
 /// This device's control-plane-assigned name (`KarstLoginResponse.dns_name`),
 /// if this device has ever completed a login — a human-readable complement
 /// to [`Identity::handle`]'s opaque fingerprint. For a device enrolled via
-/// an admin's invitation this is the admin's own invitation text run
-/// through DNS-label sanitization (ADR-0032 made `DNSLabel` itself the
-/// device's real, resolvable mesh identity, not a display-only value beside
-/// it — #163); every other setup key (reusable keys, the self-service
-/// enrollment portal) carries this node's own reported hostname instead,
-/// since there is no admin-typed label to derive from.
+/// an admin's invitation this is the admin's own invitation text, run
+/// through DNS-label sanitization and qualified with the account's DNS
+/// domain into a full FQDN (`label.domain`, e.g. `build-box.acme.example`)
+/// — ADR-0032 made `DNSLabel` itself the device's real, resolvable mesh
+/// identity rather than a display-only value beside it, and the FQDN
+/// qualification (#163 follow-up) is what makes that identity something an
+/// admin can actually hand to another user to address this device by,
+/// rather than only a label unique within the account. Every other setup
+/// key (reusable keys, the self-service enrollment portal) carries this
+/// node's own reported hostname instead, since there is no admin-typed
+/// label to derive from — still qualified into an FQDN the same way.
 ///
 /// `None` covers "never logged in" and "logged in before this was written"
 /// alike — a caller deciding what to show has exactly one thing to do

@@ -152,11 +152,14 @@ pub fn identity_handle(identity_key_path: String) -> Result<Option<String>, FfiE
 /// `KarstLoginResponse.dns_name`, written once by `Client::login`. A
 /// human-readable complement to [`identity_handle`]'s opaque fingerprint for
 /// `Karst.app`'s menu (#163). For a device enrolled via an admin's
-/// invitation this is the admin's own invitation text run through DNS-label
-/// sanitization (ADR-0032 made `DNSLabel` itself the device's real,
-/// resolvable mesh identity, not a display-only value beside it); every
-/// other setup key carries this node's own reported hostname instead, since
-/// there is no admin-typed label to derive from.
+/// invitation this is the admin's own invitation text, run through
+/// DNS-label sanitization and qualified with the account's DNS domain into
+/// a full FQDN (ADR-0032 made `DNSLabel` itself the device's real,
+/// resolvable mesh identity; the FQDN qualification is what makes it
+/// something an admin can hand to another user to address this device by,
+/// not just a label unique within the account); every other setup key
+/// carries this node's own reported hostname instead, since there is no
+/// admin-typed label to derive from — still qualified into an FQDN.
 ///
 /// `None`, not an error, covers both "never logged in" and "logged in
 /// before this was ever written" — a caller has exactly one thing to do

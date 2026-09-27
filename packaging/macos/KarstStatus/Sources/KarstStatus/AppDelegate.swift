@@ -64,11 +64,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// This device's control-plane-assigned name (#163) — `deviceName`
     /// (`crates/karst-ffi`), set at login from `KarstLoginResponse.dns_name`.
     /// For a device enrolled via an admin's invitation this is the admin's
-    /// own invitation text run through DNS-label sanitization (ADR-0032 made
-    /// `DNSLabel` itself the device's real, resolvable mesh identity, not a
-    /// display-only value beside it); every other setup key carries this
-    /// node's own reported hostname instead. `nil` whenever `identityHandle`
-    /// is, plus one more case that one doesn't have: a device enrolled
+    /// own invitation text, run through DNS-label sanitization and
+    /// qualified with the account's DNS domain into a full FQDN (ADR-0032
+    /// made `DNSLabel` itself the device's real, resolvable mesh identity;
+    /// the FQDN qualification is what makes it something an admin can hand
+    /// to another user to address this device by, not just a label unique
+    /// within the account); every other setup key carries this node's own
+    /// reported hostname instead, still qualified the same way. `nil`
+    /// whenever `identityHandle` is, plus one more case that one doesn't
+    /// have: a device enrolled
     /// before this field existed, or one whose one login attempt failed to
     /// persist it — the menu falls back to showing the handle alone rather
     /// than treating either as an error.

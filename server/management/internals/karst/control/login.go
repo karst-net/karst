@@ -35,6 +35,10 @@ import (
 // churn across a surface it does not use.
 type PeerLoginer interface {
 	LoginPeer(ctx context.Context, login types.PeerLogin) (*nbpeer.Peer, *types.Network, []*posture.Checks, bool, error)
+	// GetDNSDomain lets the login response carry a full FQDN
+	// (DNSLabel + domain) rather than a bare label -- see its use in
+	// Handle below.
+	GetDNSDomain(ctx context.Context, accountID string) (string, error)
 }
 
 // LoginHandler turns an authenticated Karst request into a peer record in the
@@ -162,10 +166,25 @@ func (h *LoginHandler) Handle(ctx context.Context, _, identity, payload []byte) 
 		return nil, fmt.Errorf("register identity: %w", err)
 	}
 
+	// A bare DNSLabel is not something another user could actually address
+	// this device by -- it's unique only within the account (and, under a
+	// mesh domain, only within that domain's path), not on the wider
+	// network. Qualifying it into a full FQDN is what makes it something an
+	// admin can literally hand another user to reach this device.
+	// Best-effort: the domain lookup failing must not fail an otherwise
+	// successful login over a value nothing but a UI convenience reads
+	// back, so fall back to the bare label exactly as before this existed.
+	deviceLabel := peer.DNSLabel
+	if dnsDomain, domainErr := h.Accounts.GetDNSDomain(ctx, peer.AccountID); domainErr == nil {
+		if fqdn := peer.FQDN(dnsDomain); fqdn != "" {
+			deviceLabel = fqdn
+		}
+	}
+
 	resp := &proto.KarstLoginResponse{
 		NodeId:  []byte(handle),
 		PeerIp:  peer.IP.String(),
-		DnsName: peer.DNSLabel,
+		DnsName: deviceLabel,
 	}
 	out, err := pb.Marshal(resp)
 	if err != nil {
