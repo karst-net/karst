@@ -102,6 +102,12 @@ pub fn render(s: &Snapshot) -> String {
             t.dropped_rate,
         ),
         (
+            "karst_relay_dropped_aquifer_rate_total",
+            "Frames refused by an aquifer's aggregate rate limiter (ADR-0038); \
+             always zero unless limits.aquifer is configured.",
+            t.dropped_aquifer_rate,
+        ),
+        (
             "karst_relay_dropped_queue_total",
             "Frames discarded because a destination's write queue was full.",
             t.dropped_queue,
@@ -176,6 +182,7 @@ mod tests {
                 frames_out: 98,
                 bytes_out: 4000,
                 dropped_rate: 1,
+                dropped_aquifer_rate: 5,
                 dropped_queue: 2,
                 undeliverable: 3,
             },
@@ -231,6 +238,7 @@ mod tests {
         let text = render(&snapshot());
         assert!(text.contains("\nkarst_relay_clients 3\n"));
         assert!(text.contains("\nkarst_relay_frames_in_total 100\n"));
+        assert!(text.contains("\nkarst_relay_dropped_aquifer_rate_total 5\n"));
         assert!(text.contains("\nkarst_relay_undeliverable_total 3\n"));
         assert!(text.contains("\nkarst_relay_uptime_seconds 42\n"));
     }
