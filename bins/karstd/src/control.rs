@@ -245,10 +245,13 @@ fn device_name_file(identity_key_file: &Path) -> PathBuf {
 
 /// This device's control-plane-assigned name (`KarstLoginResponse.dns_name`),
 /// if this device has ever completed a login — a human-readable complement
-/// to [`Identity::handle`]'s opaque fingerprint, derived server-side from
-/// this node's own reported hostname, not from anything an administrator
-/// typed when creating the enrollment invitation (#163 — that label is
-/// account-console bookkeeping and is never sent back to the device).
+/// to [`Identity::handle`]'s opaque fingerprint. For a device enrolled via
+/// an admin's invitation this is the admin's own invitation text run
+/// through DNS-label sanitization (ADR-0032 made `DNSLabel` itself the
+/// device's real, resolvable mesh identity, not a display-only value beside
+/// it — #163); every other setup key (reusable keys, the self-service
+/// enrollment portal) carries this node's own reported hostname instead,
+/// since there is no admin-typed label to derive from.
 ///
 /// `None` covers "never logged in" and "logged in before this was written"
 /// alike — a caller deciding what to show has exactly one thing to do

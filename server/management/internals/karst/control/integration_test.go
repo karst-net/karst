@@ -286,6 +286,122 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 	t.Logf("registered: handle=%s ip=%s dns=%s", handle, peer.IP, peer.DNSLabel)
 }
 
+// TestDeviceInvitationLabelReachesTheWireAgainstTheRealAccountManager is the
+// #163 / ADR-0032 counterpart to TestRegistrationAgainstTheRealAccountManager
+// above: that test proves the gRPC-to-business-layer wiring in general: this
+// one proves the specific value #163 cares about, which it does not touch.
+//
+// enrollment_test.go's TestDeviceInvitationNameBecomesPeerIdentity already
+// proves the admin's invitation text becomes peer.Name/peer.DNSLabel at the
+// business layer; login_test.go's fakeAccounts-based tests already prove
+// LoginHandler.Handle copies peer.DNSLabel into the wire response. Neither
+// proves the two are connected end to end through a real login -- this test
+// is the one place that gap closes, against the real DefaultAccountManager
+// rather than a hand-written fake.
+func TestDeviceInvitationLabelReachesTheWireAgainstTheRealAccountManager(t *testing.T) {
+	am, _, _ := realAccountManager(t)
+	ctx := context.Background()
+
+	const (
+		accountID = "bf1c8084-ba50-4ce7-9439-34653001fc3b"
+		userID    = "edafee4e-63fb-11ec-90d6-0242ac120003" // fixture role: admin
+		groupID   = "cfefqs706sqkneg59g3g"                 // fixture group: AwesomeGroup1
+	)
+
+	invitation, err := am.CreateDeviceInvitation(ctx, accountID, userID, "Adrian's MacBook Pro!", []string{groupID}, "")
+	if err != nil {
+		t.Fatalf("create device invitation: %v", err)
+	}
+
+	static, err := channel.GenerateStatic()
+	if err != nil {
+		t.Fatalf("static: %v", err)
+	}
+	srvKey, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("server identity: %v", err)
+	}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	nodes, err := node.NewStore(mustOpenMemoryDB(t, "karst-invitation-label"))
+	if err != nil {
+		t.Fatalf("node store: %v", err)
+	}
+	svc := control.New(static, identity.ControlSigner{Key: srvKey}, nodes.LookupFunc(), identity.ControlVerifier{},
+		&control.LoginHandler{Nodes: nodes, Accounts: am})
+
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	proto.RegisterKarstControlServiceServer(srv, svc)
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.Stop()
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	stream, err := proto.NewKarstControlServiceClient(conn).Session(dialCtx)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	cl, err := control.Dial(stream, svc.Pins(), identity.ControlVerifier{}, nil,
+		identity.ControlSigner{Key: key}, true)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+
+	payload, err := pb.Marshal(&proto.KarstLoginRequest{
+		SetupKey: invitation.Key,
+		// A hostname deliberately different from the invitation's label:
+		// the whole point of #163/ADR-0032 is that this is ignored in favor
+		// of the admin's own text.
+		Meta:         &proto.PeerSystemMeta{Hostname: "some-clients-own-hostname", GoOS: "linux", NetbirdVersion: "0.0.0"},
+		KemPublicKey: validKemKey(0xCD),
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw, err := cl.Request(payload)
+	if err != nil {
+		t.Fatalf("login against the real manager: %v", err)
+	}
+	resp := &proto.KarstLoginResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Grammar-sanitized (spaces and punctuation become hyphens), exactly as
+	// TestDeviceInvitationNameBecomesPeerIdentity already established at the
+	// business layer -- this asserts that same value is what a real device
+	// receives back over the wire.
+	if resp.GetDnsName() != "adrian-s-macbook-pro-" {
+		t.Fatalf("dns_name: got %q, want the admin's invitation label, not the client's reported hostname",
+			resp.GetDnsName())
+	}
+}
+
+// mustOpenMemoryDB opens a fresh in-memory SQLite DB for a Karst node.Store,
+// named so parallel tests (or a re-run within the same process) do not share
+// state through SQLite's shared-cache mode the way a fixed name would.
+func mustOpenMemoryDB(t *testing.T, name string) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", name)), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	return db
+}
+
 // testPeers mirrors bootstrap.go's unexported storePeers: the same
 // store-plus-account-manager adapter production wires into control.Service,
 // duplicated here because storePeers itself is unexported and this package
