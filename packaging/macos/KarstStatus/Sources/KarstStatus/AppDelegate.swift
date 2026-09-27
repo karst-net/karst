@@ -62,14 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var identityHandle: String?
 
     /// This device's control-plane-assigned name (#163) — `deviceName`
-    /// (`crates/karst-ffi`), derived server-side from this node's own
-    /// hostname at login, **not** the admin-typed invitation label (that
-    /// one is account-console bookkeeping and never reaches the device).
-    /// `nil` whenever `identityHandle` is, plus one more case that one
-    /// doesn't have: a device enrolled before this field existed, or one
-    /// whose one login attempt failed to persist it — the menu falls back
-    /// to showing the handle alone rather than treating either as an
-    /// error.
+    /// (`crates/karst-ffi`), set at login from `KarstLoginResponse.dns_name`.
+    /// For a device enrolled via an admin's invitation this is the admin's
+    /// own invitation text run through DNS-label sanitization (ADR-0032 made
+    /// `DNSLabel` itself the device's real, resolvable mesh identity, not a
+    /// display-only value beside it); every other setup key carries this
+    /// node's own reported hostname instead. `nil` whenever `identityHandle`
+    /// is, plus one more case that one doesn't have: a device enrolled
+    /// before this field existed, or one whose one login attempt failed to
+    /// persist it — the menu falls back to showing the handle alone rather
+    /// than treating either as an error.
     private var identityName: String?
 
     /// `nil` until the first `NetworkExtensionEnrollment.currentOwnership`
