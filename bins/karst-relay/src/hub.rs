@@ -36,6 +36,15 @@ pub struct ConnId(pub u64);
 pub enum Dropped {
     /// Over the peer's rate budget — §7.4.
     RateLimited,
+    /// Over the *aquifer's* aggregate rate budget — §13 #9 / ADR-0038.
+    ///
+    /// Distinct from [`Dropped::RateLimited`], which is per-connection: this
+    /// fires even when the sending node is well within its own allowance,
+    /// because some other node sharing its aquifer has used the aquifer's
+    /// share of this relay's capacity. Only reachable when
+    /// [`Config::aquifer_budget`] is configured; `None` (the default) never
+    /// produces this.
+    AquiferRateLimited,
     /// The destination is not in the roster, or not in this aquifer — §5.4.
     NotAdmitted,
     /// Nobody here or on the mesh holds the destination.
@@ -68,8 +77,11 @@ pub struct ConnStats {
     pub frames_out: u64,
     /// Bytes queued towards the peer.
     pub bytes_out: u64,
-    /// Frames refused by the rate limiter.
+    /// Frames refused by the per-connection rate limiter.
     pub dropped_rate: u64,
+    /// Frames from this peer refused by its aquifer's aggregate rate limiter
+    /// — ADR-0038. Always zero when [`Config::aquifer_budget`] is `None`.
+    pub dropped_aquifer_rate: u64,
     /// Frames discarded because this peer's write queue was full.
     pub dropped_queue: u64,
     /// Frames from this peer that could not be delivered.
@@ -89,6 +101,9 @@ impl ConnStats {
         self.frames_out = self.frames_out.saturating_add(other.frames_out);
         self.bytes_out = self.bytes_out.saturating_add(other.bytes_out);
         self.dropped_rate = self.dropped_rate.saturating_add(other.dropped_rate);
+        self.dropped_aquifer_rate = self
+            .dropped_aquifer_rate
+            .saturating_add(other.dropped_aquifer_rate);
         self.dropped_queue = self.dropped_queue.saturating_add(other.dropped_queue);
         self.undeliverable = self.undeliverable.saturating_add(other.undeliverable);
     }
@@ -102,6 +117,20 @@ pub struct Config {
     /// Rate allowance for a meshed relay, which carries many nodes' traffic
     /// and so cannot share a node's budget.
     pub mesh_budget: Budget,
+    /// Aggregate rate allowance shared by every node in one aquifer —
+    /// §13 #9 / ADR-0038.
+    ///
+    /// `None` (the default) is fully inert: no aquifer-level accounting is
+    /// done at all, and forwarding is governed by [`Self::client_budget`]
+    /// alone, exactly as before this field existed. A single-tenant
+    /// deployment, or an operator who has not opted in, sees no change.
+    ///
+    /// Configured, this caps the *total* traffic one aquifer may push
+    /// through this relay, independent of how many nodes it has — the gap
+    /// `ponor-v1.md` §13 #9 names: nothing today stops one aquifer with many
+    /// nodes from consuming a shared relay's entire capacity within each
+    /// node's own per-connection limit.
+    pub aquifer_budget: Option<Budget>,
     /// Per-destination write queue depth — §7.3.
     pub queue_depth: usize,
 }
@@ -111,6 +140,7 @@ impl Default for Config {
         Self {
             client_budget: Budget::default(),
             mesh_budget: Budget::unlimited(),
+            aquifer_budget: None,
             queue_depth: karst_relay_proto::consts::WRITE_QUEUE_DEPTH,
         }
     }
@@ -171,6 +201,11 @@ pub struct Hub {
     /// is eventually consistent by construction and anything stricter would
     /// fail on every client roam.
     presence: HashMap<Id, Id>,
+    /// Aggregate meters, one per aquifer that has forwarded a frame —
+    /// ADR-0038. Created lazily, on that aquifer's first charge, so an
+    /// aquifer nobody uses never allocates one. Empty and never consulted
+    /// when [`Config::aquifer_budget`] is `None`.
+    aquifer_meters: HashMap<AquiferId, Meter>,
     /// Connections whose queue has grown since the caller last asked.
     ///
     /// The hub is pull-based, so an I/O layer needs to know *which* sockets to
@@ -191,6 +226,7 @@ impl Hub {
             by_node: HashMap::new(),
             by_mesh: HashMap::new(),
             presence: HashMap::new(),
+            aquifer_meters: HashMap::new(),
             dirty: BTreeSet::new(),
         }
     }
@@ -298,7 +334,7 @@ impl Hub {
 
             // ── Client only ───────────────────────────────────────────────
             (Frame::SendPacket { dst_id, payload }, false) => {
-                Ok(self.forward_from_client(id, dst_id, payload, roster))
+                Ok(self.forward_from_client(id, dst_id, payload, roster, now_ms))
             }
 
             // ── Mesh only ─────────────────────────────────────────────────
@@ -309,7 +345,7 @@ impl Hub {
                     payload,
                 },
                 true,
-            ) => Ok(self.deliver_from_mesh(id, src_id, dst_id, payload, roster)),
+            ) => Ok(self.deliver_from_mesh(id, src_id, dst_id, payload, roster, now_ms)),
             (Frame::PeerPresent { node_id }, true) => {
                 if let Some(relay_id) = self.conns.get(&id).and_then(Conn::relay_id) {
                     self.presence.insert(node_id, relay_id);
@@ -340,6 +376,7 @@ impl Hub {
         dst_id: Id,
         payload: &[u8],
         roster: &impl Roster,
+        now_ms: u64,
     ) -> Option<Dropped> {
         let conn = self.conns.get(&from)?;
         let (Some(src_id), Some(src_aquifer)) = (conn.node_id(), conn.aquifer().cloned()) else {
@@ -368,6 +405,17 @@ impl Hub {
             );
             self.count_undeliverable(from);
             return Some(Dropped::NotAdmitted);
+        }
+
+        // ADR-0038: checked after admission (a rejected destination never
+        // touches the aquifer's shared budget) and before delivery — a drop
+        // here is silent, exactly as §7.4's per-connection limiter is,
+        // because both are the same kind of fact: a burst, not an attack.
+        if !self.charge_aquifer(&src_aquifer, payload.len() as u64, now_ms) {
+            if let Some(conn) = self.conns.get_mut(&from) {
+                conn.stats.dropped_aquifer_rate += 1;
+            }
+            return Some(Dropped::AquiferRateLimited);
         }
 
         if let Some(&to) = self.by_node.get(&dst_id) {
@@ -412,6 +460,7 @@ impl Hub {
         dst_id: Id,
         payload: &[u8],
         roster: &impl Roster,
+        now_ms: u64,
     ) -> Option<Dropped> {
         let Some(&to) = self.by_node.get(&dst_id) else {
             // Our presence claim reached them and the node has since left.
@@ -433,16 +482,38 @@ impl Hub {
         // an oracle we have to believe: re-checking here is what stops a
         // compromised mesh peer from injecting cross-aquifer traffic, and it
         // costs one lookup we were going to do anyway.
-        let same_aquifer = match (roster.client(&src_id), roster.client(&dst_id)) {
-            (Some(s), Some(d)) => s.aquifer == d.aquifer,
-            _ => false,
+        let dst_aquifer = match (roster.client(&src_id), roster.client(&dst_id)) {
+            (Some(s), Some(d)) if s.aquifer == d.aquifer => Some(d.aquifer),
+            _ => None,
         };
-        if !same_aquifer {
+        let Some(dst_aquifer) = dst_aquifer else {
             self.count_undeliverable(from);
             return Some(Dropped::NotAdmitted);
+        };
+
+        // ADR-0038: a mesh-delivered frame spends the same local aquifer
+        // budget a directly-connected client's would — otherwise an aquifer
+        // could exceed this relay's per-aquifer share simply by routing
+        // through a mesh peer instead of connecting here directly.
+        if !self.charge_aquifer(&dst_aquifer, payload.len() as u64, now_ms) {
+            self.count_undeliverable(from);
+            return Some(Dropped::AquiferRateLimited);
         }
 
         self.deliver(from, to, &Frame::RecvPacket { src_id, payload })
+    }
+
+    /// Charge `bytes` against `aquifer`'s aggregate meter, creating it on
+    /// first use. Always admits when [`Config::aquifer_budget`] is `None` —
+    /// ADR-0038's fully-inert default.
+    fn charge_aquifer(&mut self, aquifer: &AquiferId, bytes: u64, now_ms: u64) -> bool {
+        let Some(budget) = self.cfg.aquifer_budget else {
+            return true;
+        };
+        self.aquifer_meters
+            .entry(aquifer.clone())
+            .or_insert_with(|| Meter::new(budget, now_ms))
+            .admit(bytes, now_ms)
     }
 
     fn deliver(&mut self, from: ConnId, to: ConnId, frame: &Frame<'_>) -> Option<Dropped> {
@@ -1136,6 +1207,43 @@ mod tests {
     }
 
     #[test]
+    fn a_mesh_delivered_frame_also_spends_the_destination_aquifers_budget() {
+        // ADR-0038: routing through a mesh peer must not be a way around this
+        // relay's own aquifer-capacity cap.
+        let cfg = Config {
+            client_budget: Budget::unlimited(),
+            aquifer_budget: Some(Budget {
+                bytes_per_sec: 1,
+                byte_burst: 1,
+                frames_per_sec: 1,
+                frame_burst: 1,
+            }),
+            ..Config::default()
+        };
+        let mut hub = Hub::new(cfg);
+        hub.admit(B, client(0xb2, "t1"), 0);
+        hub.admit(M, mesh(0x0e), 0);
+        let _ = drain(&mut hub, M);
+        let roster = TestRoster::new().with(id(0xb2), "t1").with(id(0xc3), "t1");
+
+        let payload = [1u8; 10];
+        let dropped = hub
+            .on_frame(
+                M,
+                &Frame::Forward {
+                    src_id: id(0xc3),
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(dropped, Some(Dropped::AquiferRateLimited));
+        assert!(drain(&mut hub, B).is_empty());
+    }
+
+    #[test]
     fn only_the_claiming_relay_may_retract_a_presence_entry() {
         let mut hub = Hub::new(Config::default());
         hub.admit(M, mesh(0x0e), 0);
@@ -1387,6 +1495,172 @@ mod tests {
         assert!(drain(&mut hub, B).is_empty());
         assert_eq!(hub.stats(A).expect("A").dropped_rate, 1);
         assert!(hub.close_reason(A).is_none(), "closed over a burst");
+    }
+
+    // ── Aquifer capacity fairness — ADR-0038 / §13 #9 ──────────────────────
+
+    #[test]
+    fn no_aquifer_budget_configured_is_fully_inert() {
+        // ADR-0038's default: `Config::default().aquifer_budget` is `None`,
+        // and heavy sustained traffic must never surface
+        // `Dropped::AquiferRateLimited` when it is.
+        let (mut hub, roster) = two_clients();
+        let payload = [1u8; 100];
+        for _ in 0..1000 {
+            let r = hub
+                .on_frame(
+                    A,
+                    &Frame::SendPacket {
+                        dst_id: id(0xb2),
+                        payload: &payload,
+                    },
+                    &roster,
+                    0,
+                )
+                .expect("legal");
+            assert_ne!(r, Some(Dropped::AquiferRateLimited));
+        }
+    }
+
+    #[test]
+    fn an_aquifer_over_its_aggregate_budget_is_dropped_but_the_connection_stays_open() {
+        // A node well within its own per-connection allowance can still be
+        // dropped because its aquifer's shared budget is spent — the whole
+        // point of the aggregate cap being a second, independent limit.
+        let cfg = Config {
+            client_budget: Budget::unlimited(),
+            aquifer_budget: Some(Budget {
+                bytes_per_sec: 1,
+                byte_burst: 1,
+                frames_per_sec: 1,
+                frame_burst: 1,
+            }),
+            ..Config::default()
+        };
+        let mut hub = Hub::new(cfg);
+        hub.admit(A, client(0xa1, "t1"), 0);
+        hub.admit(B, client(0xb2, "t1"), 0);
+        let roster = TestRoster::new().with(id(0xa1), "t1").with(id(0xb2), "t1");
+
+        let payload = [1u8; 100];
+        let r = hub
+            .on_frame(
+                A,
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(r, Some(Dropped::AquiferRateLimited));
+        assert!(drain(&mut hub, B).is_empty());
+        assert_eq!(hub.stats(A).expect("A").dropped_aquifer_rate, 1);
+        assert!(hub.close_reason(A).is_none(), "closed over a burst");
+    }
+
+    #[test]
+    fn the_aquifer_budget_is_shared_across_its_nodes_not_per_connection() {
+        let cfg = Config {
+            client_budget: Budget::unlimited(),
+            aquifer_budget: Some(Budget {
+                bytes_per_sec: 1_000_000,
+                byte_burst: 150,
+                frames_per_sec: 1_000_000,
+                frame_burst: 1_000_000,
+            }),
+            ..Config::default()
+        };
+        let mut hub = Hub::new(cfg);
+        hub.admit(A, client(0xa1, "t1"), 0);
+        hub.admit(B, client(0xb2, "t1"), 0);
+        hub.admit(ConnId(4), client(0xc3, "t1"), 0);
+        let roster = TestRoster::new()
+            .with(id(0xa1), "t1")
+            .with(id(0xb2), "t1")
+            .with(id(0xc3), "t1");
+
+        let payload = [1u8; 100];
+        // A spends 100 of the aquifer's 150-byte burst.
+        let r1 = hub
+            .on_frame(
+                A,
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(r1, None);
+
+        // A different node in the same aquifer inherits what A already
+        // spent: only 50 bytes were left, not another fresh 150.
+        let r2 = hub
+            .on_frame(
+                ConnId(4),
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(r2, Some(Dropped::AquiferRateLimited));
+    }
+
+    #[test]
+    fn two_aquifers_do_not_share_their_aggregate_budget() {
+        let cfg = Config {
+            client_budget: Budget::unlimited(),
+            aquifer_budget: Some(Budget {
+                bytes_per_sec: 1,
+                byte_burst: 1,
+                frames_per_sec: 1,
+                frame_burst: 1,
+            }),
+            ..Config::default()
+        };
+        let mut hub = Hub::new(cfg);
+        hub.admit(A, client(0xa1, "t1"), 0);
+        hub.admit(B, client(0xb2, "t1"), 0);
+        hub.admit(ConnId(4), client(0xc3, "t2"), 0);
+        hub.admit(ConnId(5), client(0xd4, "t2"), 0);
+        let roster = TestRoster::new()
+            .with(id(0xa1), "t1")
+            .with(id(0xb2), "t1")
+            .with(id(0xc3), "t2")
+            .with(id(0xd4), "t2");
+
+        let payload = [1u8; 1];
+        let r1 = hub
+            .on_frame(
+                A,
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(r1, None, "t1's budget is fresh");
+
+        let r2 = hub
+            .on_frame(
+                ConnId(4),
+                &Frame::SendPacket {
+                    dst_id: id(0xd4),
+                    payload: &payload,
+                },
+                &roster,
+                0,
+            )
+            .expect("legal");
+        assert_eq!(r2, None, "t2 has its own budget, unaffected by t1's use");
     }
 
     #[test]

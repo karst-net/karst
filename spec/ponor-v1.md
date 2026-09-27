@@ -878,10 +878,22 @@ somewhere else.
    periodic full resync, so a missed `PeerGone` leaves a stale entry until the
    mesh connection is re-established. Bounded in impact (a dropped `Forward`)
    but unbounded in duration.
-9. **Multi-aquifer relays are specified but not sized.** §5.4 scopes forwarding
-   per aquifer; nothing says how a relay's capacity is divided between them, so
-   one aquifer can consume a shared relay's entire budget within its per-node
-   limits.
+9. ~~**Multi-aquifer relays are specified but not sized.**~~ **Resolved by
+   ADR-0038**, as an operator-configured policy rather than a protocol
+   change: `karst-relay`'s optional `[limits.aquifer]` table caps one
+   aquifer's aggregate bytes/frames per second across every node it has,
+   independent of §7.4's per-node budget. Off by default — an unconfigured
+   relay's capacity is still divided only by each node's own limit, exactly
+   as before. No wire change was needed: like §7.4's own defaults, this is
+   "policy rather than protocol" (§7.4), enforced entirely on the relay's
+   forwarding path (`bins/karst-relay/src/hub.rs`) with no new frame type or
+   reason code — an over-budget aquifer's frame is dropped exactly as an
+   over-budget node's already is (§7.4), silently and without closing the
+   connection. Applies to both a directly-connected client's `SendPacket`
+   and a mesh-delivered `Forward`, so routing through a mesh peer is not a
+   way around a relay's local cap. Relay capacity fairness *between*
+   relays sharing a mesh, and any admin-console surface for setting this
+   per account, remain unaddressed.
 10. **Ponor has no capability negotiation, and §7.7 spent the one free pass.**
     Adding `ReflectOffer` was a flag day: relay and node must be upgraded
     together, because §6 makes an unknown frame type fatal and neither version

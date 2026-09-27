@@ -228,6 +228,18 @@ pub struct Limits {
     /// Per-destination write queue depth.
     #[serde(default = "default_queue_depth")]
     pub queue_depth: usize,
+    /// Aggregate allowance shared by every node in one aquifer — ADR-0038 /
+    /// `ponor-v1.md` §13 #9.
+    ///
+    /// **Off unless configured.** With no `[limits.aquifer]` table, an
+    /// aquifer's total share of this relay is bounded only by its node
+    /// count times the per-node budget above — exactly today's behavior.
+    /// Configuring this caps that aggregate regardless of how many nodes the
+    /// aquifer has, which is the gap #9 names: a multi-tenant relay with no
+    /// such cap lets one large aquifer consume the whole thing within each
+    /// of its nodes' own limits.
+    #[serde(default)]
+    pub aquifer: Option<AquiferLimits>,
 }
 
 impl Default for Limits {
@@ -239,8 +251,28 @@ impl Default for Limits {
             frames_per_sec: b.frames_per_sec,
             frame_burst: b.frame_burst,
             queue_depth: default_queue_depth(),
+            aquifer: None,
         }
     }
+}
+
+/// One aquifer's aggregate rate allowance — ADR-0038.
+///
+/// Every field is required when this table is present: unlike the top-level
+/// per-node limits, there is no sensible built-in aggregate for "however
+/// many nodes a tenant happens to have," so a partially-specified table would
+/// be guessing at a number that matters.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AquiferLimits {
+    /// Sustained bytes per second, summed across every node in the aquifer.
+    pub bytes_per_sec: u64,
+    /// Bytes the aquifer may burst above the sustained rate.
+    pub byte_burst: u64,
+    /// Sustained frames per second, summed across every node in the aquifer.
+    pub frames_per_sec: u64,
+    /// Frames the aquifer may burst above the sustained rate.
+    pub frame_burst: u64,
 }
 
 fn default_listen() -> SocketAddr {
@@ -331,6 +363,16 @@ impl Config {
                     .to_owned(),
             ));
         }
+        if let Some(a) = &self.limits.aquifer {
+            if a.bytes_per_sec == 0 || a.frames_per_sec == 0 {
+                return Err(Error::Invalid(
+                    "config: a zero limits.aquifer rate admits nothing from the \
+                     whole aquifer; omit the [limits.aquifer] table for no \
+                     aggregate cap, or set it high for no practical limit"
+                        .to_owned(),
+                ));
+            }
+        }
         if let Some(t) = &self.telemetry {
             if !t.control_url.starts_with("https://") {
                 // Telemetry carries a signature, not a secret, but the
@@ -391,6 +433,12 @@ impl Config {
             // node's allowance. It is configured infrastructure rather than an
             // admitted stranger, so the operator's own limits apply upstream.
             mesh_budget: Budget::unlimited(),
+            aquifer_budget: self.limits.aquifer.map(|a| Budget {
+                bytes_per_sec: a.bytes_per_sec,
+                byte_burst: a.byte_burst,
+                frames_per_sec: a.frames_per_sec,
+                frame_burst: a.frame_burst,
+            }),
             queue_depth: self.limits.queue_depth,
         }
     }
@@ -476,6 +524,51 @@ tls_key = "/etc/karst/relay.key"
         assert_eq!(h.queue_depth, 7);
         // The mesh allowance is deliberately not the client's.
         assert_eq!(h.mesh_budget, Budget::unlimited());
+    }
+
+    #[test]
+    fn the_aquifer_budget_is_off_unless_configured() {
+        // ADR-0038's default: no `[limits.aquifer]` table means no aggregate
+        // cap, exactly as before this setting existed.
+        let c = Config::parse(MINIMAL).expect("parses");
+        assert!(c.limits.aquifer.is_none());
+        assert!(c.hub().aquifer_budget.is_none());
+    }
+
+    #[test]
+    fn the_aquifer_budget_reaches_the_hub() {
+        let text = format!(
+            "{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 1000\nbyte_burst = 2000\n\
+             frames_per_sec = 10\nframe_burst = 20\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let budget = c.hub().aquifer_budget.expect("configured");
+        assert_eq!(budget.bytes_per_sec, 1000);
+        assert_eq!(budget.byte_burst, 2000);
+        assert_eq!(budget.frames_per_sec, 10);
+        assert_eq!(budget.frame_burst, 20);
+    }
+
+    #[test]
+    fn a_partial_aquifer_table_is_an_error() {
+        // Unlike the top-level per-node limits, there is no sensible built-in
+        // aggregate for "however many nodes a tenant happens to have" — a
+        // partially-specified table would be guessing at a number that
+        // matters, so every field is required once the table appears at all.
+        let text = format!("{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 1000\n");
+        let err = Config::parse(&text).expect_err("missing fields");
+        assert!(matches!(err, Error::Syntax(_)), "{err:?}");
+    }
+
+    #[test]
+    fn a_zero_aquifer_rate_is_refused_rather_than_read_as_unlimited() {
+        let text = format!(
+            "{MINIMAL}\n[limits.aquifer]\nbytes_per_sec = 0\nbyte_burst = 0\n\
+             frames_per_sec = 10\nframe_burst = 10\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        let err = c.validate().expect_err("zero aquifer rate");
+        assert!(format!("{err}").contains("aquifer"), "{err}");
     }
 
     #[test]
