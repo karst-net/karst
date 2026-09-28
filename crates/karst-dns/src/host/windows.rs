@@ -150,7 +150,13 @@ impl RuleValues {
             name: Vec::new(), // filled in by the caller, which knows the domain
             dns_servers: stub.ip().to_string(),
             config_options: 0x8,
-            version: 1,
+            // The plan's own §6 example (and older Group Policy/Windows
+            // Server documentation generally) shows `Version = 1`, but a
+            // rule `Add-DnsClientNrptRule` itself creates on real Windows 11
+            // 25H2 has `Version = 2` — confirmed by comparison on real
+            // hardware, not assumed from docs a newer Windows release may
+            // have moved past.
+            version: 2,
             comment: MARKER.to_owned(),
         }
     }
@@ -546,6 +552,61 @@ fn prune_if_empty(root: &str) {
             let _ = LOCAL_MACHINE.remove_tree(root);
         }
     }
+}
+
+/// The system's own configured DNS servers, read from the registry rather
+/// than `/etc/resolv.conf` (a file that does not exist on Windows —
+/// `bins/karstd`'s cross-platform `host_resolvers` used to read it
+/// unconditionally, which failed every time with a raw
+/// `ERROR_PATH_NOT_FOUND` instead of ever returning a resolver). Windows
+/// keeps per-adapter resolvers under `Tcpip\Parameters\Interfaces\<GUID>`,
+/// as `NameServer` (static, comma-separated) and `DhcpNameServer`
+/// (DHCP-assigned, space-separated) — never both meaningfully set on the
+/// same adapter, but both are read regardless since a caller here wants
+/// "every resolver this host might actually use", not one interface's
+/// current source. Best effort like the rest of this module's read paths:
+/// a missing key, an unreadable value, or a value that fails to parse is
+/// skipped rather than failing the whole read, and an adapter with neither
+/// value (no IPv4 configured, or purely IPv6) contributes nothing.
+///
+/// IPv6 resolvers (`Tcpip6\Parameters\Interfaces\...`) are not read here —
+/// no gap in practice yet, since nothing in this codebase has exercised an
+/// IPv6-only upstream, but a real one should extend this rather than add a
+/// second, separately-maintained copy of it.
+#[must_use]
+pub fn system_resolvers() -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    let Ok(interfaces) =
+        LOCAL_MACHINE.open(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces")
+    else {
+        return out;
+    };
+    let Ok(names) = interfaces.keys() else {
+        return out;
+    };
+    for name in names {
+        let Ok(adapter) = interfaces.open(&name) else {
+            continue;
+        };
+        for value in ["NameServer", "DhcpNameServer"] {
+            let Ok(raw) = adapter.get_string(value) else {
+                continue;
+            };
+            for candidate in raw.split([',', ' ']) {
+                let candidate = candidate.trim();
+                if candidate.is_empty() {
+                    continue;
+                }
+                if let Ok(ip) = candidate.parse() {
+                    let resolver = SocketAddr::new(ip, 53);
+                    if resolver.ip() != crate::STUB_ADDRESS && !out.contains(&resolver) {
+                        out.push(resolver);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn io_at(path: &Path) -> impl FnOnce(io::Error) -> NrptError + '_ {

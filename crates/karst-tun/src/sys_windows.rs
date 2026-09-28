@@ -41,7 +41,7 @@ use windows_sys::Win32::NetworkManagement::IpHelper::{
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{
     IpDadStatePreferred, AF_INET, AF_INET6, AF_UNSPEC, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0,
-    SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_INET,
+    MIB_IPPROTO_NETMGMT, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_INET,
 };
 use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
@@ -625,7 +625,16 @@ fn sockaddr_inet(addr: IpAddr) -> SOCKADDR_INET {
             sin.sin_family = AF_INET;
             sin.sin_addr = IN_ADDR {
                 S_un: IN_ADDR_0 {
-                    S_addr: u32::from_be_bytes(v4.octets()),
+                    // `S_addr` is defined by its byte layout in memory
+                    // (network order), not by numeric value — `from_be_bytes`
+                    // is wrong on a little-endian host (every real Windows
+                    // target) because storing that value back to memory
+                    // reverses the octets. `from_ne_bytes` round-trips
+                    // through the host's native representation, so the bytes
+                    // land in memory exactly as `octets()` gave them,
+                    // matching what every other Windows networking caller
+                    // (including std's own sys/windows/net.rs) does.
+                    S_addr: u32::from_ne_bytes(v4.octets()),
                 },
             };
             SOCKADDR_INET { Ipv4: sin }
@@ -658,8 +667,21 @@ fn family_of(addr: &SOCKADDR_INET) -> u16 {
 /// [`crate::windows::Tun::add_secondary_address`] calls — there is no
 /// separate "alias" mode to ask for here.
 ///
-/// `SkipAsSource` is set so the tunnel address is never chosen as the source
-/// for off-mesh traffic — plan §4.
+/// Plan §4 originally set `SkipAsSource` here so Windows would never pick
+/// the tunnel address as the source for off-mesh traffic. Empirically (real
+/// Windows 11 25H2), that is not what the flag does: it excludes the
+/// address from source selection unconditionally, including for
+/// destinations *only* reachable through this interface — a peer whose
+/// `allowed_ips` falls on-link within this node's own tunnel subnet, the
+/// exact case that needs no explicit route (`bring_up_interface`'s
+/// `wanted()` skips it deliberately, relying on the automatic subnet route
+/// `CreateUnicastIpAddressEntry` itself creates). With `SkipAsSource` set,
+/// Windows has no valid source address left for that destination and
+/// outbound sends fail outright (`ping`'s own "General failure").
+/// Linux/macOS have no equivalent flag and do not have this problem, so it
+/// is dropped here rather than narrowed — the off-mesh-leak concern it was
+/// meant to address is better solved once there is a real exit-node
+/// scenario on Windows to validate a fix against, not guessed at again.
 ///
 /// # Errors
 /// An [`io::Error`] from the last Win32 error, unless it is
@@ -669,13 +691,12 @@ fn family_of(addr: &SOCKADDR_INET) -> u16 {
 pub(crate) fn create_unicast_address(luid: Luid, addr: IpAddr, prefix_len: u8) -> io::Result<()> {
     // SAFETY: `row` is a live, uniquely borrowed `MIB_UNICASTIPADDRESS_ROW`;
     // `InitializeUnicastIpAddressEntry` writes every field to its documented
-    // default before this function overrides the three that matter.
+    // default before this function overrides the two that matter.
     let mut row: MIB_UNICASTIPADDRESS_ROW = unsafe { mem::zeroed() };
     unsafe { InitializeUnicastIpAddressEntry(&raw mut row) };
     row.InterfaceLuid = luid;
     row.Address = sockaddr_inet(addr);
     row.OnLinkPrefixLength = prefix_len;
-    row.SkipAsSource = true;
 
     // SAFETY: `row` is fully initialized above — every field either came
     // from `InitializeUnicastIpAddressEntry`'s documented defaults or was
@@ -718,6 +739,20 @@ pub(crate) fn create_forward_route(luid: Luid, dst: IpAddr, prefix_len: u8) -> i
     // §4 — without pinning an exact value that would fight whatever
     // `InitializeIpForwardEntry` already defaulted for automatic metric.
     row.Metric = 0;
+    // `InitializeIpForwardEntry`'s documented default for `Protocol` is
+    // `MIB_IPPROTO_NETMGMT` ("a network management application added the
+    // route"), but empirically (real Windows 11 25H2) the field comes back
+    // as `-1` — not a valid `NL_ROUTE_PROTOCOL` value — and
+    // `CreateIpForwardEntry2` rejects the row with `ERROR_INVALID_PARAMETER`
+    // as a result. Set it explicitly rather than trust the default.
+    row.Protocol = MIB_IPPROTO_NETMGMT;
+    // `SitePrefixLength` is documented as IPv6-site-only and "not used" for
+    // an IPv4 route, but `InitializeIpForwardEntry` leaves it at `255` — not
+    // a valid prefix length for either family (IPv6's own max is 128) — and
+    // `CreateIpForwardEntry2` validates it regardless of family, rejecting
+    // the row with `ERROR_INVALID_PARAMETER`. `0` is the documented
+    // not-applicable value.
+    row.SitePrefixLength = 0;
 
     // SAFETY: `row` is fully initialized above and lives for the duration of
     // this call, which is `CreateIpForwardEntry2`'s only requirement.

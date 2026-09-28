@@ -10,7 +10,9 @@
 )]
 
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
+#[cfg(not(windows))]
+use std::net::IpAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -563,12 +565,59 @@ impl fmt::Debug for Runtime {
     }
 }
 
+/// Windows' `ERROR_ADDRESS_NOT_AVAILABLE`/`WSAEADDRNOTAVAIL`. Not part of
+/// the `Win32_Foundation` re-exports this crate otherwise pulls from, so
+/// named directly here for the one place that needs it.
+#[cfg(windows)]
+const WSAEADDRNOTAVAIL: i32 = 10049;
+
+/// Bind, retrying briefly on Windows if the address was only just assigned
+/// to the interface.
+///
+/// [`bring_up_interface`] adds the stub's secondary address
+/// (`add_secondary_address`) and returns before this runs — plain
+/// sequential code, no race between *tasks* — but on real Windows 11 25H2
+/// the bind here still fails once with `WSAEADDRNOTAVAIL` immediately
+/// afterward and succeeds a moment later: `CreateUnicastIpAddressEntry`
+/// returning success does not mean the address is bindable yet, only that
+/// Windows has accepted the request to add it. Linux/macOS have not shown
+/// this gap (netlink and the BSD routing socket both make the address
+/// immediately usable), so the retry is Windows-only rather than a general
+/// startup delay that would slow every platform's common case down for a
+/// problem only one of them has.
+///
+/// Empirically (real Windows 11 25H2, a Wintun-backed adapter), the address
+/// has taken as long as ~3.3 seconds to become bindable — long enough that
+/// this needs a real budget, not a couple of quick attempts, but bounded
+/// rather than unconditional so a genuinely wrong address still fails
+/// startup instead of hanging it for 15 seconds.
+#[cfg(windows)]
+fn bind_retrying<T>(bind: impl Fn() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut last = None;
+    for _ in 0..150 {
+        match bind() {
+            Ok(bound) => return Ok(bound),
+            Err(error) if error.raw_os_error() == Some(WSAEADDRNOTAVAIL) => {
+                last = Some(error);
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::from(std::io::ErrorKind::AddrNotAvailable)))
+}
+
+#[cfg(not(windows))]
+fn bind_retrying<T>(bind: impl Fn() -> std::io::Result<T>) -> std::io::Result<T> {
+    bind()
+}
+
 impl Runtime {
     /// Bind both DNS transports. The caller supplies an unprivileged address in
     /// tests/userspace mode or the socket-unit/TUN address in kernel mode.
     pub fn start(address: SocketAddr, resolver: Resolver) -> std::io::Result<Self> {
-        let udp = UdpSocket::bind(address)?;
-        let tcp = TcpListener::bind(address)?;
+        let udp = bind_retrying(|| UdpSocket::bind(address))?;
+        let tcp = bind_retrying(|| TcpListener::bind(address))?;
         udp.set_read_timeout(Some(Duration::from_millis(100)))?;
         tcp.set_nonblocking(true)?;
         let stopping = Arc::new(AtomicBool::new(false));
@@ -1009,6 +1058,11 @@ fn parse_spki_pin(hex: &str) -> Option<[u8; 32]> {
 /// Read normal host upstreams before a bare-file integration replaces them.
 /// A persisted revert record takes precedence over the live file, which may
 /// already name the KarstDNS stub after a prior netmap generation.
+///
+/// `/etc/resolv.conf` is a Unix path; Windows has no counterpart; see
+/// [`windows_host_resolvers`] for why the resolvers there come from the
+/// registry instead.
+#[cfg(not(windows))]
 fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
     let host = karst_dns::host::ResolvConf::system();
     let contents = host.original_contents().map_err(|error| Error::Resolver {
@@ -1032,6 +1086,24 @@ fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
         }
     }
     Ok(resolvers)
+}
+
+/// As [`host_resolvers`], reading the registry instead of a file that does
+/// not exist on this platform. Previously this crate called the Unix path
+/// unconditionally on every platform, which on Windows always failed with a
+/// raw `ERROR_PATH_NOT_FOUND` (`karst_dns::host::system_resolvers`'s own doc
+/// comment has the detail) — rejecting the entire MagicDNS config the
+/// moment an account had no explicit nameserver group, the common case.
+///
+/// Always `Ok`: the registry read is already best effort (a missing or
+/// unreadable value is skipped, not an error, so a clean host without
+/// static or DHCP resolvers configured yet is not a failure this needs to
+/// report) — `Result` only to keep this arm's signature identical to
+/// non-Windows's, which callers use uniformly.
+#[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)]
+fn host_resolvers() -> Result<Vec<SocketAddr>, Error> {
+    Ok(karst_dns::host::system_resolvers())
 }
 
 #[cfg(test)]

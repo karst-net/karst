@@ -29,4 +29,4 @@ pub use resolvconf::{
 };
 pub use resolved::{Resolved, ResolvedError};
 #[cfg(windows)]
-pub use windows::{Nrpt, NrptError, POLICY_ROOT, REVERT_STATE as NRPT_REVERT_STATE};
+pub use windows::{system_resolvers, Nrpt, NrptError, POLICY_ROOT, REVERT_STATE as NRPT_REVERT_STATE};
