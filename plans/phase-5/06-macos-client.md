@@ -167,6 +167,16 @@ the code that serves them is written so a person can check it in one sitting:
 
 ### On the App Store
 
+> **Superseded.** The LaunchDaemon this section describes no longer exists —
+> ADR-0026 replaced it with a `NEPacketTunnelProvider` System Extension, kept
+> as historical context for why the LaunchDaemon/NetworkExtension split was
+> made in the first place. That migration did not reach the App Store either:
+> docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md found the
+> System Extension packaging ADR-0026 chose is itself ineligible — the Store
+> requires the same provider packaged as a sandboxed App Extension (`.appex`),
+> a distinct target this tree does not have yet, not a smaller gap on top of
+> the one below.
+
 `scripts/appstore-submit-macos.sh` and the `app-store` CI job are **stubs, and
 will stay stubs until there is a `NEPacketTunnelProvider` variant.** The
 package built here installs a root LaunchDaemon; the App Store accepts only

@@ -7,16 +7,21 @@
 # ## Read this before wiring it up
 #
 # The artifact `scripts/build-macos-pkg.sh` produces **cannot be accepted by
-# the Mac App Store**, and no amount of credentials changes that. The App Store
-# requires a sandboxed application; Karst's macOS client is a root LaunchDaemon
-# that opens a `utun` device, which is neither sandboxed nor an application.
-# That is a deliberate architectural choice, not an oversight —
-# plans/phase-5/06-macos-client.md §3 has the reasoning, and the short version
-# is that the App Store route needs the
-# `com.apple.developer.networking.networkextension` entitlement, which Apple
-# grants by application with a review turnaround measured in weeks and no
-# committed SLA. Making the release depend on that would put shipping behind
-# somebody else's queue.
+# the Mac App Store**, and no amount of credentials changes that — but not for
+# the reason this comment used to give. `Karst.app`/`KarstPacketTunnel` is no
+# longer a root LaunchDaemon (ADR-0026 item 8 removed that build entirely);
+# it is a `NEPacketTunnelProvider` **System Extension**, which is real
+# progress but does not reach the App Store either. See
+# docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md: the Mac App
+# Store requires the *App Extension* (`.appex`, sandboxed, embedded in the
+# container app) packaging of a NetworkExtension provider, signed with the
+# standard `packet-tunnel-provider` entitlement value — not the System
+# Extension packaging this project ships today, signed with the
+# `-systemextension`-suffixed value specifically because it is *not*
+# sandboxed. A sandboxed process cannot even call the
+# `OSSystemExtensionRequest` this build's host app uses to activate its
+# extension. That is a second, separate Xcode target this tree does not have
+# yet, not a signing/entitlement adjustment to the one it does.
 #
 # So what is this for? Three things:
 #
@@ -77,18 +82,23 @@ if [ "${KARST_APPSTORE_READY:-0}" != "1" ]; then
 Credentials are present, and the submission is still blocked — on the artifact,
 not on the paperwork.
 
-The .pkg built by this repository installs a root LaunchDaemon. The Mac App
-Store accepts only sandboxed applications, so this package would be rejected on
-review whatever it is signed with. Shipping through the App Store needs a
-different build entirely:
+The .pkg built by this repository ships Karst.app's NEPacketTunnelProvider as
+a Developer-ID System Extension (docs/adr/0026-macos-network-extension-backend.md),
+which is real progress but is still not what the Mac App Store accepts.
+Per docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md, shipping
+through the App Store needs a second, separate build:
 
-  - a NEPacketTunnelProvider system extension, requiring the
-    com.apple.developer.networking.networkextension entitlement (applied for
-    separately, granted by Apple on review);
-  - an App Sandbox entitlement, and a datapath that works inside it;
-  - a containing .app, since an extension cannot ship on its own.
+  - the same NEPacketTunnelProvider logic packaged as an App Extension
+    (.appex, embedded in the container app) instead of a System Extension —
+    a different Xcode target, not a signing option on this one;
+  - the com.apple.security.app-sandbox entitlement on both the app and the
+    extension, and the standard (non "-systemextension") NetworkExtension
+    entitlement values;
+  - config/socket paths that live inside the sandboxed App Group container
+    instead of KarstPacketTunnel's root-owned
+    /Library/Application Support/dev.karst.packettunnel.
 
-None of those exist yet. See plans/phase-5/06-macos-client.md §3.
+None of those exist yet. See docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md.
 
 Set KARST_APPSTORE_READY=1 only once an App Store-eligible artifact is being
 built, and change $package above to point at it.
