@@ -965,11 +965,15 @@ jobs:
 
   # Mac App Store submission — wired up, and stubbed.
   #
-  # The package `macos-package` builds installs a root LaunchDaemon, and the
-  # App Store accepts only sandboxed applications, so it would be rejected on
-  # review whatever it is signed with. That is a deliberate architectural
-  # choice — plans/phase-5/06-macos-client.md §3 — and the App Store route
-  # needs a `NEPacketTunnelProvider` variant that does not exist yet.
+  # The package `macos-package` builds now ships Karst.app's
+  # NEPacketTunnelProvider as a Developer-ID System Extension
+  # (docs/adr/0026-macos-network-extension-backend.md),
+  # not the root LaunchDaemon this comment used to describe — that build was
+  # removed by ADR-0026 item 8. It still cannot be accepted by the Mac App
+  # Store: per docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md,
+  # the Store requires the same NEPacketTunnelProvider logic packaged as a
+  # sandboxed App Extension (.appex) instead, which is a separate Xcode
+  # target this tree does not have yet.
   #
   # This job therefore exists to be *ready*: it runs the moment an Apple ID
   # certificate is configured, checks every precondition, and reports precisely
@@ -994,7 +998,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # arm64 only — this job is a stub that refuses to submit anything until
-      # a NEPacketTunnelProvider variant exists (see the script's own header),
+      # a sandboxed App Extension variant exists (see the script's own header
+      # and docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md),
       # and Apple Silicon is the architecture that submission would actually
       # target. Nothing here depends on which architecture's precondition
       # check runs, since KARST_APPSTORE_READY is never set.
