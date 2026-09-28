@@ -833,7 +833,7 @@ mod tests {
         assert_eq!(zone.name, vec![".aquifer.karst.".to_owned()]);
         assert_eq!(zone.dns_servers, "100.100.100.100");
         assert_eq!(zone.config_options, 0x8);
-        assert_eq!(zone.version, 1);
+        assert_eq!(zone.version, 2);
         assert_eq!(zone.comment, MARKER);
 
         // The search domain's rule shares every domain-independent value
