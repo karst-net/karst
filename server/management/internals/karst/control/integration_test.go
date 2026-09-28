@@ -380,13 +380,17 @@ func TestDeviceInvitationLabelReachesTheWireAgainstTheRealAccountManager(t *test
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Grammar-sanitized (spaces and punctuation become hyphens), exactly as
-	// TestDeviceInvitationNameBecomesPeerIdentity already established at the
-	// business layer -- this asserts that same value is what a real device
-	// receives back over the wire.
-	if resp.GetDnsName() != "adrian-s-macbook-pro-" {
-		t.Fatalf("dns_name: got %q, want the admin's invitation label, not the client's reported hostname",
-			resp.GetDnsName())
+	// The bare label is grammar-sanitized (spaces and punctuation become
+	// hyphens), exactly as TestDeviceInvitationNameBecomesPeerIdentity
+	// already established at the business layer -- and Handle now qualifies
+	// it into a full FQDN with the account's DNS domain ("netbird.cloud",
+	// this fixture's controller-level default, since the account's own
+	// Settings.DNSDomain is unset) so it's something another user could
+	// actually address this device by, not just a label unique within the
+	// account.
+	if want := "adrian-s-macbook-pro-.netbird.cloud"; resp.GetDnsName() != want {
+		t.Fatalf("dns_name: got %q, want %q (the admin's invitation label qualified into a full FQDN)",
+			resp.GetDnsName(), want)
 	}
 }
 

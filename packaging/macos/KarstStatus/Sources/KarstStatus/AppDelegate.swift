@@ -64,11 +64,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// This device's control-plane-assigned name (#163) — `deviceName`
     /// (`crates/karst-ffi`), set at login from `KarstLoginResponse.dns_name`.
     /// For a device enrolled via an admin's invitation this is the admin's
-    /// own invitation text run through DNS-label sanitization (ADR-0032 made
-    /// `DNSLabel` itself the device's real, resolvable mesh identity, not a
-    /// display-only value beside it); every other setup key carries this
-    /// node's own reported hostname instead. `nil` whenever `identityHandle`
-    /// is, plus one more case that one doesn't have: a device enrolled
+    /// own invitation text, run through DNS-label sanitization and
+    /// qualified with the account's DNS domain into a full FQDN (ADR-0032
+    /// made `DNSLabel` itself the device's real, resolvable mesh identity;
+    /// the FQDN qualification is what makes it something an admin can hand
+    /// to another user to address this device by, not just a label unique
+    /// within the account); every other setup key carries this node's own
+    /// reported hostname instead, still qualified the same way. `nil`
+    /// whenever `identityHandle` is, plus one more case that one doesn't
+    /// have: a device enrolled
     /// before this field existed, or one whose one login attempt failed to
     /// persist it — the menu falls back to showing the handle alone rather
     /// than treating either as an error.
@@ -178,29 +182,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let established = status.peers.filter { $0.state.hasPrefix("established") }
-        let markState: MarkState
+        let (markState, establishedCount) = Self.connectivitySummary(for: status.peers)
         let label: String
-        if established.isEmpty {
-            markState = .noPeers
-            label = "no peers"
-        } else if established.contains(where: { $0.transport == "relay" || $0.transport == "turn" }) {
-            // A mix of direct and relayed peers still reports the relayed
-            // state — the whole point of `Transport` not collapsing to a
-            // bool (`engine.rs`'s doc comment on it) is that "slower and
-            // through a third party" must stay visible, not be averaged
-            // away by a healthier peer sitting next to it.
-            markState = .relayed
-            label = "\(established.count) via relay/TURN"
-        } else {
-            markState = .direct
-            label = "\(established.count) direct"
+        switch markState {
+        case .noPeers: label = "no peers"
+        case .relayed: label = "\(establishedCount) via relay/TURN"
+        default: label = "\(establishedCount) direct"
         }
 
         let rate = throughputRate(for: status.peers)
         statusItem.button?.image = Self.karstMarkIcon(markState, accessibilityDescription: label)
         statusItem.button?.title = "karst: \(label)\(rate)"
         statusItem.menu = menu(for: status)
+    }
+
+    /// This device's own connectivity, classified from every peer's state
+    /// and transport — the status bar icon/title's own classification,
+    /// factored out so the menu's aggregate summary line (#207) computes
+    /// the identical thing rather than a second, driftable copy of it.
+    ///
+    /// A mix of direct and relayed peers still reports the relayed state —
+    /// the whole point of `Transport` not collapsing to a bool
+    /// (`engine.rs`'s doc comment on it) is that "slower and through a
+    /// third party" must stay visible, not be averaged away by a healthier
+    /// peer sitting next to it.
+    private static func connectivitySummary(for peers: [PeerStatus]) -> (state: MarkState, established: Int) {
+        let established = peers.filter { $0.state.hasPrefix("established") }
+        guard !established.isEmpty else { return (.noPeers, 0) }
+        let relayed = established.contains { $0.transport == "relay" || $0.transport == "turn" }
+        return (relayed ? .relayed : .direct, established.count)
     }
 
     /// Template images so AppKit re-tints them for light/dark menu bars and
@@ -304,21 +314,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(withTitle: "Interface: \(status.interface) (MTU \(status.mtu))", action: nil, keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
-        if status.peers.isEmpty {
-            menu.addItem(withTitle: "No peers configured", action: nil, keyEquivalent: "")
-        }
-        for peer in status.peers {
-            let title = "\(peer.name) — \(peer.state), \(peer.transport)"
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.image = Self.symbolImage(stateSymbolName(for: peer), accessibilityDescription: peer.state)
-            menu.addItem(item)
-        }
+        menu.addItem(peerSummaryItem(for: status.peers))
         addExitNodeItem(to: menu, status: status)
         menu.addItem(NSMenuItem.separator())
         addIdentityAndEnrollItems(to: menu)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
+    }
+
+    /// One aggregate line, not one item per peer (#207). An account can have
+    /// hundreds of enrolled devices, all of them this node's WireGuard peers
+    /// in Karst's full-mesh design — a menu-bar dropdown is not where that
+    /// belongs, both because it does not scale and because it would show
+    /// every peer's name and connection state to anyone at this Mac, not
+    /// just an administrator. `web/console`'s machines view is the real
+    /// per-device listing; this line answers only "is *this* device okay."
+    private func peerSummaryItem(for peers: [PeerStatus]) -> NSMenuItem {
+        guard !peers.isEmpty else {
+            return NSMenuItem(title: "No peers configured", action: nil, keyEquivalent: "")
+        }
+        let (markState, establishedCount) = Self.connectivitySummary(for: peers)
+        let title: String
+        switch markState {
+        case .noPeers:
+            title = peers.count == 1 ? "1 peer configured, not connected" : "\(peers.count) peers configured, none connected"
+        case .relayed, .direct:
+            let transport = markState == .relayed ? "via relay/TURN" : "direct"
+            title = establishedCount == peers.count
+                ? "\(establishedCount) peers connected (\(transport))"
+                : "\(establishedCount) of \(peers.count) peers connected (\(transport))"
+        default:
+            // Unreachable: connectivitySummary only ever returns .noPeers,
+            // .direct or .relayed — the other two MarkState cases exist for
+            // the status bar icon before a status has ever been fetched.
+            title = "\(peers.count) peers configured"
+        }
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = Self.symbolImage(
+            markState == .relayed ? "circle.lefthalf.filled" : (markState == .direct ? "circle.fill" : "circle"),
+            accessibilityDescription: title
+        )
+        return item
     }
 
     /// The Exit node submenu (ADR-0036 §3): the offered exit routes plus Off,
@@ -672,14 +709,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "OK")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
-    }
-
-    private func stateSymbolName(for peer: PeerStatus) -> String {
-        guard peer.state.hasPrefix("established") else { return "circle" }
-        switch peer.transport {
-        case "direct": return "circle.fill"
-        case "relay", "turn": return "circle.lefthalf.filled"
-        default: return "triangle"
-        }
     }
 }

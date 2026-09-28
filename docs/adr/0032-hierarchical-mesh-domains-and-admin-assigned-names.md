@@ -318,3 +318,35 @@ scope: console UI for any of this (domain management, delegation,
 domain-targeted invitations all exist only as Go APIs and a
 `/karst/v1/domains*` HTTP surface so far), and the HTTP-level invitations
 gap just above.
+
+---
+
+## Implementation update (2026-09-27): `dns_name` is now a full FQDN
+
+The Decision above said `KarstLoginResponse.dns_name` "already carries
+`peer.DNSLabel`, which already **is** the live, resolvable network name" and
+needed no further work. That undersold what "resolvable" requires: a bare
+`DNSLabel` (even domain-qualified, e.g. `build-box.engineering.acme`) is
+unique only within the account — not something an admin could actually hand
+to another user as an address, since it says nothing about *which* account's
+mesh to resolve it against. The missing piece is the account's own DNS
+domain (`Peer.FQDN`'s second argument), which makes it a real FQDN
+(`build-box.engineering.acme.example.com`).
+
+`dns_name`'s wire shape still needs no change (this ADR's own point still
+holds) — only what `LoginHandler.Handle` puts into it. The account's DNS
+domain wasn't reachable from there before: `PeerLoginer` (Karst's
+deliberately narrow slice of the fork's account manager, `login.go`) only
+declared `LoginPeer`. Widening it by exactly one more single-purpose method,
+`GetDNSDomain(ctx, accountID) (string, error)` — implemented on
+`DefaultAccountManager` as an unauthenticated, server-to-node lookup, not
+the permission-gated user-facing settings read — keeps the interface's own
+stated reason for existing (avoiding a hundred-method dependency) intact.
+`bootstrap.go`'s `account.Manager`-typed value doesn't statically declare
+that method, so it's asserted down to `control.PeerLoginer` at the one call
+site rather than widening the fork's own interface.
+
+Best-effort, same posture as the rest of this path: if the domain lookup
+fails, `Handle` falls back to the bare `DNSLabel` rather than failing an
+otherwise-successful login over a value nothing but a UI convenience reads
+back.

@@ -2029,6 +2029,22 @@ func (am *DefaultAccountManager) GetAccountIDForPeerKey(ctx context.Context, pee
 	return am.Store.GetAccountIDByPeerPubKey(ctx, peerKey)
 }
 
+// GetDNSDomain returns the account's configured DNS domain -- Karst's login
+// response needs it to construct a peer's full FQDN (DNSLabel + domain)
+// without waiting for a netmap sync, over the same "whoami"-shaped round
+// trip dns_name already uses (#163 follow-up: a bare DNSLabel isn't
+// addressable by another peer without the domain suffix; a full FQDN is).
+// No permission check: this is server-to-node system data for a node
+// authenticating with its own identity key, not a user-facing settings read
+// (contrast the permission-gated GetAccountSettings above).
+func (am *DefaultAccountManager) GetDNSDomain(ctx context.Context, accountID string) (string, error) {
+	settings, err := am.Store.GetAccountSettings(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return "", err
+	}
+	return am.networkMapController.GetDNSDomain(settings), nil
+}
+
 func (am *DefaultAccountManager) handleUserPeer(ctx context.Context, transaction store.Store, peer *nbpeer.Peer, settings *types.Settings) (bool, error) {
 	user, err := transaction.GetUserByUserID(ctx, store.LockingStrengthNone, peer.UserID)
 	if err != nil {

@@ -40,6 +40,10 @@ type fakeAccounts struct {
 	gotLogin types.PeerLogin
 	calls    int
 	err      error
+	// dnsDomainErr, when set, simulates GetDNSDomain failing -- Handle must
+	// fall back to the bare DNSLabel rather than failing the whole login
+	// over it (login.go's own comment on why).
+	dnsDomainErr error
 }
 
 func (f *fakeAccounts) LoginPeer(_ context.Context, login types.PeerLogin) (*nbpeer.Peer, *types.Network, []*posture.Checks, bool, error) {
@@ -54,6 +58,13 @@ func (f *fakeAccounts) LoginPeer(_ context.Context, login types.PeerLogin) (*nbp
 		IP:       netip.MustParseAddr("100.64.0.7"),
 		DNSLabel: "test-host",
 	}, nil, nil, false, nil
+}
+
+func (f *fakeAccounts) GetDNSDomain(_ context.Context, _ string) (string, error) {
+	if f.dnsDomainErr != nil {
+		return "", f.dnsDomainErr
+	}
+	return "netbird.cloud", nil
 }
 
 func newLoginFixture(t *testing.T, accounts control.PeerLoginer) (*control.Service, proto.KarstControlServiceClient, *identity.Key, func()) {
@@ -171,6 +182,74 @@ func TestLoginReachesTheBusinessLayer(t *testing.T) {
 	}
 	if accounts.gotLogin.Meta.Hostname != "test-host" {
 		t.Fatalf("hostname not forwarded: %q", accounts.gotLogin.Meta.Hostname)
+	}
+}
+
+// dns_name is what Karst.app's menu shows this device as (#163). A bare
+// DNSLabel is only unique within the account -- not something another user
+// could actually address this device by -- so Handle qualifies it into a
+// full FQDN with the account's DNS domain.
+func TestLoginResponseQualifiesTheLabelIntoAnFQDN(t *testing.T) {
+	accounts := &fakeAccounts{}
+	svc, client, key, cleanup := newLoginFixture(t, accounts)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	stream, err := client.Session(ctx)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	cl, err := control.Dial(stream, svc.Pins(), identity.ControlVerifier{}, nil,
+		identity.ControlSigner{Key: key}, true)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	raw, err := cl.Request(loginRequest(t, "test-host"))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp := &proto.KarstLoginResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// fakeAccounts.LoginPeer returns DNSLabel "test-host";
+	// fakeAccounts.GetDNSDomain returns "netbird.cloud".
+	if want := "test-host.netbird.cloud"; resp.GetDnsName() != want {
+		t.Fatalf("dns_name: got %q, want %q", resp.GetDnsName(), want)
+	}
+}
+
+// GetDNSDomain failing is not this login's fault -- the peer record was
+// created fine, and dns_name is a UI convenience nothing else reads back
+// (login.go's own comment). Falling back to the bare label keeps that
+// convenience mostly working rather than failing the whole login over it.
+func TestLoginResponseFallsBackToTheBareLabelWhenDNSDomainLookupFails(t *testing.T) {
+	accounts := &fakeAccounts{dnsDomainErr: errors.New("settings store unavailable")}
+	svc, client, key, cleanup := newLoginFixture(t, accounts)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	stream, err := client.Session(ctx)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	cl, err := control.Dial(stream, svc.Pins(), identity.ControlVerifier{}, nil,
+		identity.ControlSigner{Key: key}, true)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	raw, err := cl.Request(loginRequest(t, "test-host"))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp := &proto.KarstLoginResponse{}
+	if err := pb.Unmarshal(raw, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.GetDnsName() != "test-host" {
+		t.Fatalf("dns_name: got %q, want the bare DNSLabel as a fallback", resp.GetDnsName())
 	}
 }
 
