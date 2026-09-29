@@ -285,7 +285,10 @@ allowed_ips = ["{peer_address}/32"]
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))
         .expect("chmod config");
 
-    let socket = dir.join("karstd.sock");
+    // A fresh subdirectory, not `dir` itself: `dir` already exists (created
+    // above), and `ipc::secure_dir` now refuses to force its required mode
+    // onto a directory it did not create — see that function's doc comment.
+    let socket = dir.join("run").join("karstd.sock");
     let log = dir.join("karstd.log");
     let out = std::fs::File::create(&log).expect("log file");
     let err = out.try_clone().expect("log file");

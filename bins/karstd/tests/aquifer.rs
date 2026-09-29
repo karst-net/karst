@@ -2315,7 +2315,13 @@ fn write_node_config(
 
 fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
     let conf = net.dir.join(tag).join("karstd.toml");
-    let sock = net.dir.join(format!("{tag}.sock"));
+    // Shared `run/` subdirectory under `net.dir`, not `net.dir` itself:
+    // `net.dir` already exists by the time any node starts, and
+    // `ipc::secure_dir` now refuses to force its required `0700` onto a
+    // directory it did not create — see that function's doc comment. The
+    // first node to start creates `run/` fresh; every later node in the same
+    // `net` finds it already `0700` and passes.
+    let sock = net.dir.join("run").join(format!("{tag}.sock"));
     let _ = std::fs::remove_file(&sock);
     let child = net.launch(
         ns,
@@ -2333,7 +2339,7 @@ fn start_node(net: &mut Aquifer, tag: &str, ns: &str) {
 
 /// `karst status` from inside a namespace.
 fn status(net: &Aquifer, tag: &str, ns: &str) -> String {
-    let sock = net.dir.join(format!("{tag}.sock"));
+    let sock = net.dir.join("run").join(format!("{tag}.sock"));
     let out = Command::new("ip")
         .args([
             "netns",
@@ -2899,7 +2905,7 @@ fn resolve_peer_and_exchange_tcp(net: &mut Aquifer) {
 /// `karst dns query NAME` from inside a namespace — the resolver-path
 /// counterpart of [`status`].
 fn dns_query(net: &Aquifer, tag: &str, ns: &str, name: &str) -> String {
-    let sock = net.dir.join(format!("{tag}.sock"));
+    let sock = net.dir.join("run").join(format!("{tag}.sock"));
     let out = Command::new("ip")
         .args([
             "netns",
@@ -4394,7 +4400,7 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
          route must not become an active default route on its own"
     );
 
-    let sock = net.dir.join("b.sock");
+    let sock = net.dir.join("run").join("b.sock");
     let use_out = Command::new("ip")
         .args([
             "netns",
@@ -4504,7 +4510,7 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
             .is_ok_and(|o| o.status.success())
     };
 
-    let sock = net.dir.join("b.sock");
+    let sock = net.dir.join("run").join("b.sock");
     let use_out = Command::new("ip")
         .args([
             "netns",
@@ -4617,7 +4623,7 @@ fn selecting_one_ip_familys_exit_route_does_not_activate_the_other() {
         || field(&status(&net, "b", NS_B), "state").as_deref() == Some("established"),
     );
 
-    let sock = net.dir.join("b.sock");
+    let sock = net.dir.join("run").join("b.sock");
     let use_route = |route_id: &str| {
         let out = Command::new("ip")
             .args([

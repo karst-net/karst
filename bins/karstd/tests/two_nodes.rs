@@ -223,7 +223,10 @@ kem_public_key = "{kem}"
     std::fs::write(&config, toml).expect("write config");
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).expect("chmod");
 
-    let socket = dir.join("karstd.sock");
+    // A fresh subdirectory, not `dir` itself: `dir` already exists (created
+    // above), and `ipc::secure_dir` now refuses to force its required mode
+    // onto a directory it did not create — see that function's doc comment.
+    let socket = dir.join("run").join("karstd.sock");
     let bin = env!("CARGO_BIN_EXE_karstd");
     let child = Command::new("ip")
         .args(["netns", "exec", netns, bin, "--config"])
