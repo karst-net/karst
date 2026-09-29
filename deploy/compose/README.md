@@ -187,12 +187,26 @@ docker build -f deploy/images/karst-relay.Dockerfile -t ghcr.io/karst-net/karst-
 
 Release images are keylessly signed by the `deliverables.yml` workflow in
 `karst-net/karst`. Verify the signature before deploying, and then use the
-verified digest rather than a mutable tag:
+verified digest rather than a mutable tag.
+
+**The `karst-control`/`karst-relay`/`karstd` GHCR packages are currently
+private**, confirmed via `gh api /orgs/karst-net/packages/container/<name>`,
+despite this repository being public — an outside self-hoster following this
+section as written has no credentials to `docker login` with and gets
+`unauthorized` on `docker pull`. This needs to be flipped to public (or
+documented as requiring an access grant) before the procedure below works for
+anyone outside the org; it is not a client-side or docs-only problem.
 
 ```sh
 image=ghcr.io/karst-net/karst-control
 tag=v0.1.0 # replace with the release tag
-digest=$(docker buildx imagetools inspect --format '{{.Digest}}' "$image:$tag")
+# Not `docker buildx imagetools inspect --format '{{.Digest}}'`: current
+# buildx (confirmed on 0.30.1) errors `can't evaluate field Digest` — there
+# is no top-level `.Digest` in the template data, only per-platform
+# manifests. `docker pull` then `docker inspect` gets the same multi-arch
+# index digest without depending on buildx's template shape at all.
+docker pull "$image:$tag"
+digest=$(docker inspect "$image:$tag" --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
 
 cosign verify \
   --certificate-identity-regexp 'https://github\\.com/karst-net/karst/\\.github/workflows/deliverables\\.yml@refs/tags/v.*' \
