@@ -58,6 +58,29 @@ const RING_CAPACITY: u32 = 4 * 1024 * 1024;
 /// rather than configurable, since nothing downstream reads it back.
 const TUNNEL_TYPE: &str = "Karst";
 
+/// Mask `addr` down to its network address for `prefix_len` — a
+/// `MIB_IPFORWARD_ROW2.DestinationPrefix` must already be normalized
+/// (host bits zero) or `CreateIpForwardEntry2` refuses it with
+/// `ERROR_INVALID_PARAMETER`.
+fn network_address_v4(addr: Ipv4Addr, prefix_len: u8) -> Ipv4Addr {
+    let mask = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix_len))
+    };
+    Ipv4Addr::from(u32::from(addr) & mask)
+}
+
+/// As [`network_address_v4`], for IPv6.
+fn network_address_v6(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
+    let mask = if prefix_len == 0 {
+        0
+    } else {
+        u128::MAX << (128 - u32::from(prefix_len))
+    };
+    Ipv6Addr::from(u128::from(addr) & mask)
+}
+
 /// Largest packet Wintun will carry — `WINTUN_MAX_IP_PACKET_SIZE` in
 /// `wintun.h`. Karst's own [`TunConfig::mtu`] is always far below this
 /// (spec §13.6 bounds it to 1280–1500-ish), so this is a sanity bound on
@@ -289,7 +312,15 @@ impl Tun {
     /// [`TunError::Ioctl`] if `CreateUnicastIpAddressEntry` refuses.
     pub fn set_ipv4(&self, addr: Ipv4Addr, prefix_len: u8) -> Result<(), TunError> {
         self.create_address(IpAddr::V4(addr), prefix_len)?;
-        self.add_route(IpAddr::V4(addr), prefix_len)
+        // The on-link subnet route, not a route to this one host: a
+        // `MIB_IPFORWARD_ROW2.DestinationPrefix` is a network prefix, so its
+        // host bits (whatever `prefix_len` leaves outside the mask) must be
+        // zero. Passing `addr` itself — this interface's own host address,
+        // almost never equal to its containing network's base address —
+        // is what `CreateIpForwardEntry2` was rejecting with
+        // `ERROR_INVALID_PARAMETER`; it validates the prefix is already
+        // normalized rather than normalizing it itself.
+        self.add_route(IpAddr::V4(network_address_v4(addr, prefix_len)), prefix_len)
     }
 
     /// Assign an IPv6 address with a prefix length.
@@ -298,7 +329,8 @@ impl Tun {
     /// [`TunError::Ioctl`] if `CreateUnicastIpAddressEntry` refuses.
     pub fn set_ipv6(&self, addr: Ipv6Addr, prefix_len: u8) -> Result<(), TunError> {
         self.create_address(IpAddr::V6(addr), prefix_len)?;
-        self.add_route(IpAddr::V6(addr), prefix_len)
+        // As `set_ipv4` above: the route needs the masked network prefix.
+        self.add_route(IpAddr::V6(network_address_v6(addr, prefix_len)), prefix_len)
     }
 
     /// Assign either family.
