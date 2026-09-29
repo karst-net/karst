@@ -10,8 +10,50 @@ measured WAL/archive lag, not a promise. Operators who require RPO=0 can enable
 synchronous commit and a named standby, accepting blocked writes when it fails.
 
 Run `../bootstrap.sh` only once; distribute its bootstrap input read-only.
-Account state lives in Postgres. `roster.toml` remains a relay input and has one
-intentional writer; move that duty explicitly during a host failure.
+
+**Seed `./state/management.json` on each host before first start — it is not
+optional here.** `docker-compose.yml` mounts it as a single file
+(`./state/management.json:/etc/netbird/management.json`); if the path does
+not exist yet, Docker creates a *directory* there instead of failing, and
+`karst-control` then loops on `failed reading provided config file: ...: is a
+directory` with no hint why. Copy `../state/management.json` (the one
+`../bootstrap.sh` wrote) to `state/management.json` on every replica host
+before `docker compose up`, and use the identical file on every host — do not
+let each host generate its own. It carries `DataStoreEncryptionKey`, which
+`boot.go` also uses as an HMAC key "to ensure all management instances are
+using the same key"; replicas that generated their own would silently diverge
+on it. Editing the copy is also required, not just copying it:
+`../bootstrap.sh` writes `"StoreConfig": {"Engine": "sqlite"}` for the
+co-located single-host deployment, and that value wins over this overlay's
+`NETBIRD_STORE_ENGINE: postgres` — `store.go`'s own comment says the env var
+is "supposed to be used in tests. Otherwise, rely on the config file." Change
+`Engine` to `"postgres"` in every replica's copy before starting it, or every
+replica silently runs its own disconnected local SQLite database instead of
+the shared one, with no error either.
+
+Also add `NB_DISABLE_GEOLOCATION: "true"` to the `control` service's
+`environment` — the base `deploy/compose/docker-compose.yml` sets it "for a
+reason" (its README: first start otherwise fetches GeoLite2 databases from a
+third party before serving anything, and a bad download is fatal), and this
+overlay does not carry it over.
+
+`KARST_WAL_ARCHIVE_DIR` must be pre-created and owned by the `postgres` image's
+runtime user (uid/gid `999`) before first start —
+`chown 999:999 that-directory` — or `archive_command` fails with `Permission
+denied` on every WAL segment and no base backup ever becomes recoverable past
+the last completed checkpoint.
+
+Account state is meant to live in Postgres (once `Engine` above is actually
+`"postgres"`). `roster.toml` remains a relay input and is meant to have one
+intentional writer, moved explicitly during a host failure — **but nothing
+writes it in this overlay today.** `KARST_RELAY_ROSTER_FILE` points inside
+`KARST_SHARED_STATE_DIR`, which every replica mounts `:ro`; the writer fails
+every 25s with `roster: create temp: ...: read-only file system` on every
+replica, confirmed live, so the relay's roster lease expires at 90s and it
+falls back to admitting nobody. Making the roster writable on the elected
+writer's replica without also making the bootstrap-input files
+(`relays.json`/`policy.json`) writable is unresolved — track before relying
+on relay admission in an HA deployment.
 
 Without an identity provider, set `KARST_BOOTSTRAP_SETUP_KEY_FILE` in the
 `.env` of whichever host starts first (only) — see the checked-in comment in

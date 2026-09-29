@@ -89,12 +89,30 @@ recent logs. Correlate a stale netmap with
 This procedure is the operator form of the exercised
 [HA record](operations/ha.md), not an independently invented runbook.
 
+0. Nothing creates the replication role for you. Once, on the primary:
+
+   ```sql
+   CREATE ROLE replication WITH REPLICATION LOGIN PASSWORD '...';
+   ```
+
+   The name matters: `deploy/compose/ha/postgres/pg_hba.conf`'s checked-in
+   rules grant the `replication` pseudo-database only to a role literally
+   named `replication`. `PGUSER` must match that role, not an arbitrary
+   name — `pg_basebackup` fails pg_hba matching with `no pg_hba.conf entry
+   for replication connection` otherwise. `pg-backup.sh`/`pg-restore.sh` also
+   need `pg_basebackup`/`pg_ctl` on `PATH` at the same major version as the
+   server; a host that only has `karstd`/`karst` installed does not have
+   these — run them inside a matching `postgres:17` container instead
+   (`docker run --rm --network host -v $PWD/scripts:/scripts:ro
+   -v OFF_HOST_DIR:OFF_HOST_DIR -e PGHOST=... postgres:17 bash
+   /scripts/pg-backup.sh --destination OFF_HOST_DIR`) if it doesn't.
+
 1. Keep base backups and the continuous WAL archive on a different failure
    domain from the primary. Set `PGHOST` and the replication-role `PGUSER`,
    then run:
 
    ```sh
-   PGHOST=primary.example PGUSER=replicator \
+   PGHOST=primary.example PGUSER=replication \
      scripts/pg-backup.sh --destination /mnt/off-host/karst
    ```
 
@@ -109,11 +127,44 @@ This procedure is the operator form of the exercised
        --target-time 2026-09-04T15:18:00.211Z --yes
    ```
 
+   Both paths above are bare-metal examples (Getting started §6). Under the
+   containerized `deploy/compose/ha/` overlay, `PGDATA` is the *host* path
+   backing the `postgres` service's data volume — find it with `docker
+   volume inspect karst-ha_postgres-data --format '{{.Mountpoint}}'`, not
+   the container-internal `/var/lib/postgresql/data` — but
+   `KARST_WAL_ARCHIVE_DIR` must be the *container-internal* mount
+   (`/var/lib/postgresql/wal-archive` in the checked-in compose file), since
+   that value is written verbatim into `postgresql.auto.conf`'s
+   `restore_command`, which the `postgres` process inside the container
+   evaluates. Passing the host path there produces `cp: cannot stat
+   .../wal-archive/%f: No such file or directory` for every segment and
+   silently caps recovery at whatever the base backup's own `pg_wal`
+   already had, short of the requested target.
+
 3. Start PostgreSQL, wait for recovery to promote, and verify known
    pre-target rows exist and post-target marker rows do not. Repoint both
    control replicas, recreate them, enroll or reconnect a node, and verify
    reads and writes. Preserve the script-created `.pre-restore.*` directory
    until verification is complete.
+
+4. Before taking another base backup from this server — most immediately,
+   to rebuild a replica per §5 below — clear the recovery settings
+   `pg-restore.sh` wrote:
+
+   ```sql
+   ALTER SYSTEM RESET recovery_target_time;
+   ALTER SYSTEM RESET recovery_target_action;
+   SELECT pg_reload_conf();
+   ```
+
+   `postgresql.auto.conf` keeps `recovery_target_time`/
+   `recovery_target_action` indefinitely; promotion does not clear them.
+   `pg_basebackup -R` against this primary without this step carries the
+   stale target into the new standby's config alongside `-R`'s own
+   `standby.signal`, and the standby promotes itself the moment it replays
+   past that (already-elapsed) timestamp instead of staying a replica —
+   confirmed live: a from-scratch replica rebuilt this way promoted to a
+   new timeline within seconds of starting, with no operator action.
 
 The drill on 2026-09-04 used these commands after deliberately dropping
 `control_sessions` and measured **RPO ≈38.5 seconds**: corruption at
