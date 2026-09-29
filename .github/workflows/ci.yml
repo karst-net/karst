@@ -469,16 +469,141 @@ jobs:
   # `miniupnpd` and nothing else this job does not already have: ADR-0012's
   # userspace gate and the port-mapping codec check. Between the three jobs,
   # every `#[ignore]`d suite in the tree now runs without being asked.
-  aquifer:
-    name: End-to-end topologies (privileged)
+  #
+  # `aquifer.rs`'s 27 tests used to run as one `--test-threads=1` process here
+  # (comment removed below explained why: every test shares hardcoded network-
+  # namespace/interface names, so two of them racing *on the same host* would
+  # collide). That serialized the whole suite to ~18-20 minutes even though a
+  # GitHub-hosted runner is a fresh VM per job — nothing stops splitting the
+  # 27 tests across several jobs, each still `--test-threads=1` internally,
+  # since jobs never share a host. `aquifer-build` compiles once; `aquifer`
+  # fans that out into 5 shards balanced by real per-test timing from a CI
+  # run (PR #217); `aquifer-fast` keeps the two unrelated, already-fast
+  # privileged checks (a different pair of test binaries) out of the shard
+  # split entirely.
+  #
+  # The shard→tests map lives once, in `aquifer-build`'s "Partition..." step,
+  # and that step diffs it against the built binary's own `--list` output —
+  # so a test added to `aquifer.rs` and left off every shard fails the build
+  # immediately, rather than silently never running in CI again.
+  aquifer-build:
+    name: Build the privileged test binaries
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    outputs:
+      aquifer_bin: ${{ steps.build.outputs.aquifer_bin }}
+      userspace_bin: ${{ steps.build.outputs.userspace_bin }}
+      gateway_bin: ${{ steps.build.outputs.gateway_bin }}
+      matrix: ${{ steps.shard.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
         with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Build the privileged test binaries
+        id: build
+        run: |
+          cargo build --workspace
+          # The gateway suite drives this as a helper inside the client
+          # namespace; `cargo build` alone does not build examples.
+          cargo build -p karst-portmap --example pmprobe
+          find_bin() {
+            cargo test -p "$1" --test "$2" --no-run --message-format=json \
+              | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
+          }
+          aquifer=$(find_bin karstd aquifer)
+          userspace=$(find_bin karstd userspace)
+          gateway=$(find_bin karst-portmap gateway)
+          for b in "$aquifer" "$userspace" "$gateway"; do
+            [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
+          done
+          echo "aquifer_bin=$aquifer" >> "$GITHUB_OUTPUT"
+          echo "userspace_bin=$userspace" >> "$GITHUB_OUTPUT"
+          echo "gateway_bin=$gateway" >> "$GITHUB_OUTPUT"
+      # Every path below is under `target/debug`, uploaded as one artifact so
+      # `actions/upload-artifact` strips exactly that shared prefix — and
+      # every shard/fast-check job downloads it back to the same `target/debug`
+      # path (same checkout, same default GitHub-hosted runner workspace), so
+      # `std::env::current_exe()`-relative lookups inside the test binaries
+      # (`aquifer.rs`'s `bin()`, `gateway.rs`'s `pmprobe()`) resolve exactly as
+      # they would in the single-job form, with no test code aware anything
+      # moved.
+      - name: Upload the built fixtures for the shard and fast-check jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: aquifer-fixtures-${{ github.sha }}
+          path: |
+            target/debug/karst
+            target/debug/karstd
+            target/debug/karst-relay
+            ${{ steps.build.outputs.aquifer_bin }}
+            ${{ steps.build.outputs.userspace_bin }}
+            ${{ steps.build.outputs.gateway_bin }}
+            target/debug/examples/pmprobe
+          if-no-files-found: error
+      # The single source of truth for how the 27 tests are divided — and the
+      # only place that division needs to change when a test is added, removed
+      # or renamed. `tests` below is validated against the binary's own
+      # `--list` before it is ever used to build the matrix `aquifer` reads,
+      # so a shard that has drifted from reality fails here, not by quietly
+      # never running the test it forgot.
+      - name: Partition aquifer's tests into balanced shards, and prove the partition is complete
+        id: shard
+        run: |
+          set -euo pipefail
+          bin="${{ steps.build.outputs.aquifer_bin }}"
+
+          # Balanced by real per-test wall-clock time from a CI run (PR #217),
+          # not by count — the slowest of these 27 tests took 1000x longer
+          # than the fastest. Each shard lands at roughly the same total.
+          declare -A shards
+          shards[1]="overlapping_pushes_under_control_plane_load_still_converge_to_the_final_state a_subscriber_behind_carrier_grade_nat_reaches_a_public_peer a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_offer"
+          shards[2]="a_node_resolves_its_peer_by_mesh_name_before_connecting a_symmetric_nat_reaches_a_port_restricted_peer_that_can_map_a_port exit_node_consent_survives_a_daemon_crash_and_restart an_ssh_policy_denies_what_the_acl_alone_would_permit a_recipients_route_follows_its_effective_gateway_to_a_standby route_changes_converge_through_push_not_restart two_nodes_on_one_home_network_go_direct_over_the_lan an_offline_ceremony_excludes_an_uncovered_peer_from_a_running_aquifer"
+          shards[3]="a_node_with_no_udp_at_all_still_carries_traffic_over_the_relay a_symmetric_nat_reaches_an_address_restricted_peer_directly a_symmetric_nat_reaches_a_reachable_peer_directly a_revoked_peer_loses_its_session_inside_the_deprovisioning_budget a_recipient_reaches_a_subnet_entirely_through_its_peers_gateway_forwarding a_symmetric_nat_with_an_explicit_mapping_reaches_another_symmetric_nat_directly two_nodes_meet_on_the_relay_and_end_up_direct"
+          shards[4]="an_ipv6_only_node_behind_nat64_reaches_an_ipv4_mesh selecting_one_ip_familys_exit_route_does_not_activate_the_other two_nodes_on_two_relays_reach_each_other two_symmetric_nats_stay_on_the_relay_until_port_prediction_lands"
+          shards[5]="a_pair_of_cone_nats_reaches_each_other_through_a_real_turn_server_once_direct_is_blocked a_symmetric_nat_and_a_port_restricted_peer_stay_on_the_relay gateway_forwarding_survives_a_daemon_crash_and_restart two_nodes_behind_nats_punch_through_with_a_reflector two_nodes_punch_through_a_port_restricted_cone"
+
+          live=$(mktemp)
+          "$bin" --list --format terse | sed -n 's/: test$//p' | sort > "$live"
+
+          claimed=$(mktemp)
+          for i in 1 2 3 4 5; do
+            for t in ${shards[$i]}; do echo "$t"; done
+          done | sort > "$claimed"
+
+          if ! diff -u "$live" "$claimed" > /tmp/shard-diff.txt; then
+            echo "::error::aquifer.rs's tests and this job's shard map have drifted \
+              — every test the binary reports must be claimed by exactly one shard \
+              in .github/workflows/ci.yml's 'Partition aquifer's tests' step \
+              ('-' = missing from every shard, '+' = a shard claims a test that no \
+              longer exists)"
+            cat /tmp/shard-diff.txt
+            exit 1
+          fi
+
+          matrix="["
+          sep=""
+          for i in 1 2 3 4 5; do
+            matrix+="$sep{\"shard\":$i,\"tests\":\"${shards[$i]}\"}"
+            sep=","
+          done
+          matrix+="]"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  aquifer:
+    name: "End-to-end topologies (privileged): shard ${{ matrix.shard }}/5"
+    needs: aquifer-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.aquifer-build.outputs.matrix) }}
+    env:
+      AQUIFER_BIN: ${{ needs.aquifer-build.outputs.aquifer_bin }}
+    steps:
+      - uses: actions/checkout@v4
       # The fixture builds and runs the coordination server itself, as root —
       # so `go` has to be on root's PATH, which is what the `sudo env PATH`
       # below is for.
@@ -486,6 +611,13 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: Download the fixtures aquifer-build produced
+        uses: actions/download-artifact@v4
+        with:
+          name: aquifer-fixtures-${{ github.sha }}
+          path: target/debug
+      - name: Artifact upload does not guarantee the executable bit
+        run: chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay "$AQUIFER_BIN"
       # `miniupnpd` serves PCP for the two rows that turn on an explicit port
       # mapping. Masked first: the package's post-install starts the service,
       # which has nothing sensible to bind to on a runner and would fail the
@@ -507,6 +639,11 @@ jobs:
       # identical reason: the package's post-install starts a `coturn` service
       # against its own config, which the row does not use (it writes and starts
       # its own `turnserver.conf` directly).
+      #
+      # Installed in every shard uniformly rather than worked out per shard:
+      # which rows land in which shard can change with the balancing above,
+      # and a shard silently missing a prerequisite is a worse failure mode
+      # than a few redundant `apt-get install`s.
       - name: Port-mapping daemon, translator, resolver and TURN server for the privileged rows
         run: |
           sudo systemctl mask miniupnpd tayga dnsmasq coturn || true
@@ -528,31 +665,59 @@ jobs:
           for t in ip nft go miniupnpd tayga dnsmasq turnserver; do
             printf '%-12s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
           done
-      - name: Build the privileged test binaries
-        run: |
-          cargo build --workspace
-          # The gateway suite drives this as a helper inside the client
-          # namespace; `cargo build` alone does not build examples.
-          cargo build -p karst-portmap --example pmprobe
-          find_bin() {
-            cargo test -p "$1" --test "$2" --no-run --message-format=json \
-              | grep -o "\"executable\":\"[^\"]*$2[^\"]*\"" | head -1 | cut -d'"' -f4
-          }
-          aquifer=$(find_bin karstd aquifer)
-          userspace=$(find_bin karstd userspace)
-          gateway=$(find_bin karst-portmap gateway)
-          for b in "$aquifer" "$userspace" "$gateway"; do
-            [ -n "$b" ] || { echo "::error::could not locate a test binary"; exit 1; }
-          done
-          echo "AQUIFER_TEST_BIN=$aquifer" >> "$GITHUB_ENV"
-          echo "USERSPACE_TEST_BIN=$userspace" >> "$GITHUB_ENV"
-          echo "GATEWAY_TEST_BIN=$gateway" >> "$GITHUB_ENV"
-      # ADR-0012's release gate. Fast, and it shares this job's root because it
-      # needs a TUN device for the *peer* — the node under test runs with an
-      # empty capability bounding set and reads /proc back to prove it.
+      # Fixed namespace, interface and port names throughout, so one at a time
+      # *within this shard* — see the job-group comment above for why sharding
+      # itself is still safe.
       #
-      # Run before the aquifer so a broken privilege drop is reported in seconds
-      # rather than after the long suite.
+      # `KARST_REQUIRE_PREREQUISITES=1` is the part that matters: without it a
+      # runner image that stopped shipping `miniupnpd` would turn this suite
+      # into a no-op that reports success, which is precisely the failure the
+      # matrix exists to prevent one layer down.
+      - name: This shard's topologies
+        timeout-minutes: 10
+        env:
+          KARST_REQUIRE_PREREQUISITES: "1"
+        run: |
+          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
+            "$AQUIFER_BIN" --ignored --test-threads=1 --nocapture --exact ${{ matrix.tests }}
+
+  # ADR-0012's release gate and the port-mapping codec check — a different
+  # pair of test binaries from `aquifer.rs`, already fast (under 15s combined
+  # in the run these numbers came from), so they get their own small job
+  # rather than a slice of the aquifer shard split.
+  aquifer-fast:
+    name: Privileged release gates (userspace, port-mapping codecs)
+    needs: aquifer-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      USERSPACE_BIN: ${{ needs.aquifer-build.outputs.userspace_bin }}
+      GATEWAY_BIN: ${{ needs.aquifer-build.outputs.gateway_bin }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the fixtures aquifer-build produced
+        uses: actions/download-artifact@v4
+        with:
+          name: aquifer-fixtures-${{ github.sha }}
+          path: target/debug
+      - name: Artifact upload does not guarantee the executable bit
+        run: |
+          chmod +x target/debug/karst target/debug/karstd target/debug/karst-relay \
+            target/debug/examples/pmprobe "$USERSPACE_BIN" "$GATEWAY_BIN"
+      # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
+      # not write. Rows 8b and 9 of `aquifer`'s matrix rest on these bytes being
+      # right, and every other test in `karst-portmap` checks the encoder
+      # against the decoder — which passes just as happily when both halves
+      # share a misreading.
+      - name: Port-mapping daemon for the gateway codec check
+        run: |
+          sudo systemctl mask miniupnpd || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq miniupnpd nftables || true
+          printf '%s\n' /usr/sbin /sbin >> "$GITHUB_PATH"
+      # Fast, and it needs a TUN device for the *peer* — the node under test
+      # runs with an empty capability bounding set and reads /proc back to
+      # prove it.
       - name: Userspace mode without CAP_NET_ADMIN
         timeout-minutes: 5
         env:
@@ -563,34 +728,14 @@ jobs:
           # virtual machine, and the number it is asserting on is the thing
           # anyone debugging it will want first.
           sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
-            "$USERSPACE_TEST_BIN" --ignored --test-threads=1 --nocapture
-      # The NAT-PMP and PCP codecs against `miniupnpd`, an implementation we did
-      # not write. Rows 8b and 9 of the matrix below rest on these bytes being
-      # right, and every other test in `karst-portmap` checks the encoder
-      # against the decoder — which passes just as happily when both halves
-      # share a misreading. Four seconds, and it needs exactly the root and the
-      # `miniupnpd` this job already has, which is why it lives here rather than
-      # in a job of its own.
+            "$USERSPACE_BIN" --ignored --test-threads=1 --nocapture
       - name: Port-mapping codecs against a third-party gateway
         timeout-minutes: 5
         env:
           KARST_REQUIRE_PREREQUISITES: "1"
         run: |
           sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
-            "$GATEWAY_TEST_BIN" --ignored --test-threads=1
-      # Fixed namespace, interface and port names throughout, so one at a time.
-      #
-      # `KARST_REQUIRE_PREREQUISITES=1` is the part that matters: without it a
-      # runner image that stopped shipping `miniupnpd` would turn this suite
-      # into a no-op that reports success, which is precisely the failure the
-      # matrix exists to prevent one layer down.
-      - name: Every topology in the matrix
-        timeout-minutes: 35
-        env:
-          KARST_REQUIRE_PREREQUISITES: "1"
-        run: |
-          sudo env "PATH=$PATH" "KARST_REQUIRE_PREREQUISITES=1" \
-            "$AQUIFER_TEST_BIN" --ignored --test-threads=1 --nocapture
+            "$GATEWAY_BIN" --ignored --test-threads=1
 
   # Licence allowlist — a GPL dependency reaching the MIT/Apache crates would
   # break both App Store and kernel-datapath viability (ADR-0003, ADR-0007).
