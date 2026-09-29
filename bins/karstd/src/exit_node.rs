@@ -44,10 +44,35 @@ type TempFile = karst_secure_storage::SecureFile;
 /// Lock down `parent` so only Administrators and `LocalSystem` can enter it
 /// — the Unix `0700` directory's counterpart.
 ///
+/// A directory that does not exist yet is created fresh and set to `0700`
+/// directly. One that already exists is checked against `0700` rather than
+/// forced to it: `exit_node_state_file` is operator-configurable, and forcing
+/// the mode of whatever directory it happens to resolve into is how a path
+/// under a shared location (rather than a dedicated one) would get that
+/// location's permissions silently overwritten on every start — see
+/// `ipc::secure_dir`, which this mirrors.
+///
 /// # Errors
-/// Any failure creating or securing the directory.
+/// Any failure creating the directory, or [`io::ErrorKind::PermissionDenied`]
+/// if `parent` already exists with a mode other than `0700`.
 #[cfg(unix)]
 fn secure_parent(parent: &Path) -> io::Result<()> {
+    if parent.exists() {
+        let actual = fs::metadata(parent)?.permissions().mode() & 0o777;
+        return if actual == 0o700 {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} exists with mode {actual:04o}, not the required 0700 — refusing to reuse \
+                     a directory karstd does not already own exclusively; point the exit-node \
+                     state file at a dedicated path instead of a shared one",
+                    parent.display()
+                ),
+            ))
+        };
+    }
     fs::create_dir_all(parent)?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
 }
@@ -187,7 +212,13 @@ mod tests {
     #[test]
     fn selection_survives_restart_and_disable() {
         let dir = Scratch::new("exit-selection");
-        let path = dir.join("selected");
+        // Nested, not a direct child of the scratch root: `secure_parent`
+        // refuses to force its required mode onto a directory it did not
+        // create, and the scratch root itself is created with the ordinary,
+        // umask-determined mode every other `Scratch` use expects — see
+        // `ipc::secure_dir`, which this mirrors, and its own test scratch
+        // directory nesting for the same reason.
+        let path = dir.join("state").join("selected");
         let mut selection = Selection::load(&path).unwrap();
         assert_eq!(selection.active(), None);
 
