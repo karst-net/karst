@@ -2301,8 +2301,14 @@ fn write_node_config(
             // Under `net.dir`, never the host's real
             // `crate::exit_node::DEFAULT_STATE_FILE` — this test runs as root
             // on a shared machine, and every node in every row would
-            // otherwise read and write the exact same file.
-            d.join("exit-route").display(),
+            // otherwise read and write the exact same file. Nested in its own
+            // fresh `state/` subdirectory, not `d` itself: `d` already exists
+            // by the time this runs (the config/keys above were just written
+            // into it), and `exit_node::secure_parent` now refuses to force
+            // its required `0700` onto a directory it did not create — see
+            // that function's doc comment, and `ipc::secure_dir`, which it
+            // mirrors.
+            d.join("state").join("exit-route").display(),
             pins.kem,
             pins.verify,
             d.join("identity.key").display(),

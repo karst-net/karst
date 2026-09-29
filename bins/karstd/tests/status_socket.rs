@@ -20,7 +20,19 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn root_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("karstd-status-socket-{}", std::process::id()))
+    // `/tmp`, not `std::env::temp_dir()`: the latter is `TMPDIR`, which on
+    // macOS is a long per-session path under `/var/folders/...`, and this
+    // function's own two extra path segments (`run/karstd.sock`,
+    // `status/status.sock` — see `start`) are exactly what pushed a real
+    // macOS CI run's joined path past `sockaddr_un.sun_path`'s ~104-byte
+    // limit (Linux's is 108, wide enough to hide the same bug — see
+    // `bins/karstd/src/scratch.rs`'s `Scratch::new`, which hit this first).
+    let base = if cfg!(unix) {
+        PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    };
+    base.join(format!("karstd-status-socket-{}", std::process::id()))
 }
 
 struct Node {
