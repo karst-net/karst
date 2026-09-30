@@ -1,0 +1,6 @@
+tool	topology	setup_s	tcp_mbps	udp_mbps	udp_jitter_ms	udp_loss_pct	ping_avg_ms	ping_p99_ms	idle_cpu_pct	idle_rss_kb
+wireguard	lan-direct	1.08	900.0	499.9	0.007	0.0	0.570	0.603	NA	NA
+karst	lan-direct	0.94	806.6	499.9	0.012	0.42	0.590	0.622	0.1	9868
+nebula	lan-direct	1.96	817.2	499.9	0.01	0.01	0.651	0.730	0.4	24868
+headscale	lan-direct	30.36	887.2	499.9	0.017	1.08	0.816	0.966	4.5	85408
+tailscale	lan-direct	NA	887.2	499.9	0.015	0.02	0.902	0.924	2.4	82472
