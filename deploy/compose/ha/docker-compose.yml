@@ -28,7 +28,13 @@ services:
       NB_STORE_ENGINE_POSTGRES_DSN: ${NB_STORE_ENGINE_POSTGRES_DSN:?current primary DSN}
       KARST_REPLICA_ID: ${KARST_REPLICA_ID:?stable unique host ID}
       KARST_HA_NOTIFY_CHANNEL: ${KARST_HA_NOTIFY_CHANNEL:-karst_ha}
-      KARST_RELAY_ROSTER_FILE: /var/lib/karst/roster.toml
+      # A separate writable mount from /var/lib/karst on purpose: that dir is
+      # bootstrap input (relays.json/policy.json) and stays read-only, but the
+      # relay's admission roster is per-replica-mutable state, rewritten every
+      # 25s by whichever replica holds the one-writer duty. It must resolve to
+      # the same physical location as whatever KARST_ROSTER_DIR points the
+      # relay's own read of roster.toml at (issue #219).
+      KARST_RELAY_ROSTER_FILE: /var/lib/karst-roster/roster.toml
       # Optional deployment-namespace prefix on top of the per-account
       # aquifer ADR-0033 now derives automatically (§5.4) — unset is fine.
       # Previously a required fixed value the roster refresher fatalled
@@ -46,6 +52,7 @@ services:
       KARST_BOOTSTRAP_SETUP_KEY_FILE: ${KARST_BOOTSTRAP_SETUP_KEY_FILE:-}
     volumes:
       - ${KARST_SHARED_STATE_DIR:?bootstrap state}:/var/lib/karst:ro
+      - ${KARST_ROSTER_DIR:?writable path shared with the relay}:/var/lib/karst-roster
       - ./state/netbird:/var/lib/netbird
       - ./state/management.json:/etc/netbird/management.json
     ports: ["${KARST_CONTROL_PORT:-33073}:33073"]
