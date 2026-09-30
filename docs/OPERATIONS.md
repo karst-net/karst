@@ -31,6 +31,32 @@ The installed `ExecStopPost=karst dns revert` is part of safe operation: keep
 it when customizing the unit. Back up `/etc/karst`, `/etc/netbird`, and server
 state with permissions and ownership intact.
 
+### Optional: internal short-link redirect service
+
+`karst-shortlink` (`server/cmd/karst-shortlink`, [ADR-0042](adr/0042-internal-shortlink-redirect-service.md))
+is a small, separate binary that serves "go/foo"-style keyword redirects
+(the wiki, the dashboard, the on-call doc) to devices on one account's mesh,
+and nowhere else. It is not part of `karst-control` and nothing above needs
+to change to deploy it.
+
+1. Enroll (or rename) one kernel-TUN mesh device as `go` — any short label
+   works; the redirect surface resolves at `<that label>.<zone>` via
+   KarstDNS's existing peer-hostname resolution, with no server-side
+   configuration. Userspace-mode nodes cannot host it, because userspace
+   mode opens no host socket at all.
+2. On that device, run the binary with:
+   - `KARST_SHORTLINK_DB` — path to its SQLite file (durable storage; back
+     it up the same as any other server state).
+   - `KARST_SHORTLINK_LISTEN` — bind address, e.g. `:80`, or the device's
+     own mesh address specifically if the host also runs something else
+     you do not want reachable the same way.
+   - `KARST_SHORTLINK_ADMIN_TOKEN` — bearer token for the CRUD API. Unset
+     disables `/api/links` entirely; existing links still redirect.
+3. Manage links with the CRUD API, e.g.
+   `curl -H "Authorization: Bearer $TOKEN" -d '{"keyword":"wiki","target_url":"https://wiki.internal"}' http://go.<zone>/api/links`.
+   There is no admin-console UI for this yet — see the ADR's "Reconsider
+   if" section.
+
 ## 2. Day-to-day operations
 
 ### Enroll and revoke nodes and users
