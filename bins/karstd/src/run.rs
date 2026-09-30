@@ -33,9 +33,11 @@ use karst_tun::{Tun, TunConfig, Userspace};
 use crate::config::Config;
 use crate::disco;
 use crate::engine::{Engine, Output, Via};
+use crate::filetransfer;
 use crate::ipc;
 use crate::portmap;
 use crate::random_seed;
+use crate::routing::PeerIndex;
 
 /// How often timers are advanced. Handshake retransmission starts at 300 ms
 /// (§10), so this has to be comfortably finer than that.
@@ -984,6 +986,19 @@ fn run_engine(
                                     active_exit.is_some(),
                                 );
                             }
+                            if matches!(
+                                command,
+                                ipc::Command::FileSend { .. }
+                                    | ipc::Command::FileAccept { .. }
+                                    | ipc::Command::FileReject { .. }
+                                    | ipc::Command::FilePending
+                                    | ipc::Command::FileReceipts
+                            ) {
+                                return file_transfer_command(
+                                    &command, engine_ctl, socket_ctl, tun_ctl, relay_out, turn_out,
+                                    started,
+                                );
+                            }
                             if command == ipc::Command::StatusJson {
                                 let current = engine_ctl.config();
                                 let selected = exit_node_ctl.and_then(|state| {
@@ -1464,6 +1479,7 @@ fn disco_poll(
             .map(|(d, to)| (d, Via::Direct(to)))
             .collect(),
         packets: Vec::new(),
+        files_received: Vec::new(),
     }
 }
 
@@ -4304,7 +4320,12 @@ fn report(
         | ipc::Command::ExitUse(_)
         | ipc::Command::ExitDisable
         | ipc::Command::Metrics
-        | ipc::Command::StatusJson => {
+        | ipc::Command::StatusJson
+        | ipc::Command::FileSend { .. }
+        | ipc::Command::FileAccept { .. }
+        | ipc::Command::FileReject { .. }
+        | ipc::Command::FilePending
+        | ipc::Command::FileReceipts => {
             unreachable!("handled before general report")
         }
         ipc::Command::Status => {
@@ -4395,6 +4416,13 @@ fn report(
             let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
             let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
             let _ = writeln!(out, "ssh_denied = {}", stats.ssh_denied);
+            let _ = writeln!(out, "file_transfer_denied = {}", stats.file_transfer_denied);
+            let _ = writeln!(
+                out,
+                "file_transfer_completed = {}",
+                stats.file_transfer_completed
+            );
+            let _ = writeln!(out, "file_transfer_failed = {}", stats.file_transfer_failed);
             // **Silent loss is the failure this line exists to prevent.** The
             // queue to the relay worker is bounded and drops rather than
             // blocking, which is the right trade — but a node quietly shedding
@@ -4552,6 +4580,9 @@ struct StatsJson {
     acl_denied_out: u64,
     acl_unclassifiable: u64,
     ssh_denied: u64,
+    file_transfer_denied: u64,
+    file_transfer_completed: u64,
+    file_transfer_failed: u64,
     relay_dropped: u64,
 }
 
@@ -4757,6 +4788,9 @@ fn status_json(
             acl_denied_out: stats.acl_denied_out,
             acl_unclassifiable: stats.acl_unclassifiable,
             ssh_denied: stats.ssh_denied,
+            file_transfer_denied: stats.file_transfer_denied,
+            file_transfer_completed: stats.file_transfer_completed,
+            file_transfer_failed: stats.file_transfer_failed,
             relay_dropped: relay_dropped.load(Ordering::Relaxed),
         },
         policy,
@@ -4905,6 +4939,7 @@ fn demultiplex(
                 .map(|(d, to)| (d, Via::Direct(to)))
                 .collect(),
             packets: Vec::new(),
+            files_received: Vec::new(),
         },
         disco::Verdict::NotAven => {
             engine.inbound(reasm, datagram, from, now_ms, &responder_randomness())
@@ -4989,6 +5024,161 @@ fn dispatch(
     }
     for packet in out.packets {
         let _ = tun.send(&packet);
+    }
+    for file in out.files_received {
+        land_received_file(&file);
+    }
+}
+
+/// Write a verified, completed transfer to disk — GitHub issue #212. The
+/// engine only decrypts and validates (mirroring the TUN write just above:
+/// `Output` names the I/O, `dispatch` performs it); where the bytes land is
+/// this function's job alone, same as `filetransfer::default_incoming_dir`'s
+/// own doc comment describes.
+///
+/// Failure is logged and otherwise swallowed, the same discipline the TUN
+/// write above already uses: a transfer that could not be saved must not
+/// take the daemon down, and the sender has no way to be told anyway — the
+/// `Receipt` frame already went out reporting a verified transfer before
+/// this ever runs.
+fn land_received_file(file: &filetransfer::ReceivedFile) {
+    let Some(dir) = filetransfer::default_incoming_dir() else {
+        tracing::warn!(
+            peer = %file.peer_name,
+            name = %file.name,
+            "no incoming directory available (HOME/USERPROFILE unset); \
+             completed file transfer was verified but not saved"
+        );
+        return;
+    };
+    match filetransfer::save_received_file(&dir, &file.name, &file.bytes) {
+        Ok(path) => {
+            tracing::info!(peer = %file.peer_name, name = %file.name, path = %path.display(), "file transfer complete");
+        }
+        Err(error) => {
+            tracing::warn!(peer = %file.peer_name, name = %file.name, %error, "could not save completed file transfer");
+        }
+    }
+}
+
+/// Handle the five file-transfer IPC commands (GitHub issue #212) against
+/// the live engine.
+///
+/// Unlike every other admin-socket command, these can originate real
+/// traffic — `offer_file`/`accept_transfer`/`reject_transfer` each return an
+/// [`Output`] the way the datapath workers' own inbound/poll handling does,
+/// and it is flushed here with the exact same [`dispatch`] those workers
+/// call, over the same socket: there is no separate send path to keep in
+/// sync with the real one.
+///
+/// A file's bytes are read from disk here, by `karstd` itself — never
+/// carried over the control socket, which is one line in and one reply out
+/// (`ipc`'s module doc) and has no business budgeting for an arbitrarily
+/// large payload.
+fn file_transfer_command(
+    command: &ipc::Command,
+    engine: &Engine,
+    socket: &UdpTransport,
+    tun: &NetworkDevice,
+    relay: Option<&RelaySender>,
+    turn: Option<&TurnSender>,
+    started: Instant,
+) -> String {
+    use std::fmt::Write as _;
+
+    let now = now_ms(started);
+    let config = engine.config();
+    let peer_name = |index: PeerIndex| {
+        config
+            .peers
+            .get(index)
+            .map_or_else(|| "unknown".to_owned(), |p| p.name.clone())
+    };
+
+    match command {
+        ipc::Command::FileSend { peer, path } => {
+            let Some(index) = config.peer_index(peer) else {
+                return format!("error = \"no such peer {peer:?}\"\n");
+            };
+            let data = match std::fs::read(path) {
+                Ok(data) => data,
+                Err(error) => return format!("error = \"could not read {path:?}: {error}\"\n"),
+            };
+            let name = std::path::Path::new(path)
+                .file_name()
+                .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned());
+            match engine.offer_file(index, name, data, now) {
+                Ok((id, out)) => {
+                    dispatch(out, socket, tun, relay, turn);
+                    format!(
+                        "transfer_id = \"{}\"\nstatus = \"offered\"\n",
+                        filetransfer::id_to_hex(&id)
+                    )
+                }
+                Err(error) => format!("error = \"{error}\"\n"),
+            }
+        }
+        ipc::Command::FileAccept { peer, id } => {
+            let Some(index) = config.peer_index(peer) else {
+                return format!("error = \"no such peer {peer:?}\"\n");
+            };
+            let Some(id) = filetransfer::id_from_hex(id) else {
+                return "error = \"malformed transfer id\"\n".to_owned();
+            };
+            match engine.accept_transfer(index, id, now) {
+                Ok(out) => {
+                    dispatch(out, socket, tun, relay, turn);
+                    "status = \"accepted\"\n".to_owned()
+                }
+                Err(error) => format!("error = \"{error}\"\n"),
+            }
+        }
+        ipc::Command::FileReject { peer, id, reason } => {
+            let Some(index) = config.peer_index(peer) else {
+                return format!("error = \"no such peer {peer:?}\"\n");
+            };
+            let Some(id) = filetransfer::id_from_hex(id) else {
+                return "error = \"malformed transfer id\"\n".to_owned();
+            };
+            match engine.reject_transfer(index, id, filetransfer::RejectReason::parse(reason), now)
+            {
+                Ok(out) => {
+                    dispatch(out, socket, tun, relay, turn);
+                    "status = \"rejected\"\n".to_owned()
+                }
+                Err(error) => format!("error = \"{error}\"\n"),
+            }
+        }
+        ipc::Command::FilePending => {
+            let mut out = String::new();
+            for (peer, id, offer) in engine.pending_transfers() {
+                let _ = writeln!(out, "\n[[pending]]");
+                let _ = writeln!(out, "peer = \"{}\"", peer_name(peer));
+                let _ = writeln!(out, "transfer_id = \"{}\"", filetransfer::id_to_hex(&id));
+                let _ = writeln!(out, "name = \"{}\"", offer.name);
+                let _ = writeln!(out, "size = {}", offer.size);
+            }
+            out
+        }
+        ipc::Command::FileReceipts => {
+            let mut out = String::new();
+            for receipt in engine.file_transfer_receipts() {
+                let _ = writeln!(out, "\n[[receipt]]");
+                let _ = writeln!(out, "peer = \"{}\"", peer_name(receipt.peer));
+                let _ = writeln!(
+                    out,
+                    "transfer_id = \"{}\"",
+                    filetransfer::id_to_hex(&receipt.transfer)
+                );
+                let _ = writeln!(out, "name = \"{}\"", receipt.name);
+                let _ = writeln!(out, "size = {}", receipt.size);
+                let _ = writeln!(out, "direction = \"{:?}\"", receipt.direction);
+                let _ = writeln!(out, "outcome = \"{:?}\"", receipt.outcome);
+                let _ = writeln!(out, "at_ms = {}", receipt.at_ms);
+            }
+            out
+        }
+        _ => String::from("error = \"not a file-transfer command\"\n"),
     }
 }
 
@@ -5633,6 +5823,13 @@ fn bug_report(
     let _ = writeln!(out, "acl_denied_out = {}", stats.acl_denied_out);
     let _ = writeln!(out, "acl_unclassifiable = {}", stats.acl_unclassifiable);
     let _ = writeln!(out, "ssh_denied = {}", stats.ssh_denied);
+    let _ = writeln!(out, "file_transfer_denied = {}", stats.file_transfer_denied);
+    let _ = writeln!(
+        out,
+        "file_transfer_completed = {}",
+        stats.file_transfer_completed
+    );
+    let _ = writeln!(out, "file_transfer_failed = {}", stats.file_transfer_failed);
     let _ = writeln!(
         out,
         "relay_dropped = {}",

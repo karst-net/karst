@@ -301,6 +301,43 @@ impl PacketFilter {
         }
     }
 
+    /// May `from` open a file transfer to this node? — GitHub issue #212.
+    ///
+    /// Evaluated against the general ingress rule set at
+    /// [`crate::filetransfer::SERVICE_PORT`], the same "no separate
+    /// allow-list" reuse [`Self::ingress`] itself documents, just without a
+    /// real IP packet to read a port from: a file-transfer offer rides the
+    /// PHREATIC session's inner control channel
+    /// (`crate::filetransfer`), not a tunnelled packet, so there is nothing
+    /// for [`ip::ports`] to parse. `peer_owns_destination: true` for the
+    /// same reason [`SshFilter::admit`] hardcodes it — the "destination"
+    /// here is always this node itself, never `from`'s.
+    #[must_use]
+    pub fn ingress_service(&self, from: PeerIndex, port: u16) -> Verdict {
+        Self::evaluate_service(self.ingress.as_deref(), from, port)
+    }
+
+    /// May we open a file transfer to `to`? The local, fast half of the same
+    /// check — see [`Self::egress`]'s doc comment on why this side exists at
+    /// all: it fails a forbidden transfer before anything is sent, but the
+    /// receiver's [`Self::ingress_service`] is the one that carries the
+    /// security property.
+    #[must_use]
+    pub fn egress_service(&self, to: PeerIndex, port: u16) -> Verdict {
+        Self::evaluate_service(self.egress.as_deref(), to, port)
+    }
+
+    fn evaluate_service(rules: Option<&[Rule]>, peer: PeerIndex, port: u16) -> Verdict {
+        let Some(rules) = rules else {
+            return Verdict::Permit; // no policy source at all
+        };
+        if rules.iter().any(|r| r.permits(peer, port, None, true)) {
+            Verdict::Permit
+        } else {
+            Verdict::Denied
+        }
+    }
+
     /// Whether any policy is being enforced, for `karst status`.
     ///
     /// An operator debugging "why can I not reach this host" needs to
@@ -1067,5 +1104,75 @@ mod tests {
         );
         assert_eq!(f.rule_count(), Some(0));
         assert_eq!(f.admit(0), Verdict::Denied);
+    }
+
+    // ── the file-transfer service port (GitHub issue #212) ─────────────────
+
+    /// The general ACL, reused rather than a second allow-list: a rule
+    /// naming the file-transfer port permits it, exactly as any other port
+    /// grant would.
+    #[test]
+    fn a_general_acl_rule_covers_the_file_transfer_port() {
+        let f = PacketFilter::compile(
+            &[rule(
+                &["alice"],
+                vec![port(
+                    u32::from(crate::filetransfer::SERVICE_PORT),
+                    u32::from(crate::filetransfer::SERVICE_PORT),
+                )],
+            )],
+            &[],
+            &handles(),
+        );
+        assert_eq!(
+            f.ingress_service(0, crate::filetransfer::SERVICE_PORT),
+            Verdict::Permit
+        );
+        assert_eq!(
+            f.ingress_service(1, crate::filetransfer::SERVICE_PORT),
+            Verdict::Denied
+        );
+    }
+
+    /// Default deny applies here exactly as it does to an ordinary packet: an
+    /// empty policy grants a file transfer nothing.
+    #[test]
+    fn an_empty_policy_denies_file_transfer_too() {
+        let f = PacketFilter::compile(&[], &[], &handles());
+        assert_eq!(
+            f.ingress_service(0, crate::filetransfer::SERVICE_PORT),
+            Verdict::Denied
+        );
+        assert_eq!(
+            f.egress_service(0, crate::filetransfer::SERVICE_PORT),
+            Verdict::Denied
+        );
+    }
+
+    /// And no policy source at all — the static TOML roster — permits it,
+    /// the same "nothing to enforce" state every other check here has.
+    #[test]
+    fn no_policy_source_permits_file_transfer() {
+        let f = PacketFilter::unrestricted();
+        assert_eq!(
+            f.ingress_service(0, crate::filetransfer::SERVICE_PORT),
+            Verdict::Permit
+        );
+    }
+
+    /// A wildcard port range (what an operator granting "reach me on
+    /// anything" would write) also covers it, since this is the same rule
+    /// matcher an ordinary packet uses.
+    #[test]
+    fn a_wildcard_port_rule_covers_the_file_transfer_port_too() {
+        let f = PacketFilter::compile(&[rule(&["*"], vec![port(0, 65535)])], &[], &handles());
+        assert_eq!(
+            f.ingress_service(0, crate::filetransfer::SERVICE_PORT),
+            Verdict::Permit
+        );
+        assert_eq!(
+            f.ingress_service(1, crate::filetransfer::SERVICE_PORT),
+            Verdict::Permit
+        );
     }
 }

@@ -28,6 +28,7 @@ pub mod engine;
 pub mod enrollment;
 pub mod exit_node;
 pub mod exit_policy;
+pub mod filetransfer;
 pub mod filter;
 pub mod flow;
 pub mod gateway;

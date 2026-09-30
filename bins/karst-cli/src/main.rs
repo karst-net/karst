@@ -30,6 +30,11 @@ USAGE:
     karst exit-node list          list exit routes and local selection
     karst exit-node use ROUTE_ID  persistently select an exit route
     karst exit-node disable       withdraw and forget exit consent
+    karst file send PEER PATH     offer PATH's bytes to PEER (GitHub issue #212)
+    karst file accept PEER ID     accept a pending inbound offer (hex transfer id)
+    karst file reject PEER ID [REASON]  reject it (REASON: declined, too-large, busy)
+    karst file pending            inbound offers awaiting accept/reject
+    karst file receipts           the local log of resolved transfers
     karst bugreport  a support bundle, safe to attach to an issue
     karst metrics    Engine::Stats and route/gateway state as Prometheus text
     karst down       ask the daemon to stop
@@ -105,43 +110,23 @@ fn main() -> ExitCode {
         return command_dns_revert(tail);
     }
 
-    let command = match (*first, rest) {
-        ("-h" | "--help", _) => {
-            print!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
-        // This CLI's own build, no socket needed — distinct from `karst
-        // version` below, which asks the running daemon for *its* build and
-        // fails if there is none to ask.
-        ("-V" | "--version", _) => {
-            println!("karst {}", karstd::VERSION);
-            return ExitCode::SUCCESS;
-        }
-        ("status", ["--json", ..]) => Command::StatusJson,
-        ("status", _) => Command::Status,
-        ("dns", ["status", ..]) => Command::DnsStatus,
-        ("dns", ["query", name, ..]) => Command::DnsQuery((*name).to_owned()),
-        ("exit-node", ["list", ..]) => Command::ExitList,
-        ("exit-node", ["use", id, ..]) => Command::ExitUse((*id).to_owned()),
-        ("exit-node", ["disable", ..]) => Command::ExitDisable,
-        ("bugreport", _) => Command::BugReport,
-        ("metrics", _) => Command::Metrics,
-        ("down", _) => Command::Down,
-        ("version", _) => Command::Version,
-        (other, _) => {
-            eprintln!("karst: unknown command {other:?}\n\n{USAGE}");
-            return ExitCode::FAILURE;
-        }
+    if matches!(*first, "-h" | "--help") {
+        print!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    // This CLI's own build, no socket needed — distinct from `karst version`
+    // below, which asks the running daemon for *its* build and fails if
+    // there is none to ask.
+    if matches!(*first, "-V" | "--version") {
+        println!("karst {}", karstd::VERSION);
+        return ExitCode::SUCCESS;
+    }
+    let Some(command) = parse_command(first, rest) else {
+        eprintln!("karst: unknown command {first:?}\n\n{USAGE}");
+        return ExitCode::FAILURE;
     };
 
-    let command_args = match (*first, rest) {
-        ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
-        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..])
-        | ("status", ["--json", tail @ ..]) => tail,
-        ("dns" | "exit-node", []) => &[],
-        _ => rest,
-    };
-    let socket = match socket_arg(command_args) {
+    let socket = match socket_arg(command_args(first, rest)) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("karst: {e}");
@@ -155,6 +140,72 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => report_request_error(&socket, &e),
+    }
+}
+
+/// Parse the subcommand and its fixed positional arguments into a
+/// [`Command`]. `None` for anything unrecognized — `main` reports that as an
+/// unknown command.
+fn parse_command(first: &str, rest: &[&str]) -> Option<Command> {
+    match (first, rest) {
+        ("status", ["--json", ..]) => Some(Command::StatusJson),
+        ("status", _) => Some(Command::Status),
+        ("dns", ["status", ..]) => Some(Command::DnsStatus),
+        ("dns", ["query", name, ..]) => Some(Command::DnsQuery((*name).to_owned())),
+        ("exit-node", ["list", ..]) => Some(Command::ExitList),
+        ("exit-node", ["use", id, ..]) => Some(Command::ExitUse((*id).to_owned())),
+        ("exit-node", ["disable", ..]) => Some(Command::ExitDisable),
+        ("file", ["send", peer, path, ..]) => Some(Command::FileSend {
+            peer: (*peer).to_owned(),
+            path: (*path).to_owned(),
+        }),
+        ("file", ["accept", peer, id, ..]) => Some(Command::FileAccept {
+            peer: (*peer).to_owned(),
+            id: (*id).to_owned(),
+        }),
+        ("file", ["reject", peer, id, reason, ..])
+            if matches!(*reason, "declined" | "too-large" | "busy") =>
+        {
+            Some(Command::FileReject {
+                peer: (*peer).to_owned(),
+                id: (*id).to_owned(),
+                reason: (*reason).to_owned(),
+            })
+        }
+        ("file", ["reject", peer, id, ..]) => Some(Command::FileReject {
+            peer: (*peer).to_owned(),
+            id: (*id).to_owned(),
+            reason: "declined".to_owned(),
+        }),
+        ("file", ["pending", ..]) => Some(Command::FilePending),
+        ("file", ["receipts", ..]) => Some(Command::FileReceipts),
+        ("bugreport", _) => Some(Command::BugReport),
+        ("metrics", _) => Some(Command::Metrics),
+        ("down", _) => Some(Command::Down),
+        ("version", _) => Some(Command::Version),
+        _ => None,
+    }
+}
+
+/// The tail of `rest` left over once [`parse_command`]'s fixed positional
+/// arguments are stripped off — what `socket_arg` parses `-s`/`--socket`
+/// from.
+fn command_args<'a>(first: &str, rest: &'a [&'a str]) -> &'a [&'a str] {
+    match (first, rest) {
+        ("file", ["reject", _, _, reason, tail @ ..])
+            if matches!(*reason, "declined" | "too-large" | "busy") =>
+        {
+            tail
+        }
+        (
+            "file",
+            ["reject" | "send" | "accept", _, _, tail @ ..] | ["pending" | "receipts", tail @ ..],
+        )
+        | ("dns", ["status", tail @ ..] | ["query", _, tail @ ..])
+        | ("exit-node", ["list" | "disable", tail @ ..] | ["use", _, tail @ ..])
+        | ("status", ["--json", tail @ ..]) => tail,
+        ("dns" | "exit-node" | "file", []) => &[],
+        _ => rest,
     }
 }
 
