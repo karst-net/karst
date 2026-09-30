@@ -23,6 +23,13 @@ because it decided a design question — whether the birthday technique is worth
 its architectural cost — and because the two fixture defects it turned up on the
 way are worth more than the number it produced.
 
+`vpn-comparison-2026-09-30.md` is issue #201: karst against four alternative
+mesh VPNs (WireGuard, Nebula, self-hosted Headscale, and the user's real
+production Tailscale tunnel), one shared instrument
+(`scripts/vpn-compare/`) across all five, on hosts that also run a live
+production karst deployment — committed with the harness because reproducing
+it safely against shared, in-use lab hosts is most of what it took to get.
+
 ## Runs
 
 | File | Result |
@@ -33,6 +40,7 @@ way are worth more than the number it produced.
 | `io-uring-spike-2026-09-12.md` | issue #120 spike — plain and multishot io_uring both lose to `recvmmsg` on the receive side (multishot far worse: 90% packet loss under load); **`UDP_GRO`, implemented correctly this time, cuts receive-side CPU 32%** at comparable throughput — recommending GRO for Phase B, not io_uring |
 | `udp-gro-2026-09-12.md` | issue #120 Phase B, shipped — real two-host run of the production `UDP_GRO` implementation: **995,228 datagrams from genuinely coalesced reads, zero corrupted**, closing the correctness question the earlier reverted attempt got wrong |
 | `quic-relay-2026-09-12.md` | issue #122 / ADR-0020, clean-loopback only — QUIC's handshake costs ~45% more median latency than TCP+TLS but a much shorter tail (worst case 5–6 ms vs 31–34 ms), and forwards 5–13% faster once established; the loss-recovery property the transport is actually for is not measured here and is left as a documented follow-up |
+| `vpn-comparison-2026-09-30.md` | issue #201 — karst, WireGuard, Nebula, Headscale, and real Tailscale within a fairly narrow band on an uncontended LAN (806–900 Mbps TCP, sub-ms ping); NAT/relay-forced paths, multi-stream scaling, and reconvergence timing left as documented follow-ups |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened
