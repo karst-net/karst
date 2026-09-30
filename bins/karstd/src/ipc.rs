@@ -160,6 +160,24 @@ pub enum Command {
     ExitUse(String),
     /// Withdraw and forget local exit-route consent.
     ExitDisable,
+    /// Offer a file to a peer by name — GitHub issue #212. `path` is read
+    /// from disk by `karstd` itself, not carried over the socket: the
+    /// content can be arbitrarily large, and this line-oriented protocol
+    /// carries one line in, one reply out.
+    FileSend { peer: String, path: String },
+    /// Accept a pending inbound offer, named by peer and hex transfer id.
+    FileAccept { peer: String, id: String },
+    /// Reject a pending inbound offer. `reason` is one of `declined`
+    /// (default), `too-large`, `busy` — see `filetransfer::RejectReason`.
+    FileReject {
+        peer: String,
+        id: String,
+        reason: String,
+    },
+    /// List inbound offers awaiting this node's own accept/reject decision.
+    FilePending,
+    /// List resolved transfers — the bounded local audit trail.
+    FileReceipts,
 }
 
 impl Command {
@@ -177,6 +195,8 @@ impl Command {
             "dns-status" => Some(Self::DnsStatus),
             "exit-list" => Some(Self::ExitList),
             "exit-disable" => Some(Self::ExitDisable),
+            "file-pending" => Some(Self::FilePending),
+            "file-receipts" => Some(Self::FileReceipts),
             _ => line
                 .strip_prefix("dns-query ")
                 .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
@@ -185,6 +205,39 @@ impl Command {
                     line.strip_prefix("exit-use ")
                         .filter(|id| !id.is_empty() && !id.contains(char::is_whitespace))
                         .map(|id| Self::ExitUse(id.to_owned()))
+                })
+                .or_else(|| {
+                    // `path` is everything after the peer name, so it may
+                    // itself contain spaces — only `peer` is a single token.
+                    let rest = line.strip_prefix("file-send ")?;
+                    let (peer, path) = rest.split_once(char::is_whitespace)?;
+                    let path = path.trim();
+                    (!peer.is_empty() && !path.is_empty()).then(|| Self::FileSend {
+                        peer: peer.to_owned(),
+                        path: path.to_owned(),
+                    })
+                })
+                .or_else(|| {
+                    let rest = line.strip_prefix("file-accept ")?;
+                    let mut it = rest.split_whitespace();
+                    let peer = it.next()?;
+                    let id = it.next()?;
+                    Some(Self::FileAccept {
+                        peer: peer.to_owned(),
+                        id: id.to_owned(),
+                    })
+                })
+                .or_else(|| {
+                    let rest = line.strip_prefix("file-reject ")?;
+                    let mut it = rest.split_whitespace();
+                    let peer = it.next()?;
+                    let id = it.next()?;
+                    let reason = it.next().unwrap_or("declined");
+                    Some(Self::FileReject {
+                        peer: peer.to_owned(),
+                        id: id.to_owned(),
+                        reason: reason.to_owned(),
+                    })
                 }),
         }
     }
@@ -204,6 +257,11 @@ impl Command {
             Self::ExitList => "exit-list".to_owned(),
             Self::ExitUse(id) => format!("exit-use {id}"),
             Self::ExitDisable => "exit-disable".to_owned(),
+            Self::FileSend { peer, path } => format!("file-send {peer} {path}"),
+            Self::FileAccept { peer, id } => format!("file-accept {peer} {id}"),
+            Self::FileReject { peer, id, reason } => format!("file-reject {peer} {id} {reason}"),
+            Self::FilePending => "file-pending".to_owned(),
+            Self::FileReceipts => "file-receipts".to_owned(),
         }
     }
 }
@@ -461,6 +519,21 @@ mod tests {
             Command::ExitList,
             Command::ExitUse("exit-eu".to_owned()),
             Command::ExitDisable,
+            Command::FileSend {
+                peer: "alice".to_owned(),
+                path: "report.pdf".to_owned(),
+            },
+            Command::FileAccept {
+                peer: "alice".to_owned(),
+                id: "0102030405060708090a0b0c0d0e0f10".to_owned(),
+            },
+            Command::FileReject {
+                peer: "alice".to_owned(),
+                id: "0102030405060708090a0b0c0d0e0f10".to_owned(),
+                reason: "too-large".to_owned(),
+            },
+            Command::FilePending,
+            Command::FileReceipts,
         ] {
             assert_eq!(Command::parse(&c.as_str()), Some(c));
         }
@@ -470,6 +543,42 @@ mod tests {
         assert_eq!(Command::parse("dns-query two names"), None);
         assert_eq!(Command::parse("exit-use two routes"), None);
         assert_eq!(Command::parse("status; rm -rf /"), None);
+    }
+
+    /// A `file-send` path is the one wire form here that may legitimately
+    /// contain spaces — everything after the peer name's single token is the
+    /// path, verbatim.
+    #[test]
+    fn a_file_send_path_may_contain_spaces() {
+        assert_eq!(
+            Command::parse("file-send alice /home/alice/My Documents/report.pdf"),
+            Some(Command::FileSend {
+                peer: "alice".to_owned(),
+                path: "/home/alice/My Documents/report.pdf".to_owned(),
+            })
+        );
+    }
+
+    /// A `file-reject` with no reason token defaults to `declined`, both
+    /// parsing the wire form and reconstructing it.
+    #[test]
+    fn a_file_reject_reason_defaults_to_declined() {
+        let id = "0102030405060708090a0b0c0d0e0f10".to_owned();
+        assert_eq!(
+            Command::parse(&format!("file-reject alice {id}")),
+            Some(Command::FileReject {
+                peer: "alice".to_owned(),
+                id,
+                reason: "declined".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_file_commands_are_rejected() {
+        assert_eq!(Command::parse("file-send alice"), None); // no path
+        assert_eq!(Command::parse("file-send  "), None); // no peer either
+        assert_eq!(Command::parse("file-accept alice"), None); // no id
     }
 
     #[test]

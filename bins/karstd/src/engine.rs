@@ -18,7 +18,7 @@
 //! packets and a clock reading and returns [`Output`]. [`crate::run`] is what
 //! owns the sockets.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -34,6 +34,7 @@ use karst_transport::source_key;
 use karst_tun::ip;
 
 use crate::config::Config;
+use crate::filetransfer;
 use crate::filter::{Direction, Verdict};
 use crate::routing::PeerIndex;
 
@@ -143,13 +144,19 @@ pub struct Output {
     pub datagrams: Vec<(Vec<u8>, Via)>,
     /// Plaintext IP packets to write to the TUN device.
     pub packets: Vec<Vec<u8>>,
+    /// Files received, verified and ready to land on disk — GitHub issue
+    /// #212. This engine's counterpart to `packets`: the engine decrypts and
+    /// validates a completed transfer, but writing it out is I/O the same
+    /// way a TUN write is, so it is left to the caller (`run::dispatch`)
+    /// rather than performed here.
+    pub files_received: Vec<filetransfer::ReceivedFile>,
 }
 
 impl Output {
     /// Whether there is nothing to do.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.datagrams.is_empty() && self.packets.is_empty()
+        self.datagrams.is_empty() && self.packets.is_empty() && self.files_received.is_empty()
     }
 }
 
@@ -229,6 +236,17 @@ pub struct Stats {
     /// §3.1). Counted apart from `acl_denied_in`: this is a second, distinct
     /// gate saying no, not the general ACL denying reachability.
     pub ssh_denied: u64,
+    /// File-transfer offers refused by [`crate::filter::PacketFilter`]'s
+    /// service-port check — GitHub issue #212 — counted on whichever side
+    /// made the local decision: an offer this node declined to send, or one
+    /// it received from a peer its own ingress rules do not cover.
+    pub file_transfer_denied: u64,
+    /// Transfers that resolved with every byte verified, either direction.
+    pub file_transfer_completed: u64,
+    /// Transfers that resolved unsuccessfully after starting — a checksum
+    /// mismatch, an incomplete delivery, or a decline — on either side.
+    /// Refused-by-policy is counted separately, in `file_transfer_denied`.
+    pub file_transfer_failed: u64,
 }
 
 /// Live counters. Separate from [`Stats`], which is the snapshot type.
@@ -254,6 +272,9 @@ struct Counters {
     ssh_denied: AtomicU64,
     bedrock_head_agreed: AtomicU64,
     bedrock_equivocation: AtomicU64,
+    file_transfer_denied: AtomicU64,
+    file_transfer_completed: AtomicU64,
+    file_transfer_failed: AtomicU64,
 }
 
 impl Counters {
@@ -274,6 +295,9 @@ impl Counters {
             ssh_denied: self.ssh_denied.load(Ordering::Relaxed),
             bedrock_head_agreed: self.bedrock_head_agreed.load(Ordering::Relaxed),
             bedrock_equivocation: self.bedrock_equivocation.load(Ordering::Relaxed),
+            file_transfer_denied: self.file_transfer_denied.load(Ordering::Relaxed),
+            file_transfer_completed: self.file_transfer_completed.load(Ordering::Relaxed),
+            file_transfer_failed: self.file_transfer_failed.load(Ordering::Relaxed),
         }
     }
 }
@@ -331,6 +355,10 @@ struct PeerSlot {
     tx_bytes: AtomicU64,
     /// Plaintext bytes decrypted and delivered to the host from this peer.
     rx_bytes: AtomicU64,
+    /// This peer's file-transfer state, both directions — GitHub issue #212.
+    /// Per peer, like `flows` above, for the same reason: two peers' transfers
+    /// must never contend.
+    file_transfers: Mutex<filetransfer::PeerTransfers>,
 }
 
 /// Everything a packet's handling depends on, swapped as a unit.
@@ -436,7 +464,19 @@ pub struct Engine {
     /// and `None` again the moment that allocation is lost — [`Self::via`]
     /// must not name a `Via::Turn` destination nothing can currently reach.
     turn_relay: RwLock<Option<SocketAddr>>,
+    /// Resolved file transfers, most recent last — GitHub issue #212. Local
+    /// audit trail, in the same spirit as
+    /// `server/management/internals/karst/node/node.go`'s
+    /// `SessionObservation`: a self-reported fact, kept for `karst
+    /// status`/IPC to read, not reported to the coordination server (see the
+    /// ADR). Bounded so a peer that offers and is refused in a loop cannot
+    /// grow this without limit.
+    file_transfer_receipts: Mutex<VecDeque<filetransfer::Receipt>>,
 }
+
+/// How many resolved transfers [`Engine::file_transfer_receipts`] remembers
+/// before the oldest is dropped.
+const MAX_FILE_TRANSFER_RECEIPTS: usize = 256;
 
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -461,6 +501,7 @@ impl Engine {
             stats: Counters::default(),
             home_relay: RwLock::new(None),
             turn_relay: RwLock::new(None),
+            file_transfer_receipts: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -1922,6 +1963,9 @@ impl Engine {
         if self.on_head_claim(peer, packet) {
             return;
         }
+        if self.on_file_transfer_frame(roster, peer, packet, now_ms, out) {
+            return;
+        }
         let Some(addrs) = karst_tun::ip::addresses(packet) else {
             self.stats.source_violations.fetch_add(1, Ordering::Relaxed);
             return;
@@ -2147,6 +2191,428 @@ impl Engine {
             })
             .collect()
     }
+
+    // ── file transfer (GitHub issue #212) ───────────────────────────────
+
+    /// Offer `data`, named `name`, to `peer`.
+    ///
+    /// Only builds the outgoing transfer state and the `Offer` frame; the
+    /// bytes move only once the peer's `Accept` is processed by
+    /// [`Self::inbound`]/[`Self::inbound_from_relay`] and turned into
+    /// `Chunk`/`Complete` frames there.
+    ///
+    /// # Errors
+    /// [`FileTransferError::NoSession`] without a live session to `peer`
+    /// yet. [`FileTransferError::NotPermitted`] if this node's own egress
+    /// ACL does not cover [`filetransfer::SERVICE_PORT`] for `peer` —
+    /// checked here so a forbidden transfer fails locally and immediately,
+    /// the same reasoning `crate::filter`'s own module doc gives for
+    /// checking egress at all; the receiver's ingress check
+    /// (`crate::filter::PacketFilter::ingress_service`) is the one that
+    /// actually carries the security property, so this is a courtesy, not
+    /// the whole enforcement. [`FileTransferError::NameTooLong`] and
+    /// [`FileTransferError::Random`] name themselves.
+    pub fn offer_file(
+        &self,
+        peer: PeerIndex,
+        name: String,
+        data: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<(filetransfer::TransferId, Output), FileTransferError> {
+        if name.len() > filetransfer::MAX_NAME_LEN {
+            return Err(FileTransferError::NameTooLong);
+        }
+        let roster = self.roster();
+        if !self.established(peer) {
+            return Err(FileTransferError::NoSession);
+        }
+        let Some(slot) = roster.peers.get(peer) else {
+            return Err(FileTransferError::UnknownPeer);
+        };
+        let mut id = [0u8; 16];
+        getrandom::fill(&mut id).map_err(|_| FileTransferError::Random)?;
+
+        if roster
+            .config
+            .filter
+            .egress_service(peer, filetransfer::SERVICE_PORT)
+            != Verdict::Permit
+        {
+            self.stats
+                .file_transfer_denied
+                .fetch_add(1, Ordering::Relaxed);
+            self.push_receipt(filetransfer::Receipt {
+                peer,
+                transfer: id,
+                name,
+                size: data.len() as u64,
+                direction: filetransfer::TransferDirection::Sent,
+                outcome: filetransfer::Outcome::DeniedByPolicy,
+                at_ms: now_ms,
+            });
+            return Err(FileTransferError::NotPermitted);
+        }
+
+        let size = data.len() as u64;
+        let checksum = Self::lock(&slot.file_transfers).begin_outgoing(id, name.clone(), data);
+        let mut out = Output::default();
+        if let Some(via) = self.via(&roster, peer) {
+            let frame = filetransfer::encode_offer(&id, &name, size, &checksum);
+            self.send_sealed(&roster, peer, via, &frame, now_ms, &mut out);
+        }
+        Ok((id, out))
+    }
+
+    /// This node's own decision: accept a pending inbound offer from `peer`.
+    ///
+    /// # Errors
+    /// [`FileTransferError::UnknownPeer`] or
+    /// [`FileTransferError::UnknownTransfer`] if `id` does not currently
+    /// name a pending offer from `peer` — including one already resolved,
+    /// so a duplicate accept is a no-op rather than a second `Accept` frame.
+    pub fn accept_transfer(
+        &self,
+        peer: PeerIndex,
+        id: filetransfer::TransferId,
+        now_ms: u64,
+    ) -> Result<Output, FileTransferError> {
+        let roster = self.roster();
+        let slot = roster
+            .peers
+            .get(peer)
+            .ok_or(FileTransferError::UnknownPeer)?;
+        Self::lock(&slot.file_transfers)
+            .accept(&id)
+            .ok_or(FileTransferError::UnknownTransfer)?;
+        let mut out = Output::default();
+        if let Some(via) = self.via(&roster, peer) {
+            let frame = filetransfer::encode_accept(&id);
+            self.send_sealed(&roster, peer, via, &frame, now_ms, &mut out);
+        }
+        Ok(out)
+    }
+
+    /// This node's own decision: reject a pending inbound offer from `peer`.
+    /// Logs a local `Declined` receipt and tells the peer why.
+    ///
+    /// # Errors
+    /// Same as [`Self::accept_transfer`].
+    pub fn reject_transfer(
+        &self,
+        peer: PeerIndex,
+        id: filetransfer::TransferId,
+        reason: filetransfer::RejectReason,
+        now_ms: u64,
+    ) -> Result<Output, FileTransferError> {
+        let roster = self.roster();
+        let slot = roster
+            .peers
+            .get(peer)
+            .ok_or(FileTransferError::UnknownPeer)?;
+        let summary = Self::lock(&slot.file_transfers)
+            .reject(&id)
+            .ok_or(FileTransferError::UnknownTransfer)?;
+        self.push_receipt(filetransfer::Receipt {
+            peer,
+            transfer: id,
+            name: summary.name,
+            size: summary.size,
+            direction: filetransfer::TransferDirection::Received,
+            outcome: filetransfer::Outcome::Declined,
+            at_ms: now_ms,
+        });
+        let mut out = Output::default();
+        if let Some(via) = self.via(&roster, peer) {
+            let frame = filetransfer::encode_reject(&id, reason);
+            self.send_sealed(&roster, peer, via, &frame, now_ms, &mut out);
+        }
+        Ok(out)
+    }
+
+    /// Pending inbound offers awaiting this node's own accept/reject
+    /// decision, across every peer — for `karst status`/IPC.
+    #[must_use]
+    pub fn pending_transfers(
+        &self,
+    ) -> Vec<(
+        PeerIndex,
+        filetransfer::TransferId,
+        filetransfer::PendingOffer,
+    )> {
+        let roster = self.roster();
+        let mut out = Vec::new();
+        for (index, slot) in roster.peers.iter().enumerate() {
+            let guard = Self::lock(&slot.file_transfers);
+            out.extend(
+                guard
+                    .pending_offers()
+                    .map(|(id, offer)| (index, *id, offer.clone())),
+            );
+        }
+        out
+    }
+
+    /// The bounded local audit log of resolved transfers — `karst
+    /// status`/IPC. Most recent last.
+    #[must_use]
+    pub fn file_transfer_receipts(&self) -> Vec<filetransfer::Receipt> {
+        Self::lock(&self.file_transfer_receipts)
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Append to the bounded receipt log, dropping the oldest entry once
+    /// full — `MAX_FILE_TRANSFER_RECEIPTS` bounds it so a peer that offers
+    /// and is refused in a loop cannot grow this without limit.
+    fn push_receipt(&self, receipt: filetransfer::Receipt) {
+        let mut log = Self::lock(&self.file_transfer_receipts);
+        if log.len() >= MAX_FILE_TRANSFER_RECEIPTS {
+            log.pop_front();
+        }
+        log.push_back(receipt);
+    }
+
+    /// Karst's own file-transfer control frames (GitHub issue #212) —
+    /// checked right after the Bedrock head claim and before the
+    /// tunnelled-IP-packet path, for the same reason: both ride the
+    /// zero-marker inner control channel inside the AEAD
+    /// (`crate::filetransfer`'s module doc).
+    ///
+    /// Returns `true` when the payload was a file-transfer frame and has
+    /// been handled, so the caller knows not to treat it as a tunnelled
+    /// packet.
+    fn on_file_transfer_frame(
+        &self,
+        roster: &Roster,
+        peer: PeerIndex,
+        payload: &[u8],
+        now_ms: u64,
+        out: &mut Output,
+    ) -> bool {
+        if !filetransfer::is_file_transfer_frame(payload) {
+            return false;
+        }
+        let Some(slot) = roster.peers.get(peer) else {
+            return true;
+        };
+
+        if let Some(offer) = filetransfer::decode_offer(payload) {
+            self.on_transfer_offer(roster, slot, peer, offer, now_ms);
+        } else if let Some(id) = filetransfer::decode_accept(payload) {
+            self.on_transfer_accept(roster, slot, peer, &id, now_ms, out);
+        } else if let Some((id, reason)) = filetransfer::decode_reject(payload) {
+            self.on_transfer_reject(slot, peer, &id, reason, now_ms);
+        } else if let Some((id, offset, data)) = filetransfer::decode_chunk(payload) {
+            let _ = Self::lock(&slot.file_transfers).on_chunk(&id, offset, data);
+        } else if let Some(id) = filetransfer::decode_complete(payload) {
+            self.on_transfer_complete(roster, slot, peer, &id, now_ms, out);
+        } else if let Some((id, status)) = filetransfer::decode_receipt(payload) {
+            self.on_transfer_receipt(slot, peer, &id, status, now_ms);
+        }
+        // Every other case — a recognized marker/kind pair that failed to
+        // decode past that — is malformed rather than merely unknown.
+        // Silent discard, §11's discipline, reused here for the same reason
+        // `on_head_claim` never answers a bad claim either.
+        true
+    }
+
+    /// An `Offer` arrived — the security-carrying ACL check happens here, on
+    /// receipt. A compromised peer will ignore its own egress filter (see
+    /// `crate::filter`'s own module doc on why ingress is the direction that
+    /// carries the property). No reply either way on denial: a well-behaved
+    /// peer's own [`Self::offer_file`] egress check already stopped it
+    /// before anything was sent, and answering a denied offer would turn
+    /// this node into a probe for its own policy.
+    fn on_transfer_offer(
+        &self,
+        roster: &Roster,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        offer: filetransfer::Offer,
+        now_ms: u64,
+    ) {
+        if roster
+            .config
+            .filter
+            .ingress_service(peer, filetransfer::SERVICE_PORT)
+            != Verdict::Permit
+        {
+            self.stats
+                .file_transfer_denied
+                .fetch_add(1, Ordering::Relaxed);
+            self.push_receipt(filetransfer::Receipt {
+                peer,
+                transfer: offer.id,
+                name: offer.name,
+                size: offer.size,
+                direction: filetransfer::TransferDirection::Received,
+                outcome: filetransfer::Outcome::DeniedByPolicy,
+                at_ms: now_ms,
+            });
+            return;
+        }
+        let (name, size) = (offer.name.clone(), offer.size);
+        if Self::lock(&slot.file_transfers).on_offer(offer) {
+            tracing::info!(
+                %peer,
+                name,
+                size,
+                "incoming file-transfer offer — awaiting local accept/reject"
+            );
+        }
+    }
+
+    /// The peer accepted a transfer this node offered: send the chunks.
+    fn on_transfer_accept(
+        &self,
+        roster: &Roster,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        id: &filetransfer::TransferId,
+        now_ms: u64,
+        out: &mut Output,
+    ) {
+        let Some(frames) = Self::lock(&slot.file_transfers).on_accept(id) else {
+            return;
+        };
+        if let Some(via) = self.via(roster, peer) {
+            for frame in frames {
+                self.send_sealed(roster, peer, via, &frame, now_ms, out);
+            }
+        }
+    }
+
+    /// The peer rejected a transfer this node offered: audit it locally.
+    fn on_transfer_reject(
+        &self,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        id: &filetransfer::TransferId,
+        reason: filetransfer::RejectReason,
+        now_ms: u64,
+    ) {
+        let Some(summary) = Self::lock(&slot.file_transfers).on_reject(id) else {
+            return;
+        };
+        self.stats
+            .file_transfer_failed
+            .fetch_add(1, Ordering::Relaxed);
+        self.push_receipt(filetransfer::Receipt {
+            peer,
+            transfer: *id,
+            name: summary.name,
+            size: summary.size,
+            direction: filetransfer::TransferDirection::Sent,
+            outcome: filetransfer::Outcome::Declined,
+            at_ms: now_ms,
+        });
+        tracing::info!(%peer, ?reason, "file transfer declined by peer");
+    }
+
+    /// The sender says every chunk has been sent: verify, audit, answer with
+    /// a `Receipt`, and — if it checked out — hand the bytes to the caller
+    /// to land on disk via `Output::files_received`.
+    fn on_transfer_complete(
+        &self,
+        roster: &Roster,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        id: &filetransfer::TransferId,
+        now_ms: u64,
+        out: &mut Output,
+    ) {
+        let Some(completed) = Self::lock(&slot.file_transfers).on_complete(id) else {
+            return;
+        };
+        let status = completed.status;
+        self.count_transfer_outcome(status);
+        self.push_receipt(filetransfer::Receipt {
+            peer,
+            transfer: *id,
+            name: completed.name.clone(),
+            size: completed.bytes.len() as u64,
+            direction: filetransfer::TransferDirection::Received,
+            outcome: filetransfer::Outcome::from(status),
+            at_ms: now_ms,
+        });
+        if let Some(via) = self.via(roster, peer) {
+            let frame = filetransfer::encode_receipt(id, status);
+            self.send_sealed(roster, peer, via, &frame, now_ms, out);
+        }
+        if status == filetransfer::ReceiptStatus::Ok {
+            let peer_name = roster
+                .config
+                .peers
+                .get(peer)
+                .map_or_else(|| "unknown".to_owned(), |p| p.name.clone());
+            out.files_received.push(filetransfer::ReceivedFile {
+                peer_name,
+                name: completed.name,
+                bytes: completed.bytes,
+            });
+        }
+    }
+
+    /// The receiver's final word on a transfer this node sent: audit it.
+    fn on_transfer_receipt(
+        &self,
+        slot: &PeerSlot,
+        peer: PeerIndex,
+        id: &filetransfer::TransferId,
+        status: filetransfer::ReceiptStatus,
+        now_ms: u64,
+    ) {
+        let Some(summary) = Self::lock(&slot.file_transfers).on_receipt(id) else {
+            return;
+        };
+        self.count_transfer_outcome(status);
+        self.push_receipt(filetransfer::Receipt {
+            peer,
+            transfer: *id,
+            name: summary.name,
+            size: summary.size,
+            direction: filetransfer::TransferDirection::Sent,
+            outcome: filetransfer::Outcome::from(status),
+            at_ms: now_ms,
+        });
+    }
+
+    /// The counter half of resolving a transfer, shared by the completing
+    /// and the receiving end so the two can never drift apart.
+    fn count_transfer_outcome(&self, status: filetransfer::ReceiptStatus) {
+        match status {
+            filetransfer::ReceiptStatus::Ok => {
+                self.stats
+                    .file_transfer_completed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            filetransfer::ReceiptStatus::ChecksumMismatch
+            | filetransfer::ReceiptStatus::Incomplete => {
+                self.stats
+                    .file_transfer_failed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+/// Why [`Engine::offer_file`], [`Engine::accept_transfer`] or
+/// [`Engine::reject_transfer`] refused — GitHub issue #212.
+#[derive(Debug, thiserror::Error)]
+pub enum FileTransferError {
+    #[error("no established session with this peer yet")]
+    NoSession,
+    #[error("no such peer")]
+    UnknownPeer,
+    #[error("this node's own policy does not permit a file transfer with this peer")]
+    NotPermitted,
+    #[error("file name is too long")]
+    NameTooLong,
+    #[error("could not draw randomness for a transfer id")]
+    Random,
+    #[error("no matching pending or outstanding transfer")]
+    UnknownTransfer,
 }
 
 /// What a [`Engine::reconfigure`] actually did.
@@ -2246,6 +2712,7 @@ fn build_roster(config: &Arc<Config>, carried: &HashMap<[u8; 32], Arc<PeerSlot>>
                 off_home: AtomicU64::new(0),
                 tx_bytes: AtomicU64::new(0),
                 rx_bytes: AtomicU64::new(0),
+                file_transfers: Mutex::new(filetransfer::PeerTransfers::new()),
             })
         };
         peers.push(slot);
