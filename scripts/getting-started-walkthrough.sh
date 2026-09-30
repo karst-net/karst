@@ -310,6 +310,14 @@ path_a_cleanup() {
 }
 
 # The substitution map for one path-A node.
+#
+# The injected `--socket` lives under `$dir/run/`, not `$dir` itself: `$dir`
+# is created by the substituted `mkdir -p /etc/karst` step above with the
+# ordinary, umask-determined mode, and `ipc::secure_dir` (karstd's own control
+# socket setup) refuses to force its required `0700` onto a directory it did
+# not create itself — see that function's doc comment. `$dir/run` does not
+# exist until `karstd` creates it, same as a real `/run/karst` on a fresh
+# boot.
 a_subst() {
 	local dir=$1 self=$2 peer=$3 peer_under=$4 peer_name=$5
 	json_subst \
@@ -318,8 +326,8 @@ a_subst() {
 		10.77.0.2 "$peer" \
 		192.0.2.20 "$peer_under" \
 		'name = "bob"' "name = \"$peer_name\"" \
-		'karstd --config' "karstd --socket $dir/karstd.sock --config" \
-		'karst status' "karst status --socket $dir/karstd.sock" \
+		'karstd --config' "karstd --socket $dir/run/karstd.sock --config" \
+		'karst status' "karst status --socket $dir/run/karstd.sock" \
 		'ping ' 'ping -c4 -W2 '
 }
 
@@ -436,7 +444,7 @@ path_a() {
 		bash -c "grep -q 'has no PSK' '$WORK/alice.log' && grep -q 'has no PSK' '$WORK/bob.log'"
 
 	wait_for 90 "alice's session with bob reaches established" -- \
-		bash -c "ip netns exec $NS_A karst status --socket $dir_a/karstd.sock \
+		bash -c "ip netns exec $NS_A karst status --socket $dir_a/run/karstd.sock \
 			| grep -q 'state = \"established\"'"
 
 	# ── verify ──────────────────────────────────────────────────────────────

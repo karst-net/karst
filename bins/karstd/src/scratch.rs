@@ -96,21 +96,28 @@ impl Scratch {
     /// A control-socket path inside it, for tests that bind one with
     /// [`crate::ipc::bind`] or a sibling.
     ///
-    /// On Unix this is no different from [`Self::join`] — a Unix domain
-    /// socket really does live at a filesystem path. On Windows,
-    /// `karst_ipc::Listener::bind` takes its argument as a literal named-pipe
-    /// name (see that crate's module docs), which lives in a flat namespace
-    /// with no relation to the filesystem at all — so joining `name` onto a
-    /// temp *directory* there is not a pipe name, it is a path a pipe cannot
-    /// be bound at, and every such test failed with `ERROR_INVALID_NAME`
-    /// until this existed. This directory's own uniqueness fragment (already
-    /// collision-free per test — see [`Self::new`]'s pid+thread hash) is
-    /// reused rather than inventing a second one.
+    /// On Unix this is nested one directory below [`Self::new`]'s own
+    /// directory (`run/name`), not a direct child of it — `ipc::secure_dir`
+    /// refuses to force its required mode onto a directory it did not create,
+    /// so binding straight inside the scratch root (created with the
+    /// ordinary, umask-determined mode every other `Scratch` use expects)
+    /// would fail every socket test with a permission mismatch instead of
+    /// exercising `bind`. `run/` gives `bind`/`bind_unprivileged_status` a
+    /// directory that does not exist yet, same as a real `/run/karst` on a
+    /// fresh boot. On Windows, `karst_ipc::Listener::bind` takes its argument
+    /// as a literal named-pipe name (see that crate's module docs), which
+    /// lives in a flat namespace with no relation to the filesystem at all —
+    /// so joining `name` onto a temp *directory* there is not a pipe name, it
+    /// is a path a pipe cannot be bound at, and every such test failed with
+    /// `ERROR_INVALID_NAME` until this existed. This directory's own
+    /// uniqueness fragment (already collision-free per test — see
+    /// [`Self::new`]'s pid+thread hash) is reused rather than inventing a
+    /// second one.
     #[must_use]
     pub(crate) fn socket(&self, name: &str) -> PathBuf {
         #[cfg(unix)]
         {
-            self.join(name)
+            self.join("run").join(name)
         }
         #[cfg(windows)]
         {

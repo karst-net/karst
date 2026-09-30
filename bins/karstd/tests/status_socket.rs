@@ -20,7 +20,19 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn root_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("karstd-status-socket-{}", std::process::id()))
+    // `/tmp`, not `std::env::temp_dir()`: the latter is `TMPDIR`, which on
+    // macOS is a long per-session path under `/var/folders/...`, and this
+    // function's own two extra path segments (`run/karstd.sock`,
+    // `status/status.sock` — see `start`) are exactly what pushed a real
+    // macOS CI run's joined path past `sockaddr_un.sun_path`'s ~104-byte
+    // limit (Linux's is 108, wide enough to hide the same bug — see
+    // `bins/karstd/src/scratch.rs`'s `Scratch::new`, which hit this first).
+    let base = if cfg!(unix) {
+        PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    };
+    base.join(format!("karstd-status-socket-{}", std::process::id()))
 }
 
 struct Node {
@@ -68,8 +80,17 @@ userspace_socks5_listen = "127.0.0.1:0"
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))
         .expect("chmod config");
 
-    let socket = dir.join("karstd.sock");
-    let status_socket = with_status_socket.then(|| dir.join("status.sock"));
+    // Each socket gets its own fresh subdirectory, not `dir` itself: `dir`
+    // already exists (this function just created it above), and
+    // `ipc::secure_dir` now refuses to force its required mode onto a
+    // directory it did not create — see that function's doc comment. Real
+    // deployments already separate them the same way (the macOS LaunchDaemon
+    // passes `/var/run/karst-status/karstd.sock` opposite
+    // `/run/karst/karstd.sock`), which is also the only way both `0700`
+    // (the admin socket's directory) and `0755` (the status socket's) can
+    // hold at once.
+    let socket = dir.join("run").join("karstd.sock");
+    let status_socket = with_status_socket.then(|| dir.join("status").join("status.sock"));
     let log = dir.join("karstd.log");
     let out = std::fs::File::create(&log).expect("log file");
     let err = out.try_clone().expect("log file");
@@ -166,7 +187,7 @@ fn no_status_socket_exists_without_the_flag() {
     // before asserting its absence.
     std::thread::sleep(Duration::from_millis(200));
     assert!(
-        !node.dir.join("status.sock").exists(),
+        !node.dir.join("status").join("status.sock").exists(),
         "no --status-socket was given; nothing should have been created"
     );
 }

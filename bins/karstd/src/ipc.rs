@@ -208,6 +208,44 @@ impl Command {
     }
 }
 
+/// Make `dir` exist with exactly `mode`, without forcing that mode onto a
+/// directory this call did not create.
+///
+/// A directory that does not exist yet is ours alone — nothing else can have
+/// an expectation about it — so it is created and set to `mode` directly.
+/// A directory that already exists might not be: `--socket`/`--status-socket`
+/// take an arbitrary path, and a caller who points one at a shared location
+/// (`/tmp` itself, say, rather than a dedicated subdirectory) used to have
+/// that location's permissions silently overwritten every time `karstd`
+/// started — including `/tmp` for every other user and process on the host.
+/// So an existing directory is checked against `mode` rather than clobbered;
+/// a mismatch is refused with an explanation instead of "fixed" by force.
+///
+/// # Errors
+/// Any failure creating the directory; [`std::io::ErrorKind::PermissionDenied`]
+/// if `dir` already exists with a different mode.
+#[cfg(unix)]
+fn secure_dir(dir: &Path, mode: u32) -> std::io::Result<()> {
+    if dir.exists() {
+        let actual = std::fs::metadata(dir)?.permissions().mode() & 0o777;
+        return if actual == mode {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} exists with mode {actual:04o}, not the required {mode:04o} — refusing to \
+                     reuse a directory karstd does not already own exclusively; point the socket \
+                     at a dedicated path instead of a shared one",
+                    dir.display()
+                ),
+            ))
+        };
+    }
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode))
+}
+
 /// Bind the control socket with restrictive permissions.
 ///
 /// Removes a stale socket left by a previous run: a Unix socket file outlives
@@ -224,8 +262,7 @@ pub fn bind(path: &Path) -> std::io::Result<Listener> {
     // The directory must be locked down *before* the socket exists inside it —
     // see the module note. This is the security boundary.
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        secure_dir(dir, 0o700)?;
     }
     bind_at(path, 0o600)
 }
@@ -253,8 +290,7 @@ pub fn bind(path: &Path) -> std::io::Result<Listener> {
 #[cfg(unix)]
 pub fn bind_unprivileged_status(path: &Path) -> std::io::Result<Listener> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+        secure_dir(dir, 0o755)?;
     }
     bind_at(path, 0o666)
 }
@@ -469,6 +505,41 @@ mod tests {
             mode & 0o077,
             0,
             "socket mode {mode:04o} exposes the control interface"
+        );
+    }
+
+    /// A `--socket` pointed inside a directory `karstd` does not own
+    /// exclusively — a shared location, not a dedicated one — must be
+    /// refused, and refused *without* changing that directory's mode. This is
+    /// the regression test for a real incident: `bind` used to
+    /// unconditionally `chmod 0700` whatever directory `path.parent()`
+    /// resolved to, so pointing the socket directly at `/tmp` (rather than a
+    /// subdirectory of it) silently locked every other user and process on
+    /// the host out of `/tmp` on every `karstd` start.
+    #[cfg(unix)]
+    #[test]
+    fn a_socket_directory_karstd_does_not_own_is_refused_not_reformatted() {
+        let dir = Scratch::new("shared");
+        // Simulate a shared directory `bind` did not create, the way `/tmp`
+        // itself is shared: world-writable, sticky, pre-existing.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o1777))
+            .expect("seed a shared-directory mode");
+        let path = dir.join("karstd.sock");
+
+        let result = bind(&path);
+
+        assert!(
+            result.is_err(),
+            "binding inside a shared, pre-existing directory must be refused"
+        );
+        let mode = std::fs::metadata(dir.path())
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(
+            mode, 0o1777,
+            "a refused bind must leave the shared directory's mode exactly as it found it"
         );
     }
 
