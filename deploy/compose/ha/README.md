@@ -45,15 +45,19 @@ the last completed checkpoint.
 
 Account state is meant to live in Postgres (once `Engine` above is actually
 `"postgres"`). `roster.toml` remains a relay input and is meant to have one
-intentional writer, moved explicitly during a host failure — **but nothing
-writes it in this overlay today.** `KARST_RELAY_ROSTER_FILE` points inside
-`KARST_SHARED_STATE_DIR`, which every replica mounts `:ro`; the writer fails
-every 25s with `roster: create temp: ...: read-only file system` on every
-replica, confirmed live, so the relay's roster lease expires at 90s and it
-falls back to admitting nobody. Making the roster writable on the elected
-writer's replica without also making the bootstrap-input files
-(`relays.json`/`policy.json`) writable is unresolved — track before relying
-on relay admission in an HA deployment.
+intentional writer, moved explicitly during a host failure. It needs its own
+writable mount, separate from the read-only bootstrap input
+(`relays.json`/`policy.json`) both replicas share via `KARST_SHARED_STATE_DIR`
+— a directory `karst-control` can write and the relay can read cannot also be
+the directory that must stay fixed bootstrap input (confirmed live: pointing
+`KARST_RELAY_ROSTER_FILE` inside `KARST_SHARED_STATE_DIR`, mounted `:ro`,
+fails every 25s with `roster: create temp: ...: read-only file system` on
+every replica, and the relay's roster lease expires at 90s and falls back to
+admitting nobody — #219). Set `KARST_ROSTER_DIR` on both hosts to the same
+physical location (a path the relay's own host also has, e.g. shared over
+NFS, or the relay's local disk if it runs on one of the two replica hosts) —
+whichever replica holds the one-writer duty writes `roster.toml` there and
+the relay reads it from the same path.
 
 Without an identity provider, set `KARST_BOOTSTRAP_SETUP_KEY_FILE` in the
 `.env` of whichever host starts first (only) — see the checked-in comment in
