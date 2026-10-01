@@ -59,7 +59,7 @@ has docs/MIGRATING-FROM-WIREGUARD-TAILSCALE.md "Karst has **no WireGuard interop
 has docs/MIGRATING-FROM-WIREGUARD-TAILSCALE.md '```json migration-policy'
 has docs/MIGRATING-FROM-WIREGUARD-TAILSCALE.md "## 4. Clean-cutover procedure"
 
-has docs/SECURITY-WHITEPAPER.md "No external cryptographic review and no external penetration test have"
+has docs/SECURITY-WHITEPAPER.md "No external cryptographic review has happened"
 has docs/SECURITY-WHITEPAPER.md "**Crypto lead:**"
 has README.md "[install guide](docs/GETTING-STARTED.md)"
 has README.md "[operations manual](docs/OPERATIONS.md)"

@@ -250,7 +250,10 @@ These are **gates, not intentions**:
   Phase 8. All high and critical findings must be remediated and re-tested
   before GA. No external cryptographic review has happened yet.
 - **External penetration test** of the control plane and console in Phase 8.
-  No external penetration test has happened yet.
+  No commissioned external penetration test has happened yet, but a
+  self-service toolkit and runbook for one are available
+  ([`deploy/compose/prod/pentest`](../deploy/compose/prod/pentest),
+  [#126](https://github.com/karst-net/karst/issues/126)).
 - Continuous fuzzing of every parser via OSS-Fuzz.
 - Spoofed-source DoS suite and amplification assertions in CI.
 - Netmap secret-leakage scan in CI on every commit.

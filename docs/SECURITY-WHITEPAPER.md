@@ -102,11 +102,16 @@ not newly derived assurances.
 
 ## 5. Review status and limitations
 
-No external cryptographic review and no external penetration test have
-happened. Both are Phase 8 work. Phase 6 performed an internal cryptographic
-review and an internal penetration test; neither is represented here as a
-substitute for independent assessment. Wire formats remain pre-alpha and may
-change without compatibility guarantees. ([Phase 6 overview §6](../plans/phase-6/00-overview.md#6-what-this-phase-does-not-do))
+No external cryptographic review has happened. A commissioned external
+penetration test is still Phase 8 work, but a self-service toolkit and
+runbook that generalize the internal pass below into runnable scripts anyone
+can point at their own deployment are available
+([`deploy/compose/prod/pentest`](../deploy/compose/prod/pentest)) — see
+GitHub issue [#126](https://github.com/karst-net/karst/issues/126). Phase 6
+performed an internal cryptographic review and an internal penetration test;
+neither is represented here as a substitute for independent assessment. Wire
+formats remain pre-alpha and may change without compatibility guarantees.
+([Phase 6 overview §6](../plans/phase-6/00-overview.md#6-what-this-phase-does-not-do))
 
 PHREATIC no longer claims a classical/lattice hybrid hedge. Verifpal verifies
 the KEM-broken model with a private PSK, while unbounded ProVerif verification

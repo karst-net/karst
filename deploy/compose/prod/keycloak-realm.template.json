@@ -34,10 +34,10 @@
   ],
   "users": [
     {
-      "username": "adrian",
+      "username": "__ADMIN_USERNAME__",
       "email": "__ADMIN_EMAIL__",
-      "firstName": "Adrian",
-      "lastName": "Anderson",
+      "firstName": "__ADMIN_USERNAME__",
+      "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
       "credentials": [
