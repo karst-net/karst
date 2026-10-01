@@ -29,6 +29,17 @@
        supervised-device behavior — see the deployment doc's test
        procedure).
 
+  **Update, checked on real hardware (macOS 26.6.2):** local testing of
+  this specific question is no longer possible at all, by any method.
+  `profiles install`/`profiles -I -F` refuse outright ("profiles tool no
+  longer supports installs"), and installing via System Settings' GUI
+  path refuses this profile with "The profile must originate from a user
+  approved MDM server." Current macOS requires genuine User-Approved MDM
+  enrollment to install a com.apple.vpn.managed/com.apple.system-
+  extension-policy profile at all — see
+  docs/operations/macos-managed-device-mdm.md's "Validating a deployment"
+  section, which this superseded.
+
   `ProviderBundleIdentifier`/team identifier below match
   `packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements`'s own
   values (`dev.karst.packettunnel`, team `WJ3MJC4KV7`) — keep them in sync
@@ -49,6 +60,14 @@
     <integer>1</integer>
     <key>PayloadOrganization</key>
     <string>REPLACE_ME</string>
+    <!-- Required for a com.apple.vpn.managed/com.apple.system-extension-policy
+         profile — found on real hardware (#162/ADR-0031 validation
+         attempt, macOS 26.6.2): installing this profile without
+         PayloadScope refuses with "The profile must be a system profile.
+         User profiles are not supported," since User is the undocumented
+         default when this key is omitted. -->
+    <key>PayloadScope</key>
+    <string>System</string>
     <!-- Removal requires the profile-removal password an admin sets when
          pushing this via MDM (many MDM consoles manage this separately
          from the profile XML itself, e.g. by requiring the device's

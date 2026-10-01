@@ -90,17 +90,29 @@ real hardware:
    Mac, confirm ordinary self-service enroll/disconnect/removal still
    works exactly as before pushing anything from this document — this
    must never regress.
-2. **Local profile-install simulation.** On a test Mac (does not need to
-   be DEP/ABM-supervised for this step), run:
-   ```sh
-   sudo profiles install -type configuration -path dev.karst.packettunnel.example.mobileconfig
-   ```
-   Confirm `Karst.app`'s menu shows "VPN configuration managed by your
-   organization" and that System Settings shows the profile's "Remove
-   Configuration" control greyed out or password-gated. **Known gap**:
-   this does not prove real DEP/ABM-supervised behavior is identical —
-   validate the same checks again on an actual supervised test device
-   before wide rollout.
+2. **Local profile-install simulation is no longer possible — skip to
+   real MDM.** This step used to read "run `sudo profiles install -type
+   configuration -path ...` on a non-supervised test Mac." Checked for
+   real on macOS 26.6.2, not assumed from older documentation: that
+   command now refuses outright —
+   `profiles install -type configuration -path ...` *and* its modern
+   replacement `profiles -I -F ...` both print "profiles tool no longer
+   supports installs. Use System Settings Profiles to add configuration
+   profiles," with or without `sudo`. The GUI path (open the
+   `.mobileconfig`, approve it in System Settings) gets further but still
+   refuses this profile specifically: first "The profile must be a system
+   profile. User profiles are not supported" (fixed by adding
+   `PayloadScope: System` — the template lacked it), then, once that's
+   fixed, "The profile must originate from a user approved MDM server."
+   That second refusal is not fixable by editing the profile — current
+   macOS requires genuine User-Approved MDM (UAMDM) enrollment to install
+   a `com.apple.vpn.managed`/`com.apple.system-extension-policy` profile
+   at all. **There is no local, non-MDM stand-in for this step anymore.**
+   Go straight to a real MDM push (Jamf Pro, Kandji, Mosyle, etc.) against
+   a UAMDM-enrolled test device and confirm the same two things this step
+   used to check locally: `Karst.app`'s menu shows "VPN configuration
+   managed by your organization," and System Settings shows the profile's
+   "Remove Configuration" control greyed out or password-gated.
 3. **Kill-switch traffic test — the most important one.** With the
    profile active and the tunnel connected, force the engine to fail
    mid-session (kill the extension process, or corrupt its
