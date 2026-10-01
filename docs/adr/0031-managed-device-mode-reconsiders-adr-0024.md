@@ -278,7 +278,23 @@ Be honest here, per this project's own template:
   identically to a real DEP/ABM-supervised MDM push is not confirmed** —
   plausible, not verified; a real gap between the recommended local test
   method (`docs/operations/macos-managed-device-mdm.md`) and production
-  behavior.
+  behavior. **Update, checked on real hardware (macOS 26.6.2, 2026-10-01):
+  the local test method no longer exists at all, which makes this a
+  harder gap than described above, not a smaller one.** Neither
+  `profiles install -type configuration` nor its replacement
+  `profiles -I -F` installs anything any more ("profiles tool no longer
+  supports installs"), and installing the same profile via System
+  Settings' GUI instead refuses outright with "The profile must
+  originate from a user approved MDM server." Current macOS requires
+  genuine UAMDM enrollment to install this profile's payload types at
+  all — there is no lower-stakes local stand-in left to validate
+  `IncludeAllNetworks` or anything else in this ADR against. (a) above
+  (the kill switch's core assumption) remains genuinely unverified on
+  real hardware; closing that gap now requires a real MDM push, not a
+  smaller local check. See `docs/operations/macos-managed-device-mdm.md`'s
+  "Validating a deployment" section and NET-08 in
+  `docs/manual-tests/02-clients-and-networking.md`, both updated to
+  reflect this.
 - **Initial enrollment-invitation delivery to a non-admin managed device
   is not solved here.** `Karst.app`'s "Enroll…" flow (pasting an
   invitation into an `NSAlert`) works identically for a non-admin user —

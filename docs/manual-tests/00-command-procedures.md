@@ -283,11 +283,16 @@ docs/operations/macos-managed-device-mdm.md for background.
    Re-enroll… via `Karst.app`'s menu first — this must not regress before
    testing the managed path at all.
 2. On a separate test device, install the sample profile and confirm
-   `Karst.app` recognizes it does not own the configuration:
-
-   ```sh
-   sudo profiles install -type configuration -path dev.karst.packettunnel.example.mobileconfig
-   ```
+   `Karst.app` recognizes it does not own the configuration. **There is
+   no local, non-MDM way to do this anymore** — checked on real hardware
+   (macOS 26.6.2), not assumed: `profiles install -type configuration
+   -path ...` and its replacement `profiles -I -F ...` both refuse ("no
+   longer supports installs"), and installing the same profile through
+   System Settings' GUI instead refuses with "The profile must originate
+   from a user approved MDM server." Push it through a real UAMDM
+   enrollment (Jamf Pro, Kandji, Mosyle, etc.) instead — see
+   docs/operations/macos-managed-device-mdm.md's "Validating a
+   deployment" section for the current procedure.
 
    Reopen the menu bar item; confirm "VPN configuration managed by your
    organization" appears, and check System Settings → Network →
