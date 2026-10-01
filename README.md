@@ -13,7 +13,10 @@ overview for a non-technical read; this README is the technical one.
 > general-availability release: interoperability, upgrade behavior, platform
 > integration, and operational workflows remain under active validation. Wire
 > formats may change without compatibility guarantees. No external
-> cryptographic review or external penetration test has happened. Start with
+> cryptographic review has happened yet; a self-service external
+> penetration-test toolkit and runbook are available
+> ([`deploy/compose/prod/pentest`](deploy/compose/prod/pentest)) in place of a
+> commissioned engagement. Start with
 > the [install guide](docs/GETTING-STARTED.md), then use the
 > [operations manual](docs/OPERATIONS.md),
 > [security whitepaper](docs/SECURITY-WHITEPAPER.md), and
