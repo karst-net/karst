@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0044: A general-purpose embedded library mode, `karst-embed`
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-02
 - **Deciders:** Adrian Anderson (project owner)
 - **Related:** ADR-0029 (the `karst-ffi` UniFFI boundary this is explicitly
@@ -38,13 +38,14 @@ machinery, not inventing a new engine mode.
 
 This also makes GitHub issue #214's own acceptance criterion — "a minimal
 example that becomes a reachable mesh peer with no `karstd` process
-running alongside it" — **attemptable with real infrastructure in this
-environment**, unlike the macOS work (ADR-0040/0043): `bins/karstd/tests/control.rs`
-already proves a real Go coordination server can run on plain loopback
-with no namespaces or root, so a real two-embedded-node test against it,
-plus a real `karst-relay`, is this pass's verification attempt — real
-code and real infrastructure, not a "written and reviewed, not run" stub,
-even though (item 7) it has not yet been watched to a passing conclusion.
+running alongside it" — **actually verifiable with real infrastructure in
+this environment**, unlike the macOS work (ADR-0040/0043):
+`bins/karstd/tests/control.rs` already proves a real Go coordination server
+can run on plain loopback with no namespaces or root, so a real
+two-embedded-node test against it, plus a real `karst-relay`, is this
+pass's verification — and (item 7) it passes: two embedded nodes register,
+enroll, establish a session, and exchange real TCP bytes, with no `karstd`
+process anywhere.
 
 ## Decision
 
@@ -127,37 +128,45 @@ even though (item 7) it has not yet been watched to a passing conclusion.
    know, not left for the next person to rediscover via a confusing EACCES.
 
 7. **Verification: a real, local, two-node, no-root integration test**
-   (`crates/karst-embed/tests/two_nodes.rs`), not unit tests alone. It
-   builds and starts the real Go coordination server on loopback (mirroring
-   `bins/karstd/tests/control.rs`'s `TestServer`, not `aquifer.rs`'s heavier
-   netns fixture — `NetworkMode::Userspace` needs neither), enrolls two
-   embedded nodes against it with real `karst-invite-v1:` invitations, and
-   is written to assert a real TCP byte exchange between them with no
-   `karstd` process anywhere. **Writing it surfaced real, fixed bugs** in
-   this pass's own code — the `ready`-channel ordering race (item 1), the
-   root-owned exit-route default (item 6), a relay roster that expires
-   mid-test without a renewal thread, and this specific development
-   machine's docker bridges needing AVEN's reflector (`ponor-v1.md` §7.7) to
-   learn a real, usable address at all, since a "local" send between two of
-   its own virtual interfaces is observably source-NATted, the same shape a
-   real NAT presents.
-   **What this pass did not reach: a confirmed real TCP byte exchange.**
-   With every fix above applied, both nodes register, sync netmaps, exchange
-   disco candidates, and reach the relay's reflector successfully — real,
-   verified progress — but the handshake itself did not complete within
-   several minutes of direct observation on this development machine, which
-   also runs its own pre-existing `karstd`/`karst-relay` and has an unusually
-   large number of virtual interfaces (several docker bridges, Tailscale, a
-   VPN) that may be interacting with disco's candidate model or the relay's
-   own data-forwarding path in a way this pass did not isolate. This is
-   named as the honest, unresolved state, not papered over: the test is
-   real infrastructure exercising real code, not a stub, but its own
-   assertion that bytes actually cross has not been watched pass locally.
-   The next real verification opportunity is `.github/workflows/ci.yml`'s
-   new "Two embedded nodes exchange TCP with no karstd process" step, on a
-   GitHub Actions runner's much simpler network (no pre-existing relay, no
-   half-dozen docker bridges) — the same "push and let CI tell you" posture
-   this project already used for ADR-0043's new workflows.
+   (`crates/karst-embed/tests/two_nodes.rs`), not unit tests alone, and it
+   passes. It builds and starts the real Go coordination server on loopback
+   (mirroring `bins/karstd/tests/control.rs`'s `TestServer`, not
+   `aquifer.rs`'s heavier netns fixture — `NetworkMode::Userspace` needs
+   neither), enrolls two embedded nodes against it with real
+   `karst-invite-v1:` invitations, and asserts a real TCP byte exchange
+   between them with no `karstd` process anywhere.
+
+   **Getting there surfaced four real, independent issues**, three fixed in
+   this pass and one a fixture detail rather than a bug:
+   - A `ready`-channel ordering race matching #161's own shape (item 1) —
+     `userspace_ready` fired before the control socket bound, so
+     `MeshNode::start`'s first real call could race the bind.
+   - The root-owned exit-route config default (item 6) — a fatal, confusing
+     permission error for any non-root embedding process.
+   - A relay roster that expires mid-test (`roster::MAX_AGE`, 90s) without a
+     renewal thread, once real disco convergence on a host with several
+     virtual interfaces turned out to take longer than that.
+   - **Not a bug at all, but the one that took longest to rule out**: this
+     fixture's own hardcoded policy document
+     (`server/management/internals/karst/testserver/netmap.go`'s
+     `buildNetmapServer`) only grants egress to port 22 —
+     `bins/karstd/tests/aquifer.rs`'s own real TCP exchange
+     (`exchange_tcp_under_the_acl`) already works around the identical
+     restriction. The test's first real run (port 7777) showed a fully
+     `established` direct session, `tx_packets` stuck at zero, and
+     `acl_denied_out` climbing on every retry — policy enforcement doing
+     exactly its job against a port nothing had granted, not a defect in
+     disco, the relay, or `karst-embed`. Switching the test to port 22
+     fixed it outright.
+   - Two apparent leads turned out not to be bugs once followed all the way:
+     an earlier attempt without `[reflect]` configured genuinely could not
+     complete direct NAT traversal on a host whose own docker bridges
+     rewrite "local" source addresses (the same shape a real NAT presents)
+     — adding the relay's AVEN reflector (`ponor-v1.md` §7.7) fixed that
+     specifically; and a focused check of whether the node's own interface
+     ever learns its netmap-assigned address (it does, from a cached
+     netmap at load time) ruled out a second hypothesis before it became a
+     change.
 
 ### Alternatives rejected
 
@@ -190,15 +199,13 @@ even though (item 7) it has not yet been watched to a passing conclusion.
 
 ### Positive
 
-- Issue #214's acceptance criteria are pursued with a real, automated,
-  no-privilege, no-hardware-dependent integration test — a stronger
-  verification *attempt* than ADR-0029/0030/0043 could even make for their
-  own, genuinely hardware-constrained, macOS-only scope. Unlike that work,
-  real infrastructure (a Go control server, a relay) is reachable here
-  without special hardware — item 7 is honest that the attempt has not yet
-  fully succeeded locally, but the path to a real pass (CI, or a cleaner
-  host) is open in a way it simply is not for anything needing a real
-  Apple Developer Program certificate.
+- Issue #214's acceptance criteria are met with a real, automated,
+  no-privilege, no-hardware-dependent integration test that passes — a
+  stronger verification bar than ADR-0029/0030/0043 could even attempt for
+  their own, genuinely hardware-constrained, macOS-only scope. Real
+  infrastructure (a Go control server, a relay) is reachable here without
+  special hardware, and this pass used that to actually prove the claim
+  rather than assume it.
 - `karst_tun::Userspace`'s socket API is exercised by a second, genuinely
   different consumer (a generic backend process, not `karstd`'s own
   SOCKS5/publish plumbing), reinforcing that nothing daemon-specific leaked
@@ -208,18 +215,15 @@ even though (item 7) it has not yet been watched to a passing conclusion.
   one engine-lifecycle implementation (`crates/karst-embed`), not two
   divergent ones — `karst-embed-capi` is a thin wrapper over it, nothing
   more.
+- Chasing the integration test to a real pass found and fixed a real race
+  (item 1) and a real root-owned-path gotcha (item 6) that would otherwise
+  have shipped unverified, and ruled out two more serious-looking hypotheses
+  (an addressing gap, a relay data-forwarding gap) with hard evidence before
+  either became a change — the slower but more trustworthy way to reach
+  "it works."
 
 ### Negative
 
-- **A real TCP byte exchange between two embedded nodes has not actually
-  been observed to succeed, on any path** — see item 7's full account.
-  Registration, netmap sync, disco candidate exchange, and reaching the
-  relay's reflector are all confirmed working; the handshake completing
-  is not. This is the central open item this ADR leaves: not "direct
-  connectivity is unconfirmed while relay fallback works," which would be a
-  narrower, more comfortable gap, but that neither path was watched to
-  completion locally. The next real evidence comes from CI (item 7's
-  closing paragraph) or a cleaner host, not from this ADR.
 - **Two configuration settings (item 6) are easy to get wrong**, and the
   failure modes are both unhelpful: a `network_mode` left at its `Tun`
   default fails fast with a clear message (`run_embedded`'s own refusal);
@@ -237,22 +241,24 @@ even though (item 7) it has not yet been watched to a passing conclusion.
   exit-node parity out, but genuinely unconsidered beyond the one
   config-validation workaround item 6 names. A future embedding use case
   that needs either would need real design work, not a flag flip.
+- **A caller must wait for `status_json`'s `peers[].established` before its
+  first `connect_tcp`/`bind_udp` traffic, or risk the same race item 7's
+  test hit**: `connect_tcp` only sets up a local `smoltcp` socket and has no
+  way to know whether a session with the destination exists yet. A SYN sent
+  before one does is silently dropped at the engine layer, and `smoltcp`'s
+  own retransmission backoff then runs on a clock with no relation to when
+  the session actually comes up — found directly, not anticipated. Nothing
+  in `karst-embed`'s own API enforces this ordering yet; the README states
+  it, but a caller who skips it gets a hang with no error, not a clear
+  refusal.
 
 ### Reconsider if
 
-- CI's run of `two_nodes.rs` (item 7) also fails to reach a passing TCP
-  exchange. That would mean the gap is in this pass's own code or design,
-  not this one development machine's networking, and would need real
-  investigation before this ADR's design can be trusted — most likely
-  starting with the relay's own forwarding path (confirmed reachable for
-  signaling; never confirmed for data) rather than disco's candidate model.
-- The gap turns out to matter for a real deployment even after CI passes —
-  e.g., two embedded nodes on the same host or LAN that need to work
-  without a relay in the loop specifically. That would move "why does
-  same-host candidate punching not converge on this one machine" from a
-  shrug to a real question, and likely needs its own investigation into
-  `karstd::disco`'s handling of two peers with identical or near-identical
-  candidate sets.
+- A real embedding deployment hits the `connect_tcp`-before-`established`
+  race this ADR's own Negative section names, suggesting `MeshNode` itself
+  should enforce the wait (or expose an async-notify alternative to polling
+  `status_json`) rather than leaving every caller to discover and implement
+  it independently.
 - A real embedding deployment hits the `exit_node_state_file` gotcha despite
   the README, suggesting the config-validation error itself should name the
   likely cause (an embedding caller that forgot to set it) rather than

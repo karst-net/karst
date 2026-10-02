@@ -446,7 +446,58 @@ fn wait_for_overlay_address(node: &karst_embed::MeshNode, timeout: Duration) -> 
     }
 }
 
-const PORT: u16 = 7777;
+/// Poll a node's own view of its one peer until the datapath reports it
+/// `established` — direct or via relay, either is fine.
+///
+/// **Not optional before the first `connect_tcp`.** `connect_tcp` only sets
+/// up a local `smoltcp` socket; it has no idea whether a session with the
+/// peer exists yet, and neither does `smoltcp`. A SYN sent before one does
+/// is silently dropped at the engine layer (`tx_dropped_no_session`) with no
+/// signal back to `smoltcp`, which then backs off its own retransmissions on
+/// a clock with no relation to when the session actually comes up — found
+/// directly, not guessed: a status check mid-test showed `established:
+/// true, transport: "direct"` on both nodes while the TCP handshake this
+/// test had already attempted was still stuck, because that first SYN went
+/// out (and was dropped) long before the session existed. Waiting here is
+/// what a real embedding caller gets for free from `MeshNode::connect_tcp`'s
+/// own retry inside a real protocol that expects the mesh to already be up;
+/// this test's `enroll`-then-immediately-`start`-then-immediately-`connect`
+/// sequence compresses time in a way nothing stops a caller from doing too,
+/// so this wait is the honest fix, not a workaround only this test needs.
+fn wait_for_peer_established(node: &karst_embed::MeshNode, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let status = node.status_json().expect("status_json");
+        let parsed: serde_json::Value = serde_json::from_str(&status).expect("status is JSON");
+        if parsed["peers"]
+            .as_array()
+            .and_then(|peers| peers.first())
+            .and_then(|peer| peer["established"].as_bool())
+            == Some(true)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "peer never reached established; last status: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// `22`, not an arbitrary port — this fixture's own hardcoded policy
+/// document only grants `["*:22", "10.99.0.0/24:22"]`
+/// (`server/management/internals/karst/testserver/netmap.go`'s
+/// `buildNetmapServer`, the same restriction `bins/karstd/tests/aquifer.rs`'s
+/// own real TCP exchange (`exchange_tcp_under_the_acl`) already works
+/// around the identical way). **Found the hard way**: with port 7777, both
+/// nodes registered, synced, and reached a fully `established` direct
+/// session — real progress, confirmed in `status_json` — and then every TCP
+/// byte this test tried to send simply vanished with `acl_denied_out`
+/// climbing on every retry, which is egress policy enforcement doing
+/// exactly its job against a port this fixture never grants, not a defect
+/// in the mesh, the relay, or `karst-embed` itself.
+const PORT: u16 = 22;
 
 /// GitHub issue #214's own acceptance criterion: a node built from
 /// `crates/karst-embed` becomes a reachable mesh peer, with no `karstd`
@@ -483,6 +534,12 @@ fn two_embedded_nodes_exchange_tcp_with_no_karstd_process() {
 
     let address_b = wait_for_overlay_address(&node_b, Duration::from_secs(30));
     wait_for_overlay_address(&node_a, Duration::from_secs(30));
+
+    // See `wait_for_peer_established`'s own doc comment: this is not
+    // optional ceremony, it is what keeps the TCP handshake below from
+    // racing session establishment.
+    wait_for_peer_established(&node_a, Duration::from_secs(150));
+    wait_for_peer_established(&node_b, Duration::from_secs(150));
 
     let mut listener = node_b.listen_tcp(PORT).expect("listen on node b");
     let accepted = std::thread::scope(|scope| {

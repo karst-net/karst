@@ -116,6 +116,16 @@ let node = karst_embed::MeshNode::start(
 // Status, the same JSON `karst status --json` reports:
 println!("{}", node.status_json()?);
 
+// **Wait for the peer to be `established` before your first connect/send.**
+// `connect_tcp`/`bind_udp` only set up a local socket — they have no way to
+// know whether a session with the destination exists yet. A SYN or
+// datagram sent before one does is silently dropped, and nothing times it
+// out for you: poll `status_json()`'s `peers[].established` (or `karst
+// status --json`'s identical field) until it's `true` first. Skip this and
+// you get a hang, not an error — found running this crate's own
+// `tests/two_nodes.rs` against a real deployment, see
+// `docs/adr/0044-embedded-library-mode.md` item 7.
+
 // Act as a server on the mesh:
 let mut listener = node.listen_tcp(9000)?;
 let (mut stream, peer_addr) = listener.accept()?;   // blocks until a peer connects
@@ -149,25 +159,27 @@ engine's full feature set.
 
 ## Verifying this actually works, not just compiles
 
-`tests/two_nodes.rs` is the real attempt, not a stub: it builds and starts
-the actual Go coordination server on loopback (no namespaces, no root —
+`tests/two_nodes.rs` is the real proof, not a stub: it builds and starts the
+actual Go coordination server on loopback (no namespaces, no root —
 `network_mode = "userspace"` creates no kernel device), enrolls two
-embedded nodes against it with real invitations, and is written to assert
-a real TCP byte exchange between them with no `karstd` process anywhere.
-
-**Read `docs/adr/0044-embedded-library-mode.md` item 7 before trusting a
-local run of this test.** On the development machine this was written on,
-registration, netmap sync, disco candidate exchange, and reaching the
-relay's own reflector all worked — real progress — but the handshake
-itself did not complete within several minutes, on a machine with its own
-pre-existing `karstd`/`karst-relay` and an unusually large number of
-virtual network interfaces. Whether that is specific to that machine or a
-real gap in this design is exactly what CI's own run of this test (a much
-simpler network) is for. Run it yourself with:
+embedded nodes against it with real invitations, and asserts a real TCP
+byte exchange between them with no `karstd` process anywhere. It passes.
+See `docs/adr/0044-embedded-library-mode.md` item 7 for what it took to get
+there — a real ordering race, a real root-owned-path gotcha, and one test-
+fixture detail (its egress policy only grants port 22) that looked like a
+connectivity bug until it wasn't. Run it yourself with:
 
 ```sh
 cargo test -p karst-embed --test two_nodes -- --ignored
 ```
+
+**One ordering rule this test had to learn the hard way, and your own code
+needs too**: wait for `status_json`'s `peers[].established` to be `true`
+before your first `connect_tcp`/`bind_udp` call. `connect_tcp` only sets up
+a local socket — it has no way to know whether a session with the
+destination exists yet — and a SYN sent too early is silently dropped, with
+`smoltcp`'s own retry backoff then running on a clock unrelated to when the
+session actually comes up. Skip this and you get a hang, not an error.
 
 ## Go
 
