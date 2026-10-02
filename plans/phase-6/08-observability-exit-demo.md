@@ -3,7 +3,10 @@
 > **Archived planning record — 2026-09-06.** Remaining work is tracked in
 > [GitHub issues via the migration index](../README.md). This notice supersedes
 > all backlog/status instructions below; retain the text as historical context.
-> Tracking: [#130](https://github.com/karst-net/karst/issues/130).
+> Tracking: [#130](https://github.com/karst-net/karst/issues/130) — **closed
+> 2026-10-03**. Sections 1 and 2 below record why those two items were not run
+> live at the time; each now carries a 2026-10-03 update with the live
+> evidence that closes them.
 
 Every IP address below is a placeholder (`203.0.113.7` — RFC 5737 — for the
 deployment's real external address, `192.168.1.x` for the real LAN address),
@@ -40,6 +43,59 @@ by:
   `SetBedrockChainDepth` on every commit; `bedrock.Scheduler.Tick` calls
   `SetBedrockLastAnchoredAt` when `LastAnchoredAt` finds one.
 
+### Update, 2026-10-03 — run live
+
+Disposable deployment on lab host `turing`, built from a new throwaway tag
+`v0.0.0-observability.2` (`78a60f68180061d3f90cf7c4eb704aa7f5f70448`),
+following this document's own precedent: `deliverables.yml`'s tag-gated jobs
+built and cosign-signed real images, independently re-verified (not just
+"CI signed it") against the workflow's own OIDC identity:
+
+```
+ghcr.io/karst-net/karst-control:v0.0.0-observability.2
+  sha256:32b06f02198483be78df166ca20d23bc28362a7b96ed787a65e2193cf65cea9d
+ghcr.io/karst-net/karst-relay:v0.0.0-observability.2
+  sha256:8dd62de07341a83f982d6c23cd5d5faf61f6535b4601cf7d4c314f91e7d3854b
+```
+
+A real root ceremony was run offline with `karst-bedrock` against a fresh,
+disposable account (zone `karst-demo-130`) — 3 root keys (k=2), 1 authority
+key, and ADR-0016's anchor key enrolled **from genesis** rather than added
+later:
+
+```
+karst-bedrock init root root1.key / root2.key / root3.key
+karst-bedrock init authority authority1.key
+karst-bedrock init anchor anchor1.key
+karst-bedrock genesis-request genesis.req karst-demo-130 2 \
+    root1.key.pub root2.key.pub root3.key.pub -- 1 authority1.key.pub \
+    -- anchor1.key.pub
+karst-bedrock sign genesis.req root1.key resp1.sig
+karst-bedrock sign genesis.req root2.key resp2.sig
+karst-bedrock combine genesis.req genesis.log resp1.sig resp2.sig
+```
+
+The resulting log was imported via `POST /api/karst/v1/bedrock/bootstrap/import`
+as the account's real (OIDC-authenticated) owner, and the account's Bedrock
+mode was set to `advisory`. With `KARST_BEDROCK_ANCHOR_MIN_ENTRIES=1`, the
+anchor scheduler fleet picked up the account on its next reconcile pass and
+anchored on its own, with no further operator action:
+
+```
+control-1 ... bedrock anchor scheduler fleet: starting for account db01fdmbcinc73bm0no0
+control-1 ... bedrock anchor scheduler: anchored db01fdmbcinc73bm0no0's audit log at seq 2
+```
+
+```
+management_karst_bedrock_chain_depth{account_id="db01fdmbcinc73bm0no0"} 2
+management_karst_bedrock_anchor_age_seconds{account_id="db01fdmbcinc73bm0no0"} 323
+```
+
+`chain_depth` moved 1 → 2 (genesis, then the scheduler's own `anchor` entry)
+and `anchor_age_seconds` appeared and climbed — both live, on the real signed
+artifact, exactly as `TestKarstMetrics_BedrockChainDepth`/
+`TestKarstMetrics_BedrockAnchorAge` predicted.
+
 ## 2. PSK epoch age — not run live
 
 `management.karst.psk.epoch.age.seconds` only updates on a real epoch
@@ -55,6 +111,49 @@ No boundary fell inside this session. Confirmed instead:
   synthetic clock and asserts the rotation and the metric write
   deterministically, which is the same code path a real day boundary
   exercises.
+
+### Update, 2026-10-03 — run live
+
+#99 (the fix this item was blocked on) is closed, so `EpochScheduler` now
+rotates a running `karst-control` without a restart. A real UTC day boundary
+was reached by advancing `turing`'s wall clock forward (NTP disabled first,
+re-enabled and resynced after) rather than by waiting out the full 86400s —
+`EpochSeconds` is a hard-coded Go constant with no test hook, and `time.Now()`
+in Go reads the clock via vDSO directly, so per-process clock faking
+(`libfaketime`/`LD_PRELOAD`) was tried and confirmed to have no effect before
+falling back to the host clock. `turing` is disposable lab hardware with one
+other, unrelated project on it; nothing on it depended on wall-clock
+continuity across the jump. This is the real `EpochScheduler.Tick` code path
+a genuine day boundary exercises — nothing about the server or the clock
+input mechanism was faked, only when the real boundary was reached.
+
+A `karstd` node (userspace mode) was enrolled against the deployment at
+`psk_epoch 20728` and left running. Server and node logged the rotation at
+the same instant, the node's netmap push arriving without waiting out any
+poll floor:
+
+```
+control (2026-10-03T00:00:38.410Z): karst: psk epoch rotated 20728 -> 20729
+node1   (2026-10-03T00:00:38.426868Z): netmap updated outcome=Replaced { peers: 0 }
+    epoch_rotated=true push_triggered=true
+```
+
+```
+management_karst_psk_epoch_age_seconds 1870
+```
+
+Peer continuity: `karst-control-1`'s container creation timestamp and
+node1's daemon uptime were both unchanged across the boundary — neither side
+restarted or reconnected.
+
+One incidental finding from this run: `karst status`'s displayed `psk_epoch`
+field did not reflect the rotation even after the node logged
+`epoch_rotated=true`, while `engine.stats()`/`engine.status()` (used for the
+rest of that output) are fetched live — `run.rs`'s `Status` IPC handler
+appears to print a `config` snapshot that was not refreshed by the engine's
+own post-rotation config swap (`engine.rs`'s `previous.config.psk_epoch !=
+config.psk_epoch` check). Filed separately; not a discrepancy in the
+control-plane behavior this item exists to verify.
 
 ## 3. Relay registry size — `0 → 1 → 0`
 
@@ -149,3 +248,12 @@ the policy store itself, so both states remain in its history.
 
 The deployment now runs `v0.0.0-observability.1` going forward — a real,
 signed, upgrade from `v0.0.0-pentest.1`, not reverted.
+
+### Update, 2026-10-03 — items 1 and 2's deployment
+
+Items 1 and 2's live run above used a separate, genuinely disposable
+deployment on lab host `turing` (built from `v0.0.0-observability.2`), not
+this section's long-lived one — a fresh account was required for the root
+ceremony. That deployment (`karst-control`, `karst-relay`, Keycloak, Caddy,
+and the one enrolled `karstd` node) was torn down after the evidence above
+was collected.
