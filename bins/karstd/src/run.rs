@@ -4480,7 +4480,12 @@ fn report(
             let _ = writeln!(out, "uptime_seconds = {}", started.elapsed().as_secs());
             let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
             let _ = writeln!(out, "addresses = {addrs:?}");
-            let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+            // Read from the engine's live config, not the `config` snapshot
+            // passed into this function — a netmap-driven PSK rotation swaps
+            // the engine's roster (see `Engine::reconfigure`) without ever
+            // updating that snapshot, so `config.psk_epoch` goes stale the
+            // moment a rotation lands on a long-running daemon (GitHub #229).
+            let _ = writeln!(out, "psk_epoch = {}", engine.config().psk_epoch);
             if let Some(sockets) = device.sockets {
                 let _ = writeln!(out, "userspace_sockets = {sockets}");
             }
@@ -4895,7 +4900,9 @@ fn status_json(
         listen: config.listen.to_string(),
         uptime_seconds: started.elapsed().as_secs(),
         addresses: config.addresses.iter().map(ToString::to_string).collect(),
-        psk_epoch: config.psk_epoch,
+        // See the comment on the plaintext `Status` handler in `report()`:
+        // `config` here is a startup snapshot, not the engine's live one.
+        psk_epoch: engine.config().psk_epoch,
         userspace_sockets: device.sockets,
         ipv6_candidates_refused: device.unreachable_family,
         portmap: PortmapJson {
@@ -5880,7 +5887,10 @@ fn bug_report(
     // The epoch is a generation number, not a secret — and a mismatch between
     // two nodes' epochs is exactly the kind of thing a bug report exists to
     // make visible.
-    let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+    // Same staleness as the plaintext `Status` handler in `report()`: `config`
+    // is a startup snapshot, so a post-rotation epoch must come from the
+    // engine's live one instead.
+    let _ = writeln!(out, "psk_epoch = {}", engine.config().psk_epoch);
     let lattice_only = config.peers.iter().filter(|p| p.psk_is_fallback).count();
     let _ = writeln!(out, "peers_total = {}", config.peers.len());
     // §7.3 requires a lattice-only session to be surfaced. A count here, and
@@ -6412,6 +6422,70 @@ mod route_tests {
             .expect("routes array");
         assert_eq!(routes[0]["route_id"], "exit-eu");
         assert_eq!(routes[0]["active"], true);
+    }
+
+    /// GitHub issue #229: a netmap-driven PSK rotation reaches the daemon
+    /// through `Engine::reconfigure`, which swaps the engine's own live
+    /// config. The `config` these report functions are handed, though, is a
+    /// snapshot captured once when the control thread started and never
+    /// refreshed — so `psk_epoch` must come from the engine, not from that
+    /// parameter, in every renderer that prints it.
+    #[test]
+    fn psk_epoch_reflects_a_rotation_absorbed_after_this_config_snapshot_was_taken() {
+        let stale = config(&["100.64.0.1/16"], &[]);
+        let stale_epoch = stale.psk_epoch;
+        let engine = Engine::new(&Arc::new(config(&["100.64.0.1/16"], &[])));
+
+        let mut rotated = config(&["100.64.0.1/16"], &[]);
+        rotated.psk_epoch = stale_epoch + 1;
+        let _ = engine.reconfigure(&Arc::new(rotated));
+
+        let device = super::Attachment {
+            name: "karst0",
+            mtu: 1420,
+            sockets: None,
+            unreachable_family: None,
+        };
+
+        let text = super::report(
+            &super::ipc::Command::Status,
+            &stale,
+            &engine,
+            device,
+            std::time::Instant::now(),
+            &std::sync::atomic::AtomicU64::new(0),
+            None,
+            super::BugReportExtras::default(),
+        );
+        assert!(
+            text.contains(&format!("psk_epoch = {}", stale.psk_epoch + 1)),
+            "status text still shows the pre-rotation epoch: {text}"
+        );
+
+        let json_text = super::status_json(
+            &stale,
+            &engine,
+            &device,
+            std::time::Instant::now(),
+            &std::sync::atomic::AtomicU64::new(0),
+            None,
+            None,
+        );
+        let value: serde_json::Value = serde_json::from_str(&json_text).expect("valid json");
+        assert_eq!(value["psk_epoch"], stale.psk_epoch + 1);
+
+        let bug_report_text = super::bug_report(
+            &stale,
+            &engine,
+            device,
+            std::time::Instant::now(),
+            &std::sync::atomic::AtomicU64::new(0),
+            super::BugReportExtras::default(),
+        );
+        assert!(
+            bug_report_text.contains(&format!("psk_epoch = {}", stale.psk_epoch + 1)),
+            "bug report still shows the pre-rotation epoch: {bug_report_text}"
+        );
     }
 
     /// GitHub issue #109: the wire has no way to tell "the server disabled
