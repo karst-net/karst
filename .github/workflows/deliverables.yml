@@ -726,6 +726,74 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/karst-signing.keychain-db" 2>/dev/null || true
 
+  # The Mac App Store client package — docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md,
+  # docs/adr/0043-mac-app-store-sandboxed-app-extension-target.md. A sibling
+  # to `macos-package` above, not a variant of it: different script
+  # (`build-macos-appstore-pkg.sh`), different bundle (`KarstAppStore` +
+  # `KarstPacketTunnelAppExtension.appex`), no notarization (App Store
+  # submissions go through App Review instead).
+  #
+  # Unsigned, always, for now: no Apple Developer Program Mac App Store
+  # certificates exist in this environment yet (unlike the Developer-ID
+  # build, which already has `APPLE_CERT_P12`/etc. configured) — this job
+  # exists to prove the artifact actually builds on a real macos-14 runner,
+  # the same bar `macos-package` itself had to clear first before any
+  # signing credentials existed for it. Signing/provisioning-profile
+  # plumbing is a real follow-up once real Mac App Store credentials exist,
+  # not invented speculatively here against secrets nobody has set.
+  #
+  # arm64 only for this pass, matching `app-store`'s own existing scope
+  # below (Apple Silicon is what a Store submission would actually target).
+  macos-appstore-package:
+    name: macOS App Store package (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute release version
+        run: ./scripts/release-version.sh >> "$GITHUB_ENV"
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the package
+        run: ./scripts/build-macos-appstore-pkg.sh --arch arm64
+
+      # Proves the sandboxed bundle shape is actually right — the `.appex`
+      # at `Contents/PlugIns/`, not `Contents/Library/SystemExtensions/`
+      # (`macos-package`'s own equivalent check, adapted for this target's
+      # different embedding location) — without needing real signing
+      # credentials to get this far.
+      - name: Verify bundle layout
+        run: |
+          sudo installer -pkg "dist/macos/karst-appstore-macos-arm64.pkg" -target /
+          app="/Applications/Karst.app"
+          test -x "$app/Contents/MacOS/KarstAppStore" || {
+            echo "::error::KarstAppStore executable missing"
+            ls -laR "$app" 2>&1 || true
+            exit 1
+          }
+          plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist" \
+            | tee /dev/stderr | grep -q '^dev\.karst\.appstore$'
+          appex="$app/Contents/PlugIns/dev.karst.appstore.packettunnel.appex"
+          test -x "$appex/Contents/MacOS/KarstPacketTunnelAppExtension" || {
+            echo "::error::KarstPacketTunnelAppExtension executable missing from the app extension bundle"
+            ls -laR "$app/Contents/PlugIns" 2>&1 || true
+            exit 1
+          }
+          plutil -extract CFBundleIdentifier raw "$appex/Contents/Info.plist" \
+            | tee /dev/stderr | grep -q '^dev\.karst\.appstore\.packettunnel$'
+          sudo rm -rf "$app"
+
+      - name: Upload macOS App Store package
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-appstore-package-arm64-${{ github.sha }}
+          path: |
+            dist/macos/karst-appstore-macos-arm64.pkg
+            dist/macos/karst-appstore-macos-arm64.pkg.sha256
+          if-no-files-found: error
+
   # The Windows client MSI — plans/phase-5/07-windows-client.md §7, issue
   # #110 criterion 4. Unsigned: Phase 6 permits it
   # (plans/phase-6/10-windows-client.md §2.3's signing deferral), the same
@@ -965,28 +1033,27 @@ jobs:
 
   # Mac App Store submission — wired up, and stubbed.
   #
-  # The package `macos-package` builds now ships Karst.app's
-  # NEPacketTunnelProvider as a Developer-ID System Extension
-  # (docs/adr/0026-macos-network-extension-backend.md),
-  # not the root LaunchDaemon this comment used to describe — that build was
-  # removed by ADR-0026 item 8. It still cannot be accepted by the Mac App
-  # Store: per docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md,
-  # the Store requires the same NEPacketTunnelProvider logic packaged as a
-  # sandboxed App Extension (.appex) instead, which is a separate Xcode
-  # target this tree does not have yet.
+  # `macos-appstore-package` above now builds a real, sandboxed App Extension
+  # artifact (docs/adr/0043-mac-app-store-sandboxed-app-extension-target.md),
+  # answering the architectural blocker this comment used to describe (a
+  # System Extension cannot be made App-Store-eligible by any entitlement
+  # change — ADR-0040). What remains is verification, not architecture: no
+  # Apple Developer Program Mac App Store certificates/App ID/provisioning
+  # profiles exist in this environment, so nothing has installed, activated,
+  # or enrolled this artifact on real hardware.
   #
   # This job therefore exists to be *ready*: it runs the moment an Apple ID
   # certificate is configured, checks every precondition, and reports precisely
   # what is still missing rather than uploading something that will be
   # rejected. `scripts/appstore-submit-macos.sh` carries the real command
-  # sequence, so the remaining work is producing an eligible artefact, not
-  # working out how to submit one.
+  # sequence, so the remaining work is real-hardware verification, not
+  # producing an artefact or working out how to submit one.
   #
   # It never blocks a release: `continue-on-error`, because a submission that
   # cannot yet succeed must not turn a good build red.
   app-store:
     name: Mac App Store (stub)
-    needs: macos-package
+    needs: macos-appstore-package
     runs-on: macos-14
     continue-on-error: true
     # Tags only. Deliberately *not* also gated on the certificates being
@@ -997,15 +1064,12 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
-      # arm64 only — this job is a stub that refuses to submit anything until
-      # a sandboxed App Extension variant exists (see the script's own header
-      # and docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md),
-      # and Apple Silicon is the architecture that submission would actually
-      # target. Nothing here depends on which architecture's precondition
-      # check runs, since KARST_APPSTORE_READY is never set.
+      # arm64 only — Apple Silicon is the architecture a real submission
+      # would actually target. Nothing here depends on which architecture's
+      # precondition check runs, since KARST_APPSTORE_READY is never set.
       - uses: actions/download-artifact@v4
         with:
-          name: macos-package-arm64-${{ github.sha }}
+          name: macos-appstore-package-arm64-${{ github.sha }}
           path: dist/macos
       - name: Submit
         env:
@@ -1020,7 +1084,7 @@ jobs:
             chmod 600 "$key"
             export KARST_NOTARY_KEY="$key"
           fi
-          ./scripts/appstore-submit-macos.sh dist/macos/karst-client-macos-arm64.pkg
+          ./scripts/appstore-submit-macos.sh dist/macos/karst-appstore-macos-arm64.pkg
 
   # The point of everything above: a page a person can actually click
   # "Download" on. `release-artefacts` only produces a workflow artifact,

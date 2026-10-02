@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Template, as packaging/macos/KarstStatus/Info.plist is — a future packaging
+  script patches CFBundleShortVersionString/CFBundleVersion with
+  `plutil -replace`, same pattern.
+
+  No `NSSystemExtensionUsageDescription`: unlike KarstStatus, this app never
+  submits an `OSSystemExtensionRequest` — `KarstPacketTunnelAppExtension`
+  activates with the app's own installation (Mac App Store distribution
+  mechanics, not `sysextd`), so the one-time system-extension consent prompt
+  that key is for never appears here.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Karst</string>
+    <key>CFBundleDisplayName</key>
+    <string>Karst</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.karst.appstore</string>
+    <key>CFBundleExecutable</key>
+    <string>KarstAppStore</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright the Karst contributors. MIT OR Apache-2.0.</string>
+</dict>
+</plist>

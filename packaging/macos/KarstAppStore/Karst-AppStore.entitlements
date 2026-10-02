@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Mac App Store entitlements for the KarstAppStore host app. Contrast with
+  packaging/macos/Karst.entitlements (the Developer-ID host app's own file):
+
+  - `com.apple.security.app-sandbox`: required for any Mac App Store
+    submission.
+  - No `com.apple.developer.system-extension.install`: this app never
+    submits an `OSSystemExtensionRequest` — see Info.plist's own comment.
+  - `com.apple.developer.networking.networkextension` =
+    `packet-tunnel-provider` (standard value, not `-systemextension`-suffixed)
+    — needed on the host app for the same reason `Karst.entitlements`'s own
+    comment documents for its suffixed copy (#159: `NETunnelProviderManager.
+    saveToPreferences`/`sendProviderMessage` need it on both host and
+    extension, not just the extension).
+  - `com.apple.security.application-groups`: shared with
+    `KarstPacketTunnelAppExtension` — see that target's entitlements file and
+    `PacketTunnelProvider.swift`'s header comment for why an App Group
+    actually bridges host and extension here, unlike the System Extension
+    split.
+
+  Not yet validated against a real provisioning profile — same "written and
+  reviewed, not run" limitation as the rest of this target
+  (docs/adr/0043-mac-app-store-sandboxed-app-extension-target.md).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>packet-tunnel-provider</string>
+    </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.dev.karst.appstore</string>
+    </array>
+    <key>com.apple.application-identifier</key>
+    <string>WJ3MJC4KV7.dev.karst.appstore</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>WJ3MJC4KV7</string>
+</dict>
+</plist>
