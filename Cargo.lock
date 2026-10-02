@@ -1659,6 +1659,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "karst-embed"
+version = "0.0.0"
+dependencies = [
+ "base64ct",
+ "karst-control-client",
+ "karst-relay",
+ "karst-tun",
+ "karstd",
+ "rcgen",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "karst-embed-capi"
+version = "0.0.0"
+dependencies = [
+ "karst-embed",
+]
+
+[[package]]
 name = "karst-ffi"
 version = "0.0.0"
 dependencies = [

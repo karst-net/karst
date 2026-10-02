@@ -583,6 +583,28 @@ impl Userspace {
         Ok(())
     }
 
+    /// Release a UDP listener.
+    ///
+    /// Immediate, unlike [`Self::tcp_release`]: a datagram socket has no
+    /// close handshake to wait out, so there is no connection in flight a
+    /// grace period would protect — the handle is simply freed. Added for
+    /// GitHub issue #214's embedding library, whose sockets are
+    /// short-lived and caller-owned, unlike `karstd`'s own DNS runtime
+    /// (this type's only caller before that issue), which binds one
+    /// `listen_udp` for the life of the daemon and so never needed a way to
+    /// give one back.
+    pub fn udp_release(&self, handle: UdpHandle) {
+        let mut stack = self
+            .stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if stack.live.get(&handle.socket).copied() != Some(handle.generation) {
+            return;
+        }
+        stack.live.remove(&handle.socket);
+        let _ = stack.sockets.remove(handle.socket);
+    }
+
     /// Open a TCP connection over the userspace stack.
     ///
     /// # Errors
@@ -916,6 +938,22 @@ mod tests {
             Some("10.0.0.2:53".parse().expect("server endpoint"))
         );
         assert_eq!(answer, b"answer");
+    }
+
+    #[test]
+    fn udp_release_frees_the_socket_and_invalidates_the_handle() {
+        let endpoint = endpoint("10.0.0.1");
+        let handle = endpoint.listen_udp(49_153).expect("bind");
+        assert_eq!(endpoint.socket_count(), 1);
+
+        endpoint.udp_release(handle);
+        assert_eq!(endpoint.socket_count(), 0);
+
+        // The port is free again — a stale handle is simply inert, the same
+        // contract `socket`/`udp_socket` already give every other released
+        // handle, not a panic or a reused identity.
+        assert!(endpoint.listen_udp(49_153).is_ok());
+        assert_eq!(endpoint.udp_recv(handle, &mut Vec::new()), None);
     }
 
     /// **Finding 41's defect, asserted where it is deterministic.**
