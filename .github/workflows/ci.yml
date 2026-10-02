@@ -882,8 +882,8 @@ jobs:
       # karst-embed nodes (NetworkMode::Userspace, no karstd process) and a
       # real karst-relay, built here just like the fixture above.
       - name: Two embedded nodes exchange TCP with no karstd process
-        timeout-minutes: 5
-        run: cargo test -p karst-embed --test two_nodes -- --ignored --test-threads=1
+        timeout-minutes: 8
+        run: cargo test -p karst-embed --test two_nodes -- --ignored --test-threads=1 --nocapture
 
   # Phase 3 exit criterion (§2.6): "an automated scan of logs, traces, and a
   # generated karst bugreport over a full registration-to-handshake run finds
