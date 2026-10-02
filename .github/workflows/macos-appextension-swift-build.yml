@@ -1,0 +1,56 @@
+name: macOS App Store extension (Swift)
+
+# Ad hoc build check for packaging/macos/KarstPacketTunnelAppExtension and
+# packaging/macos/KarstAppStore —
+# docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md,
+# docs/adr/0043-mac-app-store-sandboxed-app-extension-target.md. Mirrors
+# macos-packettunnel-swift-build.yml and macos-status-swift-build.yml exactly
+# (same reasoning: both packages were written on a Linux machine with no
+# Xcode/NetworkExtension SDK to verify them against, so this is the fastest
+# way to find out whether they actually compile, without waiting on a Mac).
+# One workflow for both new packages, not two, since they are this target's
+# one logical unit (host app + its extension) and always change together.
+#
+# Not a merge gate, same as both siblings it mirrors — whether this becomes
+# one is a decision for whoever picks feature parity or real-hardware
+# verification back up, not made here.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packaging/macos/KarstPacketTunnelAppExtension/**'
+      - 'packaging/macos/KarstAppStore/**'
+      - 'crates/karst-ffi/**'
+      - 'bins/karstd/**'
+      - '.github/workflows/macos-appextension-swift-build.yml'
+
+jobs:
+  packet-tunnel-app-extension:
+    name: KarstPacketTunnelAppExtension swift build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p karst-ffi --features network-extension
+        env:
+          # Matches Package.swift's .macOS(.v13) — see
+          # macos-packettunnel-swift-build.yml's identical step for why.
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+      - run: swift --version
+      - run: swift test
+        working-directory: packaging/macos/KarstPacketTunnelAppExtension
+
+  app-store-host-app:
+    name: KarstAppStore swift build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build --product KarstAppStore
+        working-directory: packaging/macos/KarstAppStore

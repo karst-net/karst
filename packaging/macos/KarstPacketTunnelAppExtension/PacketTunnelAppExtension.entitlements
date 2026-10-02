@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Mac App Store entitlements for the sandboxed packet-tunnel App Extension —
+  docs/adr/0040-mac-app-store-needs-a-sandboxed-app-extension.md,
+  docs/adr/0043-mac-app-store-sandboxed-app-extension-target.md. Contrast
+  with packaging/macos/KarstPacketTunnel/PacketTunnel.entitlements, which
+  this is a sibling to, not a superset of:
+
+  - `com.apple.security.app-sandbox`: unconditionally required for any Mac
+    App Store submission (App Review Guideline 2.5.2) and the whole reason
+    this target exists as a second Xcode-less SPM package rather than a
+    signing option on the System Extension one — a sandboxed process cannot
+    call `OSSystemExtensionRequest.activationRequest` the way
+    `SystemExtensionActivator.swift` does, per ADR-0040's own research.
+  - `com.apple.developer.networking.networkextension` =
+    `packet-tunnel-provider`, the **standard** value, not the
+    `-systemextension`-suffixed one `PacketTunnel.entitlements` carries —
+    per Apple's own developer-forums guidance that ADR-0040 quotes
+    (developer.apple.com/forums/thread/737894): the standard value is for
+    development and App Store distribution, the suffixed one specifically
+    for Developer ID.
+  - `com.apple.security.application-groups`: shared with the host app
+    (`Karst-AppStore.entitlements`) — both run as the console user under
+    this sandboxed packaging, unlike the System Extension/host-app split,
+    so an App Group container is the right state-sharing mechanism here
+    (see `PacketTunnelProvider.swift`'s own header comment).
+  - No `com.apple.developer.system-extension.install`: nothing here ever
+    submits an `OSSystemExtensionRequest` — the `.appex` activates with the
+    app's own installation, not a separate request.
+
+  `dev.karst.appstore`/`dev.karst.appstore.packettunnel` are new, distinct
+  bundle identifiers from `dev.karst.karststatus`/`dev.karst.packettunnel` —
+  a separate Developer Portal App ID for this distribution channel, so the
+  App Store's entitlement configuration never needs to coexist with the
+  already-working Developer-ID one on a single App ID.
+
+  Not yet validated against a real provisioning profile — no Apple Developer
+  Program Mac App Store certificates/App ID exist in this environment. Same
+  "written and reviewed, not run" limitation as the rest of this target.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>packet-tunnel-provider</string>
+    </array>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.dev.karst.appstore</string>
+    </array>
+    <key>com.apple.application-identifier</key>
+    <string>WJ3MJC4KV7.dev.karst.appstore.packettunnel</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>WJ3MJC4KV7</string>
+</dict>
+</plist>

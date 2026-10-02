@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: MIT OR Apache-2.0
+  Copyright the Karst contributors.
+
+  Template, as packaging/macos/KarstPacketTunnel/Info.plist is — a future
+  packaging script patches CFBundleShortVersionString/CFBundleVersion with
+  `plutil -replace`, the same pattern that file's own comment describes.
+
+  `NSExtensionPrincipalClass` names the class directly
+  (`KarstPacketTunnelAppExtension.PacketTunnelProvider`), not Xcode's
+  `$(PRODUCT_MODULE_NAME)` substitution — nothing here builds through Xcode,
+  same reasoning as KarstPacketTunnel's own copy of this comment.
+
+  `CFBundlePackageType` = `XPC!` for an App Extension (`.appex`), as opposed
+  to a System Extension's `SYSX` (KarstPacketTunnel/Info.plist) — this is the
+  one detail in this file taken from secondary sources rather than an Apple
+  documentation page read directly during this session, flagged the same way
+  that file flags its own least-certain detail.
+
+  No `NetworkExtension`/`NEProviderClasses` dict and no
+  `NSSystemExtensionUsageDescription`: both are specifically `sysextd`/
+  `OSSystemExtensionRequest` requirements (see KarstPacketTunnel/Info.plist's
+  own comments on each), and neither applies to a `.appex` that installs and
+  activates with the app itself — no separate activation request is ever
+  made. Unverified on real hardware, same as the rest of this target; flagged
+  rather than assumed correct by analogy.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>KarstPacketTunnelAppExtension</string>
+    <key>CFBundleDisplayName</key>
+    <string>Karst Network Extension</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.karst.appstore.packettunnel</string>
+    <key>CFBundleExecutable</key>
+    <string>KarstPacketTunnelAppExtension</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright the Karst contributors. MIT OR Apache-2.0.</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.networkextension.packet-tunnel</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>KarstPacketTunnelAppExtension.PacketTunnelProvider</string>
+    </dict>
+</dict>
+</plist>
