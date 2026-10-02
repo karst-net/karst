@@ -1,0 +1,48 @@
+name: Go embedding bindings (cgo)
+
+# bindings/go/karst cgo-links crates/karst-embed-capi's compiled library —
+# docs/adr/0044-embedded-library-mode.md, GitHub issue #214. This job proves
+# the cgo boundary actually compiles and links, the same bar
+# macos-*-swift-build.yml holds the Swift side of karst-ffi to.
+#
+# Not a merge gate: path-triggered and workflow_dispatch, matching this
+# repo's other "ad hoc build check for a new binding surface" workflows.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'crates/karst-embed/**'
+      - 'crates/karst-embed-capi/**'
+      - 'bindings/go/karst/**'
+      - '.github/workflows/go-embed-build.yml'
+
+jobs:
+  go-bindings:
+    name: bindings/go/karst build and vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # karst-embed-capi pulls in karstd -> karst-control-client, whose
+      # build.rs compiles karst_control.proto/management.proto — the same
+      # reason every other Rust-building job in this repo installs this
+      # before its first cargo step.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bindings/go/karst/go.mod
+      - name: Build karst-embed-capi (release cdylib)
+        run: cargo build -p karst-embed-capi --release
+      - name: go build / go vet
+        working-directory: bindings/go/karst
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/target/release
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...

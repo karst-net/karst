@@ -1,0 +1,24 @@
+[package]
+name = "karst-embed-capi"
+description = "Hand-rolled C ABI over karst-embed, for cgo and other non-Rust embedders (ADR-0044, GitHub issue #214)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# `cdylib`/`staticlib` are what cgo actually links against; `lib` (rlib) is
+# what `cargo test` needs to build this crate's own unit tests — the same
+# three-way split `crates/karst-ffi`'s own `Cargo.toml` already uses, for the
+# identical reason (its comment there is the one to read first).
+[lib]
+name = "karst_embed_capi"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-embed.workspace = true

@@ -309,7 +309,132 @@ pub fn run_with_control(
         status_socket_path,
         DeviceOrigin::Create,
         None,
+        None,
     )
+}
+
+/// As [`run_with_control`], for an embedding application with no kernel
+/// device at all — a Go or Rust backend process linking in a mesh node
+/// directly (GitHub issue #214), as distinct from [`run_with_adopted_fd`]'s
+/// mobile/`NetworkExtension` shape, which adopts a *platform-owned*
+/// descriptor rather than driving sockets itself.
+///
+/// Requires `config.network_mode` to already be
+/// [`crate::config::NetworkMode::Userspace`] — refused immediately
+/// otherwise, since [`crate::config::NetworkMode::Tun`] hands this function
+/// nothing an embedding caller could address (a kernel `Tun` has no socket
+/// API; only [`karst_tun::Userspace`] does). Needs no `unsafe`, no root, and
+/// no platform-specific feature: [`karst_tun::Userspace::create`] already
+/// runs on any OS, which is the whole reason this needs so little new code
+/// here — see `docs/adr/0044-embedded-library-mode.md`.
+///
+/// `userspace_ready` is sent exactly once, at the same point
+/// [`run_with_adopted_fd`]'s own `ready` channel fires — right after
+/// `socket_path` is bound, not merely once the interface exists. **Found
+/// chasing the identical race #161 already named for `ready`**: this used to
+/// fire immediately after the interface came up, which handed back a
+/// `Userspace` whose first real use (`crates/karst-embed::MeshNode::start`
+/// calling `status_json()` right after `start` returns) could race the
+/// socket bind further down this function — the connect side fails fast
+/// (the socket path does not exist as a file yet), which read as `start`
+/// succeeding but every following call failing with "not found." A crashed
+/// or early-exiting engine thread simply drops the sender, which
+/// `MeshNode::start`'s bounded `recv_timeout` turns into a prompt error
+/// rather than an indefinite hang.
+///
+/// # Errors
+/// As [`run`], plus the `network_mode` refusal above.
+// `userspace_ready` must stay by-value: `crates/karst-embed::MeshNode::start`
+// moves its sender into the thread that calls this, the same reasoning
+// `run_with_adopted_fd`'s own `ready` parameter already carries this
+// identical allow for.
+#[allow(clippy::needless_pass_by_value)]
+pub fn run_embedded(
+    config: &Arc<Config>,
+    shutdown: &Shutdown,
+    socket_path: &std::path::Path,
+    control_client: Option<crate::control::Client>,
+    userspace_ready: std::sync::mpsc::SyncSender<Userspace>,
+) -> io::Result<()> {
+    if config.network_mode != crate::config::NetworkMode::Userspace {
+        return Err(io::Error::other(
+            "run_embedded requires network_mode = \"userspace\": an embedding \
+             caller has no kernel device to create or adopt",
+        ));
+    }
+    run_engine(
+        config,
+        shutdown,
+        socket_path,
+        control_client,
+        None,
+        DeviceOrigin::Create,
+        None,
+        Some(&userspace_ready),
+    )
+}
+
+#[cfg(test)]
+mod run_embedded_tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use super::*;
+
+    /// A config this module owns, trimmed to what [`run_embedded`]'s own
+    /// refusal check reaches before anything else — it must never create an
+    /// interface, bind a socket, or touch the network, so most of
+    /// `Config`'s fields are irrelevant filler.
+    fn config(network_mode: crate::config::NetworkMode) -> Config {
+        Config {
+            relay_ca_file: None,
+            prefer_quic_relay: false,
+            metrics_listen: None,
+            tracing_collector: None,
+            route_offers: Vec::new(),
+            exit_node_state_file: None,
+            keys: Arc::new(karst_noise::handshake::StaticKeys::from_seed(&[0x11; 64])),
+            listen: "0.0.0.0:51820".parse().expect("addr"),
+            port_mapping: true,
+            interface: "karst0".to_owned(),
+            network_mode,
+            dns: crate::config::DnsSettings::default(),
+            netmap_dns: crate::netmap::DNSConfig::default(),
+            userspace_socks5_listen: None,
+            userspace_publish: Vec::new(),
+            nat64: None,
+            addresses: Vec::new(),
+            psk_epoch: 1,
+            node_id: Vec::new(),
+            relays: Vec::new(),
+            turn_servers: Vec::new(),
+            peers: Vec::new(),
+            routes: crate::routing::AllowedIps::build(Vec::new()).expect("no conflicts"),
+            skipped: Vec::new(),
+            filter: crate::filter::PacketFilter::unrestricted(),
+            ssh_filter: crate::filter::SshFilter::absent(),
+            datapath_workers: 1,
+        }
+    }
+
+    /// GitHub issue #214: an embedding caller gets a prompt, specific error
+    /// rather than a kernel-`Tun`-creation attempt (which would need
+    /// `CAP_NET_ADMIN` an embedding process may not have) or a silent
+    /// misconfiguration.
+    #[test]
+    fn refuses_tun_network_mode_before_touching_anything() {
+        let config = Arc::new(config(crate::config::NetworkMode::Tun));
+        let shutdown = Shutdown::default();
+        let (ready_tx, _ready_rx) = std::sync::mpsc::sync_channel(1);
+        let error = run_embedded(
+            &config,
+            &shutdown,
+            std::path::Path::new("/nonexistent/karst-embed-test.sock"),
+            None,
+            ready_tx,
+        )
+        .expect_err("Tun mode must be refused");
+        assert!(error.to_string().contains("userspace"), "{error}");
+    }
 }
 
 /// As [`run_with_control`], adopting an already-open tunnel descriptor
@@ -371,14 +496,15 @@ pub unsafe fn run_with_adopted_fd(
         None,
         DeviceOrigin::AdoptFd(fd),
         ready.as_ref(),
+        None,
     )
 }
 
-/// The shared implementation behind [`run_with_control`] and
-/// [`run_with_adopted_fd`] — ADR-0030 extracted this out from the previously
-/// `pub fn run_with_control` so the two entry points differ only in how the
-/// interface comes to exist, not in a second, forked copy of everything
-/// after that.
+/// The shared implementation behind [`run_with_control`],
+/// [`run_with_adopted_fd`] and [`run_embedded`] — ADR-0030 extracted this out
+/// from the previously `pub fn run_with_control` so the entry points differ
+/// only in how the interface comes to exist, not in a second, forked copy of
+/// everything after that.
 ///
 /// # Errors
 /// As [`run`].
@@ -392,6 +518,7 @@ fn run_engine(
     status_socket_path: Option<&std::path::Path>,
     attachment: DeviceOrigin,
     ready: Option<&std::sync::mpsc::SyncSender<()>>,
+    userspace_ready: Option<&std::sync::mpsc::SyncSender<Userspace>>,
 ) -> io::Result<()> {
     let control_endpoint = control_client
         .as_ref()
@@ -542,6 +669,16 @@ fn run_engine(
     // on something the caller stopped caring about.
     if let Some(ready) = ready {
         let _ = ready.try_send(());
+    }
+    // GitHub issue #214: sent at the same point as `ready` above, for the
+    // identical reason — `crates/karst-embed::MeshNode::start`'s first real
+    // use of the handle it gets back is `status_json()` over this very
+    // socket, so handing the handle out any earlier would reintroduce #161's
+    // race in a new guise.
+    if let Some(userspace_ready) = userspace_ready {
+        if let Some(stack) = tun.userspace() {
+            let _ = userspace_ready.try_send(stack);
+        }
     }
 
     // The unprivileged status listener — absent unless `--status-socket` named

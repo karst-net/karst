@@ -1,0 +1,29 @@
+[package]
+name = "karst-embed"
+description = "Embed a mesh node directly into a Rust application — no karstd sidecar (ADR-0044, GitHub issue #214)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "karst_embed"
+
+[lints]
+workspace = true
+
+[dependencies]
+karst-tun.workspace = true
+karstd.workspace = true
+thiserror = "2"
+
+[dev-dependencies]
+base64ct = { version = "1", features = ["alloc"] }
+karst-control-client.workspace = true
+karst-relay = { path = "../../bins/karst-relay" }
+rcgen = "0.14"
+serde_json = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
