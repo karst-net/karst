@@ -24,6 +24,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # karst-embed-capi pulls in karstd -> karst-control-client, whose
+      # build.rs compiles karst_control.proto/management.proto — the same
+      # reason every other Rust-building job in this repo installs this
+      # before its first cargo step.
+      - uses: arduino/setup-protoc@v3
+        with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-go@v5
