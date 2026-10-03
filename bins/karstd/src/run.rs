@@ -4480,7 +4480,9 @@ fn report(
             let _ = writeln!(out, "uptime_seconds = {}", started.elapsed().as_secs());
             let addrs: Vec<String> = config.addresses.iter().map(ToString::to_string).collect();
             let _ = writeln!(out, "addresses = {addrs:?}");
-            let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+            // The engine's live config, not the startup `config`: a netmap
+            // push can rotate the epoch while the daemon is running.
+            let _ = writeln!(out, "psk_epoch = {}", engine.config().psk_epoch);
             if let Some(sockets) = device.sockets {
                 let _ = writeln!(out, "userspace_sockets = {sockets}");
             }
@@ -4895,7 +4897,7 @@ fn status_json(
         listen: config.listen.to_string(),
         uptime_seconds: started.elapsed().as_secs(),
         addresses: config.addresses.iter().map(ToString::to_string).collect(),
-        psk_epoch: config.psk_epoch,
+        psk_epoch: engine.config().psk_epoch,
         userspace_sockets: device.sockets,
         ipv6_candidates_refused: device.unreachable_family,
         portmap: PortmapJson {
@@ -5880,7 +5882,7 @@ fn bug_report(
     // The epoch is a generation number, not a secret — and a mismatch between
     // two nodes' epochs is exactly the kind of thing a bug report exists to
     // make visible.
-    let _ = writeln!(out, "psk_epoch = {}", config.psk_epoch);
+    let _ = writeln!(out, "psk_epoch = {}", engine.config().psk_epoch);
     let lattice_only = config.peers.iter().filter(|p| p.psk_is_fallback).count();
     let _ = writeln!(out, "peers_total = {}", config.peers.len());
     // §7.3 requires a lattice-only session to be surfaced. A count here, and
