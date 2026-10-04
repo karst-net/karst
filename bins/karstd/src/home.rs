@@ -197,6 +197,12 @@ pub struct Rotation {
     resting: u32,
     /// Where in the registry the next candidate comes from.
     next: usize,
+    /// A network change is being answered by visiting every candidate once,
+    /// back to back — see [`Self::network_changed`].
+    sweeping: bool,
+    /// Candidates the sweep has yet to start. `None` until the first round
+    /// after the change, which is when the registry is known.
+    sweep_left: Option<u32>,
 }
 
 /// How many consecutive rounds one alternative is measured for.
@@ -223,6 +229,9 @@ impl Rotation {
     /// that one is measured on its own connection every round, and a node that
     /// probed it twice would be comparing it against itself.
     pub fn round(&mut self, candidates: &[RelayId]) -> Option<RelayId> {
+        if self.sweeping && self.sweep_left.is_none() {
+            self.sweep_left = Some(u32::try_from(candidates.len()).unwrap_or(u32::MAX));
+        }
         if let Some((id, left)) = self.measuring {
             // A candidate withdrawn from the registry mid-window, or adopted as
             // the home relay, stops being an alternative at once.
@@ -236,8 +245,17 @@ impl Rotation {
             // cut short by the registry does not: there is nothing being held,
             // so there is nothing to stand back from.
             if still_a_candidate {
-                self.resting = REST_ROUNDS;
+                // A sweep goes straight on to the next candidate; the rest
+                // that follows is for the sweep's end, not for each window.
+                self.resting = if self.sweeping && self.sweep_left != Some(0) {
+                    0
+                } else {
+                    REST_ROUNDS
+                };
             }
+        }
+        if self.sweeping && (self.sweep_left == Some(0) || candidates.is_empty()) {
+            self.sweeping = false;
         }
         if self.resting > 0 {
             self.resting -= 1;
@@ -245,8 +263,44 @@ impl Rotation {
         }
         let id = *candidates.get(self.next % candidates.len().max(1))?;
         self.next = self.next.wrapping_add(1);
+        if self.sweeping {
+            self.sweep_left = self.sweep_left.map(|n| n.saturating_sub(1));
+        }
         self.measuring = Some((id, PROBE_ROUNDS - 1));
         Some(id)
+    }
+
+    /// The network under this node changed, so what was measured no longer
+    /// describes it.
+    ///
+    /// **Measure sooner; do not decide sooner.** Abandons the current window
+    /// and any rest, and visits every candidate once, back to back, instead of
+    /// one per ten minutes. §9.2's margin and sample count are untouched — a
+    /// challenger still has to win [`HYSTERESIS_SAMPLES`] consecutive rounds —
+    /// because the cost of flapping falls on the whole aquifer's netmap, not on
+    /// the node that roamed. While [`Self::sweeping`] the caller should run
+    /// rounds at [`SWEEP_INTERVAL`].
+    pub fn network_changed(&mut self) {
+        self.measuring = None;
+        self.resting = 0;
+        self.sweeping = true;
+        self.sweep_left = None;
+    }
+
+    /// Whether a post-change sweep is still visiting candidates.
+    #[must_use]
+    pub fn sweeping(&self) -> bool {
+        self.sweeping
+    }
+
+    /// How long to wait before the next round.
+    #[must_use]
+    pub fn interval(&self) -> std::time::Duration {
+        if self.sweeping {
+            SWEEP_INTERVAL
+        } else {
+            PROBE_INTERVAL
+        }
     }
 
     /// The candidate under measurement, whose connection must be held.
@@ -264,6 +318,95 @@ impl Rotation {
 /// a netmap update on noise the hysteresis is there to ignore; slower would
 /// leave a node on a relay that had become the wrong one for most of an hour.
 pub const PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The smallest jitter window a drain notice is spread over.
+///
+/// A relay that announces `reconnect_in_ms = 0` is still not asking every
+/// client to redial in the same instant; §7.6's reason for jitter does not
+/// depend on how long the relay asked for.
+pub const RESTART_JITTER_FLOOR_MS: u64 = 1_000;
+
+/// A relay's `Restarting` notice, carried out — `ponor-v1.md` §7.6.
+///
+/// **Sans-clock**, like the rest of this module: the caller supplies the time
+/// and the entropy. The notice does two things. It sets how long to wait before
+/// redialling — `reconnect_in_ms` plus jitter, so a restart is not a
+/// synchronised reconnect storm — and it opens a window, `try_for_ms` long,
+/// during which a failed connect is the relay still coming back rather than
+/// evidence it is dead. Without the second part the 3-attempt abandon path
+/// would read a relay that was merely restarting as one to leave, and walk the
+/// whole home population off it.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Restart {
+    retry_until_ms: Option<u64>,
+}
+
+impl Restart {
+    /// Take a notice received at `now_ms`; returns how long to wait before
+    /// reconnecting.
+    ///
+    /// `entropy` is uniform random; the jitter is drawn from
+    /// `[0, max(reconnect_in_ms, RESTART_JITTER_FLOOR_MS))`.
+    pub fn begin(
+        &mut self,
+        now_ms: u64,
+        reconnect_in_ms: u32,
+        try_for_ms: u32,
+        entropy: u64,
+    ) -> u64 {
+        let window = u64::from(reconnect_in_ms).max(RESTART_JITTER_FLOOR_MS);
+        let wait = u64::from(reconnect_in_ms) + entropy % window;
+        self.retry_until_ms = Some(
+            now_ms
+                .saturating_add(wait)
+                .saturating_add(u64::from(try_for_ms)),
+        );
+        wait
+    }
+
+    /// Whether a failed connect at `now_ms` is still inside the window the
+    /// relay asked for, and so must not count towards abandoning it.
+    #[must_use]
+    pub fn in_grace(&self, now_ms: u64) -> bool {
+        self.retry_until_ms.is_some_and(|until| now_ms < until)
+    }
+}
+
+/// How often a connection busy with traffic looks for a pending move.
+///
+/// The idle path notices a move within a tick; a connection that is never idle
+/// needs a bound of its own. A second is far below anything §9.2's cadence can
+/// produce — a move is decided over minutes — and far above the per-packet cost
+/// of taking a lock, which is the reason it is not checked on every datagram.
+pub const MOVE_CHECK_INTERVAL_MS: u64 = 1_000;
+
+/// Rate limit on the "has the choice moved?" check, for a connection whose
+/// queue never empties.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MoveCheck {
+    last_ms: Option<u64>,
+}
+
+impl MoveCheck {
+    /// Whether the check is due at `now_ms`; asking starts the next interval.
+    pub fn due(&mut self, now_ms: u64) -> bool {
+        let due = self
+            .last_ms
+            .is_none_or(|last| now_ms.saturating_sub(last) >= MOVE_CHECK_INTERVAL_MS);
+        if due {
+            self.last_ms = Some(now_ms);
+        }
+        due
+    }
+}
+
+/// How often rounds run while answering a network change.
+///
+/// Rounds are still consecutive and still [`HYSTERESIS_SAMPLES`] wins are still
+/// needed; only the gap between them shrinks. Long enough that a Ponor
+/// handshake to a distant relay finishes inside it, which the first
+/// measurement of a window already assumes.
+pub const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Outstanding latency probes on one relay connection — `ponor-v1.md` §9.1.
 ///
@@ -383,6 +526,89 @@ mod tests {
 
     fn id(n: u8) -> RelayId {
         [n; 32]
+    }
+
+    #[test]
+    fn a_restart_waits_the_requested_time_plus_jitter() {
+        let mut r = Restart::default();
+        // No entropy: exactly what the relay asked for.
+        assert_eq!(r.begin(0, 2_000, 60_000, 0), 2_000);
+        // Jitter is bounded by the larger of the request and the floor.
+        assert_eq!(r.begin(0, 2_000, 60_000, 1_999), 3_999);
+        assert_eq!(r.begin(0, 0, 60_000, 999_999), 999_999 % 1_000);
+        // And the same notice spreads clients out rather than aligning them.
+        let waits: std::collections::HashSet<u64> = (0..50)
+            .map(|e| Restart::default().begin(0, 2_000, 60_000, e * 37))
+            .collect();
+        assert!(waits.len() > 1);
+    }
+
+    #[test]
+    fn failures_inside_the_restart_window_are_not_evidence_of_a_dead_relay() {
+        let mut r = Restart::default();
+        assert!(!r.in_grace(0), "no notice, no grace");
+        let wait = r.begin(10_000, 2_000, 60_000, 0);
+        assert!(r.in_grace(10_000 + wait + 59_999));
+        assert!(!r.in_grace(10_000 + wait + 60_000), "the window ends");
+    }
+
+    #[test]
+    fn a_network_change_visits_every_candidate_without_resting() {
+        let candidates = [id(1), id(2), id(3)];
+        let mut r = Rotation::default();
+        // Settle into the slow cycle first: a window, then its rest.
+        for _ in 0..=PROBE_ROUNDS {
+            r.round(&candidates);
+        }
+        assert!(!r.sweeping());
+        assert_eq!(r.interval(), PROBE_INTERVAL);
+
+        r.network_changed();
+        assert!(r.sweeping());
+        assert_eq!(r.interval(), SWEEP_INTERVAL);
+
+        let mut seen = Vec::new();
+        for _ in 0..(3 * PROBE_ROUNDS) {
+            let probed = r.round(&candidates).expect("no rest inside a sweep");
+            if seen.last() != Some(&probed) {
+                seen.push(probed);
+            }
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, candidates.to_vec(), "each candidate measured once");
+
+        // The sweep ends and the ordinary rest follows it.
+        assert_eq!(r.round(&candidates), None);
+        assert!(!r.sweeping());
+        assert_eq!(r.interval(), PROBE_INTERVAL);
+    }
+
+    #[test]
+    fn a_sweep_keeps_the_hysteresis() {
+        // Faster measurement must not become a faster decision: a challenger
+        // that wins fewer than HYSTERESIS_SAMPLES rounds does not move the node.
+        let mut s = Selector::new();
+        s.hold(id(1));
+        for _ in 0..(HYSTERESIS_SAMPLES - 1) {
+            s.observe(id(1), 100);
+            s.observe(id(2), 10);
+            assert!(!s.select().1);
+        }
+        assert_eq!(s.chosen(), Some(id(1)));
+    }
+
+    #[test]
+    fn a_connection_that_is_never_idle_still_checks_for_a_move() {
+        // A datagram every millisecond for ten seconds: the idle branch is
+        // never reached, and the check must still fire on a bounded schedule
+        // without being taken per packet.
+        let mut check = MoveCheck::default();
+        let fired: Vec<u64> = (0..10_000).filter(|&ms| check.due(ms)).collect();
+        assert_eq!(fired.len(), 10);
+        assert!(fired.windows(2).all(|w| w.get(1).copied().unwrap_or(0)
+            - w.first().copied().unwrap_or(0)
+            == MOVE_CHECK_INTERVAL_MS));
+        assert_eq!(fired.first(), Some(&0), "the first look is immediate");
     }
 
     #[test]

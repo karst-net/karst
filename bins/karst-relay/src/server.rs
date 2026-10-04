@@ -535,9 +535,37 @@ pub async fn serve_on(
             r = tokio::signal::ctrl_c() => {
                 if r.is_ok() {
                     eprintln!("karst-relay: shutting down");
+                    ctx.announce_restart().await;
                 }
                 return Ok(());
             }
+        }
+    }
+}
+
+/// What a draining relay asks its clients to do — `ponor-v1.md` §7.6.
+///
+/// The delay is a floor: clients add their own jitter on top, which is what
+/// spreads the reconnects. `try_for` bounds how long they keep retrying, so a
+/// relay that is not coming back is eventually given up on by the abandon path
+/// rather than waited on for ever.
+const RESTART_RECONNECT_IN_MS: u32 = 2_000;
+const RESTART_TRY_FOR_MS: u32 = 60_000;
+/// How long a draining relay lets the notice reach its clients before exiting.
+const RESTART_FLUSH_GRACE: Duration = Duration::from_millis(500);
+
+impl Ctx {
+    /// Send `Restarting` to every client and give the writes a moment to land.
+    ///
+    /// What a graceful shutdown does first; public so a test can drive it
+    /// without sending the process a signal.
+    pub async fn announce_restart(&self) {
+        let told =
+            self.with_hub(|hub| hub.begin_restart(RESTART_RECONNECT_IN_MS, RESTART_TRY_FOR_MS));
+        self.wake_dirty();
+        if told > 0 {
+            eprintln!("karst-relay: told {told} clients to reconnect elsewhere");
+            tokio::time::sleep(RESTART_FLUSH_GRACE).await;
         }
     }
 }

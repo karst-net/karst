@@ -671,6 +671,26 @@ peer must learn the new home before it is useful. Selection that tracks the
 instantaneous minimum produces flapping whose cost is paid by the whole aquifer,
 not by the flapping node.
 
+### 9.3 Acting on the choice
+
+These clarify how a node carries out §9.1 and §9.2; they do not change the
+margin or the sample count.
+
+- **A busy connection moves too.** A node MUST NOT defer a change of home relay
+  until its home connection is idle. The choice is checked on a bounded interval
+  (a second is sufficient) while traffic is flowing. The relay being left stays
+  reachable as an on-demand connection until peers have learned the new home, so
+  packets in flight are not black-holed.
+- **A network change restarts measurement.** When the node's interfaces change,
+  the RTTs measured so far describe a network it is no longer on. A node SHOULD
+  measure every relay in the registry promptly rather than waiting for its
+  ordinary rotation. It MUST still require §9.2's margin sustained across the
+  same number of consecutive measurements: measuring sooner is not a licence to
+  decide on less evidence.
+- **A relay that sends `Restarting` is not a dead relay.** See §7.6. Reconnect
+  attempts made within `try_for_ms` of the notice MUST NOT count towards a
+  client's decision to abandon the relay.
+
 ---
 
 ## 10. Error handling
