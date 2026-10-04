@@ -80,13 +80,70 @@ this month is the on-prem rack in Miami that is 40% idle.
 - ADR-0038 gives a per-aquifer aggregate token-bucket budget — a unit in which
   to *size* capacity.
 - The relay registry already carries a region map and latency-probed selection
-  (PLAN.md Phase 4). Clients already choose among relays; scaling does not
-  need a new client-side mechanism, only a way to change what is in the
-  registry.
+  (PLAN.md Phase 4). Clients already choose among relays (`ponor-v1.md` §9,
+  `bins/karstd/src/home.rs`), so scaling needs no new *selection* mechanism —
+  but it does depend on how fast and how gracefully that mechanism reacts.
+  That was checked rather than assumed; see **Verified: client re-homing**
+  below, which found gaps that must close before Phase 2.
 - ADR-0008 §6 makes signed-roster admission **mandatory** for pool relays.
   A relay that appears automatically is only usable if its enrollment is also
   automatic and still signed — this is the hard integration point (see
   Decision §6).
+
+### Verified: client re-homing (checked against the tree, 2026-10-04)
+
+The first draft of this ADR assumed clients re-home when a relay leaves the
+registry. Reading `home.rs`, `run.rs` and `spec/ponor-v1.md` §9:
+
+**Works today**
+
+- *Withdrawn relay.* `Selector::retain` releases a relay the netmap no longer
+  lists, even if it was the choice (`home.rs`, test
+  `a_withdrawn_relay_is_released_even_if_it_was_the_choice`). `home_target`
+  then moves the home connection to the best measured relay, or the first in the
+  registry if nothing is measured, and `handover` keeps the old relay as an
+  on-demand connection so peers still pointing at it are not black-holed until
+  the netmap propagates.
+- *Dead relay.* After `HOME_RELAY_ATTEMPTS` (3) failed connects the node
+  abandons the relay and walks the registry (`abandon_relay`), with backoff that
+  survives the move.
+- *Hysteresis.* §9.2's margin (the larger of 20 ms or 20%) must be beaten on
+  `HYSTERESIS_SAMPLES` (3) consecutive rounds, and the relay held at start-up
+  is treated as an incumbent.
+
+**Gaps that matter for scaling and for mobile clients**
+
+1. **A busy home connection does not move.** `moved_home` is checked only on the
+   send loop's *idle* path (`relay_send_loop`, `run.rs`), "because a relay
+   change is a thing that happens in minutes." A node with continuous traffic
+   never reaches that branch, so a *chosen* move, and the move away from a
+   relay the scaler is draining, can be deferred indefinitely. This is
+   precisely the case of a client in transit that is also in use.
+2. **Reaction time is tens of minutes.** `PROBE_INTERVAL` is 60 s;
+   each alternative is measured for `PROBE_ROUNDS` (4) consecutive rounds, then
+   `REST_ROUNDS` (6) rounds pass before the next candidate. With *N*
+   alternatives a specific one is measured roughly every 10·*N* minutes, then
+   needs three more wins. A device that has just changed networks, or a
+   geography that has just woken up, waits that long for a better relay.
+3. **No network-change trigger.** `run.rs` already re-enumerates interfaces and
+   calls `rediscover` for AVEN path discovery, but nothing there resets or
+   accelerates the home-relay `Rotation` or `Selector`. A roam is invisible to
+   relay selection until the slow cycle comes round.
+4. **`Restarting` is specified but unused.** `ponor-v1.md` §7.6 says a relay
+   SHOULD send `Restarting(reconnect_in_ms, try_for_ms)` before a planned close,
+   and clients SHOULD jitter. The frame exists in `karst-relay-proto`, but
+   `karst-relay` never sends it and `karstd` has no handler. Scale-down
+   therefore has no graceful-drain signal: a relay removed by the scaler drops
+   its clients at once, who then take the dead-relay path (three attempts plus
+   backoff) rather than a coordinated, jittered move.
+5. **Selection is purely latency.** The selector knows nothing about relay
+   load, cost or a drain request. That is correct for §9.2's goals, and
+   means a planner can influence placement only by changing *which relays
+   exist and where*, not by steering clients.
+
+These gaps are independent of this ADR — gap 1 and gap 3 matter to any
+roaming client today — which is why the remediation (§7, Phase 0b) is scoped
+as its own work item rather than a sub-task of the scaler.
 
 ### Constraints that eliminate options before preference applies
 
@@ -159,14 +216,24 @@ on-demand, with the commitment's own cost counted whether or not it is used.
 
 Sources of the numbers, in precedence order:
 
-1. Operator-supplied overrides (contracts, EDP/MACC discounts, committed
-   spend) — authoritative.
+1. Operator-supplied entries (contracts, EDP/MACC discounts, committed
+   spend, a colo's rate card) — authoritative.
 2. Provider public price APIs where they exist (the AWS Price List and Azure
    Retail Prices APIs are public and unauthenticated), fetched by a separate
    helper and **committed as a reviewable file**, never silently
    hot-reloaded into decisions.
 3. Nothing else. A pool with no cost model is rejected at validation, not
    defaulted to "free."
+
+**A provider with no API is a first-class case, not a degraded one.** A small
+colocation or VPS host's pricing is entered by an administrator in the same
+schema an API fetch would populate — the schema is the contract, and an API
+helper is only one way of writing it. Every entry carries `as_of` and an
+optional `review_by`; the planner warns, and in Phase 2 refuses to *add*
+capacity to a pool whose model is past `review_by`, so a stale hand-entered
+price cannot silently drive spend. Operator entries override fetched ones
+field by field, so a negotiated discount on top of a list price is a
+two-line file.
 
 The planner tracks **month-to-date usage per meter per pool**, so a tier
 position is state it owns, rebuilt from relay telemetry (ADR-0021) and
@@ -220,9 +287,10 @@ Stability is a first-class requirement, not an afterthought:
   headroom must cover that lag or the SLA is violated during the very ramp the
   scaler is reacting to.
 - **Drain, don't kill.** A node chosen for removal is removed from the
-  registry first, allowed to shed its clients to other relays (this
-  relies on clients re-homing when a relay leaves the registry, which Phase 0
-  must verify rather than assume), and destroyed only once its session count
+  registry first, allowed to shed its clients to other relays (clients
+  do re-home when a relay leaves the registry, but a busy connection may not
+  move and no graceful-drain signal is sent today — see *Verified: client
+  re-homing* and Phase 0b), and destroyed only once its session count
   falls under a threshold or a drain deadline passes.
 
 ### 5. Drivers: actuation behind a narrow interface
@@ -273,6 +341,7 @@ whatever the operator already trusts.
 | Phase | Deliverable | Actuates anything? |
 |---|---|---|
 | **0 — Cost model and simulator** | The declarative schema (§2); an offline tool that replays recorded relay telemetry against a cost model and reports spend per pool, per meter, per edge. | No |
+| **0b — Re-homing hardening** | Close the client/relay gaps in *Verified: client re-homing* (move a busy connection, network-change trigger, `Restarting` sent and honoured, faster probing). Independently valuable; a prerequisite for Phase 2 scale-down. | No (client/relay behaviour only) |
 | **1 — Advisor** | The planner and constraint set (§3, §4) running continuously, publishing "recommended vs actual" as metrics and a console view. Humans act on it. | No |
 | **2 — Reactive actuation** | Drivers (§5), enrollment (§6), circuit breaker. Scales on observed demand with headroom. | Yes, bounded |
 | **3 — Predictive scaling and pattern of life** | A forecaster behind the same planner interface: learns daily/weekly/seasonal demand per (region, aquifer) and leads the ramp. | Yes |
@@ -281,6 +350,55 @@ Phases 0 and 1 deliver most of the *insight* with none of the credential risk,
 and they are the empirical basis for deciding whether Phase 2 is worth its
 attack surface. They can be the stopping point for an operator who never wants
 auto-actuation.
+
+### 7a. Geography moves: clients in transit and follow-the-sun demand
+
+Demand is not stationary in space. A client crossing regions during a day
+should move to a closer relay, and an organization's load shifts from one
+region to the next as the working day travels. Both change *where* capacity
+is needed, and both interact with scaling:
+
+- **Client-driven moves are the fast loop; the scaler is the slow loop.**
+  Clients re-home by measured RTT in minutes (once Phase 0b lands); the scaler
+  adds or removes capacity over longer horizons. The planner must treat
+  re-homing as *demand it cannot control and must observe*, not as a mechanism
+  it steers. It sees the result as telemetry and sizes against it.
+- **Capacity must exist where a client is *going*, not only where it is.**
+  A traveller landing in a region with no relay re-homes to a far one and
+  experiences it as the SLA failing. The latency constraint (§3) is therefore
+  evaluated over *regions where clients appear*, including transient ones,
+  not only home regions. Phase 3's pattern-of-life model is where
+  predictable movement (a commute, a rotation, a recurring trip) is
+  anticipated; until then it is covered by minimum headroom at the nearest pool.
+- **Scale-down and roaming must not fight.** Draining a relay should use
+  `Restarting` (Phase 0b), and the drained clients must land somewhere that
+  still meets the SLA, so a drain is itself a placement decision the planner
+  checks before issuing.
+- **Hysteresis cuts both ways.** Faster re-homing (Phase 0b) risks the netmap
+  churn §9.2 warns about; the selector stays hysteresis-governed, and any
+  speed-up comes from measuring sooner (on a detected network change), not
+  from lowering the margin.
+
+### 7b. Beyond relays: which components can share the model
+
+Relays are the first target because they are bandwidth-bound, carry little
+durable state, and already sit in a registry that clients consult. The pool
+model is intended to extend, but each candidate differs in a way that changes
+what "scale" means, and the order below is a judgment, not a commitment:
+
+| Component | Scales how | What differs from a relay |
+|---|---|---|
+| **Relays** (`karst-relay`) | Add/remove nodes in a region | Baseline. Stateless-ish, clients re-home. |
+| **TURN gateways** (ADR-0008 §4) | Same | Credentials are minted by the control server; allocations are stateful per client, so drain is slower. |
+| **AVEN reflectors** | Co-located with relays | Ride along with relay placement; no separate pool. |
+| **KarstDNS resolvers** | Add/remove | Latency-sensitive, tiny bandwidth; cost is almost all instance-hours. |
+| **Exit nodes and subnet routers** | Add/remove, but each is bound to a network or address range | Not interchangeable: an exit node's egress IP and a subnet router's reachable network are part of its identity. HA failover exists (`docs/operations/ha.md`); *placement* is a policy decision, not capacity. |
+| **Regional coordination/control replicas** | Add read replicas | Carry the signing keys and roster; scaling them enlarges the most sensitive trust boundary. Out of scope until the threat model covers it. |
+
+The abstraction must not bake in "relay" (§1's pool has a `kind`), but
+nothing beyond relays is designed here. Components that are *identity-bound*
+rather than *capacity-bound* are the likeliest to need a different model
+entirely, and the ADR commits only to not foreclosing that.
 
 ### 8. Predictive scaling (Phase 3) — constraints recorded now
 
@@ -411,11 +529,10 @@ corner:
 
 These are real unknowns to resolve in Phase 0, not rhetorical ones.
 
-1. **What scales?** Relays are the obvious first target (stateless-ish,
-   bandwidth-heavy, already in a registry). Do TURN gateways, exit nodes,
-   subnet routers and regional coordination replicas share the same pool
-   abstraction, or do they need different handling (they carry state, or are
-   tied to specific networks)?
+1. **Which non-relay components, in what order?** §7b sketches the
+   candidates; the open part is whether identity-bound components (exit nodes,
+   subnet routers) fit the pool abstraction at all, or need placement
+   policy instead of capacity scaling.
 2. **How is demand attributed to a region?** Relay telemetry says what a relay
    carried, not where the *unmet* demand is. Home-relay selection already
    clusters clients; do we need client-reported RTT histograms (more
