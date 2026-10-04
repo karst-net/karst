@@ -76,13 +76,15 @@ fn start_relay(
         ),
     )
     .expect("roster");
+    // `{:?}`, not `"{}"`: a Windows path is full of backslashes, and `\U` in
+    // `C:\Users` is a TOML unicode escape. Debug formatting escapes them.
     let cfg = karst_relay::config::Config::parse(&format!(
-        "listen = \"127.0.0.1:0\"\nidentity_key = \"{}\"\nroster = \"{}\"\n\
-         tls_cert = \"{}\"\ntls_key = \"{}\"\n",
-        dir.0.join(format!("relay{n}.key")).display(),
-        roster.display(),
-        cert.display(),
-        key.display()
+        "listen = \"127.0.0.1:0\"\nidentity_key = {:?}\nroster = {:?}\n\
+         tls_cert = {:?}\ntls_key = {:?}\n",
+        dir.0.join(format!("relay{n}.key")),
+        roster,
+        cert,
+        key
     ))
     .expect("config");
     cfg.validate().expect("valid");
