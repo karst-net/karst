@@ -9,7 +9,7 @@
   the demand signal), ADR-0038 (per-aquifer relay capacity — the capacity unit),
   ADR-0039 (air-gapped scope — the zero-cloud floor this must not break),
   ADR-0016 (capability-scoped authorities — the model for scoping the scaler's
-  credentials), `deploy/kubernetes/`, `deploy/compose/ha/`. Tracking issue: TBD.
+  credentials), `deploy/kubernetes/`, `deploy/compose/ha/`. Tracking issue: #234; re-homing hardening (Phase 0b): #233.
 
 ---
 
