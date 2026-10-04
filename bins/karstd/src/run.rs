@@ -1463,6 +1463,7 @@ fn run_engine(
                 // that woke on a worse network from staying on a relay it can
                 // no longer reach.
                 next_probe = Instant::now();
+                rotation.network_changed();
                 disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1475,10 +1476,19 @@ fn run_engine(
             // actually moved, so a stable host pays nothing for this.
             if Instant::now() >= next_scan {
                 next_scan = Instant::now() + INTERFACE_SCAN;
-                disco
+                let moved = disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_interfaces(&gather_interfaces(config), listen_port);
+                // **The relay is a path too.** A roam leaves every latency
+                // measured so far describing a network this node is no longer
+                // on, and without this the rotation would come round to a
+                // better relay on its own schedule, tens of minutes later.
+                if moved {
+                    tracing::info!("karstd: interfaces changed; re-measuring home relays");
+                    rotation.network_changed();
+                    next_probe = Instant::now();
+                }
             }
             dispatch(
                 engine.poll(now, random_seed),
@@ -1488,7 +1498,6 @@ fn run_engine(
                 turn_out,
             );
             if Instant::now() >= next_probe {
-                next_probe = Instant::now() + crate::home::PROBE_INTERVAL;
                 probe_relays(
                     &rtt_probes,
                     &home_selector,
@@ -1498,6 +1507,9 @@ fn run_engine(
                     now,
                     random_seed,
                 );
+                // After the round, not before: the round is what ends a sweep,
+                // and the gap that follows depends on whether it did.
+                next_probe = Instant::now() + rotation.interval();
             }
             sync_relay_latency(&disco, &home_selector, now);
             dispatch(
@@ -1908,6 +1920,43 @@ fn sleep_backoff(shutdown: &Shutdown, backoff: &mut Duration) {
     *backoff = (*backoff * 2).min(RELAY_BACKOFF_MAX);
 }
 
+/// Wait as a draining relay asked: its `reconnect_in_ms` plus jitter of this
+/// node's own — the whole point of the notice is that clients of one relay do
+/// not all come back in the same instant — and open the window in which a failed
+/// dial is not held against it.
+fn wait_out_restart(
+    context: &RelayContext<'_>,
+    restart: &mut crate::home::Restart,
+    (reconnect_in_ms, try_for_ms): (u32, u32),
+) {
+    let wait = restart.begin(
+        now_ms(context.common.started),
+        reconnect_in_ms,
+        try_for_ms,
+        u64::from_le_bytes(first_eight(&random_seed())),
+    );
+    tracing::info!(
+        relay = %context.relay.address,
+        "relay is restarting; reconnecting in {wait} ms"
+    );
+    sleep_for(context.common.shutdown, Duration::from_millis(wait));
+}
+
+/// Wait for `duration`, in `TICK`-sized pieces so a shutdown is noticed.
+fn sleep_for(shutdown: &Shutdown, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline && !shutdown.requested() {
+        std::thread::sleep(TICK.min(deadline.saturating_duration_since(Instant::now())));
+    }
+}
+
+/// The first eight bytes of a seed.
+fn first_eight(seed: &[u8; 32]) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&seed[..8]);
+    out
+}
+
 /// One relay or TURN server's most recently observed reachability —
 /// `bugreport`'s [[relay]]/[[turn]] sections (plans/phase-6
 /// /08-observability.md §5 W6 item 3).
@@ -2300,6 +2349,7 @@ async fn connect_preferring_quic(
 /// tunnel data rather than only rendezvous messages, that interval *is* the
 /// tunnel's latency.
 #[allow(clippy::needless_pass_by_value)] // owns data moved into the scoped worker
+#[allow(clippy::too_many_lines)]
 fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Receiver<Relayed>) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2329,6 +2379,9 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
     // thread, so it costs nothing to give it a private one rather than share
     // the direct path's.
     let mut reasm = Reassembler::new(ReasmConfig::default());
+    // §7.6: set by a relay's `Restarting`, and what keeps a planned drain off
+    // the dead-relay path.
+    let mut restart = crate::home::Restart::default();
     while !context.common.shutdown.requested() {
         // §9.2's decision, carried out. The home connection follows the
         // selector: this is the point where a choice that moved becomes a
@@ -2383,7 +2436,12 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
                         context.relay.address
                     );
                 }
-                failures = failures.saturating_add(1);
+                // A relay that said it was restarting is allowed to take its
+                // time: until the window it asked for closes, failing to
+                // reach it is the restart, not a verdict on the relay.
+                if !restart.in_grace(now_ms(context.common.started)) {
+                    failures = failures.saturating_add(1);
+                }
                 if context.is_home() && failures >= HOME_RELAY_ATTEMPTS {
                     failures = 0;
                     abandon_relay(&mut context);
@@ -2421,12 +2479,16 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         // how an on-demand connection ends — and the worker would sit in
         // `join!` holding a TLS stream nobody is using until the daemon exits.
         let closing = AtomicBool::new(false);
+        let notice = Mutex::new(None);
         runtime.block_on(async {
             tokio::join!(
                 relay_send_loop(&context, &closing, sender, &mut outbound),
-                relay_receive_loop(&context, &closing, receiver, &mut reasm),
+                relay_receive_loop(&context, &closing, &notice, receiver, &mut reasm),
             )
         });
+        let notice = notice
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // §7.7: the reflect key died with the connection. Keeping it would
         // mean probing a reflector that has already forgotten this node, and
@@ -2444,6 +2506,15 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         if outbound.is_closed() && outbound.is_empty() {
             return;
         }
+
+        // §7.6: a planned drain.
+        if let Some(notice) = notice {
+            wait_out_restart(&context, &mut restart, notice);
+            // A planned move starts the backoff over: the relay told this node
+            // exactly when to return, and the doubling that follows unplanned
+            // failures would stretch it past what was asked.
+            backoff = RELAY_BACKOFF_MIN;
+        }
     }
 }
 
@@ -2454,7 +2525,19 @@ async fn relay_send_loop(
     mut sender: crate::relay::Sender,
     outbound: &mut tokio::sync::mpsc::Receiver<Relayed>,
 ) {
+    let mut move_check = crate::home::MoveCheck::default();
     while !context.common.shutdown.requested() {
+        // **Bounded, not idle-only.** A node with continuous traffic never
+        // reaches the timeout below, so a move chosen by §9.2 — or forced by
+        // the netmap withdrawing this relay — would wait for a lull that may
+        // never come. Checked between datagrams, so nothing in flight is cut
+        // off: whatever is still queued is picked up by the next connection,
+        // and `handover` keeps this relay reachable for peers that have not
+        // yet heard.
+        if move_check.due(now_ms(context.common.started)) && moved_home(context).is_some() {
+            closing.store(true, Ordering::Relaxed);
+            return;
+        }
         // A short timeout rather than a bare `recv`, so a quiet connection
         // still notices a shutdown request.
         let Ok(next) = tokio::time::timeout(TICK, outbound.recv()).await else {
@@ -2502,6 +2585,7 @@ async fn relay_send_loop(
 async fn relay_receive_loop(
     context: &RelayContext<'_>,
     closing: &AtomicBool,
+    notice: &Mutex<Option<(u32, u32)>>,
     mut receiver: crate::relay::Receiver,
     reasm: &mut Reassembler,
 ) {
@@ -2527,6 +2611,20 @@ async fn relay_receive_loop(
             }
         }
         for event in events {
+            // §7.6. Recorded for the worker, which acts on it once the relay
+            // closes — acting here would redial while the old connection is
+            // still draining.
+            if let crate::relay::Event::Restarting {
+                reconnect_in_ms,
+                try_for_ms,
+            } = event
+            {
+                *notice
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some((reconnect_in_ms, try_for_ms));
+                continue;
+            }
             on_relay_event(context, event, reasm);
         }
     }
@@ -7170,6 +7268,73 @@ mod probe_tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .observe(relay, measured);
         }
+    }
+
+    /// A roam is answered by measuring sooner, not by deciding sooner: after a
+    /// network change the faster relay is found and adopted within the sweep —
+    /// a minute or two — where the slow cycle would have taken tens of minutes,
+    /// and only after the same number of consecutive wins.
+    #[test]
+    fn a_network_change_remeasures_the_registry_promptly() {
+        let engine = engine(vec![relay(1), relay(2), relay(3)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+
+        let now = std::cell::Cell::new(0u64);
+        let mut round = |rotation: &mut crate::home::Rotation, fast: u64| {
+            now.set(now.get() + u64::try_from(rotation.interval().as_millis()).expect("fits"));
+            let now = now.get();
+            probe_relays(
+                &rtt,
+                &home,
+                rotation,
+                &engine,
+                Some(&q.sender),
+                now,
+                seeds(),
+            );
+            while let Ok(item) = q.home.try_recv() {
+                answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
+            }
+            while let Ok((id, item)) = q.on_demand.try_recv() {
+                let rtt_ms = if id == relay(2).relay_id { fast } else { 110 };
+                answer(&rtt, &home, id, &item, now, rtt_ms);
+            }
+        };
+        let chosen = |home: &Mutex<crate::home::Selector>| {
+            home.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .chosen()
+        };
+
+        // Before the roam relay(2) is no better than the rest, and the node
+        // settles into the slow cycle.
+        for _ in 0..4 {
+            round(&mut rotation, 110);
+        }
+        assert_eq!(chosen(&home), Some(relay(1).relay_id));
+        let before = now.get();
+
+        // The roam: relay(2) is now much closer. Interfaces changed.
+        rotation.network_changed();
+        let mut rounds = 0;
+        while chosen(&home) != Some(relay(2).relay_id) {
+            rounds += 1;
+            assert!(rounds <= 3 * crate::home::PROBE_ROUNDS, "never adopted");
+            round(&mut rotation, 10);
+        }
+        let took = now.get() - before;
+        assert!(
+            took < 5 * 60_000,
+            "took {took} ms; the slow cycle alone needs ten minutes per candidate"
+        );
+        assert!(
+            rounds >= karst_disco::consts::HYSTERESIS_SAMPLES,
+            "adopted on fewer wins than §9.2 requires"
+        );
     }
 
     /// **The whole of §9.2, driven a round at a time.** A relay four times

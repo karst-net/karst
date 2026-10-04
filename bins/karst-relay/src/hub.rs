@@ -610,6 +610,32 @@ impl Hub {
         }
     }
 
+    /// Tell every directly connected client this relay is going away, then
+    /// close their connections once the notice has been written — `ponor-v1.md`
+    /// §7.6.
+    ///
+    /// **`Restarting` goes in front of the close, not instead of it.** The
+    /// frame is what turns a dropped connection into a coordinated move: a
+    /// client that has seen it waits `reconnect_in_ms` plus its own jitter, and
+    /// one that has not treats the close as a dead relay. Mesh peers are left
+    /// alone — they redial on their own schedule and have no jitter to apply.
+    ///
+    /// Returns how many clients were told.
+    pub fn begin_restart(&mut self, reconnect_in_ms: u32, try_for_ms: u32) -> usize {
+        let clients: Vec<ConnId> = self.by_node.values().copied().collect();
+        for &id in &clients {
+            self.enqueue_priority(
+                id,
+                &Frame::Restarting {
+                    reconnect_in_ms,
+                    try_for_ms,
+                },
+            );
+            self.begin_close(id, None);
+        }
+        clients.len()
+    }
+
     /// Forget a connection and correct the tables that referred to it.
     ///
     /// Returns the client whose mapping this actually released, which is
@@ -804,6 +830,13 @@ mod tests {
                 Frame::PeerGone { peer_id, reason } => Frame::PeerGone { peer_id, reason },
                 Frame::PeerPresent { node_id } => Frame::PeerPresent { node_id },
                 Frame::Close(r) => Frame::Close(r),
+                Frame::Restarting {
+                    reconnect_in_ms,
+                    try_for_ms,
+                } => Frame::Restarting {
+                    reconnect_in_ms,
+                    try_for_ms,
+                },
                 other => panic!("unexpected frame {other:?}"),
             });
         }
@@ -1063,6 +1096,27 @@ mod tests {
                 hub.on_frame(A, &f, &roster, 0),
                 Err(HubError::IllegalForRole),
                 "{f:?} should be illegal from a client"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restart_tells_every_client_before_closing_it() {
+        let (mut hub, _roster) = two_clients();
+        let _ = drain(&mut hub, A);
+        let _ = drain(&mut hub, B);
+        assert_eq!(hub.begin_restart(1_500, 30_000), 2);
+        for conn in [A, B] {
+            assert_eq!(
+                drain(&mut hub, conn),
+                vec![Frame::Restarting {
+                    reconnect_in_ms: 1_500,
+                    try_for_ms: 30_000,
+                }]
+            );
+            assert!(
+                hub.close_reason(conn).is_some(),
+                "the connection closes once the notice is written"
             );
         }
     }

@@ -69,6 +69,8 @@ struct Running {
     /// deployment configures one `listen` for both (ADR-0020).
     relay_quic: Option<Relay>,
     ca_path: std::path::PathBuf,
+    /// The relay's shared state, so a test can drain it as a shutdown would.
+    ctx: Arc<Ctx>,
     _dir: TempDir,
 }
 
@@ -140,8 +142,9 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
         None
     };
 
+    let serving = Arc::clone(&ctx);
     tokio::spawn(async move {
-        let _ = serve_on(listener, ctx).await;
+        let _ = serve_on(listener, serving).await;
     });
 
     // The registry entry a netmap would carry. `relay_id` is derived from the
@@ -167,6 +170,7 @@ async fn start_relay_with(tag: &str, nodes: &[&Identity], quic: bool) -> Running
         relay,
         relay_quic,
         ca_path: cert_path,
+        ctx,
         _dir: dir,
     }
 }
@@ -490,4 +494,55 @@ async fn a_relay_reports_a_peer_it_cannot_reach_without_dropping_the_connection(
     let a_id = karst_control_client::handle_bytes(&a.handle()).expect("a's handle");
     tx.send_packet(a_id, b"still here").await.expect("send");
     tx.flush().await.expect("flush");
+}
+
+/// §7.6: a relay that drains tells its clients before it closes them, and the
+/// client reads that as a planned move rather than as a dead relay.
+#[tokio::test]
+async fn a_draining_relay_sends_restarting_before_it_closes() {
+    let a = node(0x11);
+    let running = start_relay("restarting", &[&a]).await;
+
+    let (_tx, mut rx) = connect(&running, &a)
+        .await
+        .expect("a connects")
+        .split()
+        .expect("established");
+
+    running.ctx.announce_restart().await;
+
+    let events = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rx.receive(&*a, &RelayVerifier),
+    )
+    .await
+    .expect("the relay did not announce its restart")
+    .expect("the stream failed before the notice arrived");
+    let Some(&karstd::relay::Event::Restarting {
+        reconnect_in_ms,
+        try_for_ms,
+    }) = events.first()
+    else {
+        panic!("expected Restarting, got {events:?}");
+    };
+    assert!(
+        try_for_ms >= reconnect_in_ms,
+        "the window outlasts the wait"
+    );
+
+    // What the node does with it: waits as asked plus jitter, and the retries
+    // inside the window are not held against the relay.
+    let mut restart = karstd::home::Restart::default();
+    let wait = restart.begin(0, reconnect_in_ms, try_for_ms, 123);
+    assert!(wait >= u64::from(reconnect_in_ms));
+    assert!(restart.in_grace(wait + 1));
+
+    // And then the relay closes the connection.
+    let closed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rx.receive(&*a, &RelayVerifier),
+    )
+    .await
+    .expect("the relay never closed after announcing");
+    assert!(closed.is_err(), "the connection closes after the notice");
 }

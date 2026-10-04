@@ -434,7 +434,10 @@ impl Disco {
     /// socket is actually bound to, which is not always the configured one: a
     /// node listening on port 0 gets an ephemeral port, and advertising 0 would
     /// name nothing.
-    pub fn set_interfaces(&mut self, addresses: &[std::net::IpAddr], port: u16) {
+    ///
+    /// Returns whether the list actually moved, which is what a caller deciding
+    /// whether the network changed under it needs.
+    pub fn set_interfaces(&mut self, addresses: &[std::net::IpAddr], port: u16) -> bool {
         let mut next: Vec<SocketAddr> = addresses
             .iter()
             .map(|ip| SocketAddr::new(*ip, port))
@@ -442,10 +445,11 @@ impl Disco {
         next.sort_by_key(|a| (a.is_ipv6(), a.ip().to_string(), a.port()));
         next.dedup();
         if next == self.interfaces {
-            return;
+            return false;
         }
         self.interfaces = next;
         self.republish();
+        true
     }
 
     /// The candidate list this node advertises, in the order it is offered.

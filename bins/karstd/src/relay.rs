@@ -80,6 +80,19 @@ pub enum Event {
         /// purpose, so a caller must not read more into this than it says.
         reason: frame::Reason,
     },
+    /// The relay is draining and will close this connection — `ponor-v1.md`
+    /// §7.6.
+    ///
+    /// **Not a failure.** What follows is a close that would otherwise look
+    /// like a dead relay; this is how a node tells the two apart, and why it
+    /// must wait `reconnect_in_ms` plus its own jitter rather than redial at
+    /// once with every other client of the same relay.
+    Restarting {
+        /// Wait at least this long before reconnecting.
+        reconnect_in_ms: u32,
+        /// Keep retrying for this long.
+        try_for_ms: u32,
+    },
     /// This relay runs an AVEN reflector — `ponor-v1.md` §7.7.
     ///
     /// Only ever produced **after** the relay's ML-DSA-87 signature has
@@ -681,7 +694,9 @@ async fn write_handshake_events(
             // means anything, and a relay saying something surprising about a
             // third party is not a reason to drop a connection that just
             // authenticated.
-            deferred_event @ (Event::Reflector { .. } | Event::Gone { .. }) => {
+            deferred_event @ (Event::Reflector { .. }
+            | Event::Gone { .. }
+            | Event::Restarting { .. }) => {
                 deferred.push(deferred_event);
             }
         }
@@ -793,6 +808,18 @@ impl Session {
                     .first_chunk::<PING_TOKEN_LEN>()
                     .copied()
                     .map(|token| Event::Pong { token }));
+            }
+            // §7.6. Legal only once authenticated: before that, a drain notice
+            // is an unauthenticated party telling this node when to redial.
+            if let Frame::Restarting {
+                reconnect_in_ms,
+                try_for_ms,
+            } = *frame
+            {
+                return Ok(Some(Event::Restarting {
+                    reconnect_in_ms,
+                    try_for_ms,
+                }));
             }
             // §10.1. **Not a protocol error, and treating it as one cost a
             // reconnection.** Before this, an undeliverable destination — a
