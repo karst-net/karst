@@ -6877,8 +6877,13 @@ mod probe_tests {
     }
 
     /// An engine whose netmap carries `relays` and no peers.
-    fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
-        let config = Arc::new(crate::config::Config {
+    pub(super) fn engine(relays: Vec<crate::netmap::Relay>) -> Engine {
+        Engine::new(&config(relays))
+    }
+
+    /// The configuration [`engine`] runs on.
+    pub(super) fn config(relays: Vec<crate::netmap::Relay>) -> Arc<crate::config::Config> {
+        Arc::new(crate::config::Config {
             relay_ca_file: None,
             prefer_quic_relay: false,
             metrics_listen: None,
@@ -6906,8 +6911,7 @@ mod probe_tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
-        });
-        Engine::new(&config)
+        })
     }
 
     struct Queues {
@@ -7557,3 +7561,6 @@ fn write_bedrock(
         );
     }
 }
+
+#[cfg(test)]
+mod rehome_tests;

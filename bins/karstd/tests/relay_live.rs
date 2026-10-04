@@ -509,7 +509,16 @@ async fn a_draining_relay_sends_restarting_before_it_closes() {
         .split()
         .expect("established");
 
+    // The wait ends when the clients have been told and closed, not after a
+    // fixed delay: prompt on a healthy link, so a shutdown is not slowed, and
+    // complete, so the notice is out before the process exits.
+    let started = std::time::Instant::now();
     running.ctx.announce_restart().await;
+    assert_eq!(running.ctx.local_clients(), 0, "every client was closed");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "a healthy drain should not run to its upper bound"
+    );
 
     let events = tokio::time::timeout(
         std::time::Duration::from_secs(5),
