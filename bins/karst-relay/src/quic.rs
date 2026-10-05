@@ -115,10 +115,11 @@ pub fn bind(addr: SocketAddr, config: quinn::ServerConfig) -> Result<quinn::Endp
 /// Run the QUIC accept loop until the endpoint closes or the process is asked
 /// to stop.
 ///
-/// Mirrors `server::serve_on`'s shape: accept, spawn, and one `ctrl_c` arm.
-/// `tokio::signal::ctrl_c` may be awaited from more than one task — each
-/// completes independently — so this listener shuts down on the same signal
-/// as the TCP one without the two coordinating.
+/// Mirrors `server::serve_on`'s shape: accept, spawn, and one shutdown arm.
+/// Signal streams may be registered by more than one task — each completes
+/// independently — so this listener shuts down on the same signal as the TCP
+/// one without the two coordinating. The TCP listener is the one that tells
+/// clients (QUIC clients are in the same hub, so they hear it too).
 pub async fn serve_on(endpoint: quinn::Endpoint, ctx: Arc<Ctx>) {
     let Ok(addr) = endpoint.local_addr() else {
         return;
@@ -127,6 +128,8 @@ pub async fn serve_on(endpoint: quinn::Endpoint, ctx: Arc<Ctx>) {
         "karst-relay: listening (quic) on {addr} (relay_id {})",
         crate::server::hex(&ctx.identity.relay_id())
     );
+    let shutdown = crate::server::shutdown_signal();
+    tokio::pin!(shutdown);
     loop {
         tokio::select! {
             incoming = endpoint.accept() => {
@@ -137,10 +140,8 @@ pub async fn serve_on(endpoint: quinn::Endpoint, ctx: Arc<Ctx>) {
                 let ctx = Arc::clone(&ctx);
                 tokio::spawn(Box::pin(async move { serve(incoming, ctx).await }));
             }
-            r = tokio::signal::ctrl_c() => {
-                if r.is_ok() {
-                    eprintln!("karst-relay: shutting down (quic)");
-                }
+            () = &mut shutdown => {
+                eprintln!("karst-relay: shutting down (quic)");
                 return;
             }
         }

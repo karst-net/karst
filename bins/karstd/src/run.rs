@@ -2163,6 +2163,11 @@ fn home_target(
     }
 }
 
+/// How long to keep reading after the relay has closed a connection this node
+/// was still writing to — long enough for what it sent first to arrive, short
+/// enough that a relay that is simply gone costs one tick.
+const PEER_CLOSE_READ: Duration = Duration::from_millis(500);
+
 /// How many attempts a relay gets before this node looks for another.
 ///
 /// Three, which the backoff spreads over a few seconds. Fewer would abandon a
@@ -2479,11 +2484,19 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
         // how an on-demand connection ends — and the worker would sit in
         // `join!` holding a TLS stream nobody is using until the daemon exits.
         let closing = AtomicBool::new(false);
+        let peer_failed = AtomicBool::new(false);
         let notice = Mutex::new(None);
         runtime.block_on(async {
             tokio::join!(
-                relay_send_loop(&context, &closing, sender, &mut outbound),
-                relay_receive_loop(&context, &closing, &notice, receiver, &mut reasm),
+                relay_send_loop(&context, &closing, &peer_failed, sender, &mut outbound),
+                relay_receive_loop(
+                    &context,
+                    &closing,
+                    &peer_failed,
+                    &notice,
+                    receiver,
+                    &mut reasm
+                ),
             )
         });
         let notice = notice
@@ -2522,6 +2535,7 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
 async fn relay_send_loop(
     context: &RelayContext<'_>,
     closing: &AtomicBool,
+    peer_failed: &AtomicBool,
     mut sender: crate::relay::Sender,
     outbound: &mut tokio::sync::mpsc::Receiver<Relayed>,
 ) {
@@ -2562,6 +2576,7 @@ async fn relay_send_loop(
             return;
         };
         if write_relayed(&mut sender, next).await.is_err() {
+            peer_failed.store(true, Ordering::Relaxed);
             closing.store(true, Ordering::Relaxed);
             return;
         }
@@ -2570,11 +2585,13 @@ async fn relay_send_loop(
         // fragments belonging to one handshake should cost one of each.
         while let Ok(more) = outbound.try_recv() {
             if write_relayed(&mut sender, more).await.is_err() {
+                peer_failed.store(true, Ordering::Relaxed);
                 closing.store(true, Ordering::Relaxed);
                 return;
             }
         }
         if sender.flush().await.is_err() {
+            peer_failed.store(true, Ordering::Relaxed);
             closing.store(true, Ordering::Relaxed);
             return;
         }
@@ -2585,11 +2602,29 @@ async fn relay_send_loop(
 async fn relay_receive_loop(
     context: &RelayContext<'_>,
     closing: &AtomicBool,
+    peer_failed: &AtomicBool,
     notice: &Mutex<Option<(u32, u32)>>,
     mut receiver: crate::relay::Receiver,
     reasm: &mut Reassembler,
 ) {
-    while !context.common.shutdown.requested() && !closing.load(Ordering::Relaxed) {
+    let mut read_on_until: Option<Instant> = None;
+    while !context.common.shutdown.requested() {
+        if closing.load(Ordering::Relaxed) {
+            // **Who ended it decides whether to keep reading.** This node chose
+            // to (a move, a closed queue): stop now. The relay did (a write
+            // failed because it closed): read on briefly, because whatever it
+            // said first — a `Restarting` above all (`ponor-v1.md` §7.6) — is
+            // already on the wire, and a node busy enough to notice the close
+            // by writing would otherwise leave before reading it and take a
+            // planned drain for a dead relay.
+            if !peer_failed.load(Ordering::Relaxed) {
+                return;
+            }
+            let until = *read_on_until.get_or_insert_with(|| Instant::now() + PEER_CLOSE_READ);
+            if Instant::now() >= until {
+                return;
+            }
+        }
         let received = tokio::time::timeout(
             TICK,
             receiver.receive(&*context.common.identity, &crate::control::RelayVerifier),

@@ -690,6 +690,10 @@ margin or the sample count.
 - **A relay that sends `Restarting` is not a dead relay.** See §7.6. Reconnect
   attempts made within `try_for_ms` of the notice MUST NOT count towards a
   client's decision to abandon the relay.
+- **Read what the relay said before it closed.** A node that is writing may
+  notice a close by a failed write before it has read the `Restarting` already
+  sent. It SHOULD keep reading briefly after such a failure, so a planned drain
+  is not mistaken for a dead relay.
 
 ---
 

@@ -35,6 +35,20 @@ const MOVE_BOUND: Duration = Duration::from_secs(6);
 struct LiveRelay {
     relay: Relay,
     ctx: Arc<Ctx>,
+    /// The accept loop; aborting it closes the listener, so the relay refuses
+    /// every dial from then on.
+    serving: tokio::task::JoinHandle<()>,
+}
+
+/// What a scenario is given once the node is connected to relay 1 and traffic
+/// is flowing.
+struct Rig<'a> {
+    engine: &'a Engine,
+    home: &'a Mutex<crate::home::Selector>,
+    one: &'a LiveRelay,
+    two: &'a LiveRelay,
+    sent: &'a AtomicU64,
+    rt: &'a tokio::runtime::Runtime,
 }
 
 struct Dir(std::path::PathBuf);
@@ -97,9 +111,9 @@ fn start_relay(
         .block_on(tokio::net::TcpListener::bind(cfg.listen))
         .expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let serving = Arc::clone(&ctx);
-    rt.spawn(async move {
-        let _ = serve_on(listener, serving).await;
+    let accepting = Arc::clone(&ctx);
+    let serving = rt.spawn(async move {
+        let _ = serve_on(listener, accepting).await;
     });
     let identity_key = identity.public_key().to_vec();
     LiveRelay {
@@ -111,6 +125,7 @@ fn start_relay(
             region: "test".to_owned(),
         },
         ctx,
+        serving,
     }
 }
 
@@ -135,12 +150,8 @@ fn wait_for(what: &str, bound: Duration, mut done: impl FnMut() -> bool) -> Dura
 }
 
 /// Run the real home worker on relay 1 with an unbroken stream of datagrams,
-/// call `change` once it is connected, and return how long the node took to be
-/// connected to relay 2 and homed there.
-fn move_under_traffic(
-    tag: &str,
-    change: impl FnOnce(&Engine, &Mutex<crate::home::Selector>, &LiveRelay, &LiveRelay),
-) -> Duration {
+/// let `scenario` act once it is connected, and return what it returns.
+fn with_two_relays<T>(tag: &str, scenario: impl FnOnce(&Rig<'_>) -> T) -> T {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -193,7 +204,7 @@ fn move_under_traffic(
     };
 
     let sent = AtomicU64::new(0);
-    let took = std::thread::scope(|scope| {
+    let out = std::thread::scope(|scope| {
         let _stop = StopOnDrop(&shutdown);
         scope.spawn(|| {
             relay_worker(
@@ -226,8 +237,29 @@ fn move_under_traffic(
         let busy_before = sent.load(Ordering::Relaxed);
         assert!(busy_before > 0, "the feeder never got going");
 
+        scenario(&Rig {
+            engine: &engine,
+            home: &home,
+            one: &one,
+            two: &two,
+            sent: &sent,
+            rt: &rt,
+        })
+    });
+    drop(rt);
+    out
+}
+
+/// How long the node took to be connected to relay 2 and homed there after
+/// `change`, with traffic never idle.
+fn move_under_traffic(
+    tag: &str,
+    change: impl FnOnce(&Engine, &Mutex<crate::home::Selector>, &LiveRelay, &LiveRelay),
+) -> Duration {
+    with_two_relays(tag, |rig| {
+        let (engine, two, sent) = (rig.engine, rig.two, rig.sent);
         let start = Instant::now();
-        change(&engine, &home, &one, &two);
+        change(rig.engine, rig.home, rig.one, rig.two);
         wait_for("the node to reach relay 2", MOVE_BOUND, || {
             two.ctx.local_clients() == 1
         });
@@ -244,9 +276,7 @@ fn move_under_traffic(
             || sent.load(Ordering::Relaxed) > at_move,
         );
         took
-    });
-    drop(rt);
-    took
+    })
 }
 
 #[test]
@@ -271,4 +301,41 @@ fn a_busy_home_connection_leaves_a_relay_the_netmap_withdrew() {
             .all(|r| r.relay_id != one.relay.relay_id));
     });
     assert!(took < MOVE_BOUND, "{took:?}");
+}
+
+/// §7.6 end to end, on the real worker: a relay that announced a restart is
+/// waited for. While it is away every dial is refused, which without the
+/// announcement is exactly the "three failed connects" that abandons a relay
+/// and walks the node onto another one.
+#[test]
+fn a_relay_that_announced_a_restart_is_waited_for_not_abandoned() {
+    with_two_relays("restarting", |rig| {
+        // The relay is going away for longer than the node will wait: stop it
+        // accepting first, so that the moment its clients are told and closed
+        // every dial is refused. Established connections are unaffected until
+        // the drain closes them.
+        rig.one.serving.abort();
+        let addr: std::net::SocketAddr = rig.one.relay.address.parse().expect("address");
+        wait_for(
+            "the relay to stop accepting",
+            Duration::from_secs(5),
+            || std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err(),
+        );
+        rig.rt.block_on(rig.one.ctx.announce_restart());
+
+        // The announced wait is 2 s plus up to 2 s of jitter; the dials after
+        // it fail at roughly +0, +1 and +3 s, and the third is the one that
+        // abandons an unannounced relay. Watch past all of that.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(9) {
+            assert_eq!(
+                rig.engine.home_relay(),
+                Some(rig.one.relay.relay_id),
+                "the node gave up on a relay that said it was restarting, after {:?}",
+                start.elapsed()
+            );
+            assert_eq!(rig.two.ctx.local_clients(), 0);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
 }
