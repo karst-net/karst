@@ -25,7 +25,7 @@ use std::sync::Arc;
 use base64ct::{Base64, Encoding as _};
 use karst_relay::config::Config;
 use karst_relay::roster::FileRoster;
-use karst_relay::server::{metrics_loop, serve_on, Ctx};
+use karst_relay::server::{metrics_loop, serve_until, Ctx};
 use karst_relay::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_relay::tls;
 use karst_relay_proto::consts::ID_LEN;
@@ -46,7 +46,24 @@ struct Harness {
     ca: rustls::pki_types::CertificateDer<'static>,
     ca_pem: String,
     relay: Arc<Identity>,
+    /// Ends `serve_until`, as a shutdown signal would.
+    stop: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// The serving task, so a test can see that it returned.
+    serving: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     _dir: TempDir,
+}
+
+impl Harness {
+    /// Ask the relay to shut down and wait for it to finish draining.
+    async fn shut_down(&self) {
+        let stop = self.stop.lock().unwrap().take().expect("stopped once");
+        let serving = self.serving.lock().unwrap().take().expect("serving");
+        let _ = stop.send(());
+        tokio::time::timeout(std::time::Duration::from_secs(10), serving)
+            .await
+            .expect("the relay did not return after its shutdown")
+            .expect("the serving task panicked");
+    }
 }
 
 /// A temporary directory that removes itself.
@@ -133,8 +150,16 @@ async fn start_with_ctx(tag: &str, roster_text: &str) -> (Harness, Arc<Ctx>, std
     let metrics_addr = metrics.local_addr().expect("addr");
     tokio::spawn(metrics_loop(metrics, Arc::clone(&ctx)));
 
-    tokio::spawn(async move {
-        let _ = serve_on(listener, ctx).await;
+    // A dropped sender must not read as a shutdown: most tests never stop the
+    // relay and just let the harness go at the end.
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let serving = tokio::spawn(async move {
+        let shutdown = async move {
+            if stopped.await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        };
+        let _ = serve_until(listener, ctx, shutdown).await;
     });
 
     let path = dir.0.clone();
@@ -145,6 +170,8 @@ async fn start_with_ctx(tag: &str, roster_text: &str) -> (Harness, Arc<Ctx>, std
             ca: cert.cert.der().clone(),
             ca_pem: cert.cert.pem(),
             relay: identity,
+            stop: std::sync::Mutex::new(Some(stop)),
+            serving: std::sync::Mutex::new(Some(serving)),
             _dir: dir,
         },
         ctx_handle,
@@ -374,6 +401,111 @@ async fn a_packet_crosses_the_relay_over_a_real_socket() {
             payload: &payload,
         }
     );
+}
+
+/// §7.6: a relay that is stopped tells its clients before it closes them, so a
+/// planned stop is a coordinated move rather than a dead relay.
+#[tokio::test]
+async fn a_shutdown_tells_clients_to_reconnect_before_closing_them() {
+    let alice = identity(0x21);
+    let h = start("shutdown", &[(&alice, "acme")]).await;
+    let (mut a, _) = connect(&h).await;
+    handshake(&h, &mut a, &alice).await;
+
+    h.shut_down().await;
+
+    let got = a.frame().await;
+    let (frame, _) = decode(&got).expect("decodes").expect("complete");
+    let Frame::Restarting {
+        reconnect_in_ms,
+        try_for_ms,
+    } = frame
+    else {
+        panic!("expected Restarting, got {frame:?}");
+    };
+    assert!(try_for_ms >= reconnect_in_ms);
+
+    // And then the connection ends, rather than hanging open.
+    let mut rest = [0u8; 64];
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match a.tls.read(&mut rest).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "the connection was left open after the drain"
+    );
+}
+
+/// The idle case above is the easy one. A client that is sending all the time
+/// must still hear the notice and still be closed: that is the client whose
+/// relay going away costs the most.
+#[tokio::test]
+async fn a_shutdown_reaches_a_client_that_never_stops_sending() {
+    let alice = identity(0x21);
+    let h = start("shutdown-busy", &[(&alice, "acme")]).await;
+    let (mut a, _) = connect(&h).await;
+    handshake(&h, &mut a, &alice).await;
+
+    // An unbroken stream of datagrams to a peer that is not there, each of
+    // which the relay answers with a `PeerGone`.
+    let payload = [7u8; 64];
+    let packet = Frame::SendPacket {
+        dst_id: [9; ID_LEN],
+        payload: &payload,
+    }
+    .to_vec();
+    let (mut read, mut write) = tokio::io::split(a.tls);
+    let writer = tokio::spawn(async move {
+        loop {
+            if write.write_all(&packet).await.is_err() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    });
+    let mut buf = a.buf;
+    let mut chunk = [0u8; 4096];
+    // Make sure it is busy before the relay is stopped.
+    for _ in 0..20 {
+        let n = read.read(&mut chunk).await.expect("read");
+        assert_ne!(n, 0);
+        buf.extend_from_slice(&chunk[..n]);
+    }
+
+    let stopped = std::time::Instant::now();
+    h.shut_down().await;
+    assert!(
+        stopped.elapsed() < std::time::Duration::from_secs(2),
+        "the drain ran to its upper bound with a busy client connected: {:?}",
+        stopped.elapsed()
+    );
+
+    // The notice is somewhere in what the relay sent, among the PeerGones.
+    let mut told = false;
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            while let Some((frame, used)) = decode(&buf).expect("decodable") {
+                if matches!(frame, Frame::Restarting { .. }) {
+                    told = true;
+                }
+                buf.drain(..used);
+            }
+            match read.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+    })
+    .await;
+    writer.abort();
+    assert!(ended.is_ok(), "the connection was left open");
+    assert!(told, "the busy client was closed without being told why");
 }
 
 #[tokio::test]

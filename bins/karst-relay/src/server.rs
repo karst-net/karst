@@ -505,11 +505,64 @@ pub async fn serve_on(
     listener: TcpListener,
     ctx: Arc<Ctx>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    serve_until(listener, ctx, shutdown_signal()).await
+}
+
+/// Resolves when the process is asked to stop: Ctrl-C everywhere, and SIGTERM
+/// on Unix.
+///
+/// **SIGTERM is the one that matters in production.** It is what `systemctl
+/// stop`, a container runtime and an orchestrator send; Ctrl-C is what a person
+/// at a terminal sends. A relay that drained only on the second would drop its
+/// clients onto the dead-relay path on every planned stop (`ponor-v1.md` §7.6).
+///
+/// **The handlers are registered when this is called, not when the returned
+/// future is first polled**, so a caller that creates it before accepting
+/// anything can never miss a signal that arrives in between — and a test can
+/// signal its own process without racing the registration.
+pub fn shutdown_signal() -> impl std::future::Future<Output = ()> + Send {
+    #[cfg(unix)]
+    let signals = {
+        use tokio::signal::unix::{signal, SignalKind};
+        (
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::terminate()),
+        )
+    };
+    async move {
+        #[cfg(unix)]
+        if let (Ok(mut interrupt), Ok(mut terminate)) = signals {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+        // Not Unix, or the handlers could not be installed: fall back to the
+        // portable one rather than run with no way to stop gracefully.
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Serve on an already-bound listener until `shutdown` resolves, then tell every
+/// client the relay is going away (`ponor-v1.md` §7.6) before returning.
+///
+/// Split out from [`serve_on`] so the drain can be exercised without sending
+/// the test process a signal.
+///
+/// # Errors
+/// As [`serve_on`].
+pub async fn serve_until(
+    listener: TcpListener,
+    ctx: Arc<Ctx>,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!(
         "karst-relay: listening on {} (relay_id {})",
         listener.local_addr()?,
         hex(&ctx.identity.relay_id())
     );
+    tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
@@ -532,11 +585,9 @@ pub async fn serve_on(
                 // cliff. FINDINGS 58.
                 tokio::spawn(Box::pin(async move { serve(stream, peer, ctx).await }));
             }
-            r = tokio::signal::ctrl_c() => {
-                if r.is_ok() {
-                    eprintln!("karst-relay: shutting down");
-                    ctx.announce_restart().await;
-                }
+            () = &mut shutdown => {
+                eprintln!("karst-relay: shutting down");
+                ctx.announce_restart().await;
                 return Ok(());
             }
         }
