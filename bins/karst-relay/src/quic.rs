@@ -16,7 +16,7 @@
 //! settled inside the TLS handshake before any stream opens, so [`ALPN`]
 //! replaces the upgrade rather than sitting on top of it.
 //!
-//! # Why one stream, and why no adapter type
+//! # Why one stream, and the one thing the adapter adds
 //!
 //! A Ponor connection is one ordered byte stream, on TCP and now on QUIC —
 //! ADR-0020 is explicit that per-peer multiplexing is a different, larger
@@ -24,7 +24,19 @@
 //! back a [`quinn::SendStream`]/[`quinn::RecvStream`] pair rather than one
 //! duplex value; [`tokio::io::join`] combines them into a single
 //! `AsyncRead + AsyncWrite` type, which is all [`crate::server::Stream`]
-//! requires — no bespoke adapter needed.
+//! requires for reading and writing.
+//!
+//! What it does not give is TCP's **close**. `server::drive` ends every
+//! connection with `shutdown()` and then lets the stream go, which on TCP
+//! hands whatever is still buffered to the kernel to deliver. On QUIC the
+//! buffer is `quinn`'s, in this process: `SendStream`'s `shutdown()` only
+//! marks the stream finished, and dropping the last handle to a connection
+//! closes it at once, discarding anything not yet sent. The last frames a
+//! closing connection is sent — `Restarting` on a drain (`ponor-v1.md`
+//! §7.6), the `Close` reason on a replacement or a revocation — are exactly
+//! the ones that were lost. [`Carrier`] makes `shutdown()` wait until the
+//! peer has acknowledged everything, so it means on QUIC what it means on
+//! TCP. Issue #239.
 //!
 //! # Who opens the stream
 //!
@@ -47,6 +59,94 @@ use crate::server::Ctx;
 
 /// One QUIC-carried Ponor connection: a joined send/receive stream pair.
 pub type BiStream = tokio::io::Join<quinn::RecvStream, quinn::SendStream>;
+
+/// The longest [`Carrier`]'s `shutdown()` waits for the peer to acknowledge
+/// what it was sent.
+///
+/// An upper bound, not a delay: a peer that is reading acknowledges within a
+/// round trip. Matches the relay's drain bound (`server::RESTART_FLUSH_MAX`),
+/// which already caps how long a stopping relay waits for this; the bound here
+/// is for a peer that has stopped reading on a connection closed for some
+/// other reason. Chosen, not measured.
+const FINISH_ACK_MAX: Duration = Duration::from_secs(3);
+
+/// A [`BiStream`] whose `shutdown()` waits for delivery — see the module
+/// documentation's note on the adapter.
+pub struct Carrier {
+    inner: BiStream,
+    /// Set once `shutdown()` has finished the send stream: resolves when the
+    /// peer has acknowledged all of it, stopped it, or [`FINISH_ACK_MAX`]
+    /// passes.
+    acked: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+}
+
+impl std::fmt::Debug for Carrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Carrier")
+            .field("finishing", &self.acked.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Carrier {
+    /// Join a stream pair into one Ponor connection.
+    #[must_use]
+    pub fn new(recv: quinn::RecvStream, send: quinn::SendStream) -> Self {
+        Self {
+            inner: tokio::io::join(recv, send),
+            acked: None,
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for Carrier {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for Carrier {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    /// Finish the send stream, then wait until the peer has it all.
+    ///
+    /// Never an error: like TCP's close in `server::drive`, this is best
+    /// effort, and a peer that is already gone cannot be told anything.
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let acked = this.acked.get_or_insert_with(|| {
+            let send = this.inner.writer_mut();
+            // An error means the stream was already finished or reset, or the
+            // connection is gone; `stopped` resolves at once in each case.
+            let _ = send.finish();
+            let stopped = send.stopped();
+            Box::pin(async move {
+                let _ = tokio::time::timeout(FINISH_ACK_MAX, stopped).await;
+            })
+        });
+        acked.as_mut().poll(cx).map(Ok)
+    }
+}
 
 /// Errors adapting an already-built `rustls` config for QUIC.
 #[derive(Debug)]
@@ -121,6 +221,24 @@ pub fn bind(addr: SocketAddr, config: quinn::ServerConfig) -> Result<quinn::Endp
 /// one without the two coordinating. The TCP listener is the one that tells
 /// clients (QUIC clients are in the same hub, so they hear it too).
 pub async fn serve_on(endpoint: quinn::Endpoint, ctx: Arc<Ctx>) {
+    serve_until(endpoint, ctx, crate::server::shutdown_signal()).await;
+}
+
+/// Run the QUIC accept loop until the endpoint closes or `shutdown` resolves.
+///
+/// Split out from [`serve_on`], as `server::serve_until` is from
+/// `server::serve_on`, so a drain can be exercised without sending the test
+/// process a signal.
+///
+/// **Returning drops this task's `Endpoint` handle, and that is safe.** An
+/// established connection keeps the endpoint's driver running on its own, so
+/// the connections already admitted to the hub go on being driven — and so
+/// hear the TCP listener's `Restarting` — after the accept loop has stopped.
+pub async fn serve_until(
+    endpoint: quinn::Endpoint,
+    ctx: Arc<Ctx>,
+    shutdown: impl std::future::Future<Output = ()>,
+) {
     let Ok(addr) = endpoint.local_addr() else {
         return;
     };
@@ -128,7 +246,6 @@ pub async fn serve_on(endpoint: quinn::Endpoint, ctx: Arc<Ctx>) {
         "karst-relay: listening (quic) on {addr} (relay_id {})",
         crate::server::hex(&ctx.identity.relay_id())
     );
-    let shutdown = crate::server::shutdown_signal();
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
@@ -163,7 +280,7 @@ async fn serve(incoming: quinn::Incoming, ctx: Arc<Ctx>) {
 async fn establish(
     incoming: quinn::Incoming,
     ctx: &Arc<Ctx>,
-) -> Option<(BiStream, Vec<u8>, Admitted, SocketAddr)> {
+) -> Option<(Carrier, Vec<u8>, Admitted, SocketAddr)> {
     let connection = incoming.await.ok()?;
     let peer = connection.remote_address();
     // The relay opens the stream, not the peer: `RelayHandshake` speaks
@@ -172,7 +289,7 @@ async fn establish(
     // writes to it. Accepting here would deadlock waiting for a write the
     // peer is waiting on us to make first.
     let (send, recv) = connection.open_bi().await.ok()?;
-    let stream = tokio::io::join(recv, send);
+    let stream = Carrier::new(recv, send);
     let (stream, buf, admitted) = crate::server::establish_ponor(stream, ctx, Vec::new()).await?;
     Some((stream, buf, admitted, peer))
 }
@@ -219,7 +336,7 @@ pub async fn dial_mesh(
         .accept_bi()
         .await
         .map_err(|e| format!("accept_bi: {e}"))?;
-    let mut stream = tokio::io::join(recv, send);
+    let mut stream = Carrier::new(recv, send);
 
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|e| format!("no entropy: {e}"))?;

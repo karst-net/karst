@@ -26,12 +26,12 @@ use base64ct::{Base64, Encoding as _};
 use karst_relay::config::Config;
 use karst_relay::quic::BiStream;
 use karst_relay::roster::FileRoster;
-use karst_relay::server::{serve_on, Ctx};
+use karst_relay::server::{serve_on, serve_until, Ctx};
 use karst_relay::sign::{node_id, Identity, PonorVerifier, SEED_LEN};
 use karst_relay::tls;
 use karst_relay_proto::consts::ID_LEN;
 use karst_relay_proto::{frame::decode, ClientHandshake, Frame, Role};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const UPGRADE: &str = "GET /ponor HTTP/1.1\r\n\
@@ -73,9 +73,8 @@ async fn start(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> Harness {
     start_with_ctx(tag, nodes, quic).await.0
 }
 
-/// As [`start`], but keeping the [`Ctx`] a mesh test needs to reload the
-/// roster and start dialling from.
-async fn start_with_ctx(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> (Harness, Arc<Ctx>) {
+/// Configure a relay and bind its listeners, without serving yet.
+async fn bind(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> Bound {
     let dir = temp_dir(tag);
 
     let cert = rcgen::generate_simple_self_signed(vec!["relay.test".to_owned()])
@@ -122,32 +121,105 @@ async fn start_with_ctx(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> (
     let addr = listener.local_addr().expect("addr");
     let ctx = Ctx::new(&cfg, Arc::clone(&identity), roster, Arc::clone(&tls_config));
 
-    let quic_addr = if quic {
+    let endpoint = quic.then(|| {
         let quic_server_cfg = karst_relay::quic::server_config(&tls_config).expect("quic tls");
-        let endpoint =
-            karst_relay::quic::bind(cfg.listen, quic_server_cfg).expect("bind quic endpoint");
-        let quic_addr = endpoint.local_addr().expect("quic addr");
-        tokio::spawn(karst_relay::quic::serve_on(endpoint, Arc::clone(&ctx)));
-        Some(quic_addr)
-    } else {
-        None
-    };
-
-    let ctx_handle = Arc::clone(&ctx);
-    tokio::spawn(async move {
-        let _ = serve_on(listener, ctx).await;
+        karst_relay::quic::bind(cfg.listen, quic_server_cfg).expect("bind quic endpoint")
     });
+    let quic_addr = endpoint
+        .as_ref()
+        .map(|e| e.local_addr().expect("quic addr"));
 
-    (
-        Harness {
+    Bound {
+        harness: Harness {
             addr,
             quic_addr,
             ca_path,
             relay: identity,
             _dir: dir,
         },
-        ctx_handle,
-    )
+        ctx,
+        listener,
+        endpoint,
+    }
+}
+
+/// A relay that is configured and bound but not yet serving, so the caller
+/// chooses how it is stopped.
+struct Bound {
+    harness: Harness,
+    ctx: Arc<Ctx>,
+    listener: TcpListener,
+    endpoint: Option<quinn::Endpoint>,
+}
+
+/// As [`start`], but keeping the [`Ctx`] a mesh test needs to reload the
+/// roster and start dialling from.
+async fn start_with_ctx(tag: &str, nodes: &[(&Identity, &str)], quic: bool) -> (Harness, Arc<Ctx>) {
+    let Bound {
+        harness,
+        ctx,
+        listener,
+        endpoint,
+    } = bind(tag, nodes, quic).await;
+    if let Some(endpoint) = endpoint {
+        tokio::spawn(karst_relay::quic::serve_on(endpoint, Arc::clone(&ctx)));
+    }
+    let ctx_handle = Arc::clone(&ctx);
+    tokio::spawn(async move {
+        let _ = serve_on(listener, ctx).await;
+    });
+    (harness, ctx_handle)
+}
+
+/// A relay serving TCP and QUIC that a test can shut down, as a signal would.
+struct Drainable {
+    harness: Harness,
+    /// Ends both listeners' accept loops.
+    stop: tokio::sync::watch::Sender<bool>,
+    /// The TCP listener's task — the one that runs the drain.
+    serving: tokio::task::JoinHandle<()>,
+}
+
+impl Drainable {
+    /// Ask the relay to shut down and wait for it to finish draining.
+    async fn shut_down(self) -> Harness {
+        let _ = self.stop.send(true);
+        tokio::time::timeout(Duration::from_secs(10), self.serving)
+            .await
+            .expect("the relay did not return after its shutdown")
+            .expect("the serving task panicked");
+        self.harness
+    }
+}
+
+async fn start_drainable(tag: &str, nodes: &[(&Identity, &str)]) -> Drainable {
+    let Bound {
+        harness,
+        ctx,
+        listener,
+        endpoint,
+    } = bind(tag, nodes, true).await;
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    // Each listener gets its own copy of the signal, as each registers its own
+    // signal handlers in `run`. A dropped sender is not a shutdown.
+    let until = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
+        if stopped.wait_for(|stop| *stop).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::spawn(karst_relay::quic::serve_until(
+        endpoint.expect("bound with QUIC"),
+        Arc::clone(&ctx),
+        until(stopped.clone()),
+    ));
+    let serving = tokio::spawn(async move {
+        let _ = serve_until(listener, ctx, until(stopped)).await;
+    });
+    Drainable {
+        harness,
+        stop,
+        serving,
+    }
 }
 
 /// A client connection over QUIC, past ALPN.
@@ -557,4 +629,119 @@ async fn two_relays_mesh_over_quic_and_a_packet_crosses() {
             payload: &payload,
         }
     );
+}
+
+/// `ponor-v1.md` §7.6 over QUIC: a relay that is stopped tells a QUIC client
+/// to reconnect elsewhere before it closes it, exactly as it does a TCP one.
+///
+/// QUIC clients share the TCP clients' hub and connection loop, so they should
+/// hear the TCP listener's drain — but the QUIC accept loop returns and drops
+/// its endpoint handle the moment the shutdown fires, and a QUIC connection's
+/// last handle going away closes it without sending what is still buffered.
+/// Either could cut the notice off; this is the test that says neither does.
+#[tokio::test]
+async fn a_shutdown_tells_quic_clients_to_reconnect_before_closing_them() {
+    let alice = identity(0x41);
+    let relay = start_drainable("shutdown", &[(&alice, "acme")]).await;
+    let mut a = connect_quic(&relay.harness).await;
+    handshake_quic(&relay.harness, &mut a, &alice).await;
+
+    let _h = relay.shut_down().await;
+
+    let got = tokio::time::timeout(Duration::from_secs(5), a.frame())
+        .await
+        .expect("no notice arrived");
+    let (frame, _) = decode(&got).expect("decodes").expect("complete");
+    let Frame::Restarting {
+        reconnect_in_ms,
+        try_for_ms,
+    } = frame
+    else {
+        panic!("expected Restarting, got {frame:?}");
+    };
+    assert!(try_for_ms >= reconnect_in_ms);
+
+    // And then the connection ends, rather than hanging open.
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        while a.read_more().await {}
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "the connection was left open after the drain"
+    );
+}
+
+/// The busy QUIC client: one that is sending all the time must still hear the
+/// notice and still be closed, within the drain's bound.
+#[tokio::test]
+async fn a_shutdown_reaches_a_quic_client_that_never_stops_sending() {
+    let alice = identity(0x42);
+    let relay = start_drainable("shutdown-busy", &[(&alice, "acme")]).await;
+    let mut a = connect_quic(&relay.harness).await;
+    handshake_quic(&relay.harness, &mut a, &alice).await;
+
+    // An unbroken stream of datagrams to a peer that is not there, each of
+    // which the relay answers with a `PeerGone`.
+    let payload = [7u8; 64];
+    let packet = Frame::SendPacket {
+        dst_id: [9; ID_LEN],
+        payload: &payload,
+    }
+    .to_vec();
+    let QConn {
+        stream,
+        mut buf,
+        _endpoint,
+    } = a;
+    // `quinn`'s streams have inherent `read`/`write_all` methods with other
+    // signatures; the tokio traits are named explicitly below to get the
+    // ones `tests/listener.rs`'s version of this test uses.
+    let (mut read, mut write) = stream.into_inner();
+    let writer = tokio::spawn(async move {
+        loop {
+            if AsyncWriteExt::write_all(&mut write, &packet).await.is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    });
+    let mut chunk = [0u8; 4096];
+    // Make sure it is busy before the relay is stopped.
+    for _ in 0..20 {
+        let n = AsyncReadExt::read(&mut read, &mut chunk)
+            .await
+            .expect("read");
+        assert_ne!(n, 0);
+        buf.extend_from_slice(&chunk[..n]);
+    }
+
+    let stopped = std::time::Instant::now();
+    let _h = relay.shut_down().await;
+    assert!(
+        stopped.elapsed() < Duration::from_secs(2),
+        "the drain ran to its upper bound with a busy client connected: {:?}",
+        stopped.elapsed()
+    );
+
+    // The notice is somewhere in what the relay sent, among the PeerGones.
+    let mut told = false;
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            while let Some((frame, used)) = decode(&buf).expect("decodable") {
+                if matches!(frame, Frame::Restarting { .. }) {
+                    told = true;
+                }
+                buf.drain(..used);
+            }
+            match AsyncReadExt::read(&mut read, &mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+    })
+    .await;
+    writer.abort();
+    assert!(ended.is_ok(), "the connection was left open");
+    assert!(told, "the busy client was closed without being told why");
 }
