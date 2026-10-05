@@ -551,11 +551,20 @@ pub async fn serve_on(
 /// rather than waited on for ever.
 const RESTART_RECONNECT_IN_MS: u32 = 2_000;
 const RESTART_TRY_FOR_MS: u32 = 60_000;
-/// How long a draining relay lets the notice reach its clients before exiting.
-const RESTART_FLUSH_GRACE: Duration = Duration::from_millis(500);
+/// The longest a draining relay waits for its clients to be told and closed.
+///
+/// An upper bound, not a delay: the wait ends as soon as every directly
+/// connected client has been sent the notice and closed, which on a healthy
+/// link is milliseconds. The bound is for the client that is not reading — a
+/// stalled peer must not hold a shutdown open — and is long enough that a slow
+/// link still gets the notice out instead of seeing a bare close, which a
+/// client can only read as a dead relay.
+const RESTART_FLUSH_MAX: Duration = Duration::from_secs(3);
+const RESTART_FLUSH_POLL: Duration = Duration::from_millis(25);
 
 impl Ctx {
-    /// Send `Restarting` to every client and give the writes a moment to land.
+    /// Send `Restarting` to every client, then wait until they have been told
+    /// and closed, or [`RESTART_FLUSH_MAX`] passes.
     ///
     /// What a graceful shutdown does first; public so a test can drive it
     /// without sending the process a signal.
@@ -563,10 +572,20 @@ impl Ctx {
         let told =
             self.with_hub(|hub| hub.begin_restart(RESTART_RECONNECT_IN_MS, RESTART_TRY_FOR_MS));
         self.wake_dirty();
-        if told > 0 {
-            eprintln!("karst-relay: told {told} clients to reconnect elsewhere");
-            tokio::time::sleep(RESTART_FLUSH_GRACE).await;
+        if told == 0 {
+            return;
         }
+        eprintln!("karst-relay: told {told} clients to reconnect elsewhere");
+        let deadline = tokio::time::Instant::now() + RESTART_FLUSH_MAX;
+        while self.local_clients() > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(RESTART_FLUSH_POLL).await;
+        }
+    }
+
+    /// Clients connected directly to this relay.
+    #[must_use]
+    pub fn local_clients(&self) -> usize {
+        self.with_hub(|hub| hub.local_clients())
     }
 }
 
