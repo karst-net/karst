@@ -225,6 +225,17 @@ mod tests {
         });
         let (mut server, _) = listener.accept().expect("accept");
         let decided = negotiate(&mut server);
+        // A refusal path returns before reading everything the client sent in
+        // its one write (e.g. the request bytes after an unacceptable method
+        // list) -- closing a socket with unread inbound data still queued
+        // sends an abortive RST on Windows rather than a graceful FIN, which
+        // can drop this side's own just-written reply before the peer reads
+        // it. Drain whatever the client already sent so the close below is
+        // always graceful; a no-op (one immediate WouldBlock) on every path
+        // that already consumed the full request.
+        server.set_nonblocking(true).ok();
+        let mut drain = [0u8; 64];
+        while matches!(server.read(&mut drain), Ok(n) if n > 0) {}
         drop(server);
         (decided, client.join().expect("client thread"))
     }
