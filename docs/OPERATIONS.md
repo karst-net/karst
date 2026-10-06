@@ -192,6 +192,13 @@ This procedure is the operator form of the exercised
    confirmed live: a from-scratch replica rebuilt this way promoted to a
    new timeline within seconds of starting, with no operator action.
 
+   This step is easy to skip under incident pressure, and skipping it gives
+   no error until a *later*, unrelated clone attempt fails confusingly —
+   run `PGDATA=... scripts/pg-preflight-clone-source.sh` against this
+   primary before any `pg_basebackup -R` against it (here or in §5) to
+   catch a missed reset before it produces a split-brain replica instead
+   of after.
+
 The drill on 2026-09-04 used these commands after deliberately dropping
 `control_sessions` and measured **RPO ≈38.5 seconds**: corruption at
 `15:18:38.749Z`, recoverable state at `15:18:00.211Z`. This is a measurement,
@@ -209,8 +216,10 @@ The tested manual failover sequence is:
 3. On the standby host run
    `scripts/pg-promote.sh --compose-dir deploy/compose/ha`.
 4. Recreate the control services on both hosts and confirm reads and writes.
-5. Move the relay-roster writer explicitly. Rebuild the old primary with a
-   fresh `pg_basebackup -R`; never restart its old data directory. Verify
+5. Move the relay-roster writer explicitly. Run
+   `scripts/pg-preflight-clone-source.sh` against the new primary first
+   (§4 step 4 explains why), then rebuild the old primary with a fresh
+   `pg_basebackup -R`; never restart its old data directory. Verify
    `pg_stat_replication` reports `state=streaming`.
 
 On 2026-09-04 this command sequence measured **control read/write RTO ≈45
