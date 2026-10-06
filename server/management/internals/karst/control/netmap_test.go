@@ -1659,3 +1659,35 @@ func TestNetmapFallsBackToStaticTurnServersWhenStoreIsEmpty(t *testing.T) {
 		t.Fatalf("uri = %q, want the static field's entry", servers[0].GetUri())
 	}
 }
+
+// The policy half of the same fallback bug (#250): an account with a
+// PolicyStore attached but no stored version yet — every account, until it
+// writes its first one via the console/API — must not silently discard a
+// configured static policy document either. GETTING-STARTED.md documents
+// KARST_POLICY_FILE/policy.json as effective from first boot, and
+// bootstrap.go's own comment at the policyStore construction promises this
+// exact fallback; compileFilter must honor it rather than treating
+// policy.ErrNoVersion as "no policy at all".
+func TestNetmapFallsBackToStaticPolicyWhenStoreHasNoVersion(t *testing.T) {
+	f := newNetmapFixture(t, 2)
+
+	db, err := gorm.Open(sqlite.Open("file:netmap-policystore-empty?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	if err := db.Exec("DROP TABLE IF EXISTS karst_policy_versions").Error; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	store, err := policy.NewStore(db)
+	if err != nil {
+		t.Fatalf("policy store: %v", err)
+	}
+
+	withPolicy(t, f, netmapPolicy)
+	f.handler.PolicyStore = store
+
+	resp := requestNetmap(t, f, 0)
+	if len(resp.GetPacketFilter()) == 0 {
+		t.Fatal("an account with no stored policy version got an empty filter instead of the configured static fallback")
+	}
+}
