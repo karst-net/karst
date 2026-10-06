@@ -78,6 +78,22 @@ directory. Backups and WAL archive must be off-host; see the scripts and
 [`docs/operations/ha.md`](../../../docs/operations/ha.md) for the real-drill
 record.
 
+**Before cloning a replica from any primary that was itself restored with
+`pg-restore.sh`**, run `scripts/pg-preflight-clone-source.sh` against that
+primary's own `PGDATA` first. `pg_basebackup` copies `postgresql.auto.conf`
+verbatim, and a primary that still carries the `recovery_target_time`/
+`recovery_target_action` `pg-restore.sh` wrote (`docs/OPERATIONS.md` §4 step
+4 exists to clear these, and is easy to skip) hands that stale,
+already-elapsed target straight to the clone — which then replays past it
+on its first start and silently promotes itself onto a new timeline instead
+of staying a standby. Confirmed live (#244): `pg_basebackup -R` itself
+reports success either way; the self-promotion gives no error at the
+moment it happens, only a confusing failure on a *later*, unrelated clone
+attempt. This cannot be checked over the primary's live connection —
+`recovery_target_time` has postmaster context, so `SHOW` on it keeps
+reporting history rather than the current file — the preflight script
+reads `postgresql.auto.conf` directly instead.
+
 `postgres/pg_hba.conf`'s checked-in rule uses this file's own placeholder
 subnet — replace it with the real LAN CIDR the two hosts share, **and** add
 each host's own docker-compose bridge subnet (`docker network inspect
