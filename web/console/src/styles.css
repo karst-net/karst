@@ -24,3 +24,9 @@ dialog { width: min(40rem, calc(100vw - 2rem)); padding: var(--space-3); color: 
 dialog::backdrop { background: rgb(0 0 0 / 55%); }
 dialog h2 { margin-top: 0; }
 dialog .table-wrap { max-height: 50vh; overflow: auto; }
+
+/* NOC view (#241 Phase 1a). MapLibre needs an element with a real, non-zero
+   height to size its canvas into -- height here, sizing left to .two-col. */
+.noc-map { height: 28rem; border: 1px solid var(--border); border-radius: var(--radius); }
+.noc-unplaced { padding: var(--space-2); border: 1px dashed var(--border); border-radius: var(--radius); }
+.noc-unplaced ul { margin: 0; padding-left: 1.2rem; }

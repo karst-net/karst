@@ -212,6 +212,19 @@ message KarstRelay {
   // load-balancer address while the certificate names the shared control host.
   // Ponor still authenticates the relay by `identity_key`, never this name.
   string tls_server_name = 5;
+  // Operator-declared location for the NOC view's map (ADR-0046 §1). Absent
+  // means "location unknown" — never inferred from an address via GeoIP.
+  RelayLocation location = 6;
+}
+
+// RelayLocation is an operator-declared point on the NOC map (ADR-0046 §1).
+// It is configuration, the same trust level as `KarstRelay.region` — never
+// derived from `KarstRelay.address` by a GeoIP lookup, which ADR-0039's
+// air-gapped bar and ADR-0046's no-inference rule both rule out.
+message RelayLocation {
+  double lat = 1;
+  double lon = 2;
+  string label = 3;
 }
 
 // KarstTurnServer is a TURN (RFC 8656) fallback server this node may use,

@@ -147,6 +147,63 @@ func TestRecordTelemetryReplacesThePreviousReport(t *testing.T) {
 	}
 }
 
+// TestADeclaredLocationSurvivesCreateAndList covers the NOC-map data path
+// end to end: Entry.Location -> StoredRelay's flat columns -> back out
+// through List, and through ToProto -> compiledRelay's cache/clone path.
+func TestADeclaredLocationSurvivesCreateAndList(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	_, err := s.Create(ctx, Entry{
+		Address:       "203.0.113.7:443",
+		TLSServerName: "relay.example.com",
+		IdentityKey:   testKey(0x88),
+		Region:        "eu",
+		Location:      &Location{Lat: 51.5072, Lon: -0.1276, Label: "London"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	records, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(records) != 1 || records[0].LocationLat == nil {
+		t.Fatalf("got %+v, want one record with a location", records)
+	}
+	if *records[0].LocationLat != 51.5072 || *records[0].LocationLon != -0.1276 || records[0].LocationLabel != "London" {
+		t.Fatalf("location = (%v, %v, %q), want (51.5072, -0.1276, \"London\")",
+			*records[0].LocationLat, *records[0].LocationLon, records[0].LocationLabel)
+	}
+
+	relay, err := records[0].ToProto()
+	if err != nil {
+		t.Fatalf("to proto: %v", err)
+	}
+	if relay.GetLocation() == nil || relay.GetLocation().GetLabel() != "London" {
+		t.Fatalf("ToProto location = %+v, want London", relay.GetLocation())
+	}
+}
+
+// TestNoDeclaredLocationStaysNilThroughTheStore is the companion case: a
+// relay created with no Location must never pick one up on the way through
+// storage — ADR-0046 §1's "never a guessed pin."
+func TestNoDeclaredLocationStaysNilThroughTheStore(t *testing.T) {
+	s := newTestStore(t)
+	relay := mustCreate(t, s, "acct-a", 0x99)
+	if relay.LocationLat != nil {
+		t.Fatalf("a relay created with no location got one: %+v", relay)
+	}
+
+	proto, err := relay.ToProto()
+	if err != nil {
+		t.Fatalf("to proto: %v", err)
+	}
+	if proto.GetLocation() != nil {
+		t.Fatalf("ToProto location = %+v, want nil", proto.GetLocation())
+	}
+}
+
 func TestLatestTelemetryIsScopedToTheAskingAccount(t *testing.T) {
 	s := newTestStore(t)
 	a := mustCreate(t, s, "acct-a", 0x66)

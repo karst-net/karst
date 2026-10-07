@@ -231,6 +231,56 @@ func TestLoadNamesTheFile(t *testing.T) {
 	}
 }
 
+// TestADeclaredLocationCompilesThrough covers ADR-0046 §1: an operator may
+// declare a relay's NOC-map position, and it survives the compile step
+// unmodified — never defaulted, never inferred.
+func TestADeclaredLocationCompilesThrough(t *testing.T) {
+	body := goodEntry() + `,"location":{"lat":51.5072,"lon":-0.1276,"label":"London"}`
+	relays, err := Parse(doc(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	loc := relays[0].GetLocation()
+	if loc == nil {
+		t.Fatal("location was dropped during compile")
+	}
+	if loc.GetLat() != 51.5072 || loc.GetLon() != -0.1276 || loc.GetLabel() != "London" {
+		t.Fatalf("location = %+v, want {51.5072 -0.1276 London}", loc)
+	}
+}
+
+// TestNoLocationMeansUnknownNotAGuess covers the other half of ADR-0046 §1:
+// an entry with no declared location compiles with no location at all,
+// never a synthesized or zero-valued one that a map would draw as a real
+// pin at (0, 0).
+func TestNoLocationMeansUnknownNotAGuess(t *testing.T) {
+	relays, err := Parse(doc(goodEntry()))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if relays[0].GetLocation() != nil {
+		t.Fatalf("an undeclared location compiled to %+v, want nil", relays[0].GetLocation())
+	}
+}
+
+// TestAnOutOfRangeLocationIsRefused mirrors this file's other validation
+// tests: a typo'd coordinate should fail at startup with a named field, not
+// silently place a relay on the wrong continent.
+func TestAnOutOfRangeLocationIsRefused(t *testing.T) {
+	cases := []string{
+		`{"lat":91,"lon":0,"label":""}`,
+		`{"lat":-91,"lon":0,"label":""}`,
+		`{"lat":0,"lon":181,"label":""}`,
+		`{"lat":0,"lon":-181,"label":""}`,
+	}
+	for _, loc := range cases {
+		body := goodEntry() + `,"location":` + loc
+		if _, err := Parse(doc(body)); err == nil {
+			t.Fatalf("location %s was accepted", loc)
+		}
+	}
+}
+
 func mustQuote(s string) string {
 	out := `"`
 	for _, r := range s {

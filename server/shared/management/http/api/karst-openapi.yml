@@ -250,6 +250,27 @@ paths:
       responses:
         '200': {description: Relay health derived from the roster, content: {application/json: {schema: {$ref: '#/components/schemas/RelayHealth'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /noc/components:
+    get:
+      operationId: nocComponents
+      tags: [noc]
+      description: >-
+        The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047) --
+        every relay this account can see, reshaped through the same response
+        every other relay endpoint uses. Every call is audit-logged
+        (karst.noc.view) explicitly, since this is a GET.
+      responses:
+        '200': {description: Relays with their declared location (if any) and health, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Relay'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /noc/relays/{relayId}:
+    parameters: [{$ref: '#/components/parameters/relayId'}]
+    get:
+      operationId: nocRelay
+      tags: [noc]
+      description: The NOC map's marker-click drill-down for one relay. Audit-logged as karst.noc.drilldown.
+      responses:
+        '200': {description: One relay, content: {application/json: {schema: {$ref: '#/components/schemas/Relay'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
       operationId: listTurnServers
@@ -573,13 +594,20 @@ components:
       type: object
       required: [address, identity_key, region]
       additionalProperties: false
-      properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}}
+      properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}, location: {$ref: '#/components/schemas/RelayLocation'}}
     Relay:
       allOf: [{$ref: '#/components/schemas/RelayCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/RelayHealth'}}}]
     RelayHealth:
       type: object
       required: [source, last_confirmed_at, admission_state]
       properties: {source: {type: string, enum: [roster_mtime]}, last_confirmed_at: {type: string, nullable: true, format: date-time}, sessions: {type: integer, nullable: true, minimum: 0}, bytes: {type: integer, nullable: true, minimum: 0}, admission_state: {type: string, enum: [confirmed, stale, unknown]}}
+    # Operator-declared NOC-map position (ADR-0046 §1) -- never GeoIP, never
+    # inferred from Relay.address. Absent on a Relay means "location unknown."
+    RelayLocation:
+      type: object
+      required: [lat, lon]
+      additionalProperties: false
+      properties: {lat: {type: number, minimum: -90, maximum: 90}, lon: {type: number, minimum: -180, maximum: 180}, label: {type: string}}
     TurnServerCreate:
       type: object
       required: [uri]

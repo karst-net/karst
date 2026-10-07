@@ -47,6 +47,15 @@ type StoredRelay struct {
 	TLSServerName string `gorm:"not null" json:"tls_server_name"`
 	IdentityKey   string `gorm:"not null" json:"identity_key"`
 	Region        string `gorm:"not null" json:"region"`
+
+	// LocationLat/LocationLon/LocationLabel are the operator-declared NOC-map
+	// position (ADR-0046 §1), flat nullable columns rather than an embedded
+	// struct to match gorm's column-per-field convention elsewhere in this
+	// file. LocationLat is nil exactly when no location was declared; Lon and
+	// Label are only meaningful when it isn't.
+	LocationLat   *float64 `json:"-"`
+	LocationLon   *float64 `json:"-"`
+	LocationLabel string   `json:"-"`
 }
 
 func (StoredRelay) TableName() string { return "karst_relays" }
@@ -110,6 +119,10 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredRelay, error) {
 		return nil, err
 	}
 	record := &StoredRelay{AccountID: accountID, ID: base64.RawURLEncoding.EncodeToString(relay.RelayId), Address: relay.Address, TLSServerName: relay.TlsServerName, IdentityKey: entry.IdentityKey, Region: relay.Region}
+	if relay.Location != nil {
+		lat, lon := relay.Location.Lat, relay.Location.Lon
+		record.LocationLat, record.LocationLon, record.LocationLabel = &lat, &lon, relay.Location.Label
+	}
 	var existing StoredRelay
 	if err := s.db.Where("account_id = ? AND id = ?", accountID, record.ID).First(&existing).Error; err == nil {
 		return nil, ErrExists
@@ -282,15 +295,23 @@ func (s *Store) invalidateCompiled(accountID, id string) {
 }
 
 func cloneRelay(relay *proto.KarstRelay) *proto.KarstRelay {
-	return &proto.KarstRelay{
+	cloned := &proto.KarstRelay{
 		Address:       relay.Address,
 		RelayId:       append([]byte(nil), relay.RelayId...),
 		IdentityKey:   append([]byte(nil), relay.IdentityKey...),
 		Region:        relay.Region,
 		TlsServerName: relay.TlsServerName,
 	}
+	if relay.Location != nil {
+		cloned.Location = &proto.RelayLocation{Lat: relay.Location.Lat, Lon: relay.Location.Lon, Label: relay.Location.Label}
+	}
+	return cloned
 }
 
 func (r StoredRelay) ToProto() (*proto.KarstRelay, error) {
-	return Compile(Entry{Address: r.Address, TLSServerName: r.TLSServerName, IdentityKey: r.IdentityKey, Region: r.Region})
+	entry := Entry{Address: r.Address, TLSServerName: r.TLSServerName, IdentityKey: r.IdentityKey, Region: r.Region}
+	if r.LocationLat != nil {
+		entry.Location = &Location{Lat: *r.LocationLat, Lon: *r.LocationLon, Label: r.LocationLabel}
+	}
+	return Compile(entry)
 }

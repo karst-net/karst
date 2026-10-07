@@ -413,13 +413,25 @@ const server = http.createServer((request, response) => {
     return readBody(request).then((entry) => {
       if (!entry.address || !entry.identity_key) return error(response, 422, "invalid_argument", "address and identity_key are required");
       if (fixture.relays.some((relay) => relay.address === entry.address)) return error(response, 412, "already_exists", "relay already exists");
-      const relay = { id: id("relay"), address: entry.address, identity_key: entry.identity_key, region: entry.region ?? "default", tls_server_name: entry.tls_server_name ?? "", health: { source: "roster_mtime", last_confirmed_at: null, sessions: null, bytes: null, admission_state: "unknown" } };
+      const relay = { id: id("relay"), address: entry.address, identity_key: entry.identity_key, region: entry.region ?? "default", tls_server_name: entry.tls_server_name ?? "", location: entry.location ?? undefined, health: { source: "roster_mtime", last_confirmed_at: null, sessions: null, bytes: null, admission_state: "unknown" } };
       fixture.relays.push(relay);
       return json(response, 201, relay);
     });
   }
   if (relayMatch && method === "GET" && karst.endsWith("/health")) return json(response, 200, fixture.relays.find((item) => item.id === relayMatch[1])?.health ?? fixture.relays[0].health);
   if (relayMatch && method === "DELETE") return remove(fixture.relays, relayMatch[1], response);
+
+  // NOC view (#241 Phase 1a) -- the same relay data /relays serves, reshaped
+  // for a map rather than a table. No separate fixture state: there is
+  // nothing here a console operator with relay-read access couldn't already
+  // see on the Relays page.
+  if (method === "GET" && karst === "/noc/components") return json(response, 200, fixture.relays);
+  const nocRelayMatch = karst.match(/^\/noc\/relays\/([^/]+)$/);
+  if (nocRelayMatch && method === "GET") {
+    const relay = fixture.relays.find((item) => item.id === nocRelayMatch[1]);
+    if (!relay) return error(response, 404, "not_found", "relay not found");
+    return json(response, 200, relay);
+  }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);
   if (method === "GET" && karst === "/bedrock/log") return json(response, 200, page(fixture.bedrockLog, url));

@@ -126,6 +126,11 @@ type relayHealth struct {
 type relayResponse struct {
 	relayreg.StoredRelay
 	Health relayHealth `json:"health"`
+	// Location is the operator-declared NOC-map position (ADR-0046 §1),
+	// composed here from StoredRelay's flat, JSON-hidden columns rather than
+	// exposing them directly -- the API's shape should not have to change if
+	// the storage columns ever do. Nil means no location was declared.
+	Location *relayreg.Location `json:"location,omitempty"`
 }
 
 func unknownRelayHealth() relayHealth {
@@ -170,7 +175,11 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 }
 
 func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRelay) relayResponse {
-	return relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
+	resp := relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
+	if relay.LocationLat != nil {
+		resp.Location = &relayreg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}
+	}
+	return resp
 }
 
 type peerWriter interface {
@@ -323,6 +332,8 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -1436,6 +1447,83 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nocComponents is the NOC view's map data source — #241 Phase 1a,
+// ADR-0046/ADR-0047. It is deliberately just relay data reshaped through the
+// same relayResponseFor every other relay endpoint uses, not a new read
+// path: the NOC view shows nothing a console operator with relay-read access
+// could not already see on the Relays page, only drawn on a map instead of
+// a table.
+//
+// Audit logging here is explicit rather than left to auditMutations
+// (nodes.go's mutation-logging middleware), because that middleware
+// deliberately skips every GET, and ADR-0046 §6 requires every NOC view load
+// to be logged regardless of HTTP method.
+func (h *handler) nocComponents(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	relays, err := h.relays.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]relayResponse, 0, len(relays))
+	for _, relay := range relays {
+		result = append(result, h.relayResponseFor(r.Context(), relay))
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.noc.view", "components", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// nocRelay is the NOC map's drill-down for one relay — the marker-click
+// detail panel. There is no relayReader.Get; relay counts are small enough
+// (Phase 1a is relays only, not the wider fleet later phases add) that
+// filtering the same List this account already pays for elsewhere is
+// simpler than adding a new store method for one caller.
+func (h *handler) nocRelay(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	relayID := mux.Vars(r)["relayId"]
+	relays, err := h.relays.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	for _, relay := range relays {
+		if relay.ID != relayID {
+			continue
+		}
+		resp := h.relayResponseFor(r.Context(), relay)
+		if h.audit != nil {
+			if _, err := h.audit.Append(r.Context(), user.UserId, "karst.noc.drilldown", "relay/"+relayID, ""); err != nil {
+				util.WriteError(r.Context(), err, w)
+				return
+			}
+		}
+		util.WriteJSONObject(r.Context(), w, resp)
+		return
+	}
+	util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 }
 
 func (h *handler) turnsList(w http.ResponseWriter, r *http.Request) {

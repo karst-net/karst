@@ -224,6 +224,7 @@ export type RelayCreate = {
     identity_key: string;
     region: string;
     tls_server_name?: string;
+    location?: RelayLocation;
 };
 
 export type Relay = RelayCreate & {
@@ -240,6 +241,12 @@ export type RelayHealth = {
     sessions?: number | null;
     bytes?: number | null;
     admission_state: 'confirmed' | 'stale' | 'unknown';
+};
+
+export type RelayLocation = {
+    lat: number;
+    lon: number;
+    label?: string;
 };
 
 export type TurnServerCreate = {
@@ -1243,6 +1250,58 @@ export type GetRelayHealthResponses = {
 };
 
 export type GetRelayHealthResponse = GetRelayHealthResponses[keyof GetRelayHealthResponses];
+
+export type NocComponentsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/noc/components';
+};
+
+export type NocComponentsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type NocComponentsError = NocComponentsErrors[keyof NocComponentsErrors];
+
+export type NocComponentsResponses = {
+    /**
+     * Relays with their declared location (if any) and health
+     */
+    200: Array<Relay>;
+};
+
+export type NocComponentsResponse = NocComponentsResponses[keyof NocComponentsResponses];
+
+export type NocRelayData = {
+    body?: never;
+    path: {
+        readonly relayId: string;
+    };
+    query?: never;
+    url: '/noc/relays/{relayId}';
+};
+
+export type NocRelayErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type NocRelayError = NocRelayErrors[keyof NocRelayErrors];
+
+export type NocRelayResponses = {
+    /**
+     * One relay
+     */
+    200: Relay;
+};
+
+export type NocRelayResponse = NocRelayResponses[keyof NocRelayResponses];
 
 export type ListTurnServersData = {
     body?: never;

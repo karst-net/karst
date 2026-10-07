@@ -805,18 +805,20 @@ type Relay struct {
 	Health  RelayHealth `json:"health"`
 
 	// Id Derived from identity_key; never accepted from callers.
-	Id            *string `json:"id,omitempty"`
-	IdentityKey   []byte  `json:"identity_key"`
-	Region        string  `json:"region"`
-	TlsServerName *string `json:"tls_server_name,omitempty"`
+	Id            *string        `json:"id,omitempty"`
+	IdentityKey   []byte         `json:"identity_key"`
+	Location      *RelayLocation `json:"location,omitempty"`
+	Region        string         `json:"region"`
+	TlsServerName *string        `json:"tls_server_name,omitempty"`
 }
 
 // RelayCreate defines model for RelayCreate.
 type RelayCreate struct {
-	Address       string  `json:"address"`
-	IdentityKey   []byte  `json:"identity_key"`
-	Region        string  `json:"region"`
-	TlsServerName *string `json:"tls_server_name,omitempty"`
+	Address       string         `json:"address"`
+	IdentityKey   []byte         `json:"identity_key"`
+	Location      *RelayLocation `json:"location,omitempty"`
+	Region        string         `json:"region"`
+	TlsServerName *string        `json:"tls_server_name,omitempty"`
 }
 
 // RelayHealth defines model for RelayHealth.
@@ -833,6 +835,13 @@ type RelayHealthAdmissionState string
 
 // RelayHealthSource defines model for RelayHealth.Source.
 type RelayHealthSource string
+
+// RelayLocation defines model for RelayLocation.
+type RelayLocation struct {
+	Label *string `json:"label,omitempty"`
+	Lat   float32 `json:"lat"`
+	Lon   float32 `json:"lon"`
+}
 
 // SessionPage defines model for SessionPage.
 type SessionPage struct {

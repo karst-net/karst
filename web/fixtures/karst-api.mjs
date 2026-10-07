@@ -46,7 +46,8 @@ export function buildFixture({ empty = false } = {}) {
         identity_key: "fixture-public-key-denver",
         region: "us-central",
         tls_server_name: "relay-den.example.test",
-        health: { source: "roster_mtime", last_confirmed_at: asOf, sessions: null, bytes: null, admission_state: "confirmed" },
+        location: { lat: 39.7392, lon: -104.9903, label: "Denver" },
+        health: { source: "roster_mtime", last_confirmed_at: asOf, sessions: 12, bytes: 918273645, admission_state: "confirmed" },
       },
       {
         id: "relay-fixture-frankfurt",

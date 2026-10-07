@@ -107,6 +107,20 @@ type Entry struct {
 
 	// Region this relay serves — §8, §9. Empty means [DefaultRegion].
 	Region string `json:"region"`
+
+	// Location is this relay's operator-declared position on the NOC map
+	// (ADR-0046 §1). Nil means "location unknown" — there is deliberately no
+	// GeoIP or address-based inference anywhere in this package, matching
+	// ADR-0039's air-gapped bar and ADR-0046's no-inference rule.
+	Location *Location `json:"location,omitempty"`
+}
+
+// Location is a point an operator declares for a relay, never derived from
+// [Entry.Address] — see [Entry.Location].
+type Location struct {
+	Lat   float64 `json:"lat"`
+	Lon   float64 `json:"lon"`
+	Label string  `json:"label,omitempty"`
 }
 
 type document struct {
@@ -200,12 +214,28 @@ func (e Entry) compile() (*proto.KarstRelay, error) {
 		region = DefaultRegion
 	}
 
+	var location *proto.RelayLocation
+	if e.Location != nil {
+		if e.Location.Lat < -90 || e.Location.Lat > 90 {
+			return nil, fmt.Errorf("location.lat is %v, want -90..90", e.Location.Lat)
+		}
+		if e.Location.Lon < -180 || e.Location.Lon > 180 {
+			return nil, fmt.Errorf("location.lon is %v, want -180..180", e.Location.Lon)
+		}
+		location = &proto.RelayLocation{
+			Lat:   e.Location.Lat,
+			Lon:   e.Location.Lon,
+			Label: e.Location.Label,
+		}
+	}
+
 	return &proto.KarstRelay{
 		Address:       e.Address,
 		TlsServerName: e.TLSServerName,
 		RelayId:       RelayID(key),
 		IdentityKey:   key,
 		Region:        region,
+		Location:      location,
 	}, nil
 }
 
