@@ -1286,16 +1286,78 @@ func TestRoleMatrixCoversEveryKarstRoute(t *testing.T) {
 		return nil
 	}))
 	require.NotEmpty(t, routes)
-	for _, role := range []types.UserRole{types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin, types.UserRoleAuditor, types.UserRoleUser} {
+	for _, role := range []types.UserRole{types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin, types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser} {
 		permissions, ok := roles.RolesMap[role].Permissions[modules.KarstControl]
 		require.Truef(t, ok, "%s has no KarstControl permission entry", role)
 		for _, route := range routes {
 			allowed, listed := permissions[route.operation]
 			require.Truef(t, listed, "%s %s has no %s matrix entry", role, route.method, route.operation)
-			want := role == types.UserRoleOwner || role == types.UserRoleAdmin || role == types.UserRoleNetworkAdmin || (role == types.UserRoleAuditor && route.operation == operations.Read)
+			want := role == types.UserRoleOwner || role == types.UserRoleAdmin || role == types.UserRoleNetworkAdmin ||
+				((role == types.UserRoleAuditor || role == types.UserRoleNOC) && route.operation == operations.Read)
 			require.Equalf(t, want, allowed, "%s %s permission", role, route.method)
 		}
 	}
+}
+
+// TestNOCRoleReachesComponentsAndDrilldownButNotWrites covers #241/ADR-0046
+// §6 directly, rather than relying only on the generic matrix scan above: a
+// NOC-role caller can load the map and drill into one relay, and cannot
+// create or delete one.
+func TestNOCRoleReachesComponentsAndDrilldownButNotWrites(t *testing.T) {
+	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, router)
+
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/karst/v1/noc/components", http.StatusOK},
+		{http.MethodGet, "/karst/v1/noc/relays/relay-id", http.StatusOK},
+		{http.MethodPost, "/karst/v1/relays", http.StatusForbidden},
+		{http.MethodDelete, "/karst/v1/relays/relay-id", http.StatusForbidden},
+	} {
+		request := httptest.NewRequest(tc.method, tc.path, nil)
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equalf(t, tc.want, response.Code, "%s %s: %s", tc.method, tc.path, response.Body.String())
+	}
+}
+
+// TestNOCViewAndDrilldownAreAuditLoggedOnGET covers ADR-0046 §6's audit
+// requirement directly: auditMutations (nodes.go) skips every GET, so
+// without an explicit Append call inside the NOC handlers these actions
+// would never reach the audit log at all.
+func TestNOCViewAndDrilldownAreAuditLoggedOnGET(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:noc-audit?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	auditLog, err := audit.New(db)
+	require.NoError(t, err)
+	relays := fixedRelays{{AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu"}}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, router)
+
+	for _, path := range []string{"/karst/v1/noc/components", "/karst/v1/noc/relays/relay-id"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	}
+
+	// auditMutations (nodes.go) only fires on a non-GET, non-2xx-excluded
+	// mutation -- these are both GETs, so these entries exist only because
+	// nocComponents/nocRelay call audit.Append explicitly. List is
+	// newest-first (audit.go's ListFiltered, "ORDER BY seq DESC").
+	entries, err := auditLog.List(context.Background(), 0, 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, "noc-viewer", entries[0].Actor)
+	require.Equal(t, "karst.noc.drilldown", entries[0].Action)
+	require.Equal(t, "relay/relay-id", entries[0].Target)
+	require.Equal(t, "karst.noc.view", entries[1].Action)
+	require.Equal(t, "components", entries[1].Target)
 }
 
 // Relay responses are a public contract, not a direct dump of database fields.

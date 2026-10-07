@@ -7,8 +7,8 @@ import type { Relay } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
-type Draft = { address: string; tls_server_name: string; identity_key: string; region: string };
-const blank: Draft = { address: "", tls_server_name: "", identity_key: "", region: "default" };
+type Draft = { address: string; tls_server_name: string; identity_key: string; region: string; lat: string; lon: string; label: string };
+const blank: Draft = { address: "", tls_server_name: "", identity_key: "", region: "default", lat: "", lon: "", label: "" };
 
 // `karstd` parses this with Rust's SocketAddr, which does not resolve names. A
 // DNS name here is not a relay that fails to dial — it is a netmap every node
@@ -31,7 +31,16 @@ export function Relays() {
     const entry = { address: draft.address.trim(), tls_server_name: draft.tls_server_name.trim(), identity_key: draft.identity_key.trim(), region: draft.region.trim() || "default" };
     if (!address.test(entry.address)) { setMessage("The address must be an IP address and port, such as 203.0.113.7:443. A DNS name here is rejected by every node, for the whole netmap — put the name in the TLS server name instead."); return; }
     if (!entry.identity_key) { setMessage("The identity key is what a node authenticates the relay by. Copy it from `karst-relay pubkey`."); return; }
-    if (await run(() => api.addRelay(entry), `Relay ${entry.address} was added. Nodes pick it up with their next netmap.`)) setDraft(undefined);
+    const lat = draft.lat.trim(), lon = draft.lon.trim();
+    if (Boolean(lat) !== Boolean(lon)) { setMessage("A declared location needs both latitude and longitude, or neither."); return; }
+    let location: { lat: number; lon: number; label?: string } | undefined;
+    if (lat && lon) {
+      const latNum = Number(lat), lonNum = Number(lon);
+      if (!Number.isFinite(latNum) || latNum < -90 || latNum > 90) { setMessage("Latitude must be a number between -90 and 90."); return; }
+      if (!Number.isFinite(lonNum) || lonNum < -180 || lonNum > 180) { setMessage("Longitude must be a number between -180 and 180."); return; }
+      location = { lat: latNum, lon: lonNum, label: draft.label.trim() || undefined };
+    }
+    if (await run(() => api.addRelay({ ...entry, location }), `Relay ${entry.address} was added. Nodes pick it up with their next netmap.`)) setDraft(undefined);
   };
   const remove = (relay: Relay) => {
     if (!confirm(`Remove the relay at ${relay.address}? Machines that cannot reach each other directly and have no other relay lose connectivity.`)) return;
@@ -45,10 +54,11 @@ export function Relays() {
     <Notice message={message} />
     {relays.length === 0
       ? <EmptyState title="No relays configured">The coordination server will publish relay health here when a relay is configured.</EmptyState>
-      : <Rows head={<><th>Region</th><th>Address</th><th>Health</th><th>Last confirmed</th><th>Actions</th></>}>
+      : <Rows head={<><th>Region</th><th>Address</th><th>Location</th><th>Health</th><th>Last confirmed</th><th>Actions</th></>}>
         {relays.map((relay) => <tr key={relay.id}>
           <td>{relay.region}</td>
           <td><code>{relay.address}</code><br /><span className="lede">{relay.tls_server_name}</span></td>
+          <td>{relay.location ? (relay.location.label || `${relay.location.lat}, ${relay.location.lon}`) : <span className="lede">Not declared</span>}</td>
           <td><Status state={relay.health.admission_state === "confirmed" ? "healthy" : relay.health.admission_state === "stale" ? "warning" : "unknown"} label={relay.health.admission_state} /></td>
           <td><Observed at={relay.health.last_confirmed_at} /></td>
           <td><button className="danger" onClick={() => remove(relay)}>Remove</button></td>
@@ -64,6 +74,10 @@ export function Relays() {
         <label>Identity key<input aria-label="Relay identity key" placeholder="base64, from `karst-relay pubkey`" value={draft?.identity_key ?? ""} onChange={(event) => setDraft((current) => current && { ...current, identity_key: event.target.value })} /></label>
         <p className="lede">The ML-DSA-87 public key the relay prints as <code>identity_pk</code>. This — not the certificate — is what proves which relay a node is talking to.</p>
         <label>Region<input aria-label="Relay region" value={draft?.region ?? ""} onChange={(event) => setDraft((current) => current && { ...current, region: event.target.value })} /></label>
+        <label>Latitude<input aria-label="Relay latitude" placeholder="51.5072" value={draft?.lat ?? ""} onChange={(event) => setDraft((current) => current && { ...current, lat: event.target.value })} /></label>
+        <label>Longitude<input aria-label="Relay longitude" placeholder="-0.1276" value={draft?.lon ?? ""} onChange={(event) => setDraft((current) => current && { ...current, lon: event.target.value })} /></label>
+        <label>Location label<input aria-label="Relay location label" placeholder="London" value={draft?.label ?? ""} onChange={(event) => setDraft((current) => current && { ...current, label: event.target.value })} /></label>
+        <p className="lede">Optional. Shown on the NOC map — never inferred from the address, so a relay with no declared location shows there as unplaced rather than a guess.</p>
         <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add relay</button></div>
       </form>
     </Dialog>

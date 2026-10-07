@@ -308,6 +308,11 @@ impl Relay {
             relay_id: self.relay_id.to_vec(),
             identity_key: self.identity_key.clone(),
             region: self.region.clone(),
+            // A relay's declared NOC-map position (ADR-0046 §1) is
+            // operator/console data this node has no use for -- `Relay`
+            // never stores it, so a round trip through this node's own
+            // netmap cache drops it rather than carrying it as dead weight.
+            location: None,
         }
     }
 }
@@ -1269,6 +1274,7 @@ mod tests {
             relay_id: h.finalize().to_vec(),
             identity_key,
             region: "test".to_owned(),
+            location: None,
         }
     }
 
@@ -1760,6 +1766,7 @@ mod tests {
             relay_id: vec![0x11; RELAY_ID_LEN],
             identity_key: vec![0x22; 32],
             region: "test".to_owned(),
+            location: None,
         };
         assert!(matches!(Relay::from_wire(&relay), Err(Error::Relay(_))));
     }
@@ -1779,6 +1786,7 @@ mod tests {
             relay_id: vec![0x11; RELAY_ID_LEN],
             identity_key: vec![0x22; RELAY_IDENTITY_KEY_LEN],
             region: "test".to_owned(),
+            location: None,
         };
         assert!(
             matches!(Relay::from_wire(&relay), Err(Error::Relay(message)) if message.contains("does not match"))

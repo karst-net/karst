@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayLocation, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -233,8 +233,16 @@ export const api = {
 
   // ── relays ─────────────────────────────────────────────────────────────────
   relays: () => request<Relay[]>("/relays"),
-  addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
+  addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
   removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── NOC view (#241 Phase 1a, ADR-0046/ADR-0047) ─────────────────────────────
+  // Reuses the Relay type -- these are the same relay data the Relays page
+  // shows, reshaped for a map instead of a table. Both calls are audit-logged
+  // server-side on every request, since they're GETs the console's generic
+  // mutation-audit middleware never sees.
+  nocComponents: () => request<Relay[]>("/noc/components"),
+  nocRelay: (id: string) => request<Relay>(`/noc/relays/${encodeURIComponent(id)}`),
 
   // ── turn servers ───────────────────────────────────────────────────────────
   turns: () => request<TurnServer[]>("/turns"),

@@ -26,6 +26,23 @@ export function useResource<T>(load: () => Promise<T>, dependencies: unknown[] =
   return { value, error, loading, reload };
 }
 
+/** Like [useResource], but re-fetches on an interval rather than once on
+ *  mount -- the NOC view's own need (ADR-0047 §3: polling, not push, for
+ *  Phase 1a). A refresh after the first load never flips `loading` back to
+ *  true: a view with data already on screen should keep showing it while a
+ *  poll is in flight, not flash back to "Loading…" every intervalMs. */
+export function usePolledResource<T>(load: () => Promise<T>, intervalMs: number, dependencies: unknown[] = []) {
+  const [value, setValue] = useState<T>(); const [error, setError] = useState<string>(); const [loading, setLoading] = useState(true);
+  const reload = () => { load().then((v) => { setValue(v); setError(undefined); }).catch((e: Error) => setError(e.message)).finally(() => setLoading(false)); };
+  useEffect(() => {
+    setLoading(true);
+    reload();
+    const timer = setInterval(reload, intervalMs);
+    return () => clearInterval(timer);
+  }, dependencies);
+  return { value, error, loading, reload };
+}
+
 /** Every mutating view needs the same three things: run it, say what happened,
  *  reload. Written once so that a view cannot quietly forget the third — a
  *  table that still shows the row you just deleted is worse than an error. */

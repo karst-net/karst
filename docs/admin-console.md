@@ -93,3 +93,41 @@ and is the place to update when a deferral is later picked up.
   validation) predates this page; relay health now reflects a relay's own
   signed, periodic self-report to the control plane (ADR-0021, issue #147)
   rather than a permanent `"unknown"` placeholder.
+
+## NOC view
+
+- **Phase 1a is done: declared relay locations, a map, health, and current
+  snapshot.** An operator declares a relay's position (`location.lat`/`lon`/
+  `label`, optional) through the same add-relay form/API the Relays page
+  already uses (ADR-0046 §1 — never GeoIP, never inferred from `address`).
+  The NOC page (`GET /karst/v1/noc/components`, `GET
+  /karst/v1/noc/relays/{id}`) plots every relay with a declared location on
+  a map, color-coded by the same health states the Relays page shows, and
+  lists relays with no declared location separately rather than hiding
+  them. A new read-only `noc` role (ADR-0046 §6) can reach these two
+  endpoints and nothing that writes; every view load and drill-down is
+  audit-logged (`karst.noc.view`, `karst.noc.drilldown`) explicitly in the
+  handler, since `auditMutations` only fires on a non-GET.
+- **Deferred: history, current rate, and utilization against capacity**
+  (ADR-0047). These need the Prometheus re-export and account-scoped query
+  proxy ADR-0047 describes, which is separately scoped Phase 1b work, not
+  part of this page yet. A relay's current snapshot today is still the
+  same cumulative total the Relays page already shows (`health.bytes`), not
+  a rate.
+- **Deferred: non-relay components and client aggregates.** Exit nodes,
+  subnet routers, TURN, Bedrock, and the control plane itself (#241's own
+  Phase 3) and client per-region/per-aquifer aggregates (ADR-0046 §2, #241's
+  Phase 4) are not on this page yet — it shows relays only.
+- **Known trade-off: the basemap is a coarse, hand-authored placeholder, and
+  MapLibre GL adds real bundle weight.** `public/noc-world-outline.geojson`
+  is a handful of deliberately schematic continent silhouettes, not a real
+  geographic dataset — chosen over fetching a third-party dataset of unknown
+  license. Swapping in a properly licensed, simplified dataset (e.g. a
+  trimmed Natural Earth 1:110m extract, license-checked first) is a
+  follow-up, not done here. Separately, adding MapLibre GL — this console's
+  first mapping dependency and first library over ~500 KB gzipped — pushed
+  the main bundle past Vite's default chunk-size warning; this console has
+  no code-splitting convention today (every other dependency, including
+  CodeMirror, ships in the one main bundle), so the NOC page is not
+  lazy-loaded either, consistent with that, but is the first page where the
+  cost of that convention is visible.
