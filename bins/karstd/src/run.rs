@@ -795,6 +795,21 @@ fn run_engine(
     // §9.2. Which alternative is being measured, and when the next one's turn
     // comes. Only the timer thread touches it.
     let mut rotation = crate::home::Rotation::default();
+    // How often a network change starts a sweep, how many of those ended in
+    // a home-relay change, and how long they took — `metrics_report`'s
+    // payload for GitHub issue #240. Written only by the timer thread,
+    // alongside `rotation`; read through the `_ctl` handles taken below,
+    // the same way every other counter here is.
+    let home_sweeps_started = Arc::new(AtomicU64::new(0));
+    let home_sweeps_changed = Arc::new(AtomicU64::new(0));
+    let home_sweep_duration_ms_sum = Arc::new(AtomicU64::new(0));
+    let home_sweep_duration_ms_count = Arc::new(AtomicU64::new(0));
+    let mut sweep = SweepTracker::new(
+        Arc::clone(&home_sweeps_started),
+        Arc::clone(&home_sweeps_changed),
+        Arc::clone(&home_sweep_duration_ms_sum),
+        Arc::clone(&home_sweep_duration_ms_count),
+    );
 
     // Initial handshakes, before any thread starts.
     dispatch(
@@ -1030,6 +1045,10 @@ fn run_engine(
         let control_synchronized_ctl = &control_synchronized;
         let relay_health_ctl = &relay_health;
         let turn_health_ctl = &turn_health;
+        let home_sweeps_started_ctl = &home_sweeps_started;
+        let home_sweeps_changed_ctl = &home_sweeps_changed;
+        let home_sweep_duration_ms_sum_ctl = &home_sweep_duration_ms_sum;
+        let home_sweep_duration_ms_count_ctl = &home_sweep_duration_ms_count;
         // A second handle: the block below moves `relay_dropped` itself into
         // this closure, so anything after it needs its own `Arc`.
         let relay_dropped_status = Arc::clone(&relay_dropped);
@@ -1121,6 +1140,14 @@ fn run_engine(
                                     current.route_offers.len(),
                                     gateway_active,
                                     active_exit.is_some(),
+                                    HomeSweepMetrics {
+                                        started: home_sweeps_started_ctl.load(Ordering::Relaxed),
+                                        changed: home_sweeps_changed_ctl.load(Ordering::Relaxed),
+                                        duration_ms_sum: home_sweep_duration_ms_sum_ctl
+                                            .load(Ordering::Relaxed),
+                                        duration_ms_count: home_sweep_duration_ms_count_ctl
+                                            .load(Ordering::Relaxed),
+                                    },
                                 );
                             }
                             if matches!(
@@ -1464,6 +1491,7 @@ fn run_engine(
                 // no longer reach.
                 next_probe = Instant::now();
                 rotation.network_changed();
+                sweep.began(now);
                 disco
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1487,6 +1515,7 @@ fn run_engine(
                 if moved {
                     tracing::info!("karstd: interfaces changed; re-measuring home relays");
                     rotation.network_changed();
+                    sweep.began(now);
                     next_probe = Instant::now();
                 }
             }
@@ -1502,6 +1531,7 @@ fn run_engine(
                     &rtt_probes,
                     &home_selector,
                     &mut rotation,
+                    &mut sweep,
                     &engine,
                     relay_out,
                     now,
@@ -1635,6 +1665,86 @@ fn disco_poll(
 /// How often the host's interface addresses are re-enumerated.
 const INTERFACE_SCAN: Duration = Duration::from_secs(15);
 
+/// One network-change sweep, timed and counted for `metrics_report` —
+/// GitHub issue #240.
+///
+/// **Lives beside `rotation`, in the same thread.** A sweep's start, whatever
+/// home-relay change it produces, and its end are all decided across separate
+/// calls to [`crate::home::Rotation::network_changed`] and
+/// [`crate::home::Rotation::round`] — `home.rs` is sans-clock on purpose and
+/// proves none of this, so the timer loop is the only place that sees a whole
+/// sweep from start to finish.
+struct SweepTracker {
+    /// When the sweep in progress began, in `probe_relays`'s own clock.
+    /// `None` outside a sweep.
+    started_at: Option<u64>,
+    /// Whether the home relay has changed since the sweep began.
+    changed: bool,
+    started: Arc<AtomicU64>,
+    changed_total: Arc<AtomicU64>,
+    duration_ms_sum: Arc<AtomicU64>,
+    duration_ms_count: Arc<AtomicU64>,
+}
+
+impl SweepTracker {
+    fn new(
+        started: Arc<AtomicU64>,
+        changed_total: Arc<AtomicU64>,
+        duration_ms_sum: Arc<AtomicU64>,
+        duration_ms_count: Arc<AtomicU64>,
+    ) -> Self {
+        Self {
+            started_at: None,
+            changed: false,
+            started,
+            changed_total,
+            duration_ms_sum,
+            duration_ms_count,
+        }
+    }
+
+    /// A network change just started a new sweep.
+    ///
+    /// A sweep already in progress is abandoned rather than finished: it was
+    /// interrupted before it measured what it set out to, so its partial
+    /// duration describes nothing real and must not be recorded. This is
+    /// `Rotation::network_changed`'s own rule — measure sooner, not decide
+    /// sooner — applied to the metric instead of the choice.
+    fn began(&mut self, now_ms: u64) {
+        self.started_at = Some(now_ms);
+        self.changed = false;
+        self.started.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// This round's home-relay change, if any, counts toward the sweep it
+    /// happened in. `was_sweeping` is `Rotation::sweeping` as it stood
+    /// *before* this round's `Rotation::round`, which is what the change
+    /// `Selector::select` just settled actually belongs to.
+    fn observed_change(&mut self, was_sweeping: bool, changed: bool) {
+        if was_sweeping && changed {
+            self.changed = true;
+        }
+    }
+
+    /// `Rotation::round` just ran; record the sweep if that is what ended
+    /// it — whether because every candidate had its turn, or cut short by
+    /// the registry shrinking to nothing. Either way the sweep is over and
+    /// its duration is real, so both are recorded alike.
+    fn round_ended(&mut self, was_sweeping: bool, is_sweeping: bool, now_ms: u64) {
+        if !was_sweeping || is_sweeping {
+            return;
+        }
+        if let Some(start) = self.started_at.take() {
+            self.duration_ms_sum
+                .fetch_add(now_ms.saturating_sub(start), Ordering::Relaxed);
+            self.duration_ms_count.fetch_add(1, Ordering::Relaxed);
+        }
+        if std::mem::take(&mut self.changed) {
+            self.changed_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Measure the relay this node holds and one alternative, and settle §9.1's
 /// choice.
 ///
@@ -1646,10 +1756,12 @@ const INTERFACE_SCAN: Duration = Duration::from_secs(15);
 /// and let go again — a Ponor connection to every relay in the registry would
 /// cost a TLS and ML-DSA-87 handshake apiece and defeat the point of choosing
 /// one.
+#[allow(clippy::too_many_arguments)]
 fn probe_relays(
     rtt: &Mutex<crate::home::Probes>,
     home: &Mutex<crate::home::Selector>,
     rotation: &mut crate::home::Rotation,
+    sweep: &mut SweepTracker,
     engine: &Engine,
     relay: Option<&RelaySender>,
     now_ms: u64,
@@ -1659,6 +1771,11 @@ fn probe_relays(
         return;
     };
     let registry: Vec<crate::home::RelayId> = engine.relays().iter().map(|r| r.relay_id).collect();
+
+    // Read before `Rotation::round` below, which is the only thing that can
+    // end a sweep: whether the change this round produces belongs to one
+    // depends on the state the sweep was in when the round started.
+    let was_sweeping = rotation.sweeping();
 
     // Settle whatever the last round measured before asking again, so the
     // choice reflects answers rather than questions.
@@ -1687,6 +1804,7 @@ fn probe_relays(
         }
         home.select()
     };
+    sweep.observed_change(was_sweeping, changed);
     if changed {
         tracing::warn!(
             "karstd: home relay is now {}",
@@ -1704,7 +1822,10 @@ fn probe_relays(
         .into_iter()
         .filter(|id| Some(*id) != held)
         .collect();
-    if let Some(candidate) = rotation.round(&candidates) {
+    let candidate = rotation.round(&candidates);
+    // After the round, not before: the round is what ends a sweep.
+    sweep.round_ended(was_sweeping, rotation.sweeping(), now_ms);
+    if let Some(candidate) = candidate {
         send_probe(rtt, relay, Some(candidate), candidate, now_ms, &rand);
     }
 }
@@ -4298,6 +4419,28 @@ pub struct Attachment<'a> {
     pub unreachable_family: Option<u64>,
 }
 
+/// `SweepTracker`'s counters, read for one `metrics_report` call — GitHub
+/// issue #240.
+#[derive(Clone, Copy)]
+struct HomeSweepMetrics {
+    /// Sweeps a network change has started, including one cut short by
+    /// another change before it finished. A flapping interface shows up
+    /// here as a burst, which is the point: this is what makes that visible
+    /// at all.
+    started: u64,
+    /// Of those, how many ended with a different relay held than the one
+    /// the sweep began with.
+    changed: u64,
+    /// Milliseconds spent sweeping, summed over every sweep that has ended
+    /// — paired with `duration_ms_count` rather than exposed as an average,
+    /// so a scrape taken between sweeps still reports the true total instead
+    /// of needing one to be in progress.
+    duration_ms_sum: u64,
+    /// Sweeps that have ended, cut short or not. The denominator for
+    /// `duration_ms_sum`.
+    duration_ms_count: u64,
+}
+
 /// Render `Engine::Stats` and route/gateway state as Prometheus text —
 /// `Command::Metrics`'s payload (plans/phase-6/08-observability.md §3.1,
 /// §5 W6 item 1).
@@ -4312,6 +4455,7 @@ fn metrics_report(
     route_offers: usize,
     gateway_active: bool,
     exit_route_active: bool,
+    home_sweeps: HomeSweepMetrics,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -4393,6 +4537,29 @@ fn metrics_report(
             "Packets dropped by the bounded queue to the relay worker.",
             relay_dropped,
         ),
+        (
+            "karst_home_sweeps_started",
+            "Home-relay sweeps a network change has started — ponor-v1.md \
+             §9.1/§9.2, GitHub issue #240. A burst means a flapping interface.",
+            home_sweeps.started,
+        ),
+        (
+            "karst_home_sweeps_changed",
+            "Of those, how many ended on a different home relay than the one \
+             the sweep began with.",
+            home_sweeps.changed,
+        ),
+        (
+            "karst_home_sweep_duration_ms_sum",
+            "Milliseconds spent sweeping, summed over every sweep that has \
+             ended. Divide by the matching _count metric for the mean.",
+            home_sweeps.duration_ms_sum,
+        ),
+        (
+            "karst_home_sweep_duration_ms_count",
+            "Home-relay sweeps that have ended, cut short or not.",
+            home_sweeps.duration_ms_count,
+        ),
     ];
     for (name, help, value) in counters {
         let _ = writeln!(out, "# HELP {name} {help}");
@@ -4430,8 +4597,18 @@ fn metrics_report(
 mod metrics_report_tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
-    use super::metrics_report;
+    use super::{metrics_report, HomeSweepMetrics};
     use crate::engine::Stats;
+
+    /// No sweep has run — the common case for most of a node's life.
+    fn no_sweeps() -> HomeSweepMetrics {
+        HomeSweepMetrics {
+            started: 0,
+            changed: 0,
+            duration_ms_sum: 0,
+            duration_ms_count: 0,
+        }
+    }
 
     /// Every counter and gauge appears with its own `# HELP`/`# TYPE`
     /// preamble and the right value — the shape a Prometheus scraper
@@ -4445,7 +4622,7 @@ mod metrics_report_tests {
             bedrock_equivocation: 3,
             ..Stats::default()
         };
-        let out = metrics_report(&stats, 7, 2, true, false);
+        let out = metrics_report(&stats, 7, 2, true, false, no_sweeps());
 
         assert!(out.contains("# TYPE karst_tx_packets counter"));
         assert!(out.contains("karst_tx_packets 11"));
@@ -4461,12 +4638,38 @@ mod metrics_report_tests {
         assert!(out.contains("karst_exit_route_active 0"));
     }
 
+    /// The sweep counters a scrape sees mid-roam: one sweep started, none
+    /// finished yet, so there is nothing to sum or average — GitHub issue
+    /// #240.
+    #[test]
+    fn home_sweep_metrics_render_as_their_own_counters() {
+        let out = metrics_report(
+            &Stats::default(),
+            0,
+            0,
+            false,
+            false,
+            HomeSweepMetrics {
+                started: 4,
+                changed: 1,
+                duration_ms_sum: 9_500,
+                duration_ms_count: 3,
+            },
+        );
+
+        assert!(out.contains("# TYPE karst_home_sweeps_started counter"));
+        assert!(out.contains("karst_home_sweeps_started 4"));
+        assert!(out.contains("karst_home_sweeps_changed 1"));
+        assert!(out.contains("karst_home_sweep_duration_ms_sum 9500"));
+        assert!(out.contains("karst_home_sweep_duration_ms_count 3"));
+    }
+
     /// `# HELP`/`# TYPE` lines outnumber value lines only by their own count
     /// — i.e. every metric name appears exactly three times (HELP, TYPE,
     /// value), never a stray duplicate from copy-pasting the tuple table.
     #[test]
     fn no_metric_name_is_duplicated() {
-        let out = metrics_report(&Stats::default(), 0, 0, false, false);
+        let out = metrics_report(&Stats::default(), 0, 0, false, false, no_sweeps());
         for line in out.lines().filter(|l| l.starts_with("# TYPE ")) {
             let name = line
                 .strip_prefix("# TYPE ")
@@ -6975,6 +7178,32 @@ mod probe_tests {
         move || [n.fetch_add(1, Ordering::Relaxed); 32]
     }
 
+    /// `SweepTracker`'s own atomics, kept alongside it so a test can read
+    /// what it wrote — the same split `run()` itself has between the
+    /// tracker's handles and the `_ctl` ones `metrics_report` reads.
+    struct SweepCounters {
+        started: Arc<AtomicU64>,
+        changed: Arc<AtomicU64>,
+        duration_ms_sum: Arc<AtomicU64>,
+        duration_ms_count: Arc<AtomicU64>,
+    }
+
+    fn sweep_tracker() -> (SweepTracker, SweepCounters) {
+        let counters = SweepCounters {
+            started: Arc::new(AtomicU64::new(0)),
+            changed: Arc::new(AtomicU64::new(0)),
+            duration_ms_sum: Arc::new(AtomicU64::new(0)),
+            duration_ms_count: Arc::new(AtomicU64::new(0)),
+        };
+        let tracker = SweepTracker::new(
+            Arc::clone(&counters.started),
+            Arc::clone(&counters.changed),
+            Arc::clone(&counters.duration_ms_sum),
+            Arc::clone(&counters.duration_ms_count),
+        );
+        (tracker, counters)
+    }
+
     fn pinged_home(q: &mut Queues) -> bool {
         matches!(q.home.try_recv(), Ok(Relayed::Ping(_)))
     }
@@ -6997,11 +7226,13 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
 
         probe_relays(
             &rtt,
             &home,
             &mut rotation,
+            &mut sweep,
             &engine,
             Some(&q.sender),
             1_000,
@@ -7031,12 +7262,14 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
 
         for round in 0..6 {
             probe_relays(
                 &rtt,
                 &home,
                 &mut rotation,
+                &mut sweep,
                 &engine,
                 Some(&q.sender),
                 1_000 * (round + 1),
@@ -7088,11 +7321,13 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
         for round in 0..40 {
             probe_relays(
                 &rtt,
                 &home,
                 &mut rotation,
+                &mut sweep,
                 &engine,
                 Some(&q.sender),
                 1_000 * (round + 1),
@@ -7132,6 +7367,7 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
 
         let mut home_probes = 0;
         for round in 0..6 {
@@ -7139,6 +7375,7 @@ mod probe_tests {
                 &rtt,
                 &home,
                 &mut rotation,
+                &mut sweep,
                 &engine,
                 Some(&q.sender),
                 1_000 * (round + 1),
@@ -7165,11 +7402,13 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
 
         probe_relays(
             &rtt,
             &home,
             &mut rotation,
+            &mut sweep,
             &engine,
             Some(&q.sender),
             1_000,
@@ -7187,6 +7426,7 @@ mod probe_tests {
             &rtt,
             &home,
             &mut rotation,
+            &mut sweep,
             &engine,
             Some(&q.sender),
             2_000,
@@ -7196,6 +7436,195 @@ mod probe_tests {
             pinged_elsewhere(&mut q),
             None,
             "a relay the netmap withdrew was still being measured"
+        );
+    }
+
+    // ── sweep metrics — GitHub issue #240 ───────────────────────────────
+
+    /// A sweep that runs its course is counted once started, timed from the
+    /// network change to its last round, and marked as having changed the
+    /// home relay — because this one does.
+    #[test]
+    fn a_completed_sweep_is_counted_timed_and_marked_as_a_change() {
+        let engine = engine(vec![relay(1), relay(2), relay(3)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let mut q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, counters) = sweep_tracker();
+
+        // Nothing has swept yet.
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &mut sweep,
+            &engine,
+            Some(&q.sender),
+            1_000,
+            seeds(),
+        );
+        while let Ok(item) = q.home.try_recv() {
+            answer(&rtt, &home, relay(1).relay_id, &item, 1_000, 10);
+        }
+        while let Ok((id, item)) = q.on_demand.try_recv() {
+            answer(&rtt, &home, id, &item, 1_000, 100);
+        }
+        assert_eq!(counters.started.load(Ordering::Relaxed), 0);
+
+        // A roam starts a sweep: relay(2) is now far closer than relay(1).
+        let now = std::cell::Cell::new(1_000u64);
+        rotation.network_changed();
+        sweep.began(now.get());
+
+        let mut rounds = 0;
+        while rotation.sweeping() {
+            rounds += 1;
+            assert!(
+                rounds <= 10 * crate::home::PROBE_ROUNDS,
+                "the sweep never finished"
+            );
+            now.set(
+                now.get() + u64::try_from(crate::home::SWEEP_INTERVAL.as_millis()).expect("fits"),
+            );
+            probe_relays(
+                &rtt,
+                &home,
+                &mut rotation,
+                &mut sweep,
+                &engine,
+                Some(&q.sender),
+                now.get(),
+                seeds(),
+            );
+            while let Ok(item) = q.home.try_recv() {
+                answer(&rtt, &home, relay(1).relay_id, &item, now.get(), 100);
+            }
+            while let Ok((id, item)) = q.on_demand.try_recv() {
+                let rtt_ms = if id == relay(2).relay_id { 10 } else { 100 };
+                answer(&rtt, &home, id, &item, now.get(), rtt_ms);
+            }
+        }
+
+        assert_eq!(
+            home.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .chosen(),
+            Some(relay(2).relay_id),
+            "relay(2) should have won the sweep"
+        );
+        assert_eq!(counters.started.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            counters.changed.load(Ordering::Relaxed),
+            1,
+            "the sweep that adopted relay(2) should be the one counted as a change"
+        );
+        assert_eq!(counters.duration_ms_count.load(Ordering::Relaxed), 1);
+        assert!(
+            counters.duration_ms_sum.load(Ordering::Relaxed) > 0,
+            "a sweep spanning several rounds has a nonzero duration"
+        );
+    }
+
+    /// A sweep cut short by the registry shrinking to nothing still has a
+    /// real start and a real end, so it is still counted and timed — just
+    /// not as a change, since nothing was ever adopted.
+    #[test]
+    fn a_sweep_cut_short_by_a_shrinking_registry_is_still_recorded() {
+        let engine = engine(vec![relay(1), relay(2)]);
+        engine.set_home_relay(Some(relay(1).relay_id));
+        let q = queues();
+        let rtt = Mutex::new(crate::home::Probes::default());
+        let home = Mutex::new(crate::home::Selector::new());
+        let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, counters) = sweep_tracker();
+
+        rotation.network_changed();
+        sweep.began(1_000);
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &mut sweep,
+            &engine,
+            Some(&q.sender),
+            1_000,
+            seeds(),
+        );
+        assert!(
+            rotation.sweeping(),
+            "the sweep should still be in progress after one round"
+        );
+        assert_eq!(
+            counters.duration_ms_count.load(Ordering::Relaxed),
+            0,
+            "recorded before it ended"
+        );
+
+        // The netmap drops the only candidate mid-sweep.
+        let smaller = Arc::new(crate::config::Config {
+            relays: vec![relay(1)],
+            ..engine_config(&engine)
+        });
+        let _ = engine.reconfigure(&smaller);
+
+        probe_relays(
+            &rtt,
+            &home,
+            &mut rotation,
+            &mut sweep,
+            &engine,
+            Some(&q.sender),
+            6_000,
+            seeds(),
+        );
+
+        assert!(
+            !rotation.sweeping(),
+            "an empty registry should have ended the sweep"
+        );
+        assert_eq!(counters.started.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            counters.duration_ms_count.load(Ordering::Relaxed),
+            1,
+            "a cut-short sweep still has a duration"
+        );
+        assert!(counters.duration_ms_sum.load(Ordering::Relaxed) > 0);
+        assert_eq!(
+            counters.changed.load(Ordering::Relaxed),
+            0,
+            "nothing was adopted before the registry shrank"
+        );
+    }
+
+    /// A network change that interrupts a sweep already in progress
+    /// abandons it rather than recording a partial duration: the interrupted
+    /// sweep never measured what it set out to, so nothing it saw describes
+    /// the network it was cut short on.
+    #[test]
+    fn an_interrupted_sweep_is_abandoned_not_recorded() {
+        let (mut sweep, counters) = sweep_tracker();
+        sweep.began(1_000);
+        sweep.observed_change(true, true);
+
+        // A second roam, before the first sweep ever reached `round_ended`.
+        sweep.began(5_000);
+
+        assert_eq!(
+            counters.started.load(Ordering::Relaxed),
+            2,
+            "each network change starts its own sweep, interrupted or not"
+        );
+        assert_eq!(
+            counters.duration_ms_count.load(Ordering::Relaxed),
+            0,
+            "the interrupted sweep's duration was never settled"
+        );
+        assert_eq!(
+            counters.changed.load(Ordering::Relaxed),
+            0,
+            "the interrupted sweep's change does not carry over to the next one"
         );
     }
 
@@ -7321,28 +7750,31 @@ mod probe_tests {
         let rtt = Mutex::new(crate::home::Probes::default());
         let home = Mutex::new(crate::home::Selector::new());
         let mut rotation = crate::home::Rotation::default();
+        let (mut sweep, _sweep_counters) = sweep_tracker();
 
         let now = std::cell::Cell::new(0u64);
-        let mut round = |rotation: &mut crate::home::Rotation, fast: u64| {
-            now.set(now.get() + u64::try_from(rotation.interval().as_millis()).expect("fits"));
-            let now = now.get();
-            probe_relays(
-                &rtt,
-                &home,
-                rotation,
-                &engine,
-                Some(&q.sender),
-                now,
-                seeds(),
-            );
-            while let Ok(item) = q.home.try_recv() {
-                answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
-            }
-            while let Ok((id, item)) = q.on_demand.try_recv() {
-                let rtt_ms = if id == relay(2).relay_id { fast } else { 110 };
-                answer(&rtt, &home, id, &item, now, rtt_ms);
-            }
-        };
+        let mut round =
+            |rotation: &mut crate::home::Rotation, sweep: &mut SweepTracker, fast: u64| {
+                now.set(now.get() + u64::try_from(rotation.interval().as_millis()).expect("fits"));
+                let now = now.get();
+                probe_relays(
+                    &rtt,
+                    &home,
+                    rotation,
+                    sweep,
+                    &engine,
+                    Some(&q.sender),
+                    now,
+                    seeds(),
+                );
+                while let Ok(item) = q.home.try_recv() {
+                    answer(&rtt, &home, relay(1).relay_id, &item, now, 100);
+                }
+                while let Ok((id, item)) = q.on_demand.try_recv() {
+                    let rtt_ms = if id == relay(2).relay_id { fast } else { 110 };
+                    answer(&rtt, &home, id, &item, now, rtt_ms);
+                }
+            };
         let chosen = |home: &Mutex<crate::home::Selector>| {
             home.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -7352,18 +7784,19 @@ mod probe_tests {
         // Before the roam relay(2) is no better than the rest, and the node
         // settles into the slow cycle.
         for _ in 0..4 {
-            round(&mut rotation, 110);
+            round(&mut rotation, &mut sweep, 110);
         }
         assert_eq!(chosen(&home), Some(relay(1).relay_id));
         let before = now.get();
 
         // The roam: relay(2) is now much closer. Interfaces changed.
         rotation.network_changed();
+        sweep.began(before);
         let mut rounds = 0;
         while chosen(&home) != Some(relay(2).relay_id) {
             rounds += 1;
             assert!(rounds <= 3 * crate::home::PROBE_ROUNDS, "never adopted");
-            round(&mut rotation, 10);
+            round(&mut rotation, &mut sweep, 10);
         }
         let took = now.get() - before;
         assert!(
@@ -7394,6 +7827,7 @@ mod probe_tests {
             let rtt = Mutex::new(crate::home::Probes::default());
             let home = Mutex::new(crate::home::Selector::new());
             let mut rotation = crate::home::Rotation::default();
+            let (mut sweep, _sweep_counters) = sweep_tracker();
             let mut measured = Vec::new();
 
             let rounds = 2 * u64::from(crate::home::PROBE_ROUNDS + crate::home::REST_ROUNDS);
@@ -7403,6 +7837,7 @@ mod probe_tests {
                     &rtt,
                     &home,
                     &mut rotation,
+                    &mut sweep,
                     &engine,
                     Some(&q.sender),
                     now,
