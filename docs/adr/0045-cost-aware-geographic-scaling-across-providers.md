@@ -9,7 +9,11 @@
   the demand signal), ADR-0038 (per-aquifer relay capacity — the capacity unit),
   ADR-0039 (air-gapped scope — the zero-cloud floor this must not break),
   ADR-0016 (capability-scoped authorities — the model for scoping the scaler's
-  credentials), `deploy/kubernetes/`, `deploy/compose/ha/`. Tracking issue: #234; re-homing hardening (Phase 0b): #233.
+  credentials), ADR-0023 (declining device-activity visibility — the authority-
+  asymmetry reasoning §4a below applies to demand attribution) and ADR-0046
+  (NOC location/visibility policy — the companion decision this one stays
+  consistent with), `deploy/kubernetes/`, `deploy/compose/ha/`. Tracking issue:
+  #234; re-homing hardening (Phase 0b): #233.
 
 ---
 
@@ -263,8 +267,9 @@ penalized candidate.
 
 ### 4. The planner
 
-Inputs: demand per (region, aquifer) from relay telemetry; pool state and
-month-to-date meter positions; the cost models; the constraints.
+Inputs: demand per (region, aquifer) from relay telemetry, including the
+aggregate RTT-histogram signal §4a adds; pool state and month-to-date meter
+positions; the cost models; the constraints.
 Output: a desired node count per pool, plus the **estimated cost delta and the
 constraint that bound the choice**, so every decision is explainable.
 
@@ -292,6 +297,47 @@ Stability is a first-class requirement, not an afterthought:
   move and no graceful-drain signal is sent today — see *Verified: client
   re-homing* and Phase 0b), and destroyed only once its session count
   falls under a threshold or a drain deadline passes.
+
+### 4a. Demand attribution: an aggregate RTT signal, not client location
+
+This resolves Open Question #2 below. A pure client *count* per relay
+(ADR-0021's existing telemetry) cannot distinguish "this relay is well
+placed" from "this relay is the least-bad option a distant group of
+clients is stuck with" — a count says nothing about quality. The
+concrete case that exposes this: an organization's usual East Coast
+users fly to a West Coast conference. Their clients keep using their
+usual relay (nothing closer exists to measure against), so the
+headcount barely moves — only the RTT to it gets worse.
+
+The signal that is actually missing is *how badly served clients are*,
+not *where they are*. That can be measured and reported without
+identifying or locating anyone:
+
+- **A relay already measures round-trip latency to every client it
+  terminates a connection with** — no new client cooperation, no new
+  reporting from the node side. ADR-0021's existing signed telemetry
+  push gains one more aggregate field: a bucketed RTT histogram ("N
+  clients under 20 ms, N at 20–50 ms, N at 50–100 ms, N over 100 ms").
+  Bucketed and relay-wide, matching the aggregate-only discipline
+  ADR-0021 already established for `local_clients`/`mesh_peers`/
+  `bytes_total` — this is an extension of that same wire format by one
+  field, not a new reporting channel.
+- **The planner never resolves where a client is.** It evaluates the
+  RTT-histogram signal against pools it already has declared locations
+  for (§1's `pool { region/site, geography, ... }`) — the same
+  operator-declared-location principle ADR-0046 §1 uses for the NOC
+  map. A fat high-latency tail on relay R tells the planner "something
+  near R is underserved"; deciding *where* to respond means picking the
+  best-fitting pool among ones the operator already registered as
+  candidates, never discovering a new point on the map from a client's
+  address.
+- **The real prerequisite is pool coverage, not location data.** If an
+  operator never registered a West Coast candidate pool (even at
+  `min_nodes: 0`), the planner has nothing to activate no matter how bad
+  the RTT signal gets — that is a provisioning decision for the
+  operator, not something the scaler can route around by locating
+  people. Demand-history retention (§8, Open Question 7) should keep
+  this histogram per relay, not any client-identifying key.
 
 ### 5. Drivers: actuation behind a narrow interface
 
@@ -461,6 +507,20 @@ corner:
   out a Karst-operated fleet, and a service that held operators' cloud
   credentials and traffic-pattern history would be the most sensitive thing
   Karst could run.
+- **Client-reported RTT histograms, or resolving client IP to a physical
+  location, as the demand-attribution signal (§4a).** Rejected: either one
+  creates a per-device signal with no disclosure to the device's own user —
+  the same authority asymmetry ADR-0023 already declined to build for device
+  activity, just sourced from latency or IP metadata instead of DNS queries.
+  ADR-0046 drew the identical line for the NOC map (aggregate region counts,
+  never a per-device pin, never GeoIP); a privacy-sensitive line drawn once
+  for a human-viewed map should not be redrawn more permissively for an
+  automated planner whose inputs can still leak into logs, debug output, or
+  the Phase 1 Advisor's own console view (§7). The relay-reported RTT
+  histogram gets the planner the same "something is underserved" signal with
+  materially less privacy surface, at the cost of resolution: it says a
+  relay is badly serving some of its clients, not how many separate
+  locations they're spread across.
 
 ---
 
@@ -533,10 +593,18 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
    candidates; the open part is whether identity-bound components (exit nodes,
    subnet routers) fit the pool abstraction at all, or need placement
    policy instead of capacity scaling.
-2. **How is demand attributed to a region?** Relay telemetry says what a relay
-   carried, not where the *unmet* demand is. Home-relay selection already
-   clusters clients; do we need client-reported RTT histograms (more
-   metadata) or is relay-side data enough?
+2. **~~How is demand attributed to a region?~~ Resolved — see §4a.** A
+   relay-reported, bucketed RTT histogram (an extension of ADR-0021's
+   existing signed telemetry, not a new per-client signal) tells the planner
+   when existing clients are being badly served, without resolving where any
+   of them physically are. The planner matches that signal against
+   operator-declared candidate pools (§1), the same declared-not-inferred
+   principle ADR-0046 uses for relay locations on the NOC map. Client-reported
+   RTT or client IP geolocation were considered and rejected for the
+   authority-asymmetry reasons ADR-0023 already established — see
+   *Alternatives rejected*. What remains open: the exact bucket boundaries
+   and histogram retention window, which is an ordinary tuning question, not
+   a design one.
 3. **Which SLA metric is operator-meaningful?** p95 RTT to nearest relay is
    measurable by clients but is not the same as an application SLA. The
    vocabulary in §3 should be validated against real operators before it is
