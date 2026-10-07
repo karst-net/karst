@@ -242,6 +242,55 @@ jobs:
           name: enrollment-desktop-${{ matrix.pending }}-${{ github.sha }}
           path: /tmp/karst-enrollment-desktop-results
 
+  # The console and portal, built and packaged as a release artefact — #249.
+  # GETTING-STARTED.md §7 only ever documented building these from source
+  # (Node 22+, pnpm, a `git clone`), which is not an option for anyone
+  # restricted to released artifacts, including every path #107's
+  # outsider-installation walkthrough is scoped to. This ships the same
+  # `dist/` output §3's build produces, so "serve it from any web server"
+  # still holds — nothing here assumes a particular web server or packaging
+  # format beyond a plain tarball.
+  #
+  # The portal is built with VITE_BASE=/portal/ to match
+  # deploy/compose/prod/Caddyfile's documented single-origin layout (§7.2),
+  # which serves it at that sub-path — see #252: built with the default
+  # base, its asset URLs don't resolve there. The console keeps the default
+  # root base, matching that same layout's `/` route for it. A deployment
+  # that serves either app from a different path needs its own rebuild with
+  # a different VITE_BASE; this tarball matches the one layout this repo
+  # actually documents.
+  web-assets:
+    name: Console and portal release tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build console and portal
+        run: |
+          cd web
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm --filter @karst-net/console build
+          VITE_BASE=/portal/ corepack pnpm --filter @karst-net/portal build
+      # One tarball, two top-level directories — mirroring the layout
+      # deploy/compose/prod/Caddyfile already expects at /srv/console and
+      # /srv/portal, so "untar and point your web server's roots at these
+      # two directories" is the whole instruction.
+      - name: Package
+        run: |
+          staging=dist/web/karst-web
+          mkdir -p "$staging"
+          cp -r web/console/dist "$staging/console"
+          cp -r web/portal/dist "$staging/portal"
+          tar -C dist/web -czf dist/web/karst-web.tar.gz karst-web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-assets-${{ github.sha }}
+          path: dist/web/karst-web.tar.gz
+          if-no-files-found: error
+
   # ## The artefacts a release is actually made of
   #
   # plans/phase-5/09-exit-criteria.md §5 lists checksums, a detached signature
@@ -257,7 +306,7 @@ jobs:
   # the signature is required there.
   release-artefacts:
     name: Checksums, signatures and SBOMs
-    needs: [packages, packages-verify, packages-systemd, enrollment-desktop, macos-package]
+    needs: [packages, packages-verify, packages-systemd, enrollment-desktop, macos-package, web-assets]
     runs-on: ubuntu-latest
     env:
       RELEASE_GPG_KEY: ${{ secrets.RELEASE_GPG_KEY }}
@@ -281,6 +330,14 @@ jobs:
           pattern: macos-package-*-${{ github.sha }}
           path: dist/release
           merge-multiple: true
+      # The console/portal tarball — #249. An operator artefact, like
+      # karst-control and karst-relay above, not something release-manifest.sh
+      # lists on the portal's own end-user download page (it names exactly
+      # one file, not a matrix, so no `pattern:` needed).
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-assets-${{ github.sha }}
+          path: dist/release
       - name: Checksums
         run: |
           cd dist/release

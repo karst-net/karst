@@ -815,6 +815,14 @@ location /api/ { proxy_pass http://127.0.0.1:33073; }
 location /     { root /var/www/karst-console; try_files $uri /index.html; }
 ```
 
+Each release also ships `karst-web.tar.gz`: both apps already built, as
+`console/` and `portal/`, so this needs no Node toolchain or repository
+checkout — extract it and point a web server's roots at the two directories,
+same as above. The portal inside it is built for `/portal/` specifically
+(`VITE_BASE=/portal/`, §7.2's layout below); building it yourself for a
+different path needs `VITE_BASE` set to match before `vite build`, or its
+asset URLs resolve at the wrong place.
+
 Both apps authenticate as the operator does: every `/api/karst/v1` route is
 behind the management server's authorization middleware, so this only works
 once `HttpConfig.AuthIssuer`, `AuthAudience` and `AuthKeysLocation` in
