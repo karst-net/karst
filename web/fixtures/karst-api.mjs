@@ -47,6 +47,7 @@ export function buildFixture({ empty = false } = {}) {
         region: "us-central",
         tls_server_name: "relay-den.example.test",
         location: { lat: 39.7392, lon: -104.9903, label: "Denver" },
+        location_source: "declared",
         health: { source: "roster_mtime", last_confirmed_at: asOf, sessions: 12, bytes: 918273645, admission_state: "confirmed" },
       },
       {
@@ -56,6 +57,18 @@ export function buildFixture({ empty = false } = {}) {
         region: "eu-central",
         tls_server_name: "relay-fra.example.test",
         health: { source: "roster_mtime", last_confirmed_at: "2026-08-22T20:30:00Z", sessions: null, bytes: null, admission_state: "stale" },
+      },
+      {
+        // ADR-0048: no operator-entered location at all -- this relay's
+        // location came from its own AWS instance metadata.
+        id: "relay-fixture-portland",
+        address: "relay-pdx.example.test:443",
+        identity_key: "fixture-public-key-portland",
+        region: "us-west-2",
+        tls_server_name: "relay-pdx.example.test",
+        location: { lat: 45.8399, lon: -119.7006 },
+        location_source: "detected",
+        health: { source: "relay_telemetry", last_confirmed_at: asOf, sessions: 4, bytes: 102400, admission_state: "confirmed" },
       },
     ],
     policy: {

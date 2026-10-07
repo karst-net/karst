@@ -596,11 +596,11 @@ components:
       additionalProperties: false
       properties: {address: {type: string}, identity_key: {type: string, format: byte}, region: {type: string}, tls_server_name: {type: string}, location: {$ref: '#/components/schemas/RelayLocation'}}
     Relay:
-      allOf: [{$ref: '#/components/schemas/RelayCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/RelayHealth'}}}]
+      allOf: [{$ref: '#/components/schemas/RelayCreate'}, {type: object, required: [id, health], properties: {id: {type: string, readOnly: true, description: Derived from identity_key; never accepted from callers.}, health: {$ref: '#/components/schemas/RelayHealth'}, location_source: {type: string, readOnly: true, enum: [declared, detected], description: 'Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.'}}}]
     RelayHealth:
       type: object
       required: [source, last_confirmed_at, admission_state]
-      properties: {source: {type: string, enum: [roster_mtime]}, last_confirmed_at: {type: string, nullable: true, format: date-time}, sessions: {type: integer, nullable: true, minimum: 0}, bytes: {type: integer, nullable: true, minimum: 0}, admission_state: {type: string, enum: [confirmed, stale, unknown]}}
+      properties: {source: {type: string, enum: [roster_mtime, relay_telemetry]}, last_confirmed_at: {type: string, nullable: true, format: date-time}, sessions: {type: integer, nullable: true, minimum: 0}, bytes: {type: integer, nullable: true, minimum: 0}, admission_state: {type: string, enum: [confirmed, stale, unknown]}}
     # Operator-declared NOC-map position (ADR-0046 §1) -- never GeoIP, never
     # inferred from Relay.address. Absent on a Relay means "location unknown."
     RelayLocation:

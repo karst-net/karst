@@ -126,11 +126,15 @@ type relayHealth struct {
 type relayResponse struct {
 	relayreg.StoredRelay
 	Health relayHealth `json:"health"`
-	// Location is the operator-declared NOC-map position (ADR-0046 §1),
-	// composed here from StoredRelay's flat, JSON-hidden columns rather than
-	// exposing them directly -- the API's shape should not have to change if
-	// the storage columns ever do. Nil means no location was declared.
+	// Location is the relay's NOC-map position -- declared (ADR-0046 §1) or
+	// detected via cloud instance metadata (ADR-0048), whichever locationFor
+	// resolves. Nil means neither source has one.
 	Location *relayreg.Location `json:"location,omitempty"`
+	// LocationSource says which of the two it came from, mirroring
+	// relayHealth.Source's existing "roster_mtime"/"relay_telemetry"
+	// provenance-tagging shape rather than inventing a new one. Omitted
+	// along with Location when neither source has a value.
+	LocationSource string `json:"location_source,omitempty"`
 }
 
 func unknownRelayHealth() relayHealth {
@@ -176,10 +180,24 @@ func (h *handler) healthFor(ctx context.Context, id string) relayHealth {
 
 func (h *handler) relayResponseFor(ctx context.Context, relay relayreg.StoredRelay) relayResponse {
 	resp := relayResponse{StoredRelay: relay, Health: h.healthFor(ctx, relay.ID)}
-	if relay.LocationLat != nil {
-		resp.Location = &relayreg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}
-	}
+	resp.Location, resp.LocationSource = h.locationFor(ctx, relay)
 	return resp
+}
+
+// locationFor resolves a relay's NOC-map position -- detected (ADR-0048)
+// overrides declared (ADR-0046 §1) when present, declared is the fallback,
+// neither is "unknown". A read error is treated the same as no detected
+// location, the same posture healthFor already takes for telemetry reads.
+func (h *handler) locationFor(ctx context.Context, relay relayreg.StoredRelay) (*relayreg.Location, string) {
+	if h.relays != nil {
+		if record, err := h.relays.LatestTelemetry(ctx, relay.ID); err == nil && record != nil && record.DetectedLat != nil {
+			return &relayreg.Location{Lat: *record.DetectedLat, Lon: *record.DetectedLon}, "detected"
+		}
+	}
+	if relay.LocationLat != nil {
+		return &relayreg.Location{Lat: *relay.LocationLat, Lon: *relay.LocationLon, Label: relay.LocationLabel}, "declared"
+	}
+	return nil, ""
 }
 
 type peerWriter interface {

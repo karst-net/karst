@@ -147,6 +147,54 @@ func TestRecordTelemetryReplacesThePreviousReport(t *testing.T) {
 	}
 }
 
+// TestRecordTelemetryDetectedLocationRoundTrips covers ADR-0048: a
+// relay-detected location (via cloud metadata) round-trips through the
+// same upsert as the rest of the report.
+func TestRecordTelemetryDetectedLocationRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	relay := mustCreate(t, s, "acct-a", 0x66)
+	ctx := WithAccount(context.Background(), "acct-a")
+
+	lat, lon := 47.6062, -122.3321
+	if err := s.RecordTelemetry(ctx, "acct-a", relay.ID, Telemetry{LocalClients: 1, DetectedLat: &lat, DetectedLon: &lon}); err != nil {
+		t.Fatalf("record telemetry: %v", err)
+	}
+
+	got, err := s.LatestTelemetry(ctx, relay.ID)
+	if err != nil {
+		t.Fatalf("latest telemetry: %v", err)
+	}
+	if got == nil || got.DetectedLat == nil || got.DetectedLon == nil || *got.DetectedLat != lat || *got.DetectedLon != lon {
+		t.Fatalf("got %+v, want detected location (%v, %v)", got, lat, lon)
+	}
+}
+
+// TestRecordTelemetryClearsAStaleDetectedLocation is the companion case: a
+// relay that stops reporting a location (has_location=false on a later
+// tick) must have that clear the stored value, not leave a stale one
+// behind from a previous report.
+func TestRecordTelemetryClearsAStaleDetectedLocation(t *testing.T) {
+	s := newTestStore(t)
+	relay := mustCreate(t, s, "acct-a", 0x77)
+	ctx := WithAccount(context.Background(), "acct-a")
+
+	lat, lon := 47.6062, -122.3321
+	if err := s.RecordTelemetry(ctx, "acct-a", relay.ID, Telemetry{LocalClients: 1, DetectedLat: &lat, DetectedLon: &lon}); err != nil {
+		t.Fatalf("first report: %v", err)
+	}
+	if err := s.RecordTelemetry(ctx, "acct-a", relay.ID, Telemetry{LocalClients: 2}); err != nil {
+		t.Fatalf("second report: %v", err)
+	}
+
+	got, err := s.LatestTelemetry(ctx, relay.ID)
+	if err != nil {
+		t.Fatalf("latest telemetry: %v", err)
+	}
+	if got == nil || got.DetectedLat != nil || got.DetectedLon != nil {
+		t.Fatalf("got %+v, want the stale location cleared by the second report", got)
+	}
+}
+
 // TestADeclaredLocationSurvivesCreateAndList covers the NOC-map data path
 // end to end: Entry.Location -> StoredRelay's flat columns -> back out
 // through List, and through ToProto -> compiledRelay's cache/clone path.

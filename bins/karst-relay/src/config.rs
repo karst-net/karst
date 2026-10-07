@@ -175,6 +175,16 @@ pub struct Telemetry {
     /// How often to push a report.
     #[serde(default = "default_telemetry_interval_secs")]
     pub interval_secs: u64,
+
+    /// Probe cloud instance metadata (AWS `IMDSv2` today) once at startup for
+    /// a self-reported location to include in each report — ADR-0048.
+    ///
+    /// Defaults to **off**. Turning this on makes the relay reach a new
+    /// network target (`169.254.169.254`) it would not otherwise contact;
+    /// an operator running on AWS opts in with this one line rather than
+    /// every relay probing a link-local address on upgrade with no notice.
+    #[serde(default)]
+    pub detect_location: bool,
 }
 
 fn default_telemetry_interval_secs() -> u64 {
@@ -590,6 +600,24 @@ tls_key = "/etc/karst/relay.key"
         let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\n");
         let c = Config::parse(&text).expect("parses");
         assert_eq!(c.telemetry.expect("configured").interval_secs, 60);
+    }
+
+    #[test]
+    fn detect_location_defaults_off() {
+        // ADR-0048: a relay must not start probing cloud instance metadata
+        // just because telemetry is on, with no operator action.
+        let text = format!("{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\n");
+        let c = Config::parse(&text).expect("parses");
+        assert!(!c.telemetry.expect("configured").detect_location);
+    }
+
+    #[test]
+    fn detect_location_can_be_turned_on() {
+        let text = format!(
+            "{MINIMAL}\n[telemetry]\ncontrol_url = \"https://control.example\"\ndetect_location = true\n"
+        );
+        let c = Config::parse(&text).expect("parses");
+        assert!(c.telemetry.expect("configured").detect_location);
     }
 
     #[test]

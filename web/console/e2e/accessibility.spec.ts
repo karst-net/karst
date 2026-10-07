@@ -306,7 +306,10 @@ test("a relay with a DNS name for an address is refused before it is sent", asyn
   // karstd parses this with SocketAddr, which does not resolve. A name here is
   // not one bad relay — it is a netmap every node rejects in full.
   await expect(page.getByRole("status")).toContainText("must be an IP address and port");
-  await expect(page.locator("tbody tr")).toHaveCount(2);
+  // Fixture count, not a magic number: the rejected add must leave the
+  // table exactly as it was. ADR-0048 added a third fixture relay
+  // (declared, no location, detected) to exercise location provenance.
+  await expect(page.locator("tbody tr")).toHaveCount(3);
 });
 
 test("a relay can be added and removed", async ({ page }) => {

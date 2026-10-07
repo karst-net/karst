@@ -69,6 +69,12 @@ type Telemetry struct {
 	RemoteClients int
 	BytesTotal    int64
 	UptimeSecs    int64
+	// DetectedLat/DetectedLon are the relay's self-reported position
+	// (ADR-0048), detected via cloud instance metadata -- nil when the
+	// relay didn't detect one (not running on a supported cloud, detection
+	// disabled, or the probe failed/timed out). Never a default coordinate.
+	DetectedLat *float64
+	DetectedLon *float64
 }
 
 // RelayTelemetryRecord is the latest self-reported report a relay has pushed
@@ -86,6 +92,9 @@ type RelayTelemetryRecord struct {
 	RemoteClients int
 	BytesTotal    int64
 	UptimeSecs    int64
+	// DetectedLat/DetectedLon -- see Telemetry.DetectedLat/DetectedLon.
+	DetectedLat *float64
+	DetectedLon *float64
 }
 
 func (RelayTelemetryRecord) TableName() string { return "karst_relay_telemetry" }
@@ -203,6 +212,8 @@ func (s *Store) RecordTelemetry(_ context.Context, accountID, id string, t Telem
 		RemoteClients: t.RemoteClients,
 		BytesTotal:    t.BytesTotal,
 		UptimeSecs:    t.UptimeSecs,
+		DetectedLat:   t.DetectedLat,
+		DetectedLon:   t.DetectedLon,
 	}
 	err := s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "account_id"}, {Name: "id"}},

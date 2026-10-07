@@ -45,9 +45,10 @@ const maxBodyBytes = 8192
 // tight enough that a captured report is useless within minutes.
 const freshnessWindow = 5 * time.Minute
 
-// signedFieldCount matches the fixed layout ADR-0021 specifies: relay_id (32
-// bytes) plus six 8-byte big-endian fields.
-const signedMessageLen = 32 + 8*6
+// signedMessageLen matches the fixed layout ADR-0021/ADR-0048 specify:
+// relay_id (32 bytes) plus nine 8-byte big-endian fields (the original six,
+// plus has_location/lat_e7/lon_e7 added by ADR-0048).
+const signedMessageLen = 32 + 8*9
 
 // store is the narrow slice of relayreg.Store this package needs. Unlike
 // api.relayReader, FindByID is not account-scoped — a relay proves itself by
@@ -81,7 +82,14 @@ type report struct {
 	RemoteClients int    `json:"remote_clients"`
 	BytesTotal    int64  `json:"bytes_total"`
 	UptimeSecs    int64  `json:"uptime_secs"`
-	Signature     string `json:"signature"`
+	// HasLocation/LatE7/LonE7 are ADR-0048's self-reported location,
+	// detected by the relay via cloud instance metadata — optional, and
+	// never a default coordinate when absent. E7 = degrees × 1e7 (Google's
+	// S2/LatLng convention), not "microdegree" (×1e6).
+	HasLocation bool   `json:"has_location"`
+	LatE7       int64  `json:"lat_e7"`
+	LonE7       int64  `json:"lon_e7"`
+	Signature   string `json:"signature"`
 }
 
 func (h *handler) report(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +136,18 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 		BytesTotal:    req.BytesTotal,
 		UptimeSecs:    req.UptimeSecs,
 	}
+	// ADR-0048: a malformed/out-of-range location drops only the location --
+	// the rest of the report still records. The server trusts a relay's
+	// signed report no further than it already does for any other
+	// self-reported field (RelayTelemetryRecord's own doc comment:
+	// "relay-asserted, signature-authenticated observation"); this is a
+	// sanity bound, not a truthfulness check.
+	if req.HasLocation {
+		lat, lon := float64(req.LatE7)/1e7, float64(req.LonE7)/1e7
+		if err := relayreg.ValidLocation(lat, lon); err == nil {
+			t.DetectedLat, t.DetectedLon = &lat, &lon
+		}
+	}
 	recorded := false
 	for _, candidate := range candidates {
 		key, err := base64.StdEncoding.DecodeString(candidate.IdentityKey)
@@ -154,10 +174,10 @@ func (h *handler) report(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// signingInput builds ADR-0021's fixed 80-byte signed message: relay_id
-// followed by six big-endian 8-byte fields. Never the JSON body — JSON has
-// no canonical encoding, and a signature must cover bytes both sides
-// construct identically without needing to agree on field order or
+// signingInput builds ADR-0021/ADR-0048's fixed 104-byte signed message:
+// relay_id followed by nine big-endian 8-byte fields. Never the JSON body —
+// JSON has no canonical encoding, and a signature must cover bytes both
+// sides construct identically without needing to agree on field order or
 // whitespace.
 func signingInput(relayID []byte, req report) []byte {
 	buf := make([]byte, 0, signedMessageLen)
@@ -168,5 +188,12 @@ func signingInput(relayID []byte, req report) []byte {
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.RemoteClients))
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.BytesTotal))
 	buf = binary.BigEndian.AppendUint64(buf, uint64(req.UptimeSecs))
+	hasLocation := uint64(0)
+	if req.HasLocation {
+		hasLocation = 1
+	}
+	buf = binary.BigEndian.AppendUint64(buf, hasLocation)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(req.LatE7))
+	buf = binary.BigEndian.AppendUint64(buf, uint64(req.LonE7))
 	return buf
 }

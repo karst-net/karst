@@ -24,8 +24,15 @@ use base64ct::{Base64, Base64UrlUnpadded, Encoding};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 
+use crate::cloud_location::{self, DetectedLocation};
 use crate::config::Telemetry as TelemetryConfig;
 use crate::server::Ctx;
+
+/// Degrees-to-E7 scale (ADR-0048) — Google's S2/`LatLng` convention, not
+/// "microdegree" (×1e6). ~1.1 cm of precision at the equator, far more than
+/// this needs; the point of the scale is a clean, lossless fixed-point
+/// encoding for a cryptographically signed message, not the precision.
+const E7: f64 = 1e7;
 
 /// How long a whole report — connect, TLS, request, response — may take
 /// before this tick gives up. Generous relative to a single request because
@@ -42,10 +49,14 @@ pub async fn telemetry_loop(cfg: TelemetryConfig, ctx: Arc<Ctx>) {
             return;
         }
     };
+    // Detected once, not every tick: an instance does not change cloud
+    // region mid-process, so re-probing on every report would only add
+    // latency for an answer that cannot change — ADR-0048.
+    let location = cloud_location::detect(&cfg).await;
     let mut tick = tokio::time::interval(Duration::from_secs(cfg.interval_secs));
     loop {
         tick.tick().await;
-        match tokio::time::timeout(REQUEST_TIMEOUT, report_once(&cfg, &tls, &ctx)).await {
+        match tokio::time::timeout(REQUEST_TIMEOUT, report_once(&cfg, &tls, &ctx, location)).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => eprintln!("karst-relay: telemetry: {e}"),
             Err(_) => eprintln!("karst-relay: telemetry: timed out"),
@@ -57,6 +68,7 @@ async fn report_once(
     cfg: &TelemetryConfig,
     tls: &Arc<rustls::ClientConfig>,
     ctx: &Arc<Ctx>,
+    location: Option<DetectedLocation>,
 ) -> Result<(), String> {
     let (host, port) = parse_authority(&cfg.control_url)?;
     let relay_id = ctx.identity.relay_id();
@@ -74,6 +86,15 @@ async fn report_once(
         .bytes_in
         .saturating_add(snapshot.totals.bytes_out);
     let uptime_secs = snapshot.uptime_secs;
+    let has_location = location.is_some();
+    // A valid lat/lon (-90..90, -180..180) scaled by E7 fits comfortably in
+    // an i64 (max ~1.8e9) -- the truncation clippy warns about can't
+    // actually occur for any coordinate region_to_location ever produces.
+    #[allow(clippy::cast_possible_truncation)]
+    let (lat_e7, lon_e7) = (
+        location.map_or(0, |l| (l.lat * E7).round() as i64),
+        location.map_or(0, |l| (l.lon * E7).round() as i64),
+    );
 
     let msg = signing_input(
         &relay_id,
@@ -83,6 +104,9 @@ async fn report_once(
         remote_clients,
         bytes_total,
         uptime_secs,
+        has_location,
+        lat_e7,
+        lon_e7,
     );
 
     let signature = ctx
@@ -97,7 +121,8 @@ async fn report_once(
         "{{\"relay_id\":\"{relay_id_b64}\",\"timestamp\":{timestamp},\
          \"local_clients\":{local_clients},\"mesh_peers\":{mesh_peers},\
          \"remote_clients\":{remote_clients},\"bytes_total\":{bytes_total},\
-         \"uptime_secs\":{uptime_secs},\"signature\":\"{signature_b64}\"}}"
+         \"uptime_secs\":{uptime_secs},\"has_location\":{has_location},\
+         \"lat_e7\":{lat_e7},\"lon_e7\":{lon_e7},\"signature\":\"{signature_b64}\"}}"
     );
 
     let path = format!("/karst/v1/relays/{relay_id_b64}/telemetry");
@@ -153,10 +178,12 @@ async fn post(
     }
 }
 
-/// ADR-0021's exact 80-byte signed message: `relay_id` followed by six
-/// big-endian `u64` fields. Never the JSON body — JSON has no canonical
-/// encoding, and a signature must cover bytes both sides construct
-/// identically without agreeing on field order or whitespace.
+/// ADR-0021/ADR-0048's exact 104-byte signed message: `relay_id` followed
+/// by nine big-endian `u64` fields (the original six, plus
+/// `has_location`/`lat_e7`/`lon_e7` added by ADR-0048). Never the JSON
+/// body — JSON has no canonical encoding, and a signature must cover bytes
+/// both sides construct identically without agreeing on field order or
+/// whitespace.
 ///
 /// Pure and deterministic, unlike the signature over it: this is what
 /// `spec/vectors/relay-telemetry-v1.json` pins against
@@ -165,6 +192,7 @@ async fn post(
 /// signature — ML-DSA-87 is hedged, so a signature is never reproducible
 /// vector material, but the bytes it signs over always are.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn signing_input(
     relay_id: &[u8; 32],
     timestamp: u64,
@@ -173,8 +201,11 @@ pub fn signing_input(
     remote_clients: u64,
     bytes_total: u64,
     uptime_secs: u64,
+    has_location: bool,
+    lat_e7: i64,
+    lon_e7: i64,
 ) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(80);
+    let mut msg = Vec::with_capacity(104);
     msg.extend_from_slice(relay_id);
     msg.extend_from_slice(&timestamp.to_be_bytes());
     msg.extend_from_slice(&local_clients.to_be_bytes());
@@ -182,6 +213,12 @@ pub fn signing_input(
     msg.extend_from_slice(&remote_clients.to_be_bytes());
     msg.extend_from_slice(&bytes_total.to_be_bytes());
     msg.extend_from_slice(&uptime_secs.to_be_bytes());
+    msg.extend_from_slice(&u64::from(has_location).to_be_bytes());
+    // Bit-pattern reinterpretation (two's complement), not a value
+    // conversion -- matching the Go side's identical `uint64(int64)` cast
+    // in relaytelemetry.signingInput.
+    msg.extend_from_slice(&lat_e7.cast_unsigned().to_be_bytes());
+    msg.extend_from_slice(&lon_e7.cast_unsigned().to_be_bytes());
     msg
 }
 

@@ -153,14 +153,14 @@ export function Noc() {
 
   return <section>
     <h2>NOC view</h2>
-    <p className="lede">Every relay with a declared location, colored by health. A relay with no declared location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</p>
+    <p className="lede">Every relay with a location -- declared by an operator or detected via cloud instance metadata -- colored by health. A relay with neither is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</p>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     <div className="two-col">
       <div ref={container} className="noc-map" role="application" aria-label="Relay map" />
       <div>
-        <h3>Relays with no declared location ({unplaced.length})</h3>
+        <h3>Relays with no location ({unplaced.length})</h3>
         {unplaced.length === 0
-          ? <p className="lede">Every relay has a declared location.</p>
+          ? <p className="lede">Every relay has a declared or detected location.</p>
           : <div className="noc-unplaced"><ul>{unplaced.map((relay) => <li key={relay.id}>
             <code>{relay.address}</code> <Status state={healthState(relay)} label={relay.health.admission_state} />
           </li>)}</ul></div>}
@@ -171,6 +171,7 @@ export function Noc() {
       {selected?.error ? <p role="alert">{selected.error}</p> : !selected?.value ? <p>Loading…</p> : <>
         <p><code>{selected.value.address}</code></p>
         <p>Region: {selected.value.region}</p>
+        {selected.value.location && <p>Location: {selected.value.location.label || `${selected.value.location.lat}, ${selected.value.location.lon}`} <span className="lede">({selected.value.location_source === "detected" ? "detected via cloud metadata" : "declared"})</span></p>}
         <p>Health: <Status state={healthState(selected.value)} label={selected.value.health.admission_state} /></p>
         <p>Sessions: {selected.value.health.sessions ?? "—"}</p>
         <p>Bytes (cumulative): {selected.value.health.bytes != null ? formatBytes(selected.value.health.bytes) : "—"}</p>
