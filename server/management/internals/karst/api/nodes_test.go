@@ -1447,7 +1447,7 @@ func TestDeclaredLocationSurvivesWithNoTelemetry(t *testing.T) {
 
 	var decoded []struct {
 		Location       *struct{ Label string } `json:"location"`
-		LocationSource string                   `json:"location_source"`
+		LocationSource string                  `json:"location_source"`
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
 	require.Len(t, decoded, 1)
