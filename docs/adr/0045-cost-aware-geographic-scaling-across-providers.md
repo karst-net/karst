@@ -506,6 +506,8 @@ this project's own convention is to tell an operator what they must set
 rather than quietly assume the permissive answer (the same reasoning
 `detect_location` and §4b's own opt-in flag already apply one level up).
 
+### 5. Drivers: actuation behind a narrow interface
+
 The planner never calls a cloud API. It emits desired state to a **driver**
 that implements roughly four verbs — `list`, `create(n)`, `drain(id)`,
 `destroy(id)` — against one pool. Initial drivers worth building:
