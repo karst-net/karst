@@ -155,6 +155,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Free-riding on foreign infrastructure | No DERP compatibility mode; registry rejects `derp://` | ADR-0008 | Registry validation test |
 | TURN credential theft | Ephemeral HMAC credentials, time-limited, netmap-delivered; never static | ADR-0008 | Credential-expiry tests |
 | Relay operator learns metadata (A9) | **Not mitigated** — disclosed at point of configuration | ADR-0008 | §7 |
+| Relay reaches a new network target (cloud instance metadata, for NOC-map location) beyond the mesh/control-plane reachability ADR-0039 assumes | Opt-in (`detect_location`, default off); bounded ~1s probe to the link-local `169.254.169.254` only; any failure/timeout/unrecognized region yields no location, never a guess | ADR-0048 | Config default test; prober timeout test |
 
 ### B4/B5 — Console, admin, identity
 

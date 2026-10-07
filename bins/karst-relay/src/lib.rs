@@ -11,6 +11,7 @@
 //! forwarding core is worth integration-testing, and a `[[bin]]`-only package
 //! cannot be imported from `tests/`.
 
+pub mod cloud_location;
 pub mod config;
 pub mod http;
 pub mod hub;

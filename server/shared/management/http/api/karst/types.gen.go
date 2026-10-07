@@ -222,6 +222,24 @@ func (e PathObservationKind) Valid() bool {
 	}
 }
 
+// Defines values for RelayLocationSource.
+const (
+	RelayLocationSourceDeclared RelayLocationSource = "declared"
+	RelayLocationSourceDetected RelayLocationSource = "detected"
+)
+
+// Valid indicates whether the value is a known member of the RelayLocationSource enum.
+func (e RelayLocationSource) Valid() bool {
+	switch e {
+	case RelayLocationSourceDeclared:
+		return true
+	case RelayLocationSourceDetected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayHealthAdmissionState.
 const (
 	RelayHealthAdmissionStateConfirmed RelayHealthAdmissionState = "confirmed"
@@ -245,12 +263,15 @@ func (e RelayHealthAdmissionState) Valid() bool {
 
 // Defines values for RelayHealthSource.
 const (
-	RelayHealthSourceRosterMtime RelayHealthSource = "roster_mtime"
+	RelayHealthSourceRelayTelemetry RelayHealthSource = "relay_telemetry"
+	RelayHealthSourceRosterMtime    RelayHealthSource = "roster_mtime"
 )
 
 // Valid indicates whether the value is a known member of the RelayHealthSource enum.
 func (e RelayHealthSource) Valid() bool {
 	switch e {
+	case RelayHealthSourceRelayTelemetry:
+		return true
 	case RelayHealthSourceRosterMtime:
 		return true
 	default:
@@ -805,12 +826,18 @@ type Relay struct {
 	Health  RelayHealth `json:"health"`
 
 	// Id Derived from identity_key; never accepted from callers.
-	Id            *string        `json:"id,omitempty"`
-	IdentityKey   []byte         `json:"identity_key"`
-	Location      *RelayLocation `json:"location,omitempty"`
-	Region        string         `json:"region"`
-	TlsServerName *string        `json:"tls_server_name,omitempty"`
+	Id          *string        `json:"id,omitempty"`
+	IdentityKey []byte         `json:"identity_key"`
+	Location    *RelayLocation `json:"location,omitempty"`
+
+	// LocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
+	LocationSource *RelayLocationSource `json:"location_source,omitempty"`
+	Region         string               `json:"region"`
+	TlsServerName  *string              `json:"tls_server_name,omitempty"`
 }
+
+// RelayLocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
+type RelayLocationSource string
 
 // RelayCreate defines model for RelayCreate.
 type RelayCreate struct {

@@ -123,6 +123,21 @@ type Location struct {
 	Label string  `json:"label,omitempty"`
 }
 
+// ValidLocation bounds-checks a latitude/longitude pair. Shared by every
+// path that accepts a location — an operator-declared [Entry.Location] here
+// and a relay-detected one over telemetry (ADR-0048) — so a typo or a
+// corrupted detection is rejected with the same named-field message
+// regardless of which path produced it.
+func ValidLocation(lat, lon float64) error {
+	if lat < -90 || lat > 90 {
+		return fmt.Errorf("location.lat is %v, want -90..90", lat)
+	}
+	if lon < -180 || lon > 180 {
+		return fmt.Errorf("location.lon is %v, want -180..180", lon)
+	}
+	return nil
+}
+
 type document struct {
 	Relays []Entry `json:"relays"`
 }
@@ -216,11 +231,8 @@ func (e Entry) compile() (*proto.KarstRelay, error) {
 
 	var location *proto.RelayLocation
 	if e.Location != nil {
-		if e.Location.Lat < -90 || e.Location.Lat > 90 {
-			return nil, fmt.Errorf("location.lat is %v, want -90..90", e.Location.Lat)
-		}
-		if e.Location.Lon < -180 || e.Location.Lon > 180 {
-			return nil, fmt.Errorf("location.lon is %v, want -180..180", e.Location.Lon)
+		if err := ValidLocation(e.Location.Lat, e.Location.Lon); err != nil {
+			return nil, err
 		}
 		location = &proto.RelayLocation{
 			Lat:   e.Location.Lat,

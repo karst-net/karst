@@ -233,10 +233,14 @@ export type Relay = RelayCreate & {
      */
     readonly id: string;
     health: RelayHealth;
+    /**
+     * Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
+     */
+    readonly location_source?: 'declared' | 'detected';
 };
 
 export type RelayHealth = {
-    source: 'roster_mtime';
+    source: 'roster_mtime' | 'relay_telemetry';
     last_confirmed_at: string | null;
     sessions?: number | null;
     bytes?: number | null;

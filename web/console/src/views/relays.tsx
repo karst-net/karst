@@ -58,7 +58,9 @@ export function Relays() {
         {relays.map((relay) => <tr key={relay.id}>
           <td>{relay.region}</td>
           <td><code>{relay.address}</code><br /><span className="lede">{relay.tls_server_name}</span></td>
-          <td>{relay.location ? (relay.location.label || `${relay.location.lat}, ${relay.location.lon}`) : <span className="lede">Not declared</span>}</td>
+          <td>{relay.location
+            ? <>{relay.location.label || `${relay.location.lat}, ${relay.location.lon}`} <span className="lede">({relay.location_source === "detected" ? "detected" : "declared"})</span></>
+            : <span className="lede">No location</span>}</td>
           <td><Status state={relay.health.admission_state === "confirmed" ? "healthy" : relay.health.admission_state === "stale" ? "warning" : "unknown"} label={relay.health.admission_state} /></td>
           <td><Observed at={relay.health.last_confirmed_at} /></td>
           <td><button className="danger" onClick={() => remove(relay)}>Remove</button></td>

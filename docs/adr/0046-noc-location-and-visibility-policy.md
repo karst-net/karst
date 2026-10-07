@@ -11,8 +11,11 @@
   own ADR), ADR-0033/ADR-0037 (multi-tenant scoping and operator-granted
   cross-tenant access), ADR-0035 (per-account audit partitioning), ADR-0039
   (air-gapped scope — no GeoIP, no external tile/CDN lookups), ADR-0021
-  (relay telemetry — aggregate-only, the precedent this follows),
-  `docs/THREAT-MODEL.md` A9 and B4/B5, `server/management/internals/karst/relayreg/relayreg.go`
+  (relay telemetry — aggregate-only, the precedent this follows), ADR-0048
+  (relay self-reported location via cloud instance metadata — a second,
+  preferred-when-present source for the declared location this ADR
+  introduces; see that ADR for the mechanism, not a change to this one's
+  policy), `docs/THREAT-MODEL.md` A9 and B4/B5, `server/management/internals/karst/relayreg/relayreg.go`
 
 ---
 

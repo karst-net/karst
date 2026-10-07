@@ -85,14 +85,11 @@ func (r testRelay) storedRelay() relayreg.StoredRelay {
 	}
 }
 
-// validRequest signs a report exactly the way ADR-0021 specifies, so these
-// tests exercise the real wire contract rather than a shortcut through it.
+// validRequest signs a report exactly the way ADR-0021/ADR-0048 specify, so
+// these tests exercise the real wire contract rather than a shortcut through
+// it. tel.DetectedLat/DetectedLon, if set, become the report's location.
 func (r testRelay) validRequest(t *testing.T, at time.Time, tel relayreg.Telemetry) report {
 	t.Helper()
-	rawID, err := base64.RawURLEncoding.DecodeString(r.id)
-	if err != nil {
-		t.Fatalf("decode id: %v", err)
-	}
 	req := report{
 		RelayID:       r.id,
 		Timestamp:     at.Unix(),
@@ -102,6 +99,24 @@ func (r testRelay) validRequest(t *testing.T, at time.Time, tel relayreg.Telemet
 		BytesTotal:    tel.BytesTotal,
 		UptimeSecs:    tel.UptimeSecs,
 	}
+	if tel.DetectedLat != nil {
+		req.HasLocation = true
+		req.LatE7 = int64(*tel.DetectedLat * 1e7)
+		req.LonE7 = int64(*tel.DetectedLon * 1e7)
+	}
+	return r.sign(t, req)
+}
+
+// sign lets a test build a raw report (e.g. an out-of-range location that
+// validRequest's Telemetry-based API can't express) and still get a
+// genuinely valid signature over it.
+func (r testRelay) sign(t *testing.T, req report) report {
+	t.Helper()
+	rawID, err := base64.RawURLEncoding.DecodeString(r.id)
+	if err != nil {
+		t.Fatalf("decode id: %v", err)
+	}
+	req.RelayID = r.id
 	sig, err := r.key.Sign([]byte(identity.RelayTelemetryContext), signingInput(rawID, req))
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -240,6 +255,79 @@ func TestAReportIsRecordedUnderEveryAccountThatRegisteredTheSameKey(t *testing.T
 	}
 	if len(store.recorded) != 2 {
 		t.Fatalf("got %d recorded calls, want 2 (one per account holding this key)", len(store.recorded))
+	}
+}
+
+// TestADetectedLocationIsRecorded covers ADR-0048's happy path: a relay
+// that detected a location via cloud metadata has it recorded alongside
+// the rest of the report.
+func TestADetectedLocationIsRecorded(t *testing.T) {
+	relay := newTestRelay(t, "acct-a")
+	store := &fakeStore{byID: map[string][]relayreg.StoredRelay{relay.id: {relay.storedRelay()}}}
+	lat, lon := 47.6062, -122.3321
+	tel := relayreg.Telemetry{LocalClients: 3, DetectedLat: &lat, DetectedLon: &lon}
+	req := relay.validRequest(t, time.Now(), tel)
+
+	w := post(t, newHandler(store), relay.id, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if len(store.recorded) != 1 {
+		t.Fatalf("got %d recorded calls, want 1", len(store.recorded))
+	}
+	got := store.recorded[0].t
+	if got.DetectedLat == nil || got.DetectedLon == nil || *got.DetectedLat != lat || *got.DetectedLon != lon {
+		t.Fatalf("recorded location = %+v, want (%v, %v)", got, lat, lon)
+	}
+}
+
+// TestNoLocationStaysNilNotZero covers the companion case: a report with
+// has_location=false must never record (0, 0) as if that had been detected.
+func TestNoLocationStaysNilNotZero(t *testing.T) {
+	relay := newTestRelay(t, "acct-a")
+	store := &fakeStore{byID: map[string][]relayreg.StoredRelay{relay.id: {relay.storedRelay()}}}
+	req := relay.validRequest(t, time.Now(), relayreg.Telemetry{LocalClients: 3})
+
+	w := post(t, newHandler(store), relay.id, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got := store.recorded[0].t
+	if got.DetectedLat != nil || got.DetectedLon != nil {
+		t.Fatalf("recorded location = %+v, want nil -- has_location was never set", got)
+	}
+}
+
+// TestAnOutOfRangeLocationDropsOnlyTheLocation covers ADR-0048's §3: a
+// relay with a corrupted detection shouldn't also go dark on the rest of
+// its health report. The signature is still valid -- only the coordinate
+// values are garbage -- so the report as a whole is accepted.
+func TestAnOutOfRangeLocationDropsOnlyTheLocation(t *testing.T) {
+	relay := newTestRelay(t, "acct-a")
+	store := &fakeStore{byID: map[string][]relayreg.StoredRelay{relay.id: {relay.storedRelay()}}}
+	req := relay.sign(t, report{
+		Timestamp:    time.Now().Unix(),
+		LocalClients: 3, MeshPeers: 1, RemoteClients: 7, BytesTotal: 1000, UptimeSecs: 60,
+		HasLocation: true,
+		LatE7:       999 * 1e7, // out of -90..90 range once divided back to degrees
+	})
+
+	w := post(t, newHandler(store), relay.id, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s -- an out-of-range location must not fail the whole report", w.Code, w.Body.String())
+	}
+	if len(store.recorded) != 1 {
+		t.Fatalf("got %d recorded calls, want 1", len(store.recorded))
+	}
+	got := store.recorded[0].t
+	if got.DetectedLat != nil || got.DetectedLon != nil {
+		t.Fatalf("recorded location = %+v, want nil -- out of range", got)
+	}
+	if got.LocalClients != 3 || got.BytesTotal != 1000 {
+		t.Fatalf("recorded telemetry = %+v, want the rest of the report preserved", got)
 	}
 }
 

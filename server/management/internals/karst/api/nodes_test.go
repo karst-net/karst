@@ -356,6 +356,18 @@ func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTele
 	return nil, nil
 }
 
+// relaysWithTelemetry layers a fixed LatestTelemetry record onto fixedRelays
+// -- for exercising locationFor's detected-overrides-declared precedence
+// (ADR-0048), which fixedRelays' own always-nil LatestTelemetry cannot.
+type relaysWithTelemetry struct {
+	fixedRelays
+	telemetry *relayreg.RelayTelemetryRecord
+}
+
+func (r relaysWithTelemetry) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
+	return r.telemetry, nil
+}
+
 type scanTurns struct{}
 
 func (scanTurns) List(context.Context) ([]turncred.StoredTurnServer, error) { return nil, nil }
@@ -1380,6 +1392,68 @@ func TestRelayResponsesUseContractFieldsAndHealth(t *testing.T) {
 	router.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.JSONEq(t, `[{"id":"relay-id","address":"203.0.113.7:443","tls_server_name":"relay.example.test","identity_key":"identity-key","region":"eu","health":{"source":"roster_mtime","last_confirmed_at":null,"sessions":null,"bytes":null,"admission_state":"unknown"}}]`, response.Body.String())
+}
+
+// TestDetectedLocationOverridesDeclared covers ADR-0048 §3: when a relay
+// has both a registry-declared location and a telemetry-detected one, the
+// response shows the detected one and says so via location_source.
+func TestDetectedLocationOverridesDeclared(t *testing.T) {
+	lat, lon := 47.6062, -122.3321
+	declaredLat, declaredLon := 39.7392, -104.9903
+	relays := relaysWithTelemetry{
+		fixedRelays: fixedRelays{{
+			AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu",
+			LocationLat: &declaredLat, LocationLon: &declaredLon, LocationLabel: "Denver",
+		}},
+		telemetry: &relayreg.RelayTelemetryRecord{DetectedLat: &lat, DetectedLon: &lon},
+	}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, router)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var decoded []struct {
+		Location       *struct{ Lat, Lon float64 } `json:"location"`
+		LocationSource string                      `json:"location_source"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+	require.Len(t, decoded, 1)
+	require.Equal(t, "detected", decoded[0].LocationSource)
+	require.NotNil(t, decoded[0].Location)
+	require.Equal(t, lat, decoded[0].Location.Lat)
+	require.Equal(t, lon, decoded[0].Location.Lon)
+}
+
+// TestDeclaredLocationSurvivesWithNoTelemetry is the companion case: a
+// relay that has never reported telemetry (or reported no location) still
+// shows its declared one, rather than the detected-overrides rule
+// silently dropping it.
+func TestDeclaredLocationSurvivesWithNoTelemetry(t *testing.T) {
+	declaredLat, declaredLon := 39.7392, -104.9903
+	relays := fixedRelays{{
+		AccountID: "account-a", ID: "relay-id", Address: "203.0.113.7:443", Region: "eu",
+		LocationLat: &declaredLat, LocationLon: &declaredLon, LocationLabel: "Denver",
+	}}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleOwner}, nil, nil, router)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/relays", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "admin"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	var decoded []struct {
+		Location       *struct{ Label string } `json:"location"`
+		LocationSource string                   `json:"location_source"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+	require.Len(t, decoded, 1)
+	require.Equal(t, "declared", decoded[0].LocationSource)
+	require.NotNil(t, decoded[0].Location)
+	require.Equal(t, "Denver", decoded[0].Location.Label)
 }
 
 // The DB-backed TURN registry's CRUD surface, driven against a real

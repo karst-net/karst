@@ -413,7 +413,7 @@ const server = http.createServer((request, response) => {
     return readBody(request).then((entry) => {
       if (!entry.address || !entry.identity_key) return error(response, 422, "invalid_argument", "address and identity_key are required");
       if (fixture.relays.some((relay) => relay.address === entry.address)) return error(response, 412, "already_exists", "relay already exists");
-      const relay = { id: id("relay"), address: entry.address, identity_key: entry.identity_key, region: entry.region ?? "default", tls_server_name: entry.tls_server_name ?? "", location: entry.location ?? undefined, health: { source: "roster_mtime", last_confirmed_at: null, sessions: null, bytes: null, admission_state: "unknown" } };
+      const relay = { id: id("relay"), address: entry.address, identity_key: entry.identity_key, region: entry.region ?? "default", tls_server_name: entry.tls_server_name ?? "", location: entry.location ?? undefined, location_source: entry.location ? "declared" : undefined, health: { source: "roster_mtime", last_confirmed_at: null, sessions: null, bytes: null, admission_state: "unknown" } };
       fixture.relays.push(relay);
       return json(response, 201, relay);
     });
