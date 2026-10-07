@@ -12,8 +12,11 @@
   credentials), ADR-0023 (declining device-activity visibility — the authority-
   asymmetry reasoning §4a below applies to demand attribution) and ADR-0046
   (NOC location/visibility policy — the companion decision this one stays
-  consistent with), `deploy/kubernetes/`, `deploy/compose/ha/`. Tracking issue:
-  #234; re-homing hardening (Phase 0b): #233.
+  consistent with), ADR-0048 (relay self-reported location via cloud
+  metadata — §4b's anchor dispatcher follows the same plain-function,
+  no-trait-until-a-second-provider pattern), `deploy/kubernetes/`,
+  `deploy/compose/ha/`. Tracking issue: #234; re-homing hardening (Phase 0b):
+  #233.
 
 ---
 
@@ -197,6 +200,12 @@ On-prem is a pool whose cost model is "fixed amount per period, zero marginal
 price, finite capacity." It is not a special case in the planner — it is a
 pool whose marginal price curve is flat at zero and then vertical.
 
+A region can also exist below the level of a pool at all: a **candidate
+region** (§4b) has no cost model, no capacity, no driver — just a region
+code and a way to measure RTT against it. It is not provisioned and costs
+nothing; it exists purely to be measured, and is promoted into a real pool
+only once §4b's aggregate signal and §2's cost model together justify it.
+
 ### 2. Cost model: declarative, composable, stateful
 
 Cost is expressed as **data**, not code, and composed from three primitives:
@@ -338,6 +347,77 @@ identifying or locating anyone:
   operator, not something the scaler can route around by locating
   people. Demand-history retention (§8, Open Question 7) should keep
   this histogram per relay, not any client-identifying key.
+
+### 4b. Discovering a wholly new region: provider-operated anchors, not client location
+
+§4a's own prerequisite is the gap this closes: a relay-side histogram can
+say "something near me is underserved," never *which direction* — and if
+the operator never registered a candidate pool anywhere nearby, the
+planner has nothing to point at no matter how bad the signal gets. Only
+the client, sitting at the point of the complaint, can supply directional
+information. The discipline that makes this acceptable is the same one
+§4a already established, applied to a different measurement: the client
+never reports *where it is* — it reports RTT to a small set of known,
+fixed points, and the server folds that into a histogram **per point**,
+discarding the reporting node's identity once aggregated.
+
+**The points are the cloud provider's own infrastructure, not ours.**
+Every AWS region runs a permanent, multi-tenant, public endpoint that
+exists whether or not we are a customer of it — `s3.<region>.amazonaws.com`
+resolves to an address physically inside that region and completes a TCP
+handshake with no authentication required. This is not a novel trick:
+public tools (e.g. cloudping.info) have measured browser-to-region latency
+this way for years, against the exact reachability S3's regional endpoints
+are built to offer. The client times the TCP handshake, not an ICMP ping —
+ICMP is widely filtered by providers and corporate networks alike, and
+sending it needs a raw socket `karstd` does not otherwise require; a plain
+`connect()` to port 443 needs neither.
+
+**Nothing of Karst's own is provisioned anywhere for this.** Not an
+ephemeral instance, not a standing probe VM, nothing to patch or
+decommission. Discovering the candidate list needs no CIDR data either —
+a small, stable, public list of AWS region codes plus ordinary DNS
+resolution is the entire input. (AWS's published `ip-ranges.json` is a
+defense-in-depth cross-check against DNS spoofing, if ever wanted — not a
+requirement for the mechanism to work.)
+
+**AWS only, for now.** GCP's default storage endpoint is a single global
+anycast address, not per-region — it measures distance to Google's edge
+network, a different and less useful signal than distance to a specific
+GCP compute region. Azure's regional endpoints generally require creating
+a resource (e.g. one storage account per region) rather than hitting
+something already running for every customer and non-customer alike.
+Neither is a straightforward copy of the AWS mechanism, and guessing at
+either provider's equivalent without verifying it against the real
+service would put a wrong hostname pattern into a design document as if
+it were settled fact. Each gets its own verification and its own arm in
+the same dispatcher (ADR-0048's `cloud_location::detect` pattern: a plain
+function per provider, not a trait, until a second real implementation
+exists to design the abstraction against) once someone checks what each
+provider actually offers.
+
+**New client-side network dependency, same treatment as ADR-0048's relay
+side.** This is telemetry `karstd` does not emit today — §4a's histogram
+is relay-side only. It needs its own opt-in flag, defaulting off, and
+must be a true no-op in air-gapped deployments (ADR-0039): a node that
+never enables it never resolves a single AWS hostname. Default-off for
+the same reason `detect_location` is default-off on the relay side —
+every node silently gaining a new outbound target on upgrade is the
+"quietly ignored, not told" pattern this project avoids elsewhere;
+opting in costs one config line.
+
+**No AZ granularity, and it isn't needed.** AWS's region list is the
+resolvable unit; there is no public, free way to distinguish AZs within
+a region this way, and AZs within a region are typically sub-millisecond
+apart by design. The decision this signal feeds is which *region* to
+stand capacity up in — AZ placement within a chosen region is a
+capacity/availability decision, not a latency one.
+
+A candidate region is promoted to a real pool (§1) — gaining a cost model
+(§2) and a driver (§5) — only when the aggregate signal here shows a
+meaningful share of currently badly-served clients would get materially
+better RTT there, weighed against what standing it up would cost. Until
+then it costs nothing and commits to nothing.
 
 ### 5. Drivers: actuation behind a narrow interface
 
@@ -507,20 +587,39 @@ corner:
   out a Karst-operated fleet, and a service that held operators' cloud
   credentials and traffic-pattern history would be the most sensitive thing
   Karst could run.
-- **Client-reported RTT histograms, or resolving client IP to a physical
-  location, as the demand-attribution signal (§4a).** Rejected: either one
-  creates a per-device signal with no disclosure to the device's own user —
-  the same authority asymmetry ADR-0023 already declined to build for device
-  activity, just sourced from latency or IP metadata instead of DNS queries.
-  ADR-0046 drew the identical line for the NOC map (aggregate region counts,
-  never a per-device pin, never GeoIP); a privacy-sensitive line drawn once
-  for a human-viewed map should not be redrawn more permissively for an
-  automated planner whose inputs can still leak into logs, debug output, or
-  the Phase 1 Advisor's own console view (§7). The relay-reported RTT
-  histogram gets the planner the same "something is underserved" signal with
-  materially less privacy surface, at the cost of resolution: it says a
-  relay is badly serving some of its clients, not how many separate
-  locations they're spread across.
+- **Resolving a client's IP to a physical location (GeoIP), as the
+  demand-attribution or new-region-discovery signal (§4a/§4b).** Rejected on
+  accuracy grounds before privacy ones: GeoIP databases fail *confidently*,
+  not gracefully — unresolvable ranges get assigned a default centroid that
+  is a real place, and a planner that trusts it can confidently place
+  capacity in the wrong city, or misattribute a whole ISP's traffic to one
+  location indefinitely. RTT measures the thing that actually matters
+  (network path quality) directly; geographic closeness is a proxy for RTT
+  that can diverge from it on a bad peering path. Secondarily, it is also a
+  new inference step ADR-0046 already declined to add for relay location,
+  for the authority-asymmetry reasons ADR-0023 established.
+- **Client-reported RTT to its *chosen relay*, as a substitute for the
+  relay-side histogram (§4a specifically).** Rejected as redundant: a relay
+  already measures this with no client cooperation at all, so asking the
+  client to report the same number again adds a new reporting channel for
+  no new information. This is narrower than, and does not extend to, §4b's
+  client-reported RTT *to fixed provider anchors* — that measures something
+  no relay can see (distance to a region with no relay in it), which is the
+  actual gap §4b exists to close, with the same never-retain-per-client
+  discipline enforced at the aggregation point.
+- **An ephemeral instance per candidate region, with clients probing an
+  address inside its published CIDR (§4b).** Rejected: discovering the CIDR
+  is free (providers publish it), but an arbitrary address inside it
+  usually answers nothing — most of a CIDR is unassigned space a provider's
+  edge may silently drop, or someone else's instance with no reason to
+  answer a stranger. A reliable answer needs something of ours actually
+  running there, which is exactly the cost and operational burden §4b is
+  designed to avoid.
+- **A standing probe-only anchor we operate in every candidate region
+  (§4b).** Rejected for the same reason: AWS already runs a permanent,
+  multi-tenant, public service in every region (S3) built for exactly this
+  kind of reachability. Standing up a parallel one duplicates
+  infrastructure that already exists for free.
 
 ---
 
@@ -568,6 +667,11 @@ corner:
   collected (Phase 0–1 retention), it exists and can be subpoenaed or
   exfiltrated like any operational data. Retention length is a security
   decision, not just a modeling one.
+- **A new third-party dependency, opt-in but real (§4b).** A node with
+  region-discovery enabled depends on AWS's S3 regional endpoints staying
+  reachable and behaving the way they have for years. This is a dependency
+  on another company's infrastructure behaving as documented, not
+  infrastructure Karst controls — named here rather than assumed away.
 
 ### Reconsider if
 
@@ -582,6 +686,9 @@ corner:
 - Operators overwhelmingly want a managed service rather than self-run
   scaling; that conflicts with ADR-0008 §5 and would need that ADR revisited
   first.
+- AWS materially changes S3's regional-endpoint behavior (auth requirement,
+  deprecation, rate limiting a bare TCP handshake) — §4b's mechanism would
+  need a different anchor, not just a config change.
 
 ---
 
@@ -599,12 +706,13 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
    when existing clients are being badly served, without resolving where any
    of them physically are. The planner matches that signal against
    operator-declared candidate pools (§1), the same declared-not-inferred
-   principle ADR-0046 uses for relay locations on the NOC map. Client-reported
-   RTT or client IP geolocation were considered and rejected for the
-   authority-asymmetry reasons ADR-0023 already established — see
-   *Alternatives rejected*. What remains open: the exact bucket boundaries
-   and histogram retention window, which is an ordinary tuning question, not
-   a design one.
+   principle ADR-0046 uses for relay locations on the NOC map. Client IP
+   geolocation was considered and rejected on accuracy grounds (GeoIP fails
+   confidently, not gracefully) and, secondarily, for the same inference
+   concern ADR-0046 already raised — see *Alternatives rejected*. Discovering
+   a region with no relay nearby at all needed a different mechanism; see
+   §4b. What remains open here: the exact bucket boundaries and histogram
+   retention window, which is an ordinary tuning question, not a design one.
 3. **Which SLA metric is operator-meaningful?** p95 RTT to nearest relay is
    measurable by clients but is not the same as an application SLA. The
    vocabulary in §3 should be validated against real operators before it is
@@ -620,3 +728,10 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
    multi-tenant case, #166) is a separate decision.
 7. **Default retention for demand history** (§8): long enough to see
    seasonality, short enough to bound the sensitivity.
+8. **GCP and Azure equivalents of §4b's AWS anchor mechanism.** AWS's trick
+   (a permanent, multi-tenant, public per-region endpoint that needs nothing
+   provisioned) does not obviously transfer: GCP's default storage endpoint
+   is a single global anycast address, not per-region, and Azure's regional
+   endpoints generally require creating a resource first. Each provider
+   needs its own verification against the real service before it gets its
+   own arm in the anchor dispatcher — not a guessed hostname pattern.
