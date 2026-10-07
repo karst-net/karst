@@ -144,7 +144,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | PSK master extraction (A4) | HSM/KMS custody where available; documented software fallback; O(1) derived, not stored | ADR-0004 | Key-custody review |
 | Control-channel interception | TLS 1.3 with `X25519MLKEM768` | ADR-0001 | Config tests |
 | Stale netmap → silent connectivity loss (A8) | Netmap age surfaced in `karst status`; `karst doctor` diagnoses hint misses | ADR-0005 | Phase 3 |
-| Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views | Phase 5 control API | Route × role secret/authorization scan |
+| Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views, including the NOC map (ADR-0046) | Phase 5 control API | Route × role secret/authorization scan |
 
 ### B3 — Relay and TURN
 
@@ -165,6 +165,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Malicious admin (T6) | Not prevented; append-only hash-chained audit log, SIEM export | §4.4 | Audit-log integrity tests |
 | ACL misconfiguration (A6) | Policy unit tests; console dry-run diff of affected flows; versioned history and rollback | §4.3 | Table-driven ACL suite |
 | IdP compromise | Out of scope for v1 — the IdP is authoritative by construction | — | §7 |
+| NOC map presents account topology/metadata more legibly than table rows did | Client nodes shown only as per-region/per-aquifer aggregates, never a per-device marker or location; dedicated read-only NOC role; every view load and drill-down audit-logged | ADR-0046 | Route × role authorization scan (extended to NOC endpoints) |
 
 ### B6 — Host integration
 
