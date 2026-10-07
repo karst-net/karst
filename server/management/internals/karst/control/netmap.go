@@ -551,7 +551,10 @@ func (h *NetmapHandler) compileFilter(ctx context.Context, self string, peers []
 	if h.PolicyStore != nil {
 		version, err := h.PolicyStore.Current(ctx)
 		if errors.Is(err, policy.ErrNoVersion) {
-			doc = nil
+			// No version has been written for this account yet: fall back to
+			// the configured document (doc already holds h.Policy from
+			// above) rather than discarding it, per the fallback promised at
+			// bootstrap.go's policyStore construction.
 		} else if err != nil {
 			return nil, nil, nil, false, fmt.Errorf("load current policy: %w", err)
 		} else if doc, err = h.parsedPolicy(version); err != nil {
