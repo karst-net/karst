@@ -49,12 +49,17 @@ impl std::error::Error for Error {}
 /// §4b's anchor dispatcher uses; a cost model has no behavior per provider
 /// today, only data, so there is nothing yet for a closed `match` to protect).
 ///
-/// `AwsGovCloud` is a distinct arm, not a region under `Aws`: AWS's
-/// `GovCloud` is its own partition — separate account, separate ARNs,
-/// separate pricing — so §4c's `allowed_regions.aws-gov-cloud` is a
-/// separate list an operator must opt into independently of
-/// `allowed_regions.aws`, the same separation a typo'd region code must
-/// not be able to cross.
+/// `AwsGovCloud` and `AzureGovCloud` are distinct arms, not a region under
+/// `Aws`/`Azure`: each is its own partition of its parent provider —
+/// separate account (AWS) or tenant/ARM endpoint (Azure), separate
+/// ARN/resource-ID namespace, separate pricing — so each gets its own
+/// `allowed_regions` key (`aws-gov-cloud`, `azure-gov-cloud`) an operator
+/// must opt into independently of the commercial one, the same separation
+/// a typo'd region code must not be able to cross. There is deliberately
+/// no `GcpGovCloud`: GCP has no equivalent account/API boundary — its
+/// government/compliance offerings are policy on the same commercial
+/// account and region list `Gcp` already covers, so there is no second
+/// partition for a second arm to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -62,6 +67,8 @@ pub enum Provider {
     #[serde(rename = "aws-gov-cloud")]
     AwsGovCloud,
     Azure,
+    #[serde(rename = "azure-gov-cloud")]
+    AzureGovCloud,
     Gcp,
     Onprem,
     Generic,
@@ -77,6 +84,7 @@ impl Provider {
             Self::Aws => "aws",
             Self::AwsGovCloud => "aws-gov-cloud",
             Self::Azure => "azure",
+            Self::AzureGovCloud => "azure-gov-cloud",
             Self::Gcp => "gcp",
             Self::Onprem => "onprem",
             Self::Generic => "generic",
@@ -90,7 +98,7 @@ impl Provider {
     #[must_use]
     pub const fn is_region_bound(self) -> bool {
         match self {
-            Self::Aws | Self::AwsGovCloud | Self::Azure | Self::Gcp => true,
+            Self::Aws | Self::AwsGovCloud | Self::Azure | Self::AzureGovCloud | Self::Gcp => true,
             Self::Onprem | Self::Generic => false,
         }
     }
@@ -608,6 +616,42 @@ bands = [{ unit_price = 1.0 }]
     }
 
     #[test]
+    fn every_cloud_provider_is_bound_by_its_own_allowlist() {
+        // §4c applies uniformly to every region-bound provider, not just
+        // AWS — each of the "top 3" is checked here with its own region
+        // code and its own allowlist entry.
+        for (provider, allowed, outside) in [
+            ("aws", "us-east-1", "us-west-2"),
+            ("azure", "eastus", "westus2"),
+            ("gcp", "us-central1", "europe-west1"),
+        ] {
+            let text = format!(
+                "[allowed_regions]\n{provider} = [\"{allowed}\"]\n\n\
+                 [pools.p]\nprovider = \"{provider}\"\nregion = \"{allowed}\"\n\n\
+                 [pools.p.cost_model.meters.m]\nmode = \"graduated\"\n\
+                 bands = [{{ unit_price = 1.0 }}]\n"
+            );
+            let d = Document::parse(&text).expect("parses");
+            assert!(
+                d.validate().is_ok(),
+                "{provider}: {allowed} should be allowed"
+            );
+
+            let text = format!(
+                "[allowed_regions]\n{provider} = [\"{allowed}\"]\n\n\
+                 [pools.p]\nprovider = \"{provider}\"\nregion = \"{outside}\"\n\n\
+                 [pools.p.cost_model.meters.m]\nmode = \"graduated\"\n\
+                 bands = [{{ unit_price = 1.0 }}]\n"
+            );
+            let d = Document::parse(&text).expect("parses");
+            let err = d
+                .validate()
+                .expect_err(&format!("{provider}: {outside} is not in its allowlist"));
+            assert!(format!("{err}").contains(outside), "{provider}: {err}");
+        }
+    }
+
+    #[test]
     fn aws_gov_cloud_is_a_distinct_provider_from_commercial_aws() {
         // Allowing a commercial region does not reach into GovCloud, and
         // vice versa — the two partitions never share an allowlist entry.
@@ -639,6 +683,46 @@ bands = [{ unit_price = 1.0 }]
 [pools.p]
 provider = "aws-gov-cloud"
 region = "us-gov-west-1"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn azure_gov_cloud_is_a_distinct_provider_from_commercial_azure() {
+        // Same separation as AWS GovCloud, for Azure Government.
+        let text = r#"
+[allowed_regions]
+azure = ["eastus"]
+
+[pools.p]
+provider = "azure-gov-cloud"
+region = "usgovvirginia"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        let err = d
+            .validate()
+            .expect_err("commercial allowlist does not cover azure government");
+        assert!(
+            format!("{err}").contains("allowed_regions.azure-gov-cloud"),
+            "{err}"
+        );
+
+        let text = r#"
+[allowed_regions]
+"azure-gov-cloud" = ["usgovvirginia"]
+
+[pools.p]
+provider = "azure-gov-cloud"
+region = "usgovvirginia"
 
 [pools.p.cost_model.meters.m]
 mode = "graduated"
