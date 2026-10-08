@@ -1877,6 +1877,7 @@ async fn write_relayed(
             payload,
         } => sender.send_packet(destination, &payload).await,
         Relayed::Ping(token) => sender.ping(token).await,
+        Relayed::Pong(token) => sender.pong(token).await,
         // The connection was the request. Nothing goes on the wire.
         Relayed::Hold => Ok(()),
     }
@@ -1946,6 +1947,11 @@ enum Relayed {
     /// is already waiting — a round trip taken past a full queue is the one the
     /// datapath would actually see, and one taken past it is not.
     Ping([u8; crate::relay::PING_TOKEN_LEN]),
+    /// §7.5's reply to a `Ping` the relay sent, unprompted. Shares this queue
+    /// for the same reason [`Relayed::Ping`] does — but see
+    /// [`crate::relay::Sender::pong`] for why "ahead of queued traffic" is
+    /// only approximated here, unlike the relay's own priority lane.
+    Pong([u8; crate::relay::PING_TOKEN_LEN]),
     /// Nothing to write: a request that this connection exist, and go on
     /// existing while something keeps asking. It is how the relay this node is
     /// *leaving* stays reachable across a §9.2 move, and how an alternative
@@ -1987,6 +1993,24 @@ impl RelaySender {
             Some(relay) => self
                 .on_demand
                 .try_send((relay, Relayed::Ping(token)))
+                .is_ok(),
+        };
+        if !queued {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Queue §7.5's reply to a `Ping` the relay sent on this connection,
+    /// unprompted — home or on-demand alike, with no exception for which one
+    /// asked. Dropped rather than blocked on, the same posture as
+    /// [`Self::ping`]: a lost reply costs the relay one measurement, not
+    /// this node's own datapath.
+    fn pong(&self, relay: Option<RelayId>, token: [u8; crate::relay::PING_TOKEN_LEN]) {
+        let queued = match relay {
+            None => self.queue.try_send(Relayed::Pong(token)).is_ok(),
+            Some(relay) => self
+                .on_demand
+                .try_send((relay, Relayed::Pong(token)))
                 .is_ok(),
         };
         if !queued {
@@ -2786,6 +2810,15 @@ async fn relay_receive_loop(
     }
 }
 
+/// Which queue a §7.5 `Pong` reply belongs on — [`RelaySender::pong`]'s
+/// `relay` argument, named so the one-line call site in [`on_relay_event`]
+/// reads as a decision rather than a boolean juggled inline, and so a test
+/// can check the decision without going through a live connection to make
+/// it.
+fn ping_reply_target(is_home: bool, relay_id: RelayId) -> Option<RelayId> {
+    (!is_home).then_some(relay_id)
+}
+
 /// Act on one event from a relay, whichever of §9.1's two connections it
 /// arrived on.
 fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm: &mut Reassembler) {
@@ -2883,6 +2916,16 @@ fn on_relay_event(context: &RelayContext<'_>, event: crate::relay::Event, reasm:
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .observe(context.relay.relay_id, measured);
         }
+        return;
+    }
+    // §7.5's other half: the relay asked, so this node owes a reply —
+    // whichever connection it arrived on, home or on-demand, since §7.5 is
+    // unconditional about who initiated it.
+    if let crate::relay::Event::Ping { token } = event {
+        context.common.relayed.pong(
+            ping_reply_target(context.is_home(), context.relay.relay_id),
+            token,
+        );
         return;
     }
     let crate::relay::Event::Packet { source_id, payload } = event else {
@@ -3027,6 +3070,7 @@ fn on_demand_hub<'scope>(
                     payload,
                 } => common.relayed.send_via(None, destination, &payload),
                 Relayed::Ping(token) => common.relayed.ping(None, token),
+                Relayed::Pong(token) => common.relayed.pong(None, token),
                 // The connection was the request, and it exists.
                 Relayed::Hold => {}
             }
@@ -3055,6 +3099,16 @@ fn on_demand_hub<'scope>(
                 match item {
                     Relayed::Packet { .. } => "to reach a peer that published it as its home relay",
                     Relayed::Ping(_) => "to measure it against the relay this node holds",
+                    // Bounded, named waste rather than a case worth
+                    // special-casing: the connection this reply was for has
+                    // already closed, so this dials one just to deliver a
+                    // stale `Pong` nobody is still waiting for — it then
+                    // idles out on the ordinary `ON_DEMAND_IDLE_MS` sweep
+                    // above, the same as any other connection with nothing
+                    // left to say.
+                    Relayed::Pong(_) =>
+                        "to answer a ping it received there, though that \
+                                          connection has since closed",
                     Relayed::Hold => "to stay reachable there while peers learn this node moved",
                 }
             );
@@ -7213,6 +7267,65 @@ mod probe_tests {
             Ok((relay, Relayed::Ping(_))) => Some(relay),
             _ => None,
         }
+    }
+
+    fn ponged_home(q: &mut Queues) -> Option<[u8; crate::relay::PING_TOKEN_LEN]> {
+        match q.home.try_recv() {
+            Ok(Relayed::Pong(token)) => Some(token),
+            _ => None,
+        }
+    }
+
+    fn ponged_elsewhere(q: &mut Queues) -> Option<(RelayId, [u8; crate::relay::PING_TOKEN_LEN])> {
+        match q.on_demand.try_recv() {
+            Ok((relay, Relayed::Pong(token))) => Some((relay, token)),
+            _ => None,
+        }
+    }
+
+    /// §7.5's reply, queued on the home connection — [`super::ping_reply_target`]
+    /// returning `None` for the home case, and [`RelaySender::pong`] routing a
+    /// `None` target there.
+    #[test]
+    fn a_ping_received_on_the_home_connection_is_answered_there() {
+        let mut q = queues();
+        let token = [0x42; crate::relay::PING_TOKEN_LEN];
+        q.sender
+            .pong(super::ping_reply_target(true, relay(1).relay_id), token);
+        assert_eq!(ponged_home(&mut q), Some(token));
+        assert!(
+            ponged_elsewhere(&mut q).is_none(),
+            "nothing queued elsewhere"
+        );
+    }
+
+    /// The same reply, for a `Ping` received on an on-demand connection —
+    /// routed by relay id so it reaches the connection that actually asked,
+    /// not whichever one happens to be home right now.
+    #[test]
+    fn a_ping_received_on_an_on_demand_connection_is_answered_there() {
+        let mut q = queues();
+        let token = [0x42; crate::relay::PING_TOKEN_LEN];
+        let r = relay(2);
+        q.sender
+            .pong(super::ping_reply_target(false, r.relay_id), token);
+        assert_eq!(ponged_elsewhere(&mut q), Some((r.relay_id, token)));
+        assert!(
+            ponged_home(&mut q).is_none(),
+            "nothing queued on the home connection"
+        );
+    }
+
+    /// The decision itself, independent of any queue: home stays home,
+    /// everything else is routed back by relay id.
+    #[test]
+    fn ping_reply_target_follows_the_connection_it_arrived_on() {
+        let r = relay(3);
+        assert_eq!(super::ping_reply_target(true, r.relay_id), None);
+        assert_eq!(
+            super::ping_reply_target(false, r.relay_id),
+            Some(r.relay_id)
+        );
     }
 
     /// One round measures the incumbent on the connection it is already on, and

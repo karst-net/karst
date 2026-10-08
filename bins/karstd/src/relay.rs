@@ -67,6 +67,17 @@ pub enum Event {
         /// The token that went out, so the caller can attribute the round trip.
         token: [u8; PING_TOKEN_LEN],
     },
+    /// A `Ping` the *relay* sent, unprompted — §7.5: "Either side MAY send
+    /// `Ping` at any time. A receiver MUST reply `Pong` with the identical
+    /// token." ADR-0045 §4a is what gives a relay a reason to actually do
+    /// this (measuring RTT to its clients), but the obligation to answer is
+    /// unconditional on who asked or why — a node that only ever echoed back
+    /// pings of its own making would be out of spec the moment anything else
+    /// relied on this half of §7.5.
+    Ping {
+        /// Echoed back verbatim in the `Pong` this produces.
+        token: [u8; PING_TOKEN_LEN],
+    },
     /// The relay cannot deliver to a peer this node addressed — §5.4, §10.1.
     ///
     /// **The answer to "is the peer on my relay?", which §9.1's first rule
@@ -566,6 +577,22 @@ impl Sender {
         self.tls.write_all(&bytes).await.map_err(ConnectError::Io)
     }
 
+    /// Answer a `Ping` the relay sent — §7.5's reply half.
+    ///
+    /// On the same queue as [`Self::ping`] and [`Self::send_packet`], not a
+    /// priority lane ahead of them: unlike the relay's own hub, this
+    /// connection has only the one outbound queue, so "ahead of queued
+    /// `RecvPacket` frames" is approximated as "as soon as this item's turn
+    /// comes," which on a bounded queue is a reply delayed by at most
+    /// whatever was already waiting — not by the §7.5 keepalive window.
+    ///
+    /// # Errors
+    /// I/O failure on the TLS stream.
+    pub async fn pong(&mut self, token: [u8; PING_TOKEN_LEN]) -> Result<(), ConnectError> {
+        let bytes = Frame::Pong(&token).to_vec();
+        self.tls.write_all(&bytes).await.map_err(ConnectError::Io)
+    }
+
     /// Flush whatever the last sends buffered.
     ///
     /// # Errors
@@ -694,9 +721,16 @@ async fn write_handshake_events(
             // means anything, and a relay saying something surprising about a
             // third party is not a reason to drop a connection that just
             // authenticated.
+            //
+            // `Ping` belongs here too, and for a different reason than the
+            // others: §7.5 obliges a reply regardless of when it arrived, so
+            // one coalesced with the final handshake bytes is deferred to the
+            // main event loop rather than answered here — `write_handshake_events`
+            // has no outbound queue of its own to put a `Pong` on.
             deferred_event @ (Event::Reflector { .. }
             | Event::Gone { .. }
-            | Event::Restarting { .. }) => {
+            | Event::Restarting { .. }
+            | Event::Ping { .. }) => {
                 deferred.push(deferred_event);
             }
         }
@@ -808,6 +842,18 @@ impl Session {
                     .first_chunk::<PING_TOKEN_LEN>()
                     .copied()
                     .map(|token| Event::Pong { token }));
+            }
+            // §7.5's other half. Before this, an unsolicited `Ping` fell
+            // through to `received`, which recognizes only `RecvPacket` and
+            // returns `None` for anything else — turning a relay's own
+            // keepalive into `OutOfOrder`, which closes the connection. A
+            // relay has always been allowed to send this; nothing on this
+            // side was ever built to survive it.
+            if let Frame::Ping(token) = frame {
+                return Ok(token
+                    .first_chunk::<PING_TOKEN_LEN>()
+                    .copied()
+                    .map(|token| Event::Ping { token }));
             }
             // §7.6. Legal only once authenticated: before that, a drain notice
             // is an unauthenticated party telling this node when to redial.
@@ -1027,6 +1073,45 @@ mod tests {
                 source_id: [0x77; ID_LEN],
                 payload: b"relay payload".to_vec(),
             })
+        );
+    }
+
+    #[test]
+    fn an_unsolicited_ping_from_the_relay_is_a_ping_event_not_out_of_order() {
+        // §7.5: "Either side MAY send Ping at any time." Before this was
+        // fixed, a `Frame::Ping` arriving on an established connection fell
+        // through to `received`, which only recognizes `RecvPacket`, and
+        // came back `OutOfOrder` — a protocol error that closes the
+        // connection on the relay's own keepalive.
+        let relay = relay();
+        let mut session = Session::new([0x11; ID_LEN], &relay, [0x22; ID_LEN]);
+        session
+            .on_frame(
+                &Frame::RelayHello {
+                    relay_id: relay.relay_id,
+                    relay_random: [0x33; ID_LEN],
+                },
+                &TestSigner,
+                &TestVerifier,
+            )
+            .expect("relay hello");
+        session
+            .on_frame(
+                &Frame::RelayAuth {
+                    signature: &[0x66; SIG_LEN],
+                },
+                &TestSigner,
+                &TestVerifier,
+            )
+            .expect("relay auth");
+        assert!(session.established());
+
+        let token = [0x99u8; PING_TOKEN_LEN];
+        assert_eq!(
+            session
+                .on_frame(&Frame::Ping(&token), &TestSigner, &TestVerifier)
+                .expect("an unsolicited ping is answerable, not an error"),
+            Some(Event::Ping { token })
         );
     }
 
