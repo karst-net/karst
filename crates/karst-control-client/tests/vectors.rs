@@ -22,8 +22,9 @@ use karst_control_client::{
     channel::{derive_keys, hello_signing_input, init_signing_input, Record, KEY_LEN},
     handle::handle,
     netmap::{
-        netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, DNSUpstreamView,
-        FilterRuleView, NetmapContent, PeerEntry, RelayView, RouteView,
+        netmap_version, peer_digest, AllowedRegionsEntryView, BedrockHeadView, DNSConfigView,
+        DNSRouteView, DNSUpstreamView, FilterRuleView, NetmapContent, PeerEntry, RelayView,
+        RouteView,
     },
     psk::{pair, PSK_LEN},
 };
@@ -72,7 +73,20 @@ struct VersionCase {
     dns: VersionDNS,
     #[serde(default)]
     bedrock: VersionBedrock,
+    /// ADR-0045 §4c's deployment-wide region allowlist. Absent (not merely
+    /// empty) when the deployment has not configured one — the same
+    /// nil-vs-empty discipline `ssh_filter_present` carries above.
+    #[serde(default)]
+    allowed_regions: Option<Vec<VersionAllowedRegionsEntry>>,
     version: u64,
+}
+
+/// One provider's slice of ADR-0045 §4c's allowlist as the version hash
+/// sees it.
+#[derive(Deserialize, Debug, Clone)]
+struct VersionAllowedRegionsEntry {
+    provider: String,
+    regions: Vec<String>,
 }
 
 /// The Bedrock log tip as the version hash sees it — `bedrock-v1.md` §5.
@@ -689,6 +703,15 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         .collect();
 
     let bedrock_hash = unhex(&c.bedrock.hash);
+    let allowed_regions: Vec<AllowedRegionsEntryView<'_>> = c
+        .allowed_regions
+        .iter()
+        .flatten()
+        .map(|entry| AllowedRegionsEntryView {
+            provider: &entry.provider,
+            regions: &entry.regions,
+        })
+        .collect();
 
     netmap_version(&NetmapContent {
         psk_epoch: c.psk_epoch,
@@ -704,6 +727,7 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         routes: &routes,
         dns: dns_config(c, &dns_routes, &config_upstreams),
         bedrock_head: bedrock_head(c, &bedrock_hash),
+        allowed_regions: &allowed_regions,
     })
 }
 

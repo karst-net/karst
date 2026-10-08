@@ -37,6 +37,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
@@ -119,7 +120,7 @@ type Karst struct {
 // package discovers. Either nil means no TURN configured — see
 // karst/turncred — and produces netmaps with no turn_servers field at all,
 // exactly as before this parameter existed.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -224,6 +225,21 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: tenancy: reconcile grants: %w", err)
 	}
 	nbserver.Inject(s, tenancyStore)
+	// ADR-0045 §4c: the deployment-wide region allowlist. Reconciled
+	// declaratively against allowedRegions on every boot, the identical
+	// convention tenancyStore just above uses -- an empty/nil map
+	// (KARST_ALLOWED_REGIONS_FILE unset) clears any allowlist a previous run
+	// left, which is the ADR's own fail-closed default rather than a special
+	// case. Handed directly to the NetmapHandler constructed below, not
+	// injected via nbserver.Inject -- unlike tenancy, nothing outside this
+	// package's own netmap projection needs to reach it.
+	regionAllowStore, err := regionallow.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: region allowlist store: %w", err)
+	}
+	if err := regionAllowStore.Reconcile(context.Background(), allowedRegions); err != nil {
+		return nil, fmt.Errorf("karst: region allowlist: reconcile: %w", err)
+	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -282,6 +298,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			TurnMinter:  turnMinter,
 			TurnStore:   turnStore,
 			Bedrock:     bedrockLog,
+			RegionAllow: regionAllowStore,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
 	}

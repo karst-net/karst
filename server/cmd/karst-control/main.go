@@ -37,6 +37,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
@@ -88,6 +89,16 @@ const karstRelayRegistryEnv = "KARST_RELAY_REGISTRY_FILE"
 // of who may view which other account -- reconciled on every boot, the same
 // declarative convention as the relay and TURN registries.
 const karstTenancyGrantsEnv = "KARST_TENANCY_GRANTS_FILE"
+
+// karstAllowedRegionsEnv names ADR-0045 §4c's deployment-wide region
+// allowlist file. Unset means the deployment has configured no allowlist at
+// all: §4b's anchor dispatcher enumerates nothing for any provider, and §1
+// pool creation is refused outright for every region-bound provider — the
+// ADR's own fail-closed default, not a special case. Set, the file is the
+// whole truth of which (provider, region) pairs may ever be probed or
+// stood up, reconciled on every boot like the relay/TURN registries and
+// tenancy grants above.
+const karstAllowedRegionsEnv = "KARST_ALLOWED_REGIONS_FILE"
 
 // TURN fallback configuration — ADR-0008 §4.
 //
@@ -182,6 +193,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
+	allowedRegions, err := loadAllowedRegions()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
@@ -210,7 +226,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -407,6 +423,28 @@ func loadTenancyGrants() ([]tenancy.Grant, error) {
 	}
 	log.Infof("karst: loaded %d tenancy grants from %s", len(grants), path)
 	return grants, nil
+}
+
+// loadAllowedRegions reads ADR-0045 §4c's deployment-wide region allowlist
+// file. Unset returns (nil, nil), which bootstrap.Install's Reconcile treats
+// as "revoke everything" -- correct both for a deployment that never
+// configured this (every region-bound provider stays unprobed and
+// unprovisionable) and for one that just unset it.
+func loadAllowedRegions() (regionallow.Document, error) {
+	path := os.Getenv(karstAllowedRegionsEnv)
+	if path == "" {
+		return nil, nil
+	}
+	doc, err := regionallow.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	count := 0
+	for _, regions := range doc {
+		count += len(regions)
+	}
+	log.Infof("karst: loaded %d allowed region(s) across %d provider(s) from %s", count, len(doc), path)
+	return doc, nil
 }
 
 // loadTurn reads ADR-0008 §4's TURN fallback configuration: the server

@@ -323,6 +323,33 @@ message KarstBedrockHead {
   KarstBedrockMode mode = 3;
 }
 
+// KarstAllowedRegions is ADR-0045 §4c's deployment-wide region allowlist,
+// projected into the netmap so an opted-in node's own §4b anchor dispatcher
+// knows which (provider, region) pairs it may ever enumerate or probe. Not
+// account-scoped — one allowlist for the whole deployment, loaded from an
+// operator file the same way the relay and TURN registries are (see
+// `regionallow.go`).
+//
+// Absent or empty for a provider means that provider's anchors are never
+// probed by any node — the ADR's own "no default" rule: a region never
+// listed is never a candidate, not merely unrecommended.
+//
+// Part of the netmap content hash (`karst-allowed-regions` below), so a
+// narrowed or widened allowlist reaches every node on its next poll rather
+// than waiting for some unrelated field to change.
+message KarstAllowedRegions {
+  message Entry {
+    // A provider key, spelled exactly as `karst-scaler`'s own
+    // `cost_model::Provider::as_str()` does ("aws", "aws-gov-cloud",
+    // "azure", "azure-gov-cloud", "gcp") — one vocabulary for the same
+    // concept wherever it appears, rather than a second mapping that could
+    // drift from the first.
+    string provider = 1;
+    repeated string regions = 2;
+  }
+  repeated Entry providers = 1;
+}
+
 // KarstBedrockMode is the operator-selected enforcement level — bedrock-v1.md
 // §6. Ordered: each level is strictly stronger than the one before, which is
 // what lets a node take the maximum of this and its local floor.
@@ -482,6 +509,12 @@ message KarstNetmapResponse {
   // the same wire shape.
   repeated KarstFilterRule ssh_filter = 18;
   bool ssh_filter_present = 19;
+
+  // ADR-0045 §4c's deployment-wide region allowlist, projected for §4b's
+  // anchor dispatcher. Absent means the deployment has not configured one —
+  // every provider's anchors are then unprobed, not permissively probed; see
+  // KarstAllowedRegions's own doc comment.
+  KarstAllowedRegions allowed_regions = 20;
 
   // True when `peers` contains only entries that changed, and `removed_peers`
   // names those to drop. False means `peers` is the complete set and anything
