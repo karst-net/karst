@@ -60,6 +60,14 @@ const READ_BUF_MAX: usize = FRAME_HEADER + FRAME_PAYLOAD_MAX + 2 * CHUNK;
 /// How often the trusted roster file is polled for an atomic replacement.
 const ROSTER_POLL: Duration = Duration::from_secs(5);
 
+/// How often this relay probes a connection's RTT for ADR-0045 §4a's
+/// demand-attribution histogram. Matches §7.5's own idle-keepalive cadence
+/// (30s) rather than inventing a second one: that interval was already
+/// chosen to be frequent enough to matter and infrequent enough not to, and
+/// a continuously busy connection has no idle keepalive of its own for this
+/// to ride along with, so it needs an interval regardless.
+const RTT_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+
 // Asserted at compile time rather than in a test, so a future change to any of
 // the three constants cannot produce a relay that stalls a valid peer.
 const _: () = {
@@ -241,12 +249,13 @@ impl Ctx {
     /// the metrics endpoint renders, to report the same numbers rather than
     /// recomputing them a second way.
     pub(crate) fn snapshot(&self) -> crate::metrics::Snapshot {
-        let (local_clients, mesh_peers, remote_clients, totals) = self.with_hub(|hub| {
+        let (local_clients, mesh_peers, remote_clients, totals, rtt) = self.with_hub(|hub| {
             (
                 hub.local_clients(),
                 hub.mesh_peers(),
                 hub.remote_clients(),
                 hub.totals(),
+                hub.rtt_histogram(),
             )
         });
         crate::metrics::Snapshot {
@@ -255,6 +264,7 @@ impl Ctx {
             remote_clients,
             totals,
             uptime_secs: self.started.elapsed().as_secs(),
+            rtt,
         }
     }
 
@@ -835,6 +845,11 @@ pub(crate) async fn drive(
         let idle = Duration::from_secs(IDLE_TIMEOUT_SECS);
         let mut roster_updates = ctx.roster_updates.subscribe();
         let mut deadline = tokio::time::Instant::now() + idle;
+        // §4a's own timer, independent of `deadline`: a continuously busy
+        // connection resets `deadline` on every read and would otherwise
+        // never reach this bound at all, and the RTT this exists to measure
+        // is the one busy clients actually have.
+        let mut next_probe = tokio::time::Instant::now() + RTT_PROBE_INTERVAL;
         // **On the heap, not the stack.** This buffer lives across every
         // `.await` in the loop below, so a stack array would sit inside this
         // function's future — and these futures nest, so the cost compounds.
@@ -885,6 +900,15 @@ pub(crate) async fn drive(
                 () = tokio::time::sleep_until(deadline) => {
                     // §7.5: three missed keepalives.
                     break;
+                }
+                () = tokio::time::sleep_until(next_probe) => {
+                    next_probe = tokio::time::Instant::now() + RTT_PROBE_INTERVAL;
+                    // A no-op for a mesh connection, and for a client that
+                    // already has one outstanding — `Hub::probe_rtt` decides
+                    // both, so this call site does not have to know either.
+                    if ctx.with_hub(|hub| hub.probe_rtt(id, ctx.now_ms())) {
+                        ctx.wake_dirty();
+                    }
                 }
             }
         }

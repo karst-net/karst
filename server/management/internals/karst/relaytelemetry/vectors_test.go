@@ -12,10 +12,10 @@ import (
 	"testing"
 )
 
-// Cross-implementation test vectors for ADR-0021/ADR-0048's telemetry
-// signing input.
+// Cross-implementation test vectors for ADR-0021/ADR-0048/ADR-0045's
+// telemetry signing input.
 //
-// The Go control server and the Rust relay each build the same 104-byte
+// The Go control server and the Rust relay each build the same 136-byte
 // message independently — this file, and `bins/karst-relay/src/telemetry.rs`'s
 // signing_input. A field reordered, a width changed from 8 bytes to 4, or a
 // byte order flipped on either side would still let every other test pass:
@@ -33,6 +33,10 @@ import (
 // what was committed before — a regression check that the location fields
 // were appended, not spliced in. Cases 3-5 (added by ADR-0048) cover no
 // location, a (0,0) location, and the ±90/±180 boundary at the E7 scale.
+// Cases 0-5 all leave §4a's four RTT bucket fields zero for the same
+// byte-identical-prefix reason; case 6 (added by ADR-0045 §4a) is the one
+// that exercises them, with distinct, non-zero values in each so a bucket
+// swapped with its neighbor would still fail.
 //
 // Regenerate with:  UPDATE_VECTORS=1 go test ./management/internals/karst/relaytelemetry/ -run Vectors
 
@@ -53,6 +57,10 @@ type signingInputCase struct {
 	HasLocation   bool   `json:"has_location"`
 	LatE7         int64  `json:"lat_e7"`
 	LonE7         int64  `json:"lon_e7"`
+	RTTUnder20ms  int64  `json:"rtt_under_20ms"`
+	RTT20To50ms   int64  `json:"rtt_20_to_50ms"`
+	RTT50To100ms  int64  `json:"rtt_50_to_100ms"`
+	RTTOver100ms  int64  `json:"rtt_over_100ms"`
 	Expected      string `json:"expected"`
 }
 
@@ -77,10 +85,11 @@ func vectorsPath(t *testing.T) string {
 func TestVectors(t *testing.T) {
 	got := vectorFile{
 		Spec: "ADR-0021 relay telemetry signing input",
-		Note: "Cross-implementation vectors for the 104-byte message " +
-			"ADR-0021/ADR-0048's telemetry report is signed over: relay_id " +
-			"followed by nine big-endian u64 fields (the original six, plus " +
-			"has_location/lat_e7/lon_e7 added by ADR-0048). Not the " +
+		Note: "Cross-implementation vectors for the 136-byte message " +
+			"ADR-0021/ADR-0048/ADR-0045's telemetry report is signed over: " +
+			"relay_id followed by thirteen big-endian u64 fields (the " +
+			"original six, plus has_location/lat_e7/lon_e7 added by " +
+			"ADR-0048, plus §4a's four RTT histogram buckets). Not the " +
 			"signature itself — ML-DSA-87 signing is hedged, so no " +
 			"signature is reproducible vector material — only the bytes " +
 			"signed over. " +
@@ -98,6 +107,10 @@ func TestVectors(t *testing.T) {
 		hasLocation   bool
 		latE7         int64
 		lonE7         int64
+		rttUnder20ms  int64
+		rtt20To50ms   int64
+		rtt50To100ms  int64
+		rttOver100ms  int64
 	}{
 		{relayIDSeed: 0x00},
 		{relayIDSeed: 0x11, timestamp: 1_700_000_000, localClients: 3, meshPeers: 1, remoteClients: 7, bytesTotal: 1_000, uptimeSecs: 60},
@@ -116,6 +129,10 @@ func TestVectors(t *testing.T) {
 		// truncation bug on either side shows up here rather than in
 		// production at the literal edge of the Earth.
 		{relayIDSeed: 0x55, timestamp: 1_700_000_000, localClients: 9, meshPeers: 9, remoteClients: 9, bytesTotal: 9, uptimeSecs: 9, hasLocation: true, latE7: -900_000_000, lonE7: -1_800_000_000},
+		// ADR-0045 §4a: four distinct, non-zero bucket counts, so a bucket
+		// swapped with its neighbor — or truncated at 32 bits, like the
+		// other fields above check for — shows up as a vector mismatch.
+		{relayIDSeed: 0x66, timestamp: 1_700_000_000, localClients: 100, rttUnder20ms: 40, rtt20To50ms: 30, rtt50To100ms: 20, rttOver100ms: 10},
 	} {
 		relayID := pattern(32, tc.relayIDSeed)
 		// req.RelayID is deliberately left unset: signingInput takes the
@@ -130,6 +147,10 @@ func TestVectors(t *testing.T) {
 			HasLocation:   tc.hasLocation,
 			LatE7:         tc.latE7,
 			LonE7:         tc.lonE7,
+			RTTUnder20ms:  tc.rttUnder20ms,
+			RTT20To50ms:   tc.rtt20To50ms,
+			RTT50To100ms:  tc.rtt50To100ms,
+			RTTOver100ms:  tc.rttOver100ms,
 		}
 		got.Cases = append(got.Cases, signingInputCase{
 			RelayID:       hex.EncodeToString(relayID),
@@ -142,6 +163,10 @@ func TestVectors(t *testing.T) {
 			HasLocation:   tc.hasLocation,
 			LatE7:         tc.latE7,
 			LonE7:         tc.lonE7,
+			RTTUnder20ms:  tc.rttUnder20ms,
+			RTT20To50ms:   tc.rtt20To50ms,
+			RTT50To100ms:  tc.rtt50To100ms,
+			RTTOver100ms:  tc.rttOver100ms,
 			Expected:      hex.EncodeToString(signingInput(relayID, req)),
 		})
 	}

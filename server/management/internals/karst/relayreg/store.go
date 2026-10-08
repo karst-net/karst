@@ -75,6 +75,15 @@ type Telemetry struct {
 	// disabled, or the probe failed/timed out). Never a default coordinate.
 	DetectedLat *float64
 	DetectedLon *float64
+	// RTTUnder20ms/RTT20To50ms/RTT50To100ms/RTTOver100ms are ADR-0045 §4a's
+	// demand-attribution signal: how many of this relay's currently
+	// connected clients last measured RTT in each bucket. Aggregate counts
+	// only, never a per-client value -- the same discipline every other
+	// field here already follows.
+	RTTUnder20ms int64
+	RTT20To50ms  int64
+	RTT50To100ms int64
+	RTTOver100ms int64
 }
 
 // RelayTelemetryRecord is the latest self-reported report a relay has pushed
@@ -95,6 +104,12 @@ type RelayTelemetryRecord struct {
 	// DetectedLat/DetectedLon -- see Telemetry.DetectedLat/DetectedLon.
 	DetectedLat *float64
 	DetectedLon *float64
+	// RTTUnder20ms/RTT20To50ms/RTT50To100ms/RTTOver100ms -- see
+	// Telemetry's own fields of the same name.
+	RTTUnder20ms int64
+	RTT20To50ms  int64
+	RTT50To100ms int64
+	RTTOver100ms int64
 }
 
 func (RelayTelemetryRecord) TableName() string { return "karst_relay_telemetry" }
@@ -214,6 +229,10 @@ func (s *Store) RecordTelemetry(_ context.Context, accountID, id string, t Telem
 		UptimeSecs:    t.UptimeSecs,
 		DetectedLat:   t.DetectedLat,
 		DetectedLon:   t.DetectedLon,
+		RTTUnder20ms:  t.RTTUnder20ms,
+		RTT20To50ms:   t.RTT20To50ms,
+		RTT50To100ms:  t.RTT50To100ms,
+		RTTOver100ms:  t.RTTOver100ms,
 	}
 	err := s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "account_id"}, {Name: "id"}},
