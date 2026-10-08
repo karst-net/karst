@@ -232,6 +232,17 @@ impl AllowedRegions {
     pub fn regions_for(&self, provider: &str) -> &[String] {
         self.0.get(provider).map_or(&[][..], Vec::as_slice)
     }
+
+    /// Every `(provider, region)` pair this node may enumerate or probe —
+    /// `anchor_probe.rs`'s whole input. Deterministic order (`BTreeMap`
+    /// iteration), matching this type's own doc comment on why that matters.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().flat_map(|(provider, regions)| {
+            regions
+                .iter()
+                .map(move |region| (provider.as_str(), region.as_str()))
+        })
+    }
 }
 
 impl DNSConfig {

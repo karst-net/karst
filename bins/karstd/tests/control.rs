@@ -282,6 +282,7 @@ fn local(seed: u8) -> LocalSettings {
         tracing_collector_server_name: None,
         tracing_collector_pin_hex: None,
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     }
 }
 

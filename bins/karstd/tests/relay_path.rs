@@ -186,6 +186,7 @@ fn node(own: u8, own_range: &str, specs: &[PeerSpec], with_relay: bool) -> Node 
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     };
 
     let config = Arc::new(config);

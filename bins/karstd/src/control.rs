@@ -383,6 +383,14 @@ pub struct Client {
     /// nothing is listening.
     home_relay: Vec<u8>,
     sessions: Vec<pb::KarstSessionObservation>,
+    /// ADR-0045 §4b: anchor RTTs this node measured since the last
+    /// successful request, queued the same way `sessions` is — set by
+    /// [`set_anchor_rtt_observation`](Self::set_anchor_rtt_observation) and
+    /// sent on the next netmap request rather than through a second control
+    /// path. Empty on a node that has not enabled `[probe] anchor_probe`,
+    /// which produces a request byte-identical to one from before this field
+    /// existed.
+    anchor_rtt: Vec<pb::KarstAnchorRtt>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
     /// Empty until the first registration completes.
@@ -520,6 +528,7 @@ impl Client {
         Ok(Self {
             home_relay: Vec::new(),
             sessions: Vec::new(),
+            anchor_rtt: Vec::new(),
             endpoint: section.server.clone(),
             pins,
             node_id: if registered {
@@ -1018,6 +1027,15 @@ impl Client {
         self.sessions = sessions;
     }
 
+    /// Replace the last locally measured anchor RTTs — ADR-0045 §4b. Like
+    /// [`set_session_observations`](Self::set_session_observations), sent
+    /// with the next netmap request rather than through a second control
+    /// path. An empty `Vec` (the default, and every node that has not
+    /// enabled `[probe] anchor_probe`) reports nothing.
+    pub fn set_anchor_rtt_observations(&mut self, reports: Vec<pb::KarstAnchorRtt>) {
+        self.anchor_rtt = reports;
+    }
+
     /// GitHub issue #170: the second of the three client-side spans — the
     /// direct counterpart of `karst-control`'s own `karst.netmap.push` span,
     /// covering the round trip and this node's local
@@ -1037,6 +1055,7 @@ impl Client {
             // fact is a second path that can disagree with this one.
             home_relay: self.home_relay.clone(),
             sessions: self.sessions.clone(),
+            anchor_rtt: self.anchor_rtt.clone(),
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())
@@ -1236,6 +1255,7 @@ pub fn load_config(path: &Path) -> Result<(Config, Source, Option<Client>), Erro
         tracing_collector_server_name: file.tracing.collector_server_name.clone(),
         tracing_collector_pin_hex: file.tracing.collector_pin_hex.clone(),
         datapath_workers: file.node.datapath_workers,
+        anchor_probe_enabled: file.probe.anchor_probe,
         // Resolved against the config directory like every other path here, so
         // a relative one means what an operator editing the file expects.
         relay_ca_file: section.relay_ca_file.as_ref().map(|p| resolve(p, dir)),

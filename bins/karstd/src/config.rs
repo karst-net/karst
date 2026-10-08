@@ -196,6 +196,9 @@ pub struct File {
     /// The opt-in OTLP/HTTP trace-export destination — GitHub issue #170.
     #[serde(default)]
     pub tracing: TracingSection,
+    /// The opt-in ADR-0045 §4b anchor-RTT prober.
+    #[serde(default)]
+    pub probe: ProbeSection,
 }
 
 /// The `[tracing]` TOML table.
@@ -229,6 +232,23 @@ pub struct TracingSection {
     /// with no public CA certificate is exactly the case pinning exists
     /// for. Omitted trusts the system CA store instead.
     pub collector_pin_hex: Option<String>,
+}
+
+/// The `[probe]` TOML table — ADR-0045 §4b.
+///
+/// Unset (the default) means what the ADR's own text requires: "a true
+/// no-op in air-gapped deployments (ADR-0039): a node that never enables it
+/// never resolves a single provider hostname." Same default-off posture as
+/// [`TracingSection`] and `cloud_location.rs`'s `detect_location`, and for
+/// the identical reason — a node silently gaining a new outbound target on
+/// upgrade is the pattern this project avoids everywhere else.
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProbeSection {
+    /// Measure TCP-handshake RTT to each allowlisted region's provider
+    /// anchor and report it on the netmap request — see
+    /// [`crate::anchor_probe`]. Off by default.
+    pub anchor_probe: bool,
 }
 
 /// The `[metrics]` TOML table.
@@ -922,6 +942,9 @@ pub struct Config {
     /// the time it reaches here; [`crate::run`] is what further reduces it to
     /// what the platform and attachment mode actually support.
     pub datapath_workers: usize,
+    /// See [`ProbeSection::anchor_probe`]. `false` for a static TOML roster,
+    /// which has no `[control]`-sourced allowlist to probe against anyway.
+    pub anchor_probe_enabled: bool,
 }
 
 impl fmt::Debug for Config {
@@ -1062,6 +1085,7 @@ impl Config {
             filter: PacketFilter::unrestricted(),
             ssh_filter: SshFilter::absent(),
             datapath_workers: file.node.datapath_workers,
+            anchor_probe_enabled: false,
         })
     }
 
@@ -1280,6 +1304,7 @@ impl Config {
             filter,
             ssh_filter,
             datapath_workers: local.datapath_workers,
+            anchor_probe_enabled: local.anchor_probe_enabled,
         })
     }
 }
@@ -1355,6 +1380,10 @@ pub struct LocalSettings {
     /// knob, not something the coordination server has any business
     /// deciding.
     pub datapath_workers: usize,
+    /// See [`ProbeSection::anchor_probe`] — a local opt-in, not something the
+    /// coordination server has any business deciding, the same division of
+    /// labor `prefer_quic_relay` already has.
+    pub anchor_probe_enabled: bool,
 }
 
 impl fmt::Debug for LocalSettings {
@@ -1372,6 +1401,7 @@ impl fmt::Debug for LocalSettings {
             .field("tracing_collector", &self.tracing_collector)
             .field("datapath_workers", &self.datapath_workers)
             .field("prefer_quic_relay", &self.prefer_quic_relay)
+            .field("anchor_probe_enabled", &self.anchor_probe_enabled)
             .finish_non_exhaustive()
     }
 }
@@ -2502,6 +2532,7 @@ mod netmap_tests {
             userspace_publish: Vec::new(),
             nat64: None,
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         }
     }
 

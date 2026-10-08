@@ -108,6 +108,32 @@ message KarstNetmapRequest {
   // assertions by the control server; the receiver records its own timestamp.
   // No key material, PSKs, or discovery secrets appear in this message.
   repeated KarstSessionObservation sessions = 4;
+
+  // ADR-0045 §4b: RTT this node measured to a provider region's anchor
+  // hostname, for every (provider, region) pair in the allowlist it was
+  // handed. Reported only when the node's local `[probe] anchor_probe` opt-in
+  // is set — see `bins/karstd/src/anchor_probe.rs`'s own doc comment. Like
+  // `sessions` above, this is an observation the server records, never an
+  // assertion it trusts outright: the handler re-checks each entry against
+  // the deployment's own allowlist before recording it (defense in depth
+  // against a buggy or compromised node reporting an unlisted region).
+  repeated KarstAnchorRtt anchor_rtt = 5;
+}
+
+// KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.
+message KarstAnchorRtt {
+  // A provider key, spelled exactly as `karst-scaler`'s own
+  // `cost_model::Provider::as_str()` does ("aws", "aws-gov-cloud", "azure",
+  // "azure-gov-cloud", "gcp").
+  string provider = 1;
+  // A region code in that provider's own naming, as it appears in the
+  // deployment's `allowed_regions` configuration.
+  string region = 2;
+  // The measured TCP-handshake RTT, in milliseconds. The server buckets this
+  // (§4a's same four buckets) rather than storing it verbatim — see
+  // `regionallow.Store.RecordAnchorRTT`'s own doc comment for why no finer
+  // precision, and no reporting node's identity, is retained.
+  uint32 rtt_ms = 3;
 }
 
 message KarstSessionObservation {

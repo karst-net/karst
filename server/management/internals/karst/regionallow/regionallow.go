@@ -85,7 +85,7 @@ type Store struct {
 
 // NewStore migrates and returns the allowlist store.
 func NewStore(db *gorm.DB) (*Store, error) {
-	if err := db.AutoMigrate(&regionRow{}); err != nil {
+	if err := db.AutoMigrate(&regionRow{}, &bucketRow{}); err != nil {
 		return nil, fmt.Errorf("allowed regions: migrate: %w", err)
 	}
 	return &Store{db: db}, nil

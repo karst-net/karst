@@ -19,6 +19,7 @@
 //! coordination server sent, and produces the same peer types, so the datapath
 //! below cannot tell where a peer came from.
 
+pub mod anchor_probe;
 pub mod bedrock;
 pub mod config;
 pub mod control;

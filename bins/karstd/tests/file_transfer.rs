@@ -115,6 +115,7 @@ fn node(
         filter,
         ssh_filter: karstd::filter::SshFilter::absent(),
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     });
 
     Node {

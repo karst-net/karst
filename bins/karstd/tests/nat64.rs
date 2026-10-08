@@ -269,5 +269,6 @@ fn config() -> karstd::config::Config {
         filter: karstd::filter::PacketFilter::unrestricted(),
         ssh_filter: karstd::filter::SshFilter::absent(),
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     }
 }

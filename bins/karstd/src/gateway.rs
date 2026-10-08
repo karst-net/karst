@@ -409,6 +409,7 @@ mod tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         }
     }
 
