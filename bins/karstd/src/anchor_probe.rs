@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_connection_is_none_promptly() {
+    fn an_unanswered_port_is_none_within_the_probe_budget() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("local addr");
         drop(listener); // free the port, guaranteeing nothing answers it
@@ -259,9 +259,16 @@ mod tests {
         let got = probe_at(addr.ip(), addr.port());
 
         assert_eq!(got, None);
+        // Not "promptly": a dropped loopback listener's port is refused
+        // with an immediate RST on Linux, but Windows has been observed to
+        // let the SYN sit unanswered until the connect's own timeout fires
+        // — so this only checks that `connect_timeout`'s bound is actually
+        // honored (with CI scheduling slack), never that the OS refuses
+        // fast. Either outcome reaches the same `None`, which is all a
+        // caller of `probe` can rely on.
         assert!(
-            started.elapsed() < PROBE_BUDGET,
-            "a refused connection should fail well under the probe budget"
+            started.elapsed() < PROBE_BUDGET + Duration::from_secs(1),
+            "a connect that will never succeed must still respect its own timeout"
         );
     }
 
