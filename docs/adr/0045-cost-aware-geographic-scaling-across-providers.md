@@ -406,7 +406,6 @@ with no mapping table.
 | Azure | `<region>.livediagnostics.monitor.azure.com` | every public region tried except `westcentralus` | each address sits in that region's own `AzureCloud.<region>` prefix in the published service tags; no address is shared between regions |
 | Azure (fallback) | `<region>.api.cognitive.microsoft.com` | 37 regions, including `westcentralus` | same check, 37 of 37 in-region, none shared |
 | GCP | `storage.<region>.rep.googleapis.com` | 45 of 47 regions (not yet `asia-southeast3`, `europe-west15`) | Google documents that traffic to a regional endpoint is "processed and TLS terminated entirely within the specified region"; each region resolves to its own distinct address |
-| OCI | `objectstorage.<region>.oraclecloud.com` | 55 of 56 regions | `public_ip_ranges.json` tags each prefix with its region; none shared |
 
 What these replace, and why the obvious candidates fail:
 
@@ -422,10 +421,10 @@ What these replace, and why the obvious candidates fail:
   ingestion endpoint is the service that does pass. Regional ARM
   (`<region>.management.azure.com`) looks regional and is not: every region
   resolves to the same two front-door addresses.
-- **GCP is the weakest of the four.** The regional-endpoint addresses are
+- **GCP is the weakest of the three.** The regional-endpoint addresses are
   in Google's services ranges (`goog.json`), not the region-tagged
   `cloud.json`, so there is no published address-to-region mapping to
-  cross-check against the way `ip-ranges.json` and the Azure and OCI lists
+  cross-check against the way `ip-ranges.json` and the Azure service tags
   allow. The evidence is Google's documented in-region TLS termination plus
   one distinct address per region. An RTT check from two distant vantage
   points (near/far must flip between them) is what closes that gap, and
@@ -434,9 +433,7 @@ What these replace, and why the obvious candidates fail:
 The dispatcher stays ADR-0048's shape — a plain function per provider, not
 a trait — with each arm formatting its own hostname from a region code. A
 region whose anchor does not resolve (GCP's newest regions, Azure's
-restricted ones) is simply unmeasured, not an error. OCI is not yet a §1
-pool `provider`; its anchor is recorded here because it was checked, and
-gets an arm when OCI becomes a pool provider.
+restricted ones) is simply unmeasured, not an error.
 
 **None of these services exist to be probed.** Each is a provider's
 production endpoint, used here for reachability it already offers, and
@@ -822,11 +819,11 @@ corner:
   decision, not just a modeling one.
 - **A new third-party dependency, opt-in but real (§4b).** A node with
   region-discovery enabled depends on each provider's anchor endpoint (S3
-  for AWS, Azure Monitor Live Metrics, GCP regional endpoints, OCI Object
-  Storage) staying reachable and behaving the way it does today. The
-  non-AWS anchors are services that were never meant as probe targets,
-  which is why §4b pairs them with a shared-address check. This is a dependency
-  on another company's infrastructure behaving as documented, not
+  for AWS, Azure Monitor Live Metrics, GCP regional endpoints) staying
+  reachable and behaving the way it does today. The non-AWS anchors are
+  services that were never meant as probe targets, which is why §4b pairs
+  them with a shared-address check. This is a dependency on another
+  company's infrastructure behaving as documented, not
   infrastructure Karst controls — named here rather than assumed away.
 - **The region allowlist (§4c) is a technical control, not legal advice.**
   Karst enforces exactly the region codes an operator writes down; it has
@@ -904,9 +901,8 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
 8. **~~GCP and Azure equivalents of §4b's AWS anchor mechanism.~~
    Resolved — see §4b.** Azure uses its Monitor Live Metrics regional
    endpoint (`<region>.livediagnostics.monitor.azure.com`), GCP its
-   regional service endpoints (`storage.<region>.rep.googleapis.com`), and
-   OCI its Object Storage endpoint (`objectstorage.<region>.oraclecloud.com`),
-   each checked against published IP ranges or provider documentation on
+   regional service endpoints (`storage.<region>.rep.googleapis.com`), each
+   checked against published IP ranges or provider documentation on
    2026-10-08. What remains open: a two-vantage-point RTT check of the GCP
    anchor before its arm ships, since GCP publishes no region mapping for
    those addresses.
