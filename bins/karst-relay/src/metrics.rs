@@ -21,7 +21,7 @@
 
 use core::fmt::Write as _;
 
-use crate::hub::ConnStats;
+use crate::hub::{ConnStats, RttHistogram};
 
 /// A point-in-time view of the relay, ready to render.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,9 @@ pub struct Snapshot {
     pub totals: ConnStats,
     /// Seconds since the process started.
     pub uptime_secs: u64,
+    /// ADR-0045 §4a's demand-attribution signal: how many currently
+    /// connected clients last measured RTT in each of four buckets.
+    pub rtt: RttHistogram,
 }
 
 /// Render the Prometheus text exposition format.
@@ -68,6 +71,26 @@ pub fn render(s: &Snapshot) -> String {
             "karst_relay_uptime_seconds",
             "Seconds since this relay started.",
             s.uptime_secs,
+        ),
+        (
+            "karst_relay_rtt_under_20ms",
+            "Clients whose last measured RTT was under 20ms — ADR-0045 §4a.",
+            s.rtt.under_20ms,
+        ),
+        (
+            "karst_relay_rtt_20_to_50ms",
+            "Clients whose last measured RTT was 20-50ms — ADR-0045 §4a.",
+            s.rtt.ms_20_to_50,
+        ),
+        (
+            "karst_relay_rtt_50_to_100ms",
+            "Clients whose last measured RTT was 50-100ms — ADR-0045 §4a.",
+            s.rtt.ms_50_to_100,
+        ),
+        (
+            "karst_relay_rtt_over_100ms",
+            "Clients whose last measured RTT was over 100ms — ADR-0045 §4a.",
+            s.rtt.over_100ms,
         ),
     ] {
         let _ = writeln!(out, "# HELP {name} {help}");
@@ -187,6 +210,12 @@ mod tests {
                 undeliverable: 3,
             },
             uptime_secs: 42,
+            rtt: RttHistogram {
+                under_20ms: 2,
+                ms_20_to_50: 1,
+                ms_50_to_100: 0,
+                over_100ms: 0,
+            },
         }
     }
 

@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-use karst_relay_proto::consts::ID_LEN;
+use karst_relay_proto::consts::{ID_LEN, TOKEN_LEN};
 use karst_relay_proto::{Admitted, AquiferId, Frame, Reason, Roster};
 
 use crate::limits::{Budget, Meter};
@@ -153,6 +153,21 @@ struct Conn {
     meter: Meter,
     close_after_flush: Option<Reason>,
     stats: ConnStats,
+    /// §4a's RTT probe: the token and send time of an outstanding
+    /// relay-initiated `Ping`, if this connection has one out that has not
+    /// yet been answered. At most one at a time — a second probe before the
+    /// first resolves would leave an answering `Pong` ambiguous about which
+    /// send it is timing.
+    pending_ping: Option<(u64, u64)>,
+    /// Strictly increasing, so a `Pong` cannot be mistaken for the answer to
+    /// an earlier, abandoned probe — see [`Hub::resolve_ping`].
+    ping_seq: u64,
+    /// This connection's most recently measured RTT, in milliseconds —
+    /// ADR-0045 §4a. `None` until the first probe answers; never reset by a
+    /// probe that times out or a `Pong` that does not match, so a
+    /// momentarily slow or silent peer does not fall out of the histogram
+    /// entirely, it just goes stale.
+    last_rtt_ms: Option<u32>,
 }
 
 impl Conn {
@@ -267,6 +282,9 @@ impl Hub {
                 meter: Meter::new(budget, now_ms),
                 close_after_flush: None,
                 stats: ConnStats::default(),
+                pending_ping: None,
+                ping_seq: 0,
+                last_rtt_ms: None,
             },
         );
 
@@ -325,8 +343,14 @@ impl Hub {
                 self.enqueue_priority(id, &Frame::Pong(token));
                 Ok(None)
             }
-            // The peer's own RTT accounting. Nothing for the relay to do.
-            (Frame::Pong(_), _) => Ok(None),
+            // Answers either the peer's own keepalive probe (nothing for the
+            // relay to do with that) or this relay's own §4a probe — telling
+            // the two apart, and ignoring a `Pong` that answers neither, is
+            // `resolve_ping`'s job.
+            (Frame::Pong(token), _) => {
+                self.resolve_ping(id, *token, now_ms);
+                Ok(None)
+            }
             (Frame::Close(_), _) => {
                 self.begin_close(id, None);
                 Ok(None)
@@ -559,8 +583,12 @@ impl Hub {
 
     /// Queue at the head, past whatever is waiting.
     ///
-    /// Only for `Pong` (§7.5). Anything else jumping the queue would reorder
-    /// a peer's datagrams for no reason.
+    /// For `Pong` (§7.5) and this relay's own outbound `Ping` (ADR-0045
+    /// §4a) only. Anything else jumping the queue would reorder a peer's
+    /// datagrams for no reason; these two are exempted for different
+    /// reasons — a `Pong` is a keepalive whose deadline a full queue could
+    /// miss, and a `Ping` whose own send is delayed behind other traffic
+    /// would measure this relay's queueing, not the path to the peer.
     fn enqueue_priority(&mut self, to: ConnId, frame: &Frame<'_>) {
         let depth = self.cfg.queue_depth;
         let Some(conn) = self.conns.get_mut(&to) else {
@@ -742,6 +770,94 @@ impl Hub {
     pub fn remote_clients(&self) -> usize {
         self.presence.len()
     }
+
+    /// Send a `Ping` to measure round-trip latency to a connection's peer —
+    /// ADR-0045 §4a's demand-attribution signal.
+    ///
+    /// Returns whether a probe actually went out. `false` for a mesh
+    /// connection (§4a's histogram is about clients, not meshed relays, and
+    /// this is where that distinction is made so a caller sweeping every
+    /// connection need not know it), an unknown connection, or a client
+    /// that already has one outstanding.
+    pub fn probe_rtt(&mut self, id: ConnId, now_ms: u64) -> bool {
+        let Some(conn) = self.conns.get_mut(&id) else {
+            return false;
+        };
+        if conn.node_id().is_none() || conn.pending_ping.is_some() {
+            return false;
+        }
+        conn.ping_seq = conn.ping_seq.wrapping_add(1);
+        let token = conn.ping_seq;
+        conn.pending_ping = Some((token, now_ms));
+        self.enqueue_priority(id, &Frame::Ping(&token.to_be_bytes()));
+        true
+    }
+
+    /// Resolve a `Pong` against this connection's outstanding §4a probe, if
+    /// it has one and `token` is the answer to it.
+    ///
+    /// A `Pong` that does not match — nothing was pending, or the token is
+    /// someone else's — is silently ignored rather than treated as an
+    /// error: it is also legitimately the peer's own §7.5 keepalive
+    /// surfacing here, or the answer to a probe this relay already gave up
+    /// on, and neither is a protocol violation.
+    fn resolve_ping(&mut self, id: ConnId, token: [u8; TOKEN_LEN], now_ms: u64) {
+        let Some(conn) = self.conns.get_mut(&id) else {
+            return;
+        };
+        let Some((expected, sent_ms)) = conn.pending_ping else {
+            return;
+        };
+        if expected.to_be_bytes() != token {
+            return;
+        }
+        conn.pending_ping = None;
+        let rtt_ms = now_ms.saturating_sub(sent_ms);
+        conn.last_rtt_ms = Some(u32::try_from(rtt_ms).unwrap_or(u32::MAX));
+    }
+
+    /// ADR-0045 §4a's bucketed RTT histogram: how many currently connected
+    /// *clients* last measured under 20ms, 20–50ms, 50–100ms, and over
+    /// 100ms. Meshed relays are excluded — see [`Self::probe_rtt`] — and a
+    /// client never yet successfully probed contributes to none of the four
+    /// buckets rather than being assumed into any particular one, including
+    /// the most favorable.
+    #[must_use]
+    pub fn rtt_histogram(&self) -> RttHistogram {
+        let mut h = RttHistogram::default();
+        for conn in self.conns.values() {
+            if conn.node_id().is_none() {
+                continue;
+            }
+            if let Some(ms) = conn.last_rtt_ms {
+                h.record(ms);
+            }
+        }
+        h
+    }
+}
+
+/// ADR-0045 §4a's RTT histogram — aggregate counts only, never a per-client
+/// value, matching the discipline ADR-0021's existing fields already use.
+/// Bucket boundaries are the ADR's own text, verbatim: "N clients under
+/// 20 ms, N at 20–50 ms, N at 50–100 ms, N over 100 ms."
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RttHistogram {
+    pub under_20ms: u64,
+    pub ms_20_to_50: u64,
+    pub ms_50_to_100: u64,
+    pub over_100ms: u64,
+}
+
+impl RttHistogram {
+    fn record(&mut self, rtt_ms: u32) {
+        match rtt_ms {
+            0..=19 => self.under_20ms += 1,
+            20..=49 => self.ms_20_to_50 += 1,
+            50..=99 => self.ms_50_to_100 += 1,
+            _ => self.over_100ms += 1,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -826,7 +942,13 @@ mod tests {
                     dst_id,
                     payload: Box::leak(payload.to_vec().into_boxed_slice()),
                 },
-                Frame::Ping(t) | Frame::Pong(t) => Frame::Pong(Box::leak(Box::new(*t))),
+                // Previously collapsed into `Frame::Pong` regardless, back
+                // when the relay never emitted an outbound `Ping` of its
+                // own (ADR-0045 §4a) and every token-carrying frame this
+                // helper ever drained was a reply. Kept distinct now that
+                // both occur.
+                Frame::Ping(t) => Frame::Ping(Box::leak(Box::new(*t))),
+                Frame::Pong(t) => Frame::Pong(Box::leak(Box::new(*t))),
                 Frame::PeerGone { peer_id, reason } => Frame::PeerGone { peer_id, reason },
                 Frame::PeerPresent { node_id } => Frame::PeerPresent { node_id },
                 Frame::Close(r) => Frame::Close(r),
@@ -1511,6 +1633,111 @@ mod tests {
         let got = drain(&mut hub, B);
         assert_eq!(got.first(), Some(&Frame::Pong(&[9u8; 8])));
         assert_eq!(got.len(), 5);
+    }
+
+    // ── §4a's RTT probe (ADR-0045) ──────────────────────────────────────────
+
+    #[test]
+    fn a_probed_client_is_pinged_and_a_matching_pong_resolves_it() {
+        let mut hub = Hub::new(Config::default());
+        hub.admit(A, client(0xa1, "t1"), 0);
+        let roster = TestRoster::new().with(id(0xa1), "t1");
+
+        assert!(hub.probe_rtt(A, 1_000));
+        let got = drain(&mut hub, A);
+        let Some(Frame::Ping(token)) = got.first() else {
+            panic!("expected a Ping, got {got:?}");
+        };
+        let token = **token;
+
+        assert!(
+            hub.rtt_histogram() == RttHistogram::default(),
+            "no answer yet"
+        );
+        hub.on_frame(A, &Frame::Pong(&token), &roster, 1_015)
+            .expect("legal");
+        assert_eq!(
+            hub.rtt_histogram(),
+            RttHistogram {
+                under_20ms: 1,
+                ..RttHistogram::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_second_probe_is_refused_while_one_is_outstanding() {
+        // Sending a second would leave an answering `Pong` ambiguous about
+        // which send it is timing.
+        let mut hub = Hub::new(Config::default());
+        hub.admit(A, client(0xa1, "t1"), 0);
+        assert!(hub.probe_rtt(A, 0));
+        assert!(!hub.probe_rtt(A, 100));
+    }
+
+    #[test]
+    fn a_mesh_connection_is_never_probed() {
+        // §4a's histogram is about clients, not meshed relays.
+        let mut hub = Hub::new(Config::default());
+        hub.admit(M, mesh(0xaa), 0);
+        assert!(!hub.probe_rtt(M, 0));
+    }
+
+    #[test]
+    fn a_pong_with_the_wrong_token_does_not_resolve_the_probe() {
+        let mut hub = Hub::new(Config::default());
+        hub.admit(A, client(0xa1, "t1"), 0);
+        let roster = TestRoster::new().with(id(0xa1), "t1");
+
+        assert!(hub.probe_rtt(A, 0));
+        drain(&mut hub, A); // the Ping this relay sent, not a reply
+        hub.on_frame(A, &Frame::Pong(&[0xffu8; TOKEN_LEN]), &roster, 50)
+            .expect("legal");
+        assert_eq!(
+            hub.rtt_histogram(),
+            RttHistogram::default(),
+            "a mismatched token must not be mistaken for the answer"
+        );
+        // The real probe is still outstanding, so a second one is refused.
+        assert!(!hub.probe_rtt(A, 50));
+    }
+
+    #[test]
+    fn rtt_buckets_match_the_adrs_boundaries_exactly() {
+        let mut hub = Hub::new(Config::default());
+        let roster = TestRoster::new()
+            .with(id(0xa1), "t1")
+            .with(id(0xa2), "t1")
+            .with(id(0xa3), "t1")
+            .with(id(0xa4), "t1");
+        for (n, rtt) in [(0xa1u8, 19u64), (0xa2, 20), (0xa3, 99), (0xa4, 100)] {
+            let conn = ConnId(u64::from(n));
+            hub.admit(conn, client(n, "t1"), 0);
+            assert!(hub.probe_rtt(conn, 0));
+            let got = drain(&mut hub, conn);
+            let Some(Frame::Ping(token)) = got.first() else {
+                panic!("expected a Ping");
+            };
+            let token = **token;
+            hub.on_frame(conn, &Frame::Pong(&token), &roster, rtt)
+                .expect("legal");
+        }
+        assert_eq!(
+            hub.rtt_histogram(),
+            RttHistogram {
+                under_20ms: 1,
+                ms_20_to_50: 1,
+                ms_50_to_100: 1,
+                over_100ms: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn a_client_never_probed_is_in_no_bucket() {
+        let mut hub = Hub::new(Config::default());
+        hub.admit(A, client(0xa1, "t1"), 0);
+        assert_eq!(hub.rtt_histogram(), RttHistogram::default());
     }
 
     // ── Rate limiting — §7.4 ──────────────────────────────────────────────

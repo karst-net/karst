@@ -86,6 +86,10 @@ async fn report_once(
         .bytes_in
         .saturating_add(snapshot.totals.bytes_out);
     let uptime_secs = snapshot.uptime_secs;
+    let rtt_under_20ms = snapshot.rtt.under_20ms;
+    let rtt_20_to_50ms = snapshot.rtt.ms_20_to_50;
+    let rtt_50_to_100ms = snapshot.rtt.ms_50_to_100;
+    let rtt_over_100ms = snapshot.rtt.over_100ms;
     let has_location = location.is_some();
     // A valid lat/lon (-90..90, -180..180) scaled by E7 fits comfortably in
     // an i64 (max ~1.8e9) -- the truncation clippy warns about can't
@@ -107,6 +111,10 @@ async fn report_once(
         has_location,
         lat_e7,
         lon_e7,
+        rtt_under_20ms,
+        rtt_20_to_50ms,
+        rtt_50_to_100ms,
+        rtt_over_100ms,
     );
 
     let signature = ctx
@@ -122,7 +130,10 @@ async fn report_once(
          \"local_clients\":{local_clients},\"mesh_peers\":{mesh_peers},\
          \"remote_clients\":{remote_clients},\"bytes_total\":{bytes_total},\
          \"uptime_secs\":{uptime_secs},\"has_location\":{has_location},\
-         \"lat_e7\":{lat_e7},\"lon_e7\":{lon_e7},\"signature\":\"{signature_b64}\"}}"
+         \"lat_e7\":{lat_e7},\"lon_e7\":{lon_e7},\
+         \"rtt_under_20ms\":{rtt_under_20ms},\"rtt_20_to_50ms\":{rtt_20_to_50ms},\
+         \"rtt_50_to_100ms\":{rtt_50_to_100ms},\"rtt_over_100ms\":{rtt_over_100ms},\
+         \"signature\":\"{signature_b64}\"}}"
     );
 
     let path = format!("/karst/v1/relays/{relay_id_b64}/telemetry");
@@ -178,12 +189,12 @@ async fn post(
     }
 }
 
-/// ADR-0021/ADR-0048's exact 104-byte signed message: `relay_id` followed
-/// by nine big-endian `u64` fields (the original six, plus
-/// `has_location`/`lat_e7`/`lon_e7` added by ADR-0048). Never the JSON
-/// body — JSON has no canonical encoding, and a signature must cover bytes
-/// both sides construct identically without agreeing on field order or
-/// whitespace.
+/// ADR-0021/ADR-0048/ADR-0045's exact 136-byte signed message: `relay_id`
+/// followed by thirteen big-endian `u64` fields (the original six, plus
+/// `has_location`/`lat_e7`/`lon_e7` added by ADR-0048, plus §4a's four RTT
+/// histogram buckets). Never the JSON body — JSON has no canonical
+/// encoding, and a signature must cover bytes both sides construct
+/// identically without agreeing on field order or whitespace.
 ///
 /// Pure and deterministic, unlike the signature over it: this is what
 /// `spec/vectors/relay-telemetry-v1.json` pins against
@@ -204,8 +215,12 @@ pub fn signing_input(
     has_location: bool,
     lat_e7: i64,
     lon_e7: i64,
+    rtt_under_20ms: u64,
+    rtt_20_to_50ms: u64,
+    rtt_50_to_100ms: u64,
+    rtt_over_100ms: u64,
 ) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(104);
+    let mut msg = Vec::with_capacity(136);
     msg.extend_from_slice(relay_id);
     msg.extend_from_slice(&timestamp.to_be_bytes());
     msg.extend_from_slice(&local_clients.to_be_bytes());
@@ -219,6 +234,10 @@ pub fn signing_input(
     // in relaytelemetry.signingInput.
     msg.extend_from_slice(&lat_e7.cast_unsigned().to_be_bytes());
     msg.extend_from_slice(&lon_e7.cast_unsigned().to_be_bytes());
+    msg.extend_from_slice(&rtt_under_20ms.to_be_bytes());
+    msg.extend_from_slice(&rtt_20_to_50ms.to_be_bytes());
+    msg.extend_from_slice(&rtt_50_to_100ms.to_be_bytes());
+    msg.extend_from_slice(&rtt_over_100ms.to_be_bytes());
     msg
 }
 
