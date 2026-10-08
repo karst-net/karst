@@ -1123,6 +1123,23 @@ jobs:
                   })
           exit "$fail"
 
+  # ADR-0045 §4b's own guard: none of the provider anchors anchor_probe.rs
+  # dials "exist to be probed" — each is a production endpoint that can
+  # change, and regional ARM (`<region>.management.azure.com`) is the ADR's
+  # own example of a regional-looking name that turned out to sit behind a
+  # shared front door. This depends on live DNS and provider state, not on
+  # anything this repository's content controls, so it runs on a schedule
+  # rather than on every PR — a push can't make an anchor move, and a push
+  # can't fix one either.
+  anchor-addresses:
+    name: Anchor addresses (ADR-0045 §4b)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: No anchor address is shared across two different regions
+        run: ./scripts/check-anchor-addresses.sh
+
   # Fuzzing targets the pre-authentication path: the fragment codec and the
   # reassembler (THREAT-MODEL R1). Short smoke runs per PR; OSS-Fuzz runs
   # continuously.
