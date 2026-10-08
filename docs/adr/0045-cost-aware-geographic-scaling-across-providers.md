@@ -14,7 +14,9 @@
   (NOC location/visibility policy — the companion decision this one stays
   consistent with), ADR-0048 (relay self-reported location via cloud
   metadata — §4b's anchor dispatcher follows the same plain-function,
-  no-trait-until-a-second-provider pattern), `deploy/kubernetes/`,
+  no-trait-until-a-second-provider pattern), ADR-0037 (operator-granted
+  tenancy grants — §4c's `allowed_regions` follows the same file-loaded,
+  operator-only, no-self-service-endpoint-yet shape), `deploy/kubernetes/`,
   `deploy/compose/ha/`. Tracking issue: #234; re-homing hardening (Phase 0b):
   #233.
 
@@ -204,7 +206,8 @@ A region can also exist below the level of a pool at all: a **candidate
 region** (§4b) has no cost model, no capacity, no driver — just a region
 code and a way to measure RTT against it. It is not provisioned and costs
 nothing; it exists purely to be measured, and is promoted into a real pool
-only once §4b's aggregate signal and §2's cost model together justify it.
+only once §4b's aggregate signal and §2's cost model together justify it,
+**and only if §4c's allowlist permits that region at all.**
 
 ### 2. Cost model: declarative, composable, stateful
 
@@ -273,6 +276,15 @@ Initial constraint vocabulary (deliberately small):
 Residency and trust constraints are **hard and not tradeable for cost**. A
 cheaper pool in a disallowed jurisdiction is not a candidate, not a
 penalized candidate.
+
+Residency as written here is a **per-aquifer** tag match — it says which
+*tagged* pools a given tenant's relays may land on, among pools that
+already exist. It presumes the pool itself was something the operator was
+willing to have at all. §4c adds the layer underneath that: a
+deployment-wide bound on which regions may ever become a pool in the
+first place, regardless of aquifer. Per-aquifer residency can only narrow
+within what §4c allows — it is never a way to reach a region §4c
+excludes.
 
 ### 4. The planner
 
@@ -419,6 +431,81 @@ meaningful share of currently badly-served clients would get materially
 better RTT there, weighed against what standing it up would cost. Until
 then it costs nothing and commits to nothing.
 
+### 4c. Bounding where any resource may ever be created: a deployment-wide region allowlist
+
+§4b makes the planner capable of noticing a region it has never been told
+about. That is exactly the moment a real operational risk shows up: an
+organization can have reasons — sanctions exposure, data-residency
+obligations, a board-level "we do not operate infrastructure in country
+X," or simply not wanting to explain to legal why a relay appeared
+somewhere nobody chose — to never have Karst stand anything up in a given
+region, independent of cost or latency. §4b's own candidate-discovery
+capability is what makes this worth deciding explicitly now rather than
+assuming it will never come up: before this ADR, the only regions in play
+were ones an operator typed in by hand; after it, the system itself
+proposes ones nobody did.
+
+**The mechanism is an allowlist, not a denylist, enforced in two places.**
+
+- **At discovery (§4b).** The anchor dispatcher only ever enumerates and
+  probes region codes present in the operator's `allowed_regions` list for
+  that provider. A region not on the list is never measured, never
+  resolved, never appears in the Phase 1 Advisor's output as a
+  possibility — it generates zero network traffic of any kind, because it
+  was never a candidate to begin with. This is deliberately stronger than
+  "don't recommend it": the system never even looks.
+- **At pool creation (§1), for every pool regardless of how it was
+  proposed.** A pool — operator-declared by hand, or a candidate region
+  being promoted by the planner — is validated against the allowlist for
+  its provider before it can exist at all, with the same named-field,
+  fail-fast rejection style `relayreg.go`'s `compile()` already uses for a
+  malformed declared location. This is the actual backstop: it catches an
+  operator's own typo the same way it catches anything the planner might
+  otherwise have proposed, and it does not depend on §4b having run
+  first — an operator who never enables region discovery and only ever
+  adds pools by hand still gets the same guardrail.
+
+**Allowlist, because a denylist fails open.** A provider opening a new
+region tomorrow is automatically *excluded* under an allowlist until an
+operator deliberately adds it, and automatically *included* under a
+denylist until someone remembers to block it. The harm this section
+exists to prevent — something appearing somewhere nobody intended — is
+exactly the failure mode a denylist cannot structurally rule out and an
+allowlist can.
+
+**Scoped to region codes, not inferred jurisdictions.** The list is
+`allowed_regions: { aws: [...], gcp: [...], azure: [...] }` — provider
+region codes, the same identifier §1's pools and §4b's anchors already
+use. Karst does not maintain its own mapping from region code to country
+or legal jurisdiction to decide this *for* the operator — that mapping
+can change, differs by who's asking (a compliance team's definition of
+"in the EU" is not always a geography question), and getting it wrong
+quietly would be worse than not having it, the same accuracy argument §4a
+already made against GeoIP. An operator who wants "no EU regions" writes
+down the EU region codes themselves; Karst enforces the list exactly as
+written, nothing it infers on top of it. On-prem and `generic` pools are
+exempt — their location is a single operator decision made once per pool,
+not something auto-discovered or auto-proposed.
+
+**Enforced independently of the planner's correctness, the same way §6
+already requires for spend.** The allowlist check is not only a filter
+inside the optimizer — it is also a hard gate in the driver layer (§5),
+mirroring §6's "spend is bounded independently of the planner's
+correctness" circuit breaker exactly. A bug in the planner, a corrupted
+candidate list, or a compromised component upstream of the driver must
+not be able to create a resource in a region the operator excluded; the
+driver refuses regardless of what it is asked to do.
+
+**No default.** Until an operator configures `allowed_regions` for a
+provider, §4b's discovery for that provider does not run (it has nothing
+to enumerate) and §1 pool creation for that provider is refused outright,
+including by hand. This is a deliberate fail-closed default, not an
+oversight: the alternative — defaulting to "every region" until someone
+locks it down — is precisely the gap this section exists to close, and
+this project's own convention is to tell an operator what they must set
+rather than quietly assume the permissive answer (the same reasoning
+`detect_location` and §4b's own opt-in flag already apply one level up).
+
 ### 5. Drivers: actuation behind a narrow interface
 
 The planner never calls a cloud API. It emits desired state to a **driver**
@@ -461,6 +548,11 @@ whatever the operator already trusts.
   that may be compromised or misreporting; the planner clamps per-relay
   contributions and ignores a relay whose report is not signed by its roster
   identity.
+- **The region allowlist (§4c) is enforced in the driver, not only in the
+  planner.** Same shape as the budget circuit breaker above: a bug in the
+  planner or a corrupted candidate list must not be able to create a
+  resource in a region the operator excluded. The driver checks
+  independently and refuses regardless of what it is asked to do.
 
 ### 7. Phasing
 
@@ -620,6 +712,26 @@ corner:
   multi-tenant, public service in every region (S3) built for exactly this
   kind of reachability. Standing up a parallel one duplicates
   infrastructure that already exists for free.
+- **A region denylist instead of an allowlist (§4c).** Rejected: a denylist
+  is automatically *permissive* for any region nobody has thought to add
+  yet, including a new one a provider opens tomorrow — exactly the "it
+  appeared somewhere nobody intended" failure this section exists to rule
+  out. An allowlist is automatically *restrictive* until an operator
+  deliberately widens it, which is the direction a legal-exposure control
+  should fail in.
+- **Karst inferring jurisdiction from region code (§4c)**, so an operator
+  could write "no EU" instead of enumerating region codes. Rejected: that
+  mapping is a legal judgment, not a technical fact Karst can look up
+  once and trust — it changes, and whose definition of "the EU" applies
+  depends on who's asking. Getting it wrong silently would undermine the
+  entire point of the control. The operator writes the region codes;
+  Karst enforces exactly what was written.
+- **Defaulting `allowed_regions` to "every region" until an operator locks
+  it down (§4c).** Rejected: that is the exact gap this section exists to
+  close, just deferred to whether someone remembers to configure it.
+  Fail-closed — no pool creation for a provider with no configured
+  allowlist — costs an operator one config file and removes the gap
+  entirely rather than narrowing it.
 
 ---
 
@@ -672,6 +784,17 @@ corner:
   reachable and behaving the way they have for years. This is a dependency
   on another company's infrastructure behaving as documented, not
   infrastructure Karst controls — named here rather than assumed away.
+- **The region allowlist (§4c) is a technical control, not legal advice.**
+  Karst enforces exactly the region codes an operator writes down; it has
+  no opinion on and makes no claim about whether that list actually
+  satisfies whatever sanctions, residency, or export-control obligation
+  motivated it. Getting the list right is the operator's and their
+  legal team's call.
+- **No default means genuinely no pools until configured.** An operator who
+  enables the scaler at all now has one more required piece of
+  configuration before any pool — even a hand-declared one — can exist.
+  This is a real, if small, new setup step for every deployment that uses
+  §1's pool model, not only ones that also use §4b.
 
 ### Reconsider if
 
@@ -689,6 +812,11 @@ corner:
 - AWS materially changes S3's regional-endpoint behavior (auth requirement,
   deprecation, rate limiting a bare TCP handshake) — §4b's mechanism would
   need a different anchor, not just a config change.
+- Operators ask for self-service editing of `allowed_regions` through the
+  console rather than a boot-time file — the same "file-loaded,
+  operator-only, no HTTP endpoint in this pass" deferral ADR-0037 already
+  made for tenancy grants, and the same answer applies here until this
+  shape has seen real use.
 
 ---
 
