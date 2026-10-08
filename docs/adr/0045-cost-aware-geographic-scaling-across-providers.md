@@ -393,26 +393,64 @@ resolution is the entire input. (AWS's published `ip-ranges.json` is a
 defense-in-depth cross-check against DNS spoofing, if ever wanted — not a
 requirement for the mechanism to work.)
 
-**AWS only, for now.** GCP's default storage endpoint is a single global
-anycast address, not per-region — it measures distance to Google's edge
-network, a different and less useful signal than distance to a specific
-GCP compute region. Azure's regional endpoints generally require creating
-a resource (e.g. one storage account per region) rather than hitting
-something already running for every customer and non-customer alike.
-Neither is a straightforward copy of the AWS mechanism, and guessing at
-either provider's equivalent without verifying it against the real
-service would put a wrong hostname pattern into a design document as if
-it were settled fact. Each gets its own verification and its own arm in
-the same dispatcher (ADR-0048's `cloud_location::detect` pattern: a plain
-function per provider, not a trait, until a second real implementation
-exists to design the abstraction against) once someone checks what each
-provider actually offers.
+**One anchor pattern per provider, each verified against the real
+service (2026-10-08).** The same bar applies to every provider: a
+permanent, multi-tenant, public endpoint per region that completes an
+unauthenticated TCP handshake, needs nothing provisioned, and is keyed by
+the provider's own region code so §4c's `allowed_regions` lists drive it
+with no mapping table.
+
+| Provider | Anchor | Coverage | Evidence the address is in-region |
+|---|---|---|---|
+| AWS | `s3.<region>.amazonaws.com` | all regions | `ip-ranges.json` tags each prefix with its region |
+| Azure | `<region>.livediagnostics.monitor.azure.com` | every public region tried except `westcentralus` | each address sits in that region's own `AzureCloud.<region>` prefix in the published service tags; no address is shared between regions |
+| Azure (fallback) | `<region>.api.cognitive.microsoft.com` | 37 regions, including `westcentralus` | same check, 37 of 37 in-region, none shared |
+| GCP | `storage.<region>.rep.googleapis.com` | 45 of 47 regions (not yet `asia-southeast3`, `europe-west15`) | Google documents that traffic to a regional endpoint is "processed and TLS terminated entirely within the specified region"; each region resolves to its own distinct address |
+
+What these replace, and why the obvious candidates fail:
+
+- **GCP's default storage endpoint is global anycast**, as is every
+  `<region>-<service>.googleapis.com` name checked (`-aiplatform`, `-run`,
+  `-docker.pkg.dev`): every region resolves to the same handful of
+  addresses, so a handshake measures distance to Google's edge, not to the
+  region. The regional endpoints (`*.rep.googleapis.com`, built for data
+  residency) are the exception, and the only GCP names that pass.
+- **Azure Storage has no per-region shared hostname** — account names are
+  global, so a storage anchor would need one account per region, which is
+  the provisioning §4b exists to avoid. Azure Monitor's Live Metrics
+  ingestion endpoint is the service that does pass. Regional ARM
+  (`<region>.management.azure.com`) looks regional and is not: every region
+  resolves to the same two front-door addresses.
+- **GCP is the weakest of the three.** The regional-endpoint addresses are
+  in Google's services ranges (`goog.json`), not the region-tagged
+  `cloud.json`, so there is no published address-to-region mapping to
+  cross-check against the way `ip-ranges.json` and the Azure service tags
+  allow. The evidence is Google's documented in-region TLS termination plus
+  one distinct address per region. An RTT check from two distant vantage
+  points (near/far must flip between them) is what closes that gap, and
+  should be done before the GCP arm ships.
+
+The dispatcher stays ADR-0048's shape — a plain function per provider, not
+a trait — with each arm formatting its own hostname from a region code. A
+region whose anchor does not resolve (GCP's newest regions, Azure's
+restricted ones) is simply unmeasured, not an error.
+
+**None of these services exist to be probed.** Each is a provider's
+production endpoint, used here for reachability it already offers, and
+each can change: regional ARM shows exactly how a regional-looking name
+ends up behind a global front door. The guard is cheap and lives outside
+the client — a periodic check (CI or a scheduled job) that resolves every
+allowlisted region's anchor and fails if any two regions share an address,
+which is the signature of a service moving behind anycast. Checking
+resolved addresses against each provider's published region ranges, where
+one exists, is the same defense-in-depth cross-check already described
+for AWS above.
 
 **New client-side network dependency, same treatment as ADR-0048's relay
 side.** This is telemetry `karstd` does not emit today — §4a's histogram
 is relay-side only. It needs its own opt-in flag, defaulting off, and
 must be a true no-op in air-gapped deployments (ADR-0039): a node that
-never enables it never resolves a single AWS hostname. Default-off for
+never enables it never resolves a single provider hostname. Default-off for
 the same reason `detect_location` is default-off on the relay side —
 every node silently gaining a new outbound target on upgrade is the
 "quietly ignored, not told" pattern this project avoids elsewhere;
@@ -780,9 +818,12 @@ corner:
   exfiltrated like any operational data. Retention length is a security
   decision, not just a modeling one.
 - **A new third-party dependency, opt-in but real (§4b).** A node with
-  region-discovery enabled depends on AWS's S3 regional endpoints staying
-  reachable and behaving the way they have for years. This is a dependency
-  on another company's infrastructure behaving as documented, not
+  region-discovery enabled depends on each provider's anchor endpoint (S3
+  for AWS, Azure Monitor Live Metrics, GCP regional endpoints) staying
+  reachable and behaving the way it does today. The non-AWS anchors are
+  services that were never meant as probe targets, which is why §4b pairs
+  them with a shared-address check. This is a dependency on another
+  company's infrastructure behaving as documented, not
   infrastructure Karst controls — named here rather than assumed away.
 - **The region allowlist (§4c) is a technical control, not legal advice.**
   Karst enforces exactly the region codes an operator writes down; it has
@@ -809,9 +850,10 @@ corner:
 - Operators overwhelmingly want a managed service rather than self-run
   scaling; that conflicts with ADR-0008 §5 and would need that ADR revisited
   first.
-- AWS materially changes S3's regional-endpoint behavior (auth requirement,
-  deprecation, rate limiting a bare TCP handshake) — §4b's mechanism would
-  need a different anchor, not just a config change.
+- A provider materially changes its anchor's behavior (auth requirement,
+  deprecation, rate limiting a bare TCP handshake, or moving it behind
+  anycast, which §4b's shared-address check is there to catch) — that
+  provider's arm would need a different anchor, not just a config change.
 - Operators ask for self-service editing of `allowed_regions` through the
   console rather than a boot-time file — the same "file-loaded,
   operator-only, no HTTP endpoint in this pass" deferral ADR-0037 already
@@ -856,10 +898,11 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
    multi-tenant case, #166) is a separate decision.
 7. **Default retention for demand history** (§8): long enough to see
    seasonality, short enough to bound the sensitivity.
-8. **GCP and Azure equivalents of §4b's AWS anchor mechanism.** AWS's trick
-   (a permanent, multi-tenant, public per-region endpoint that needs nothing
-   provisioned) does not obviously transfer: GCP's default storage endpoint
-   is a single global anycast address, not per-region, and Azure's regional
-   endpoints generally require creating a resource first. Each provider
-   needs its own verification against the real service before it gets its
-   own arm in the anchor dispatcher — not a guessed hostname pattern.
+8. **~~GCP and Azure equivalents of §4b's AWS anchor mechanism.~~
+   Resolved — see §4b.** Azure uses its Monitor Live Metrics regional
+   endpoint (`<region>.livediagnostics.monitor.azure.com`), GCP its
+   regional service endpoints (`storage.<region>.rep.googleapis.com`), each
+   checked against published IP ranges or provider documentation on
+   2026-10-08. What remains open: a two-vantage-point RTT check of the GCP
+   anchor before its arm ships, since GCP publishes no region mapping for
+   those addresses.
