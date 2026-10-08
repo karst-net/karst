@@ -24,6 +24,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -101,6 +102,16 @@ type NetmapHandler struct {
 	// lock).
 	BedrockMode interface {
 		Mode(ctx context.Context, accountID string) proto.KarstBedrockMode
+	}
+
+	// RegionAllow is ADR-0045 §4c's deployment-wide region allowlist store.
+	// Nil means the deployment has not configured one — the projected
+	// KarstAllowedRegions is then absent, not a permissive "every region",
+	// matching the fail-closed default regionallow.go's own doc comment
+	// describes. Deployment-wide rather than account-scoped, so unlike every
+	// other store here this one's method takes no accountID.
+	RegionAllow interface {
+		AllowedRegions(ctx context.Context) (regionallow.Document, error)
 	}
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
@@ -359,6 +370,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("project dns config: %w", err)
+	}
+	resp.AllowedRegions, err = h.allowedRegions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project allowed regions: %w", err)
 	}
 	if h.Routes != nil {
 		networkMap, routeErr := h.Routes.GetNetworkMap(ctx, selfPeer.ID)
@@ -723,6 +738,42 @@ func allowedIPsOf(p *nbpeer.Peer) []string {
 	return out
 }
 
+// allowedRegions projects ADR-0045 §4c's deployment-wide region allowlist.
+// Nil RegionAllow (no store configured) produces a nil response field, the
+// same "feature not configured" shape DnsConfig/Routes/Bedrock use elsewhere
+// in this handler, and is not an error.
+//
+// Deployment-wide rather than account-scoped, unlike every other projector
+// here: accountID plays no part, since the allowlist is one list for the
+// whole control server, not per account.
+func (h *NetmapHandler) allowedRegions(ctx context.Context) (*proto.KarstAllowedRegions, error) {
+	if h.RegionAllow == nil {
+		return nil, nil
+	}
+	doc, err := h.RegionAllow.AllowedRegions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(doc) == 0 {
+		return nil, nil
+	}
+	providers := make([]string, 0, len(doc))
+	for provider := range doc {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	entries := make([]*proto.KarstAllowedRegions_Entry, 0, len(providers))
+	for _, provider := range providers {
+		regions := append([]string(nil), doc[provider]...)
+		sort.Strings(regions)
+		entries = append(entries, &proto.KarstAllowedRegions_Entry{
+			Provider: provider,
+			Regions:  regions,
+		})
+	}
+	return &proto.KarstAllowedRegions{Providers: entries}, nil
+}
+
 // NetmapVersion is a content hash: identical netmaps always yield the same
 // version, and any change yields a different one. That is what lets a node ask
 // "has anything changed?" without the server keeping per-node history.
@@ -902,6 +953,19 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 	// one change the server could not deliver.
 	binary.BigEndian.PutUint32(buf[:4], uint32(head.GetMode()))
 	h.Write(buf[:4])
+
+	// ADR-0045 §4c's region allowlist, so a narrowed or widened list reaches
+	// nodes on their next poll instead of waiting for some unrelated field to
+	// change. allowedRegions already returns providers and each provider's
+	// regions sorted, so this hashes in the same deterministic order both
+	// ends agree on.
+	writeField(h, []byte("karst-allowed-regions"))
+	for _, entry := range resp.GetAllowedRegions().GetProviders() {
+		writeField(h, []byte(entry.GetProvider()))
+		for _, region := range entry.GetRegions() {
+			writeField(h, []byte(region))
+		}
+	}
 
 	sum := h.Sum(nil)
 	v := binary.BigEndian.Uint64(sum[:8])

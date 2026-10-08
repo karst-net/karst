@@ -277,6 +277,10 @@ pub struct NetmapContent<'a> {
     /// The tip of the Bedrock log the server is serving. Part of the content
     /// hash so a log that has moved cannot be reported as `unchanged`.
     pub bedrock_head: BedrockHeadView<'a>,
+    /// ADR-0045 §4c's deployment-wide region allowlist. Part of the content
+    /// hash so a narrowed or widened allowlist reaches a node on its next
+    /// poll rather than waiting for some unrelated field to change.
+    pub allowed_regions: &'a [AllowedRegionsEntryView<'a>],
 }
 
 /// The Bedrock log tip as the version hash sees it — `bedrock-v1.md` §5.
@@ -295,6 +299,14 @@ pub struct BedrockHeadView<'a> {
     /// change. Without it, turning on the network lock would be a change the
     /// server could not deliver.
     pub mode: u32,
+}
+
+/// One provider's slice of ADR-0045 §4c's deployment-wide region allowlist,
+/// as the version hash sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllowedRegionsEntryView<'a> {
+    pub provider: &'a str,
+    pub regions: &'a [String],
 }
 
 /// The netmap's content hash — `NetmapVersion` in `control/netmap.go`.
@@ -403,6 +415,19 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
     push(&mut h, content.bedrock_head.hash);
     push(&mut h, &content.bedrock_head.seq.to_be_bytes());
     h.update(content.bedrock_head.mode.to_be_bytes());
+
+    // ADR-0045 §4c's region allowlist, so a narrowed or widened list reaches
+    // this node on its next poll instead of waiting for some unrelated field
+    // to change. The caller (karstd's `AllowedRegions`) already provides
+    // providers and each provider's regions sorted, matching the Go side's
+    // own deterministic ordering.
+    push(&mut h, b"karst-allowed-regions");
+    for entry in content.allowed_regions {
+        push(&mut h, entry.provider.as_bytes());
+        for region in entry.regions {
+            push(&mut h, region.as_bytes());
+        }
+    }
 
     let v = leading_u64(&h.finalize());
     // Zero means "I hold no netmap" on the request side, so it must never be a

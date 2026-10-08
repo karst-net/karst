@@ -31,8 +31,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use karst_control_client::netmap::{
-    netmap_version, peer_digest, BedrockHeadView, DNSConfigView, DNSRouteView, DNSUpstreamView,
-    FilterRuleView, NetmapContent, PeerEntry, RelayView,
+    netmap_version, peer_digest, AllowedRegionsEntryView, BedrockHeadView, DNSConfigView,
+    DNSRouteView, DNSUpstreamView, FilterRuleView, NetmapContent, PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -177,6 +177,60 @@ impl BedrockHead {
         } else {
             None
         }
+    }
+}
+
+/// ADR-0045 §4c's deployment-wide region allowlist, as pushed down by the
+/// server. Absent means the deployment has not configured one — §4b's
+/// anchor dispatcher then enumerates nothing for any provider, the
+/// fail-closed default `regionallow.go`'s own doc comment describes, never
+/// a permissive "every region".
+///
+/// Deterministic iteration order (`BTreeMap`, not `HashMap`): this feeds
+/// both the netmap content hash (`AllowedRegionsEntryView`, below) and §4b's
+/// own probe loop, and neither should depend on hash-map iteration order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AllowedRegions(BTreeMap<String, Vec<String>>);
+
+impl AllowedRegions {
+    fn from_wire(msg: Option<pb::KarstAllowedRegions>) -> Self {
+        let Some(msg) = msg else {
+            return Self::default();
+        };
+        Self(
+            msg.providers
+                .into_iter()
+                .map(|entry| (entry.provider, entry.regions))
+                .collect(),
+        )
+    }
+
+    /// `None` for an empty allowlist rather than a present-but-empty
+    /// message, so re-encoding into the on-disk cache reproduces the bytes
+    /// the server sent — and therefore the same content hash. Matches
+    /// `BedrockHead::to_wire`'s own reasoning.
+    fn to_wire(&self) -> Option<pb::KarstAllowedRegions> {
+        if self.0.is_empty() {
+            return None;
+        }
+        Some(pb::KarstAllowedRegions {
+            providers: self
+                .0
+                .iter()
+                .map(|(provider, regions)| pb::karst_allowed_regions::Entry {
+                    provider: provider.clone(),
+                    regions: regions.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// The regions this node may enumerate or probe for `provider` —
+    /// ADR-0045 §4c. Empty for a provider with no entry: "never a candidate
+    /// to begin with" means there is nothing here to iterate, not an error.
+    #[must_use]
+    pub fn regions_for(&self, provider: &str) -> &[String] {
+        self.0.get(provider).map_or(&[][..], Vec::as_slice)
     }
 }
 
@@ -732,6 +786,10 @@ pub struct Netmap {
     /// against what a peer reports at session setup. Part of the netmap content
     /// hash, so a server that advances its log cannot report `unchanged`.
     pub bedrock_head: BedrockHead,
+    /// ADR-0045 §4c's deployment-wide region allowlist, projected for §4b's
+    /// anchor dispatcher. Part of the netmap content hash, so a narrowed or
+    /// widened allowlist reaches this node on its next poll.
+    pub allowed_regions: AllowedRegions,
     /// Peers, keyed by handle. Ordered, so digests and the re-encoded form are
     /// deterministic rather than dependent on hash iteration order.
     peers: BTreeMap<Vec<u8>, Peer>,
@@ -817,6 +875,7 @@ impl Netmap {
             dns_name: String::new(),
             dns_config: DNSConfig::default(),
             bedrock_head: BedrockHead::default(),
+            allowed_regions: AllowedRegions::default(),
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
             ssh_filter: Vec::new(),
@@ -913,6 +972,7 @@ impl Netmap {
         self.dns_name = resp.dns_name;
         self.dns_config = DNSConfig::from_wire(resp.dns_config);
         self.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
+        self.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions);
         // The filter is shipped whole even in a delta — it is small, and a rule
         // set assembled from fragments would be a second thing to keep in step.
         // If that ever changes, replacing wholesale here would empty the filter
@@ -1075,6 +1135,12 @@ impl Netmap {
                 upstreams,
             })
             .collect();
+        let allowed_regions: Vec<AllowedRegionsEntryView<'_>> = self
+            .allowed_regions
+            .0
+            .iter()
+            .map(|(provider, regions)| AllowedRegionsEntryView { provider, regions })
+            .collect();
 
         netmap_version(&NetmapContent {
             psk_epoch: self.psk_epoch,
@@ -1101,6 +1167,7 @@ impl Netmap {
                 seq: self.bedrock_head.seq,
                 mode: self.bedrock_head.mode as u32,
             },
+            allowed_regions: &allowed_regions,
         })
     }
 
@@ -1143,6 +1210,7 @@ impl Netmap {
             dns_name: self.dns_name.clone(),
             dns_config: Some(self.dns_config.to_wire()),
             bedrock_head: self.bedrock_head.to_wire(),
+            allowed_regions: self.allowed_regions.to_wire(),
             peers: self.peers.values().map(Peer::to_wire).collect(),
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
@@ -1208,6 +1276,7 @@ mod tests {
         projected.dns_name = resp.dns_name.clone();
         projected.dns_config = DNSConfig::from_wire(resp.dns_config.clone());
         projected.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
+        projected.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions.clone());
         projected.packet_filter = resp.packet_filter.clone();
         projected.egress_filter = resp.egress_filter.clone();
         projected.ssh_filter = resp.ssh_filter.clone();
@@ -1682,6 +1751,57 @@ mod tests {
         with.apply(sealed(response, &with)).expect("apply");
         assert_ne!(without.version, with.version);
         assert_eq!(with.dns_config.nameservers, vec!["1.1.1.1:53"]);
+    }
+
+    #[test]
+    fn changing_only_allowed_regions_changes_the_version_and_replaces_it() {
+        // ADR-0045 §4c.
+        let mut without = Netmap::new();
+        without
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &without))
+            .expect("apply");
+
+        let mut with = Netmap::new();
+        let mut response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        response.allowed_regions = Some(pb::KarstAllowedRegions {
+            providers: vec![
+                pb::karst_allowed_regions::Entry {
+                    provider: "aws".to_owned(),
+                    regions: vec!["us-east-1".to_owned(), "us-west-2".to_owned()],
+                },
+                pb::karst_allowed_regions::Entry {
+                    provider: "aws-gov-cloud".to_owned(),
+                    regions: vec!["us-gov-west-1".to_owned()],
+                },
+            ],
+        });
+        with.apply(sealed(response, &with)).expect("apply");
+        assert_ne!(without.version, with.version);
+        assert_eq!(
+            with.allowed_regions.regions_for("aws"),
+            ["us-east-1", "us-west-2"]
+        );
+        assert_eq!(
+            with.allowed_regions.regions_for("aws-gov-cloud"),
+            ["us-gov-west-1"]
+        );
+        // A provider never listed has nothing to enumerate -- §4c's
+        // fail-closed default, not an error.
+        assert!(with.allowed_regions.regions_for("gcp").is_empty());
+    }
+
+    #[test]
+    fn an_absent_allowed_regions_round_trips_through_the_cache_encoding() {
+        // `to_wire` returns `None` for an empty allowlist so the re-encoded
+        // cache is byte-identical to a server response that never populated
+        // the field -- matching `BedrockHead::to_wire`'s own reasoning.
+        let map = loaded();
+        assert_eq!(map.allowed_regions, AllowedRegions::default());
+        let mut round_tripped = Netmap::new();
+        round_tripped
+            .apply(sealed(map.to_wire_full(), &round_tripped))
+            .expect("apply");
+        assert_eq!(round_tripped.allowed_regions, AllowedRegions::default());
     }
 
     // ── digests ─────────────────────────────────────────────────────────────
