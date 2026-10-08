@@ -187,7 +187,7 @@ A pool is the unit the planner reasons about:
 
 ```
 pool {
-  id, provider,           # aws | azure | gcp | onprem | generic
+  id, provider,           # aws | aws-gov-cloud | azure | azure-gov-cloud | gcp | onprem | generic
   region / site,          # geography, with coordinates or a latency-probe target
   capacity {              # hard ceilings; on-prem is bounded, cloud is "large"
     nodes_max, uplink_mbps_max, ...
@@ -224,7 +224,7 @@ Cost is expressed as **data**, not code, and composed from three primitives:
 - **Edge price** — a price schedule keyed on a **(source pool, destination
   class)** pair, where class is one of `internet`, `same-region`,
   `cross-region`, `cross-provider`, `private-link`. This is where
-  cross-region and "within-AWS" traffic pricing lives.
+  cross-region and within-provider traffic pricing lives.
 
 Plus **commitments**: a reserved or savings-plan quantity is a prepaid band at
 price zero (or a discounted rate) that the optimizer consumes before reaching
@@ -456,12 +456,12 @@ every node silently gaining a new outbound target on upgrade is the
 "quietly ignored, not told" pattern this project avoids elsewhere;
 opting in costs one config line.
 
-**No AZ granularity, and it isn't needed.** AWS's region list is the
-resolvable unit; there is no public, free way to distinguish AZs within
-a region this way, and AZs within a region are typically sub-millisecond
-apart by design. The decision this signal feeds is which *region* to
-stand capacity up in — AZ placement within a chosen region is a
-capacity/availability decision, not a latency one.
+**No AZ granularity, and it isn't needed.** Each provider's region list is
+the resolvable unit; there is no public, free way to distinguish AZs
+within a region this way, and AZs within a region are typically
+sub-millisecond apart by design. The decision this signal feeds is which
+*region* to stand capacity up in — AZ placement within a chosen region is
+a capacity/availability decision, not a latency one.
 
 A candidate region is promoted to a real pool (§1) — gaining a cost model
 (§2) and a driver (§5) — only when the aggregate signal here shows a
@@ -524,6 +524,23 @@ down the EU region codes themselves; Karst enforces the list exactly as
 written, nothing it infers on top of it. On-prem and `generic` pools are
 exempt — their location is a single operator decision made once per pool,
 not something auto-discovered or auto-proposed.
+
+**A sovereign cloud with its own account/auth boundary is a separate
+provider, not a region — but only where that boundary actually exists.**
+AWS GovCloud and Azure Government are each a distinct partition from
+their commercial cloud: a separate account (AWS) or tenant/ARM endpoint
+(Azure), a separate ARN/resource-ID namespace, and separate pricing. Each
+gets its own key — `allowed_regions.aws-gov-cloud`,
+`allowed_regions.azure-gov-cloud` — independent of `allowed_regions.aws`
+and `allowed_regions.azure`. Folding either under its commercial parent
+would let a commercial-region entry (or a typo) reach across a boundary
+the provider itself treats as a hard separation; keeping it a separate
+provider means the allowlist can only ever widen one partition at a
+time, by name. **GCP has no equivalent arm**, not because it was missed
+but because it has no equivalent boundary: Google's government/compliance
+offerings (Assured Workloads and similar) are policy layered onto the
+same commercial account, API surface, and region list `gcp` already
+covers — there is no second partition for a second provider key to name.
 
 **Enforced independently of the planner's correctness, the same way §6
 already requires for spend.** The allowlist check is not only a filter
@@ -746,10 +763,12 @@ corner:
   running there, which is exactly the cost and operational burden §4b is
   designed to avoid.
 - **A standing probe-only anchor we operate in every candidate region
-  (§4b).** Rejected for the same reason: AWS already runs a permanent,
-  multi-tenant, public service in every region (S3) built for exactly this
-  kind of reachability. Standing up a parallel one duplicates
-  infrastructure that already exists for free.
+  (§4b).** Rejected for the same reason: every provider §4b supports
+  already runs a permanent, multi-tenant, public service in each region
+  (S3 for AWS, Azure Monitor Live Metrics, GCP's regional endpoints) built
+  for exactly this kind of reachability, or close enough to repurpose.
+  Standing up a parallel one duplicates infrastructure that already exists
+  for free.
 - **A region denylist instead of an allowlist (§4c).** Rejected: a denylist
   is automatically *permissive* for any region nobody has thought to add
   yet, including a new one a provider opens tomorrow — exactly the "it

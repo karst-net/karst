@@ -450,7 +450,7 @@ free_allowance = 10.0
     fn a_commitment_is_charged_once_per_period_even_with_no_usage() {
         let d = doc(r#"
 [pools.p]
-provider = "aws"
+provider = "onprem"
 region = "us-east-1"
 [pools.p.cost_model.meters.instance_hours]
 mode = "graduated"
@@ -473,7 +473,7 @@ price = 5.0
     fn a_commitment_is_consumed_before_the_schedule() {
         let d = doc(r#"
 [pools.p]
-provider = "aws"
+provider = "onprem"
 region = "us-east-1"
 [pools.p.cost_model.meters.instance_hours]
 mode = "graduated"
@@ -504,7 +504,7 @@ price = 5.0
     fn edge_usage_is_reported_separately_from_meter_usage() {
         let d = doc(r#"
 [pools.p]
-provider = "aws"
+provider = "onprem"
 region = "us-east-1"
 [pools.p.cost_model.edges.cross-region]
 mode = "graduated"
@@ -588,7 +588,7 @@ bands = [{ up_to = 10.0, unit_price = 0.1 }]
     fn minimum_increment_rounds_each_record_up_before_summing() {
         let d = doc(r#"
 [pools.p]
-provider = "aws"
+provider = "onprem"
 region = "us-east-1"
 [pools.p.cost_model.meters.instance_hours]
 mode = "graduated"
