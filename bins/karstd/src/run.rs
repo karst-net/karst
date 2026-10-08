@@ -413,6 +413,7 @@ mod run_embedded_tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         }
     }
 
@@ -811,6 +812,18 @@ fn run_engine(
         Arc::clone(&home_sweep_duration_ms_count),
     );
 
+    // ADR-0045 §4b. `allowed_regions` is the refresh loop's own projection of
+    // whatever netmap it currently holds — refreshed after every successful
+    // sync, the same way `routes`/`gateway`/`dns_runtime` already are —
+    // because `anchor_probe::run` cannot read `client.netmap()` itself: the
+    // refresh loop owns the one `control::Client` value exclusively for the
+    // daemon's lifetime. `anchor_rtt_pending` carries the opposite
+    // direction: measurements queued here by the probe thread, drained by
+    // the refresh loop right before its next request, mirroring how
+    // `sessions` is built fresh from `engine.status()` on the same line.
+    let allowed_regions = Mutex::new(crate::netmap::AllowedRegions::default());
+    let anchor_rtt_pending: Mutex<Vec<pb::KarstAnchorRtt>> = Mutex::new(Vec::new());
+
     // Initial handshakes, before any thread starts.
     dispatch(
         engine.connect_all(now_ms(started), random_seed),
@@ -848,6 +861,7 @@ fn run_engine(
         prefer_quic_relay: config.prefer_quic_relay,
         exit_node_state_file: config.exit_node_state_file.clone(),
         datapath_workers: config.datapath_workers,
+        anchor_probe_enabled: config.anchor_probe_enabled,
     };
     // The control client owns the ML-DSA identity. Clone its `Arc` before the
     // refresh worker takes ownership of the client, so the relay reader can
@@ -1424,6 +1438,8 @@ fn run_engine(
             let control_endpoint_refresh = control_endpoint.as_deref();
             let last_push_refresh = &last_push;
             let control_synchronized_refresh = &control_synchronized;
+            let allowed_regions_refresh = &allowed_regions;
+            let anchor_rtt_refresh = &anchor_rtt_pending;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -1447,8 +1463,21 @@ fn run_engine(
                     turn_out,
                     last_push_refresh,
                     control_synchronized_refresh,
+                    allowed_regions_refresh,
+                    anchor_rtt_refresh,
                 );
             });
+
+            // ADR-0045 §4b. Opt-in: a node that has not set
+            // `[probe] anchor_probe` spawns nothing here and so never
+            // resolves a single provider hostname.
+            if config.anchor_probe_enabled {
+                let allowed_regions_probe = &allowed_regions;
+                let anchor_rtt_probe = &anchor_rtt_pending;
+                scope.spawn(move || {
+                    crate::anchor_probe::run(allowed_regions_probe, anchor_rtt_probe, shutdown);
+                });
+            }
         }
 
         // ── explicit port mapping ──────────────────────────────────────────
@@ -5847,6 +5876,8 @@ fn refresh_netmap(
     turned: Option<&TurnSender>,
     last_push: &Mutex<Option<Instant>>,
     control_synchronized: &std::sync::atomic::AtomicBool,
+    allowed_regions: &Mutex<crate::netmap::AllowedRegions>,
+    anchor_rtt: &Mutex<Vec<pb::KarstAnchorRtt>>,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -5987,6 +6018,15 @@ fn refresh_netmap(
             })
             .collect();
         client.set_session_observations(sessions);
+        // ADR-0045 §4b. Drained, not cloned: whatever the probe thread
+        // queued since the last request is sent exactly once, the same
+        // "observation queued here, sent on the next request" contract
+        // `sessions` above honors by being rebuilt fresh every tick.
+        client.set_anchor_rtt_observations(std::mem::take(
+            &mut *anchor_rtt
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ));
         published = chosen;
 
         let synced = runtime.block_on(client.sync());
@@ -5996,6 +6036,19 @@ fn refresh_netmap(
         // moved, and the two advance independently — a log that grew while the
         // netmap stood still is the ordinary case after a countersignature.
         engine.set_bedrock(client.bedrock_snapshot());
+        // ADR-0045 §4b's other direction: project the allowlist this sync
+        // just confirmed (or reconfirmed, on an `Unchanged` response) so
+        // `anchor_probe::run` has a current view without ever touching
+        // `client` itself. Updated on every poll, not only when the netmap
+        // changes, since `Unchanged` is the overwhelmingly common case and
+        // the probe thread would otherwise run against a stale allowlist for
+        // as long as nothing else about the netmap happened to move.
+        if synced.is_ok() {
+            *allowed_regions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                client.netmap().allowed_regions.clone();
+        }
 
         let outcome = match synced {
             // Nothing moved. The overwhelmingly common case, and the one the
@@ -6489,6 +6542,7 @@ mod route_tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         }
     }
 
@@ -7203,6 +7257,7 @@ mod probe_tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         })
     }
 
@@ -8075,6 +8130,7 @@ mod probe_tests {
             filter: crate::filter::PacketFilter::unrestricted(),
             ssh_filter: crate::filter::SshFilter::absent(),
             datapath_workers: 1,
+            anchor_probe_enabled: false,
         }
     }
 }

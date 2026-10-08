@@ -147,6 +147,7 @@ fn server_config(filter: PacketFilter, ssh_filter: SshFilter) -> Arc<Config> {
         filter,
         ssh_filter,
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     })
 }
 

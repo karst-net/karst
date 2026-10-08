@@ -111,6 +111,7 @@ fn config_for(
         // tests/ssh_gate.rs.
         ssh_filter: karstd::filter::SshFilter::absent(),
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     };
     Arc::new(config)
 }

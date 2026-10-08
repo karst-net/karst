@@ -198,6 +198,7 @@ fn local() -> LocalSettings {
         nat64: None,
         exit_node_state_file: None,
         datapath_workers: 1,
+        anchor_probe_enabled: false,
     }
 }
 

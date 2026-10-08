@@ -104,14 +104,18 @@ type NetmapHandler struct {
 		Mode(ctx context.Context, accountID string) proto.KarstBedrockMode
 	}
 
-	// RegionAllow is ADR-0045 §4c's deployment-wide region allowlist store.
-	// Nil means the deployment has not configured one — the projected
-	// KarstAllowedRegions is then absent, not a permissive "every region",
-	// matching the fail-closed default regionallow.go's own doc comment
-	// describes. Deployment-wide rather than account-scoped, so unlike every
-	// other store here this one's method takes no accountID.
+	// RegionAllow is ADR-0045 §4c's deployment-wide region allowlist store,
+	// and §4b's anchor-RTT histogram sink. Nil means the deployment has not
+	// configured one — the projected KarstAllowedRegions is then absent, not
+	// a permissive "every region", matching the fail-closed default
+	// regionallow.go's own doc comment describes; an absent allowlist also
+	// means every reported KarstAnchorRtt entry is rejected by
+	// recordAnchorRTT below, since nothing is allowlisted to validate against.
+	// Deployment-wide rather than account-scoped, so unlike every other store
+	// here these methods take no accountID.
 	RegionAllow interface {
 		AllowedRegions(ctx context.Context) (regionallow.Document, error)
+		RecordAnchorRTT(ctx context.Context, provider, region string, rttMs uint32) error
 	}
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
@@ -300,6 +304,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			log.WithError(err).WithField("node", self).Warn("record Karst session observations")
 		}
 	}
+
+	// ADR-0045 §4b. Like sessions above, this is advisory telemetry: a
+	// failure to record never denies the node its netmap.
+	h.recordAnchorRTT(ctx, self, req.GetAnchorRtt())
 
 	handles := make([]string, 0, len(peers))
 	for _, p := range peers {
@@ -772,6 +780,53 @@ func (h *NetmapHandler) allowedRegions(ctx context.Context) (*proto.KarstAllowed
 		})
 	}
 	return &proto.KarstAllowedRegions{Providers: entries}, nil
+}
+
+// recordAnchorRTT validates and records §4b's anchor-RTT reports.
+//
+// **Defense in depth, not trust.** The reporting node already had the
+// allowlist handed to it on a previous response, so an honest node reports
+// only (provider, region) pairs it was told about — but this re-checks every
+// entry against the deployment's *current* allowlist anyway, the same way
+// the session-observation block above re-checks peer handles against the
+// account's *current* peer list rather than trusting what a node claims. A
+// buggy or compromised node reporting an unlisted region must not be able to
+// pollute an aggregate that Phase 1's Advisor will eventually read.
+//
+// An absent or empty allowlist rejects every entry: there is nothing to
+// validate a report against, so §4c's fail-closed default extends here too.
+func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, reports []*proto.KarstAnchorRtt) {
+	if h.RegionAllow == nil || len(reports) == 0 {
+		return
+	}
+	allowed, err := h.RegionAllow.AllowedRegions(ctx)
+	if err != nil {
+		log.WithError(err).WithField("node", self).Warn("load allowed regions for anchor RTT validation")
+		return
+	}
+	for _, report := range reports {
+		provider, region := report.GetProvider(), report.GetRegion()
+		if !regionAllowed(allowed, provider, region) {
+			log.WithFields(log.Fields{"node": self, "provider": provider, "region": region}).
+				Warn("ignore Karst anchor RTT report for a region outside the deployment's allowlist")
+			continue
+		}
+		if err := h.RegionAllow.RecordAnchorRTT(ctx, provider, region, report.GetRttMs()); err != nil {
+			// Advisory, like session telemetry above: a database failure here
+			// must not cost the node its netmap.
+			log.WithError(err).WithFields(log.Fields{"node": self, "provider": provider, "region": region}).
+				Warn("record Karst anchor RTT observation")
+		}
+	}
+}
+
+func regionAllowed(doc regionallow.Document, provider, region string) bool {
+	for _, allowed := range doc[provider] {
+		if allowed == region {
+			return true
+		}
+	}
+	return false
 }
 
 // NetmapVersion is a content hash: identical netmaps always yield the same
