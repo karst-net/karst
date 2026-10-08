@@ -1767,6 +1767,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "karst-scaler"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "karst-secure-storage"
 version = "0.0.0"
 dependencies = [
