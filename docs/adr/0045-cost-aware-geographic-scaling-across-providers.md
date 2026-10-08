@@ -525,6 +525,14 @@ written, nothing it infers on top of it. On-prem and `generic` pools are
 exempt — their location is a single operator decision made once per pool,
 not something auto-discovered or auto-proposed.
 
+**AWS GovCloud is a separate provider, not a region.** It is a distinct
+AWS partition — its own account, its own ARN namespace, its own
+pricing — so it gets its own key, `allowed_regions.aws-gov-cloud`,
+independent of `allowed_regions.aws`. Folding it under `aws` would let a
+commercial-region entry (or a typo) reach across a boundary AWS itself
+treats as a hard separation; keeping it a separate provider means the
+allowlist can only ever widen one partition at a time, by name.
+
 **Enforced independently of the planner's correctness, the same way §6
 already requires for spend.** The allowlist check is not only a filter
 inside the optimizer — it is also a hard gate in the driver layer (§5),

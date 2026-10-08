@@ -9,6 +9,12 @@
 //! that is a separate, not-yet-built helper (§2's precedence order item 2),
 //! and an operator-maintained TOML file is precedence order item 1 either
 //! way: "committed as a reviewable file, never silently hot-reloaded."
+//!
+//! [`Document::allowed_regions`] is §4c's deployment-wide backstop: a
+//! region-bound pool's `(provider, region)` must appear there, checked by
+//! [`Document::validate`] independently of how the pool was proposed and
+//! fail-closed when the section (or the provider's own entry in it) is
+//! absent entirely.
 
 use std::collections::HashMap;
 
@@ -42,14 +48,58 @@ impl std::error::Error for Error {}
 /// provider, not a trait, until a second real implementation exists" posture
 /// §4b's anchor dispatcher uses; a cost model has no behavior per provider
 /// today, only data, so there is nothing yet for a closed `match` to protect).
+///
+/// `AwsGovCloud` is a distinct arm, not a region under `Aws`: AWS's
+/// `GovCloud` is its own partition — separate account, separate ARNs,
+/// separate pricing — so §4c's `allowed_regions.aws-gov-cloud` is a
+/// separate list an operator must opt into independently of
+/// `allowed_regions.aws`, the same separation a typo'd region code must
+/// not be able to cross.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     Aws,
+    #[serde(rename = "aws-gov-cloud")]
+    AwsGovCloud,
     Azure,
     Gcp,
     Onprem,
     Generic,
+}
+
+impl Provider {
+    /// The lowercase spelling used by the TOML schema (via `Deserialize`)
+    /// and by [`Document::validate`]'s own error messages — one mapping,
+    /// matching [`EdgeClass::as_str`]'s reasoning.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aws => "aws",
+            Self::AwsGovCloud => "aws-gov-cloud",
+            Self::Azure => "azure",
+            Self::Gcp => "gcp",
+            Self::Onprem => "onprem",
+            Self::Generic => "generic",
+        }
+    }
+
+    /// Whether this provider is bound by §4c's region allowlist at all.
+    /// On-prem and `generic` pools are exempt — ADR-0045 §4c: "their
+    /// location is a single operator decision made once per pool, not
+    /// something auto-discovered or auto-proposed."
+    #[must_use]
+    pub const fn is_region_bound(self) -> bool {
+        match self {
+            Self::Aws | Self::AwsGovCloud | Self::Azure | Self::Gcp => true,
+            Self::Onprem | Self::Generic => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A meter id — `instance_hours`, `egress_gb`, `ipv4_hours`, … — ADR-0045
@@ -211,6 +261,16 @@ pub struct Pool {
 pub struct Document {
     #[serde(default)]
     pub pools: HashMap<String, Pool>,
+
+    /// `[allowed_regions]` — ADR-0045 §4c's deployment-wide backstop: the
+    /// region codes a pool's provider may ever be declared in, keyed by
+    /// provider. Deliberately `#[serde(default)]` rather than required:
+    /// an operator who never writes this section gets the fail-closed
+    /// behavior §4c specifies (every region-bound pool rejected), not a
+    /// parse error, so the message that explains why lands in
+    /// [`Self::validate`] where it can name the pool at fault.
+    #[serde(default)]
+    pub allowed_regions: HashMap<Provider, Vec<String>>,
 }
 
 impl Document {
@@ -241,6 +301,7 @@ impl Document {
     /// [`Error::Invalid`] naming the pool and field at fault.
     pub fn validate(&self) -> Result<(), Error> {
         for (pool_id, pool) in &self.pools {
+            self.check_allowed_region(pool_id, pool)?;
             for (meter, schedule) in &pool.cost_model.meters {
                 validate_schedule(
                     &format!("pools.{pool_id}.cost_model.meters.{meter}"),
@@ -269,6 +330,30 @@ impl Document {
                     )));
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// ADR-0045 §4c: a region-bound pool (anything but `onprem`/`generic`)
+    /// must be in its provider's `allowed_regions` list, independent of how
+    /// the pool was proposed and independent of whether `allowed_regions`
+    /// was configured at all. No default: a provider with no entry here
+    /// rejects every pool for that provider, the same fail-closed posture
+    /// `detect_location` and §4b's own opt-in flag already apply.
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] naming the pool, provider, and region at fault.
+    fn check_allowed_region(&self, pool_id: &str, pool: &Pool) -> Result<(), Error> {
+        if !pool.provider.is_region_bound() {
+            return Ok(());
+        }
+        let allowed = self.allowed_regions.get(&pool.provider);
+        if !allowed.is_some_and(|regions| regions.iter().any(|r| r == &pool.region)) {
+            return Err(Error::Invalid(format!(
+                "pools.{pool_id}: region {:?} is not in allowed_regions.{} \
+                 (configure allowed_regions.{} to permit a {} pool in this region)",
+                pool.region, pool.provider, pool.provider, pool.provider,
+            )));
         }
         Ok(())
     }
@@ -465,8 +550,135 @@ free_allowance = -5.0
     }
 
     #[test]
+    fn a_cloud_pool_is_refused_when_allowed_regions_has_no_entry_at_all() {
+        // §4c: "No default" — a provider absent from allowed_regions
+        // entirely rejects every pool for that provider, not "allow all."
+        let text = r#"
+[pools.p]
+provider = "aws"
+region = "us-east-1"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        let err = d.validate().expect_err("no allowed_regions configured");
+        assert!(format!("{err}").contains("allowed_regions.aws"), "{err}");
+    }
+
+    #[test]
+    fn a_cloud_pool_outside_its_providers_allowlist_is_refused() {
+        let text = r#"
+[allowed_regions]
+aws = ["us-east-1"]
+
+[pools.p]
+provider = "aws"
+region = "us-west-2"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        let err = d
+            .validate()
+            .expect_err("region not in that provider's allowlist");
+        assert!(format!("{err}").contains("us-west-2"), "{err}");
+        assert!(format!("{err}").contains("allowed_regions.aws"), "{err}");
+    }
+
+    #[test]
+    fn a_cloud_pool_inside_its_providers_allowlist_is_accepted() {
+        let text = r#"
+[allowed_regions]
+aws = ["us-east-1", "us-west-2"]
+
+[pools.p]
+provider = "aws"
+region = "us-west-2"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn aws_gov_cloud_is_a_distinct_provider_from_commercial_aws() {
+        // Allowing a commercial region does not reach into GovCloud, and
+        // vice versa — the two partitions never share an allowlist entry.
+        let text = r#"
+[allowed_regions]
+aws = ["us-east-1"]
+
+[pools.p]
+provider = "aws-gov-cloud"
+region = "us-gov-west-1"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        let err = d
+            .validate()
+            .expect_err("commercial allowlist does not cover gov-cloud");
+        assert!(
+            format!("{err}").contains("allowed_regions.aws-gov-cloud"),
+            "{err}"
+        );
+
+        let text = r#"
+[allowed_regions]
+"aws-gov-cloud" = ["us-gov-west-1"]
+
+[pools.p]
+provider = "aws-gov-cloud"
+region = "us-gov-west-1"
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn onprem_and_generic_pools_are_exempt_from_the_allowlist() {
+        // §4c: "their location is a single operator decision made once per
+        // pool" — no allowed_regions section at all, and these still pass.
+        let text = r#"
+[pools.mia]
+provider = "onprem"
+region = "us-east"
+
+[pools.mia.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 0.0 }]
+
+[pools.vps]
+provider = "generic"
+region = "wherever"
+
+[pools.vps.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
     fn edge_classes_round_trip_through_kebab_case() {
         let text = r#"
+[allowed_regions]
+aws = ["us-east-1"]
+
 [pools.p]
 provider = "aws"
 region = "us-east-1"
