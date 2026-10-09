@@ -1,13 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Device lifecycle ledger foundation
+# Device lifecycle ledger and collection coverage
 
-Implements the transaction-bound ledger portion of proposed ADR-0050 for
-[#275](https://github.com/karst-net/karst/issues/275). This package is intentionally
-not imported by bootstrap or any production mutation handler. No collection is
-enabled, no public reporting endpoint is provided, and the implementation tracker
-must remain open.
+Implements device lifecycle accounting under ADR-0050 for
+[#275](https://github.com/karst-net/karst/issues/275). Bootstrap installs hooks in
+the SQL membership store. Collection defaults off, and this slice exposes only
+internal Go configuration/reconciliation methods. No public configuration or
+reporting endpoint is provided; the implementation tracker remains open.
 
-`Migrate` creates two additive tables. `Append` requires an existing GORM SQL
+`Migrate` creates additive ledger, collection, coverage, and discrepancy tables.
+`Append` requires an existing GORM SQL
 transaction and a stable account-scoped event ID. The membership operation and
 append must use that same transaction, and the caller must propagate errors.
 Repeating identical content is safe; changing an existing event's content or
@@ -28,46 +29,83 @@ claim. An empty timeline's zero count is not proof of zero billable usage. The
 initial query reads account history; production reporting needs bounded windows
 and a verified checkpoint strategy before history becomes large.
 
-## Integration work required before enabling collection
+## Membership integration
 
-The repository's membership mutations need semantic hooks inside their existing
-transactions; neither HTTP hooks nor generic SQL create/delete callbacks suffice.
-The inventory below is a starting point for that integration, not a claim that
-all mutation paths are covered by this package.
+The SQL store wraps semantic membership mutations in `Collector.Track` inside
+their existing transaction (or a new transaction for standalone peer writes).
+Before/after snapshots use the persisted account-owned peer ID as enrollment
+identity; account, peer, coverage, and lifecycle writes commit or roll back
+together. Collector hooks propagate through `SqlStore.withTx`.
 
-| Path | Required accounting treatment |
+| Path | Accounting treatment |
 | --- | --- |
-| `server/peer.go`: `AddPeer` → `store.AddPeerToAccount` | Append enrollment in the existing membership transaction, once per generation. |
-| `karst/control/login.go`: `LoginPeer` followed by `Nodes.Register` | The identity write is after the peer commit and may fail independently. Decide activation readiness explicitly; never append an enrollment on each key registration or retry. |
-| `server/peer.go`: administrative and own-peer deletion → `deletePeers` | Append revocation in the same transaction as peer removal. |
-| `internals/modules/peers/manager.go`: bulk `DeletePeers` | Same guarantee for each removed generation, including automated callers. |
-| `store/sql_store.go`: `DeleteAccount` | Close every active generation atomically while retaining ledger evidence. |
-| `store/sql_store.go`: `SaveAccount` | This deletes and recreates associations; storage churn is not a semantic revoke/re-enroll. Compare authoritative before/after membership or avoid this path for metered membership. |
+| `server/peer.go`: `AddPeer` → `store.AddPeerToAccount` | Enrollment is observed at membership commit, once per generation. |
+| `karst/control/login.go`: `LoginPeer` followed by `Nodes.Register` | Membership is already committed if identity registration fails; repairing that identity does not add another enrollment. This slice measures membership, not successful connection or key-registration time. |
+| `server/peer.go`: administrative and own-peer deletion → `deletePeers` | Revocation commits atomically with peer removal. |
+| `internals/modules/peers/manager.go`: bulk `DeletePeers` | Each `store.DeletePeer` call carries the same guarantee, including automated callers. |
+| `store/sql_store.go`: `DeleteAccount` | Closes active generations and collection coverage while retaining ledger evidence. |
+| `store/sql_store.go`: `SaveAccount` | Compares authoritative before/after peer IDs, so deleting and recreating unchanged associations produces no lifecycle events. |
 
 Paths above are relative to `server/management/`, except `karst/`, which is
 relative to `server/management/internals/`.
 
-The next integration slice must also implement:
+`SavePeer`, status updates, reconnects, approval changes, and key changes retain
+the same enrollment ID. A new enrollment requires a fresh peer ID. Direct SQL
+imports or account reassignment that bypass these semantic methods are not
+supported during collection. No provider, plan, or enforcement depends on it.
 
-- An explicit collection switch and durable coverage intervals, default off.
-- An activation snapshot serialized with concurrent membership mutations; existing
-  devices start at activation, without backdating from current rows.
-- Disable/re-enable handling, reconciliation, and explicit discrepancy records.
-- Stable generation and retry-key derivation at every mutation entry point.
-- A decision for the peer-commit/identity-write gap noted above, including repair.
-- Coverage for account deletion, replacements, ephemeral cleanup, imports, and any
-  supported account reassignment; absence of online activity never closes an
-  enrollment interval.
-- Account-authorized reports that intersect ledger intervals with coverage and
-  expose incompleteness, rather than exposing `Timeline` directly.
-- Transaction/concurrency tests on supported managed database engines. Current
-  executable tests use SQLite; PostgreSQL/MySQL behavior is not yet validated.
+## Coverage and recovery
+
+The internal `SqlStore.SetDeviceUsageCollection` method enables/disables one
+account. Its caller must authorize the operation; it is not a public endpoint.
+Activation and membership changes lock the same per-account collection row.
+The activation snapshot starts eligible intervals at observation time, never at
+an inferred historical date. Repeated enable/disable calls are idempotent.
+
+Disabling closes coverage without revoking devices. While disabled, membership
+changes do not create usage events. Re-enabling compares current membership with
+the last observed state at the new boundary; the disabled gap remains uncovered.
+An open coverage interval must be capped at the report snapshot, not extrapolated
+into the future. Do not expose `Timeline` alone as a billing report.
+
+A mismatch between the ledger and authoritative pre-mutation membership aborts
+that transaction. `SqlStore.ReconcileDeviceUsage` explicitly records the mismatch,
+marks the affected coverage period incomplete, and starts a new period with
+current membership. It retains the original events and never fabricates the
+precise time of a missed change. A change made and undone entirely through
+uninstrumented writers cannot be detected by snapshots.
+
+Clock regression aborts the transaction instead of introducing negative time.
+Ledger write failures roll membership changes back; they do not disconnect live
+traffic. Database deadlocks/serialization failures require retrying the whole
+business transaction, not only the accounting append.
+
+## Rollout prerequisites
+
+- All writers/replicas must run the instrumented SQL store before collection is
+  enabled. Mixed-version writers cannot establish complete coverage.
+- Add an authorized operator configuration surface and audit configuration
+  changes before offering runtime activation. No environment variable enables
+  collection in this slice.
+- Review the membership-based eligibility boundary for any service-generated
+  peers before managed billing launch; this primitive counts persisted peer IDs.
+- Support account reassignment explicitly if it is exposed; do not move metered
+  peers through raw SQL or cross-account imports.
+- Add account-authorized reports that intersect lifecycle intervals with coverage
+  and expose incompleteness; add bounded queries/checkpoints and retention policy.
+- Validate MySQL behavior before enabling collection on that backend.
+- Before downgrading to code without hooks, disable every collecting account and
+  retain the ledger tables. Upgrading again requires new activation snapshots;
+  no historical coverage should span an uninstrumented deployment.
 
 ## Validation
 
 From `server/`, run `go test -race ./management/internals/karst/usage`.
-Tests cover half-open windows, overlapping enrollment, offline eligibility,
-re-enrollment, duplicate/conflicting retries, timestamp regression, account
-isolation, durable reopen, concurrent appends, and rollback with a membership
-fixture in the same SQL transaction. They do not claim production membership
-integration or pricing arithmetic coverage.
+Tests cover lifecycle boundaries, retries, rollback, collection activation,
+disabled gaps, and explicit reconciliation. The real SQL integration suite is
+`go test -race -run TestDeviceUsage ./management/server/store`. It covers
+account association replacement, enrollment/deletion, outer transaction failure,
+ledger write failure, reactivation, and reconciliation. Set
+`KARST_TEST_POSTGRES_DSN` to also test activation racing with enrollment and
+nested rollback on PostgreSQL; CI provides that service. Each PostgreSQL test
+uses an isolated temporary schema. These tests do not cover pricing arithmetic.

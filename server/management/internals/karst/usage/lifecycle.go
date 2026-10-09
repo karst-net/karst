@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// Package usage provides the device lifecycle ledger proposed in ADR-0050.
-// It is not wired to production: coverage activation and all membership
-// mutation paths must be integrated before these records represent usage.
+// Package usage provides the device lifecycle ledger and collection coverage
+// described in ADR-0050. SQL membership hooks are installed by bootstrap;
+// collection defaults off and has no public configuration or reporting API yet.
 package usage
 
 import (
@@ -63,11 +63,11 @@ type event struct {
 
 func (event) TableName() string { return "karst_usage_device_events" }
 
-// Migrate creates the additive ledger tables. Bootstrap intentionally does not
-// call this yet. Tables have no cascading foreign keys to live membership: a
+// Migrate creates the additive ledger and coverage tables. Tables have no
+// cascading foreign keys to live membership: a
 // deletion must not destroy historical evidence.
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&stream{}, &event{})
+	return db.AutoMigrate(&stream{}, &event{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{})
 }
 
 func validTime(t time.Time) bool {

@@ -135,6 +135,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, errors.New("karst: the store is not SQL-backed")
 	}
 	db := sql.GetDB()
+	if err := sql.InitializeDeviceUsage(); err != nil {
+		return nil, fmt.Errorf("karst: device usage: %w", err)
+	}
 
 	// BaseServer.Metrics() is lazily memoized and fatal-on-error at
 	// construction, so it is always non-nil here — no nil check needed before

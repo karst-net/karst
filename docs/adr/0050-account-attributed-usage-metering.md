@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0050: Account-attributed device and managed relay usage metering
 
-- **Status:** Proposed
+- **Status:** Accepted (merged in #276 on 2026-10-09)
 - **Date:** 2026-10-09
-- **Deciders:** TBD
+- **Deciders:** adriananderson (merged #276)
 - **Related:** #275 (active design and implementation tracker), #232,
   ADR-0049 (scope), ADR-0033 (account/aquifer mapping), ADR-0035 (audit),
   ADR-0021 and ADR-0047 (operational telemetry), ADR-0038 (relay fairness),
@@ -45,13 +45,13 @@ The current code does not provide a billing ledger:
 
 ## Decision
 
-Propose a separate, opt-in usage ledger in the existing control-plane database,
+Use a separate, opt-in usage ledger in the existing control-plane database,
 with durable device lifecycle records and authenticated, replayable managed
 relay reports. The first release exposes usage and completeness only. It does
 not calculate invoices, configure rates, collect money, send billing alerts,
 apply spending caps, or reject traffic because metering is unavailable.
-Acceptance of this ADR selects the accounting semantics below; its proposed
-status must not be presented as approval of those details.
+Acceptance selects the accounting semantics below. Rates, billing periods,
+payment integration, and enforcement remain separate decisions under #275.
 
 ### 1. Account identity and rollout
 
