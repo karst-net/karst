@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -260,6 +261,91 @@ func (s *Store) LatestTelemetry(ctx context.Context, id string) (*RelayTelemetry
 		return nil, fmt.Errorf("relay registry: latest telemetry: %w", err)
 	}
 	return &record, nil
+}
+
+// RegionDemand is one (region, account)'s aggregated RTT histogram —
+// ADR-0045 §4a's per-(region, aquifer) demand signal, summed across every
+// relay in that region this account has registered. AccountID is the
+// aquifer modulo the deployment-wide prefix (ADR-0033).
+type RegionDemand struct {
+	Region       string
+	AccountID    string
+	RTTUnder20ms int64
+	RTT20To50ms  int64
+	RTT50To100ms int64
+	RTTOver100ms int64
+}
+
+// DemandByRegion aggregates every account's latest relay telemetry RTT
+// buckets, grouped by (region, account) — ADR-0045 §7 Phase 1's whole
+// demand-side input. Region lives on karst_relays; karst_relay_telemetry
+// carries no region column of its own, so this correlates the two in Go by
+// (account_id, id) rather than a SQL join — there is no precedent anywhere
+// in this package for a GROUP BY query, and matching one up by hand in Go
+// avoids betting this on gorm's generated column spelling for a
+// multi-acronym field name (RTTUnder20ms) that nothing here has ever had to
+// reference from raw SQL before.
+//
+// Unlike every other method on this Store — and like FindByID above, for a
+// related reason — this is deliberately NOT scoped by WithAccount: a
+// deployment-wide Advisor needs the full per-(region,aquifer) picture, not
+// one account's slice of it. Every row still carries its own AccountID, so
+// nothing here hides which aquifer a number belongs to; it is the *caller*
+// of this method that must be trusted with cross-account visibility, which
+// is why its only caller (the new /karst/v1/demand/regions endpoint) is
+// gated behind its own dedicated role rather than the ordinary per-account
+// KarstControl grant every other relayreg-backed endpoint uses.
+func (s *Store) DemandByRegion(ctx context.Context) ([]RegionDemand, error) {
+	var relays []StoredRelay
+	if err := s.db.WithContext(ctx).Select("account_id", "id", "region").Find(&relays).Error; err != nil {
+		return nil, fmt.Errorf("relay registry: demand by region: list relays: %w", err)
+	}
+	regionOf := make(map[string]string, len(relays))
+	for _, r := range relays {
+		regionOf[r.AccountID+"\x00"+r.ID] = r.Region
+	}
+
+	var reports []RelayTelemetryRecord
+	if err := s.db.WithContext(ctx).Find(&reports).Error; err != nil {
+		return nil, fmt.Errorf("relay registry: demand by region: list telemetry: %w", err)
+	}
+
+	type key struct{ region, accountID string }
+	totals := make(map[key]*RegionDemand)
+	for _, report := range reports {
+		region, ok := regionOf[report.AccountID+"\x00"+report.ID]
+		if !ok {
+			// A telemetry row for a relay no longer in the registry (deleted
+			// since its last report) names no region to attribute it to —
+			// skipped rather than guessed, the same "simply unmeasured"
+			// posture the rest of ADR-0045 takes for data it cannot place.
+			continue
+		}
+		k := key{region, report.AccountID}
+		d, ok := totals[k]
+		if !ok {
+			d = &RegionDemand{Region: region, AccountID: report.AccountID}
+			totals[k] = d
+		}
+		d.RTTUnder20ms += report.RTTUnder20ms
+		d.RTT20To50ms += report.RTT20To50ms
+		d.RTT50To100ms += report.RTT50To100ms
+		d.RTTOver100ms += report.RTTOver100ms
+	}
+
+	result := make([]RegionDemand, 0, len(totals))
+	for _, d := range totals {
+		result = append(result, *d)
+	}
+	// Deterministic order: callers (the HTTP handler, its tests, and any
+	// future consumer) must not depend on Go's randomized map iteration.
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Region != result[j].Region {
+			return result[i].Region < result[j].Region
+		}
+		return result[i].AccountID < result[j].AccountID
+	})
+	return result, nil
 }
 
 // recordSize refreshes the cached registry-size gauge for accountID after a

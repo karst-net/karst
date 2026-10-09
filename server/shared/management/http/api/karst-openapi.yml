@@ -271,6 +271,32 @@ paths:
       responses:
         '200': {description: One relay, content: {application/json: {schema: {$ref: '#/components/schemas/Relay'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /demand/regions:
+    get:
+      operationId: demandRegions
+      tags: [demand]
+      description: >-
+        ADR-0045 §7 Phase 1's per-(region, aquifer) demand feed -- §4a's RTT
+        histogram, aggregated across every account's relays. Deliberately
+        cross-account, unlike every other endpoint in this file; requires
+        the advisor role (see the Advisor permission role), not merely
+        read access to karst control. Audit-logged as karst.demand.regions.view.
+      responses:
+        '200': {description: 'Per-(region, account) RTT histogram', content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RegionDemand'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /demand/anchors:
+    get:
+      operationId: demandAnchors
+      tags: [demand]
+      description: >-
+        ADR-0045 §7 Phase 1's second demand-side input -- §4b's deployment-wide,
+        anonymous anchor-RTT histogram. No node or account identity appears in
+        this response. Requires the advisor role, the same as demandRegions,
+        so that "who can see what the Advisor sees" stays one grant. Audit-logged
+        as karst.demand.anchors.view.
+      responses:
+        '200': {description: Deployment-wide anchor-RTT histogram, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AnchorHistogramEntry'}}}}}
+        default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
       operationId: listTurnServers
@@ -608,6 +634,14 @@ components:
       required: [lat, lon]
       additionalProperties: false
       properties: {lat: {type: number, minimum: -90, maximum: 90}, lon: {type: number, minimum: -180, maximum: 180}, label: {type: string}}
+    RegionDemand:
+      type: object
+      required: [region, account_id, rtt_under_20ms, rtt_20_to_50ms, rtt_50_to_100ms, rtt_over_100ms]
+      properties: {region: {type: string}, account_id: {type: string}, rtt_under_20ms: {type: integer, minimum: 0}, rtt_20_to_50ms: {type: integer, minimum: 0}, rtt_50_to_100ms: {type: integer, minimum: 0}, rtt_over_100ms: {type: integer, minimum: 0}}
+    AnchorHistogramEntry:
+      type: object
+      required: [provider, region, bucket, count]
+      properties: {provider: {type: string}, region: {type: string}, bucket: {type: string}, count: {type: integer, minimum: 0}}
     TurnServerCreate:
       type: object
       required: [uri]

@@ -19,6 +19,18 @@ const (
 	UserRoleAuditor      UserRole = "auditor"
 	UserRoleNetworkAdmin UserRole = "network_admin"
 	UserRoleNOC          UserRole = "noc"
+	// UserRoleAdvisor is ADR-0045 §7 Phase 1's read-only role for the
+	// Advisor's demand-side input endpoints (/karst/v1/demand/...). Not a
+	// reuse of NOC/Auditor: those (and every other karst role) are read
+	// access to the caller's *own* account, since karstAuthorization's
+	// permission check is always evaluated against user.AccountId. The
+	// Advisor's region-demand endpoint is deliberately cross-account (it
+	// must see every aquifer's demand to be useful at all), so granting it
+	// through an existing role would, for the first time, let an ordinary
+	// per-account operator see every other tenant's data. A distinct role
+	// draws that line explicitly, the same way introducing UserRoleNOC drew
+	// one for its own boundary.
+	UserRoleAdvisor UserRole = "advisor"
 
 	UserStatusActive   UserStatus = "active"
 	UserStatusDisabled UserStatus = "disabled"
@@ -45,6 +57,8 @@ func StrRoleToUserRole(strRole string) UserRole {
 		return UserRoleNetworkAdmin
 	case "noc":
 		return UserRoleNOC
+	case "advisor":
+		return UserRoleAdvisor
 	default:
 		return UserRoleUnknown
 	}

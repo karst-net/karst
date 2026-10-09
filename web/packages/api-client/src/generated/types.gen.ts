@@ -253,6 +253,22 @@ export type RelayLocation = {
     label?: string;
 };
 
+export type RegionDemand = {
+    region: string;
+    account_id: string;
+    rtt_under_20ms: number;
+    rtt_20_to_50ms: number;
+    rtt_50_to_100ms: number;
+    rtt_over_100ms: number;
+};
+
+export type AnchorHistogramEntry = {
+    provider: string;
+    region: string;
+    bucket: string;
+    count: number;
+};
+
 export type TurnServerCreate = {
     /**
      * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
@@ -1306,6 +1322,56 @@ export type NocRelayResponses = {
 };
 
 export type NocRelayResponse = NocRelayResponses[keyof NocRelayResponses];
+
+export type DemandRegionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/demand/regions';
+};
+
+export type DemandRegionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DemandRegionsError = DemandRegionsErrors[keyof DemandRegionsErrors];
+
+export type DemandRegionsResponses = {
+    /**
+     * Per-(region, account) RTT histogram
+     */
+    200: Array<RegionDemand>;
+};
+
+export type DemandRegionsResponse = DemandRegionsResponses[keyof DemandRegionsResponses];
+
+export type DemandAnchorsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/demand/anchors';
+};
+
+export type DemandAnchorsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DemandAnchorsError = DemandAnchorsErrors[keyof DemandAnchorsErrors];
+
+export type DemandAnchorsResponses = {
+    /**
+     * Deployment-wide anchor-RTT histogram
+     */
+    200: Array<AnchorHistogramEntry>;
+};
+
+export type DemandAnchorsResponse = DemandAnchorsResponses[keyof DemandAnchorsResponses];
 
 export type ListTurnServersData = {
     body?: never;
