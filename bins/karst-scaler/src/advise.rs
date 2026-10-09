@@ -179,7 +179,13 @@ pub struct Problem<'a> {
 /// Which hard constraint explains a [`PoolRecommendation`]'s
 /// `desired_nodes` — see the module doc for which of these this
 /// implementation can actually produce today, and why.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Serialize`s lowercase (`serde(rename_all = "snake_case")`) to match the
+/// label value `metrics_http`'s `karst_scaler_binding_constraint{constraint}`
+/// renders and the JSON `/recommendations` endpoint both use — one spelling,
+/// not two independently hand-written ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Constraint {
     Latency,
     Availability,
@@ -196,7 +202,7 @@ pub enum Constraint {
 }
 
 /// One pool's recommendation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PoolRecommendation {
     pub pool_id: String,
     pub desired_nodes: u32,
@@ -212,7 +218,7 @@ pub struct PoolRecommendation {
 }
 
 /// The whole tick's recommendation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Recommendation {
     pub pools: Vec<PoolRecommendation>,
 

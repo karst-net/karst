@@ -60,3 +60,9 @@ toml = "0.9"
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
 rustls-native-certs = "0.8"
+# `metrics_http`'s `GET /recommendations` — the same `Recommendation` the
+# Prometheus text rendering also carries, as JSON. ureq's own "json" feature
+# above already pulls this crate in transitively (for `body_mut().read_json`
+# on the inbound side); this is the explicit, direct dependency a 2021-edition
+# crate needs to `use` it itself.
+serde_json = "1"

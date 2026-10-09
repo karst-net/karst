@@ -12,9 +12,10 @@
 //!     per meter, per edge, and a grand total
 //! karst-scaler check COST_MODEL.toml
 //!     parse and validate a cost-model file without simulating anything
-//! karst-scaler advise COST_MODEL.toml CONTROL_API_BASE PAT_FILE POLL_SECS
+//! karst-scaler advise ADVISE_CONFIG.toml
 //!     poll the control server's demand endpoints on an interval and log a
-//!     node-count recommendation per pool, forever
+//!     node-count recommendation per pool, forever; see `advise_config`'s
+//!     own module doc for the config file's shape
 //! ```
 //!
 //! # Why this phase first
@@ -44,7 +45,9 @@ use std::time::Duration;
 use karst_scaler::cost_model::Document;
 use karst_scaler::{simulate, usage};
 
+mod advise_config;
 mod advise_loop;
+mod metrics_http;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,9 +56,7 @@ fn main() -> ExitCode {
     let result = match refs.as_slice() {
         ["simulate", cost_model, usage_log] => run_simulate(cost_model, usage_log),
         ["check", cost_model] => run_check(cost_model),
-        ["advise", cost_model, api_base, pat_file, poll_secs] => {
-            run_advise(cost_model, api_base, pat_file, poll_secs)
-        }
+        ["advise", advise_config] => run_advise(advise_config),
         _ => {
             usage_text();
             return ExitCode::FAILURE;
@@ -79,19 +80,14 @@ fn usage_text() {
                               replay recorded usage against a cost model;
                               print spend per pool, per meter, per edge
   check COST_MODEL.toml       parse and validate a cost-model file only
-  advise COST_MODEL.toml CONTROL_API_BASE PAT_FILE POLL_SECS
-                              poll the control server's demand endpoints on
+  advise ADVISE_CONFIG.toml  poll the control server's demand endpoints on
                               an interval; log a node-count recommendation
-                              per pool, forever"
+                              per pool, forever; optionally serve /metrics
+                              and /recommendations (see advise_config)"
     );
 }
 
-fn run_advise(
-    cost_model_path: &str,
-    api_base: &str,
-    pat_file: &str,
-    poll_secs: &str,
-) -> Result<(), String> {
+fn run_advise(advise_config_path: &str) -> Result<(), String> {
     // ureq's TLS backend is built with no crypto provider of its own (see
     // Cargo.toml's comment on why) -- it needs one installed process-wide
     // before the first HTTPS request. aws-lc-rs is the one every other
@@ -100,18 +96,18 @@ fn run_advise(
     // it somehow did.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let pat = std::fs::read_to_string(pat_file)
-        .map_err(|e| format!("reading {pat_file}: {e}"))?
+    let cfg = advise_config::AdviseConfig::load(Path::new(advise_config_path))
+        .map_err(|e| format!("reading {advise_config_path}: {e}"))?;
+    let pat = std::fs::read_to_string(&cfg.pat_file)
+        .map_err(|e| format!("reading {}: {e}", cfg.pat_file))?
         .trim()
         .to_owned();
-    let poll_secs: u64 = poll_secs
-        .parse()
-        .map_err(|_| format!("{poll_secs:?} is not a whole number of seconds"))?;
     let config = advise_loop::Config {
-        cost_model_path: cost_model_path.to_owned(),
-        control_api_base: api_base.trim_end_matches('/').to_owned(),
+        cost_model_path: cfg.cost_model_path,
+        control_api_base: cfg.control_api_base.trim_end_matches('/').to_owned(),
         pat,
-        poll_interval: Duration::from_secs(poll_secs),
+        poll_interval: Duration::from_secs(cfg.poll_interval_secs),
+        metrics_listen: cfg.metrics.listen,
     };
     advise_loop::run(&config)
 }

@@ -239,3 +239,50 @@ denylist, and by the existing byte-content scan
 real PSKs through a datapath and confirms none of them appear in any
 rendered diagnostic, `bugreport` included. Both run in CI on every change to
 this surface.
+
+## 7. `karst-scaler`'s metrics surface — ADR-0045 §7 Phase 1
+
+Off by default, same posture as §4.2's `[metrics] listen`:
+
+```toml
+# karst-scaler advise's own config file
+cost_model_path = "cost-model.toml"
+control_api_base = "https://control.example.test/api"
+pat_file = "advisor.pat"
+poll_interval_secs = 60
+
+[metrics]
+listen = "127.0.0.1:9100"
+```
+
+Starts a loopback-only HTTP listener (refused at config-load time if
+configured non-loopback, not just documented — same enforcement §4.2
+describes for `karstd`) answering two routes, both rendering the latest
+completed tick's `Recommendation` — `503 Service Unavailable` before the
+first tick completes, never a fabricated empty body:
+
+- **`GET /metrics`** — Prometheus text.
+- **`GET /recommendations`** — the same data as JSON; this is what
+  `karst-control`'s `GET /karst/v1/scaler/recommendations` proxy (console
+  page, Phase 1 PR 5) dials server-to-server — the browser never reaches
+  this listener directly.
+
+| Metric | Kind | Labels | Meaning |
+|---|---|---|---|
+| `karst_scaler_recommended_nodes` | gauge | `pool` | The Advisor's desired node count for this pool this tick. |
+| `karst_scaler_configured_nodes` | gauge | `pool` | The pool's own configured floor (`pool.min_nodes`) — the ADR's "configured baseline," not an introspected live running count (no driver exists to ask a provider directly until Phase 2). A fleet that has drifted from this TOML is a known, documented gap, not an implied guarantee. |
+| `karst_scaler_cost_delta_usd` | gauge | `pool` | `recommended_nodes`'s cost for the rest of the billing period minus `configured_nodes`'s — the ADR's own worked example ("aws-use1 configured for 2, Advisor recommends 5, bound by Headroom, +$340/mo") is this value. Positive means the Advisor recommends spending more. |
+| `karst_scaler_binding_constraint` | gauge | `pool`, `constraint` | `1` for whichever hard constraint explains `recommended_nodes` (`headroom`, `capacity`, or `none` — see `advise.rs`'s own module doc for which of §3's six named constraints this phase can actually produce and why). |
+| `karst_scaler_baseline_cost_usd` | gauge | *(none)* | Sum of every pool's naive-greedy-baseline cost this tick — the solver's own never-worse-than invariant, not "the bill." |
+| `karst_scaler_last_tick_timestamp_seconds` | gauge | *(none)* | Unix time of the last tick that completed successfully. Stale relative to now by more than a few poll intervals means the loop is failing every tick (check the process's own stderr) or has stopped. |
+
+```promql
+# Pools where the Advisor disagrees with the operator's configured floor.
+karst_scaler_recommended_nodes != on(pool) karst_scaler_configured_nodes
+
+# Total recommended monthly delta across every pool.
+sum(karst_scaler_cost_delta_usd)
+
+# The loop has gone quiet.
+time() - karst_scaler_last_tick_timestamp_seconds > 300
+```
