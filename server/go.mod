@@ -2,14 +2,7 @@ module github.com/netbirdio/netbird
 
 go 1.27
 
-// Pinned to the release candidate because crypto/mldsa is a 1.27 addition and
-// 1.27.0 is not out yet. Without this line the toolchain tries to fetch a
-// go1.27.0 that does not exist and the build fails with "toolchain not
-// available", which names the symptom and not the cause.
-//
-// Drop it when 1.27.0 ships: the `go` directive above is the real requirement,
-// and this one only says which build satisfies it today.
-toolchain go1.27rc3
+toolchain go1.27.2
 
 require (
 	github.com/DeRuina/timberjack v1.4.2
@@ -67,12 +60,12 @@ require (
 	go.uber.org/mock v0.6.0
 	go.uber.org/zap v1.27.0
 	goauthentik.io/api/v3 v3.2023051.3
-	golang.org/x/crypto v0.56.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/mod v0.38.0
-	golang.org/x/net v0.58.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/time v0.15.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	golang.zx2c4.com/wireguard/windows v0.5.3
@@ -222,9 +215,9 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
