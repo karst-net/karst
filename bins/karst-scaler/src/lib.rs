@@ -12,5 +12,6 @@
 //! until that is settled.
 
 pub mod cost_model;
+pub mod position;
 pub mod simulate;
 pub mod usage;

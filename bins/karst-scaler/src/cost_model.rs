@@ -250,15 +250,31 @@ pub struct CostModel {
 
 /// A capacity pool — ADR-0045 §1.
 ///
-/// This is the Phase 0 slice of a pool: enough to cost it. `driver` (§5) and
-/// most of `capacity` are not needed to replay recorded usage against a cost
-/// model and are left for the phase that actuates something.
+/// This is the Phase 0 slice of a pool plus Phase 1's floor/ceiling: enough
+/// to cost it and to bound how the Advisor (§7 Phase 1) may size it.
+/// `driver` (§5) and the rest of `capacity` (`uplink_mbps_max`, …) are not
+/// needed for either of those and are left for the phase that actuates
+/// something or constrains bandwidth specifically — Phase 1's headroom is
+/// sized in nodes, per §4.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pool {
     pub provider: Provider,
     pub region: String,
     pub cost_model: CostModel,
+
+    /// ADR-0045 §1's `min_nodes`: "floor: N+1 / always-on presence." The
+    /// Advisor (§7 Phase 1) never recommends fewer than this many nodes for
+    /// this pool, regardless of cost. Zero (the default) means no floor.
+    #[serde(default)]
+    pub min_nodes: u32,
+
+    /// ADR-0045 §1's `capacity.nodes_max`: a hard ceiling the Advisor never
+    /// recommends exceeding. `None` (the default) means no ceiling —
+    /// appropriate for a cloud pool ("large"); an on-prem pool's actual
+    /// physical limit is the usual reason to set this.
+    #[serde(default)]
+    pub nodes_max: Option<u32>,
 }
 
 /// The whole cost-model file: one `[pools.<id>]` table per pool, keyed by
@@ -310,6 +326,14 @@ impl Document {
     pub fn validate(&self) -> Result<(), Error> {
         for (pool_id, pool) in &self.pools {
             self.check_allowed_region(pool_id, pool)?;
+            if let Some(max) = pool.nodes_max {
+                if pool.min_nodes > max {
+                    return Err(Error::Invalid(format!(
+                        "pools.{pool_id}: min_nodes ({}) exceeds nodes_max ({max})",
+                        pool.min_nodes
+                    )));
+                }
+            }
             for (meter, schedule) in &pool.cost_model.meters {
                 validate_schedule(
                     &format!("pools.{pool_id}.cost_model.meters.{meter}"),
@@ -752,6 +776,68 @@ region = "wherever"
 [pools.vps.cost_model.meters.m]
 mode = "graduated"
 bands = [{ unit_price = 1.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn min_nodes_and_nodes_max_default_to_no_floor_or_ceiling() {
+        let d = Document::parse(MINIMAL).expect("parses");
+        let pool = d.pools.get("onprem-mia").expect("pool");
+        assert_eq!(pool.min_nodes, 0);
+        assert_eq!(pool.nodes_max, None);
+    }
+
+    #[test]
+    fn min_nodes_within_nodes_max_is_accepted() {
+        let text = r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+min_nodes = 2
+nodes_max = 5
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 0.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn min_nodes_exceeding_nodes_max_is_refused() {
+        let text = r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+min_nodes = 6
+nodes_max = 5
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 0.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        let err = d.validate().expect_err("min_nodes above nodes_max");
+        assert!(format!("{err}").contains("min_nodes"), "{err}");
+        assert!(format!("{err}").contains("nodes_max"), "{err}");
+    }
+
+    #[test]
+    fn min_nodes_with_no_nodes_max_is_never_refused() {
+        // No ceiling means no check to fail, regardless of how large
+        // min_nodes is.
+        let text = r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+min_nodes = 1000
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 0.0 }]
 "#;
         let d = Document::parse(text).expect("parses");
         assert!(d.validate().is_ok());
