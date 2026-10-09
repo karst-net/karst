@@ -35,7 +35,9 @@
 //!   capacity, which no existing signal in this tree provides yet.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -44,6 +46,8 @@ use karst_scaler::advise::{self, PoolState, Problem};
 use karst_scaler::cost_model::Document;
 use karst_scaler::position::Position;
 use karst_scaler::simulate::{hours_remaining_in_period, period_key};
+
+use crate::metrics_http::{self, SharedSnapshot, Snapshot};
 
 /// See [`demand_nodes_by_region`]'s own doc comment.
 const PLACEHOLDER_SESSIONS_PER_NODE: f64 = 100.0;
@@ -62,6 +66,11 @@ pub(crate) struct Config {
     /// role exists for exactly this read.
     pub pat: String,
     pub poll_interval: Duration,
+    /// The opt-in `[metrics] listen` address -- ADR-0045 §7 Phase 1 PR 4.
+    /// `None` (the default) starts no listener at all; already refused at
+    /// config-load time if configured non-loopback -- see
+    /// `advise_config::AdviseConfig::parse`.
+    pub metrics_listen: Option<SocketAddr>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,8 +107,27 @@ pub(crate) fn run(config: &Config) -> Result<(), String> {
     let agent = build_agent()?;
     let mut positions: HashMap<String, Position> = HashMap::new();
 
+    // `None` unless `[metrics] listen` is configured -- no listener binds,
+    // and `tick` below skips building a `Snapshot` nobody can ever read,
+    // the same default-off posture `karstd`'s own `[metrics]` section has.
+    let snapshot: Option<SharedSnapshot> = config.metrics_listen.map(|listen| {
+        let snapshot: SharedSnapshot = Arc::new(Mutex::new(None));
+        let shared = Arc::clone(&snapshot);
+        // Detached, not joined: this process has no shutdown path of its
+        // own today (this `loop` below runs until killed), so there is
+        // nothing for this thread to be joined against -- see
+        // `metrics_http::Shutdown`'s own doc comment.
+        std::thread::spawn(move || {
+            let shutdown = metrics_http::Shutdown::default();
+            if let Err(e) = metrics_http::serve(listen, &shared, &shutdown) {
+                eprintln!("karst-scaler advise: metrics listener on {listen} failed: {e}");
+            }
+        });
+        snapshot
+    });
+
     loop {
-        match tick(&doc, &mut positions, config, &agent) {
+        match tick(&doc, &mut positions, config, &agent, snapshot.as_ref()) {
             Ok(()) => {}
             Err(e) => eprintln!("karst-scaler advise: tick failed: {e}"),
         }
@@ -131,6 +159,7 @@ fn tick(
     positions: &mut HashMap<String, Position>,
     config: &Config,
     agent: &ureq::Agent,
+    snapshot: Option<&SharedSnapshot>,
 ) -> Result<(), String> {
     let now = now_unix()?;
     let period = period_key(now);
@@ -181,6 +210,22 @@ fn tick(
         remaining_period_hours,
     };
     let recommendation = advise::advise(&problem).map_err(|e| e.to_string())?;
+
+    if let Some(shared) = snapshot {
+        let configured_nodes = doc
+            .pools
+            .iter()
+            .map(|(pool_id, pool)| (pool_id.clone(), pool.min_nodes))
+            .collect();
+        let new_snapshot = Snapshot {
+            tick_unix: now,
+            recommendation: recommendation.clone(),
+            configured_nodes,
+        };
+        *shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(new_snapshot);
+    }
 
     println!(
         "tick_unix={now} pools={} total_cost_delta={:.2} baseline_cost={:.2}",
