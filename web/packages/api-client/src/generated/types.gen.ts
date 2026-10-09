@@ -269,6 +269,30 @@ export type AnchorHistogramEntry = {
     count: number;
 };
 
+export type ScalerPoolRecommendation = {
+    pool_id: string;
+    desired_nodes: number;
+    cost_delta: number;
+    binding_constraint: 'latency' | 'availability' | 'headroom' | 'residency' | 'budget' | 'capacity' | 'none';
+};
+
+export type ScalerRecommendation = {
+    pools: Array<ScalerPoolRecommendation>;
+    total_cost_delta: number;
+    baseline_cost: number;
+};
+
+export type ScalerRecommendations = {
+    tick_unix: number;
+    recommendation: ScalerRecommendation;
+    /**
+     * pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).
+     */
+    configured_nodes: {
+        [key: string]: number;
+    };
+};
+
 export type TurnServerCreate = {
     /**
      * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
@@ -1372,6 +1396,31 @@ export type DemandAnchorsResponses = {
 };
 
 export type DemandAnchorsResponse = DemandAnchorsResponses[keyof DemandAnchorsResponses];
+
+export type ScalerRecommendationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/scaler/recommendations';
+};
+
+export type ScalerRecommendationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ScalerRecommendationsError = ScalerRecommendationsErrors[keyof ScalerRecommendationsErrors];
+
+export type ScalerRecommendationsResponses = {
+    /**
+     * The Advisor's latest completed tick
+     */
+    200: ScalerRecommendations;
+};
+
+export type ScalerRecommendationsResponse = ScalerRecommendationsResponses[keyof ScalerRecommendationsResponses];
 
 export type ListTurnServersData = {
     body?: never;

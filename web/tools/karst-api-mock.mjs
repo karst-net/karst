@@ -433,6 +433,25 @@ const server = http.createServer((request, response) => {
     return json(response, 200, relay);
   }
 
+  // Scaler Advisor view (ADR-0045 §7 Phase 1 PR 5) -- karst-control's own
+  // proxy of karst-scaler advise's loopback /recommendations endpoint. No
+  // live karst-scaler process exists in this dev flow, so this is a fixed
+  // snapshot, not a tick replay.
+  if (method === "GET" && karst === "/scaler/recommendations") {
+    return json(response, 200, {
+      tick_unix: 1700000000,
+      recommendation: {
+        pools: [
+          { pool_id: "aws-use1", desired_nodes: 5, cost_delta: 340.5, binding_constraint: "headroom" },
+          { pool_id: "onprem-dc1", desired_nodes: 3, cost_delta: 0, binding_constraint: "none" },
+        ],
+        total_cost_delta: -12.3,
+        baseline_cost: 982.1,
+      },
+      configured_nodes: { "aws-use1": 2, "onprem-dc1": 3 },
+    });
+  }
+
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);
   if (method === "GET" && karst === "/bedrock/log") return json(response, 200, page(fixture.bedrockLog, url));
   if (method === "GET" && karst === "/bedrock/log/verify") return error(response, 501, "not_implemented", "Bedrock log verification is not implemented");

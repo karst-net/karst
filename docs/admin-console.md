@@ -131,3 +131,34 @@ and is the place to update when a deferral is later picked up.
   CodeMirror, ships in the one main bundle), so the NOC page is not
   lazy-loaded either, consistent with that, but is the first page where the
   cost of that convention is visible.
+
+## Scaler Advisor view
+
+- **Phase 1 is done: a read-only table of the Advisor's latest
+  recommendation per pool.** ADR-0045 §7 Phase 1 ("the planner and
+  constraint set... running continuously, publishing 'recommended vs
+  actual' as metrics and a console view"). `GET
+  /karst/v1/scaler/recommendations` proxies, unchanged, whatever
+  `karst-scaler advise`'s own loopback `/recommendations` endpoint last
+  returned — `karst-control` dials it server-to-server at an
+  operator-configured address (`KARST_SCALER_ADVISOR_URL`); the browser
+  never reaches `karst-scaler` directly. Requires the `advisor` role, the
+  same as the demand-side endpoints this page's data ultimately derives
+  from. No mutation actions: there is nothing to mutate in Phase 1 — no
+  driver exists yet to act on a recommendation (that is Phase 2).
+- **Configured-not-actual, labeled as such.** The "Configured" column is
+  each pool's own `min_nodes` floor from its cost-model file, not an
+  introspected live running count — `karst-scaler`'s own advise.rs module
+  doc explains why (no driver interface exists yet to ask a provider
+  directly). A fleet that has drifted from that file reads as if it
+  hadn't; this is a known, documented gap, not an implied guarantee.
+- **Deferred: everything Phase 2+ would add.** No live polling (the page
+  loads once per visit, unlike the NOC page's 30s refresh — Phase 1's data
+  changes on `karst-scaler advise`'s own poll interval, typically minutes,
+  not seconds), no per-pool drill-down, and no way to act on a
+  recommendation from here. If `KARST_SCALER_ADVISOR_URL` is not
+  configured for a deployment, every request to this page's endpoint
+  answers precondition-failed — metrics (`karst_scaler_*`, see
+  `docs/observability.md`) still ship standalone and are directly
+  scrapeable regardless, so this page being unconfigured loses a UI, not
+  the underlying capability.

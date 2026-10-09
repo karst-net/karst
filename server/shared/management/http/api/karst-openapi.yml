@@ -297,6 +297,20 @@ paths:
       responses:
         '200': {description: Deployment-wide anchor-RTT histogram, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AnchorHistogramEntry'}}}}}
         default: {$ref: '#/components/responses/Error'}
+  /scaler/recommendations:
+    get:
+      operationId: scalerRecommendations
+      tags: [scaler]
+      description: >-
+        ADR-0045 §7 Phase 1's "recommended vs actual" view, proxied unchanged
+        from karst-scaler advise's own loopback /recommendations endpoint
+        (KARST_SCALER_ADVISOR_URL) -- the browser never dials karst-scaler
+        directly. Requires the advisor role, the same as demandRegions/
+        demandAnchors. Precondition-failed (not 404) if
+        KARST_SCALER_ADVISOR_URL is not configured for this deployment.
+      responses:
+        '200': {description: The Advisor's latest completed tick, content: {application/json: {schema: {$ref: '#/components/schemas/ScalerRecommendations'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
       operationId: listTurnServers
@@ -642,6 +656,22 @@ components:
       type: object
       required: [provider, region, bucket, count]
       properties: {provider: {type: string}, region: {type: string}, bucket: {type: string}, count: {type: integer, minimum: 0}}
+    # The three schemas below mirror karst-scaler's own advise::Recommendation
+    # / PoolRecommendation / Constraint (bins/karst-scaler/src/advise.rs) and
+    # metrics_http::Snapshot -- the exact shape its loopback /recommendations
+    # endpoint serves, proxied unchanged by GET /scaler/recommendations above.
+    ScalerPoolRecommendation:
+      type: object
+      required: [pool_id, desired_nodes, cost_delta, binding_constraint]
+      properties: {pool_id: {type: string}, desired_nodes: {type: integer, minimum: 0}, cost_delta: {type: number}, binding_constraint: {type: string, enum: [latency, availability, headroom, residency, budget, capacity, none]}}
+    ScalerRecommendation:
+      type: object
+      required: [pools, total_cost_delta, baseline_cost]
+      properties: {pools: {type: array, items: {$ref: '#/components/schemas/ScalerPoolRecommendation'}}, total_cost_delta: {type: number}, baseline_cost: {type: number}}
+    ScalerRecommendations:
+      type: object
+      required: [tick_unix, recommendation, configured_nodes]
+      properties: {tick_unix: {type: integer}, recommendation: {$ref: '#/components/schemas/ScalerRecommendation'}, configured_nodes: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 'pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).'}}
     TurnServerCreate:
       type: object
       required: [uri]

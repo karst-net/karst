@@ -100,6 +100,18 @@ const karstTenancyGrantsEnv = "KARST_TENANCY_GRANTS_FILE"
 // tenancy grants above.
 const karstAllowedRegionsEnv = "KARST_ALLOWED_REGIONS_FILE"
 
+// karstScalerAdvisorURLEnv names ADR-0045 §7 Phase 1 PR 5's own
+// server-to-server dial target: where karst-scaler advise's own loopback
+// /recommendations endpoint is reachable from this server's host (e.g.
+// "http://127.0.0.1:9100" if both processes share a host, or an internal
+// address if they don't). Unset means GET /karst/v1/scaler/recommendations
+// is a configured-but-absent endpoint -- a precondition-failed response,
+// not a 404, the same "optional capability, not a missing route" posture
+// every other store-backed endpoint in this file already has. Deliberately
+// a bare URL, not a file: unlike every other *_FILE env var above, there is
+// no document to reconcile at boot, only an address to dial per request.
+const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
+
 // TURN fallback configuration — ADR-0008 §4.
 //
 // All three unset is the common case and means exactly what it always has:
@@ -198,6 +210,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
+	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
 
 	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
@@ -226,7 +239,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions, scalerAdvisorURL)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no

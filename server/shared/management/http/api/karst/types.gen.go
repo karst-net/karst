@@ -279,6 +279,39 @@ func (e RelayHealthSource) Valid() bool {
 	}
 }
 
+// Defines values for ScalerPoolRecommendationBindingConstraint.
+const (
+	ScalerPoolRecommendationBindingConstraintAvailability ScalerPoolRecommendationBindingConstraint = "availability"
+	ScalerPoolRecommendationBindingConstraintBudget       ScalerPoolRecommendationBindingConstraint = "budget"
+	ScalerPoolRecommendationBindingConstraintCapacity     ScalerPoolRecommendationBindingConstraint = "capacity"
+	ScalerPoolRecommendationBindingConstraintHeadroom     ScalerPoolRecommendationBindingConstraint = "headroom"
+	ScalerPoolRecommendationBindingConstraintLatency      ScalerPoolRecommendationBindingConstraint = "latency"
+	ScalerPoolRecommendationBindingConstraintNone         ScalerPoolRecommendationBindingConstraint = "none"
+	ScalerPoolRecommendationBindingConstraintResidency    ScalerPoolRecommendationBindingConstraint = "residency"
+)
+
+// Valid indicates whether the value is a known member of the ScalerPoolRecommendationBindingConstraint enum.
+func (e ScalerPoolRecommendationBindingConstraint) Valid() bool {
+	switch e {
+	case ScalerPoolRecommendationBindingConstraintAvailability:
+		return true
+	case ScalerPoolRecommendationBindingConstraintBudget:
+		return true
+	case ScalerPoolRecommendationBindingConstraintCapacity:
+		return true
+	case ScalerPoolRecommendationBindingConstraintHeadroom:
+		return true
+	case ScalerPoolRecommendationBindingConstraintLatency:
+		return true
+	case ScalerPoolRecommendationBindingConstraintNone:
+		return true
+	case ScalerPoolRecommendationBindingConstraintResidency:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionPostureStatus.
 const (
 	SessionPostureStatusLatticeOnly SessionPostureStatus = "lattice_only"
@@ -886,6 +919,32 @@ type RelayLocation struct {
 	Label *string `json:"label,omitempty"`
 	Lat   float32 `json:"lat"`
 	Lon   float32 `json:"lon"`
+}
+
+// ScalerPoolRecommendation defines model for ScalerPoolRecommendation.
+type ScalerPoolRecommendation struct {
+	BindingConstraint ScalerPoolRecommendationBindingConstraint `json:"binding_constraint"`
+	CostDelta         float32                                   `json:"cost_delta"`
+	DesiredNodes      int                                       `json:"desired_nodes"`
+	PoolId            string                                    `json:"pool_id"`
+}
+
+// ScalerPoolRecommendationBindingConstraint defines model for ScalerPoolRecommendation.BindingConstraint.
+type ScalerPoolRecommendationBindingConstraint string
+
+// ScalerRecommendation defines model for ScalerRecommendation.
+type ScalerRecommendation struct {
+	BaselineCost   float32                    `json:"baseline_cost"`
+	Pools          []ScalerPoolRecommendation `json:"pools"`
+	TotalCostDelta float32                    `json:"total_cost_delta"`
+}
+
+// ScalerRecommendations defines model for ScalerRecommendations.
+type ScalerRecommendations struct {
+	// ConfiguredNodes pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).
+	ConfiguredNodes map[string]int       `json:"configured_nodes"`
+	Recommendation  ScalerRecommendation `json:"recommendation"`
+	TickUnix        int                  `json:"tick_unix"`
 }
 
 // SessionPage defines model for SessionPage.
