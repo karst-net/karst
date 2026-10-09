@@ -13,6 +13,28 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /usage/devices:
+    get:
+      operationId: getDeviceUsage
+      tags: [usage]
+      description: |
+        Account-owner/admin report of recorded enrolled-device usage. Account
+        scope comes from authenticated authorization. Every read is audited.
+        Request a past, nonempty interval of at most 93 days, with microsecond
+        timestamp precision. Dense windows must be narrowed; results are never
+        silently truncated. This reports usage, not prices or invoices.
+      parameters:
+        - {name: start, in: query, required: true, schema: {type: string, format: date-time}}
+        - {name: end, in: query, required: true, schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Consistent ledger and collection-coverage snapshot
+          headers:
+            Cache-Control: {schema: {type: string}, description: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeviceUsageReport'}
+        default: {$ref: '#/components/responses/Error'}
   /invitations:
     get:
       operationId: listDeviceInvitations
@@ -496,6 +518,29 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
+    DeviceUsageReport:
+      type: object
+      additionalProperties: false
+      required: [start, end, as_of, complete, device_microseconds, segments]
+      properties:
+        start: {type: string, format: date-time}
+        end: {type: string, format: date-time}
+        as_of: {type: string, format: date-time}
+        complete: {type: boolean, description: True only if the entire requested window has complete collection coverage.}
+        device_microseconds:
+          type: string
+          pattern: '^[0-9]+$'
+          description: Exact eligible device-time summed only over complete intervals. Zero with incomplete coverage does not prove zero usage.
+        segments: {type: array, maxItems: 10000, items: {$ref: '#/components/schemas/DeviceUsageSegment'}}
+    DeviceUsageSegment:
+      type: object
+      additionalProperties: false
+      required: [start, end, coverage, devices]
+      properties:
+        start: {type: string, format: date-time}
+        end: {type: string, format: date-time}
+        coverage: {type: string, enum: [complete, incomplete, uncollected]}
+        devices: {type: integer, format: int64, minimum: 0, nullable: true, description: Eligible enrolled devices in this half-open interval; null outside complete coverage.}
     DeviceInvitationDraft:
       type: object
       additionalProperties: false
