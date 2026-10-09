@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -105,6 +106,10 @@ type handler struct {
 	// histogram), nil in a deployment that has not configured a region
 	// allowlist store — see demandAnchors.
 	anchors demandReader
+	// scalerAdvisorURL is ADR-0045 §7 Phase 1 PR 5's own server-to-server
+	// dial target (KARST_SCALER_ADVISOR_URL) -- empty in a deployment that
+	// has not configured one, see scalerRecommendations.
+	scalerAdvisorURL string
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -312,8 +317,19 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors}
+//
+// scalerAdvisorURL is ADR-0045 §7 Phase 1 PR 5's own addition: an
+// operator-configured address (KARST_SCALER_ADVISOR_URL) where
+// karst-scaler advise's own loopback /recommendations endpoint is
+// reachable from this server's host. The browser never dials karst-scaler
+// directly -- that listener is loopback-only by design (same posture as
+// karstd's own metrics listener), and letting it bypass this server's own
+// auth would be a second, uncontrolled trust path into deployment-wide
+// demand data. Empty means scalerRecommendations below answers
+// precondition-failed, not a 404 -- the same "optional capability, not a
+// missing route" posture h.relays/h.anchors being nil already has.
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -370,6 +386,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -1684,6 +1701,94 @@ func (h *handler) demandAnchors(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.audit != nil {
 		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.demand.anchors.view", "anchors", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// scalerRecommendationsHTTPClient is used for every proxied GET below -- a
+// short, fixed timeout so a hung or unreachable karst-scaler process cannot
+// hang this handler (and, transitively, the console page polling it)
+// indefinitely, the same discipline audit.Transport's own HTTP client uses.
+var scalerRecommendationsHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+// scalerPoolRecommendationResponse mirrors karst-scaler's own
+// advise::PoolRecommendation (bins/karst-scaler/src/advise.rs), the same
+// "local response struct, not the generated contract type" convention
+// regionDemandResponse/anchorHistogramResponse above use.
+type scalerPoolRecommendationResponse struct {
+	PoolID            string  `json:"pool_id"`
+	DesiredNodes      uint32  `json:"desired_nodes"`
+	CostDelta         float64 `json:"cost_delta"`
+	BindingConstraint string  `json:"binding_constraint"`
+}
+
+// scalerRecommendationResponse mirrors advise::Recommendation.
+type scalerRecommendationResponse struct {
+	Pools          []scalerPoolRecommendationResponse `json:"pools"`
+	TotalCostDelta float64                            `json:"total_cost_delta"`
+	BaselineCost   float64                            `json:"baseline_cost"`
+}
+
+// scalerRecommendationsResponse mirrors karst-scaler's metrics_http::Snapshot
+// -- the exact shape its own GET /recommendations serves.
+type scalerRecommendationsResponse struct {
+	TickUnix        int64                        `json:"tick_unix"`
+	Recommendation  scalerRecommendationResponse `json:"recommendation"`
+	ConfiguredNodes map[string]uint32            `json:"configured_nodes"`
+}
+
+// scalerRecommendations proxies ADR-0045 §7 Phase 1's "recommended vs
+// actual" view (§7's own phrase) from karst-scaler advise's own loopback
+// /recommendations endpoint -- see RegisterEndpoints' own doc comment for
+// why the browser never dials karst-scaler directly. Decoded and
+// re-encoded through scalerRecommendationsResponse above, not proxied as
+// raw bytes: every other response in this file is a typed, contract-checked
+// shape, and a byte-for-byte proxy would be the one response here a schema
+// drift in karst-scaler's own JSON could carry straight to the browser
+// unnoticed. Gated behind the same UserRoleAdvisor role as
+// demandRegions/demandAnchors above, for the identical reason -- this is
+// itself a view of the operator's single, deployment-wide cost model, not
+// account-scoped data.
+func (h *handler) scalerRecommendations(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.scalerAdvisorURL == "" {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "KARST_SCALER_ADVISOR_URL is not configured"), w)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.scalerAdvisorURL+"/recommendations", nil)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "building karst-scaler request: %v", err), w)
+		return
+	}
+	resp, err := scalerRecommendationsHTTPClient.Do(req)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "reaching karst-scaler advise: %v", err), w)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBodyBytes))
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "karst-scaler advise returned %s: %s", resp.Status, body), w)
+		return
+	}
+	var result scalerRecommendationsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBodyBytes)).Decode(&result); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "decoding karst-scaler advise response: %v", err), w)
+		return
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.scaler.recommendations.view", "recommendations", ""); err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
 		}

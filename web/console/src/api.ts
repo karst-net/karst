@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayLocation, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayLocation, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -243,6 +243,12 @@ export const api = {
   // mutation-audit middleware never sees.
   nocComponents: () => request<Relay[]>("/noc/components"),
   nocRelay: (id: string) => request<Relay>(`/noc/relays/${encodeURIComponent(id)}`),
+
+  // ── scaler advisor (ADR-0045 §7 Phase 1) ───────────────────────────────────
+  // Audit-logged server-side on every request, same as nocComponents/
+  // demandRegions/demandAnchors above, since it's a GET the console's
+  // generic mutation-audit middleware never sees.
+  scalerRecommendations: () => request<ScalerRecommendations>("/scaler/recommendations"),
 
   // ── turn servers ───────────────────────────────────────────────────────────
   turns: () => request<TurnServer[]>("/turns"),
