@@ -6,6 +6,31 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type DeviceUsageReport = {
+    start: string;
+    end: string;
+    as_of: string;
+    /**
+     * True only if the entire requested window has complete collection coverage.
+     */
+    complete: boolean;
+    /**
+     * Exact eligible device-time summed only over complete intervals. Zero with incomplete coverage does not prove zero usage.
+     */
+    device_microseconds: string;
+    segments: Array<DeviceUsageSegment>;
+};
+
+export type DeviceUsageSegment = {
+    start: string;
+    end: string;
+    coverage: 'complete' | 'incomplete' | 'uncollected';
+    /**
+     * Eligible enrolled devices in this half-open interval; null outside complete coverage.
+     */
+    devices: number | null;
+};
+
 export type DeviceInvitationDraft = {
     name: string;
     groups: Array<string>;
@@ -513,6 +538,34 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type GetDeviceUsageData = {
+    body?: never;
+    path?: never;
+    query: {
+        start: string;
+        end: string;
+    };
+    url: '/usage/devices';
+};
+
+export type GetDeviceUsageErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetDeviceUsageError = GetDeviceUsageErrors[keyof GetDeviceUsageErrors];
+
+export type GetDeviceUsageResponses = {
+    /**
+     * Consistent ledger and collection-coverage snapshot
+     */
+    200: DeviceUsageReport;
+};
+
+export type GetDeviceUsageResponse = GetDeviceUsageResponses[keyof GetDeviceUsageResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;

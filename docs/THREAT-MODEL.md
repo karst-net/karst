@@ -239,7 +239,7 @@ Stated plainly, because a reviewer will find them anyway.
 | R6 | Metadata exposure via community relays | Medium | Opt-in with disclosure at configuration |
 | R7 | Lattice cryptanalysis advances | Low / catastrophic | Hybrid + PSK + SLH-DSA root; agility layer for rapid swap |
 | R8 | Agility layer itself becomes attack surface | Low | Closed allowlist; downgrade case in ProVerif |
-| R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off; no public usage endpoint yet. Authorized reads, retention, and deletion policy are rollout prerequisites. |
+| R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off. Usage reports require account owner/admin access, derive scope from authenticated context, audit every read, and prohibit caching. Retention and deletion policy remain activation prerequisites. |
 | R10 | An uninstrumented membership writer or database administrator invalidates usage accounting | Medium | Transactional membership hooks, coverage gaps, and explicit reconciliation; all replicas must run hooks before activation. No claim of tamper resistance against a compromised database/control server. |
 
 Device collection under ADR-0050 records enrollment generations and boundaries,

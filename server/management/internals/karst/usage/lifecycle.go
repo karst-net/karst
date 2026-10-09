@@ -3,7 +3,8 @@
 
 // Package usage provides the device lifecycle ledger and collection coverage
 // described in ADR-0050. SQL membership hooks are installed by bootstrap;
-// collection defaults off and has no public configuration or reporting API yet.
+// collection defaults off. Reports have an authorized API; configuration is
+// currently an internal operator integration seam.
 package usage
 
 import (
@@ -53,12 +54,12 @@ type stream struct {
 func (stream) TableName() string { return "karst_usage_device_streams" }
 
 type event struct {
-	AccountID    string `gorm:"primaryKey;size:128;uniqueIndex:usage_generation_kind,priority:1"`
+	AccountID    string `gorm:"primaryKey;size:128;uniqueIndex:usage_generation_kind,priority:1;index:usage_account_time,priority:1"`
 	ID           string `gorm:"primaryKey;size:128"`
 	Sequence     int64  `gorm:"not null;index"`
 	GenerationID string `gorm:"size:128;not null;uniqueIndex:usage_generation_kind,priority:2"`
 	Kind         Kind   `gorm:"size:16;not null;uniqueIndex:usage_generation_kind,priority:3"`
-	AtUS         int64  `gorm:"not null;index"`
+	AtUS         int64  `gorm:"not null;index;index:usage_account_time,priority:2"`
 }
 
 func (event) TableName() string { return "karst_usage_device_events" }
