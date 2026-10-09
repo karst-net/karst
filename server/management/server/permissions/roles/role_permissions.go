@@ -21,4 +21,5 @@ var RolesMap = map[types.UserRole]RolePermissions{
 	types.UserRoleAuditor:      Auditor,
 	types.UserRoleNetworkAdmin: NetworkAdmin,
 	types.UserRoleNOC:          NOC,
+	types.UserRoleAdvisor:      Advisor,
 }
