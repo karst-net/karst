@@ -50,8 +50,12 @@ impl std::error::Error for Error {}
 /// `String` the schedule lookup already validated against the pool, so this
 /// exists only so usage can be grouped in a `BTreeMap`, not to re-validate
 /// anything.
+///
+/// `pub(crate)`, not private: [`crate::position`] groups a running total the
+/// same way this module groups a batch, and reuses this key rather than
+/// defining its own.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum MetricKey {
+pub(crate) enum MetricKey {
     Meter(String),
     // A fixed discriminant ahead of the variant's own ordering keeps meters
     // and edges from interleaving when a pool's report is printed.
@@ -247,16 +251,64 @@ fn schedule_for_key<'a>(pool: &'a Pool, key: &MetricKey) -> Option<&'a PriceSche
 /// operator who needs it). Encoded as `year * 12 + (month - 1)` so adjacent
 /// months are adjacent integers and nothing but ordering is ever asked of
 /// the result.
-fn period_key(timestamp: i64) -> i64 {
+///
+/// `pub`, not `pub(crate)`, for the same cross-crate reason as
+/// [`hours_remaining_in_period`]: the Phase 1 `advise` CLI (the `[[bin]]`
+/// target, a separate crate from this library) uses the same period key a
+/// [`crate::position::Position`] rolls over on, so a tick's observations
+/// and a position's own notion of "has the period changed" never drift
+/// apart into two different calendars.
+#[must_use]
+pub fn period_key(timestamp: i64) -> i64 {
     let days = timestamp.div_euclid(86_400);
     let (year, month, _day) = civil_from_days(days);
     year * 12 + i64::from(month - 1)
 }
 
+/// Hours remaining from `now` (UTC, seconds since epoch) until the start of
+/// the next calendar month — the Phase 1 `advise` CLI's own conversion from
+/// a candidate node count into a quantity of whatever meter bills per node
+/// per hour (see `crate::advise`'s module doc). `pub`, not `pub(crate)`:
+/// the bin target that needs this is a separate crate from this library
+/// (Cargo's `[[bin]]`/`[lib]` split), so only a fully public item is
+/// reachable from it — unlike `round_up`/`price_quantity`/`MetricKey`,
+/// which `crate::position` reaches from inside this same library crate.
+#[must_use]
+pub fn hours_remaining_in_period(now: i64) -> f64 {
+    let days = now.div_euclid(86_400);
+    let (year, month, _day) = civil_from_days(days);
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, i64::from(month) + 1)
+    };
+    let next_month_start = days_from_civil(next_year, next_month, 1) * 86_400;
+    let seconds_remaining = (next_month_start - now).max(0);
+    #[allow(clippy::cast_precision_loss)] // whole-process-lifetime magnitudes only
+    let hours = seconds_remaining as f64 / 3600.0;
+    hours
+}
+
+/// The inverse of [`civil_from_days`] — days since the Unix epoch for the
+/// first moment of (`year`, `month`, `day`), same algorithm family (Howard
+/// Hinnant's `chrono`-compatible civil calendar).
+#[allow(clippy::many_single_char_names)]
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 /// Rounds `quantity` up to the nearest multiple of `increment`, or returns
 /// it unchanged if there is none — ADR-0045 §2's "minimum billing
 /// increments... set the *cost of churn*."
-fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
+///
+/// `pub(crate)`: [`crate::position`] rounds its own running totals with
+/// this, rather than a second copy of the same one-line rule.
+pub(crate) fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
     match increment {
         Some(inc) if inc > 0.0 => (quantity / inc).ceil() * inc,
         _ => quantity,
@@ -272,7 +324,10 @@ fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
 /// allows an operator to write a capped schedule deliberately; this is
 /// what happens when usage then exceeds the cap, surfaced rather than
 /// silently clamped or extrapolated past the operator's own boundary.
-fn price_quantity(schedule: &PriceSchedule, quantity: f64) -> Result<f64, String> {
+///
+/// `pub(crate)`: [`crate::position`] prices its own running totals against
+/// the same bands, rather than a second copy of the pricing math.
+pub(crate) fn price_quantity(schedule: &PriceSchedule, quantity: f64) -> Result<f64, String> {
     let billable = (quantity - schedule.free_allowance).max(0.0);
     match schedule.mode {
         Mode::Graduated => {
@@ -608,5 +663,22 @@ minimum_increment = 1.0
     fn period_key_matches_known_calendar_months() {
         assert_eq!(period_key(0), period_key(86_399)); // 1970-01-01, both days
         assert_ne!(period_key(0), period_key(31 * 86_400)); // into February
+    }
+
+    #[test]
+    fn hours_remaining_in_period_counts_down_to_the_next_calendar_month() {
+        // 2026-01-15T00:00:00Z -- 17 days left in January (16 remaining in
+        // January itself, plus the day that rolls into February).
+        let jan_15 = 1_768_435_200_i64;
+        assert!((hours_remaining_in_period(jan_15) - 408.0).abs() < 1e-9);
+
+        // One hour before February: 3,600 seconds remaining.
+        let jan_31_23 = jan_15 + 16 * 86_400 + 23 * 3_600;
+        assert!((hours_remaining_in_period(jan_31_23) - 1.0).abs() < 1e-9);
+
+        // December rolls into the next calendar year, not a parse error or
+        // a negative count.
+        let dec_15_2026 = jan_15 + 334 * 86_400; // 2026-12-15T00:00:00Z
+        assert!((hours_remaining_in_period(dec_15_2026) - 408.0).abs() < 1e-9);
     }
 }

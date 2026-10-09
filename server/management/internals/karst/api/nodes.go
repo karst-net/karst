@@ -29,6 +29,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -100,6 +101,10 @@ type handler struct {
 	accounts   accountUpdater
 	domainMgr  domainManager
 	tenancy    tenancyReader
+	// anchors is ADR-0045 §7 Phase 1's second demand-side input (§4b's
+	// histogram), nil in a deployment that has not configured a region
+	// allowlist store — see demandAnchors.
+	anchors demandReader
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -253,6 +258,17 @@ type relayReader interface {
 	// LatestTelemetry is ADR-0021's read side: a relay's most recent
 	// self-report, or nil if it has never reported.
 	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
+	// DemandByRegion is ADR-0045 §7 Phase 1's demand-side input — see its
+	// own doc comment on relayreg.Store for why it is deliberately not
+	// account-scoped the way every other method here is.
+	DemandByRegion(context.Context) ([]relayreg.RegionDemand, error)
+}
+
+// demandReader is ADR-0045 §4b/§7's deployment-wide anchor-RTT histogram —
+// narrower than regionallow.Store, the same "depend on behavior, not the
+// concrete store" convention tenancyReader/domainManager already use.
+type demandReader interface {
+	AnchorHistogram(context.Context) ([]regionallow.AnchorHistogramEntry, error)
 }
 
 type turnReader interface {
@@ -296,8 +312,8 @@ const maxRequestBodyBytes = 1 << 20
 // persisted state today. It is called on the management server's shared router
 // before that router is served, so its routes receive the same auth, CORS, and
 // metrics middleware as every /api endpoint.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -352,6 +368,8 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -1542,6 +1560,135 @@ func (h *handler) nocRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
+}
+
+// regionDemandResponse mirrors relayreg.RegionDemand with the JSON spelling
+// karst-openapi.yml's RegionDemand schema declares; RegionDemand itself
+// carries no JSON tags, since relayreg has no reason to know the API's
+// field-naming convention.
+type regionDemandResponse struct {
+	Region       string `json:"region"`
+	AccountID    string `json:"account_id"`
+	RTTUnder20ms int64  `json:"rtt_under_20ms"`
+	RTT20To50ms  int64  `json:"rtt_20_to_50ms"`
+	RTT50To100ms int64  `json:"rtt_50_to_100ms"`
+	RTTOver100ms int64  `json:"rtt_over_100ms"`
+}
+
+// anchorHistogramResponse mirrors regionallow.AnchorHistogramEntry, for the
+// same reason regionDemandResponse mirrors relayreg.RegionDemand.
+type anchorHistogramResponse struct {
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+	Bucket   string `json:"bucket"`
+	Count    int64  `json:"count"`
+}
+
+// requireAdvisorRole enforces the RBAC boundary ADR-0045 §7 Phase 1 actually
+// needs for the two demand endpoints below, which karstAuthorization's
+// blanket gate cannot express: that gate only checks module-level Read
+// access to modules.KarstControl, which every existing read-capable role
+// (NOC, Auditor, NetworkAdmin, Admin, Owner) already holds within their own
+// account. Without this check, the module gate alone would let any of them
+// see every OTHER tenant's aquifer-level demand the instant this route
+// exists — defeating the entire reason UserRoleAdvisor was introduced
+// instead of reusing one of those roles (see its own doc comment). The role
+// comes from context, not a fresh store lookup: karstAuthorization's
+// ValidateUserPermissions call already put it there via nbcontext.WithRole.
+func requireAdvisorRole(ctx context.Context) error {
+	role, ok := nbcontext.RoleFromContext(ctx)
+	if !ok {
+		return status.Errorf(status.Internal, "failed to get user role from context")
+	}
+	if types.UserRole(role) != types.UserRoleAdvisor {
+		return status.Errorf(status.PermissionDenied, "this endpoint requires the advisor role")
+	}
+	return nil
+}
+
+// demandRegions is ADR-0045 §7 Phase 1's per-(region, aquifer) demand feed
+// — §4a's RTT histogram, aggregated across every account's relays.
+// Deliberately cross-account; see relayreg.Store.DemandByRegion's own doc
+// comment for why. Audit-logged on every call — more deliberately than
+// nocComponents's karst.noc.view above, since every call here sees every
+// tenant's data, not just the caller's own account's.
+func (h *handler) demandRegions(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	rows, err := h.relays.DemandByRegion(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]regionDemandResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, regionDemandResponse{
+			Region:       row.Region,
+			AccountID:    row.AccountID,
+			RTTUnder20ms: row.RTTUnder20ms,
+			RTT20To50ms:  row.RTT20To50ms,
+			RTT50To100ms: row.RTT50To100ms,
+			RTTOver100ms: row.RTTOver100ms,
+		})
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.demand.regions.view", "regions", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// demandAnchors is ADR-0045 §7 Phase 1's second demand-side input — §4b's
+// deployment-wide, anonymous anchor-RTT histogram. No node or account
+// identity appears anywhere in this response, by schema (there is no such
+// column on regionallow.AnchorHistogramEntry at all) — unlike
+// demandRegions above, this is not a cross-account exposure concern, but it
+// is gated behind the same UserRoleAdvisor grant for one reason: keeping
+// both of the Advisor's inputs behind one role keeps "who can see what the
+// Advisor sees" a single, legible grant rather than two different ones.
+func (h *handler) demandAnchors(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.anchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "region allowlist store is not configured"), w)
+		return
+	}
+	rows, err := h.anchors.AnchorHistogram(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]anchorHistogramResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, anchorHistogramResponse{Provider: row.Provider, Region: row.Region, Bucket: row.Bucket, Count: row.Count})
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.demand.anchors.view", "anchors", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
 }
 
 func (h *handler) turnsList(w http.ResponseWriter, r *http.Request) {

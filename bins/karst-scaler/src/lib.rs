@@ -11,6 +11,8 @@
 //! Working name, per ADR-0045: naming follows ADR-0010 and is a placeholder
 //! until that is settled.
 
+pub mod advise;
 pub mod cost_model;
+pub mod position;
 pub mod simulate;
 pub mod usage;

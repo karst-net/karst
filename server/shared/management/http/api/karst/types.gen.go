@@ -469,6 +469,14 @@ type AcknowledgmentMismatch struct {
 	RequiredCutOffHandles []string `json:"required_cut_off_handles"`
 }
 
+// AnchorHistogramEntry defines model for AnchorHistogramEntry.
+type AnchorHistogramEntry struct {
+	Bucket   string `json:"bucket"`
+	Count    int    `json:"count"`
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+}
+
 // AuditAnchor defines model for AuditAnchor.
 type AuditAnchor struct {
 	// ContradictsAnchor true when the audit log no longer matches its recorded anchor (ADR-0016 VerifyAnchored) — the server has truncated or rewritten history since it was last anchored. False both when the log is intact and when there is no anchor to contradict.
@@ -818,6 +826,16 @@ type PostureAggregate struct {
 	StaleNodes          int            `json:"stale_nodes"`
 	Suites              map[string]int `json:"suites"`
 	WindowStart         time.Time      `json:"window_start"`
+}
+
+// RegionDemand defines model for RegionDemand.
+type RegionDemand struct {
+	AccountId    string `json:"account_id"`
+	Region       string `json:"region"`
+	Rtt20To50ms  int    `json:"rtt_20_to_50ms"`
+	Rtt50To100ms int    `json:"rtt_50_to_100ms"`
+	RttOver100ms int    `json:"rtt_over_100ms"`
+	RttUnder20ms int    `json:"rtt_under_20ms"`
 }
 
 // Relay defines model for Relay.

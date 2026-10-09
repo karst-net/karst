@@ -3,6 +3,8 @@
 
 #![forbid(unsafe_code)]
 //! `karst-scaler simulate COST_MODEL.toml USAGE_LOG` — ADR-0045 §7 Phase 0.
+//! `karst-scaler advise ...` — §7 Phase 1; see [`advise_loop`]'s own module
+//! doc.
 //!
 //! ```text
 //! karst-scaler simulate COST_MODEL.toml USAGE_LOG
@@ -10,6 +12,9 @@
 //!     per meter, per edge, and a grand total
 //! karst-scaler check COST_MODEL.toml
 //!     parse and validate a cost-model file without simulating anything
+//! karst-scaler advise COST_MODEL.toml CONTROL_API_BASE PAT_FILE POLL_SECS
+//!     poll the control server's demand endpoints on an interval and log a
+//!     node-count recommendation per pool, forever
 //! ```
 //!
 //! # Why this phase first
@@ -34,9 +39,12 @@
 
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use karst_scaler::cost_model::Document;
 use karst_scaler::{simulate, usage};
+
+mod advise_loop;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -45,6 +53,9 @@ fn main() -> ExitCode {
     let result = match refs.as_slice() {
         ["simulate", cost_model, usage_log] => run_simulate(cost_model, usage_log),
         ["check", cost_model] => run_check(cost_model),
+        ["advise", cost_model, api_base, pat_file, poll_secs] => {
+            run_advise(cost_model, api_base, pat_file, poll_secs)
+        }
         _ => {
             usage_text();
             return ExitCode::FAILURE;
@@ -62,13 +73,47 @@ fn main() -> ExitCode {
 
 fn usage_text() {
     eprintln!(
-        "karst-scaler — ADR-0045 Phase 0: cost model and offline simulator
+        "karst-scaler — ADR-0045 Phase 0/1: cost model, offline simulator, and Advisor
 
   simulate COST_MODEL.toml USAGE_LOG
                               replay recorded usage against a cost model;
                               print spend per pool, per meter, per edge
-  check COST_MODEL.toml       parse and validate a cost-model file only"
+  check COST_MODEL.toml       parse and validate a cost-model file only
+  advise COST_MODEL.toml CONTROL_API_BASE PAT_FILE POLL_SECS
+                              poll the control server's demand endpoints on
+                              an interval; log a node-count recommendation
+                              per pool, forever"
     );
+}
+
+fn run_advise(
+    cost_model_path: &str,
+    api_base: &str,
+    pat_file: &str,
+    poll_secs: &str,
+) -> Result<(), String> {
+    // ureq's TLS backend is built with no crypto provider of its own (see
+    // Cargo.toml's comment on why) -- it needs one installed process-wide
+    // before the first HTTPS request. aws-lc-rs is the one every other
+    // crate in this workspace already uses; the `Err` case is only "already
+    // installed," which cannot happen this early and would be harmless if
+    // it somehow did.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let pat = std::fs::read_to_string(pat_file)
+        .map_err(|e| format!("reading {pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let poll_secs: u64 = poll_secs
+        .parse()
+        .map_err(|_| format!("{poll_secs:?} is not a whole number of seconds"))?;
+    let config = advise_loop::Config {
+        cost_model_path: cost_model_path.to_owned(),
+        control_api_base: api_base.trim_end_matches('/').to_owned(),
+        pat,
+        poll_interval: Duration::from_secs(poll_secs),
+    };
+    advise_loop::run(&config)
 }
 
 fn run_check(cost_model_path: &str) -> Result<(), String> {
