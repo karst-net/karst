@@ -1,6 +1,6 @@
 [package]
 name = "karst-scaler"
-description = "ADR-0045 Phase 0: cost model schema and offline spend simulator"
+description = "ADR-0045 Phase 0 cost model/simulator and Phase 1's Advisor"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,8 +27,27 @@ workspace = true
 # Phase 0 is an offline tool: no network stack, no async runtime, no cloud
 # SDK. It reads two files and prints a report. Keeping the dependency list
 # this short is itself part of ADR-0045 §4c/§6's posture — a planner-adjacent
-# tool earns credentials and a network dependency only in later phases, and
-# this one has neither.
+# tool earns credentials and a network dependency only in later phases.
+#
+# Phase 1's `advise` subcommand (bin target only; the library stays as
+# described above) is the first exception: it polls the control server's own
+# read-only demand endpoints over plain outbound HTTPS with a read-scoped
+# PAT -- still no cloud credentials, still no driver, per §7 Phase 1's own
+# "actuates nothing" scope. ureq (blocking) rather than a tokio-based client:
+# a poll loop has no concurrency to speak of, and pulling in an async
+# runtime for one sequential GET per tick would be the dependency weight
+# this section exists to avoid paying.
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
+# ureq's own default `rustls` feature bundles its own crypto provider
+# (`ring`). Every other crate in this workspace that depends on `rustls`
+# picks `aws-lc-rs` instead, and Cargo's feature unification means a crate
+# simply pulling in `ring` here would silently compile `ring` into every
+# other crate's own copy of `rustls` too (confirmed: it broke karst-dns's
+# TLS-pinning tests under `cargo test --workspace` while that crate's own
+# `-p karst-dns` run stayed green). `rustls-no-provider` opts ureq out of
+# choosing a provider at all; main.rs installs `aws-lc-rs` explicitly at
+# startup instead, matching the one choice already made everywhere else.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
