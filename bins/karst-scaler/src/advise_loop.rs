@@ -95,10 +95,11 @@ pub(crate) fn run(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("reading {}: {e}", config.cost_model_path))?;
     doc.validate().map_err(|e| e.to_string())?;
 
+    let agent = build_agent()?;
     let mut positions: HashMap<String, Position> = HashMap::new();
 
     loop {
-        match tick(&doc, &mut positions, config) {
+        match tick(&doc, &mut positions, config, &agent) {
             Ok(()) => {}
             Err(e) => eprintln!("karst-scaler advise: tick failed: {e}"),
         }
@@ -106,17 +107,37 @@ pub(crate) fn run(config: &Config) -> Result<(), String> {
     }
 }
 
+/// An `Agent` with root certs loaded from the OS's own store via
+/// `rustls-native-certs` — see `Cargo.toml`'s own comment for why this
+/// loop does not use ureq's bundled root-certificate options.
+fn build_agent() -> Result<ureq::Agent, String> {
+    let loaded = rustls_native_certs::load_native_certs();
+    if loaded.certs.is_empty() {
+        return Err("the host has no usable certificate authority roots".to_owned());
+    }
+    let roots: ureq::tls::RootCerts = loaded
+        .certs
+        .into_iter()
+        .map(|der| ureq::tls::Certificate::from_der(der.as_ref()).to_owned())
+        .collect::<Vec<_>>()
+        .into();
+    let tls_config = ureq::tls::TlsConfig::builder().root_certs(roots).build();
+    let config = ureq::Agent::config_builder().tls_config(tls_config).build();
+    Ok(ureq::Agent::new_with_config(config))
+}
+
 fn tick(
     doc: &Document,
     positions: &mut HashMap<String, Position>,
     config: &Config,
+    agent: &ureq::Agent,
 ) -> Result<(), String> {
     let now = now_unix()?;
     let period = period_key(now);
     let remaining_period_hours = hours_remaining_in_period(now);
 
-    let regions: Vec<RegionDemandRow> = fetch(config, "/karst/v1/demand/regions")?;
-    let anchors: Vec<AnchorHistogramRow> = fetch(config, "/karst/v1/demand/anchors")?;
+    let regions: Vec<RegionDemandRow> = fetch(agent, config, "/karst/v1/demand/regions")?;
+    let anchors: Vec<AnchorHistogramRow> = fetch(agent, config, "/karst/v1/demand/anchors")?;
     let demand_by_region = demand_nodes_by_region(&regions);
 
     // Nothing is ever observed into these positions today: Phase 1 has no
@@ -209,9 +230,14 @@ fn demand_nodes_by_region(rows: &[RegionDemandRow]) -> HashMap<String, f64> {
         .collect()
 }
 
-fn fetch<T: serde::de::DeserializeOwned>(config: &Config, path: &str) -> Result<T, String> {
+fn fetch<T: serde::de::DeserializeOwned>(
+    agent: &ureq::Agent,
+    config: &Config,
+    path: &str,
+) -> Result<T, String> {
     let url = format!("{}{path}", config.control_api_base);
-    ureq::get(&url)
+    agent
+        .get(&url)
         .header("Authorization", &format!("Bearer {}", config.pat))
         .call()
         .map_err(|e| format!("GET {url}: {e}"))?

@@ -41,13 +41,22 @@ workspace = true
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 # ureq's own default `rustls` feature bundles its own crypto provider
-# (`ring`). Every other crate in this workspace that depends on `rustls`
-# picks `aws-lc-rs` instead, and Cargo's feature unification means a crate
-# simply pulling in `ring` here would silently compile `ring` into every
-# other crate's own copy of `rustls` too (confirmed: it broke karst-dns's
-# TLS-pinning tests under `cargo test --workspace` while that crate's own
-# `-p karst-dns` run stayed green). `rustls-no-provider` opts ureq out of
-# choosing a provider at all; main.rs installs `aws-lc-rs` explicitly at
-# startup instead, matching the one choice already made everywhere else.
-ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots", "json"] }
+# (`ring`) and its own bundled Mozilla root-certificate list
+# (`webpki-roots`, and `platform-verifier`'s own fallback pulls in the same
+# roots under the name `webpki-root-certs`). Neither matches this
+# workspace's existing choices: every other crate here picks `aws-lc-rs`
+# for its crypto provider (feature unification would otherwise silently
+# compile `ring` into every other crate's own copy of `rustls` too --
+# confirmed: it broke karst-dns's TLS-pinning tests under
+# `cargo test --workspace` while that crate's own `-p karst-dns` run stayed
+# green), and the bundled Mozilla root list carries a CDLA-Permissive-2.0
+# license this repo's dependency policy (deny.toml, ADR-0003/ADR-0007) does
+# not allow -- confirmed by the `Dependency policy` CI job rejecting it.
+# `rustls-no-provider` opts ureq out of choosing either: `advise_loop.rs`
+# builds its own `Agent` with `aws-lc-rs` installed explicitly and root
+# certs loaded via `rustls-native-certs`, the crate every other crate here
+# already uses for exactly this (`bins/karst-relay/src/tls.rs`,
+# `bins/karstd/src/relay_tls.rs`).
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-native-certs = "0.8"
