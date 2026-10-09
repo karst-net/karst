@@ -50,8 +50,12 @@ impl std::error::Error for Error {}
 /// `String` the schedule lookup already validated against the pool, so this
 /// exists only so usage can be grouped in a `BTreeMap`, not to re-validate
 /// anything.
+///
+/// `pub(crate)`, not private: [`crate::position`] groups a running total the
+/// same way this module groups a batch, and reuses this key rather than
+/// defining its own.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum MetricKey {
+pub(crate) enum MetricKey {
     Meter(String),
     // A fixed discriminant ahead of the variant's own ordering keeps meters
     // and edges from interleaving when a pool's report is printed.
@@ -256,7 +260,10 @@ fn period_key(timestamp: i64) -> i64 {
 /// Rounds `quantity` up to the nearest multiple of `increment`, or returns
 /// it unchanged if there is none — ADR-0045 §2's "minimum billing
 /// increments... set the *cost of churn*."
-fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
+///
+/// `pub(crate)`: [`crate::position`] rounds its own running totals with
+/// this, rather than a second copy of the same one-line rule.
+pub(crate) fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
     match increment {
         Some(inc) if inc > 0.0 => (quantity / inc).ceil() * inc,
         _ => quantity,
@@ -272,7 +279,10 @@ fn round_up(quantity: f64, increment: Option<f64>) -> f64 {
 /// allows an operator to write a capped schedule deliberately; this is
 /// what happens when usage then exceeds the cap, surfaced rather than
 /// silently clamped or extrapolated past the operator's own boundary.
-fn price_quantity(schedule: &PriceSchedule, quantity: f64) -> Result<f64, String> {
+///
+/// `pub(crate)`: [`crate::position`] prices its own running totals against
+/// the same bands, rather than a second copy of the pricing math.
+pub(crate) fn price_quantity(schedule: &PriceSchedule, quantity: f64) -> Result<f64, String> {
     let billable = (quantity - schedule.free_allowance).max(0.0);
     match schedule.mode {
         Mode::Graduated => {
