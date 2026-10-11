@@ -169,6 +169,18 @@ must not gain permission to submit managed billing usage. Authenticate fresh
 upload envelopes independently from historical batch timestamps so legitimate
 backlog replay does not weaken transport replay checks.
 
+For the HTTP transport, keep the persisted KRUS batch body immutable across
+retries and sign each POST separately under
+`karst-relay-usage-upload-v1`. The request transcript binds the method, exact
+route, current UTC timestamp, a fresh 32-byte nonce, and SHA-256 of the exact
+body. Accept request timestamps within five minutes of control-plane time and
+persist nonce use transactionally with batch ingestion; retain each nonce until
+its signed timestamp is outside that freshness window. A retransmission with a
+new nonce may acknowledge the same batch identity and digest, while replaying
+the same request authorization is rejected. This separates live transport
+freshness from historical batch time and does not change the signed body being
+retried.
+
 Validate integer bounds, batch sizes, bucket durations, mapping scope, and epoch
 transitions before aggregation. Revoke compromised producer credentials and
 quarantine affected data for reconciliation. Signatures prove provenance, not

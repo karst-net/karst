@@ -12,6 +12,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 )
@@ -21,6 +24,17 @@ const (
 	MaxPayloadSize = 8 * 1024 * 1024
 	headerSize     = 68
 	maxEncodedSize = headerSize + identity.SignatureSize + MaxPayloadSize
+	maxMappings    = 4096
+	minuteMicros   = uint64(60_000_000)
+)
+
+const (
+	GapUnresolvedMapping uint8 = 1 << iota
+	GapCapacity
+	GapOverflow
+	GapClock
+	GapObservationLost
+	knownGapMask = GapUnresolvedMapping | GapCapacity | GapOverflow | GapClock | GapObservationLost
 )
 
 var (
@@ -37,6 +51,24 @@ type Batch struct {
 	Digest    [32]byte
 	Signature []byte
 	Payload   []byte
+	Window    Window
+}
+
+// MappingTotal is one account-attribution reference and its observed bytes.
+// Account ownership must be resolved from durable control-plane mapping state.
+type MappingTotal struct {
+	Deployment string
+	Version    string
+	Aquifer    string
+	Bytes      uint64
+}
+
+// Window is one bounded UTC minute, including explicit coverage gaps.
+type Window struct {
+	StartMicros uint64
+	EndMicros   uint64
+	Mappings    []MappingTotal
+	Gaps        uint8
 }
 
 // Parse checks the bounded KRUS v1 envelope, its exact lengths, and payload
@@ -66,7 +98,71 @@ func Parse(encoded []byte) (Batch, error) {
 	if sha256.Sum256(batch.Payload) != batch.Digest {
 		return Batch{}, fmt.Errorf("%w: payload digest", ErrInvalidBatch)
 	}
+	window, err := parsePayload(batch.Payload)
+	if err != nil {
+		return Batch{}, err
+	}
+	batch.Window = window
 	return batch, nil
+}
+
+func parsePayload(payload []byte) (Window, error) {
+	if len(payload) < 4+2+8+8+2+1 || string(payload[:4]) != "KRUM" || binary.BigEndian.Uint16(payload[4:6]) != 1 {
+		return Window{}, fmt.Errorf("%w: payload magic or version", ErrInvalidBatch)
+	}
+	window := Window{
+		StartMicros: binary.BigEndian.Uint64(payload[6:14]),
+		EndMicros:   binary.BigEndian.Uint64(payload[14:22]),
+	}
+	if window.StartMicros%minuteMicros != 0 || window.StartMicros > ^uint64(0)-minuteMicros || window.EndMicros != window.StartMicros+minuteMicros {
+		return Window{}, fmt.Errorf("%w: payload window bounds", ErrInvalidBatch)
+	}
+	count := int(binary.BigEndian.Uint16(payload[22:24]))
+	if count > maxMappings {
+		return Window{}, fmt.Errorf("%w: mapping count", ErrInvalidBatch)
+	}
+	offset := 24
+	window.Mappings = make([]MappingTotal, 0, count)
+	previous := ""
+	for i := 0; i < count; i++ {
+		fields := [3]string{}
+		limits := [3]int{128, 64, 1024}
+		for j, limit := range limits {
+			if len(payload)-offset < 2 {
+				return Window{}, fmt.Errorf("%w: truncated mapping length", ErrInvalidBatch)
+			}
+			size := int(binary.BigEndian.Uint16(payload[offset : offset+2]))
+			offset += 2
+			if size == 0 || size > limit || size > len(payload)-offset {
+				return Window{}, fmt.Errorf("%w: mapping field bounds", ErrInvalidBatch)
+			}
+			value := payload[offset : offset+size]
+			offset += size
+			if !utf8.Valid(value) || strings.TrimSpace(string(value)) != string(value) || strings.IndexFunc(string(value), unicode.IsControl) >= 0 {
+				return Window{}, fmt.Errorf("%w: invalid mapping text", ErrInvalidBatch)
+			}
+			fields[j] = string(value)
+		}
+		if len(payload)-offset < 8 {
+			return Window{}, fmt.Errorf("%w: truncated mapping total", ErrInvalidBatch)
+		}
+		bytes := binary.BigEndian.Uint64(payload[offset : offset+8])
+		offset += 8
+		key := fields[0] + "\x00" + fields[1] + "\x00" + fields[2]
+		if i > 0 && key <= previous {
+			return Window{}, fmt.Errorf("%w: mapping order or duplicate", ErrInvalidBatch)
+		}
+		previous = key
+		window.Mappings = append(window.Mappings, MappingTotal{Deployment: fields[0], Version: fields[1], Aquifer: fields[2], Bytes: bytes})
+	}
+	if len(payload)-offset != 1 {
+		return Window{}, fmt.Errorf("%w: payload trailing bytes", ErrInvalidBatch)
+	}
+	window.Gaps = payload[offset]
+	if window.Gaps&^knownGapMask != 0 {
+		return Window{}, fmt.Errorf("%w: unknown coverage gap", ErrInvalidBatch)
+	}
+	return window, nil
 }
 
 // SigningInput returns the v1 canonical message signed under
