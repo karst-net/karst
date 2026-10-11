@@ -16,6 +16,7 @@ pub mod spool;
 
 pub const BUCKET_MICROS: u64 = 60_000_000;
 pub const MAX_MAPPINGS: usize = 4096;
+pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 /// Reasons observed bytes cannot establish complete coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,6 +42,73 @@ pub struct Window {
     pub end_us: u64,
     pub totals: Vec<Total>,
     pub gaps: BTreeSet<Gap>,
+}
+
+impl Window {
+    /// Canonical versioned encoding for a sealed spool batch. Fields are
+    /// length-prefixed UTF-8 and sorted by mapping; payload and device IDs are
+    /// absent. This representation is the input for future signing/upload.
+    /// # Errors
+    /// Rejects out-of-bound windows or metadata before allocating a batch.
+    pub fn encode(&self) -> Result<Vec<u8>, &'static str> {
+        if self.end_us <= self.start_us
+            || self.end_us - self.start_us != BUCKET_MICROS
+            || self.totals.len() > MAX_MAPPINGS
+            || self.gaps.len() > 8
+        {
+            return Err("invalid usage window");
+        }
+        let mut out = Vec::with_capacity(64 + self.totals.len() * 64);
+        out.extend_from_slice(b"KRUM");
+        out.extend_from_slice(&1u16.to_be_bytes());
+        out.extend_from_slice(&self.start_us.to_be_bytes());
+        out.extend_from_slice(&self.end_us.to_be_bytes());
+        out.extend_from_slice(
+            &u16::try_from(self.totals.len())
+                .map_err(|_| "too many mappings")?
+                .to_be_bytes(),
+        );
+        let mut previous: Option<(&str, &str, &str)> = None;
+        for total in &self.totals {
+            let mapping = &total.mapping;
+            if mapping.deployment.is_empty()
+                || mapping.deployment.len() > 128
+                || mapping.version.is_empty()
+                || mapping.version.len() > 64
+                || mapping.aquifer.is_empty()
+                || mapping.aquifer.len() > 1024
+            {
+                return Err("invalid usage mapping");
+            }
+            let current = (
+                mapping.deployment.as_str(),
+                mapping.version.as_str(),
+                mapping.aquifer.as_str(),
+            );
+            if previous.is_some_and(|p| p >= current) {
+                return Err("unsorted or duplicate usage mapping");
+            }
+            previous = Some(current);
+            for field in [current.0, current.1, current.2] {
+                out.extend_from_slice(
+                    &u16::try_from(field.len())
+                        .map_err(|_| "mapping field too long")?
+                        .to_be_bytes(),
+                );
+                out.extend_from_slice(field.as_bytes());
+            }
+            out.extend_from_slice(&total.bytes.to_be_bytes());
+        }
+        let mut gap_bits = 0u8;
+        for gap in &self.gaps {
+            gap_bits |= 1 << (*gap as u8);
+        }
+        out.push(gap_bits);
+        if out.len() > MAX_BATCH_BYTES {
+            return Err("usage batch too large");
+        }
+        Ok(out)
+    }
 }
 
 #[derive(Debug)]
@@ -210,5 +278,38 @@ mod tests {
         assert_eq!(window.end_us, BUCKET_MICROS);
         assert!(Accumulator::new(1).is_none());
         assert!(Accumulator::new(u64::MAX - u64::MAX % BUCKET_MICROS).is_none());
+    }
+
+    #[test]
+    fn batch_encoding_is_stable_versioned_and_contains_only_aggregate_metadata() {
+        let mut acc = Accumulator::new(0).expect("minute");
+        acc.record(1, delivery("version", 100));
+        let window = acc.seal();
+        let first = window.encode().expect("encode");
+        assert_eq!(first, window.encode().expect("repeatable"));
+        assert_eq!(&first[..6], b"KRUM\x00\x01");
+        assert_eq!(
+            u64::from_be_bytes(first[6..14].try_into().expect("start")),
+            0
+        );
+        assert_eq!(
+            u64::from_be_bytes(first[14..22].try_into().expect("end")),
+            BUCKET_MICROS
+        );
+    }
+
+    #[test]
+    fn unrepresentable_windows_are_rejected_before_sealing() {
+        let mut acc = Accumulator::new(0).expect("minute");
+        acc.record(1, delivery("version", 1));
+        let mut window = acc.seal();
+        window.end_us -= 1;
+        assert!(window.encode().is_err());
+        let mut acc = Accumulator::new(0).expect("minute");
+        acc.record(1, delivery("z-version", 1));
+        acc.record(2, delivery("a-version", 2));
+        let mut window = acc.seal();
+        window.totals.reverse();
+        assert!(window.encode().is_err());
     }
 }

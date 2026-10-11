@@ -9,9 +9,9 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
+use super::{Window, MAX_BATCH_BYTES};
 use sha2::{Digest, Sha256};
 
-pub const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_SPOOL_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_BATCHES: usize = 1024;
 
@@ -98,6 +98,18 @@ impl Spool {
             epoch: self.epoch,
             sequence,
         })
+    }
+
+    /// Encode, reserve a fresh identity, and durably seal a completed window.
+    /// On storage failure the reserved sequence stays consumed and the caller
+    /// must mark coverage incomplete; it must not retry under another identity.
+    /// # Errors
+    /// Returns invalid window, capacity, or filesystem errors.
+    pub fn seal(&mut self, window: &Window) -> io::Result<BatchId> {
+        let payload = window.encode().map_err(invalid)?;
+        let id = self.reserve()?;
+        self.put(id, &payload)?;
+        Ok(id)
     }
 
     /// Record clean producer shutdown after the final window is sealed. Any
@@ -539,5 +551,32 @@ mod tests {
         let mut spool = Spool::open(&temp.0).expect("open");
         spool.next_sequence = u64::MAX;
         assert!(spool.reserve().is_err());
+    }
+
+    #[test]
+    fn sealing_a_window_reserves_and_replays_the_exact_canonical_batch() {
+        let temp = Temp::new();
+        let mut spool = Spool::open(&temp.0).expect("open");
+        let mut acc = super::super::Accumulator::new(0).expect("window");
+        acc.record(1, DeliveryUsageForTest::make());
+        let window = acc.seal();
+        let expected = window.encode().expect("encode");
+        let id = spool.seal(&window).expect("seal");
+        assert_eq!(id.sequence, 0);
+        assert_eq!(spool.read(id).expect("replay"), expected);
+    }
+
+    struct DeliveryUsageForTest;
+    impl DeliveryUsageForTest {
+        fn make() -> super::super::DeliveryUsage {
+            super::super::DeliveryUsage {
+                mapping: Some(crate::roster::UsageMapping {
+                    deployment: "deployment".into(),
+                    version: "version".into(),
+                    aquifer: "aquifer".into(),
+                }),
+                payload_bytes: 9,
+            }
+        }
     }
 }
