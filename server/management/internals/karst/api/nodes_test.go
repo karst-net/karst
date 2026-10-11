@@ -346,6 +346,9 @@ func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelem
 	return nil, nil
 }
 func (scanRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) { return nil, nil }
+func (scanRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+	return nil, nil
+}
 
 // scanRelaysExists reports every Create as a duplicate — the
 // relaysEnroll/relaysCreate "relay already exists" path.
@@ -395,6 +398,9 @@ func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTele
 	return nil, nil
 }
 func (fixedRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) {
+	return nil, nil
+}
+func (fixedRelays) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
 	return nil, nil
 }
 
@@ -1578,13 +1584,72 @@ func TestOnlyAdvisorRoleReachesDemandEndpoints(t *testing.T) {
 		router := mux.NewRouter()
 		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, anchors, "", router)
 
-		for _, path := range []string{"/karst/v1/demand/regions", "/karst/v1/demand/anchors"} {
+		for _, path := range []string{
+			"/karst/v1/demand/regions",
+			"/karst/v1/demand/regions/history?since=2026-01-01T00:00:00Z&until=2026-01-02T00:00:00Z",
+			"/karst/v1/demand/anchors",
+		} {
 			request := httptest.NewRequest(http.MethodGet, path, nil)
 			request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			require.Equalf(t, http.StatusForbidden, response.Code, "role %s on %s: %s", role, path, response.Body.String())
 		}
+	}
+}
+
+// fixedDemandHistory answers DemandHistory with a fixed set of samples,
+// embedding fixedRelays for every other relayReader method this doesn't
+// need to customize.
+type fixedDemandHistory struct {
+	fixedRelays
+	samples []relayreg.RegionDemandSample
+}
+
+func (f fixedDemandHistory) DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error) {
+	return f.samples, nil
+}
+
+// TestDemandRegionsHistoryResponseShape confirms the wire response uses the
+// openapi.yml field spelling (snake_case), the same discipline
+// TestDemandRegionsResponseShape already holds demandRegions to.
+func TestDemandRegionsHistoryResponseShape(t *testing.T) {
+	sampledAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	relays := fixedDemandHistory{samples: []relayreg.RegionDemandSample{
+		{Region: "eu", AccountID: "account-a", SampledAt: sampledAt, RTTUnder20ms: 5, RTT20To50ms: 1, RTT50To100ms: 2, RTTOver100ms: 3},
+	}}
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, relays, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", router)
+
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/demand/regions/history?since=2026-01-01T00:00:00Z&until=2026-01-02T00:00:00Z", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.JSONEq(t,
+		`[{"region":"eu","account_id":"account-a","sampled_at":"2026-01-01T12:00:00Z","rtt_under_20ms":5,"rtt_20_to_50ms":1,"rtt_50_to_100ms":2,"rtt_over_100ms":3}]`,
+		response.Body.String())
+}
+
+// TestDemandRegionsHistoryRequiresSinceAndUntil confirms the range is
+// mandatory -- there is no sensible default window for a query whose whole
+// point is "a specific range to train or chart against".
+func TestDemandRegionsHistoryRequiresSinceAndUntil(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, fixedRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", router)
+
+	for _, path := range []string{
+		"/karst/v1/demand/regions/history",
+		"/karst/v1/demand/regions/history?since=2026-01-01T00:00:00Z",
+		"/karst/v1/demand/regions/history?until=2026-01-02T00:00:00Z",
+		// until before since: the [since, until) contract inverted.
+		"/karst/v1/demand/regions/history?since=2026-01-02T00:00:00Z&until=2026-01-01T00:00:00Z",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equalf(t, http.StatusBadRequest, response.Code, "%s: %s", path, response.Body.String())
 	}
 }
 
