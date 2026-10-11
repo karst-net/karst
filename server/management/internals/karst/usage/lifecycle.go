@@ -68,7 +68,7 @@ func (event) TableName() string { return "karst_usage_device_events" }
 // cascading foreign keys to live membership: a
 // deletion must not destroy historical evidence.
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&stream{}, &event{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{})
+	return db.AutoMigrate(&stream{}, &event{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{}, &RelayMapping{})
 }
 
 func validTime(t time.Time) bool {

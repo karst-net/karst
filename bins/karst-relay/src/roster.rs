@@ -68,6 +68,48 @@ struct ClientRow {
     identity_pk: String,
     /// The aquifer this node belongs to. Forwarding is scoped by it (§5.4).
     aquifer: String,
+    // Malformed billing metadata must not prevent admission. It is retained
+    // only when both fields pass validation; otherwise usage is unresolved.
+    usage_deployment: Option<toml::Value>,
+    usage_mapping: Option<toml::Value>,
+}
+
+/// Immutable reference to control-plane attribution evidence (ADR-0050).
+/// This is not authorization to upload managed usage.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UsageMapping {
+    pub deployment: String,
+    pub version: String,
+    pub aquifer: String,
+}
+
+impl std::fmt::Debug for UsageMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UsageMapping").finish_non_exhaustive()
+    }
+}
+
+impl UsageMapping {
+    fn from_row(row: &ClientRow) -> Option<Self> {
+        let deployment = row.usage_deployment.as_ref()?.as_str()?;
+        let version = row.usage_mapping.as_ref()?.as_str()?;
+        if deployment.is_empty()
+            || deployment.len() > 128
+            || deployment.trim() != deployment
+            || deployment.chars().any(char::is_control)
+            || version.len() != 64
+            || !version
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return None;
+        }
+        Some(Self {
+            deployment: deployment.to_owned(),
+            version: version.to_owned(),
+            aquifer: row.aquifer.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +153,7 @@ fn default_region() -> String {
 /// unauthenticated caller can read at one connection per guess.
 pub struct FileRoster {
     clients: HashMap<Id, RosterEntry>,
+    usage: HashMap<Id, UsageMapping>,
     mesh: HashMap<Id, RelayEntry>,
     /// Which region each mesh peer serves — §8.
     ///
@@ -231,6 +274,7 @@ impl FileRoster {
     pub fn empty() -> Self {
         Self {
             clients: HashMap::new(),
+            usage: HashMap::new(),
             mesh: HashMap::new(),
             dial: Vec::new(),
             region: HashMap::new(),
@@ -248,9 +292,13 @@ impl FileRoster {
         let file: File = toml::from_str(text).map_err(|e| Error::Syntax(format!("roster: {e}")))?;
 
         let mut clients = HashMap::new();
+        let mut usage = HashMap::new();
         for (n, row) in file.client.iter().enumerate() {
             let pk = decode_key(&row.identity_pk, "client", n)?;
             let id = node_id(&pk);
+            if let Some(mapping) = UsageMapping::from_row(row) {
+                usage.insert(id, mapping);
+            }
             if clients
                 .insert(
                     id,
@@ -291,6 +339,7 @@ impl FileRoster {
         }
 
         Ok(Self {
+            usage,
             clients,
             mesh,
             dial,
@@ -313,6 +362,13 @@ impl FileRoster {
     #[must_use]
     pub fn client_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// Capture before queueing; a later roster reload must not reattribute a
+    /// delivery. None means unresolved attribution, never zero billable bytes.
+    #[must_use]
+    pub fn usage_mapping(&self, id: &Id) -> Option<UsageMapping> {
+        self.usage.get(id).cloned()
     }
 
     /// Configured mesh peers.
@@ -449,6 +505,46 @@ mod tests {
         assert!(r.mesh_peer(&relay_id(&pk(1))).is_none());
         // And it still has a decoy, so a miss costs the same as a hit.
         assert_eq!(r.decoy_key().len(), IDENTITY_PK_LEN);
+    }
+
+    #[test]
+    fn usage_references_are_optional_and_captured_independently_of_reload() {
+        let base = format!(
+            "[[client]]\nidentity_pk = \"{}\"\naquifer = \"acme\"\n",
+            key(1)
+        );
+        let version = "a".repeat(64);
+        let roster = FileRoster::parse(&format!(
+            "{base}usage_deployment = \"deployment\"\nusage_mapping = \"{version}\"\n"
+        ))
+        .expect("valid metadata");
+        let captured = roster.usage_mapping(&node_id(&pk(1))).expect("mapping");
+        let replacement = FileRoster::parse(&base).expect("unconfigured roster");
+        assert!(replacement.usage_mapping(&node_id(&pk(1))).is_none());
+        assert_eq!(captured.version, version);
+        assert_eq!(captured.deployment, "deployment");
+        assert_eq!(captured.aquifer, "acme");
+    }
+
+    #[test]
+    fn malformed_usage_metadata_preserves_admission_but_not_attribution() {
+        for fields in [
+            "usage_deployment = 42\nusage_mapping = false\n".to_owned(),
+            "usage_deployment = \"deployment\"\n".to_owned(),
+            "usage_deployment = \"deployment\"\nusage_mapping = \"bad\"\n".to_owned(),
+            format!(
+                "usage_deployment = \" \"\nusage_mapping = \"{}\"\n",
+                "a".repeat(64)
+            ),
+        ] {
+            let roster = FileRoster::parse(&format!(
+                "[[client]]\nidentity_pk = \"{}\"\naquifer = \"acme\"\n{fields}",
+                key(1)
+            ))
+            .expect("billing metadata must not reject admission");
+            assert!(roster.client(&node_id(&pk(1))).is_some());
+            assert!(roster.usage_mapping(&node_id(&pk(1))).is_none());
+        }
     }
 
     #[test]

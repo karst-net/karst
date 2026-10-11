@@ -63,3 +63,23 @@ fn the_aquifer_survives_the_round_trip() {
         "the aquifer the Go renderer wrote is not the one this side read"
     );
 }
+
+#[test]
+fn durable_mapping_references_survive_the_go_rust_boundary() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../spec/vectors/relay-usage-roster-v1.toml");
+    let roster = FileRoster::load(&path).expect("Go usage roster");
+    let key: Vec<u8> = (0..2592)
+        .map(|i| 0x11u8.wrapping_add(u8::try_from(i % 251).expect("bounded byte")))
+        .collect();
+    let mapping = roster
+        .usage_mapping(&karst_relay::sign::node_id(&key))
+        .expect("durable reference");
+    assert_eq!(mapping.deployment, "vector-deployment");
+    assert_eq!(mapping.aquifer, "vector:account-a");
+    assert_eq!(
+        mapping.version,
+        "9353ec83b89b72601de04824f5379bb639a9507b3c68d9b9a5bc7ddfc810d47e"
+    );
+    assert_eq!(roster.client_count(), 1);
+}
