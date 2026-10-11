@@ -24,6 +24,13 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+# ADR-0045 §7 Phase 2 PR 4: the Kubernetes driver is an optional dependency
+# behind this feature, not a plain one -- see karst-scaler-k8s/Cargo.toml's
+# own comment. `cargo build -p karst-scaler` (no features) never compiles
+# `kube`/`tokio`/`k8s-openapi`; `--features k8s` opts in.
+[features]
+k8s = ["karst-scaler-k8s"]
+
 # Phase 0 is an offline tool: no network stack, no async runtime, no cloud
 # SDK. It reads two files and prints a report. Keeping the dependency list
 # this short is itself part of ADR-0045 §4c/§6's posture — a planner-adjacent
@@ -66,3 +73,7 @@ rustls-native-certs = "0.8"
 # on the inbound side); this is the explicit, direct dependency a 2021-edition
 # crate needs to `use` it itself.
 serde_json = "1"
+# Its own crate, not a module here -- see karst-scaler-driver's own crate
+# doc for why (breaking a cycle with the optional dependency below).
+karst-scaler-driver = { path = "../../crates/karst-scaler-driver" }
+karst-scaler-k8s = { path = "../karst-scaler-k8s", optional = true }

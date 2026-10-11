@@ -1,14 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright the Karst contributors.
 
-//! ADR-0045 §5: the driver interface a [`crate::advise::Recommendation`] is
-//! reconciled against. "The planner never calls a cloud API. It emits
+#![forbid(unsafe_code)]
+//! ADR-0045 §5: the driver interface `karst-scaler`'s own `Recommendation`
+//! is reconciled against. "The planner never calls a cloud API. It emits
 //! desired state to a driver that implements roughly four verbs... against
-//! one pool." This module defines that interface and the no-op/"advise"
+//! one pool." This crate defines that interface and the no-op/"advise"
 //! driver §5 names explicitly as one of the drivers worth building —
-//! everything else ADR-0045 §7 Phase 2 adds (the budget circuit breaker,
-//! the independent region-allowlist re-check, any real cloud/Kubernetes
-//! driver) is built on top of [`Driver`], not this module.
+//! everything else ADR-0045 §7 Phase 2 adds (the budget circuit breaker in
+//! `karst-scaler`'s own `breaker` module, the real Kubernetes driver in
+//! `karst-scaler-k8s`) is built on top of [`Driver`], not this crate.
+//!
+//! **Its own crate, not a module of `karst-scaler`**, solely to break a
+//! dependency cycle: `karst-scaler-k8s` implements [`Driver`], and
+//! `karst-scaler` optionally depends on `karst-scaler-k8s` (its own `k8s`
+//! Cargo feature). See this crate's own `Cargo.toml` for the full
+//! reasoning. `karst-scaler` re-exports this crate as its own `driver`
+//! module (`pub use karst_scaler_driver as driver;`), so every existing
+//! `karst_scaler::driver::...` path elsewhere in the tree still resolves
+//! unchanged.
 //!
 //! [`NoopDriver`] is in-memory and pool-scoped: it tracks instances it was
 //! asked to create, nothing more. It has no notion of what is actually
@@ -35,7 +45,7 @@ pub enum InstanceState {
 
 /// A [`Driver`] operation failed. Deliberately one message-carrying
 /// variant today rather than a set of named ones: [`NoopDriver`]'s own
-/// failure ("that instance doesn't exist"), `crate::breaker::BoundedDriver`'s
+/// failure ("that instance doesn't exist"), `karst_scaler::breaker::BoundedDriver`'s
 /// refusals, and a real driver's own failure modes (quota, a transient
 /// cloud-API error, ...) are not yet a well-enough-understood set to name
 /// as distinct variants without guessing which ones callers will actually
@@ -100,6 +110,29 @@ pub trait Driver {
     /// If `id` is not a known instance of `pool_id`, or the driver could
     /// not remove it.
     fn destroy(&mut self, pool_id: &str, id: &str) -> Result<(), DriverError>;
+}
+
+/// Lets a caller pick a concrete driver at runtime (`karst-scaler drive`'s
+/// own `[driver] kind` config, ADR-0045 §7 Phase 2 PR 4) without every
+/// caller of `karst_scaler::breaker::BoundedDriver` becoming generic over which
+/// one — `BoundedDriver<Box<dyn Driver>>` is one concrete type regardless
+/// of what is inside the box.
+impl Driver for Box<dyn Driver> {
+    fn list(&self, pool_id: &str) -> Result<Vec<Instance>, DriverError> {
+        (**self).list(pool_id)
+    }
+
+    fn create(&mut self, pool_id: &str, n: u32) -> Result<Vec<Instance>, DriverError> {
+        (**self).create(pool_id, n)
+    }
+
+    fn drain(&mut self, pool_id: &str, id: &str) -> Result<(), DriverError> {
+        (**self).drain(pool_id, id)
+    }
+
+    fn destroy(&mut self, pool_id: &str, id: &str) -> Result<(), DriverError> {
+        (**self).destroy(pool_id, id)
+    }
 }
 
 /// §5's no-op/"advise" driver: records what it was asked to do, in memory,
