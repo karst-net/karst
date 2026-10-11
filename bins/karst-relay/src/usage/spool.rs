@@ -64,9 +64,50 @@ impl BatchId {
 pub struct Spool {
     path: PathBuf,
     _lock: File,
+    epoch: [u8; 16],
+    next_sequence: u64,
+    was_unclean: bool,
 }
 
 impl Spool {
+    /// Current producer epoch, unique to this process lifetime.
+    #[must_use]
+    pub const fn epoch(&self) -> [u8; 16] {
+        self.epoch
+    }
+
+    /// True when the previous process did not record a clean stop. Callers
+    /// must mark affected coverage incomplete before reporting subsequent data.
+    #[must_use]
+    pub const fn recovered_unclean(&self) -> bool {
+        self.was_unclean
+    }
+
+    /// Reserve and durably advance the next identity before creating its batch.
+    /// A crash can leave a sequence gap, which is explicit and safe; it can
+    /// never reuse an identity that may already have reached the server.
+    /// # Errors
+    /// Returns state persistence errors or sequence exhaustion.
+    pub fn reserve(&mut self) -> io::Result<BatchId> {
+        let sequence = self.next_sequence;
+        self.next_sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| invalid("sequence exhausted"))?;
+        self.persist_state(false)?;
+        Ok(BatchId {
+            epoch: self.epoch,
+            sequence,
+        })
+    }
+
+    /// Record clean producer shutdown after the final window is sealed. Any
+    /// failure leaves the on-disk state unclean for the next process.
+    /// # Errors
+    /// Returns state persistence errors.
+    pub fn clean_shutdown(&mut self) -> io::Result<()> {
+        self.persist_state(true)
+    }
+
     /// Discover all retained batch identities after restart, in stable order.
     /// Corrupt names and nonregular entries are errors, not silently lost usage.
     /// Contents are integrity-checked separately by [`Self::read`].
@@ -77,7 +118,7 @@ impl Spool {
         for entry in fs::read_dir(&self.path)? {
             let entry = entry?;
             let name = entry.file_name();
-            if name == "spool.lock" || name == "pending" {
+            if name == "spool.lock" || name == "pending" || name == "producer.state" {
                 continue;
             }
             if !entry.file_type()?.is_file() {
@@ -110,13 +151,32 @@ impl Spool {
             .truncate(false)
             .open(path.join("spool.lock"))?;
         rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)?;
+        let prior_state = read_state(path)?;
+        let was_unclean = prior_state.as_ref().is_some_and(|state| !state.2);
+        let epoch = {
+            let mut bytes = [0; 16];
+            getrandom::fill(&mut bytes)
+                .map_err(|_| io::Error::other("producer epoch entropy unavailable"))?;
+            bytes
+        };
         let spool = Self {
             path: path.to_owned(),
             _lock: lock,
+            epoch,
+            next_sequence: 0,
+            was_unclean,
         };
+        // Mark this process dirty before touching recovery files. A crash at
+        // any later point must be visible to the next process.
+        spool.persist_state(false)?;
         // A pending file was never published. Epoch recovery must still mark
         // an unclean producer incomplete; removing it is not evidence of zero.
         match fs::remove_file(path.join("pending")) {
+            Ok(()) => spool.sync_directory()?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        match fs::remove_file(path.join("state.pending")) {
             Ok(()) => spool.sync_directory()?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
@@ -206,6 +266,59 @@ impl Spool {
     fn sync_directory(&self) -> io::Result<()> {
         File::open(&self.path)?.sync_all()
     }
+
+    fn persist_state(&self, clean: bool) -> io::Result<()> {
+        let mut state = Vec::with_capacity(49);
+        state.extend_from_slice(&self.epoch);
+        state.extend_from_slice(&self.next_sequence.to_be_bytes());
+        state.push(u8::from(clean));
+        state.extend_from_slice(&Sha256::digest(&state));
+        let path = self.path.join("state.pending");
+        let mut file = options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        file.write_all(&state)?;
+        file.sync_all()?;
+        fs::rename(path, self.path.join("producer.state"))?;
+        self.sync_directory()
+    }
+}
+
+fn read_state(path: &Path) -> io::Result<Option<([u8; 16], u64, bool)>> {
+    let state_path = path.join("producer.state");
+    let mut bytes = Vec::new();
+    match options().read(true).open(&state_path) {
+        Ok(file) => file.take(58).read_to_end(&mut bytes)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if bytes.len() != 57 {
+        return Err(invalid("producer state integrity failure"));
+    }
+    let body = bytes
+        .get(..25)
+        .ok_or_else(|| invalid("producer state body"))?;
+    let digest = bytes
+        .get(25..)
+        .ok_or_else(|| invalid("producer state digest"))?;
+    let clean = *body.get(24).ok_or_else(|| invalid("producer clean flag"))?;
+    if Sha256::digest(body).as_slice() != digest || clean > 1 {
+        return Err(invalid("producer state integrity failure"));
+    }
+    let epoch = body
+        .get(..16)
+        .ok_or_else(|| invalid("producer epoch"))?
+        .try_into()
+        .map_err(|_| invalid("producer epoch"))?;
+    let sequence = u64::from_be_bytes(
+        body.get(16..24)
+            .ok_or_else(|| invalid("producer sequence"))?
+            .try_into()
+            .map_err(|_| invalid("producer sequence"))?,
+    );
+    Ok(Some((epoch, sequence, clean == 1)))
 }
 
 fn options() -> OpenOptions {
@@ -394,5 +507,37 @@ mod tests {
         symlink("spool.lock", temp.0.join(ID.name())).expect("symlink");
         assert!(spool.read(ID).is_err());
         assert!(spool.pending().is_err());
+    }
+
+    #[test]
+    fn sequence_reservations_are_durable_and_unclean_restarts_are_reported() {
+        let temp = Temp::new();
+        let mut spool = Spool::open(&temp.0).expect("first start");
+        assert!(!spool.recovered_unclean());
+        let old_epoch = spool.epoch();
+        let first = spool.reserve().expect("reserve");
+        assert_eq!(first.epoch, old_epoch);
+        assert_eq!(first.sequence, 0);
+        // Drop without clean_shutdown to model a process crash.
+        drop(spool);
+        let mut recovered = Spool::open(&temp.0).expect("restart");
+        assert!(recovered.recovered_unclean());
+        assert_ne!(recovered.epoch(), old_epoch);
+        let next = recovered.reserve().expect("new epoch");
+        assert_eq!(next.sequence, 0);
+        let current_epoch = recovered.epoch();
+        recovered.clean_shutdown().expect("clean stop");
+        drop(recovered);
+        let clean = Spool::open(&temp.0).expect("clean restart");
+        assert!(!clean.recovered_unclean());
+        assert_ne!(clean.epoch(), current_epoch);
+    }
+
+    #[test]
+    fn sequence_exhaustion_does_not_reuse_the_last_identity() {
+        let temp = Temp::new();
+        let mut spool = Spool::open(&temp.0).expect("open");
+        spool.next_sequence = u64::MAX;
+        assert!(spool.reserve().is_err());
     }
 }
