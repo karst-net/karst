@@ -665,7 +665,7 @@ what "scale" means, and the order below is a judgment, not a commitment:
 | **TURN gateways** (ADR-0008 §4) | Same | Credentials are minted by the control server; allocations are stateful per client, so drain is slower. |
 | **AVEN reflectors** | Co-located with relays | Ride along with relay placement; no separate pool. |
 | **KarstDNS resolvers** | Add/remove | Latency-sensitive, tiny bandwidth; cost is almost all instance-hours. |
-| **Exit nodes and subnet routers** | Add/remove, but each is bound to a network or address range | Not interchangeable: an exit node's egress IP and a subnet router's reachable network are part of its identity. HA failover exists (`docs/operations/ha.md`); *placement* is a policy decision, not capacity. |
+| **Exit nodes and subnet routers** | Add/remove, but each is bound to a network or address range | Not interchangeable: an exit node's egress IP and a subnet router's reachable network are part of its identity. HA failover exists (`docs/subnet-routers-and-exit-nodes.md` §4's gateway-group recovery row); *placement* is a policy decision, not capacity. |
 | **Regional coordination/control replicas** | Add read replicas | Carry the signing keys and roster; scaling them enlarges the most sensitive trust boundary. Out of scope until the threat model covers it. |
 
 The abstraction must not bake in "relay" (§1's pool has a `kind`), but
