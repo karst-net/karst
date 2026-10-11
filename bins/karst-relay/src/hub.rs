@@ -19,6 +19,37 @@ use karst_relay_proto::consts::{ID_LEN, TOKEN_LEN};
 use karst_relay_proto::{Admitted, AquiferId, Frame, Reason, Roster};
 
 use crate::limits::{Budget, Meter};
+use crate::roster::{FileRoster, UsageMapping};
+
+/// A queued delivery is evidence only after its complete frame is written.
+#[derive(Debug)]
+pub struct Outbound {
+    pub bytes: Vec<u8>,
+    pub delivery: Option<DeliveryUsage>,
+}
+
+impl Outbound {
+    /// Return delivery evidence only after the complete encoded frame has been
+    /// accepted by the transport. This does not prove endpoint receipt. Taking
+    /// ownership prevents reusing the queued operation after a partial failure.
+    /// # Errors
+    /// Any transport error, including a zero write, produces no evidence.
+    pub async fn write_to(
+        self,
+        writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    ) -> std::io::Result<Option<DeliveryUsage>> {
+        use tokio::io::AsyncWriteExt;
+        writer.write_all(&self.bytes).await?;
+        Ok(self.delivery)
+    }
+}
+
+/// Missing mapping means unresolved usage, not a zero-byte delivery.
+#[derive(Debug)]
+pub struct DeliveryUsage {
+    pub mapping: Option<UsageMapping>,
+    pub payload_bytes: u64,
+}
 
 /// A 32-byte node or relay identifier.
 pub type Id = [u8; ID_LEN];
@@ -149,7 +180,7 @@ impl Default for Config {
 #[derive(Debug)]
 struct Conn {
     peer: Admitted,
-    queue: VecDeque<Vec<u8>>,
+    queue: VecDeque<Outbound>,
     meter: Meter,
     close_after_flush: Option<Reason>,
     stats: ConnStats,
@@ -320,6 +351,36 @@ impl Hub {
         roster: &impl Roster,
         now_ms: u64,
     ) -> Result<Option<Dropped>, HubError> {
+        self.on_frame_inner(id, frame, roster, now_ms, None)
+    }
+
+    /// Capture attribution from the same roster snapshot used for admission.
+    /// # Errors
+    /// Same role and connection errors as [`Self::on_frame`].
+    pub fn on_frame_attributed(
+        &mut self,
+        id: ConnId,
+        frame: &Frame<'_>,
+        roster: &FileRoster,
+        now_ms: u64,
+    ) -> Result<Option<Dropped>, HubError> {
+        let mapping = match frame {
+            Frame::SendPacket { dst_id, .. } | Frame::Forward { dst_id, .. } => {
+                roster.usage_mapping(dst_id)
+            }
+            _ => None,
+        };
+        self.on_frame_inner(id, frame, roster, now_ms, mapping)
+    }
+
+    fn on_frame_inner(
+        &mut self,
+        id: ConnId,
+        frame: &Frame<'_>,
+        roster: &impl Roster,
+        now_ms: u64,
+        mapping: Option<UsageMapping>,
+    ) -> Result<Option<Dropped>, HubError> {
         let len = frame.encoded_len() as u64;
         let conn = self.conns.get_mut(&id).ok_or(HubError::UnknownConn)?;
 
@@ -358,7 +419,7 @@ impl Hub {
 
             // ── Client only ───────────────────────────────────────────────
             (Frame::SendPacket { dst_id, payload }, false) => {
-                Ok(self.forward_from_client(id, dst_id, payload, roster, now_ms))
+                Ok(self.forward_from_client(id, dst_id, payload, roster, now_ms, mapping))
             }
 
             // ── Mesh only ─────────────────────────────────────────────────
@@ -369,7 +430,7 @@ impl Hub {
                     payload,
                 },
                 true,
-            ) => Ok(self.deliver_from_mesh(id, src_id, dst_id, payload, roster, now_ms)),
+            ) => Ok(self.deliver_from_mesh(id, src_id, dst_id, payload, roster, now_ms, mapping)),
             (Frame::PeerPresent { node_id }, true) => {
                 if let Some(relay_id) = self.conns.get(&id).and_then(Conn::relay_id) {
                     self.presence.insert(node_id, relay_id);
@@ -401,6 +462,7 @@ impl Hub {
         payload: &[u8],
         roster: &impl Roster,
         now_ms: u64,
+        mapping: Option<UsageMapping>,
     ) -> Option<Dropped> {
         let conn = self.conns.get(&from)?;
         let (Some(src_id), Some(src_aquifer)) = (conn.node_id(), conn.aquifer().cloned()) else {
@@ -443,7 +505,12 @@ impl Hub {
         }
 
         if let Some(&to) = self.by_node.get(&dst_id) {
-            return self.deliver(from, to, &Frame::RecvPacket { src_id, payload });
+            return self.deliver_attributed(
+                from,
+                to,
+                &Frame::RecvPacket { src_id, payload },
+                mapping,
+            );
         }
 
         if let Some(to) = self
@@ -477,6 +544,7 @@ impl Hub {
     /// §8. **One hop.** A `Forward` is delivered locally or not at all; it is
     /// never forwarded onward, so a mesh loop is not expressible rather than
     /// merely bounded.
+    #[allow(clippy::too_many_arguments)]
     fn deliver_from_mesh(
         &mut self,
         from: ConnId,
@@ -485,6 +553,7 @@ impl Hub {
         payload: &[u8],
         roster: &impl Roster,
         now_ms: u64,
+        mapping: Option<UsageMapping>,
     ) -> Option<Dropped> {
         let Some(&to) = self.by_node.get(&dst_id) else {
             // Our presence claim reached them and the node has since left.
@@ -524,7 +593,7 @@ impl Hub {
             return Some(Dropped::AquiferRateLimited);
         }
 
-        self.deliver(from, to, &Frame::RecvPacket { src_id, payload })
+        self.deliver_attributed(from, to, &Frame::RecvPacket { src_id, payload }, mapping)
     }
 
     /// Charge `bytes` against `aquifer`'s aggregate meter, creating it on
@@ -541,7 +610,17 @@ impl Hub {
     }
 
     fn deliver(&mut self, from: ConnId, to: ConnId, frame: &Frame<'_>) -> Option<Dropped> {
-        if self.enqueue(to, frame) {
+        self.deliver_attributed(from, to, frame, None)
+    }
+
+    fn deliver_attributed(
+        &mut self,
+        from: ConnId,
+        to: ConnId,
+        frame: &Frame<'_>,
+        mapping: Option<UsageMapping>,
+    ) -> Option<Dropped> {
+        if self.enqueue_attributed(to, frame, mapping) {
             None
         } else {
             self.count_undeliverable(from);
@@ -563,6 +642,15 @@ impl Hub {
     /// fresh — everything in it is either a handshake retransmission or a
     /// datagram whose usefulness decays.
     fn enqueue(&mut self, to: ConnId, frame: &Frame<'_>) -> bool {
+        self.enqueue_attributed(to, frame, None)
+    }
+
+    fn enqueue_attributed(
+        &mut self,
+        to: ConnId,
+        frame: &Frame<'_>,
+        mapping: Option<UsageMapping>,
+    ) -> bool {
         let depth = self.cfg.queue_depth;
         let Some(conn) = self.conns.get_mut(&to) else {
             return false;
@@ -574,7 +662,17 @@ impl Hub {
             conn.stats.dropped_queue += 1;
             clean = false;
         }
-        conn.queue.push_back(frame.to_vec());
+        let delivery = match frame {
+            Frame::RecvPacket { payload, .. } if conn.node_id().is_some() => Some(DeliveryUsage {
+                mapping,
+                payload_bytes: payload.len() as u64,
+            }),
+            _ => None,
+        };
+        conn.queue.push_back(Outbound {
+            bytes: frame.to_vec(),
+            delivery,
+        });
         conn.stats.frames_out += 1;
         conn.stats.bytes_out += bytes;
         self.dirty.insert(to);
@@ -599,7 +697,10 @@ impl Hub {
             conn.queue.pop_front();
             conn.stats.dropped_queue += 1;
         }
-        conn.queue.push_front(frame.to_vec());
+        conn.queue.push_front(Outbound {
+            bytes: frame.to_vec(),
+            delivery: None,
+        });
         conn.stats.frames_out += 1;
         conn.stats.bytes_out += bytes;
         self.dirty.insert(to);
@@ -631,7 +732,10 @@ impl Hub {
     pub fn begin_close(&mut self, id: ConnId, reason: Option<Reason>) {
         if let Some(conn) = self.conns.get_mut(&id) {
             if let Some(r) = reason {
-                conn.queue.push_back(Frame::Close(r).to_vec());
+                conn.queue.push_back(Outbound {
+                    bytes: Frame::Close(r).to_vec(),
+                    delivery: None,
+                });
             }
             conn.close_after_flush = Some(reason.unwrap_or(Reason::Disconnected));
             self.dirty.insert(id);
@@ -709,6 +813,11 @@ impl Hub {
 
     /// The next frame to write to `id`, if any.
     pub fn take_outbound(&mut self, id: ConnId) -> Option<Vec<u8>> {
+        self.take_outbound_attributed(id).map(|out| out.bytes)
+    }
+
+    /// Removes one queued frame with its immutable attribution metadata.
+    pub fn take_outbound_attributed(&mut self, id: ConnId) -> Option<Outbound> {
         self.conns.get_mut(&id)?.queue.pop_front()
     }
 
@@ -1967,6 +2076,61 @@ mod tests {
         assert_eq!(b.frames_out, 1);
         assert_eq!(b.bytes_out, 4 + 32 + 100);
         assert_eq!(b.frames_in, 0);
+    }
+
+    #[test]
+    fn queued_delivery_keeps_mapping_and_payload_without_framing() {
+        let (mut hub, roster) = two_clients();
+        let mapping = UsageMapping {
+            deployment: "deployment".to_owned(),
+            version: "a".repeat(64),
+            aquifer: "t1".to_owned(),
+        };
+        hub.on_frame_inner(
+            A,
+            &Frame::SendPacket {
+                dst_id: id(0xb2),
+                payload: &[7; 100],
+            },
+            &roster,
+            0,
+            Some(mapping.clone()),
+        )
+        .expect("forward");
+        let queued = hub.take_outbound_attributed(B).expect("delivery");
+        let evidence = queued.delivery.expect("destination egress");
+        assert_eq!(evidence.mapping, Some(mapping));
+        assert_eq!(evidence.payload_bytes, 100);
+        assert_eq!(queued.bytes.len(), 136);
+        hub.on_frame(B, &Frame::Ping(&[0; 8]), &roster, 0)
+            .expect("ping");
+        assert!(hub
+            .take_outbound_attributed(B)
+            .expect("pong")
+            .delivery
+            .is_none());
+    }
+
+    #[test]
+    fn a_mesh_hop_has_no_delivery_usage() {
+        let (mut hub, roster) = two_clients();
+        hub.disconnect(B);
+        hub.admit(M, mesh(0x0e), 0);
+        drain(&mut hub, M);
+        hub.on_frame(M, &Frame::PeerPresent { node_id: id(0xb2) }, &roster, 0)
+            .expect("presence");
+        hub.on_frame(
+            A,
+            &Frame::SendPacket {
+                dst_id: id(0xb2),
+                payload: &[7; 100],
+            },
+            &roster,
+            0,
+        )
+        .expect("forward");
+        let queued = hub.take_outbound_attributed(M).expect("mesh hop");
+        assert!(queued.delivery.is_none());
     }
 
     #[test]

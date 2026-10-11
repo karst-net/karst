@@ -39,6 +39,8 @@ import (
 	"time"
 
 	"github.com/netbirdio/netbird/management/internals/karst/node"
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
+	"gorm.io/gorm"
 )
 
 // DefaultInterval is how often the file is rewritten.
@@ -109,6 +111,9 @@ func (s NodeSource) All() ([]Entry, error) {
 
 // Config is what a co-located relay needs to be told.
 type Config struct {
+	// Usage optionally publishes durable attribution references. Nil preserves
+	// the existing roster format and does not query the usage ledger.
+	Usage *UsageConfig
 	// Path to the roster file. Empty disables the refresher entirely.
 	Path string
 	// AquiferPrefix optionally namespaces every derived aquifer value as
@@ -122,6 +127,13 @@ type Config struct {
 	AquiferPrefix string
 	// Interval between rewrites. Zero means DefaultInterval.
 	Interval time.Duration
+}
+
+// UsageConfig is operator-controlled; deployment identity must remain stable
+// across restarts. This alone does not authorize a managed billing producer.
+type UsageConfig struct {
+	DB           *gorm.DB
+	DeploymentID string
 }
 
 // Refresher rewrites the roster file on an interval.
@@ -142,6 +154,14 @@ func New(source Source, cfg Config, logf func(string, ...any)) (*Refresher, erro
 	}
 	if source == nil {
 		return nil, fmt.Errorf("roster: no identity source")
+	}
+	if cfg.Usage != nil && (cfg.Usage.DB == nil || cfg.Usage.DeploymentID == "") {
+		return nil, fmt.Errorf("roster: usage requires a database and deployment identity")
+	}
+	if cfg.Usage != nil {
+		if _, inTransaction := cfg.Usage.DB.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+			return nil, fmt.Errorf("roster: usage publication requires a committed database handle")
+		}
 	}
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
@@ -186,7 +206,31 @@ func (r *Refresher) Once() error {
 	if err != nil {
 		return fmt.Errorf("roster: list identities: %w", err)
 	}
-	return WriteFile(r.cfg.Path, Render(entries, r.cfg.AquiferPrefix))
+	versions := make(map[string]usage.RelayMapping)
+	if r.cfg.Usage != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, entry := range entries {
+			if entry.AccountID == "" || len(entry.PublicKey) == 0 {
+				continue
+			}
+			if _, ok := versions[entry.AccountID]; ok {
+				continue
+			}
+			mapping, err := usage.PersistRelayMapping(ctx, r.cfg.Usage.DB,
+				r.cfg.Usage.DeploymentID, aquiferValue(r.cfg.AquiferPrefix, entry.AccountID), entry.AccountID)
+			if err != nil {
+				// Billing failure must not stop admission lease renewal. Publish
+				// no attribution references; an enabled meter must mark these
+				// deliveries unresolved, never reuse the previous mapping.
+				r.log("karst: usage mapping unavailable; publishing unattributed roster")
+				versions = nil
+				break
+			}
+			versions[entry.AccountID] = mapping
+		}
+	}
+	return WriteFile(r.cfg.Path, render(entries, r.cfg.AquiferPrefix, versions))
 }
 
 // Render returns the TOML the relay parses.
@@ -195,6 +239,10 @@ func (r *Refresher) Once() error {
 // the aquifer, and the relay computes the node id from the key (§5.1). Writing
 // an id here as well would make a silent mismatch a typo away.
 func Render(entries []Entry, aquiferPrefix string) []byte {
+	return render(entries, aquiferPrefix, nil)
+}
+
+func render(entries []Entry, aquiferPrefix string, versions map[string]usage.RelayMapping) []byte {
 	sorted := make([]Entry, len(entries))
 	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Handle < sorted[j].Handle })
@@ -225,6 +273,9 @@ func Render(entries []Entry, aquiferPrefix string) []byte {
 		b.WriteString("\"\naquifer = \"")
 		b.WriteString(aquiferValue(aquiferPrefix, sorted[i].AccountID))
 		b.WriteString("\"\n")
+		if mapping, ok := versions[sorted[i].AccountID]; ok {
+			fmt.Fprintf(&b, "usage_deployment = %q\nusage_mapping = %q\n", mapping.DeploymentID, mapping.Version)
+		}
 	}
 	return []byte(b.String())
 }

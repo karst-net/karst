@@ -959,7 +959,7 @@ fn consume(buf: &mut Vec<u8>, id: ConnId, admitted: &Admitted, ctx: &Arc<Ctx>) -
                     Err(p) => p.into_inner(),
                 };
                 let roster = ctx.roster();
-                Some((g.hub.on_frame(id, &frame, &*roster, now), used))
+                Some((g.hub.on_frame_attributed(id, &frame, &roster, now), used))
             }
             Ok(None) => None,
             // §10: a malformed frame means tampering or a bug on an ordered,
@@ -982,9 +982,11 @@ fn consume(buf: &mut Vec<u8>, id: ConnId, admitted: &Admitted, ctx: &Arc<Ctx>) -
 /// Write everything the hub has queued for this connection.
 async fn flush(tls: &mut impl Stream, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     loop {
-        let next = ctx.with_hub(|hub| hub.take_outbound(id));
-        let Some(bytes) = next else { return true };
-        if tls.write_all(&bytes).await.is_err() {
+        let next = ctx.with_hub(|hub| hub.take_outbound_attributed(id));
+        let Some(outbound) = next else { return true };
+        // The durable usage producer will consume successful completion
+        // evidence here. Until configured, no usage is retained or billed.
+        if outbound.write_to(tls).await.is_err() {
             return false;
         }
     }
