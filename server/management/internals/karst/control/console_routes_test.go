@@ -92,6 +92,17 @@ type consoleCase struct {
 	// template is the mux path template this case covers, for the completeness
 	// check below.
 	template string
+	// skipRoleChecks is set for a route whose authorization is not
+	// session/role-based at all -- "enroll a relay with a token" below.
+	// TestConsoleMutationsAreAuthorizedForAnAdministrator and
+	// TestConsoleMutationsAreRefusedForAMember's own "every mutating route
+	// is admin-usable, member-forbidden" premise does not hold for a route
+	// whose entire authentication is a bearer token neither an admin nor a
+	// member session has anything to do with (ADR-0045 §6's relay-enroll
+	// endpoint is deliberately outside karstAuthorization -- see its own
+	// doc comment). It still needs an entry here, for
+	// TestEveryMutatingConsoleRouteHasRealServerCoverage.
+	skipRoleChecks bool
 }
 
 func consoleMutations() []consoleCase {
@@ -167,6 +178,24 @@ func consoleMutations() []consoleCase {
 			name: "remove a relay", method: http.MethodDelete,
 			path: "/karst/v1/relays/unknown-relay", body: "",
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/relays/{relayId}",
+		},
+		{
+			name: "mint a relay enroll token", method: http.MethodPost,
+			path: "/karst/v1/relays/enroll-tokens", body: `{"pool_id":"console-test-pool"}`,
+			want: []int{http.StatusCreated}, template: "/karst/v1/relays/enroll-tokens",
+		},
+		{
+			// No real token is minted for this case (see skipRoleChecks's
+			// own doc comment) -- without one, both an admin and a member
+			// session get the same answer a relay with no token at all
+			// would: 401. ADR-0045 §7 Phase 2 PR 4's own integration test
+			// (a real driver actually minting and redeeming one of these)
+			// is where this endpoint's happy path is exercised end to end.
+			name: "enroll a relay with a token", method: http.MethodPost,
+			path: "/karst/v1/relays/enroll",
+			body: `{"address":"198.51.100.11:443","tls_server_name":"relay-enroll.example.test","region":"eu","identity_key":"unused"}`,
+			want: []int{http.StatusUnauthorized}, template: "/karst/v1/relays/enroll",
+			skipRoleChecks: true,
 		},
 		{
 			name: "register a turn server", method: http.MethodPost,
@@ -367,6 +396,9 @@ func TestConsoleMutationsAreAuthorizedForAnAdministrator(t *testing.T) {
 	router := consoleRouter(t)
 	for _, c := range consoleMutations() {
 		t.Run(c.name, func(t *testing.T) {
+			if c.skipRoleChecks {
+				t.Skip("not a role/session-authorized route -- see consoleCase.skipRoleChecks")
+			}
 			response := consoleRequest(t, router, consoleAdminID, c)
 			// The assertion that matters is that it is *not* a refusal. A
 			// route that 403s here is one the real permissions manager
@@ -393,6 +425,9 @@ func TestConsoleMutationsAreRefusedForAMember(t *testing.T) {
 	router := consoleRouter(t)
 	for _, c := range consoleMutations() {
 		t.Run(c.name, func(t *testing.T) {
+			if c.skipRoleChecks {
+				t.Skip("not a role/session-authorized route -- see consoleCase.skipRoleChecks")
+			}
 			response := consoleRequest(t, router, consoleMemberID, c)
 			if response.Code != http.StatusForbidden {
 				t.Fatalf("a member was not refused: %s %s -> %d %s",

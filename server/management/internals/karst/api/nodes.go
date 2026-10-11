@@ -3,7 +3,11 @@
 
 // Package api serves Karst-owned administrative endpoints on the management
 // router. It deliberately consumes the router's existing authentication
-// middleware; this package never parses credentials itself.
+// middleware rather than parsing credentials itself, with one exception:
+// relaysEnroll (ADR-0045 §6) authenticates a not-yet-registered relay's own
+// one-off enrollment token directly, because that caller has no
+// router-level session to hold in the first place — see its own doc
+// comment.
 package api
 
 import (
@@ -382,6 +386,12 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/relays/enroll-tokens", h.relayEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	// Deliberately on the parent router, not karstRouter -- see
+	// relaysEnroll's own doc comment for why. limitRequestBody is applied
+	// explicitly since this route does not inherit karstRouter's own
+	// middleware stack.
+	router.Handle("/karst/v1/relays/enroll", limitRequestBody(http.HandlerFunc(h.relaysEnroll))).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
@@ -544,6 +554,21 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			if !allowed {
 				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Karst control permission denied"), w)
 				return
+			}
+			// ADR-0045 §6: the Scaler role exists to mint relay-enroll
+			// tokens, nothing else. roles.Scaler's own Create grant on
+			// modules.KarstControl is coarser than that (this RBAC model's
+			// only module granularity covers every mutation under
+			// /karst/v1, not just this one route — see roles.Scaler's own
+			// doc comment), so this hard allowlist is what actually keeps
+			// the role narrow, independent of whatever a future endpoint
+			// added under this same module gate would otherwise permit it
+			// to reach.
+			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
+				if strings.TrimPrefix(r.URL.Path, "/api") != relayEnrollTokensPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens"), w)
+					return
+				}
 			}
 			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 			next.ServeHTTP(w, r.WithContext(scoped))
@@ -1500,6 +1525,153 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// relayEnrollTokensPath is the one route the Scaler role's hard allowlist
+// in karstAuthorization permits — see that allowlist's own comment and
+// relayEnrollTokensCreate below.
+const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
+
+// relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
+// §7 Phase 2) sends when it has just created a relay instance and needs a
+// credential for that instance to complete its own roster admission with.
+type relayEnrollTokenRequest struct {
+	// PoolID names the pool the new instance belongs to, carried into the
+	// minted key's own Name only for an operator reading the Auth keys
+	// console later — it plays no role in redemption.
+	PoolID string `json:"pool_id"`
+	// ExpiresInSecs overrides the default expiry (see
+	// DefaultAccountManager.MintRelayEnrollKey) — 0 means "use the
+	// default," not "never expires": this credential has no unlimited
+	// option, the same ADR-0045 §6 posture as the scaling circuit breaker.
+	ExpiresInSecs int64 `json:"expires_in_secs,omitempty"`
+}
+
+type relayEnrollTokenResponse struct {
+	Token string `json:"token"`
+}
+
+// relayEnrollTokensCreate mints ADR-0045 §6's "short-lived, single-use
+// enrollment token minted for that specific instance" — the credential a
+// relay the scaler just created redeems at relaysEnroll below, in place of
+// an admin pasting its public key into the console (relaysCreate above).
+// Reached only by a caller karstAuthorization has already resolved to the
+// Scaler role (or an Admin/Owner, who could already reach relaysCreate
+// directly) — never the relay itself, which has no session yet; that is
+// exactly the asymmetry this token exists to bridge.
+func (h *handler) relayEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	minter, ok := h.accounts.(interface {
+		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
+		return
+	}
+	var req relayEnrollTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	token, err := minter.MintRelayEnrollKey(r.Context(), user.AccountId, req.PoolID, time.Duration(req.ExpiresInSecs)*time.Second)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(relayEnrollTokenResponse{Token: token}); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+// bearerToken reads the `Authorization: Bearer <token>` header
+// relaysEnroll's own caller — a relay with no session, only its minted
+// enroll token — authenticates with. Not reused from anywhere else in this
+// tree on purpose: see relaysEnroll's own doc comment for why this endpoint
+// is this package's one deliberate exception to parsing a credential
+// itself.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
+}
+
+// relaysEnroll lets a relay the scaler just created complete its own
+// roster admission with no admin session — ADR-0045 §6's signed-enrollment
+// requirement; see relayEnrollTokensCreate above for where its credential
+// comes from. Deliberately registered on the parent router, not
+// karstRouter (see RegisterEndpoints): every karstRouter route requires an
+// authenticated user/PAT context before any handler runs
+// (karstAuthorization's own first line), which a relay calling this for
+// the very first time does not have. The token itself — short-lived,
+// single-use, mintable only by a Scaler-role-gated caller — is this
+// endpoint's entire authentication; see the package doc comment's one
+// named exception.
+//
+// Does not add a proof-of-possession challenge for the submitted
+// IdentityKey — a relay registering here is no less trusted than one an
+// admin registers through relaysCreate today, which has the identical gap
+// (the public key is simply asserted, never challenged, at registration
+// time either way). Closing that gap for both paths at once is follow-up
+// work, not something this endpoint needs to solve alone.
+func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		util.WriteError(r.Context(), status.Errorf(status.Unauthorized, "relay enrollment requires a bearer token"), w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	consumer, ok := h.accounts.(interface {
+		ConsumeRelayEnrollKey(context.Context, string) (string, string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
+		return
+	}
+	accountID, keyID, err := consumer.ConsumeRelayEnrollKey(r.Context(), token)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var entry relayreg.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	ctx := relayreg.WithAccount(r.Context(), accountID)
+	relay, err := h.relays.Create(ctx, entry)
+	if errors.Is(err, relayreg.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.relays.enroll", "relay", relay.ID); err != nil {
+			// Not fatal -- auditMutations' own doc comment gives the same
+			// reasoning: an audit outage must not turn a working
+			// admission path into an impossible one.
+			log.WithContext(r.Context()).Errorf("append relay-enroll audit event: %v", err)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
 }
 
 // nocComponents is the NOC view's map data source — #241 Phase 1a,
