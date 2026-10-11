@@ -4,7 +4,8 @@
 #![forbid(unsafe_code)]
 //! `karst-scaler simulate COST_MODEL.toml USAGE_LOG` — ADR-0045 §7 Phase 0.
 //! `karst-scaler advise ...` — §7 Phase 1; see [`advise_loop`]'s own module
-//! doc.
+//! doc. `karst-scaler drive ...` — §7 Phase 2's first PR (the driver trait
+//! and a no-op implementation); see [`drive_loop`]'s own module doc.
 //!
 //! ```text
 //! karst-scaler simulate COST_MODEL.toml USAGE_LOG
@@ -16,6 +17,9 @@
 //!     poll the control server's demand endpoints on an interval and log a
 //!     node-count recommendation per pool, forever; see `advise_config`'s
 //!     own module doc for the config file's shape
+//! karst-scaler drive ADVISE_CONFIG.toml
+//!     the same recommendation loop as advise, reconciled against a driver
+//!     instead of only printed; see `driver`'s own module doc
 //! ```
 //!
 //! # Why this phase first
@@ -47,6 +51,7 @@ use karst_scaler::{simulate, usage};
 
 mod advise_config;
 mod advise_loop;
+mod drive_loop;
 mod metrics_http;
 
 fn main() -> ExitCode {
@@ -57,6 +62,7 @@ fn main() -> ExitCode {
         ["simulate", cost_model, usage_log] => run_simulate(cost_model, usage_log),
         ["check", cost_model] => run_check(cost_model),
         ["advise", advise_config] => run_advise(advise_config),
+        ["drive", advise_config] => run_drive(advise_config),
         _ => {
             usage_text();
             return ExitCode::FAILURE;
@@ -74,7 +80,7 @@ fn main() -> ExitCode {
 
 fn usage_text() {
     eprintln!(
-        "karst-scaler — ADR-0045 Phase 0/1: cost model, offline simulator, and Advisor
+        "karst-scaler — ADR-0045 Phase 0/1/2: cost model, offline simulator, Advisor, and driver
 
   simulate COST_MODEL.toml USAGE_LOG
                               replay recorded usage against a cost model;
@@ -83,11 +89,32 @@ fn usage_text() {
   advise ADVISE_CONFIG.toml  poll the control server's demand endpoints on
                               an interval; log a node-count recommendation
                               per pool, forever; optionally serve /metrics
-                              and /recommendations (see advise_config)"
+                              and /recommendations (see advise_config)
+  drive ADVISE_CONFIG.toml   same recommendation loop as advise, but
+                              reconciles each pool's actual instance count
+                              against it through a driver (ADR-0045 §7
+                              Phase 2); today that driver is always the
+                              no-op one -- see driver.rs"
     );
 }
 
 fn run_advise(advise_config_path: &str) -> Result<(), String> {
+    let config = load_drive_config(advise_config_path)?;
+    advise_loop::run(&config)
+}
+
+fn run_drive(advise_config_path: &str) -> Result<(), String> {
+    let config = load_drive_config(advise_config_path)?;
+    // The no-op driver is the only one wired up today -- ADR-0045 §7
+    // Phase 2's own PR 2 (budget circuit breaker, independent
+    // region-allowlist re-check) and later PRs (a real driver) both plug
+    // in here, in front of or in place of this value, without this
+    // function's own shape changing.
+    let mut driver = karst_scaler::driver::NoopDriver::new();
+    drive_loop::run(&config, &mut driver)
+}
+
+fn load_drive_config(advise_config_path: &str) -> Result<advise_loop::Config, String> {
     // ureq's TLS backend is built with no crypto provider of its own (see
     // Cargo.toml's comment on why) -- it needs one installed process-wide
     // before the first HTTPS request. aws-lc-rs is the one every other
@@ -102,14 +129,13 @@ fn run_advise(advise_config_path: &str) -> Result<(), String> {
         .map_err(|e| format!("reading {}: {e}", cfg.pat_file))?
         .trim()
         .to_owned();
-    let config = advise_loop::Config {
+    Ok(advise_loop::Config {
         cost_model_path: cfg.cost_model_path,
         control_api_base: cfg.control_api_base.trim_end_matches('/').to_owned(),
         pat,
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         metrics_listen: cfg.metrics.listen,
-    };
-    advise_loop::run(&config)
+    })
 }
 
 fn run_check(cost_model_path: &str) -> Result<(), String> {
