@@ -151,6 +151,7 @@ func TestRegistrationAgainstTheRealAccountManager(t *testing.T) {
 		t.Fatalf("node store: %v", err)
 	}
 	router := mux.NewRouter()
+	router.UseEncodedPath()
 	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
@@ -483,6 +484,7 @@ func TestServerPushesOnPeerDeletion(t *testing.T) {
 		t.Fatalf("node store: %v", err)
 	}
 	router := mux.NewRouter()
+	router.UseEncodedPath()
 	karstapi.RegisterEndpoints(nodes, am, am, nil, nil, nil, nil, nil, nil, nil, permissions.NewManager(s), nil, nil, nil, "", router)
 	portalRequest := func(method, path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, nil)
