@@ -36,6 +36,25 @@ pub(crate) struct AdviseConfig {
     pub poll_interval_secs: u64,
     #[serde(default)]
     pub metrics: MetricsSection,
+    /// Required by `drive`, ignored by `advise` — ADR-0045 §6's budget
+    /// circuit breaker and independent region-allowlist re-check
+    /// (`breaker.rs`) need their own config and persisted state. `None`
+    /// here is refused at the point `drive` starts, not silently treated
+    /// as "no limit."
+    #[serde(default)]
+    pub breaker: Option<BreakerSection>,
+}
+
+/// The `[breaker]` TOML table — see [`crate::breaker`]'s own module doc
+/// for why these are separate files from the cost model.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BreakerSection {
+    /// Path to a [`karst_scaler::breaker::BreakerLimitsDocument`] file.
+    pub limits_path: String,
+    /// Path to the breaker's persisted per-pool, per-period counters —
+    /// created on first use, read and rewritten on every `create`.
+    pub state_path: String,
 }
 
 /// The `[metrics]` TOML table — same loopback-only posture as `karstd`'s own

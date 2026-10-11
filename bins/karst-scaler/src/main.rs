@@ -93,28 +93,45 @@ fn usage_text() {
   drive ADVISE_CONFIG.toml   same recommendation loop as advise, but
                               reconciles each pool's actual instance count
                               against it through a driver (ADR-0045 §7
-                              Phase 2); today that driver is always the
-                              no-op one -- see driver.rs"
+                              Phase 2), bounded by a budget/node-count
+                              circuit breaker and an independent region
+                              check (see breaker.rs); requires a [breaker]
+                              section in ADVISE_CONFIG.toml. Today the
+                              underlying driver is always the no-op one
+                              -- see driver.rs"
     );
 }
 
 fn run_advise(advise_config_path: &str) -> Result<(), String> {
-    let config = load_drive_config(advise_config_path)?;
+    let (config, _breaker) = load_drive_config(advise_config_path)?;
     advise_loop::run(&config)
 }
 
 fn run_drive(advise_config_path: &str) -> Result<(), String> {
-    let config = load_drive_config(advise_config_path)?;
-    // The no-op driver is the only one wired up today -- ADR-0045 §7
-    // Phase 2's own PR 2 (budget circuit breaker, independent
-    // region-allowlist re-check) and later PRs (a real driver) both plug
-    // in here, in front of or in place of this value, without this
-    // function's own shape changing.
-    let mut driver = karst_scaler::driver::NoopDriver::new();
+    let (config, breaker) = load_drive_config(advise_config_path)?;
+    // ADR-0045 §6: no "unlimited" default. A `drive` config with no
+    // [breaker] section is refused here, before anything is actuated,
+    // rather than falling back to the bare no-op driver with no ceiling
+    // at all.
+    let breaker = breaker.ok_or_else(|| {
+        format!(
+            "{advise_config_path}: drive requires a [breaker] section (limits_path, \
+             state_path) -- ADR-0045 §6 allows no \"unlimited\" default"
+        )
+    })?;
+    let mut driver = karst_scaler::breaker::BoundedDriver::new(
+        karst_scaler::driver::NoopDriver::new(),
+        Path::new(&config.cost_model_path),
+        Path::new(&breaker.limits_path),
+        Path::new(&breaker.state_path),
+    )
+    .map_err(|e| e.to_string())?;
     drive_loop::run(&config, &mut driver)
 }
 
-fn load_drive_config(advise_config_path: &str) -> Result<advise_loop::Config, String> {
+fn load_drive_config(
+    advise_config_path: &str,
+) -> Result<(advise_loop::Config, Option<advise_config::BreakerSection>), String> {
     // ureq's TLS backend is built with no crypto provider of its own (see
     // Cargo.toml's comment on why) -- it needs one installed process-wide
     // before the first HTTPS request. aws-lc-rs is the one every other
@@ -129,13 +146,14 @@ fn load_drive_config(advise_config_path: &str) -> Result<advise_loop::Config, St
         .map_err(|e| format!("reading {}: {e}", cfg.pat_file))?
         .trim()
         .to_owned();
-    Ok(advise_loop::Config {
+    let config = advise_loop::Config {
         cost_model_path: cfg.cost_model_path,
         control_api_base: cfg.control_api_base.trim_end_matches('/').to_owned(),
         pat,
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         metrics_listen: cfg.metrics.listen,
-    })
+    };
+    Ok((config, cfg.breaker))
 }
 
 fn run_check(cost_model_path: &str) -> Result<(), String> {

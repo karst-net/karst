@@ -12,6 +12,7 @@
 //! until that is settled.
 
 pub mod advise;
+pub mod breaker;
 pub mod cost_model;
 pub mod driver;
 pub mod position;

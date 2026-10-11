@@ -33,11 +33,13 @@ pub enum InstanceState {
     Draining,
 }
 
-/// A [`Driver`] operation failed. Deliberately one variant today: every
-/// current implementation (just [`NoopDriver`]) has exactly one way to
-/// fail ("that instance doesn't exist"), and a real driver's own failure
-/// modes (quota, a transient cloud-API error, ...) are not yet known well
-/// enough to name as distinct variants without guessing.
+/// A [`Driver`] operation failed. Deliberately one message-carrying
+/// variant today rather than a set of named ones: [`NoopDriver`]'s own
+/// failure ("that instance doesn't exist"), `crate::breaker::BoundedDriver`'s
+/// refusals, and a real driver's own failure modes (quota, a transient
+/// cloud-API error, ...) are not yet a well-enough-understood set to name
+/// as distinct variants without guessing which ones callers will actually
+/// need to branch on.
 #[derive(Debug)]
 pub enum DriverError {
     Other(String),
