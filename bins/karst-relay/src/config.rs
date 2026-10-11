@@ -115,6 +115,11 @@ pub struct Config {
     #[serde(default)]
     pub telemetry: Option<Telemetry>,
 
+    /// Managed relay usage spool. Absent means no accounting task, disk access,
+    /// or network reporting is started.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+
     /// Which region this relay serves — §8, §9.
     ///
     /// **Mesh is within a region**, and §8 gives the reason: cross-region
@@ -159,6 +164,14 @@ pub struct Mesh {
 pub struct Metrics {
     /// Address to serve `GET /metrics` on.
     pub listen: SocketAddr,
+}
+
+/// Explicit operator opt-in to local managed relay usage collection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Usage {
+    /// Private persistent spool directory, shared by no other relay process.
+    pub spool_dir: PathBuf,
 }
 
 /// Where, and how often, to push self-reported telemetry — ADR-0021.
@@ -336,6 +349,15 @@ impl Config {
     /// # Errors
     /// [`Error::Invalid`] naming the setting at fault.
     pub fn validate(&self) -> Result<(), Error> {
+        if self
+            .usage
+            .as_ref()
+            .is_some_and(|usage| usage.spool_dir.as_os_str().is_empty())
+        {
+            return Err(Error::Invalid(
+                "config: usage.spool_dir must not be empty".to_owned(),
+            ));
+        }
         if let Some(metrics) = self.metrics {
             // **Refuse a metrics listener that shares the client port.** It
             // would put an unauthenticated `GET` on the socket carrying the

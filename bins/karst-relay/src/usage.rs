@@ -7,12 +7,204 @@
 //! prove that all observations reached it or survived a process failure.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::hub::DeliveryUsage;
 use crate::roster::UsageMapping;
 
 #[cfg(unix)]
 pub mod spool;
+
+const OBSERVATION_QUEUE: usize = 4096;
+
+#[derive(Debug)]
+struct Observation {
+    completed_us: u64,
+    delivery: DeliveryUsage,
+}
+
+/// Nonblocking handoff used after a complete transport write. A full or closed
+/// queue sets a sticky gap flag; it never delays destination forwarding.
+#[derive(Debug, Clone)]
+pub struct Observer {
+    sender: tokio::sync::mpsc::Sender<Observation>,
+    lost: Arc<AtomicBool>,
+}
+
+impl Observer {
+    pub fn record(&self, completed_us: u64, delivery: DeliveryUsage) {
+        if self
+            .sender
+            .try_send(Observation {
+                completed_us,
+                delivery,
+            })
+            .is_err()
+        {
+            self.lost.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Live, explicitly enabled relay usage collection.
+#[derive(Debug)]
+pub struct Runtime {
+    observer: Observer,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Runtime {
+    /// Open the durable spool and start minute aggregation.
+    /// # Errors
+    /// Returns spool, locking, or filesystem errors before the listener starts.
+    #[cfg(unix)]
+    pub fn start(path: &Path) -> std::io::Result<Self> {
+        let mut spool = spool::Spool::open(path)?;
+        let unclean = spool.recovered_unclean();
+        let lost = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = tokio::sync::mpsc::channel(OBSERVATION_QUEUE);
+        let task_lost = Arc::clone(&lost);
+        let task =
+            tokio::spawn(async move { consume(receiver, task_lost, &mut spool, unclean).await });
+        Ok(Self {
+            observer: Observer { sender, lost },
+            task,
+        })
+    }
+
+    /// # Errors
+    /// Relay usage spooling currently requires a Unix filesystem.
+    #[cfg(not(unix))]
+    pub fn start(_path: &Path) -> std::io::Result<Self> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "relay usage spool requires Unix",
+        ))
+    }
+
+    #[must_use]
+    pub fn observer(&self) -> Observer {
+        self.observer.clone()
+    }
+
+    /// Join after dropping every observer; the consumer seals its last window.
+    /// # Errors
+    /// Returns a panic from the background consumer task.
+    pub async fn finish(self) -> Result<(), tokio::task::JoinError> {
+        let Self { observer, task } = self;
+        drop(observer);
+        task.await
+    }
+}
+
+#[cfg(unix)]
+async fn consume(
+    mut receiver: tokio::sync::mpsc::Receiver<Observation>,
+    lost: Arc<AtomicBool>,
+    spool: &mut spool::Spool,
+    unclean: bool,
+) {
+    let now = now_micros();
+    let bucket = now / BUCKET_MICROS * BUCKET_MICROS;
+    let Some(mut window) = Accumulator::new(bucket) else {
+        return;
+    };
+    if unclean {
+        window.mark_gap(Gap::ObservationLost);
+    }
+    let mut storage_lost = false;
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        let observation = tokio::select! {
+            item = receiver.recv() => item,
+            _ = ticker.tick() => {
+                let now = now_micros();
+                let target = now / BUCKET_MICROS * BUCKET_MICROS;
+                advance(&mut window, target, lost.load(Ordering::Acquire), &mut storage_lost, spool);
+                continue;
+            }
+        };
+        let Some(observation) = observation else {
+            break;
+        };
+        let target = observation.completed_us / BUCKET_MICROS * BUCKET_MICROS;
+        advance(
+            &mut window,
+            target,
+            lost.load(Ordering::Acquire),
+            &mut storage_lost,
+            spool,
+        );
+        if lost.swap(false, Ordering::AcqRel) {
+            window.mark_gap(Gap::ObservationLost);
+        }
+        if storage_lost {
+            window.mark_gap(Gap::ObservationLost);
+        }
+        window.record(observation.completed_us, observation.delivery);
+    }
+    let now = now_micros();
+    let target = now / BUCKET_MICROS * BUCKET_MICROS;
+    advance(
+        &mut window,
+        target,
+        lost.load(Ordering::Acquire),
+        &mut storage_lost,
+        spool,
+    );
+    if lost.load(Ordering::Acquire) || storage_lost {
+        window.mark_gap(Gap::ObservationLost);
+    }
+    let sealed = spool.seal(&window.seal()).is_ok();
+    if sealed {
+        let _ = spool.clean_shutdown();
+    }
+}
+
+#[cfg(unix)]
+fn advance(
+    window: &mut Accumulator,
+    target: u64,
+    loss: bool,
+    storage_lost: &mut bool,
+    spool: &mut spool::Spool,
+) {
+    if target.saturating_sub(window.start_us) / BUCKET_MICROS > 5 {
+        window.mark_gap(Gap::Clock);
+        if loss || *storage_lost {
+            window.mark_gap(Gap::ObservationLost);
+        }
+        let Some(next) = Accumulator::new(target) else {
+            return;
+        };
+        let completed = std::mem::replace(window, next).seal();
+        *storage_lost = spool.seal(&completed).is_err();
+        return;
+    }
+    while window.start_us < target {
+        if loss || *storage_lost {
+            window.mark_gap(Gap::ObservationLost);
+        }
+        let next_start = window.end_us;
+        let Some(next) = Accumulator::new(next_start) else {
+            return;
+        };
+        let completed = std::mem::replace(window, next).seal();
+        *storage_lost = spool.seal(&completed).is_err();
+    }
+}
+
+#[cfg(unix)]
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_micros().try_into().unwrap_or(u64::MAX))
+}
 
 pub const BUCKET_MICROS: u64 = 60_000_000;
 pub const MAX_MAPPINGS: usize = 4096;
