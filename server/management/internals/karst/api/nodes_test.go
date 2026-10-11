@@ -347,6 +347,43 @@ func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelem
 }
 func (scanRelays) DemandByRegion(context.Context) ([]relayreg.RegionDemand, error) { return nil, nil }
 
+// scanRelaysExists reports every Create as a duplicate — the
+// relaysEnroll/relaysCreate "relay already exists" path.
+type scanRelaysExists struct{ scanRelays }
+
+func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
+	return nil, relayreg.ErrExists
+}
+
+// scanRelayEnrollAccounts fakes the two ADR-0045 §7 Phase 2 methods
+// relayEnrollTokensCreate/relaysEnroll type-assert for (MintRelayEnrollKey,
+// ConsumeRelayEnrollKey), plus the accountUpdater method every other
+// RegisterEndpoints test fixture here already has to implement.
+type scanRelayEnrollAccounts struct {
+	mintToken string
+	mintErr   error
+
+	consumeAccountID string
+	consumeKeyID     string
+	consumeErr       error
+}
+
+func (scanRelayEnrollAccounts) UpdateAccountPeers(context.Context, string, types.UpdateReason) {}
+
+func (s scanRelayEnrollAccounts) MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error) {
+	if s.mintErr != nil {
+		return "", s.mintErr
+	}
+	return s.mintToken, nil
+}
+
+func (s scanRelayEnrollAccounts) ConsumeRelayEnrollKey(context.Context, string) (string, string, error) {
+	if s.consumeErr != nil {
+		return "", "", s.consumeErr
+	}
+	return s.consumeAccountID, s.consumeKeyID, nil
+}
+
 type fixedRelays []relayreg.StoredRelay
 
 func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return f, nil }
@@ -478,6 +515,103 @@ func TestUserRoleIsDeniedByKarstAuthorization(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
+// ADR-0045 §7 Phase 2: the Scaler role may mint relay-enroll tokens, and
+// Admin/Owner (who already hold Create on KarstControl) may too — the same
+// relationship relaysCreate already has with those roles.
+func TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T) {
+	for _, tc := range []struct {
+		role     types.UserRole
+		wantCode int
+	}{
+		{types.UserRoleScaler, http.StatusCreated},
+		{types.UserRoleAdmin, http.StatusCreated},
+		{types.UserRoleOwner, http.StatusCreated},
+		{types.UserRoleAdvisor, http.StatusForbidden},
+		{types.UserRoleUser, http.StatusForbidden},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			router := mux.NewRouter()
+			accounts := scanRelayEnrollAccounts{mintToken: "RELAY-ENROLL-SECRET"}
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", router)
+			req := httptest.NewRequest(http.MethodPost, relayEnrollTokensPath, strings.NewReader(`{"pool_id":"aws-use1"}`))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
+			if tc.wantCode != http.StatusCreated {
+				return
+			}
+			var decoded relayEnrollTokenResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+			require.Equal(t, "RELAY-ENROLL-SECRET", decoded.Token)
+		})
+	}
+}
+
+// The Scaler role's own Create grant on modules.KarstControl is coarser
+// than its actual job (see roles.Scaler's own doc comment) — this proves
+// karstAuthorization's hard allowlist, not that grant, is what keeps it
+// from reaching any other mutation under /karst/v1.
+func TestScalerRoleCannotReachAnyOtherKarstRoute(t *testing.T) {
+	router := mux.NewRouter()
+	accounts := scanRelayEnrollAccounts{mintToken: "irrelevant"}
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", router)
+	req := httptest.NewRequest(http.MethodPost, "/karst/v1/turns", strings.NewReader(`{}`))
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+}
+
+// ADR-0045 §6: relaysEnroll authenticates by bearer token alone, with no
+// session at all — the exact gap a scaled-up relay with nothing but its
+// minted token needs bridged.
+func TestRelaysEnroll(t *testing.T) {
+	entryBody := `{"address":"10.0.0.5:443","tls_server_name":"relay.example.test","identity_key":"a-public-key","region":"aws-use1"}`
+
+	t.Run("no bearer token is unauthenticated", func(t *testing.T) {
+		router := mux.NewRouter()
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, scanRelayEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	})
+
+	t.Run("an invalid token is refused", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanRelayEnrollAccounts{consumeErr: status.Errorf(status.PermissionDenied, "relay enroll key is invalid")}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer wrong-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	})
+
+	t.Run("a valid token registers the relay into the token's own account", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer the-real-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	})
+
+	t.Run("an already-registered relay is a precondition failure, same as relaysCreate", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanRelayEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysExists{}, nil, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/relays/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer the-real-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
+	})
+}
+
 // The member hostility test walks the same router that production serves. A
 // newly-added admin route therefore cannot silently become usable by Members.
 func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
@@ -495,6 +629,17 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		// authorization boundary and fakeOwnDevices proves it rejects a regular
 		// member even when that member owns a device.
 		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
+			return nil
+		}
+		// relaysEnroll (ADR-0045 §6) is bearer-token-gated, not
+		// session-gated -- it deliberately sits outside karstAuthorization
+		// (see its own doc comment), so a member's session cannot reach
+		// KarstControl's permission check to be denied by in the first
+		// place. It still correctly refuses a member with no enroll token
+		// (401, checked by TestRelaysEnroll* below) -- this walk's own
+		// "every admin route denies a session-bearing member" shape just
+		// does not apply to a route with no session-based gate at all.
+		if template == "/karst/v1/relays/enroll" {
 			return nil
 		}
 		methods, err := route.GetMethods()
