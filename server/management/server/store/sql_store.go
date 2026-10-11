@@ -31,6 +31,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	nbdns "github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/accesslogs"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain"
 
@@ -80,6 +81,7 @@ type SqlStore struct {
 	pool               *pgxpool.Pool
 	fieldEncrypt       *crypt.FieldEncrypt
 	transactionTimeout time.Duration
+	deviceUsage        *usage.Collector
 }
 
 type installation struct {
@@ -300,7 +302,7 @@ func (s *SqlStore) SaveAccount(ctx context.Context, account *types.Account) erro
 		group.StoreGroupPeers()
 	}
 
-	err := s.transaction(func(tx *gorm.DB) error {
+	err := s.membershipTransaction(ctx, account.Id, false, func(tx *gorm.DB) error {
 		result := tx.Select(clause.Associations).Delete(account.Policies, "account_id = ?", account.Id)
 		if result.Error != nil {
 			return result.Error
@@ -395,7 +397,7 @@ func (s *SqlStore) checkAccountDomainBeforeSave(ctx context.Context, accountID, 
 func (s *SqlStore) DeleteAccount(ctx context.Context, account *types.Account) error {
 	start := time.Now()
 
-	err := s.transaction(func(tx *gorm.DB) error {
+	err := s.membershipTransaction(ctx, account.Id, true, func(tx *gorm.DB) error {
 		result := tx.Select(clause.Associations).Delete(account.Policies, "account_id = ?", account.Id)
 		if result.Error != nil {
 			return result.Error
@@ -3411,11 +3413,12 @@ func (s *SqlStore) GetUserPeers(ctx context.Context, lockStrength LockingStrengt
 }
 
 func (s *SqlStore) AddPeerToAccount(ctx context.Context, peer *nbpeer.Peer) error {
-	if err := s.db.Create(peer).Error; err != nil {
-		return status.Errorf(status.Internal, "issue adding peer to account: %s", err)
-	}
-
-	return nil
+	return s.peerMembershipTransaction(ctx, peer.AccountID, func(tx *gorm.DB) error {
+		if err := tx.Create(peer).Error; err != nil {
+			return status.Errorf(status.Internal, "issue adding peer to account: %s", err)
+		}
+		return nil
+	})
 }
 
 // GetPeerByID retrieves a peer by its ID and account ID.
@@ -3523,17 +3526,19 @@ func (s *SqlStore) GetAllEphemeralPeers(ctx context.Context, lockStrength Lockin
 
 // DeletePeer removes a peer from the store.
 func (s *SqlStore) DeletePeer(ctx context.Context, accountID string, peerID string) error {
-	result := s.db.Delete(&nbpeer.Peer{}, accountAndIDQueryCondition, accountID, peerID)
-	if err := result.Error; err != nil {
-		log.WithContext(ctx).Errorf("failed to delete peer from the store: %s", err)
-		return status.Errorf(status.Internal, "failed to delete peer from store")
-	}
+	return s.peerMembershipTransaction(ctx, accountID, func(tx *gorm.DB) error {
+		result := tx.Delete(&nbpeer.Peer{}, accountAndIDQueryCondition, accountID, peerID)
+		if err := result.Error; err != nil {
+			log.WithContext(ctx).Errorf("failed to delete peer from the store: %s", err)
+			return status.Errorf(status.Internal, "failed to delete peer from store")
+		}
 
-	if result.RowsAffected == 0 {
-		return status.NewPeerNotFoundError(peerID)
-	}
+		if result.RowsAffected == 0 {
+			return status.NewPeerNotFoundError(peerID)
+		}
 
-	return nil
+		return nil
+	})
 }
 
 func (s *SqlStore) IncrementNetworkSerial(ctx context.Context, accountId string) error {
@@ -3620,6 +3625,7 @@ func (s *SqlStore) withTx(tx *gorm.DB) Store {
 		db:           tx,
 		storeEngine:  s.storeEngine,
 		fieldEncrypt: s.fieldEncrypt,
+		deviceUsage:  s.deviceUsage,
 	}
 }
 

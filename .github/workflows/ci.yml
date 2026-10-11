@@ -785,6 +785,10 @@ jobs:
       - run: go vet ./...
       - name: Karst packages
         run: go test -race ./management/internals/karst/...
+      - name: Device usage SQL integration
+        env:
+          NETBIRD_STORE_ENGINE: sqlite
+        run: go test -race -count=1 -run 'TestDeviceUsage|TestSqlStore_AddPeerToAccount|TestSqlStore_DeletePeer' ./management/server/store/
       # Upstream's own tests are how a cherry-picked security fix gets
       # validated. They need testdata fixtures, which a package-graph prune
       # silently removes and which neither build nor vet can detect.

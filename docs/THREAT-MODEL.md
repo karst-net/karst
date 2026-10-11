@@ -239,6 +239,18 @@ Stated plainly, because a reviewer will find them anyway.
 | R6 | Metadata exposure via community relays | Medium | Opt-in with disclosure at configuration |
 | R7 | Lattice cryptanalysis advances | Low / catastrophic | Hybrid + PSK + SLH-DSA root; agility layer for rapid swap |
 | R8 | Agility layer itself becomes attack surface | Low | Closed allowlist; downgrade case in ProVerif |
+| R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off; no public usage endpoint yet. Authorized reads, retention, and deletion policy are rollout prerequisites. |
+| R10 | An uninstrumented membership writer or database administrator invalidates usage accounting | Medium | Transactional membership hooks, coverage gaps, and explicit reconciliation; all replicas must run hooks before activation. No claim of tamper resistance against a compromised database/control server. |
+
+Device collection under ADR-0050 records enrollment generations and boundaries,
+not online activity or per-device traffic. Membership and ledger writes share a
+transaction; a metering write failure rolls that membership mutation back without
+disconnecting existing traffic. Tests in `management/internals/karst/usage` and
+`management/server/store/karst_usage_test.go` (paths relative to `server/`)
+exercise rollback, account scoping, disabled coverage, reconciliation, and
+concurrent activation on PostgreSQL. Reconciliation marks uncertain periods
+incomplete; it cannot detect a change made and undone entirely by a writer that
+bypasses the hooks. Internal collector methods are not authorization boundaries.
 
 ---
 
