@@ -115,6 +115,7 @@ pub struct Ctx {
     /// datagram contend with every packet the relay carries, to protect two
     /// structures that never refer to each other.
     reflect: Option<Mutex<Reflector>>,
+    usage_observer: RwLock<Option<crate::usage::Observer>>,
 }
 
 impl std::fmt::Debug for Ctx {
@@ -157,6 +158,7 @@ impl Ctx {
                 .reflect
                 .as_ref()
                 .map(|r| Mutex::new(Reflector::new(r.advertised()))),
+            usage_observer: RwLock::new(None),
         })
     }
 
@@ -307,6 +309,13 @@ impl Ctx {
             Admitted::Mesh { relay_id } => roster.mesh_peer(relay_id).is_some(),
         }
     }
+
+    fn usage_observer(&self) -> Option<crate::usage::Observer> {
+        self.usage_observer
+            .read()
+            .ok()
+            .and_then(|current| current.clone())
+    }
 }
 
 /// Run the relay until the process is asked to stop.
@@ -332,6 +341,15 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     let ctx = Ctx::new(cfg, identity, roster, tls_config);
+    let usage_runtime = if let Some(usage) = &cfg.usage {
+        let runtime = crate::usage::Runtime::start(&usage.spool_dir)?;
+        if let Ok(mut observer) = ctx.usage_observer.write() {
+            *observer = Some(runtime.observer());
+        }
+        Some(runtime)
+    } else {
+        None
+    };
     tokio::spawn(roster_loop(roster_source, Arc::clone(&ctx)));
 
     if let Some(r) = &cfg.reflect {
@@ -402,7 +420,14 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     let listener = TcpListener::bind(cfg.listen).await?;
-    serve_on(listener, ctx).await
+    let result = serve_on(listener, Arc::clone(&ctx)).await;
+    if let Some(runtime) = usage_runtime {
+        if let Ok(mut observer) = ctx.usage_observer.write() {
+            *observer = None;
+        }
+        runtime.finish().await?;
+    }
+    result
 }
 
 /// Serve `GET /metrics` until the process ends.
@@ -984,10 +1009,19 @@ async fn flush(tls: &mut impl Stream, id: ConnId, ctx: &Arc<Ctx>) -> bool {
     loop {
         let next = ctx.with_hub(|hub| hub.take_outbound_attributed(id));
         let Some(outbound) = next else { return true };
-        // The durable usage producer will consume successful completion
-        // evidence here. Until configured, no usage is retained or billed.
-        if outbound.write_to(tls).await.is_err() {
-            return false;
+        match outbound.write_to(tls).await {
+            Ok(Some(delivery)) => {
+                if let Some(observer) = ctx.usage_observer() {
+                    let completed_us = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |duration| {
+                            duration.as_micros().try_into().unwrap_or(u64::MAX)
+                        });
+                    observer.record(completed_us, delivery);
+                }
+            }
+            Ok(None) => {}
+            Err(_) => return false,
         }
     }
 }

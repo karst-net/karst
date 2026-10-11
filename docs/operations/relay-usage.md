@@ -33,25 +33,24 @@ TCP/QUIC writer returns this metadata after a successful complete-frame write.
 
 ## Not yet operational
 
-Runtime collection remains unwired. No operator option enables managed relay
-billing, and the successful-write evidence is currently discarded. The relay
-library has a bounded minute aggregator and durable local batch spool. It
-allocates a fresh producer epoch on each start, reserves each sequence before
-sealing, records clean/unclean shutdown state, discovers replayable batches,
-and stores a deterministic versioned aggregate encoding with an integrity
-digest. The spool is bounded to 256 MiB and 1,024 batches; a full spool rejects
-new batches, which must become visible coverage gaps. Signed upload, producer
-authorization, control-plane ingestion, customer relay reports, charges, and
-spending enforcement are not implemented yet. Unconfigured deployments create
-no relay spool and retain existing forwarding behavior. The device ledger
-migration adds the mapping table, but no mappings are written unless the
-optional roster integration is explicitly supplied.
+Collection is explicitly enabled in the relay TOML with a `usage.spool_dir`
+path. Successful complete writes enter a bounded nonblocking queue and feed the
+minute aggregator. Queue loss, unresolved mapping, overflow, clock changes,
+unclean restart, or spool failure marks coverage incomplete. The consumer seals
+empty windows as heartbeats, reserves each sequence before writing a batch,
+and replays retained batches after restart. The Unix spool is bounded to
+256 MiB and 1,024 batches; full storage rejects new windows and marks a gap.
+No traffic is blocked when collection falls behind.
+
+Signed upload, managed producer authorization, control-plane ingestion,
+customer relay reports, charges, and spending enforcement are not implemented
+yet. Unconfigured deployments create no relay spool and retain existing
+forwarding behavior. The device ledger migration adds the mapping table, but no
+mappings are written unless the optional roster integration is explicitly
+supplied. On non-Unix platforms, enabling the spool currently fails at startup.
 
 Next implementation work under [#275](https://github.com/karst-net/karst/issues/275):
 
-- Connect a bounded successful-write handoff to the aggregator and spool, seal
-  empty coverage heartbeats, and carry unclean epochs and local gaps into report
-  completeness.
 - Authenticate upload envelopes and authorize managed producer/mapping scope;
   accept identical retries without adding bytes twice and reject conflicts.
 - Expose provisional account totals and coverage gaps, including unresolved
