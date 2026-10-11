@@ -1963,6 +1963,7 @@ dependencies = [
  "quinn",
  "rand_core 0.10.1",
  "rcgen",
+ "rustix",
  "rustls",
  "rustls-native-certs",
  "rustls-pki-types",

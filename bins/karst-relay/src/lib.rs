@@ -25,3 +25,4 @@ pub mod server;
 pub mod sign;
 pub mod telemetry;
 pub mod tls;
+pub mod usage;

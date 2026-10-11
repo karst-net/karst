@@ -34,19 +34,24 @@ TCP/QUIC writer returns this metadata after a successful complete-frame write.
 ## Not yet operational
 
 Runtime collection remains unwired. No operator option enables managed relay
-billing, and the successful-write evidence is currently discarded. There is no
-durable spool, signed upload, producer authorization, coverage heartbeat,
-aggregate relay report, charge, or spending enforcement in this slice.
-Unconfigured deployments create no relay spool and retain existing forwarding
-behavior. The device ledger migration adds the mapping table, but no mappings
-are written unless the optional roster integration is explicitly supplied.
+billing, and the successful-write evidence is currently discarded. The relay
+library has a bounded minute aggregator and durable local batch spool. It
+allocates a fresh producer epoch on each start, reserves each sequence before
+sealing, records clean/unclean shutdown state, discovers replayable batches,
+and stores a deterministic versioned aggregate encoding with an integrity
+digest. The spool is bounded to 256 MiB and 1,024 batches; a full spool rejects
+new batches, which must become visible coverage gaps. Signed upload, producer
+authorization, control-plane ingestion, customer relay reports, charges, and
+spending enforcement are not implemented yet. Unconfigured deployments create
+no relay spool and retain existing forwarding behavior. The device ledger
+migration adds the mapping table, but no mappings are written unless the
+optional roster integration is explicitly supplied.
 
 Next implementation work under [#275](https://github.com/karst-net/karst/issues/275):
 
-- Bound the nonblocking aggregation path and persist immutable batches before
-  upload; record lost observations as incomplete coverage.
-- Persist producer epochs, sequence identities, clean termination, and coverage
-  heartbeats; preserve sealed batches across restart and acknowledgment loss.
+- Connect a bounded successful-write handoff to the aggregator and spool, seal
+  empty coverage heartbeats, and carry unclean epochs and local gaps into report
+  completeness.
 - Authenticate upload envelopes and authorize managed producer/mapping scope;
   accept identical retries without adding bytes twice and reject conflicts.
 - Expose provisional account totals and coverage gaps, including unresolved
