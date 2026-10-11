@@ -6,6 +6,8 @@
 //! and producer coverage are separate: a complete window here alone does not
 //! prove that all observations reached it or survived a process failure.
 
+#[cfg(unix)]
+use sha2::Digest as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +21,72 @@ use crate::roster::UsageMapping;
 #[cfg(unix)]
 pub mod spool;
 
+/// Signed batch envelope. Its identity metadata and digest are signed with a
+/// context separate from Ponor and advisory telemetry.
+#[cfg(unix)]
+#[derive(Debug)]
+pub struct SignedBatch {
+    pub id: spool::BatchId,
+    pub digest: [u8; 32],
+    pub signature: Vec<u8>,
+    pub encoded: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl SignedBatch {
+    /// Sign the exact bytes stored in the spool. Upload retries must reuse this
+    /// envelope unchanged; never create a new signature or batch ID on retry.
+    /// # Errors
+    /// Returns oversize payloads or signing entropy failures.
+    pub fn create(
+        identity: &crate::sign::Identity,
+        id: spool::BatchId,
+        payload: &[u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let payload_len = u32::try_from(payload.len()).map_err(|_| "usage batch too large")?;
+        if payload.is_empty() || payload.len() > MAX_BATCH_BYTES {
+            return Err("invalid usage batch size".into());
+        }
+        let digest: [u8; 32] = sha2::Sha256::digest(payload).into();
+        let message = Self::signing_input(id, payload, &digest, payload_len);
+        let signature = identity.sign_usage(&message)?;
+
+        let mut encoded = Vec::with_capacity(68 + signature.len() + payload.len());
+        encoded.extend_from_slice(b"KRUS");
+        encoded.extend_from_slice(&1u16.to_be_bytes());
+        encoded.extend_from_slice(&id.epoch);
+        encoded.extend_from_slice(&id.sequence.to_be_bytes());
+        encoded.extend_from_slice(&payload_len.to_be_bytes());
+        encoded.extend_from_slice(&digest);
+        encoded.extend_from_slice(&u16::try_from(signature.len())?.to_be_bytes());
+        encoded.extend_from_slice(&signature);
+        encoded.extend_from_slice(payload);
+        Ok(Self {
+            id,
+            digest,
+            signature,
+            encoded,
+        })
+    }
+
+    fn signing_input(
+        id: spool::BatchId,
+        payload: &[u8],
+        digest: &[u8; 32],
+        payload_len: u32,
+    ) -> Vec<u8> {
+        let mut message = Vec::with_capacity(70 + payload.len());
+        message.extend_from_slice(b"karst-relay-usage-batch-v1\0");
+        message.extend_from_slice(&id.epoch);
+        message.extend_from_slice(&id.sequence.to_be_bytes());
+        message.extend_from_slice(&payload_len.to_be_bytes());
+        message.extend_from_slice(digest);
+        message.extend_from_slice(payload);
+        message
+    }
+}
+
+#[cfg(unix)]
 const OBSERVATION_QUEUE: usize = 4096;
 
 #[derive(Debug)]
@@ -62,14 +130,15 @@ impl Runtime {
     /// # Errors
     /// Returns spool, locking, or filesystem errors before the listener starts.
     #[cfg(unix)]
-    pub fn start(path: &Path) -> std::io::Result<Self> {
+    pub fn start(path: &Path, identity: Arc<crate::sign::Identity>) -> std::io::Result<Self> {
         let mut spool = spool::Spool::open(path)?;
         let unclean = spool.recovered_unclean();
         let lost = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = tokio::sync::mpsc::channel(OBSERVATION_QUEUE);
         let task_lost = Arc::clone(&lost);
-        let task =
-            tokio::spawn(async move { consume(receiver, task_lost, &mut spool, unclean).await });
+        let task = tokio::spawn(async move {
+            consume(receiver, task_lost, &mut spool, unclean, &identity).await;
+        });
         Ok(Self {
             observer: Observer { sender, lost },
             task,
@@ -79,7 +148,7 @@ impl Runtime {
     /// # Errors
     /// Relay usage spooling currently requires a Unix filesystem.
     #[cfg(not(unix))]
-    pub fn start(_path: &Path) -> std::io::Result<Self> {
+    pub fn start(_path: &Path, _identity: Arc<crate::sign::Identity>) -> std::io::Result<Self> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "relay usage spool requires Unix",
@@ -107,6 +176,7 @@ async fn consume(
     lost: Arc<AtomicBool>,
     spool: &mut spool::Spool,
     unclean: bool,
+    identity: &crate::sign::Identity,
 ) {
     let now = now_micros();
     let bucket = now / BUCKET_MICROS * BUCKET_MICROS;
@@ -125,7 +195,7 @@ async fn consume(
             _ = ticker.tick() => {
                 let now = now_micros();
                 let target = now / BUCKET_MICROS * BUCKET_MICROS;
-                advance(&mut window, target, lost.load(Ordering::Acquire), &mut storage_lost, spool);
+                advance(&mut window, target, lost.load(Ordering::Acquire), &mut storage_lost, spool, identity);
                 continue;
             }
         };
@@ -139,6 +209,7 @@ async fn consume(
             lost.load(Ordering::Acquire),
             &mut storage_lost,
             spool,
+            identity,
         );
         if lost.swap(false, Ordering::AcqRel) {
             window.mark_gap(Gap::ObservationLost);
@@ -156,11 +227,12 @@ async fn consume(
         lost.load(Ordering::Acquire),
         &mut storage_lost,
         spool,
+        identity,
     );
     if lost.load(Ordering::Acquire) || storage_lost {
         window.mark_gap(Gap::ObservationLost);
     }
-    let sealed = spool.seal(&window.seal()).is_ok();
+    let sealed = spool.seal_signed(&window.seal(), identity).is_ok();
     if sealed {
         let _ = spool.clean_shutdown();
     }
@@ -173,6 +245,7 @@ fn advance(
     loss: bool,
     storage_lost: &mut bool,
     spool: &mut spool::Spool,
+    identity: &crate::sign::Identity,
 ) {
     if target.saturating_sub(window.start_us) / BUCKET_MICROS > 5 {
         window.mark_gap(Gap::Clock);
@@ -183,7 +256,7 @@ fn advance(
             return;
         };
         let completed = std::mem::replace(window, next).seal();
-        *storage_lost = spool.seal(&completed).is_err();
+        *storage_lost = spool.seal_signed(&completed, identity).is_err();
         return;
     }
     while window.start_us < target {
@@ -195,7 +268,7 @@ fn advance(
             return;
         };
         let completed = std::mem::replace(window, next).seal();
-        *storage_lost = spool.seal(&completed).is_err();
+        *storage_lost = spool.seal_signed(&completed, identity).is_err();
     }
 }
 
@@ -237,9 +310,9 @@ pub struct Window {
 }
 
 impl Window {
-    /// Canonical versioned encoding for a sealed spool batch. Fields are
-    /// length-prefixed UTF-8 and sorted by mapping; payload and device IDs are
-    /// absent. This representation is the input for future signing/upload.
+    /// Canonical versioned encoding for a sealed aggregate, placed inside a
+    /// signed spool envelope. Fields are length-prefixed UTF-8 and sorted by
+    /// mapping; packet payloads and device IDs are absent.
     /// # Errors
     /// Rejects out-of-bound windows or metadata before allocating a batch.
     pub fn encode(&self) -> Result<Vec<u8>, &'static str> {
@@ -488,6 +561,120 @@ mod tests {
             u64::from_be_bytes(first[14..22].try_into().expect("end")),
             BUCKET_MICROS
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signed_batch_binds_its_identity_and_exact_aggregate_payload() {
+        let identity = crate::sign::Identity::from_seed(&[3; crate::sign::SEED_LEN]);
+        let mut acc = Accumulator::new(0).expect("minute");
+        acc.record(1, delivery("version", 100));
+        let payload = acc.seal().encode().expect("payload");
+        let id = spool::BatchId {
+            epoch: [7; 16],
+            sequence: 9,
+        };
+        let batch = SignedBatch::create(&identity, id, &payload).expect("signed batch");
+        assert_eq!(batch.encoded.get(..6).expect("header"), b"KRUS\0\x01");
+        assert_eq!(batch.id, id);
+        let expected_digest: [u8; 32] = sha2::Sha256::digest(&payload).into();
+        assert_eq!(batch.digest, expected_digest);
+
+        let signature_len = u16::from_be_bytes(batch.encoded[66..68].try_into().expect("sig len"));
+        let signature_end = 68 + usize::from(signature_len);
+        let payload_len = u32::try_from(payload.len()).expect("payload length");
+        let message = SignedBatch::signing_input(id, &payload, &batch.digest, payload_len);
+        assert!(crate::sign::verify_usage(
+            identity.public_key(),
+            &message,
+            &batch.encoded[68..signature_end]
+        ));
+
+        let changed_id = spool::BatchId { sequence: 10, ..id };
+        let changed_message =
+            SignedBatch::signing_input(changed_id, &payload, &batch.digest, payload_len);
+        assert!(!crate::sign::verify_usage(
+            identity.public_key(),
+            &changed_message,
+            &batch.encoded[68..signature_end]
+        ));
+        let mut changed_payload = payload.clone();
+        *changed_payload.last_mut().expect("payload is nonempty") ^= 1;
+        let changed_digest: [u8; 32] = sha2::Sha256::digest(&changed_payload).into();
+        let changed_message = SignedBatch::signing_input(
+            id,
+            &changed_payload,
+            &changed_digest,
+            u32::try_from(changed_payload.len()).expect("payload length"),
+        );
+        assert!(!crate::sign::verify_usage(
+            identity.public_key(),
+            &changed_message,
+            &batch.encoded[68..signature_end]
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_go_signing_vector_matches_the_relay_envelope() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "EpochHex")]
+            epoch_hex: String,
+            #[serde(rename = "Sequence")]
+            sequence: u64,
+            #[serde(rename = "PayloadHex")]
+            payload_hex: String,
+            #[serde(rename = "PayloadSHA256Hex")]
+            payload_sha256_hex: String,
+            #[serde(rename = "SigningInputHex")]
+            signing_input_hex: String,
+        }
+
+        fn decode_hex(text: &str) -> Vec<u8> {
+            text.as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    u8::from_str_radix(std::str::from_utf8(pair).expect("hex is UTF-8"), 16)
+                        .expect("valid hex pair")
+                })
+                .collect()
+        }
+
+        fn encode_hex(bytes: &[u8]) -> String {
+            use std::fmt::Write as _;
+            let mut text = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                write!(&mut text, "{byte:02x}").expect("writing to String cannot fail");
+            }
+            text
+        }
+
+        let vector: Vector = serde_json::from_str(include_str!(
+            "../../../spec/vectors/relay-usage-batch-v1.json"
+        ))
+        .expect("valid shared usage vector");
+        let mut epoch = [0; 16];
+        epoch.copy_from_slice(&decode_hex(&vector.epoch_hex));
+        let id = spool::BatchId {
+            epoch,
+            sequence: vector.sequence,
+        };
+        let payload = Accumulator::new(0)
+            .expect("minute")
+            .seal()
+            .encode()
+            .expect("payload");
+        assert_eq!(encode_hex(&payload), vector.payload_hex);
+        let digest: [u8; 32] = sha2::Sha256::digest(&payload).into();
+        assert_eq!(encode_hex(&digest), vector.payload_sha256_hex);
+        let message = SignedBatch::signing_input(
+            id,
+            &payload,
+            &digest,
+            u32::try_from(payload.len()).expect("payload length"),
+        );
+        assert_eq!(encode_hex(&message), vector.signing_input_hex);
     }
 
     #[test]

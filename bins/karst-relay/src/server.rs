@@ -342,7 +342,7 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
 
     let ctx = Ctx::new(cfg, identity, roster, tls_config);
     let usage_runtime = if let Some(usage) = &cfg.usage {
-        let runtime = crate::usage::Runtime::start(&usage.spool_dir)?;
+        let runtime = crate::usage::Runtime::start(&usage.spool_dir, Arc::clone(&ctx.identity))?;
         if let Ok(mut observer) = ctx.usage_observer.write() {
             *observer = Some(runtime.observer());
         }
