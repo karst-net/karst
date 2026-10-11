@@ -3,10 +3,11 @@
 
 Implements device lifecycle accounting under ADR-0050 for
 [#275](https://github.com/karst-net/karst/issues/275). Bootstrap installs hooks in
-the SQL membership store. Collection defaults off, and this slice exposes only
-internal Go configuration/reconciliation methods. Account owners and admins can
+the SQL membership store. Collection defaults off. Operators manage collection
+with `karst-control admin usage devices`; see the
+[rollout guide](../../../../../docs/operations/device-usage.md). Account owners and admins can
 read coverage-aware reports; no public configuration endpoint is provided.
-The implementation tracker remains open for activation, relay metering, pricing,
+The implementation tracker remains open for relay metering, pricing,
 alerts, spending caps, and payments.
 
 `Migrate` creates additive ledger, collection, coverage, and discrepancy tables.
@@ -114,9 +115,8 @@ business transaction, not only the accounting append.
 
 - All writers/replicas must run the instrumented SQL store before collection is
   enabled. Mixed-version writers cannot establish complete coverage.
-- Add an authorized operator configuration surface and audit configuration
-  changes before offering runtime activation. No environment variable enables
-  collection in this slice.
+- Use the operator CLI for activation; configuration and its audit record commit
+  together. No environment variable enables collection.
 - Review the membership-based eligibility boundary for any service-generated
   peers before managed billing launch; this primitive counts persisted peer IDs.
 - Support account reassignment explicitly if it is exposed; do not move metered

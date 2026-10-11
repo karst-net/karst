@@ -388,6 +388,21 @@ func (l *Log) Append(ctx context.Context, actor, action, target, detail string) 
 	return &written, nil
 }
 
+// AppendInTransaction uses the caller's already-open transaction, including
+// sink delivery rows. The caller must propagate errors and roll back its entire
+// mutation. New must have initialized this database's audit schema beforehand.
+// Unlike Append on the root log, no record is durable until the caller commits.
+func (l *Log) AppendInTransaction(ctx context.Context, tx *gorm.DB, actor, action, target, detail string) (*Entry, error) {
+	if tx == nil || tx.Statement == nil {
+		return nil, errors.New("audit: caller transaction required")
+	}
+	if _, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok {
+		return nil, errors.New("audit: caller transaction required")
+	}
+	log := &Log{db: tx.Session(&gorm.Session{NewDB: true})}
+	return log.Append(ctx, actor, action, target, detail)
+}
+
 func (l *Log) enqueueDeliveries(ctx context.Context, entry Entry) error {
 	accountID, err := accountFromContext(ctx)
 	if err != nil {
