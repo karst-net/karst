@@ -112,6 +112,24 @@ const karstAllowedRegionsEnv = "KARST_ALLOWED_REGIONS_FILE"
 // no document to reconcile at boot, only an address to dial per request.
 const karstScalerAdvisorURLEnv = "KARST_SCALER_ADVISOR_URL"
 
+// karstDemandHistoryIntervalEnv/karstDemandHistoryRetentionEnv configure
+// ADR-0045 §8 (Phase 3)'s demand-history retention worker. Unset means the
+// defaults below: hourly sampling (fine enough to see daily patterns,
+// coarse enough that even a year of retention is a few thousand rows),
+// retained 400 days (one full seasonal cycle plus margin) -- an
+// operator-overridable decision, not a precedent reused from elsewhere in
+// this codebase (audit data retains indefinitely with no pruning code at
+// all, confirmed by reading it, so there was no existing number to copy).
+const (
+	karstDemandHistoryIntervalEnv  = "KARST_DEMAND_HISTORY_INTERVAL"
+	karstDemandHistoryRetentionEnv = "KARST_DEMAND_HISTORY_RETENTION"
+)
+
+const (
+	karstDemandHistoryDefaultInterval  = time.Hour
+	karstDemandHistoryDefaultRetention = 400 * 24 * time.Hour
+)
+
 // TURN fallback configuration — ADR-0008 §4.
 //
 // All three unset is the common case and means exactly what it always has:
@@ -212,6 +230,23 @@ func main() {
 	}
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
 
+	demandHistoryInterval := karstDemandHistoryDefaultInterval
+	if raw := os.Getenv(karstDemandHistoryIntervalEnv); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("karst: %s=%q is not a duration: %v", karstDemandHistoryIntervalEnv, raw, err)
+		}
+		demandHistoryInterval = parsed
+	}
+	demandHistoryRetention := karstDemandHistoryDefaultRetention
+	if raw := os.Getenv(karstDemandHistoryRetentionEnv); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("karst: %s=%q is not a duration: %v", karstDemandHistoryRetentionEnv, raw, err)
+		}
+		demandHistoryRetention = parsed
+	}
+
 	// Canceled when main returns, which is the only shutdown signal this
 	// process has: cmd.Execute blocks until the daemon stops.
 	ctx, stop := context.WithCancel(context.Background())
@@ -239,7 +274,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions, scalerAdvisorURL)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no

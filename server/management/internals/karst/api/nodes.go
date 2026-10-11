@@ -271,6 +271,10 @@ type relayReader interface {
 	// own doc comment on relayreg.Store for why it is deliberately not
 	// account-scoped the way every other method here is.
 	DemandByRegion(context.Context) ([]relayreg.RegionDemand, error)
+	// DemandHistory is ADR-0045 §8 (Phase 3)'s retained time series over
+	// the same signal DemandByRegion reads live — see relayreg.Store's own
+	// doc comment on RegionDemandSample for why this exists at all.
+	DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error)
 }
 
 // demandReader is ADR-0045 §4b/§7's deployment-wide anchor-RTT histogram —
@@ -395,6 +399,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
@@ -1838,6 +1843,94 @@ func (h *handler) demandRegions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// regionDemandHistoryResponse mirrors regionDemandResponse plus the one
+// field a retained sample has that a live read does not: when it was taken.
+type regionDemandHistoryResponse struct {
+	Region       string    `json:"region"`
+	AccountID    string    `json:"account_id"`
+	SampledAt    time.Time `json:"sampled_at"`
+	RTTUnder20ms int64     `json:"rtt_under_20ms"`
+	RTT20To50ms  int64     `json:"rtt_20_to_50ms"`
+	RTT50To100ms int64     `json:"rtt_50_to_100ms"`
+	RTTOver100ms int64     `json:"rtt_over_100ms"`
+}
+
+// demandRegionsHistory is ADR-0045 §8 (Phase 3)'s retained time series over
+// demandRegions' own live signal — see relayreg.Store's own doc comment on
+// RegionDemandSample for why this exists (Phases 0-1 did not actually build
+// the history §8 says they should have) and what it does and does not
+// store. Gated behind the same UserRoleAdvisor role as demandRegions, for
+// the identical reason: this is deployment-wide, cross-account data, not
+// anything scoped to the caller's own account.
+func (h *handler) demandRegionsHistory(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	since, until, err := parseDemandHistoryRange(r.URL.Query())
+	if err != nil {
+		util.WriteErrorResponse(err.Error(), http.StatusBadRequest, w)
+		return
+	}
+	rows, err := h.relays.DemandHistory(r.Context(), since, until)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]regionDemandHistoryResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, regionDemandHistoryResponse{
+			Region:       row.Region,
+			AccountID:    row.AccountID,
+			SampledAt:    row.SampledAt,
+			RTTUnder20ms: row.RTTUnder20ms,
+			RTT20To50ms:  row.RTT20To50ms,
+			RTT50To100ms: row.RTT50To100ms,
+			RTTOver100ms: row.RTTOver100ms,
+		})
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.demand.regions.history.view", "regions", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// parseDemandHistoryRange reads `since`/`until` (both RFC3339, both
+// required — there is no sensible default range for a query whose whole
+// point is "a specific window to train or chart against"). `until` must be
+// strictly after `since`, the same ordering DemandHistory's own `[since,
+// until)` contract assumes.
+func parseDemandHistoryRange(query url.Values) (time.Time, time.Time, error) {
+	rawSince, rawUntil := query.Get("since"), query.Get("until")
+	if rawSince == "" || rawUntil == "" {
+		return time.Time{}, time.Time{}, errors.New("since and until (RFC3339) are both required")
+	}
+	since, err := time.Parse(time.RFC3339, rawSince)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("since: %w", err)
+	}
+	until, err := time.Parse(time.RFC3339, rawUntil)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("until: %w", err)
+	}
+	if !until.After(since) {
+		return time.Time{}, time.Time{}, errors.New("until must be after since")
+	}
+	return since, until, nil
 }
 
 // demandAnchors is ADR-0045 §7 Phase 1's second demand-side input — §4b's

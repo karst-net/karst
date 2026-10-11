@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -128,7 +129,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay registry: nil database")
 	}
-	if err := db.AutoMigrate(&StoredRelay{}, &RelayTelemetryRecord{}); err != nil {
+	if err := db.AutoMigrate(&StoredRelay{}, &RelayTelemetryRecord{}, &RegionDemandSample{}); err != nil {
 		return nil, fmt.Errorf("relay registry: migrate: %w", err)
 	}
 	return &Store{db: db, compiledNetmap: make(map[string]*proto.KarstRelay)}, nil
@@ -346,6 +347,120 @@ func (s *Store) DemandByRegion(ctx context.Context) ([]RegionDemand, error) {
 		return result[i].AccountID < result[j].AccountID
 	})
 	return result, nil
+}
+
+// RegionDemandSample is one retained snapshot of RegionDemand — ADR-0045
+// §8's own prerequisite for Phase 3 ("Phase 0-1 must record the history it
+// will need... because a forecaster has no data on day one"), which Phases
+// 0-1 did not actually build (checked, not assumed: Position discards
+// history every period, and RecordTelemetry below is an upsert). Stores the
+// same raw RTT buckets DemandByRegion already aggregates, not a resolved
+// node count — `advise_loop.rs`'s own conversion from histogram to node
+// count is "a deliberately crude stand-in," and permanently retaining
+// history under today's placeholder formula would bake in a decision
+// nobody has actually made yet. No denormalized calendar columns either
+// (day-of-week, hour-of-day): §8 wants "the calendar context to explain
+// it," but that is derivable from SampledAt at query time, and a column
+// that can only ever drift from its own source is worse than deriving it.
+type RegionDemandSample struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement"`
+	Region       string    `gorm:"index:idx_demand_history_region_account_time"`
+	AccountID    string    `gorm:"index:idx_demand_history_region_account_time"`
+	SampledAt    time.Time `gorm:"index:idx_demand_history_region_account_time"`
+	RTTUnder20ms int64
+	RTT20To50ms  int64
+	RTT50To100ms int64
+	RTTOver100ms int64
+}
+
+func (RegionDemandSample) TableName() string { return "karst_region_demand_history" }
+
+// RecordDemandSample snapshots DemandByRegion's current output into the
+// retained history, one row per (region, account) currently reporting any
+// demand. Called on an interval by StartDemandHistoryWorker; exported
+// separately so a test (or an operator-triggered one-off backfill) can call
+// it without waiting for a tick.
+func (s *Store) RecordDemandSample(ctx context.Context) error {
+	rows, err := s.DemandByRegion(ctx)
+	if err != nil {
+		return fmt.Errorf("relay registry: record demand sample: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	samples := make([]RegionDemandSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, RegionDemandSample{
+			Region:       row.Region,
+			AccountID:    row.AccountID,
+			SampledAt:    now,
+			RTTUnder20ms: row.RTTUnder20ms,
+			RTT20To50ms:  row.RTT20To50ms,
+			RTT50To100ms: row.RTT50To100ms,
+			RTTOver100ms: row.RTTOver100ms,
+		})
+	}
+	if err := s.db.WithContext(ctx).Create(&samples).Error; err != nil {
+		return fmt.Errorf("relay registry: record demand sample: %w", err)
+	}
+	return nil
+}
+
+// DemandHistory returns every retained sample with SampledAt in
+// [since, until), ordered by SampledAt then Region then AccountID — the
+// read path a forecaster or the NOC view's own time-series panels would
+// both use. Deliberately cross-account, the same posture DemandByRegion
+// itself already has and for the same reason (ADR-0045 §4a).
+func (s *Store) DemandHistory(ctx context.Context, since, until time.Time) ([]RegionDemandSample, error) {
+	var samples []RegionDemandSample
+	err := s.db.WithContext(ctx).
+		Where("sampled_at >= ? AND sampled_at < ?", since, until).
+		Order("sampled_at, region, account_id").
+		Find(&samples).Error
+	if err != nil {
+		return nil, fmt.Errorf("relay registry: demand history: %w", err)
+	}
+	return samples, nil
+}
+
+// PruneDemandHistory deletes every retained sample older than cutoff.
+func (s *Store) PruneDemandHistory(ctx context.Context, cutoff time.Time) error {
+	err := s.db.WithContext(ctx).
+		Where("sampled_at < ?", cutoff).
+		Delete(&RegionDemandSample{}).Error
+	if err != nil {
+		return fmt.Errorf("relay registry: prune demand history: %w", err)
+	}
+	return nil
+}
+
+// StartDemandHistoryWorker samples and prunes demand history on interval,
+// forever, until ctx is canceled — same shape as audit.Log's own
+// StartDeliveryWorker: one immediate pass at startup (a restart should not
+// wait a full interval for the first sample), then a ticker loop.
+func (s *Store) StartDemandHistoryWorker(ctx context.Context, interval, retention time.Duration) {
+	tick := func() {
+		if err := s.RecordDemandSample(ctx); err != nil && ctx.Err() == nil {
+			log.WithContext(ctx).Errorf("record demand history sample: %v", err)
+		}
+		if err := s.PruneDemandHistory(ctx, time.Now().UTC().Add(-retention)); err != nil && ctx.Err() == nil {
+			log.WithContext(ctx).Errorf("prune demand history: %v", err)
+		}
+	}
+	go func() {
+		tick()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				tick()
+			}
+		}
+	}()
 }
 
 // recordSize refreshes the cached registry-size gauge for accountID after a

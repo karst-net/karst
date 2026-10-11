@@ -127,7 +127,7 @@ type Karst struct {
 // loopback /recommendations endpoint is reachable from this server's host.
 // Empty means the GET /karst/v1/scaler/recommendations endpoint is
 // configured-but-absent — see RegisterEndpoints' own doc comment.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, scalerAdvisorURL string) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -207,6 +207,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
 	relayStore.Metrics = karstMetrics
+	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
+	// future forecaster (and the NOC view's own time-series panels) have
+	// data to train/chart against -- see relayreg.Store's own doc comment
+	// on RegionDemandSample for why this did not already exist.
+	relayStore.StartDemandHistoryWorker(context.Background(), demandHistoryInterval, demandHistoryRetention)
 	turnStore, err := turncred.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: turn store: %w", err)
