@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
@@ -14,6 +15,32 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestUsageRosterVector(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "mapping.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sql, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sql.Close() })
+	require.NoError(t, usage.Migrate(db))
+	generated := filepath.Join(t.TempDir(), "roster.toml")
+	r, err := New(fixed{rows: []Entry{entry("first", key(0x11), "account-a")}},
+		Config{Path: generated, AquiferPrefix: "vector", Usage: &UsageConfig{DB: db, DeploymentID: "vector-deployment"}}, nil)
+	require.NoError(t, err)
+	require.NoError(t, r.Once())
+	data, err := os.ReadFile(generated)
+	require.NoError(t, err)
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	path := filepath.Join(filepath.Dir(file), "../../../../../spec/vectors/relay-usage-roster-v1.toml")
+	if os.Getenv("UPDATE_VECTORS") == "1" {
+		require.NoError(t, os.WriteFile(path, data, 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, string(want), string(data), "regenerate with UPDATE_VECTORS=1 and verify Rust parsing")
+}
 
 func TestUsagePublicationPersistsBeforeAdvertisingAndSurvivesLedgerFailure(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "mapping.db")), &gorm.Config{})
