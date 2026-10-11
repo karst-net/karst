@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::hub::DeliveryUsage;
@@ -100,6 +101,7 @@ impl Runtime {
     }
 }
 
+#[cfg(unix)]
 async fn consume(
     mut receiver: tokio::sync::mpsc::Receiver<Observation>,
     lost: Arc<AtomicBool>,
@@ -164,6 +166,7 @@ async fn consume(
     }
 }
 
+#[cfg(unix)]
 fn advance(
     window: &mut Accumulator,
     target: u64,
@@ -196,6 +199,7 @@ fn advance(
     }
 }
 
+#[cfg(unix)]
 fn now_micros() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
