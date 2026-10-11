@@ -13,6 +13,7 @@
 
 pub mod advise;
 pub mod cost_model;
+pub mod driver;
 pub mod position;
 pub mod simulate;
 pub mod usage;
