@@ -72,12 +72,17 @@ fn tick(
 }
 
 /// Brings `pool_id`'s actual instance count to `desired`: `create`s the
-/// shortfall, or `drain`s then `destroy`s the excess, lowest-id-first so a
-/// repeated tick's choice of which instance to remove is deterministic
-/// rather than whatever order a driver's own `list` happens to return.
+/// shortfall, or `drain`s then `destroys` the excess, **highest-ordinal-
+/// first** (see [`ordinal_sort_key`]) — a repeated tick's choice of which
+/// instance to remove is deterministic rather than whatever order a
+/// driver's own `list` happens to return, and matches the one real driver
+/// this matters for: a Kubernetes `StatefulSet` always removes its
+/// highest-ordinal pod on scale-down, never an arbitrary one, so a generic
+/// "lowest id first" policy here would pick an instance a real driver
+/// cannot actually honor.
 fn reconcile(driver: &mut dyn Driver, pool_id: &str, desired: u32) -> Result<(), String> {
     let mut current = driver.list(pool_id).map_err(|e| e.to_string())?;
-    current.sort_by(|a, b| a.id.cmp(&b.id));
+    current.sort_by(|a, b| ordinal_sort_key(&b.id).cmp(&ordinal_sort_key(&a.id)));
     let current_count = u32::try_from(current.len()).unwrap_or(u32::MAX);
 
     if current_count < desired {
@@ -100,6 +105,23 @@ fn reconcile(driver: &mut dyn Driver, pool_id: &str, desired: u32) -> Result<(),
         println!("  pool={pool_id} destroy={}", instance.id);
     }
     Ok(())
+}
+
+/// Sorts `id` by its trailing run of ASCII digits as a number, not as a
+/// string — plain string order puts `"relay-10"` before `"relay-2"`
+/// (`'1' < '2'`), which is wrong for exactly the ids this module's one
+/// real driver produces (Kubernetes `StatefulSet` pod names, `<name>-N`).
+/// Falls back to the id's own bytes when there is no trailing digit run
+/// (e.g. [`karst_scaler::driver::NoopDriver`]'s own ids still compare
+/// correctly against each other either way, since they share one prefix).
+fn ordinal_sort_key(id: &str) -> (&str, u64) {
+    let digits_start = id.rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1);
+    if digits_start == id.len() {
+        return (id, 0);
+    }
+    #[allow(clippy::indexing_slicing)] // digits_start is a valid char boundary by construction
+    let (prefix, digits) = (&id[..digits_start], &id[digits_start..]);
+    (prefix, digits.parse().unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -131,6 +153,33 @@ mod tests {
         reconcile(&mut driver, "p", 5).expect("reconciles");
         reconcile(&mut driver, "p", 2).expect("reconciles");
         assert_eq!(driver.list("p").expect("lists").len(), 2);
+    }
+
+    #[test]
+    fn reconcile_removes_the_highest_ordinal_instances_first() {
+        let mut driver = NoopDriver::new();
+        reconcile(&mut driver, "p", 5).expect("reconciles"); // noop-1..noop-5
+        reconcile(&mut driver, "p", 2).expect("reconciles");
+        let mut remaining: Vec<String> = driver
+            .list("p")
+            .expect("lists")
+            .into_iter()
+            .map(|i| i.id)
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining, vec!["noop-1".to_owned(), "noop-2".to_owned()]);
+    }
+
+    #[test]
+    fn ordinal_sort_key_orders_numerically_not_lexicographically() {
+        let mut ids = vec!["relay-10", "relay-2", "relay-1"];
+        ids.sort_by_key(|id| ordinal_sort_key(id));
+        assert_eq!(ids, vec!["relay-1", "relay-2", "relay-10"]);
+    }
+
+    #[test]
+    fn ordinal_sort_key_falls_back_to_the_whole_id_with_no_trailing_digits() {
+        assert_eq!(ordinal_sort_key("no-digits-here"), ("no-digits-here", 0));
     }
 
     #[test]

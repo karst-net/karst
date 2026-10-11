@@ -1,0 +1,63 @@
+[package]
+name = "karst-scaler-k8s"
+description = "ADR-0045 §7 Phase 2 PR 4: the Kubernetes driver (optional, feature-gated from bins/karst-scaler)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+publish = false
+
+[lib]
+name = "karst_scaler_k8s"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# This crate exists so bins/karst-scaler's own Cargo.toml comment ("no cloud
+# SDK... a planner-adjacent tool earns credentials and a network dependency
+# only in later phases") stays literally true for the *default* build.
+# karst-scaler depends on this crate only behind its own `k8s` feature
+# (optional = true) -- an operator who never asks for the Kubernetes driver
+# never compiles `kube`/`tokio`/`k8s-openapi` into their binary at all.
+[dependencies]
+# The Driver trait only -- not the whole karst-scaler crate, which would
+# recreate the exact dependency cycle this split exists to avoid (see
+# karst-scaler-driver's own crate doc).
+karst-scaler-driver = { path = "../../crates/karst-scaler-driver" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+serde_json = "1"
+# kube's own async client needs a runtime; Driver's trait methods
+# (karst-scaler-driver's own src/lib.rs) are deliberately not async (that
+# trait predates any driver needing one) -- K8sDriver owns a `Runtime` and
+# `block_on`s inside each method rather than making every karst-scaler
+# binary async for the sake of one driver implementation.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# default-features = false + the explicit `aws-lc-rs` feature: kube
+# defaults to rustls with the `ring` crypto provider, which is not this
+# workspace's choice -- see bins/karst-scaler/Cargo.toml's own comment on
+# the exact conflict this already caused once (`ring` vs `aws-lc-rs` feature
+# unification breaking karst-dns's TLS-pinning tests under a workspace-wide
+# `cargo test`). `aws-lc-rs` selects the same provider `ureq` below already
+# does, confirmed against kube's own feature list (not assumed) before this
+# dependency was added.
+#
+# Pinned to exactly 4.0.0, not "4": 4.1/4.2 need rustc 1.89, one minor above
+# this workspace's own MSRV (1.88, Cargo.toml's rust-version) -- 4.0.0 is
+# the newest release that still builds on it (confirmed via `cargo info
+# kube@<version>` across 4.0/4.1/4.2, not guessed).
+kube = { version = "=4.0.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+k8s-openapi = { version = "0.28", features = ["latest"] }
+# The mint-enrollment-token call (POST to the control server, a different
+# host than the k8s API server kube::Client talks to, so that client can't
+# be reused for it) stays on ureq, matching bins/karst-scaler's own
+# advise_loop.rs::build_agent -- one more HTTP stack (e.g. reqwest) alongside
+# kube's own is exactly the kind of dependency weight this workspace avoids
+# paying twice for the same job.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-native-certs = "0.8"

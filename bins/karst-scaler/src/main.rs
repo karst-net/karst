@@ -103,12 +103,12 @@ fn usage_text() {
 }
 
 fn run_advise(advise_config_path: &str) -> Result<(), String> {
-    let (config, _breaker) = load_drive_config(advise_config_path)?;
+    let (config, _breaker, _driver) = load_drive_config(advise_config_path)?;
     advise_loop::run(&config)
 }
 
 fn run_drive(advise_config_path: &str) -> Result<(), String> {
-    let (config, breaker) = load_drive_config(advise_config_path)?;
+    let (config, breaker, driver_section) = load_drive_config(advise_config_path)?;
     // ADR-0045 §6: no "unlimited" default. A `drive` config with no
     // [breaker] section is refused here, before anything is actuated,
     // rather than falling back to the bare no-op driver with no ceiling
@@ -119,8 +119,26 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
              state_path) -- ADR-0045 §6 allows no \"unlimited\" default"
         )
     })?;
+
+    let inner: Box<dyn karst_scaler::driver::Driver> =
+        match driver_section.as_ref().map_or("noop", |d| d.kind.as_str()) {
+            "noop" => Box::new(karst_scaler::driver::NoopDriver::new()),
+            "k8s" => {
+                // The match above only reaches this arm when `driver_section`
+                // produced `"k8s"` via `.map_or(..., |d| d.kind.as_str())`,
+                // which cannot happen for `None` -- so this is always `Some`.
+                let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
+                build_k8s_driver(section, &config.control_api_base)?
+            }
+            other => {
+                return Err(format!(
+                "{advise_config_path}: unknown driver.kind {other:?} (expected \"noop\" or \"k8s\")"
+            ))
+            }
+        };
+
     let mut driver = karst_scaler::breaker::BoundedDriver::new(
-        karst_scaler::driver::NoopDriver::new(),
+        inner,
         Path::new(&config.cost_model_path),
         Path::new(&breaker.limits_path),
         Path::new(&breaker.state_path),
@@ -129,9 +147,54 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
     drive_loop::run(&config, &mut driver)
 }
 
+#[cfg(feature = "k8s")]
+fn build_k8s_driver(
+    section: &advise_config::DriverSection,
+    control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    let namespace = section
+        .namespace
+        .clone()
+        .ok_or_else(|| "driver.kind = \"k8s\" needs driver.namespace".to_owned())?;
+    let enroll_pat_file = section
+        .enroll_pat_file
+        .clone()
+        .ok_or_else(|| "driver.kind = \"k8s\" needs driver.enroll_pat_file".to_owned())?;
+    let enroll_pat = std::fs::read_to_string(&enroll_pat_file)
+        .map_err(|e| format!("reading {enroll_pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let driver = karst_scaler_k8s::K8sDriver::new(karst_scaler_k8s::K8sDriverConfig {
+        namespace,
+        control_api_base: control_api_base.to_owned(),
+        enroll_pat,
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(Box::new(driver))
+}
+
+#[cfg(not(feature = "k8s"))]
+fn build_k8s_driver(
+    _section: &advise_config::DriverSection,
+    _control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    Err(
+        "this build of karst-scaler was not compiled with k8s driver support -- \
+         rebuild with --features k8s"
+            .to_owned(),
+    )
+}
+
 fn load_drive_config(
     advise_config_path: &str,
-) -> Result<(advise_loop::Config, Option<advise_config::BreakerSection>), String> {
+) -> Result<
+    (
+        advise_loop::Config,
+        Option<advise_config::BreakerSection>,
+        Option<advise_config::DriverSection>,
+    ),
+    String,
+> {
     // ureq's TLS backend is built with no crypto provider of its own (see
     // Cargo.toml's comment on why) -- it needs one installed process-wide
     // before the first HTTPS request. aws-lc-rs is the one every other
@@ -153,7 +216,7 @@ fn load_drive_config(
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         metrics_listen: cfg.metrics.listen,
     };
-    Ok((config, cfg.breaker))
+    Ok((config, cfg.breaker, cfg.driver))
 }
 
 fn run_check(cost_model_path: &str) -> Result<(), String> {

@@ -43,6 +43,11 @@ pub(crate) struct AdviseConfig {
     /// as "no limit."
     #[serde(default)]
     pub breaker: Option<BreakerSection>,
+    /// Which concrete `Driver` `drive` actuates through — ADR-0045 §7
+    /// Phase 2 PR 4. Absent means the no-op driver (today's only option
+    /// before this PR), matching `drive`'s own prior behavior exactly.
+    #[serde(default)]
+    pub driver: Option<DriverSection>,
 }
 
 /// The `[breaker]` TOML table — see [`crate::breaker`]'s own module doc
@@ -55,6 +60,35 @@ pub(crate) struct BreakerSection {
     /// Path to the breaker's persisted per-pool, per-period counters —
     /// created on first use, read and rewritten on every `create`.
     pub state_path: String,
+}
+
+/// The `[driver]` TOML table.
+///
+/// `namespace`/`enroll_pat_file` are only ever *read* by `main.rs`'s
+/// `#[cfg(feature = "k8s")]` build of `build_k8s_driver` -- a default
+/// build still parses and carries them (an operator's config must not
+/// silently lose fields depending on how the binary happened to be
+/// compiled), it just never looks at them, which is what this `allow`
+/// documents rather than lets rustc report as unused.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(not(feature = "k8s"), allow(dead_code))]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DriverSection {
+    /// `"noop"` or `"k8s"` — anything else is refused at the point `drive`
+    /// starts. `"k8s"` on a `karst-scaler` built without the `k8s` Cargo
+    /// feature (see `karst-scaler-k8s`'s own crate doc) is refused the
+    /// same way, not silently downgraded to the no-op driver.
+    pub kind: String,
+    /// Required when `kind = "k8s"`: the namespace every `StatefulSet`,
+    /// `Pod`, and bundle `Secret` this driver touches lives in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Required when `kind = "k8s"`: path to a file holding a
+    /// `UserRoleScaler`-scoped PAT (ADR-0045 §7 Phase 2 PR 3), trimmed of
+    /// surrounding whitespace when read — same convention as `pat_file`
+    /// above.
+    #[serde(default)]
+    pub enroll_pat_file: Option<String>,
 }
 
 /// The `[metrics]` TOML table — same loopback-only posture as `karstd`'s own

@@ -1,0 +1,29 @@
+[package]
+name = "karst-scaler-driver"
+description = "ADR-0045 §5's Driver trait and the no-op driver — shared by karst-scaler and karst-scaler-k8s"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+publish = false
+
+[lib]
+name = "karst_scaler_driver"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# Deliberately no dependencies at all. This crate exists only to break the
+# dependency cycle a plain module could not: karst-scaler-k8s implements
+# Driver (so it needs this), and karst-scaler optionally depends on
+# karst-scaler-k8s (its own `k8s` feature) -- if the Driver trait lived
+# inside karst-scaler itself, karst-scaler-k8s -> karst-scaler ->
+# (optionally) karst-scaler-k8s would be a cycle Cargo refuses outright.
+# Pulling the trait and its one safe default (NoopDriver) out to a crate
+# with nothing of its own to depend on breaks that cleanly: both other
+# crates depend on this one, never on each other through it.
+[dependencies]
