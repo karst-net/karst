@@ -20,6 +20,7 @@ import (
 
 	"github.com/netbirdio/netbird/formatter/hook"
 	nbdex "github.com/netbirdio/netbird/idp/dex"
+	"github.com/netbirdio/netbird/management/cmd/karstusage"
 	"github.com/netbirdio/netbird/management/cmd/proxy"
 	"github.com/netbirdio/netbird/management/cmd/token"
 	nbconfig "github.com/netbirdio/netbird/management/internals/server/config"
@@ -173,6 +174,7 @@ func NewCommands(openers Openers) *cobra.Command {
 	if openers.Store != nil {
 		adminCmd.AddCommand(tokencmd.NewCommands(tokencmd.StoreOpener(openers.Store)))
 		adminCmd.AddCommand(proxycmd.NewCommands(proxycmd.StoreOpener(openers.Store)))
+		adminCmd.AddCommand(karstusage.NewCommands(karstusage.StoreOpener(openers.Store)))
 	}
 	return adminCmd
 }

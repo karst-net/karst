@@ -42,6 +42,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
 	"github.com/netbirdio/netbird/management/server/account"
@@ -264,6 +265,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// outside karstapi's own `/karst/v1` subrouter for its own auth check.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
+		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)

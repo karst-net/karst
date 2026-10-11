@@ -785,6 +785,8 @@ jobs:
       - run: go vet ./...
       - name: Karst packages
         run: go test -race ./management/internals/karst/...
+      - name: Device usage operator controls
+        run: go test -race ./management/cmd/karstusage ./management/cmd/admin
       - name: Device usage SQL integration
         env:
           NETBIRD_STORE_ENGINE: sqlite

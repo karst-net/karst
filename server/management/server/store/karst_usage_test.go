@@ -254,4 +254,10 @@ func TestDeviceUsagePostgresAtomicActivation(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.SaveAccount(ctx, account))
 	require.EqualValues(t, 12, eventCount(t, s), "account rewrite preserves PostgreSQL generations")
+	end := time.Now().UTC().Truncate(time.Microsecond)
+	report, err := (usage.Reporter{DB: db}).Devices(ctx, "a", time.UnixMicro(coverage[0].StartUS), end)
+	require.NoError(t, err, "report queries and read-only repeatable-read transactions work on PostgreSQL")
+	require.True(t, report.Complete)
+	require.NotEmpty(t, report.Segments)
+	require.EqualValues(t, 12, *report.Segments[len(report.Segments)-1].Devices)
 }

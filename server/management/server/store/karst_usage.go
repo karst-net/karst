@@ -67,7 +67,8 @@ func (s *SqlStore) trackMembership(tx *gorm.DB, accountID string, removeAccount 
 
 // SetDeviceUsageCollection is an internal operator integration seam, not a
 // customer endpoint. Its caller must authorize the account and configuration
-// change. No public API or environment flag enables collection in this slice.
+// change. The admin CLI provides audited configuration; no customer API or
+// environment flag enables collection.
 func (s *SqlStore) SetDeviceUsageCollection(ctx context.Context, accountID string, enabled bool) error {
 	if s.deviceUsage == nil {
 		return errors.New("device usage hooks are not initialized")

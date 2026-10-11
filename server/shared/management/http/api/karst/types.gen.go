@@ -141,6 +141,27 @@ func (e DeviceInvitationState) Valid() bool {
 	}
 }
 
+// Defines values for DeviceUsageSegmentCoverage.
+const (
+	DeviceUsageSegmentCoverageComplete    DeviceUsageSegmentCoverage = "complete"
+	DeviceUsageSegmentCoverageIncomplete  DeviceUsageSegmentCoverage = "incomplete"
+	DeviceUsageSegmentCoverageUncollected DeviceUsageSegmentCoverage = "uncollected"
+)
+
+// Valid indicates whether the value is a known member of the DeviceUsageSegmentCoverage enum.
+func (e DeviceUsageSegmentCoverage) Valid() bool {
+	switch e {
+	case DeviceUsageSegmentCoverageComplete:
+		return true
+	case DeviceUsageSegmentCoverageIncomplete:
+		return true
+	case DeviceUsageSegmentCoverageUncollected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DiagnosticSeverity.
 const (
 	DiagnosticSeverityError   DiagnosticSeverity = "error"
@@ -671,6 +692,33 @@ type DeviceRename struct {
 	Name string `json:"name"`
 }
 
+// DeviceUsageReport defines model for DeviceUsageReport.
+type DeviceUsageReport struct {
+	AsOf time.Time `json:"as_of"`
+
+	// Complete True only if the entire requested window has complete collection coverage.
+	Complete bool `json:"complete"`
+
+	// DeviceMicroseconds Exact eligible device-time summed only over complete intervals. Zero with incomplete coverage does not prove zero usage.
+	DeviceMicroseconds string               `json:"device_microseconds"`
+	End                time.Time            `json:"end"`
+	Segments           []DeviceUsageSegment `json:"segments"`
+	Start              time.Time            `json:"start"`
+}
+
+// DeviceUsageSegment defines model for DeviceUsageSegment.
+type DeviceUsageSegment struct {
+	Coverage DeviceUsageSegmentCoverage `json:"coverage"`
+
+	// Devices Eligible enrolled devices in this half-open interval; null outside complete coverage.
+	Devices *int64    `json:"devices"`
+	End     time.Time `json:"end"`
+	Start   time.Time `json:"start"`
+}
+
+// DeviceUsageSegmentCoverage defines model for DeviceUsageSegment.Coverage.
+type DeviceUsageSegmentCoverage string
+
 // Diagnostic defines model for Diagnostic.
 type Diagnostic struct {
 	Column   int                `json:"column"`
@@ -1142,6 +1190,12 @@ type ListPostureSessionsParams struct {
 
 // ListPostureSessionsParamsPosture defines parameters for ListPostureSessions.
 type ListPostureSessionsParamsPosture string
+
+// GetDeviceUsageParams defines parameters for GetDeviceUsage.
+type GetDeviceUsageParams struct {
+	Start time.Time `form:"start" json:"start"`
+	End   time.Time `form:"end" json:"end"`
+}
 
 // CreateAuditSinkJSONRequestBody defines body for CreateAuditSink for application/json ContentType.
 type CreateAuditSinkJSONRequestBody = AuditSinkWrite

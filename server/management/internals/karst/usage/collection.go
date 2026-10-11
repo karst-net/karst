@@ -5,6 +5,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -33,6 +34,36 @@ type collection struct {
 }
 
 func (collection) TableName() string { return "karst_usage_device_collection" }
+
+// CollectionStatus is operator configuration, not a usage completeness claim.
+// An absent configuration row means this account has never enabled collection.
+type CollectionStatus struct {
+	AccountID string     `json:"account_id"`
+	Enabled   bool       `json:"enabled"`
+	PeriodID  string     `json:"period_id,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+func ReadCollection(ctx context.Context, db *gorm.DB, accountID string) (CollectionStatus, error) {
+	status := CollectionStatus{AccountID: accountID}
+	if !validID(accountID) {
+		return status, ErrInvalid
+	}
+	var row collection
+	err := db.WithContext(ctx).Where("account_id = ?", accountID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return status, nil
+	}
+	if err != nil {
+		return status, err
+	}
+	status.Enabled, status.PeriodID = row.Enabled, row.PeriodID
+	if row.LastAtUS != 0 {
+		at := time.UnixMicro(row.LastAtUS).UTC()
+		status.UpdatedAt = &at
+	}
+	return status, nil
+}
 
 // Period records collection coverage, not a billing period. Complete is false
 // when reconciliation detected unrecorded membership changes. An open period
