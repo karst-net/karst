@@ -79,6 +79,9 @@ func TestSubmitAmbiguousProviderFailureMovesToReconciliation(t *testing.T) {
 	if _, err := store.SubmitFinalizedInvoice(ctx, client, start, end, testPaddleCustomer, testPaddleProduct); !errors.Is(err, ErrPaymentRequiresReconciliation) || requests != 1 {
 		t.Fatalf("blind retry err=%v requests=%d", err, requests)
 	}
+	if _, err := store.ReconcilePayment(ctx, client, start, end, time.Now().UTC(), "ctm_01grnn4zta5a1mf02jjze7y2yz"); !errors.Is(err, ErrPaymentConflict) || requests != 1 {
+		t.Fatalf("reconciliation with unbound customer err=%v requests=%d", err, requests)
+	}
 }
 
 func mustInvoice(t *testing.T, store *Store, ctx context.Context, start, end time.Time) FinalInvoice {

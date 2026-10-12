@@ -82,6 +82,9 @@ func (s *Store) ReconcilePayment(ctx context.Context, client *PaddleClient, star
 	if intent.State != PaymentReconcile {
 		return intent, ErrInvalidPaymentState
 	}
+	if intent.ProviderCustomerID == "" || customerID != intent.ProviderCustomerID {
+		return PaymentIntent{}, ErrPaymentConflict
+	}
 	if intent.AttemptStartedAt.IsZero() || now.IsZero() || now.Before(intent.AttemptStartedAt) || now.Sub(intent.AttemptStartedAt) > paddleLookupWindow {
 		return s.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentReconcile, PaymentOperatorHold, "", "")
 	}
