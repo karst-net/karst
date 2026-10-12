@@ -1218,7 +1218,18 @@ mod tests {
             drop(probe);
             match Runtime::start(address, resolver.clone()) {
                 Ok(runtime) => return Ok((runtime, address)),
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && attempt < 9 => {
+                Err(e)
+                    if (e.kind() == std::io::ErrorKind::AddrInUse
+                        // Windows reserves ranges of ephemeral ports for
+                        // system services; a free-port probe can land inside
+                        // one and `bind` reports WSAEACCES rather than
+                        // WSAEADDRINUSE. Treat that candidate as unavailable
+                        // and probe another, but still fail after the bounded
+                        // retry count if the listener really cannot bind.
+                        || (cfg!(windows)
+                            && e.kind() == std::io::ErrorKind::PermissionDenied))
+                        && attempt < 9 =>
+                {
                     attempt += 1;
                 }
                 Err(e) => return Err(e),

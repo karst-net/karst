@@ -131,7 +131,7 @@ export function Billing() {
           <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} /> I understand managed-relay connections may stall or disconnect when this cap is reached.</label>
           <div className="actions"><button className="primary" type="submit" disabled={!cap.value}>Save cap</button></div>
         </form>
-        {cap.value.enabled && capMonth === now && <p className="lede">After credits have been issued, this release may reject a current-period decrease until the next month. Relay restarts can also leave unused credits reserved through period end.</p>}
+        {cap.value.enabled && capMonth === now && <p className="lede">A current-period decrease is accepted only after every relay grant has been safely surrendered and consumed usage fits under the lower limit. Clean relay shutdowns return unused credits; an unclean shutdown, unreachable relay, or failed surrender leaves its full reservation in place through period end.</p>}
       </>}
       <Notice message={message} />
     </section>

@@ -129,6 +129,41 @@ export type RelayCapDraft = {
     acknowledge_interruption: true;
 };
 
+export type RelayCreditRequest = {
+    relay_id: string;
+    deployment_id: string;
+    mapping_version: string;
+    generation: string;
+    request_id: string;
+    requested_bytes: string;
+    signature: string;
+};
+
+export type RelayCreditGrant = {
+    grant_id: string;
+    account_id: string;
+    period_start: string;
+    period_end: string;
+    relay_id: string;
+    generation: string;
+    mapping_version: string;
+    schedule_version: string;
+    cap_revision: number;
+    requested_bytes: string;
+    granted_bytes: string;
+    created_at: string;
+};
+
+export type RelayCreditSurrender = {
+    grant_id: string;
+    relay_id: string;
+    deployment_id: string;
+    mapping_version: string;
+    generation: string;
+    consumed_bytes: string;
+    signature: string;
+};
+
 export type RelayCap = {
     enabled: boolean;
     period_start: string;
@@ -784,6 +819,78 @@ export type SetRelaySpendingCapResponses = {
 };
 
 export type SetRelaySpendingCapResponse = SetRelaySpendingCapResponses[keyof SetRelaySpendingCapResponses];
+
+export type RequestRelayCreditsData = {
+    body: RelayCreditRequest;
+    path?: never;
+    query?: never;
+    url: '/billing/relay-credits';
+};
+
+export type RequestRelayCreditsErrors = {
+    /**
+     * Cap activation is waiting for existing uncapped leases
+     */
+    425: unknown;
+    /**
+     * Account-wide relay byte budget is exhausted
+     */
+    429: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RequestRelayCreditsError = RequestRelayCreditsErrors[keyof RequestRelayCreditsErrors];
+
+export type RequestRelayCreditsResponses = {
+    /**
+     * Account-wide reservation
+     */
+    200: RelayCreditGrant;
+    /**
+     * Short uncapped lease
+     */
+    204: void;
+};
+
+export type RequestRelayCreditsResponse = RequestRelayCreditsResponses[keyof RequestRelayCreditsResponses];
+
+export type SurrenderRelayCreditsData = {
+    body: RelayCreditSurrender;
+    path: {
+        grant_id: string;
+    };
+    query?: never;
+    url: '/billing/relay-credits/{grant_id}/surrender';
+};
+
+export type SurrenderRelayCreditsErrors = {
+    /**
+     * Grant is unknown or does not belong to this relay generation
+     */
+    404: unknown;
+    /**
+     * Surrender conflicts with the previously accepted final report
+     */
+    409: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SurrenderRelayCreditsError = SurrenderRelayCreditsErrors[keyof SurrenderRelayCreditsErrors];
+
+export type SurrenderRelayCreditsResponses = {
+    /**
+     * Grant surrendered; only unused bytes are released
+     */
+    204: void;
+};
+
+export type SurrenderRelayCreditsResponse = SurrenderRelayCreditsResponses[keyof SurrenderRelayCreditsResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;

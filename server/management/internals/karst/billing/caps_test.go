@@ -82,21 +82,21 @@ func TestRelayCapRevisionsAndCrossRelayReservationsShareOneBudget(t *testing.T) 
 
 	// Credits return only after the signed relay's durable surrender/fence has
 	// been verified by the HTTP boundary. The backend keeps consumed bytes.
-	released, err := store.SurrenderRelayCredits(ctx, first.GrantID, "relay-a", "epoch-a", "5000000000", fmt.Sprintf("%064x", 1))
+	released, err := store.SurrenderRelayCredits(ctx, first.GrantID, "relay-a", "epoch-a", "map-v1", "5000000000", fmt.Sprintf("%064x", 1))
 	require.NoError(t, err)
 	require.Equal(t, "20000000000", released.GrantedBytes)
 	returned, err := store.ReserveRelayCredits(ctx, start, end, "relay-c", "epoch-c", "map-v1", "req-c", 5_000_000_000)
 	require.NoError(t, err)
 	require.Equal(t, "5000000000", returned.GrantedBytes)
-	if _, err := store.SurrenderRelayCredits(ctx, first.GrantID, "relay-a", "epoch-a", "6000000000", fmt.Sprintf("%064x", 2)); !errors.Is(err, ErrCreditGrantConflict) {
+	if _, err := store.SurrenderRelayCredits(ctx, first.GrantID, "relay-a", "epoch-a", "map-v1", "6000000000", fmt.Sprintf("%064x", 2)); !errors.Is(err, ErrCreditGrantConflict) {
 		t.Fatalf("conflicting surrender replay = %v, want ErrCreditGrantConflict", err)
 	}
 	if _, err := store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1"); !errors.Is(err, ErrRelayCapDecrease) {
 		t.Fatalf("decrease with outstanding grants = %v, want ErrRelayCapDecrease", err)
 	}
-	_, err = store.SurrenderRelayCredits(ctx, second.GrantID, "relay-b", "epoch-b", "10000000000", fmt.Sprintf("%064x", 3))
+	_, err = store.SurrenderRelayCredits(ctx, second.GrantID, "relay-b", "epoch-b", "map-v1", "10000000000", fmt.Sprintf("%064x", 3))
 	require.NoError(t, err)
-	_, err = store.SurrenderRelayCredits(ctx, returned.GrantID, "relay-c", "epoch-c", "0", fmt.Sprintf("%064x", 4))
+	_, err = store.SurrenderRelayCredits(ctx, returned.GrantID, "relay-c", "epoch-c", "map-v1", "0", fmt.Sprintf("%064x", 4))
 	require.NoError(t, err)
 	cap, err = store.SetRelaySpendingCap(ctx, start, end, 100, true, "owner-1")
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestRelayCapAndGrantsAreAccountScopedAndPersisted(t *testing.T) {
 	if _, err := store.RelaySpendingCap(other, start, end); !errors.Is(err, ErrRelayCapNotConfigured) {
 		t.Fatalf("other account read cap = %v, want ErrRelayCapNotConfigured", err)
 	}
-	if _, err := store.SurrenderRelayCredits(other, grant.GrantID, "relay-a", "epoch-a", "0", fmt.Sprintf("%064x", 1)); !errors.Is(err, ErrCreditGrantNotFound) {
+	if _, err := store.SurrenderRelayCredits(other, grant.GrantID, "relay-a", "epoch-a", "map-v1", "0", fmt.Sprintf("%064x", 1)); !errors.Is(err, ErrCreditGrantNotFound) {
 		t.Fatalf("other account returned grant = %v, want ErrCreditGrantNotFound", err)
 	}
 	loaded, err := store.ReserveRelayCredits(ctx, start, end, "relay-a", "epoch-a", "map-v1", "req-a", 1_000_000_000)

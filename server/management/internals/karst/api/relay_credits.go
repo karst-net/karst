@@ -24,6 +24,61 @@ import (
 // the managed relay identity and signed mapping request are its authority.
 func RegisterRelayCreditEndpoint(router *mux.Router, relayStore *relayusage.Store, billingStore *billing.Store) {
 	router.Handle(relayusage.CreditRequestPath, &relayCreditHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+	router.Handle(relayusage.CreditSurrenderPath+"{grant_id}/surrender", &relayCreditSurrenderHandler{relays: relayStore, billing: billingStore}).Methods(http.MethodPost)
+}
+
+type relayCreditSurrenderHandler struct {
+	relays  *relayusage.Store
+	billing *billing.Store
+}
+
+func (h *relayCreditSurrenderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	grantID := mux.Vars(r)["grant_id"]
+	expectedPath := relayusage.CreditSurrenderPath + grantID + "/surrender"
+	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.EscapedPath() != expectedPath || h.relays == nil || h.billing == nil {
+		http.Error(w, "invalid relay cap credit surrender", http.StatusBadRequest)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		http.Error(w, "unsupported relay cap surrender content type", http.StatusUnsupportedMediaType)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "relay cap surrender too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "could not read relay cap surrender", http.StatusBadRequest)
+		}
+		return
+	}
+	request, err := relayusage.ParseCreditSurrender(body)
+	if err != nil || request.GrantID != grantID {
+		http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	_, err = h.billing.SurrenderAuthorizedRelayCredits(ctx, h.relays, request)
+	if err != nil {
+		switch {
+		case errors.Is(err, relayusage.ErrInvalidCreditRequest):
+			http.Error(w, "invalid relay cap surrender", http.StatusBadRequest)
+		case errors.Is(err, relayusage.ErrUnauthorized), errors.Is(err, relayusage.ErrProducerMissing), errors.Is(err, relayusage.ErrMappingNotAllowed):
+			http.Error(w, "relay cap surrender rejected", http.StatusForbidden)
+		case errors.Is(err, billing.ErrCreditGrantNotFound):
+			http.Error(w, "relay cap grant not found", http.StatusNotFound)
+		case errors.Is(err, billing.ErrCreditGrantConflict):
+			http.Error(w, "relay cap surrender conflicts with prior state", http.StatusConflict)
+		default:
+			http.Error(w, "could not surrender relay cap credits", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type relayCreditHandler struct {

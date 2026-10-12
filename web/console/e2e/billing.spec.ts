@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 const apiPort = process.env.KARST_API_MOCK_PORT ?? "4010";
 
 test("owners can inspect coverage and opt into an acknowledged relay cap", async ({ page }) => {
-  await page.request.put(`http://127.0.0.1:${apiPort}/__mock__/fixture`, { data: {} });
+  await page.request.put(`http://127.0.0.1:${apiPort}/__mock__/billing/fixture`, { data: {} });
   await page.goto("/#/billing");
 
   await expect(page.getByRole("heading", { name: "Billing", level: 2 })).toBeVisible();

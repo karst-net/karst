@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,10 +19,14 @@ use tokio::sync::{mpsc, watch};
 
 use crate::hub::CreditGate;
 use crate::roster::UsageMapping;
-use crate::sign::{credit_request_signing_input, Identity, CREDIT_REQUEST_PATH};
+use crate::sign::{
+    credit_request_signing_input, credit_surrender_signing_input, Identity, CREDIT_REQUEST_PATH,
+    CREDIT_SURRENDER_PATH,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_DELAY: Duration = Duration::from_secs(2);
+const CLEAN_SHUTDOWN_SURRENDER_BUDGET: Duration = Duration::from_secs(15);
 const REFRESH_BEFORE: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_HEADERS: usize = 16 * 1024;
 const MAX_RESPONSE_BODY: usize = 8 * 1024;
@@ -37,8 +42,22 @@ enum Allowance {
 
 #[derive(Debug)]
 struct CreditGrant {
+    grant_id: String,
+    deployment_id: String,
+    mapping_version: String,
+    generation: String,
     remaining: u64,
+    consumed: u64,
     valid_until: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct SurrenderGrant {
+    grant_id: String,
+    deployment_id: String,
+    mapping_version: String,
+    generation: String,
+    consumed: u64,
 }
 
 /// Thread-safe local check used by the synchronous forwarding core.
@@ -49,7 +68,9 @@ pub struct Controller {
     requested_bytes: u64,
     states: Mutex<HashMap<MappingKey, Allowance>>,
     pending: Mutex<HashSet<MappingKey>>,
+    closing: AtomicBool,
     requests: mpsc::Sender<UsageMapping>,
+    surrenders: mpsc::Sender<SurrenderGrant>,
 }
 
 impl Controller {
@@ -83,7 +104,7 @@ impl Controller {
         self.finish_request(mapping);
     }
 
-    fn install_grant(&self, mapping: &UsageMapping, valid_until: Instant, bytes: u64) {
+    fn install_grant(&self, mapping: &UsageMapping, valid_until: Instant, grant: ParsedGrant) {
         let mut states = self
             .states
             .lock()
@@ -94,13 +115,43 @@ impl Controller {
         };
         if valid_until > Instant::now() {
             grants.push_back(CreditGrant {
-                remaining: bytes,
+                grant_id: grant.grant_id,
+                deployment_id: grant.deployment_id,
+                mapping_version: grant.mapping_version,
+                generation: grant.generation,
+                remaining: grant.remaining,
+                consumed: grant.consumed,
                 valid_until,
             });
         }
         states.insert(key(mapping), Allowance::Capped { grants });
         drop(states);
         self.finish_request(mapping);
+    }
+
+    fn take_surrenderable_grants(&self) -> Vec<SurrenderGrant> {
+        self.closing.store(true, Ordering::SeqCst);
+        let mut states = self
+            .states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let states = std::mem::take(&mut *states);
+        states
+            .into_values()
+            .flat_map(|allowance| match allowance {
+                Allowance::Uncapped { .. } => Vec::new(),
+                Allowance::Capped { grants } => grants
+                    .into_iter()
+                    .map(|grant| SurrenderGrant {
+                        grant_id: grant.grant_id,
+                        deployment_id: grant.deployment_id,
+                        mapping_version: grant.mapping_version,
+                        generation: grant.generation,
+                        consumed: grant.consumed,
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 }
 
@@ -115,6 +166,9 @@ impl CreditGate for Controller {
             .states
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.closing.load(Ordering::SeqCst) {
+            return false;
+        }
         let mut refresh = false;
         let admitted = match states.get_mut(&mapping_key) {
             Some(Allowance::Uncapped { valid_until }) if *valid_until > now => {
@@ -122,18 +176,38 @@ impl CreditGate for Controller {
                 true
             }
             Some(Allowance::Capped { grants }) => {
-                grants.retain(|grant| grant.valid_until > now && grant.remaining > 0);
+                grants.retain(|grant| grant.valid_until > now);
                 let admitted = grants
                     .iter_mut()
                     .find(|grant| grant.remaining >= bytes)
                     .is_some_and(|grant| {
                         grant.remaining -= bytes;
+                        grant.consumed += bytes;
                         true
                     });
                 let available = grants
                     .iter()
                     .map(|grant| grant.remaining)
                     .fold(0_u64, u64::saturating_add);
+                // A fully consumed grant has no unused allowance to strand.
+                // Return it asynchronously so the packet path never waits on
+                // the control plane and the local grant queue stays bounded.
+                while let Some(index) = grants.iter().position(|grant| grant.remaining == 0) {
+                    let Some(grant) = grants.remove(index) else {
+                        break;
+                    };
+                    let surrender = SurrenderGrant {
+                        grant_id: grant.grant_id.clone(),
+                        deployment_id: grant.deployment_id.clone(),
+                        mapping_version: grant.mapping_version.clone(),
+                        generation: grant.generation.clone(),
+                        consumed: grant.consumed,
+                    };
+                    if self.surrenders.try_send(surrender).is_err() {
+                        grants.insert(index, grant);
+                        break;
+                    }
+                }
                 refresh = available <= self.requested_bytes / 4;
                 admitted
             }
@@ -186,12 +260,15 @@ impl Runtime {
         let generation = hex_lower(&generation);
         let relay_id = Base64UrlUnpadded::encode_string(&identity.relay_id());
         let (requests, receiver) = mpsc::channel(1024);
+        let (surrenders, surrender_receiver) = mpsc::channel(1024);
         let controller = Arc::new(Controller {
             relay_id,
             generation,
             requested_bytes,
             states: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashSet::new()),
+            closing: AtomicBool::new(false),
+            surrenders,
             requests,
         });
         let (cancel, cancel_rx) = watch::channel(false);
@@ -202,6 +279,7 @@ impl Runtime {
             identity,
             Arc::clone(&controller),
             receiver,
+            surrender_receiver,
             cancel_rx,
         ));
         Ok(Self {
@@ -235,6 +313,7 @@ impl Drop for Runtime {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     host: String,
     port: u16,
@@ -242,16 +321,18 @@ async fn run(
     identity: Arc<Identity>,
     controller: Arc<Controller>,
     mut requests: mpsc::Receiver<UsageMapping>,
+    mut surrender_requests: mpsc::Receiver<SurrenderGrant>,
     mut cancel: watch::Receiver<bool>,
 ) {
     let permits = Arc::new(tokio::sync::Semaphore::new(32));
+    let mut active = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             changed = cancel.changed() => {
-                if changed.is_err() || *cancel.borrow() { return; }
+                if changed.is_err() || *cancel.borrow() { break; }
             }
             mapping = requests.recv() => {
-                let Some(mapping) = mapping else { return };
+                let Some(mapping) = mapping else { break };
                 let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
                     controller.finish_request(&mapping);
                     continue;
@@ -261,13 +342,142 @@ async fn run(
                 let task_identity = Arc::clone(&identity);
                 let task_controller = Arc::clone(&controller);
                 let task_cancel = cancel.clone();
-                tokio::spawn(async move {
+                active.spawn(async move {
                     let _permit = permit;
                     request_until_ready(&task_host, port, &task_tls, &task_identity,
                         &task_controller, &mapping, task_cancel).await;
                 });
             }
+            _ = active.join_next(), if !active.is_empty() => {}
+            grant = surrender_requests.recv() => {
+                if let Some(grant) = grant {
+                    let task_host = host.clone();
+                    let task_tls = Arc::clone(&tls);
+                    let task_identity = Arc::clone(&identity);
+                    let task_controller = Arc::clone(&controller);
+                    active.spawn(async move {
+                        if let Err(error) = surrender_grant(&task_host, port, &task_tls, &task_identity, &task_controller, &grant).await {
+                            eprintln!("karst-relay: cap credit surrender: {error}; unused bytes remain reserved until period end");
+                        }
+                    });
+                }
+            }
         }
+    }
+
+    // Do not surrender a reservation until every request task has either
+    // installed its grant or observed cancellation. server::run detaches the
+    // hub gate before Runtime::finish, so after this point the controller is
+    // no longer on any forwarding path.
+    let deadline = tokio::time::Instant::now() + CLEAN_SHUTDOWN_SURRENDER_BUDGET;
+    while !active.is_empty() {
+        if tokio::time::timeout_at(deadline, active.join_next())
+            .await
+            .is_err()
+        {
+            active.abort_all();
+            while active.join_next().await.is_some() {}
+            break;
+        }
+    }
+
+    let mut grants = controller.take_surrenderable_grants();
+    while let Ok(grant) = surrender_requests.try_recv() {
+        grants.push(grant);
+    }
+    for grant in grants {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        let task_permits = Arc::clone(&permits);
+        let task_host = host.clone();
+        let task_tls = Arc::clone(&tls);
+        let task_identity = Arc::clone(&identity);
+        let task_controller = Arc::clone(&controller);
+        active.spawn(async move {
+            let Ok(_permit) = task_permits.acquire_owned().await else {
+                return;
+            };
+            if let Err(error) = surrender_grant(
+                &task_host,
+                port,
+                &task_tls,
+                &task_identity,
+                &task_controller,
+                &grant,
+            )
+            .await
+            {
+                eprintln!("karst-relay: cap credit surrender: {error}; unused bytes remain reserved until period end");
+            }
+        });
+    }
+    while !active.is_empty() {
+        if tokio::time::timeout_at(deadline, active.join_next())
+            .await
+            .is_err()
+        {
+            active.abort_all();
+            while active.join_next().await.is_some() {}
+            eprintln!("karst-relay: shutdown surrender budget elapsed; unconfirmed credits remain reserved until period end");
+            break;
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CreditSurrenderRequest<'a> {
+    grant_id: &'a str,
+    relay_id: &'a str,
+    deployment_id: &'a str,
+    mapping_version: &'a str,
+    generation: &'a str,
+    consumed_bytes: String,
+    signature: String,
+}
+
+async fn surrender_grant(
+    host: &str,
+    port: u16,
+    tls: &Arc<rustls::ClientConfig>,
+    identity: &Identity,
+    controller: &Controller,
+    grant: &SurrenderGrant,
+) -> Result<(), String> {
+    let transcript = credit_surrender_signing_input(
+        &grant.grant_id,
+        &controller.relay_id,
+        &grant.deployment_id,
+        &grant.mapping_version,
+        &grant.generation,
+        grant.consumed,
+    );
+    if transcript.is_empty() {
+        return Err("could not encode surrender transcript".to_owned());
+    }
+    let signature = identity
+        .sign_credit_surrender(&transcript)
+        .map_err(|error| error.to_string())?;
+    let body = serde_json::to_vec(&CreditSurrenderRequest {
+        grant_id: &grant.grant_id,
+        relay_id: &controller.relay_id,
+        deployment_id: &grant.deployment_id,
+        mapping_version: &grant.mapping_version,
+        generation: &grant.generation,
+        consumed_bytes: grant.consumed.to_string(),
+        signature: Base64::encode_string(&signature),
+    })
+    .map_err(|error| error.to_string())?;
+    let path = format!("{CREDIT_SURRENDER_PATH}{}/surrender", grant.grant_id);
+    let response = tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        post_control_post(host, port, tls, &path, &body),
+    )
+    .await
+    .map_err(|_| "request timed out".to_owned())??;
+    match response.status {
+        204 => Ok(()),
+        status => Err(format!("control plane returned HTTP {status}")),
     }
 }
 
@@ -301,8 +511,11 @@ async fn request_until_ready(
             return;
         }
         let started = Instant::now();
-        let result =
-            tokio::time::timeout(REQUEST_TIMEOUT, post_credit(host, port, tls, &body)).await;
+        let result = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            post_control_post(host, port, tls, CREDIT_REQUEST_PATH, &body),
+        )
+        .await;
         match result {
             Ok(Ok(response)) if response.status == 204 => {
                 let valid_ms = response
@@ -338,11 +551,11 @@ async fn request_until_ready(
                     return;
                 };
                 match parse_grant(&response.body, controller, mapping) {
-                    Ok(bytes) => {
+                    Ok(grant) => {
                         controller.install_grant(
                             mapping,
                             started + Duration::from_millis(valid_ms),
-                            bytes,
+                            grant,
                         );
                         return;
                     }
@@ -441,10 +654,11 @@ struct HttpResponse {
     body: Vec<u8>,
 }
 
-async fn post_credit(
+async fn post_control_post(
     host: &str,
     port: u16,
     tls: &Arc<rustls::ClientConfig>,
+    path: &str,
     body: &[u8],
 ) -> Result<HttpResponse, String> {
     let tcp = TcpStream::connect((host, port))
@@ -468,7 +682,7 @@ async fn post_credit(
         format!("{host_header}:{port}")
     };
     let request = format!(
-        "POST {CREDIT_REQUEST_PATH} HTTP/1.1\r\nHost: {host_header}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream
@@ -568,11 +782,21 @@ struct GrantResponse {
     period_end: String,
 }
 
+#[derive(Debug)]
+struct ParsedGrant {
+    grant_id: String,
+    deployment_id: String,
+    mapping_version: String,
+    generation: String,
+    remaining: u64,
+    consumed: u64,
+}
+
 fn parse_grant(
     body: &[u8],
     controller: &Controller,
     mapping: &UsageMapping,
-) -> Result<u64, String> {
+) -> Result<ParsedGrant, String> {
     if body.len() > MAX_RESPONSE_BODY {
         return Err("oversized credit grant".to_owned());
     }
@@ -600,7 +824,14 @@ fn parse_grant(
     {
         return Err("credit grant exceeds or conflicts with the requested byte count".to_owned());
     }
-    Ok(bytes)
+    Ok(ParsedGrant {
+        grant_id: grant.grant_id,
+        deployment_id: mapping.deployment.clone(),
+        mapping_version: mapping.version.clone(),
+        generation: controller.generation.clone(),
+        remaining: bytes,
+        consumed: 0,
+    })
 }
 
 fn key(mapping: &UsageMapping) -> MappingKey {
@@ -632,12 +863,15 @@ mod tests {
 
     fn fixture(requested_bytes: u64) -> (Arc<Controller>, mpsc::Receiver<UsageMapping>) {
         let (requests, receiver) = mpsc::channel(8);
+        let (surrenders, _) = mpsc::channel(8);
         let controller = Arc::new(Controller {
             relay_id: "relay-id".to_owned(),
             generation: "01".repeat(16),
             requested_bytes,
             states: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashSet::new()),
+            closing: AtomicBool::new(false),
+            surrenders,
             requests,
         });
         (controller, receiver)
@@ -683,7 +917,18 @@ mod tests {
     fn concurrent_reservations_never_exceed_the_installed_grant() {
         let (controller, _receiver) = fixture(100);
         let mapping = mapping();
-        controller.install_grant(&mapping, Instant::now() + Duration::from_secs(60), 100);
+        controller.install_grant(
+            &mapping,
+            Instant::now() + Duration::from_secs(60),
+            ParsedGrant {
+                grant_id: "0123456789abcdef0123456789abcdef".to_owned(),
+                deployment_id: mapping.deployment.clone(),
+                mapping_version: mapping.version.clone(),
+                generation: controller.generation.clone(),
+                remaining: 100,
+                consumed: 0,
+            },
+        );
         let count = Arc::new(AtomicUsize::new(0));
         let barrier = Arc::new(std::sync::Barrier::new(9));
         let mut workers = Vec::new();
@@ -729,7 +974,9 @@ mod tests {
         });
         let bytes = serde_json::to_vec(&body).expect("JSON body");
         assert_eq!(
-            parse_grant(&bytes, &controller, &mapping).expect("valid grant"),
+            parse_grant(&bytes, &controller, &mapping)
+                .expect("valid grant")
+                .remaining,
             2048
         );
 
@@ -744,5 +991,35 @@ mod tests {
             serde_json::Value::String("4097".to_owned());
         let bytes = serde_json::to_vec(&bad).expect("JSON body");
         assert!(parse_grant(&bytes, &controller, &mapping).is_err());
+    }
+
+    #[test]
+    fn surrender_snapshot_counts_reserved_bytes_and_closes_the_gate() {
+        let (controller, _) = fixture(100);
+        let mapping = mapping();
+        controller.install_grant(
+            &mapping,
+            Instant::now() + Duration::from_secs(60),
+            ParsedGrant {
+                grant_id: "0123456789abcdef0123456789abcdef".to_owned(),
+                deployment_id: mapping.deployment.clone(),
+                mapping_version: mapping.version.clone(),
+                generation: controller.generation.clone(),
+                remaining: 100,
+                consumed: 0,
+            },
+        );
+        assert!(controller.reserve(&mapping, 37));
+        let grants = controller.take_surrenderable_grants();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants.first().map(|grant| grant.consumed), Some(37));
+        assert!(
+            !controller.reserve(&mapping, 1),
+            "closed controllers cannot admit more traffic"
+        );
+        assert!(
+            controller.take_surrenderable_grants().is_empty(),
+            "a grant cannot be returned twice"
+        );
     }
 }

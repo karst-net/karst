@@ -67,11 +67,9 @@ selects no customer-facing cap amount.
   period, rate version, relay identity/generation, and byte limit. Retries are
   idempotent; they cannot mint credits twice.
 - A grant is bound to one authenticated relay generation and period. The relay
-  durably stores the grant before use and reserves destination-write bytes
-  before forwarding. Completed writes become consumed. Failed writes release
-  reservations only after durable state prevents later reuse. If a crash leaves
-  a write ambiguous, treat its reserved bytes as consumed until reconciliation:
-  this can stop traffic early, but cannot increase the cap.
+  holds the grant in process memory and counts every admitted payload as
+  consumed before it is queued to the destination, including queue drops and
+  ambiguous writes. This can stop traffic early, but cannot increase the cap.
 - The relay requests grants asynchronously and forwards no more billable bytes
   than its durable, unspent credits. It makes no synchronous allocator or
   payment-provider call in the packet path.
@@ -88,20 +86,23 @@ selects no customer-facing cap amount.
 - The account-period invariant is that consumed bytes plus outstanding grants
   plus unallocated bytes never exceeds the cap-derived byte budget. Do not
   reassign credits held by an unreachable relay. Return unused bytes only
-  after the relay durably surrenders the grant and can no longer spend it. For
+  after the relay surrenders the grant and can no longer spend it. For
   an unreachable relay, a control-plane fence prevents new grants but does not
   revoke cached offline credits; those remain reserved until the grant expires
   under the trusted-time/skew rule. Reclaim them only after expiry and fencing,
   or after an independently verifiable mechanism makes the relay unable to
   spend them.
 - In this implementation, grant balances are held in process memory and each
-  process start uses a fresh random generation. After restart, the relay fails
-  closed until the new generation obtains a grant. Earlier issued grants stay
-  fully reserved at the control plane for the rest of the period; unused bytes
-  cannot be reused or surrendered. This preserves the cap invariant but can
-  strand allowance and reduce traffic availability. A later implementation
-  should durably recover grants or provide authenticated surrender/expiry and
-  fencing before reclaiming unused bytes.
+  process start uses a fresh random generation. On clean shutdown, the relay
+  first detaches the forwarding gate, waits for credit requests to finish, then
+  signs a final count for each remaining grant. The control plane returns only
+  unused bytes after verifying the relay identity, enabled producer, exact
+  mapping, grant ID, and generation. Every byte reserved before a destination
+  write remains counted, even if delivery was ambiguous. Identical surrender
+  retries are idempotent. After an unclean restart or failed surrender, earlier
+  issued grants remain fully reserved through period end; no stale generation
+  is fenced or credited speculatively. This preserves the cap invariant but can
+  strand allowance and reduce traffic availability.
 
 ### At the cap and recovery
 

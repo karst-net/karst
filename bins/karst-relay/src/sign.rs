@@ -38,6 +38,8 @@ pub const USAGE_UPLOAD_PATH: &str = "/karst/v1/usage/relay-batches";
 /// Relay-side managed cap grants are a distinct identity-key use.
 pub const CREDIT_REQUEST_CTX: &[u8] = b"karst-relay-credit-request-v1";
 pub const CREDIT_REQUEST_PATH: &str = "/karst/v1/billing/relay-credits";
+pub const CREDIT_SURRENDER_CTX: &[u8] = b"karst-relay-credit-surrender-v1";
+pub const CREDIT_SURRENDER_PATH: &str = "/karst/v1/billing/relay-credits/";
 
 /// Domain label for a relay identifier — §5.2.
 const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
@@ -227,6 +229,20 @@ impl Identity {
             .map_err(|_| "signing the relay credit request failed")?;
         Ok(sig.encode().to_vec())
     }
+
+    /// Sign a final consumed-byte report for an issued relay credit grant.
+    /// # Errors
+    /// If the operating system's CSPRNG cannot be read.
+    pub fn sign_credit_surrender(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_randomized(message, CREDIT_SURRENDER_CTX, &mut OsEntropy)
+            .map_err(|_| "signing the relay credit surrender failed")?;
+        Ok(sig.encode().to_vec())
+    }
 }
 
 /// Canonical fresh transport transcript for one immutable batch upload.
@@ -270,7 +286,8 @@ pub fn credit_request_signing_input(
         generation,
         request_id,
     ];
-    let mut message = Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
+    let mut message =
+        Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
     message.extend_from_slice(b"karst-relay-credit-request-v1\0");
     for field in fields {
         let Ok(length) = u16::try_from(field.len()) else {
@@ -280,6 +297,42 @@ pub fn credit_request_signing_input(
         message.extend_from_slice(field.as_bytes());
     }
     message.extend_from_slice(&requested_bytes.to_be_bytes());
+    message
+}
+
+/// Canonical cross-language transcript for returning the unused portion of a
+/// relay credit grant. Keep in sync with Go's `CreditSurrender.SigningInput`.
+#[must_use]
+pub fn credit_surrender_signing_input(
+    grant_id: &str,
+    relay_id: &str,
+    deployment_id: &str,
+    mapping_version: &str,
+    generation: &str,
+    consumed_bytes: u64,
+) -> Vec<u8> {
+    let path = format!("{CREDIT_SURRENDER_PATH}{grant_id}/surrender");
+    let consumed_bytes = consumed_bytes.to_string();
+    let fields = [
+        "POST",
+        path.as_str(),
+        grant_id,
+        relay_id,
+        deployment_id,
+        mapping_version,
+        generation,
+        &consumed_bytes,
+    ];
+    let mut message =
+        Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
+    message.extend_from_slice(b"karst-relay-credit-surrender-v1\0");
+    for field in fields {
+        let Ok(length) = u16::try_from(field.len()) else {
+            return Vec::new();
+        };
+        message.extend_from_slice(&length.to_be_bytes());
+        message.extend_from_slice(field.as_bytes());
+    }
     message
 }
 
@@ -567,6 +620,33 @@ mod tests {
             &vector.generation,
             &vector.request_id,
             vector.requested_bytes,
+        );
+        assert_eq!(hex(&input), vector.signing_input_hex);
+    }
+
+    #[test]
+    fn shared_credit_surrender_signing_vector_matches_go() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            grant_id: String,
+            relay_id: String,
+            deployment_id: String,
+            mapping_version: String,
+            generation: String,
+            consumed_bytes: u64,
+            signing_input_hex: String,
+        }
+        let vector: Vector = serde_json::from_str(include_str!(
+            "../../../spec/vectors/relay-credit-surrender-v1.json"
+        ))
+        .expect("valid credit surrender vector");
+        let input = credit_surrender_signing_input(
+            &vector.grant_id,
+            &vector.relay_id,
+            &vector.deployment_id,
+            &vector.mapping_version,
+            &vector.generation,
+            vector.consumed_bytes,
         );
         assert_eq!(hex(&input), vector.signing_input_hex);
     }

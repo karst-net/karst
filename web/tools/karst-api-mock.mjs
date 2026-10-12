@@ -175,11 +175,17 @@ const server = http.createServer((request, response) => {
   if (path === "/__mock__/bedrock/uncovered" && method === "PUT") {
     return readBody(request).then((body) => { bedrock.uncovered_handles = body.uncovered_handles ?? []; return json(response, 200, bedrock); });
   }
+  // Keep cap fixtures scoped to billing tests. Resetting the shared console
+  // fixture while other Playwright workers are using it must not erase a cap
+  // mid-assertion or reset their unrelated resources.
+  if (path === "/__mock__/billing/fixture" && method === "PUT") {
+    relayCaps = new Map();
+    return noContent(response);
+  }
   if (path === "/__mock__/fixture" && method === "PUT") {
     return readBody(request).then((body) => {
       const empty = Boolean(body.empty);
       fixture = buildFixture({ empty });
-      relayCaps = new Map();
       setupKeys = [];
       invitations = [];
       domains = empty ? [] : [

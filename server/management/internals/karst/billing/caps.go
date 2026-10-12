@@ -446,12 +446,12 @@ func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStor
 // authenticated the relay's durable surrender or generation fence. consumed
 // bytes remain charged to the cap budget. Replays with the same report digest
 // are idempotent; conflicting reports are rejected.
-func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, generation, consumedBytes, surrenderDigest string) (RelayCreditGrant, error) {
+func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, generation, mappingVersion, consumedBytes, surrenderDigest string) (RelayCreditGrant, error) {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
 		return RelayCreditGrant{}, err
 	}
-	if !validLowerHex(grantID, 16) || !validToken(relayID) || !validToken(generation) || !validLowerHex(surrenderDigest, 32) {
+	if !validLowerHex(grantID, 16) || !validToken(relayID) || !validToken(generation) || !validToken(mappingVersion) || !validLowerHex(surrenderDigest, 32) {
 		return RelayCreditGrant{}, ErrCreditGrantConflict
 	}
 	consumed, ok := new(big.Int).SetString(consumedBytes, 10)
@@ -470,7 +470,7 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 			}
 			return fmt.Errorf("billing: load relay credit grant: %w", err)
 		}
-		if row.RelayID != relayID || row.Generation != generation {
+		if row.RelayID != relayID || row.Generation != generation || row.MappingVersion != mappingVersion {
 			return ErrCreditGrantNotFound
 		}
 		granted, ok := new(big.Int).SetString(row.GrantedBytes, 10)
@@ -504,6 +504,30 @@ func (s *Store) SurrenderRelayCredits(ctx context.Context, grantID, relayID, gen
 		}
 		output = relayGrantDTO(row, cap.PeriodEndUS)
 		return nil
+	})
+	return output, err
+}
+
+// SurrenderAuthorizedRelayCredits atomically verifies the enabled producer,
+// signed mapping, and immutable grant ownership before releasing unused bytes.
+func (s *Store) SurrenderAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, request relayusage.CreditSurrender) (RelayCreditGrant, error) {
+	if relayStore == nil {
+		return RelayCreditGrant{}, ErrCreditGrantConflict
+	}
+	digest, err := request.Digest()
+	if err != nil {
+		return RelayCreditGrant{}, err
+	}
+	var output RelayCreditGrant
+	err = runBillingTransaction(ctx, s.db, func(tx *gorm.DB) error {
+		mapping, err := relayStore.WithDB(tx).AuthorizeCreditSurrender(ctx, request)
+		if err != nil {
+			return err
+		}
+		accountCtx := WithAccount(ctx, mapping.AccountID)
+		output, err = (&Store{db: tx}).SurrenderRelayCredits(accountCtx, request.GrantID, request.RelayID,
+			request.Generation, request.MappingVersion, request.ConsumedBytes, digest)
+		return err
 	})
 	return output, err
 }

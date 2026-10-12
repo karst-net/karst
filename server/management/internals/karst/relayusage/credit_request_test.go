@@ -94,3 +94,54 @@ func TestSharedCreditRequestSigningVectorMatchesRust(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, vector.SigningInput, hex.EncodeToString(got))
 }
+
+func TestCreditSurrenderIsCanonicalAndMapsToAuthorizedRelay(t *testing.T) {
+	_, store, key, relayID, mapping := ingestionFixture(t)
+	request := CreditSurrender{GrantID: "0123456789abcdef0123456789abcdef", RelayID: relayID,
+		DeploymentID: "deployment-a", MappingVersion: mapping.Version,
+		Generation: "0102030405060708090a0b0c0d0e0f10", ConsumedBytes: "1234567"}
+	input, err := request.SigningInput()
+	require.NoError(t, err)
+	signature, err := key.Sign([]byte(identity.RelayCreditSurrenderContext), input)
+	require.NoError(t, err)
+	request.Signature = base64.StdEncoding.EncodeToString(signature)
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	parsed, err := ParseCreditSurrender(body)
+	require.NoError(t, err)
+	require.True(t, parsed.VerifySignature(key.Public()))
+	resolved, err := store.AuthorizeCreditSurrender(context.Background(), parsed)
+	require.NoError(t, err)
+	require.Equal(t, mapping, resolved)
+
+	modified := parsed
+	modified.ConsumedBytes = "1234568"
+	require.False(t, modified.VerifySignature(key.Public()), "the signature covers the consumed byte count")
+	_, err = store.AuthorizeCreditSurrender(context.Background(), modified)
+	require.ErrorIs(t, err, ErrUnauthorized)
+
+	require.NoError(t, store.RevokeMapping(context.Background(), relayID, mapping.DeploymentID, mapping.Version))
+	_, err = store.AuthorizeCreditSurrender(context.Background(), parsed)
+	require.ErrorIs(t, err, ErrMappingNotAllowed)
+}
+
+func TestSharedCreditSurrenderSigningVectorMatchesRust(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "..", "..", "spec", "vectors", "relay-credit-surrender-v1.json")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var vector struct {
+		GrantID        string `json:"grant_id"`
+		RelayID        string `json:"relay_id"`
+		DeploymentID   string `json:"deployment_id"`
+		MappingVersion string `json:"mapping_version"`
+		Generation     string `json:"generation"`
+		ConsumedBytes  uint64 `json:"consumed_bytes"`
+		SigningInput   string `json:"signing_input_hex"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &vector))
+	request := CreditSurrender{GrantID: vector.GrantID, RelayID: vector.RelayID, DeploymentID: vector.DeploymentID,
+		MappingVersion: vector.MappingVersion, Generation: vector.Generation, ConsumedBytes: strconv.FormatUint(vector.ConsumedBytes, 10)}
+	input, err := request.SigningInput()
+	require.NoError(t, err)
+	require.Equal(t, vector.SigningInput, hex.EncodeToString(input))
+}

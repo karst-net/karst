@@ -103,6 +103,30 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	require.Equal(t, "account-1", grant.AccountID)
 	require.Equal(t, "3000000000", grant.GrantedBytes)
 
+	surrender := relayusage.CreditSurrender{GrantID: grant.GrantID, RelayID: relayID, DeploymentID: "deployment-a",
+		MappingVersion: mapping.Version, Generation: request.Generation, ConsumedBytes: "1000000000"}
+	surrenderInput, err := surrender.SigningInput()
+	require.NoError(t, err)
+	surrenderSignature, err := key.Sign([]byte(identity.RelayCreditSurrenderContext), surrenderInput)
+	require.NoError(t, err)
+	surrender.Signature = base64.StdEncoding.EncodeToString(surrenderSignature)
+	surrenderBody, err := json.Marshal(surrender)
+	require.NoError(t, err)
+	surrenderPath := relayusage.CreditSurrenderPath + grant.GrantID + "/surrender"
+	response = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, surrenderPath, bytes.NewReader(surrenderBody))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+	response = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, surrenderPath, bytes.NewReader(surrenderBody))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNoContent, response.Code, "an identical signed surrender replay is idempotent")
+	cap, err = billingStore.SetRelaySpendingCap(accountCtx, start, end, 100, true, "owner-1")
+	require.NoError(t, err, "unused credits returned by the relay should permit a safe in-period decrease")
+	require.Equal(t, int64(100), cap.OverageMinor)
+
 	request.RequestedBytes = "3000000001"
 	body, err = json.Marshal(request) // The original signature no longer authenticates this body.
 	require.NoError(t, err)

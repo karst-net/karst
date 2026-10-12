@@ -71,12 +71,14 @@ forwarding paused when a capped relay has no credits. Owners/admins configure
 the cap for an assigned UTC month through `PUT /karst/v1/billing/relay-cap`;
 they must acknowledge that capped relay traffic can stall at the limit. An
 unset cap leaves that month uncapped. Current-period decreases take effect
-only after relay credit grants are safely returned; this release does not yet
-provide a grant-surrender endpoint, so a decrease may remain unavailable until
-the next period once credits have been issued. Increases remain available.
-Relay grant balances are currently in memory; a restart uses a fresh generation
-and keeps earlier issued bytes reserved until period end. The cap still bounds
-spend, but stranded credits can reduce availability after a restart.
+only after every outstanding grant is safely returned and consumed bytes fit
+under the new cap. Clean shutdown returns unused credits through a signed,
+idempotent request after detaching the forwarding gate. An unclean shutdown,
+unreachable relay, or failed request leaves that grant reserved through period
+end. Relay grant balances are currently in memory; after restart, a fresh
+generation obtains new credits and never reuses the previous generation's
+grant. The cap still bounds spend, but stranded credits can reduce availability
+after an unclean restart.
 Review usage coverage alongside alerts because incomplete reports are lower
 bounds. Keep enforcement opt-in until this implementation has shipped and its
 behavior has been validated in a pilot, including reservation sizing against
