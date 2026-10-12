@@ -50,8 +50,9 @@ Its half-open interval is limited to 93 past days and must align to whole
 minutes. The response uses `coverage: "authorized_producers"` and compares
 received account-attributed batches with retained producer/mapping authorization
 intervals. It reports expected, missing, and unexpected minute windows, known
-batch gap flags, sequence holes between received batches in the same epoch, and
-the first received window plus most recent receipt time. `complete` is true only
+batch gap flags, producer-wide sequence holes between received batches in the
+same epoch, and the first received window plus most recent receipt time.
+`complete` is true only
 when the whole request is after the recorded authorization-history cutover,
 at least one expected window exists, every expected window arrived, and no batch
 reported a measurement gap. An empty expected set does not prove zero traffic.
