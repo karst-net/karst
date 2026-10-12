@@ -9,6 +9,8 @@ assigned schedule as a bill.
 
 For approved customer-facing terms and current availability limits, see the
 [managed billing customer guide](managed-billing-customer-guide.md).
+For rollout, backup, and rollback guidance, see the
+[billing upgrade and migration guide](billing-upgrade-migration.md).
 
 ## Approved pilot rates and meter boundaries
 
