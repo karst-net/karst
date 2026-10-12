@@ -51,6 +51,11 @@ func TestStoreRequiresExplicitAccountAndAssignment(t *testing.T) {
 	if _, err := store.Assignment(ctx, start, end); !errors.Is(err, ErrScheduleUnassigned) {
 		t.Fatalf("unconfigured account assignment = %v, want ErrScheduleUnassigned", err)
 	}
+	devices := completeDeviceReport(start, end, deviceSegment(start, end, 2))
+	relays := completeRelayReport(start, end, "0")
+	if _, err := store.Calculate(ctx, devices, relays); !errors.Is(err, ErrScheduleUnassigned) {
+		t.Fatalf("unconfigured account calculation = %v, want ErrScheduleUnassigned", err)
+	}
 }
 
 func TestStorePersistsImmutableSchedulesAndExplicitAssignments(t *testing.T) {
@@ -96,6 +101,12 @@ func TestStorePersistsImmutableSchedulesAndExplicitAssignments(t *testing.T) {
 	assigned, err := store.AssignedSchedule(ctx, start, end)
 	if err != nil || assigned.Version != schedule.Version {
 		t.Fatalf("load assigned schedule: schedule=%+v err=%v", assigned, err)
+	}
+	devices := completeDeviceReport(start, end, deviceSegment(start, end, 2))
+	relays := completeRelayReport(start, end, "0")
+	estimate, err := store.Calculate(ctx, devices, relays)
+	if err != nil || !estimate.UsageComplete || estimate.ScheduleVersion != schedule.Version || estimate.TotalExact == nil || *estimate.TotalExact != (ExactAmount{Numerator: "500", Denominator: "1"}) {
+		t.Fatalf("calculate with assigned schedule: estimate=%+v err=%v", estimate, err)
 	}
 	if _, err := store.Assignment(WithAccount(context.Background(), "org-2"), start, end); !errors.Is(err, ErrScheduleUnassigned) {
 		t.Fatalf("other account inherited assignment: %v", err)

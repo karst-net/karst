@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -241,6 +243,17 @@ func (s *Store) AssignedSchedule(ctx context.Context, start, end time.Time) (Rat
 		return RateSchedule{}, err
 	}
 	return s.Schedule(ctx, assignment.ScheduleVersion)
+}
+
+// Calculate estimates exact charges using only the rate schedule explicitly
+// assigned to the device report's account and period. It does not persist an
+// invoice or create a charge; unassigned periods return ErrScheduleUnassigned.
+func (s *Store) Calculate(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (Estimate, error) {
+	schedule, err := s.AssignedSchedule(ctx, deviceReport.Start, deviceReport.End)
+	if err != nil {
+		return Estimate{}, err
+	}
+	return Calculate(deviceReport, relayReport, schedule)
 }
 
 func billingPeriodMicros(start, end time.Time) (int64, int64, error) {
