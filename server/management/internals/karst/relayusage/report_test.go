@@ -157,3 +157,20 @@ func TestCustomerReportMergesOverlappingMappingPeriodsForOneProducer(t *testing.
 	require.Len(t, report.Days, 1)
 	require.Equal(t, uint64(2), report.Days[0].ExpectedWindows)
 }
+
+func TestCustomerReportCountsSequenceHolesNumerically(t *testing.T) {
+	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	windowStart := start.UnixMicro()
+	report := Report{Start: start, End: start.Add(time.Minute), HistoryComplete: true}
+	windows := []reportWindow{
+		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "10", StartUS: windowStart},
+		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "2", StartUS: windowStart},
+		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "11", StartUS: windowStart},
+		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "1", StartUS: windowStart},
+	}
+
+	require.NoError(t, composeRelayReport(&report, nil, windows, nil))
+	require.Equal(t, "7", report.MissingSequences, "sequences 3 through 9 are missing")
+	require.Len(t, report.Days, 1)
+	require.Equal(t, "7", report.Days[0].MissingSequences)
+}

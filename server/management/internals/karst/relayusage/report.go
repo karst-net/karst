@@ -199,6 +199,30 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 	totalMissing := new(big.Int)
 	previous := make(map[string]uint64)
 	seen := make(map[string]bool)
+	type sequencedWindow struct {
+		window   reportWindow
+		sequence uint64
+	}
+	orderedWindows := make([]sequencedWindow, len(windows))
+	for i, window := range windows {
+		sequence, err := strconv.ParseUint(window.Sequence, 10, 64)
+		if err != nil {
+			return ErrReportData
+		}
+		orderedWindows[i] = sequencedWindow{window: window, sequence: sequence}
+	}
+	sort.Slice(orderedWindows, func(i, j int) bool {
+		a, b := orderedWindows[i], orderedWindows[j]
+		keyA := a.window.DeploymentID + "\x00" + a.window.RelayID + "\x00" + a.window.Epoch
+		keyB := b.window.DeploymentID + "\x00" + b.window.RelayID + "\x00" + b.window.Epoch
+		if keyA != keyB {
+			return keyA < keyB
+		}
+		if a.sequence != b.sequence {
+			return a.sequence < b.sequence
+		}
+		return a.window.StartUS < b.window.StartUS
+	})
 	expected := make(map[string]int64)
 	rangesByProducer := make(map[string][]reportWindowRange)
 	for _, period := range periods {
@@ -252,7 +276,8 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		}
 	}
 	receivedExpected := make(map[string]struct{}, len(expected))
-	for _, window := range windows {
+	for _, orderedWindow := range orderedWindows {
+		window := orderedWindow.window
 		day := getDay(window.StartUS)
 		day.windows++
 		windowKey := reportWindowKey(window.DeploymentID, window.RelayID, window.StartUS)
@@ -284,10 +309,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 			day.gapWindows++
 		}
 		producerKey := window.DeploymentID + "\x00" + window.RelayID + "\x00" + window.Epoch
-		sequence, err := strconv.ParseUint(window.Sequence, 10, 64)
-		if err != nil {
-			return ErrReportData
-		}
+		sequence := orderedWindow.sequence
 		if seen[producerKey] && previous[producerKey] != ^uint64(0) && sequence > previous[producerKey]+1 {
 			missing := new(big.Int).SetUint64(sequence - previous[producerKey] - 1)
 			day.missingSequences.Add(day.missingSequences, missing)
