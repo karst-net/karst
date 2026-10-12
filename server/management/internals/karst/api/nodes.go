@@ -32,6 +32,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
@@ -114,6 +115,10 @@ type handler struct {
 	// dial target (KARST_SCALER_ADVISOR_URL) -- empty in a deployment that
 	// has not configured one, see scalerRecommendations.
 	scalerAdvisorURL string
+	// knownEvents is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
+	// nil in a deployment that has not configured one, see
+	// knownEventsList/knownEventsCreate/knownEventsDelete.
+	knownEvents knownEventReader
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -290,6 +295,17 @@ type turnReader interface {
 	Delete(context.Context, string) error
 }
 
+// knownEventReader is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
+// account-scoped, the same shape turnReader already has, not deployment-
+// wide or cross-account the way relayReader.DemandHistory is: when an
+// organization's own traffic is expected to change is that organization's
+// own calendar.
+type knownEventReader interface {
+	List(context.Context) ([]knownevents.StoredKnownEvent, error)
+	Create(context.Context, knownevents.Entry) (*knownevents.StoredKnownEvent, error)
+	Delete(context.Context, string) error
+}
+
 // bedrockLogReader is the verified chain. Separate from bedrockReader because
 // the two answer different questions: the store holds operator configuration,
 // the log holds what the authorities signed. Coverage comes from the log and
@@ -336,8 +352,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -405,6 +421,9 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events", h.knownEventsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events", h.knownEventsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events/{eventId}", h.knownEventsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock", h.bedrockStatus).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log", h.bedrockLog).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log/verify", h.bedrockLogVerify).Methods(http.MethodGet, http.MethodOptions)
@@ -546,7 +565,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// authorization for these resource-scoped surfaces.
 			path := strings.TrimPrefix(r.URL.Path, "/api")
 			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") || strings.HasPrefix(path, "/karst/v1/nodes") {
-				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
+				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return
 			}
@@ -575,7 +594,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 					return
 				}
 			}
-			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId)
+			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 			next.ServeHTTP(w, r.WithContext(scoped))
 		})
 	}
@@ -2117,6 +2136,73 @@ func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.turns.Delete(r.Context(), mux.Vars(r)["turnId"]); errors.Is(err, turncred.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// knownEventsList/knownEventsCreate/knownEventsDelete are ADR-0045 §8
+// (Phase 3)'s operator-entered calendar -- the same shape as
+// turnsList/turnsCreate/turnsDelete above, account-scoped via the ordinary
+// karstAuthorization gate (this is the caller's own account's data, not
+// cross-account the way the demand-history endpoint is).
+func (h *handler) knownEventsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	events, err := h.knownEvents.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, events)
+}
+
+func (h *handler) knownEventsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	var entry knownevents.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	event, err := h.knownEvents.Create(r.Context(), entry)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(event); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+func (h *handler) knownEventsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	if err := h.knownEvents.Delete(r.Context(), mux.Vars(r)["eventId"]); errors.Is(err, knownevents.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "known event not found"), w)
 		return
 	} else if err != nil {
 		util.WriteError(r.Context(), err, w)
