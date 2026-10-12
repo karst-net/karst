@@ -78,13 +78,15 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/
           gitleaks version
-      # Two scans: the working tree, and every commit reachable from it. A PSK
-      # committed and then removed is still a leaked PSK, which `detect`
-      # against the checkout alone would not see.
+      # Two scans: the working tree, and every commit reachable from the
+      # checked-out commit. Gitleaks defaults to --all refs, which can pull
+      # unrelated open-PR heads into this scan and make one PR depend on
+      # findings in another. Keep the full ancestry and scan the current tree
+      # separately above.
       - name: No secrets in the working tree
         run: gitleaks dir . --redact --verbose
       - name: No secrets anywhere in history
-        run: gitleaks git . --redact --verbose
+        run: gitleaks git --log-opts="--full-history --diff-filter=tuxdb HEAD" --redact --verbose .
 
   rust:
     name: Rust
