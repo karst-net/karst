@@ -208,6 +208,25 @@ fn enroll_args(args: &[&str]) -> Result<(PathBuf, PathBuf), String> {
     Ok((config, bundle))
 }
 
+/// Resolves `address` (`host:port`, where `host` may already be a
+/// literal IP or may be a DNS name) to one concrete `ip:port`. A blocking
+/// lookup, not async: `command_enroll` is otherwise a synchronous,
+/// one-shot CLI path (like its own `enroll()` below, which blocks on
+/// `ureq` the same way), so there is no runtime here to avoid blocking.
+///
+/// # Errors
+/// If `address` cannot be parsed/resolved at all, or resolves to no
+/// address.
+fn resolve_address(address: &str) -> Result<String, String> {
+    use std::net::ToSocketAddrs as _;
+    address
+        .to_socket_addrs()
+        .map_err(|e| format!("resolving: {e}"))?
+        .next()
+        .map(|addr| addr.to_string())
+        .ok_or_else(|| "resolved to no address".to_owned())
+}
+
 fn command_enroll(args: &[&str]) -> ExitCode {
     let (config_path_arg, bundle_path) = match enroll_args(args) {
         Ok(v) => v,
@@ -247,8 +266,29 @@ fn command_enroll(args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The registry's own `address` field must be a literal socket address
+    // -- `relayreg.go`'s own `compile()` requires a literal
+    // `netip.ParseAddrPort`, matching `bins/karstd/src/netmap.rs::Relay::
+    // from_wire`'s own `SocketAddr`-only parse -- but a driver may have
+    // written a DNS name instead (`karst-scaler-k8s`'s own pod FQDN,
+    // chosen for its *stability* across pod restarts, which a raw pod IP
+    // does not have). Resolved here, once, at enroll time: today's the
+    // only moment this system binds a relay's registry address at all,
+    // and an address that is already a literal socket address resolves
+    // to itself.
+    let address = match resolve_address(&bundle.address) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!(
+                "karst-relay: {}: address {:?}: {e}",
+                bundle_path.display(),
+                bundle.address
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let entry = RegistryEntry {
-        address: &bundle.address,
+        address: &address,
         tls_server_name: &bundle.tls_server_name,
         identity_key: Base64::encode_string(identity.public_key()),
         region: &cfg.region,
@@ -383,6 +423,32 @@ mod tests {
             enroll_args(&["--bundle", "/tmp/e.toml", "-c", "/tmp/a.toml"]).expect("ok");
         assert_eq!(config, PathBuf::from("/tmp/a.toml"));
         assert_eq!(bundle, PathBuf::from("/tmp/e.toml"));
+    }
+
+    #[test]
+    fn resolve_address_passes_a_literal_socket_address_through() {
+        assert_eq!(
+            resolve_address("203.0.113.5:443").expect("ok"),
+            "203.0.113.5:443"
+        );
+    }
+
+    #[test]
+    fn resolve_address_resolves_a_dns_name_to_a_literal_address() {
+        // `localhost` is resolved via /etc/hosts or the system resolver's
+        // own built-in loopback entry, not a real network lookup -- this
+        // is the same shape of fix `karst-scaler-k8s`'s own pod FQDN
+        // needs, exercised without a real DNS server.
+        let resolved = resolve_address("localhost:443").expect("ok");
+        assert!(
+            resolved == "127.0.0.1:443" || resolved == "[::1]:443",
+            "resolved to {resolved}"
+        );
+    }
+
+    #[test]
+    fn resolve_address_rejects_a_name_with_no_port() {
+        assert!(resolve_address("localhost").is_err());
     }
 
     #[test]
