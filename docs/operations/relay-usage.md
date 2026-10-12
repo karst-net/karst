@@ -89,9 +89,9 @@ fails at startup.
 
 Next implementation work under [#275](https://github.com/karst-net/karst/issues/275):
 
-- Expose account totals and coverage to customers and operators, including
-  unresolved mappings, missing producers, disk failures, clock anomalies, and
-  late data.
+- Add operator reconciliation workflows for unexpected windows, missing or
+  late batches, and producer inventory gaps; preserve evidence for disk failures,
+  clock anomalies, and unresolved mappings.
 - Resolve pricing, alert thresholds, optional relay spending caps, and payment
   behavior from the remaining decisions tracked in #275 before implementing
   charges or enforcement.

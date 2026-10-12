@@ -43,9 +43,9 @@ paths:
         Account-owner/admin report of received relay usage batches. Account
         scope comes from authenticated authorization; every read is audited.
         Request a past, nonempty interval of at most 93 days aligned to whole
-        minutes. This is received-only evidence, not an invoice or proof of
-        complete traffic: relay producer authorization intervals are not yet
-        historized, so missing producer reports cannot be inferred.
+        minutes. This is not an invoice. Completeness compares received windows
+        with retained authorization periods for explicitly enrolled managed
+        producers; periods before the history cutover remain unknown.
       parameters:
         - {name: start, in: query, required: true, schema: {type: string, format: date-time}}
         - {name: end, in: query, required: true, schema: {type: string, format: date-time}}
@@ -567,15 +567,20 @@ components:
     RelayUsageReport:
       type: object
       additionalProperties: false
-      required: [start, end, as_of, coverage, complete, first_received_window_start, last_received_at, reported_bytes, missing_sequences, days, limitations]
+      required: [start, end, as_of, authorization_history_start, coverage, history_complete, complete, expected_windows, missing_windows, unexpected_windows, first_received_window_start, last_received_at, reported_bytes, missing_sequences, days, limitations]
       properties:
         start: {type: string, format: date-time}
         end: {type: string, format: date-time}
         as_of: {type: string, format: date-time}
+        authorization_history_start: {type: string, format: date-time, description: Cutover when producer authorization coverage began to be recorded; earlier reporting intervals remain unknown.}
         first_received_window_start: {type: string, format: date-time, nullable: true, description: Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.}
         last_received_at: {type: string, format: date-time, nullable: true, description: Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.}
-        coverage: {type: string, enum: [received_only], description: Only received batches are counted; producer coverage is not yet historized.}
-        complete: {type: boolean, enum: [false], description: Always false until expected producer intervals can be checked.}
+        coverage: {type: string, enum: [authorized_producers], description: Completeness is measured over explicitly operator-authorized producers and account mappings only.}
+        history_complete: {type: boolean, description: True when the entire requested interval begins at or after the recorded authorization-history cutover.}
+        complete: {type: boolean, description: True only when authorization history covers the request, at least one expected producer window exists, every expected window arrived, and there are no reported measurement gaps.}
+        expected_windows: {type: integer, format: int64, minimum: 0, description: Expected producer/account minute windows derived from retained authorization periods.}
+        missing_windows: {type: integer, format: int64, minimum: 0, description: Expected minute windows for which no producer batch was received.}
+        unexpected_windows: {type: integer, format: int64, minimum: 0, description: Received account windows outside retained authorization periods.}
         reported_bytes: {type: string, pattern: '^[0-9]+$', description: Exact decimal bytes reported in received batches only.}
         missing_sequences: {type: string, pattern: '^[0-9]+$', description: Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.}
         days: {type: array, maxItems: 94, items: {$ref: '#/components/schemas/RelayUsageDay'}}
@@ -583,12 +588,15 @@ components:
     RelayUsageDay:
       type: object
       additionalProperties: false
-      required: [date, reported_bytes, reported_windows, gap_windows, missing_sequences, gap_reasons]
+      required: [date, reported_bytes, reported_windows, gap_windows, expected_windows, missing_windows, unexpected_windows, missing_sequences, gap_reasons]
       properties:
         date: {type: string, format: date}
         reported_bytes: {type: string, pattern: '^[0-9]+$'}
         reported_windows: {type: integer, format: int64, minimum: 0}
         gap_windows: {type: integer, format: int64, minimum: 0}
+        expected_windows: {type: integer, format: int64, minimum: 0}
+        missing_windows: {type: integer, format: int64, minimum: 0}
+        unexpected_windows: {type: integer, format: int64, minimum: 0}
         missing_sequences: {type: string, pattern: '^[0-9]+$'}
         gap_reasons: {type: array, items: {type: string, enum: [unresolved_mapping, capacity, overflow, clock, observation_lost]}}
     DeviceInvitationDraft:

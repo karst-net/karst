@@ -47,16 +47,20 @@ by this endpoint.
 `GET /api/karst/v1/usage/relays?start=<RFC3339>&end=<RFC3339>` applies the same
 account-owner/admin authorization, account scoping, audit, and no-store policy.
 Its half-open interval is limited to 93 past days and must align to whole
-minutes. The response is explicitly `coverage: "received_only"` and always
-`complete: false`: it sums received account-attributed batch totals, reports
-known batch gap flags, counts sequence holes only between received batches
-from the same relay epoch, and returns the first received window plus the most
-recent receipt timestamp so customers can assess freshness. The first received
-window is evidence of receipt, not a producer authorization start. Producer
-authorization intervals are not historically
-stored yet, so absent producers, missing head/tail sequences, and days with no
-received windows cannot be interpreted as zero traffic or complete coverage.
-This report is evidence for customers, not an invoice or billing input.
+minutes. The response uses `coverage: "authorized_producers"` and compares
+received account-attributed batches with retained producer/mapping authorization
+intervals. It reports expected, missing, and unexpected minute windows, known
+batch gap flags, sequence holes between received batches in the same epoch, and
+the first received window plus most recent receipt time. `complete` is true only
+when the whole request is after the recorded authorization-history cutover,
+at least one expected window exists, every expected window arrived, and no batch
+reported a measurement gap. An empty expected set does not prove zero traffic.
+This completeness claim covers only explicitly enrolled managed producers; relays
+outside that operator inventory are outside the expected set. Time before the
+history cutover remains unknown. The first received window is evidence of
+receipt, not an authorization start. Reported bytes always sum received data
+only; missing traffic is never estimated. This is evidence for customers, not
+an invoice or billing input.
 
 For device reports, the requested interval is half-open, in the past, and no
 longer than 93 days; timestamps have microsecond precision. At most 10,000

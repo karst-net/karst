@@ -36,6 +36,10 @@ export type RelayUsageReport = {
     end: string;
     as_of: string;
     /**
+     * Cutover when producer authorization coverage began to be recorded; earlier reporting intervals remain unknown.
+     */
+    authorization_history_start: string;
+    /**
      * Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
      */
     first_received_window_start: string | null;
@@ -44,13 +48,29 @@ export type RelayUsageReport = {
      */
     last_received_at: string | null;
     /**
-     * Only received batches are counted; producer coverage is not yet historized.
+     * Completeness is measured over explicitly operator-authorized producers and account mappings only.
      */
-    coverage: 'received_only';
+    coverage: 'authorized_producers';
     /**
-     * Always false until expected producer intervals can be checked.
+     * True when the entire requested interval begins at or after the recorded authorization-history cutover.
      */
-    complete: false;
+    history_complete: boolean;
+    /**
+     * True only when authorization history covers the request
+     */
+    complete: boolean;
+    /**
+     * Expected producer/account minute windows derived from retained authorization periods.
+     */
+    expected_windows: number;
+    /**
+     * Expected minute windows for which no producer batch was received.
+     */
+    missing_windows: number;
+    /**
+     * Received account windows outside retained authorization periods.
+     */
+    unexpected_windows: number;
     /**
      * Exact decimal bytes reported in received batches only.
      */
@@ -68,6 +88,9 @@ export type RelayUsageDay = {
     reported_bytes: string;
     reported_windows: number;
     gap_windows: number;
+    expected_windows: number;
+    missing_windows: number;
+    unexpected_windows: number;
     missing_sequences: string;
     gap_reasons: Array<'unresolved_mapping' | 'capacity' | 'overflow' | 'clock' | 'observation_lost'>;
 };

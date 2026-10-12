@@ -38,9 +38,9 @@ export const getDeviceUsage = <ThrowOnError extends boolean = false>(options: Op
  * Account-owner/admin report of received relay usage batches. Account
  * scope comes from authenticated authorization; every read is audited.
  * Request a past, nonempty interval of at most 93 days aligned to whole
- * minutes. This is received-only evidence, not an invoice or proof of
- * complete traffic: relay producer authorization intervals are not yet
- * historized, so missing producer reports cannot be inferred.
+ * minutes. This is not an invoice. Completeness compares received windows
+ * with retained authorization periods for explicitly enrolled managed
+ * producers; periods before the history cutover remain unknown.
  *
  */
 export const getRelayUsage = <ThrowOnError extends boolean = false>(options: Options<GetRelayUsageData, ThrowOnError>): RequestResult<GetRelayUsageResponses, GetRelayUsageErrors, ThrowOnError> => (options.client ?? client).get<GetRelayUsageResponses, GetRelayUsageErrors, ThrowOnError>({
