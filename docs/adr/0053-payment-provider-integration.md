@@ -20,24 +20,29 @@ Issue #275 selects a merchant-of-record seller model and Paddle Billing for
 the pilot. Checkout rates are pre-tax USD, with applicable tax added and shown
 separately. Paddle business/domain approval, supported-market confirmation,
 and SaaS tax-category configuration remain live-selling gates. Issue #275
-approves a 14-day pilot grace period with billing-administrator notices and
-asynchronous retries. Payment failure does not suspend networking without a
-separately approved enforcement policy. Keep only provider references and
-minimum auditable invoice/payment state; never store card credentials or raw
-relay traffic. Retain finalized invoices and audit/payment state for seven
-years, normalized webhook events for thirteen months, and no raw webhook body
-after signature verification.
+approves a 14-day pilot grace period with retries on days 1, 3, 7, and 12,
+in-app notices to billing admins, and continued service after day 14 while an
+invoice remains past due for customer/operator resolution. Payment failure
+does not suspend networking. Keep only provider references and minimum
+auditable invoice/payment state; never store card credentials or raw relay
+traffic. Retain finalized invoices and audit/payment state for seven years,
+normalized webhook events for thirteen months, and no raw webhook body after
+signature verification. Whether retries use Paddle subscriptions or scheduled
+re-issuance of one-time invoice checkouts remains to be decided in #275.
 
 ## Decision
 
 Use Paddle Billing for pilot collection through an asynchronous adapter owned
 by the management control plane. The internal account billing ledger remains
-the source of rates, billable usage, and invoice-line calculations. Create one
-one-time Paddle transaction for each finalized monthly invoice; use Paddle
-Checkout for customer payment. Paddle calculates applicable tax and reports
-collection status; it does not calculate Karst usage or decide relay
-forwarding. The billing console presents the returned checkout link and reads
-payment state from the webhook-backed internal ledger.
+the source of rates, billable usage, and invoice-line calculations. The
+current adapter creates one one-time Paddle transaction for each finalized
+monthly invoice and uses Paddle Checkout for customer payment. The retry
+cadence is approved, but the mechanism is pending the #275 decision above;
+never create another transaction while a prior attempt may have succeeded.
+Paddle calculates applicable tax and reports collection status; it does not
+calculate Karst usage or decide relay forwarding. The billing console presents
+the returned checkout link and reads payment state from the webhook-backed
+internal ledger.
 
 The internal invoice currency is USD, matching the approved pilot rates. This
 ADR does not select refund/chargeback handling or merchant payout currency.
@@ -137,12 +142,14 @@ requires an explicit seller/tax decision and reviewed customer/data migration.
 
 - A payment failure first changes local billing status and starts the selected
   retry/grace policy; it never calls the forwarding path.
-- The approved pilot uses a 14-day grace with billing-admin notices and
-  asynchronous retries. The retry cadence, notice delivery channel, and
-  post-grace management-plane action still need explicit decisions in #275.
+- The approved pilot uses a 14-day grace, retries on days 1, 3, 7, and 12, and
+  in-app billing-admin notices. After day 14, keep service active and mark the
+  invoice past due for customer/operator resolution. The transaction model for
+  retries remains pending a #275 decision.
 - When payment succeeds, a verified event or reconciliation job updates local
   status idempotently. If collection still fails after the approved grace,
-  execute only the separately selected management-plane account policy.
+  keep service active and mark the invoice past due; payment state never
+  becomes a forwarding dependency.
 - Refunds, disputed payments, chargebacks, partial payments, cancellations,
   and correction invoices require explicit policies before production billing.
 
