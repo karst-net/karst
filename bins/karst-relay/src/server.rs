@@ -316,6 +316,15 @@ impl Ctx {
             .ok()
             .and_then(|current| current.clone())
     }
+
+    /// Install or remove the opt-in local relay-credit gate under the hub lock.
+    pub(crate) fn set_credit_gate(&self, gate: Option<Arc<dyn crate::hub::CreditGate>>) {
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        shared.hub.set_credit_gate(gate);
+    }
 }
 
 /// Run the relay until the process is asked to stop.
@@ -323,6 +332,7 @@ impl Ctx {
 /// # Errors
 /// Anything that stops the listener from starting: a certificate that will not
 /// load, a roster that will not parse, an address already in use.
+#[allow(clippy::too_many_lines)]
 pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let identity = Arc::new(Identity::load_or_create(&cfg.identity_key)?);
     let (roster_source, roster) = RosterSource::open(&cfg.roster)?;
@@ -341,6 +351,30 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     let ctx = Ctx::new(cfg, identity, roster, tls_config);
+    let cap_runtime = if let Some(usage) = cfg
+        .usage
+        .as_ref()
+        .filter(|usage| usage.enforce_spending_caps)
+    {
+        let origin = usage.upload_url.as_deref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "cap enforcement requires usage.upload_url",
+            )
+        })?;
+        let grant_bytes = usage.cap_grant_bytes.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "cap enforcement requires usage.cap_grant_bytes",
+            )
+        })?;
+        let runtime =
+            crate::credits::Runtime::start(origin, Arc::clone(&ctx.identity), grant_bytes)?;
+        ctx.set_credit_gate(Some(runtime.controller()));
+        Some(runtime)
+    } else {
+        None
+    };
     let usage_runtime = if let Some(usage) = &cfg.usage {
         let runtime = crate::usage::Runtime::start(
             &usage.spool_dir,
@@ -425,6 +459,10 @@ pub async fn run(cfg: &Config) -> Result<(), Box<dyn std::error::Error + Send + 
 
     let listener = TcpListener::bind(cfg.listen).await?;
     let result = serve_on(listener, Arc::clone(&ctx)).await;
+    if let Some(runtime) = cap_runtime {
+        ctx.set_credit_gate(None);
+        runtime.finish().await?;
+    }
     if let Some(runtime) = usage_runtime {
         if let Ok(mut observer) = ctx.usage_observer.write() {
             *observer = None;

@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
-	"github.com/netbirdio/netbird/shared/management/http/util"
 )
 
 // RegisterRelayCreditEndpoint mounts the relay-only, ML-DSA-authenticated
@@ -101,7 +101,22 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	util.WriteJSONObject(ctx, w, grant)
+	validMillis := end.Sub(time.Now().UTC()).Milliseconds()
+	if validMillis <= 0 {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "relay cap period boundary is being refreshed", http.StatusTooEarly)
+		return
+	}
+	encoded, err := json.Marshal(grant)
+	if err != nil {
+		http.Error(w, "could not encode relay cap grant", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+	w.Header().Set("X-Karst-Relay-Cap-Grant-Valid-Millis", strconv.FormatInt(validMillis, 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(encoded)
 }
 
 var _ http.Handler = (*relayCreditHandler)(nil)

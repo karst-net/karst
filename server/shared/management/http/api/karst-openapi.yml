@@ -79,6 +79,24 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RelayAlertFeed'}
         default: {$ref: '#/components/responses/Error'}
+  /billing/relay-cap:
+    get:
+      operationId: getRelaySpendingCap
+      tags: [billing]
+      description: Account-owner/admin view of the optional organization-wide managed relay cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}}
+      responses:
+        '200': {description: Current cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setRelaySpendingCap
+      tags: [billing]
+      description: Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. A safe decrease may take effect after outstanding uncapped leases expire.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCapDraft'}}}}
+      responses:
+        '200': {description: Saved cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /invitations:
     get:
       operationId: listDeviceInvitations
@@ -643,6 +661,26 @@ components:
         threshold_bytes: {type: string, pattern: '^[0-9]+$'}
         as_of: {type: string, format: date-time}
         usage_complete: {type: boolean, description: False means this event was evaluated from lower-bound usage coverage.}
+    RelayCapDraft:
+      type: object
+      additionalProperties: false
+      required: [period, overage_limit_minor, acknowledge_interruption]
+      properties:
+        period: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
+        overage_limit_minor: {type: integer, format: int64, minimum: 0, description: USD cents; byte budgets truncate down.}
+        acknowledge_interruption: {type: boolean, enum: [true]}
+    RelayCap:
+      type: object
+      additionalProperties: false
+      required: [enabled, period_start, period_end, currency, acknowledged_interruption]
+      properties:
+        enabled: {type: boolean}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        currency: {type: string, enum: [USD]}
+        overage_limit_minor: {type: integer, format: int64, minimum: 0}
+        acknowledged_interruption: {type: boolean}
+        effective_at: {type: string, format: date-time, description: Cap activation time after outstanding uncapped relay leases expire.}
     DeviceInvitationDraft:
       type: object
       additionalProperties: false

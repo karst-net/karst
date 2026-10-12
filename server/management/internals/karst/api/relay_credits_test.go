@@ -95,6 +95,9 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	validMillis, err := strconv.ParseUint(response.Header().Get("X-Karst-Relay-Cap-Grant-Valid-Millis"), 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, validMillis, uint64(0))
 	var grant billing.RelayCreditGrant
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &grant))
 	require.Equal(t, "account-1", grant.AccountID)

@@ -77,24 +77,27 @@ database transaction. The `--actor` value is an audit label, not authentication;
 access to the administrative command itself must remain restricted.
 
 The control plane persists batch identities, per-account totals, and coverage
-rows transactionally. This establishes durable, replay-safe ingestion, but it
-does not yet expose relay totals or coverage through a customer or operator
-report. The optional relay uploader and retry loop are wired to the local spool,
-but customer-visible relay accounting is not complete. Charges and spending
-enforcement are also not implemented. Unconfigured deployments create no relay
-spool and retain existing forwarding behavior. The mapping ledger table is
-additive, and no mappings are written unless the optional roster integration
-is explicitly supplied. On non-Unix platforms, enabling the spool currently
-fails at startup.
+rows transactionally. Account owners/admins can read a relay usage report and
+an in-app billing alert feed. They can also configure an optional monthly
+managed-relay spending cap through `PUT /karst/v1/billing/relay-cap`; the
+operation requires acknowledgment that managed-relay forwarding can pause at
+the limit. Credit reservations are shared across relays for the account and
+period, and the local gate reserves bytes before it queues a destination
+write. If a relay runs out of valid credits or cannot refresh them, that
+managed mapping fails closed while other traffic continues. An unset cap
+retains uncapped forwarding under short leases. These controls do not yet
+collect payment. Unconfigured deployments create no relay spool and retain
+existing forwarding behavior. The mapping ledger table is additive, and no
+mappings are written unless the optional roster integration is explicitly
+supplied. On non-Unix platforms, enabling the spool currently fails at startup.
 
-Next implementation work under [#275](https://github.com/karst-net/karst/issues/275):
+Remaining work under [#275](https://github.com/karst-net/karst/issues/275):
 
 - Add operator reconciliation workflows for unexpected windows, missing or
   late batches, and producer inventory gaps; preserve evidence for disk failures,
   clock anomalies, and unresolved mappings.
-- Resolve pricing, alert thresholds, optional relay spending caps, and payment
-  behavior from the remaining decisions tracked in #275 before implementing
-  charges or enforcement.
+- Resolve seller/tax responsibility, payment provider and failure policy, and
+  self-hosted support terms before implementing payment collection.
 - Document retention, recovery, and downgrade before managed rollout.
 
 There is no atomic network-write/disk-write transaction. A crash between them

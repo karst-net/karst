@@ -291,6 +291,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
 		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
 		karstapi.RegisterRelayAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
+		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)

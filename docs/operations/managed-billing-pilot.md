@@ -20,11 +20,12 @@ queue drops, direct peer traffic, and internal relay-to-relay hops.
 
 Billing uses UTC calendar months and exact eligible-time device proration.
 Incomplete usage stays open and unbilled; final invoice lines truncate down to
-currency minor units. Relay alerts are set for 75%, 90%, and 100% of allowance
-or cap once per threshold and period to billing administrators, with a coverage
-warning when data is incomplete. The alert delivery channel remains to be
-selected. The approved relay measurement boundary is not a guarantee that every
-byte was received by the destination endpoint. See
+currency minor units, including USD cents. Relay alerts are persisted at 75%,
+90%, and 100% of allowance or cap, with a coverage warning when data is
+incomplete; customers read them through the audited in-app feed. Invoice
+finalization requires complete device and relay reports. The approved relay
+measurement boundary is not a guarantee that every byte was received by the
+destination endpoint. See
 the [device collection guide](device-usage.md) and [relay usage guide](relay-usage.md)
 for full coverage and failure semantics.
 
@@ -63,14 +64,24 @@ rate snapshot available to the calculator; it does not finalize usage or
 authorize a charge.
 
 Invoice input finalization requires complete device and relay reports and an
-explicit account-period schedule assignment; it does not collect payment.
-Before broad customer rollout, select an alert delivery channel, seller and tax
-responsibilities, payment provider, self-hosted support terms, and retention
-period, and validate cap reservation sizing from shadow data. Keep alerts,
-spending-cap enforcement, and payment collection out of customer operation
-until their implementations and operational checks are complete. No billing
-configuration is required for deployments that do not opt in; relay forwarding
-and device membership behavior remain available without usage collection.
+explicit account-period schedule assignment; it does not collect payment. The
+implementation provides an audited in-app alert feed and an optional
+organization-wide managed-relay cap, with grants reserved across relays and
+forwarding paused when a capped relay has no credits. Owners/admins configure
+the cap for an assigned UTC month through `PUT /karst/v1/billing/relay-cap`;
+they must acknowledge that capped relay traffic can stall at the limit. An
+unset cap leaves that month uncapped. Current-period decreases take effect
+only after outstanding uncapped leases expire. Review usage coverage alongside
+alerts because incomplete reports are lower bounds. Keep enforcement opt-in
+until this implementation has shipped and its behavior has been validated in
+a pilot, including reservation sizing against shadow usage.
+
+Seller and tax responsibilities, the payment provider and failure/grace
+policy, self-hosted support terms, and retention period remain open in
+[#275](https://github.com/karst-net/karst/issues/275). Do not connect payment
+collection until those decisions are settled. No billing configuration is
+required for deployments that do not opt in; relay forwarding and device
+membership behavior remain available without usage collection.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool
