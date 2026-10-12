@@ -235,6 +235,15 @@ func TestUserCommandValidatesSelectorBeforeOpeningStorage(t *testing.T) {
 	require.False(t, opened)
 }
 
+func TestBillingAssignmentCommandRegisteredWithStoreOpener(t *testing.T) {
+	root := NewCommands(Openers{
+		Store: func(*cobra.Command, func(context.Context, mgmtstore.Store) error) error { return nil },
+	})
+	command, _, err := root.Find([]string{"billing", "assign-pilot"})
+	require.NoError(t, err)
+	require.Equal(t, "assign-pilot", command.Name())
+}
+
 func TestResolvePasswordInputFromStdin(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetIn(strings.NewReader("NewPass1!\n"))

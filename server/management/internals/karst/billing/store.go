@@ -76,10 +76,10 @@ func (billingAccountLock) TableName() string { return "karst_billing_account_loc
 // Assignment identifies an immutable schedule snapshot for one explicit
 // account period. It does not imply that usage is complete or chargeable.
 type Assignment struct {
-	AccountID       string
-	PeriodStart     time.Time
-	PeriodEnd       time.Time
-	ScheduleVersion string
+	AccountID       string    `json:"account_id"`
+	PeriodStart     time.Time `json:"period_start"`
+	PeriodEnd       time.Time `json:"period_end"`
+	ScheduleVersion string    `json:"schedule_version"`
 }
 
 // Store persists immutable rate snapshots and explicit, opt-in assignments.
