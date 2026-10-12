@@ -18,10 +18,13 @@ charge, and usage alerts by default. Rates and invoice behavior must be
 reproducible after prices change, and an unconfigured account must continue to
 have no billing behavior.
 
-The remaining product inputs are not settled: numerical device bands and rates,
-relay allowance and rate, billing-cycle boundaries, currency rounding, alert
-thresholds and delivery, and finalization of periods with incomplete reports.
-The repository has no production customer usage sample. Any sample counts below
+The pilot rate amounts are approved for modeling and explicit schedule
+assignment: $2.50 per device per month for devices 1–10, $1.50 for devices
+11–50, and $0.75 for each device above 50; managed relay traffic includes 10
+decimal GB per organization per month, then costs $0.20 per additional decimal
+GB. Billing-cycle boundaries, currency rounding, alert thresholds and delivery,
+and finalization of periods with incomplete reports remain unsettled. The
+repository has no production customer usage sample. Any sample counts below
 are explicit sensitivity scenarios, not forecasts.
 
 Cloud egress is only one variable cost. Published North America/Europe list
@@ -35,8 +38,9 @@ payment costs. Sources: [AWS EC2 data transfer pricing](https://aws.amazon.com/e
 
 ## Decision
 
-Propose an opt-in, versioned rate schedule and an alert evaluator. Do not enable
-charges merely because this ADR is accepted; an account must have an explicitly
+Use an opt-in, versioned rate schedule and an alert evaluator. The pilot rates
+below are approved for explicit schedule assignment. Do not enable charges
+merely because this ADR is accepted; an account must have an explicitly
 assigned schedule. Usage alerts are on by default for scheduled accounts, as
 required by #275. The notification channel and recipient selection must be
 decided before alert delivery ships. Unconfigured accounts and self-hosted
@@ -53,9 +57,9 @@ behavior.
   retain that version with every preview and charge record. Rate changes take
   effect at a period boundary; retroactive repricing is not allowed.
 - Represent money using integer currency minor units and exact rational
-  arithmetic. Do not use binary floating point. Round the sum of all line items
-  once at the invoice boundary, using half-up rounding. The currency and final
-  rounding rule still require product approval.
+  arithmetic. Do not use binary floating point. The invoice-boundary rounding
+  rule remains undecided; no rounded invoice amount is produced until that rule
+  is approved.
 
 ### Graduated device charge
 
@@ -67,9 +71,14 @@ behavior.
 - Calculate each segment from the eligible-device count and exact covered
   duration. Prorate each device's monthly rate by its fraction of the period,
   sum the exact values across all segments, and round once at invoice creation.
-- A monthly UTC calendar period is the proposed default. A month has its actual
-  elapsed duration for proration; it is not treated as a fixed 30-day month.
-  Device bands, rates, and the period convention are still unapproved inputs.
+- The approved pilot device rates are $2.50 per device per month for devices
+  1–10, $1.50 per device per month for devices 11–50, and $0.75 per device per
+  month above 50. These are graduated bands: crossing a threshold does not
+  reprice earlier devices.
+- Apply these as monthly rates, prorated by exact eligible duration within the
+  eventual billing period. The billing-cycle boundaries and proration calendar
+  convention still need approval; the calculator therefore accepts explicit
+  report periods and does not choose invoice boundaries.
 
 ### Pooled managed-relay charge
 
@@ -80,9 +89,10 @@ behavior.
 - Use decimal GB (1 GB = 1,000,000,000 bytes) for customer pricing so the
   allowance and rate map directly to the byte counter. Keep stored usage in
   exact integer bytes and compute overage as exact rational money.
-- A proposed pilot for modeling is 10 GB included per organization per month,
-  then $0.20 per additional decimal GB. It is not an accepted price. Shadow
-  usage and fully loaded relay costs must inform the final allowance and rate.
+- The approved pilot relay schedule includes 10 decimal GB per organization per
+  month, then charges $0.20 per additional decimal GB. This applies to both
+  traffic directions and remains separate from device charges. Shadow usage
+  and fully loaded relay costs should be reviewed before wider publication.
 
 ### Alerts and incomplete usage
 
@@ -105,17 +115,17 @@ behavior.
 
 ### Illustrative sensitivity scenarios
 
-The following assumes the proposed 10 GB allowance and $0.20/GB overage, and
-assumes the metered destination-write bytes are approximately the provider's
+The following uses the approved pilot rates above and assumes the metered
+destination-write bytes are approximately the provider's
 internet egress bytes. This is a scenario model, not observed customer use or
 a margin promise. Shared provider allowances can reduce marginal egress cost
 but cannot be allocated to a specific customer.
 
-| Devices | Assumed relay usage | Candidate relay overage | Approx. variable egress after listed allowances |
-| ---: | ---: | ---: | ---: |
-| 10 | 10 GB | $0 | $0–$1 |
-| 50 | 100 GB | $18 | $0–$12 |
-| 250 | 1,000 GB | $198 | $78–$112 |
+| Devices | Assumed relay usage | Device charge | Relay charge | Total pilot estimate | Approx. variable egress after listed allowances |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 10 GB | $25 | $0 | $25 | $0–$1 |
+| 50 | 100 GB | $85 | $18 | $103 | $0–$12 |
+| 250 | 1,000 GB | $235 | $198 | $433 | $78–$112 |
 
 The device counts and per-device usage assumptions are chosen solely to show
 the arithmetic. Karst has no production distribution to support these as
