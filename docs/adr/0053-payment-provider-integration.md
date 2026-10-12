@@ -17,14 +17,16 @@ relay usage source. #275 assigns account plans and payment state to the control
 plane and requires payment integration to stay outside live networking.
 
 Issue #275 selects a merchant-of-record seller model and Paddle Billing for
-the pilot. Live selling still requires Paddle onboarding and domain approval,
-confirmation of supported markets, tax category and price tax treatment, and
-an invoice/event retention period. Issue #275 approves a 14-day pilot grace
-period with billing-administrator notices and asynchronous retries. Payment
-failure does not suspend networking
-without a separately approved enforcement policy. Keep only provider
-references and minimum auditable invoice/payment state; never store card
-credentials or raw relay traffic.
+the pilot. Checkout rates are pre-tax USD, with applicable tax added and shown
+separately. Paddle business/domain approval, supported-market confirmation,
+and SaaS tax-category configuration remain live-selling gates. Issue #275
+approves a 14-day pilot grace period with billing-administrator notices and
+asynchronous retries. Payment failure does not suspend networking without a
+separately approved enforcement policy. Keep only provider references and
+minimum auditable invoice/payment state; never store card credentials or raw
+relay traffic. Retain finalized invoices and audit/payment state for seven
+years, normalized webhook events for thirteen months, and no raw webhook body
+after signature verification.
 
 ## Decision
 
@@ -38,9 +40,8 @@ forwarding. The billing console presents the returned checkout link and reads
 payment state from the webhook-backed internal ledger.
 
 The internal invoice currency is USD, matching the approved pilot rates. This
-ADR does not select invoice/event retention, refund/chargeback handling,
-price-inclusive versus price-exclusive tax presentation, or merchant payout
-currency. Verify Paddle account eligibility, supported customer markets, SaaS
+ADR does not select refund/chargeback handling or merchant payout currency.
+Verify Paddle account eligibility, supported customer markets, SaaS
 tax-category approval, seller terms, and tax configuration before live
 collection.
 
@@ -87,7 +88,8 @@ collection.
 
 - Verify Paddle webhook signatures against the raw request body and enforce
   timestamp freshness before accepting an event. Persist a normalized event
-  record with the Paddle event ID as a unique key before returning HTTP 200;
+  record with the Paddle event ID as a unique key before returning a 2xx
+  response;
   acknowledge within Paddle's five-second window and process asynchronously.
   Repeated delivery is idempotent; the same event identity with conflicting
   content is rejected and audited. Events can arrive out of order, so use
@@ -101,8 +103,9 @@ collection.
 - Retain only fields needed for payment state, financial audit, and customer
   support. Do not store card numbers, CVCs, raw payment credentials, or relay
   traffic metadata. Keep provider API secrets in deployment secret storage,
-  unavailable to relays and customers. Exact retention and access controls
-  require the data-handling decision in #275.
+  unavailable to relays and customers. Retain finalized invoices and payment
+  state seven years and normalized webhook events thirteen months; never
+  persist raw webhook bodies after signature verification.
 
 ### Provider choice and seller responsibility
 
@@ -111,8 +114,9 @@ $0.50 per Checkout transaction, and Paddle describes itself as the merchant of
 record that handles transaction processing, indirect tax, and compliant buyer
 invoices. Confirm eligibility and contractual scope with Paddle; retain the
 USD Karst invoice as the source for usage and pre-tax line amounts. Paddle
-Checkout may add or include tax based on the configured price policy and
-customer location. See [Paddle pricing](https://www.paddle.com/pricing),
+Checkout adds applicable tax to pre-tax USD rates and displays it separately,
+subject to the approved Paddle tax category and customer location. See
+[Paddle pricing](https://www.paddle.com/pricing),
 [merchant-of-record tax handling](https://www.paddle.com/help/sell/tax/how-paddle-handles-vat-on-your-behalf),
 and [Paddle setup requirements](https://developer.paddle.com/build/set-up-checklist/).
 Paddle documents that its API [does not accept client-supplied idempotency
