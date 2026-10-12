@@ -32,6 +32,18 @@ const (
 	// one for its own boundary.
 	UserRoleAdvisor UserRole = "advisor"
 
+	// UserRoleScaler is ADR-0045 §7 Phase 2's role for karst-scaler's own
+	// `drive` loop: Create access, scoped by karstAuthorization's own
+	// Scaler-role allowlist to exactly one endpoint
+	// (`/karst/v1/relays/enroll-tokens`), not "every mutation this RBAC
+	// model's module-level granularity would otherwise permit. Kept
+	// distinct from [UserRoleAdvisor] (Phase 1, read-only demand data) for
+	// the same reason that role's own doc comment gives for not reusing
+	// NOC/Auditor: a leaked read-only PAT must never be able to mint an
+	// enrollment credential, and a leaked enrollment-minting PAT must never
+	// be able to read cross-account demand data.
+	UserRoleScaler UserRole = "scaler"
+
 	UserStatusActive   UserStatus = "active"
 	UserStatusDisabled UserStatus = "disabled"
 	UserStatusInvited  UserStatus = "invited"
@@ -59,6 +71,8 @@ func StrRoleToUserRole(strRole string) UserRole {
 		return UserRoleNOC
 	case "advisor":
 		return UserRoleAdvisor
+	case "scaler":
+		return UserRoleScaler
 	default:
 		return UserRoleUnknown
 	}

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright the Karst contributors.
+#
+# ADR-0045 §7 Phase 2 PR 4: the namespace-scoped Role the karst-scaler-k8s
+# driver needs, matching deploy/kubernetes/operator/config.yaml's own
+# precedent (namespace-scoped, not cluster-scoped) rather than inventing a
+# new convention. See docs/operations/scaler-k8s-driver.md for the full
+# deployment picture this RBAC is one piece of.
+#
+# No `services` verb anywhere: the headless Service each pool's StatefulSet
+# needs is an operator-provisioned prerequisite (see the doc), not something
+# this driver creates — one less permission to grant for one less thing it
+# can get wrong.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: karst-scaler
+  namespace: karst-relays
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: karst-scaler
+  namespace: karst-relays
+rules:
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    # get+update only: the one bundle Secret per pool is created once by
+    # the operator (empty, or pre-seeded — see the doc), never by the
+    # driver itself.
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: karst-scaler
+  namespace: karst-relays
+subjects:
+  - kind: ServiceAccount
+    name: karst-scaler
+    namespace: karst-relays
+roleRef:
+  kind: Role
+  name: karst-scaler
+  apiGroup: rbac.authorization.k8s.io

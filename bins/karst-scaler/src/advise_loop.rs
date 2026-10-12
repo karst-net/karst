@@ -138,7 +138,10 @@ pub(crate) fn run(config: &Config) -> Result<(), String> {
 /// An `Agent` with root certs loaded from the OS's own store via
 /// `rustls-native-certs` — see `Cargo.toml`'s own comment for why this
 /// loop does not use ureq's bundled root-certificate options.
-fn build_agent() -> Result<ureq::Agent, String> {
+///
+/// `pub(crate)`: `drive_loop` (ADR-0045 §7 Phase 2) builds the same kind of
+/// `Agent` for the same reason and should not have to duplicate this.
+pub(crate) fn build_agent() -> Result<ureq::Agent, String> {
     let loaded = rustls_native_certs::load_native_certs();
     if loaded.certs.is_empty() {
         return Err("the host has no usable certificate authority roots".to_owned());
@@ -154,19 +157,25 @@ fn build_agent() -> Result<ureq::Agent, String> {
     Ok(ureq::Agent::new_with_config(config))
 }
 
-fn tick(
+/// Fetches this tick's region-demand signal and runs [`advise::advise`]
+/// against it. Factored out of [`tick`] so `drive_loop` (ADR-0045 §7
+/// Phase 2) reuses exactly the same solver call this subcommand already
+/// runs, rather than a second copy of it — `drive` differs from `advise`
+/// only in what happens *after* a recommendation exists.
+///
+/// `pub(crate)`: used by `drive_loop`, a sibling module in this same binary
+/// crate, not part of the `karst_scaler` library.
+pub(crate) fn tick_recommendation(
     doc: &Document,
     positions: &mut HashMap<String, Position>,
     config: &Config,
     agent: &ureq::Agent,
-    snapshot: Option<&SharedSnapshot>,
-) -> Result<(), String> {
+) -> Result<(i64, advise::Recommendation), String> {
     let now = now_unix()?;
     let period = period_key(now);
     let remaining_period_hours = hours_remaining_in_period(now);
 
     let regions: Vec<RegionDemandRow> = fetch(agent, config, "/karst/v1/demand/regions")?;
-    let anchors: Vec<AnchorHistogramRow> = fetch(agent, config, "/karst/v1/demand/anchors")?;
     let demand_by_region = demand_nodes_by_region(&regions);
 
     // Nothing is ever observed into these positions today: Phase 1 has no
@@ -210,6 +219,18 @@ fn tick(
         remaining_period_hours,
     };
     let recommendation = advise::advise(&problem).map_err(|e| e.to_string())?;
+    Ok((now, recommendation))
+}
+
+fn tick(
+    doc: &Document,
+    positions: &mut HashMap<String, Position>,
+    config: &Config,
+    agent: &ureq::Agent,
+    snapshot: Option<&SharedSnapshot>,
+) -> Result<(), String> {
+    let (now, recommendation) = tick_recommendation(doc, positions, config, agent)?;
+    let anchors: Vec<AnchorHistogramRow> = fetch(agent, config, "/karst/v1/demand/anchors")?;
 
     if let Some(shared) = snapshot {
         let configured_nodes = doc

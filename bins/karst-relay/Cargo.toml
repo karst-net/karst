@@ -56,6 +56,15 @@ rustls-pki-types = { version = "1", features = ["std"] }
 # `bins/karstd` already depends on for the analogous node-to-control-plane
 # case.
 rustls-native-certs = "0.8"
+# `enroll` (ADR-0045 §7 Phase 2 PR 4) is this crate's only outbound HTTP
+# client call -- POSTing to the control server to redeem a relay-enroll
+# token with no admin session. `rustls-no-provider` + building the `Agent`
+# explicitly, same reasoning `bins/karst-scaler`'s own `advise_loop.rs`
+# gives: ureq's default `rustls` feature would otherwise pull in `ring`
+# alongside the `aws-lc-rs` this crate's own TLS listener already requires
+# (spec §4.1's X25519MLKEM768), which is exactly the version/feature
+# unification conflict that already broke `karst-dns`'s tests once.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs"] }
 # ADR-0020. `rustls-aws-lc-rs` rather than the default `ring` backend for the

@@ -36,6 +36,93 @@ pub(crate) struct AdviseConfig {
     pub poll_interval_secs: u64,
     #[serde(default)]
     pub metrics: MetricsSection,
+    /// Required by `drive`, ignored by `advise` — ADR-0045 §6's budget
+    /// circuit breaker and independent region-allowlist re-check
+    /// (`breaker.rs`) need their own config and persisted state. `None`
+    /// here is refused at the point `drive` starts, not silently treated
+    /// as "no limit."
+    #[serde(default)]
+    pub breaker: Option<BreakerSection>,
+    /// Which concrete `Driver` `drive` actuates through — ADR-0045 §7
+    /// Phase 2 PR 4. Absent means the no-op driver (today's only option
+    /// before this PR), matching `drive`'s own prior behavior exactly.
+    #[serde(default)]
+    pub driver: Option<DriverSection>,
+}
+
+/// The `[breaker]` TOML table — see [`crate::breaker`]'s own module doc
+/// for why these are separate files from the cost model.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BreakerSection {
+    /// Path to a [`karst_scaler::breaker::BreakerLimitsDocument`] file.
+    pub limits_path: String,
+    /// Path to the breaker's persisted per-pool, per-period counters —
+    /// created on first use, read and rewritten on every `create`.
+    pub state_path: String,
+}
+
+/// The `[driver]` TOML table.
+///
+/// Every field below other than `kind` is only ever *read* by whichever
+/// one of `main.rs`'s `#[cfg(feature = "k8s")]`/`#[cfg(feature = "aws")]`
+/// builders matches `kind` -- a default build still parses and carries
+/// all of them (an operator's config must not silently lose fields
+/// depending on how the binary happened to be compiled), it just never
+/// looks at them. Each field below is `allow(dead_code)`d individually,
+/// rather than once for the whole struct, because a single-feature build
+/// (just `k8s`, or just `aws`) genuinely never reads the other kind's own
+/// fields -- a struct-level `allow` would miss exactly that case.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DriverSection {
+    /// `"noop"`, `"k8s"`, or `"aws"` — anything else is refused at the
+    /// point `drive` starts. `"k8s"`/`"aws"` on a `karst-scaler` built
+    /// without the matching Cargo feature (see `karst-scaler-k8s`/
+    /// `karst-scaler-aws`'s own crate docs) is refused the same way, not
+    /// silently downgraded to the no-op driver.
+    pub kind: String,
+    /// Required when `kind = "k8s"`: the namespace every `StatefulSet`,
+    /// `Pod`, and bundle `Secret` this driver touches lives in.
+    #[cfg_attr(not(feature = "k8s"), allow(dead_code))]
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Required when `kind = "k8s"` or `"aws"`: path to a file holding a
+    /// `UserRoleScaler`-scoped PAT (ADR-0045 §7 Phase 2 PR 3), trimmed of
+    /// surrounding whitespace when read — same convention as `pat_file`
+    /// above.
+    #[cfg_attr(not(any(feature = "k8s", feature = "aws")), allow(dead_code))]
+    #[serde(default)]
+    pub enroll_pat_file: Option<String>,
+    /// Required when `kind = "aws"`: the AWS region every EC2 call this
+    /// driver makes targets — ADR-0045 §4c's region allowlist makes this
+    /// a load-bearing fact `karst-scaler-aws` must be told explicitly,
+    /// not left to ambient discovery (see that crate's own
+    /// `AwsDriverConfig` doc).
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Required when `kind = "aws"`: the AMI every new instance of this
+    /// pool launches from — expected to already have `karst-relay`
+    /// installed and configured to run `enroll` from its own boot path.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub ami_id: Option<String>,
+    /// Required when `kind = "aws"`: the EC2 instance type new instances
+    /// launch as, e.g. `"t3.micro"`.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Required when `kind = "aws"`: the subnet new instances launch
+    /// into.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub subnet_id: Option<String>,
+    /// Required when `kind = "aws"`: the security groups new instances
+    /// launch with. At least one entry.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub security_group_ids: Vec<String>,
 }
 
 /// The `[metrics]` TOML table — same loopback-only posture as `karstd`'s own

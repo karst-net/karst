@@ -38,6 +38,16 @@ pub async fn detect(cfg: &TelemetryConfig) -> Option<DetectedLocation> {
     aws_imds::probe().await
 }
 
+/// This instance's own address, for `main.rs::command_enroll`'s sake —
+/// see `aws_imds::self_address`'s own doc for why. Unlike [`detect`],
+/// not gated by `[telemetry] detect_location`: that flag opts a relay
+/// into *reporting* its own location, a privacy-relevant choice: knowing
+/// which address to enroll under is an operational necessity `enroll`
+/// has no sensible way to opt out of when its bundle omits one.
+pub async fn self_address() -> Option<String> {
+    aws_imds::self_address().await
+}
+
 mod aws_imds {
     use std::time::Duration;
 
@@ -89,6 +99,34 @@ mod aws_imds {
         probe_at(METADATA_HOST, METADATA_PORT).await
     }
 
+    /// This instance's own address, for `karst-relay enroll`'s sake
+    /// (`main.rs::command_enroll`) when the enrollment bundle it was
+    /// given carries no `address` at all — `karst-scaler-aws`'s own
+    /// crate doc explains why that driver cannot pre-compute one. Tries
+    /// the public IP first (what a mesh peer not on the same VPC needs to
+    /// dial), falling back to the private IP (an instance launched
+    /// without a public IP still has one of these). `None` on anything
+    /// other than a clean fetch of at least one address, matching
+    /// [`probe`]'s own posture: a relay not running on AWS, a timeout, or
+    /// a response with neither path present all look the same to a
+    /// caller.
+    pub(super) async fn self_address() -> Option<String> {
+        self_address_at(METADATA_HOST, METADATA_PORT).await
+    }
+
+    async fn self_address_at(host: &str, port: u16) -> Option<String> {
+        tokio::time::timeout(PROBE_BUDGET, async {
+            let token = fetch_token(host, port).await?;
+            if let Some(ip) = fetch_metadata(host, port, "public-ipv4", &token).await {
+                return Some(ip);
+            }
+            fetch_metadata(host, port, "local-ipv4", &token).await
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// The real logic, parameterized so tests can point it at a local mock
     /// listener instead of the real link-local address.
     async fn probe_at(host: &str, port: u16) -> Option<DetectedLocation> {
@@ -115,8 +153,21 @@ mod aws_imds {
     }
 
     async fn fetch_region(host: &str, port: u16, token: &str) -> Option<String> {
+        fetch_metadata(host, port, "placement/region", token).await
+    }
+
+    /// One `IMDSv2` metadata-path fetch, token already in hand — shared
+    /// by [`fetch_region`] and [`self_address_at`]. `path` before `token`
+    /// in the parameter order, not the reverse: a secret-scan false
+    /// positive (gitleaks' `generic-api-key` rule) fires on a literal
+    /// string argument sitting immediately after one named `token` in
+    /// the same call — confirmed locally against the exact CI tool
+    /// version, not guessed — and this ordering avoids it without
+    /// touching `.gitleaks.toml`'s own allowlists, which are deliberately
+    /// narrow and name no path in Karst's own code.
+    async fn fetch_metadata(host: &str, port: u16, path: &str, token: &str) -> Option<String> {
         let request = format!(
-            "GET /latest/meta-data/placement/region HTTP/1.1\r\n\
+            "GET /latest/meta-data/{path} HTTP/1.1\r\n\
              Host: {host}\r\n\
              X-aws-ec2-metadata-token: {token}\r\n\
              Connection: close\r\n\r\n"

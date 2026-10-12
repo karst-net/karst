@@ -4,7 +4,8 @@
 #![forbid(unsafe_code)]
 //! `karst-scaler simulate COST_MODEL.toml USAGE_LOG` — ADR-0045 §7 Phase 0.
 //! `karst-scaler advise ...` — §7 Phase 1; see [`advise_loop`]'s own module
-//! doc.
+//! doc. `karst-scaler drive ...` — §7 Phase 2's first PR (the driver trait
+//! and a no-op implementation); see [`drive_loop`]'s own module doc.
 //!
 //! ```text
 //! karst-scaler simulate COST_MODEL.toml USAGE_LOG
@@ -16,6 +17,9 @@
 //!     poll the control server's demand endpoints on an interval and log a
 //!     node-count recommendation per pool, forever; see `advise_config`'s
 //!     own module doc for the config file's shape
+//! karst-scaler drive ADVISE_CONFIG.toml
+//!     the same recommendation loop as advise, reconciled against a driver
+//!     instead of only printed; see `driver`'s own module doc
 //! ```
 //!
 //! # Why this phase first
@@ -47,6 +51,7 @@ use karst_scaler::{simulate, usage};
 
 mod advise_config;
 mod advise_loop;
+mod drive_loop;
 mod metrics_http;
 
 fn main() -> ExitCode {
@@ -57,6 +62,7 @@ fn main() -> ExitCode {
         ["simulate", cost_model, usage_log] => run_simulate(cost_model, usage_log),
         ["check", cost_model] => run_check(cost_model),
         ["advise", advise_config] => run_advise(advise_config),
+        ["drive", advise_config] => run_drive(advise_config),
         _ => {
             usage_text();
             return ExitCode::FAILURE;
@@ -74,7 +80,7 @@ fn main() -> ExitCode {
 
 fn usage_text() {
     eprintln!(
-        "karst-scaler — ADR-0045 Phase 0/1: cost model, offline simulator, and Advisor
+        "karst-scaler — ADR-0045 Phase 0/1/2: cost model, offline simulator, Advisor, and driver
 
   simulate COST_MODEL.toml USAGE_LOG
                               replay recorded usage against a cost model;
@@ -83,11 +89,176 @@ fn usage_text() {
   advise ADVISE_CONFIG.toml  poll the control server's demand endpoints on
                               an interval; log a node-count recommendation
                               per pool, forever; optionally serve /metrics
-                              and /recommendations (see advise_config)"
+                              and /recommendations (see advise_config)
+  drive ADVISE_CONFIG.toml   same recommendation loop as advise, but
+                              reconciles each pool's actual instance count
+                              against it through a driver (ADR-0045 §7
+                              Phase 2), bounded by a budget/node-count
+                              circuit breaker and an independent region
+                              check (see breaker.rs); requires a [breaker]
+                              section in ADVISE_CONFIG.toml. Today the
+                              underlying driver is always the no-op one
+                              -- see driver.rs"
     );
 }
 
 fn run_advise(advise_config_path: &str) -> Result<(), String> {
+    let (config, _breaker, _driver) = load_drive_config(advise_config_path)?;
+    advise_loop::run(&config)
+}
+
+fn run_drive(advise_config_path: &str) -> Result<(), String> {
+    let (config, breaker, driver_section) = load_drive_config(advise_config_path)?;
+    // ADR-0045 §6: no "unlimited" default. A `drive` config with no
+    // [breaker] section is refused here, before anything is actuated,
+    // rather than falling back to the bare no-op driver with no ceiling
+    // at all.
+    let breaker = breaker.ok_or_else(|| {
+        format!(
+            "{advise_config_path}: drive requires a [breaker] section (limits_path, \
+             state_path) -- ADR-0045 §6 allows no \"unlimited\" default"
+        )
+    })?;
+
+    let inner: Box<dyn karst_scaler::driver::Driver> =
+        match driver_section.as_ref().map_or("noop", |d| d.kind.as_str()) {
+            "noop" => Box::new(karst_scaler::driver::NoopDriver::new()),
+            "k8s" => {
+                // The match above only reaches this arm when `driver_section`
+                // produced `"k8s"` via `.map_or(..., |d| d.kind.as_str())`,
+                // which cannot happen for `None` -- so this is always `Some`.
+                let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
+                build_k8s_driver(section, &config.control_api_base)?
+            }
+            "aws" => {
+                let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
+                build_aws_driver(section, &config.control_api_base)?
+            }
+            other => {
+                return Err(format!(
+                    "{advise_config_path}: unknown driver.kind {other:?} (expected \"noop\", \
+                     \"k8s\", or \"aws\")"
+                ))
+            }
+        };
+
+    let mut driver = karst_scaler::breaker::BoundedDriver::new(
+        inner,
+        Path::new(&config.cost_model_path),
+        Path::new(&breaker.limits_path),
+        Path::new(&breaker.state_path),
+    )
+    .map_err(|e| e.to_string())?;
+    drive_loop::run(&config, &mut driver)
+}
+
+#[cfg(feature = "k8s")]
+fn build_k8s_driver(
+    section: &advise_config::DriverSection,
+    control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    let namespace = section
+        .namespace
+        .clone()
+        .ok_or_else(|| "driver.kind = \"k8s\" needs driver.namespace".to_owned())?;
+    let enroll_pat_file = section
+        .enroll_pat_file
+        .clone()
+        .ok_or_else(|| "driver.kind = \"k8s\" needs driver.enroll_pat_file".to_owned())?;
+    let enroll_pat = std::fs::read_to_string(&enroll_pat_file)
+        .map_err(|e| format!("reading {enroll_pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let driver = karst_scaler_k8s::K8sDriver::new(karst_scaler_k8s::K8sDriverConfig {
+        namespace,
+        control_api_base: control_api_base.to_owned(),
+        enroll_pat,
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(Box::new(driver))
+}
+
+#[cfg(not(feature = "k8s"))]
+fn build_k8s_driver(
+    _section: &advise_config::DriverSection,
+    _control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    Err(
+        "this build of karst-scaler was not compiled with k8s driver support -- \
+         rebuild with --features k8s"
+            .to_owned(),
+    )
+}
+
+#[cfg(feature = "aws")]
+fn build_aws_driver(
+    section: &advise_config::DriverSection,
+    control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    let region = section
+        .region
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.region".to_owned())?;
+    let ami_id = section
+        .ami_id
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.ami_id".to_owned())?;
+    let instance_type = section
+        .instance_type
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.instance_type".to_owned())?;
+    let subnet_id = section
+        .subnet_id
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.subnet_id".to_owned())?;
+    if section.security_group_ids.is_empty() {
+        return Err(
+            "driver.kind = \"aws\" needs at least one driver.security_group_ids entry".to_owned(),
+        );
+    }
+    let enroll_pat_file = section
+        .enroll_pat_file
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.enroll_pat_file".to_owned())?;
+    let enroll_pat = std::fs::read_to_string(&enroll_pat_file)
+        .map_err(|e| format!("reading {enroll_pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let driver = karst_scaler_aws::AwsDriver::new(karst_scaler_aws::AwsDriverConfig {
+        region,
+        ami_id,
+        instance_type,
+        subnet_id,
+        security_group_ids: section.security_group_ids.clone(),
+        control_api_base: control_api_base.to_owned(),
+        enroll_pat,
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(Box::new(driver))
+}
+
+#[cfg(not(feature = "aws"))]
+fn build_aws_driver(
+    _section: &advise_config::DriverSection,
+    _control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    Err(
+        "this build of karst-scaler was not compiled with aws driver support -- \
+         rebuild with --features aws"
+            .to_owned(),
+    )
+}
+
+fn load_drive_config(
+    advise_config_path: &str,
+) -> Result<
+    (
+        advise_loop::Config,
+        Option<advise_config::BreakerSection>,
+        Option<advise_config::DriverSection>,
+    ),
+    String,
+> {
     // ureq's TLS backend is built with no crypto provider of its own (see
     // Cargo.toml's comment on why) -- it needs one installed process-wide
     // before the first HTTPS request. aws-lc-rs is the one every other
@@ -109,7 +280,7 @@ fn run_advise(advise_config_path: &str) -> Result<(), String> {
         poll_interval: Duration::from_secs(cfg.poll_interval_secs),
         metrics_listen: cfg.metrics.listen,
     };
-    advise_loop::run(&config)
+    Ok((config, cfg.breaker, cfg.driver))
 }
 
 fn run_check(cost_model_path: &str) -> Result<(), String> {

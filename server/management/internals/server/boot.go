@@ -150,7 +150,13 @@ func (s *BaseServer) IDPHandler() http.Handler {
 
 func (s *BaseServer) Router() *mux.Router {
 	return Create(s, func() *mux.Router {
-		return mux.NewRouter().PathPrefix(apiPrefix).Subrouter()
+		root := mux.NewRouter()
+		// Karst device handles use standard Base64 and may contain `/`. Keep
+		// escaped path segments intact through the root router so the Karst
+		// subrouter can decode the handle parameter instead of redirecting a
+		// request after path cleaning.
+		root.UseEncodedPath()
+		return root.PathPrefix(apiPrefix).Subrouter()
 	})
 }
 

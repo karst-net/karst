@@ -3,7 +3,11 @@
 
 // Package api serves Karst-owned administrative endpoints on the management
 // router. It deliberately consumes the router's existing authentication
-// middleware; this package never parses credentials itself.
+// middleware rather than parsing credentials itself, with one exception:
+// relaysEnroll (ADR-0045 §6) authenticates a not-yet-registered relay's own
+// one-off enrollment token directly, because that caller has no
+// router-level session to hold in the first place — see its own doc
+// comment.
 package api
 
 import (
@@ -28,6 +32,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
@@ -110,6 +115,10 @@ type handler struct {
 	// dial target (KARST_SCALER_ADVISOR_URL) -- empty in a deployment that
 	// has not configured one, see scalerRecommendations.
 	scalerAdvisorURL string
+	// knownEvents is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
+	// nil in a deployment that has not configured one, see
+	// knownEventsList/knownEventsCreate/knownEventsDelete.
+	knownEvents knownEventReader
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -267,6 +276,10 @@ type relayReader interface {
 	// own doc comment on relayreg.Store for why it is deliberately not
 	// account-scoped the way every other method here is.
 	DemandByRegion(context.Context) ([]relayreg.RegionDemand, error)
+	// DemandHistory is ADR-0045 §8 (Phase 3)'s retained time series over
+	// the same signal DemandByRegion reads live — see relayreg.Store's own
+	// doc comment on RegionDemandSample for why this exists at all.
+	DemandHistory(context.Context, time.Time, time.Time) ([]relayreg.RegionDemandSample, error)
 }
 
 // demandReader is ADR-0045 §4b/§7's deployment-wide anchor-RTT histogram —
@@ -279,6 +292,17 @@ type demandReader interface {
 type turnReader interface {
 	List(context.Context) ([]turncred.StoredTurnServer, error)
 	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
+	Delete(context.Context, string) error
+}
+
+// knownEventReader is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
+// account-scoped, the same shape turnReader already has, not deployment-
+// wide or cross-account the way relayReader.DemandHistory is: when an
+// organization's own traffic is expected to change is that organization's
+// own calendar.
+type knownEventReader interface {
+	List(context.Context) ([]knownevents.StoredKnownEvent, error)
+	Create(context.Context, knownevents.Entry) (*knownevents.StoredKnownEvent, error)
 	Delete(context.Context, string) error
 }
 
@@ -328,8 +352,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -382,14 +406,24 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays", h.relaysCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/relays/enroll-tokens", h.relayEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	// Deliberately on the parent router, not karstRouter -- see
+	// relaysEnroll's own doc comment for why. limitRequestBody is applied
+	// explicitly since this route does not inherit karstRouter's own
+	// middleware stack.
+	router.Handle("/karst/v1/relays/enroll", limitRequestBody(http.HandlerFunc(h.relaysEnroll))).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events", h.knownEventsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events", h.knownEventsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/known-events/{eventId}", h.knownEventsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock", h.bedrockStatus).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log", h.bedrockLog).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/bedrock/log/verify", h.bedrockLogVerify).Methods(http.MethodGet, http.MethodOptions)
@@ -531,7 +565,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// authorization for these resource-scoped surfaces.
 			path := strings.TrimPrefix(r.URL.Path, "/api")
 			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") || strings.HasPrefix(path, "/karst/v1/nodes") {
-				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
+				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 				next.ServeHTTP(w, r.WithContext(scoped))
 				return
 			}
@@ -545,7 +579,22 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Karst control permission denied"), w)
 				return
 			}
-			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId)
+			// ADR-0045 §6: the Scaler role exists to mint relay-enroll
+			// tokens, nothing else. roles.Scaler's own Create grant on
+			// modules.KarstControl is coarser than that (this RBAC model's
+			// only module granularity covers every mutation under
+			// /karst/v1, not just this one route — see roles.Scaler's own
+			// doc comment), so this hard allowlist is what actually keeps
+			// the role narrow, independent of whatever a future endpoint
+			// added under this same module gate would otherwise permit it
+			// to reach.
+			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
+				if strings.TrimPrefix(r.URL.Path, "/api") != relayEnrollTokensPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens"), w)
+					return
+				}
+			}
+			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
 			next.ServeHTTP(w, r.WithContext(scoped))
 		})
 	}
@@ -1502,6 +1551,153 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// relayEnrollTokensPath is the one route the Scaler role's hard allowlist
+// in karstAuthorization permits — see that allowlist's own comment and
+// relayEnrollTokensCreate below.
+const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
+
+// relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
+// §7 Phase 2) sends when it has just created a relay instance and needs a
+// credential for that instance to complete its own roster admission with.
+type relayEnrollTokenRequest struct {
+	// PoolID names the pool the new instance belongs to, carried into the
+	// minted key's own Name only for an operator reading the Auth keys
+	// console later — it plays no role in redemption.
+	PoolID string `json:"pool_id"`
+	// ExpiresInSecs overrides the default expiry (see
+	// DefaultAccountManager.MintRelayEnrollKey) — 0 means "use the
+	// default," not "never expires": this credential has no unlimited
+	// option, the same ADR-0045 §6 posture as the scaling circuit breaker.
+	ExpiresInSecs int64 `json:"expires_in_secs,omitempty"`
+}
+
+type relayEnrollTokenResponse struct {
+	Token string `json:"token"`
+}
+
+// relayEnrollTokensCreate mints ADR-0045 §6's "short-lived, single-use
+// enrollment token minted for that specific instance" — the credential a
+// relay the scaler just created redeems at relaysEnroll below, in place of
+// an admin pasting its public key into the console (relaysCreate above).
+// Reached only by a caller karstAuthorization has already resolved to the
+// Scaler role (or an Admin/Owner, who could already reach relaysCreate
+// directly) — never the relay itself, which has no session yet; that is
+// exactly the asymmetry this token exists to bridge.
+func (h *handler) relayEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	minter, ok := h.accounts.(interface {
+		MintRelayEnrollKey(context.Context, string, string, time.Duration) (string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
+		return
+	}
+	var req relayEnrollTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	token, err := minter.MintRelayEnrollKey(r.Context(), user.AccountId, req.PoolID, time.Duration(req.ExpiresInSecs)*time.Second)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(relayEnrollTokenResponse{Token: token}); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+// bearerToken reads the `Authorization: Bearer <token>` header
+// relaysEnroll's own caller — a relay with no session, only its minted
+// enroll token — authenticates with. Not reused from anywhere else in this
+// tree on purpose: see relaysEnroll's own doc comment for why this endpoint
+// is this package's one deliberate exception to parsing a credential
+// itself.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
+}
+
+// relaysEnroll lets a relay the scaler just created complete its own
+// roster admission with no admin session — ADR-0045 §6's signed-enrollment
+// requirement; see relayEnrollTokensCreate above for where its credential
+// comes from. Deliberately registered on the parent router, not
+// karstRouter (see RegisterEndpoints): every karstRouter route requires an
+// authenticated user/PAT context before any handler runs
+// (karstAuthorization's own first line), which a relay calling this for
+// the very first time does not have. The token itself — short-lived,
+// single-use, mintable only by a Scaler-role-gated caller — is this
+// endpoint's entire authentication; see the package doc comment's one
+// named exception.
+//
+// Does not add a proof-of-possession challenge for the submitted
+// IdentityKey — a relay registering here is no less trusted than one an
+// admin registers through relaysCreate today, which has the identical gap
+// (the public key is simply asserted, never challenged, at registration
+// time either way). Closing that gap for both paths at once is follow-up
+// work, not something this endpoint needs to solve alone.
+func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		util.WriteError(r.Context(), status.Errorf(status.Unauthorized, "relay enrollment requires a bearer token"), w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	consumer, ok := h.accounts.(interface {
+		ConsumeRelayEnrollKey(context.Context, string) (string, string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay enrollment is not configured"), w)
+		return
+	}
+	accountID, keyID, err := consumer.ConsumeRelayEnrollKey(r.Context(), token)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var entry relayreg.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	ctx := relayreg.WithAccount(r.Context(), accountID)
+	relay, err := h.relays.Create(ctx, entry)
+	if errors.Is(err, relayreg.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay already exists"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.relays.enroll", "relay", relay.ID); err != nil {
+			// Not fatal -- auditMutations' own doc comment gives the same
+			// reasoning: an audit outage must not turn a working
+			// admission path into an impossible one.
+			log.WithContext(r.Context()).Errorf("append relay-enroll audit event: %v", err)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
 // nocComponents is the NOC view's map data source — #241 Phase 1a,
 // ADR-0046/ADR-0047. It is deliberately just relay data reshaped through the
 // same relayResponseFor every other relay endpoint uses, not a new read
@@ -1666,6 +1862,94 @@ func (h *handler) demandRegions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// regionDemandHistoryResponse mirrors regionDemandResponse plus the one
+// field a retained sample has that a live read does not: when it was taken.
+type regionDemandHistoryResponse struct {
+	Region       string    `json:"region"`
+	AccountID    string    `json:"account_id"`
+	SampledAt    time.Time `json:"sampled_at"`
+	RTTUnder20ms int64     `json:"rtt_under_20ms"`
+	RTT20To50ms  int64     `json:"rtt_20_to_50ms"`
+	RTT50To100ms int64     `json:"rtt_50_to_100ms"`
+	RTTOver100ms int64     `json:"rtt_over_100ms"`
+}
+
+// demandRegionsHistory is ADR-0045 §8 (Phase 3)'s retained time series over
+// demandRegions' own live signal — see relayreg.Store's own doc comment on
+// RegionDemandSample for why this exists (Phases 0-1 did not actually build
+// the history §8 says they should have) and what it does and does not
+// store. Gated behind the same UserRoleAdvisor role as demandRegions, for
+// the identical reason: this is deployment-wide, cross-account data, not
+// anything scoped to the caller's own account.
+func (h *handler) demandRegionsHistory(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	since, until, err := parseDemandHistoryRange(r.URL.Query())
+	if err != nil {
+		util.WriteErrorResponse(err.Error(), http.StatusBadRequest, w)
+		return
+	}
+	rows, err := h.relays.DemandHistory(r.Context(), since, until)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]regionDemandHistoryResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, regionDemandHistoryResponse{
+			Region:       row.Region,
+			AccountID:    row.AccountID,
+			SampledAt:    row.SampledAt,
+			RTTUnder20ms: row.RTTUnder20ms,
+			RTT20To50ms:  row.RTT20To50ms,
+			RTT50To100ms: row.RTT50To100ms,
+			RTTOver100ms: row.RTTOver100ms,
+		})
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.demand.regions.history.view", "regions", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// parseDemandHistoryRange reads `since`/`until` (both RFC3339, both
+// required — there is no sensible default range for a query whose whole
+// point is "a specific window to train or chart against"). `until` must be
+// strictly after `since`, the same ordering DemandHistory's own `[since,
+// until)` contract assumes.
+func parseDemandHistoryRange(query url.Values) (time.Time, time.Time, error) {
+	rawSince, rawUntil := query.Get("since"), query.Get("until")
+	if rawSince == "" || rawUntil == "" {
+		return time.Time{}, time.Time{}, errors.New("since and until (RFC3339) are both required")
+	}
+	since, err := time.Parse(time.RFC3339, rawSince)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("since: %w", err)
+	}
+	until, err := time.Parse(time.RFC3339, rawUntil)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("until: %w", err)
+	}
+	if !until.After(since) {
+		return time.Time{}, time.Time{}, errors.New("until must be after since")
+	}
+	return since, until, nil
 }
 
 // demandAnchors is ADR-0045 §7 Phase 1's second demand-side input — §4b's
@@ -1852,6 +2136,73 @@ func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.turns.Delete(r.Context(), mux.Vars(r)["turnId"]); errors.Is(err, turncred.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// knownEventsList/knownEventsCreate/knownEventsDelete are ADR-0045 §8
+// (Phase 3)'s operator-entered calendar -- the same shape as
+// turnsList/turnsCreate/turnsDelete above, account-scoped via the ordinary
+// karstAuthorization gate (this is the caller's own account's data, not
+// cross-account the way the demand-history endpoint is).
+func (h *handler) knownEventsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	events, err := h.knownEvents.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, events)
+}
+
+func (h *handler) knownEventsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	var entry knownevents.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	event, err := h.knownEvents.Create(r.Context(), entry)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(event); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+func (h *handler) knownEventsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.knownEvents == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "known events are not configured"), w)
+		return
+	}
+	if err := h.knownEvents.Delete(r.Context(), mux.Vars(r)["eventId"]); errors.Is(err, knownevents.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "known event not found"), w)
 		return
 	} else if err != nil {
 		util.WriteError(r.Context(), err, w)
