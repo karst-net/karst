@@ -76,8 +76,7 @@ pub(crate) struct Config {
 #[derive(Debug, Deserialize)]
 struct RegionDemandRow {
     region: String,
-    #[serde(rename = "account_id")]
-    _account_id: String,
+    account_id: String,
     rtt_under_20ms: i64,
     rtt_20_to_50ms: i64,
     rtt_50_to_100ms: i64,
@@ -170,13 +169,13 @@ pub(crate) fn tick_recommendation(
     positions: &mut HashMap<String, Position>,
     config: &Config,
     agent: &ureq::Agent,
-) -> Result<(i64, advise::Recommendation), String> {
+) -> Result<(i64, advise::Recommendation, Vec<UnplaceableDemand>), String> {
     let now = now_unix()?;
     let period = period_key(now);
     let remaining_period_hours = hours_remaining_in_period(now);
 
     let regions: Vec<RegionDemandRow> = fetch(agent, config, "/karst/v1/demand/regions")?;
-    let demand_by_region = demand_nodes_by_region(&regions);
+    let (demand_by_pool, unplaceable) = attribute_demand(doc, &regions);
 
     // Nothing is ever observed into these positions today: Phase 1 has no
     // live feed of real per-node usage (that needs either Phase 2's driver
@@ -194,8 +193,7 @@ pub(crate) fn tick_recommendation(
 
     let mut states = Vec::with_capacity(doc.pools.len());
     for (pool_id, pool) in &doc.pools {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let demand_nodes = demand_by_region.get(&pool.region).copied().unwrap_or(0.0) as u32;
+        let demand_nodes = demand_by_pool.get(pool_id).copied().unwrap_or(0);
         // Inserted above for every pool_id in doc.pools, so this cannot
         // actually miss -- `unwrap_or_else(|| unreachable!())` rather than
         // `.expect(...)` to satisfy this crate's workspace-wide
@@ -219,7 +217,7 @@ pub(crate) fn tick_recommendation(
         remaining_period_hours,
     };
     let recommendation = advise::advise(&problem).map_err(|e| e.to_string())?;
-    Ok((now, recommendation))
+    Ok((now, recommendation, unplaceable))
 }
 
 fn tick(
@@ -229,7 +227,7 @@ fn tick(
     agent: &ureq::Agent,
     snapshot: Option<&SharedSnapshot>,
 ) -> Result<(), String> {
-    let (now, recommendation) = tick_recommendation(doc, positions, config, agent)?;
+    let (now, recommendation, unplaceable) = tick_recommendation(doc, positions, config, agent)?;
     let anchors: Vec<AnchorHistogramRow> = fetch(agent, config, "/karst/v1/demand/anchors")?;
 
     if let Some(shared) = snapshot {
@@ -242,6 +240,7 @@ fn tick(
             tick_unix: now,
             recommendation: recommendation.clone(),
             configured_nodes,
+            unplaceable_demand: unplaceable.clone(),
         };
         *shared
             .lock()
@@ -260,6 +259,19 @@ fn tick(
             pool.pool_id, pool.desired_nodes, pool.cost_delta, pool.binding_constraint
         );
     }
+    if !unplaceable.is_empty() {
+        println!(
+            "  residency: {} account/region pairs could not be placed on any pool \
+             (ADR-0045 §3 -- no pool satisfies their residency requirement)",
+            unplaceable.len()
+        );
+        for u in &unplaceable {
+            println!(
+                "    account={} region={} nodes={}",
+                u.account_id, u.region, u.nodes
+            );
+        }
+    }
     let anchor_total: i64 = anchors.iter().map(|a| a.count).sum();
     println!(
         "  anchors: {} rows, {anchor_total} total observations (candidate-region promotion not implemented)",
@@ -275,25 +287,91 @@ fn tick(
     Ok(())
 }
 
-/// See the module doc's "two placeholders" section.
-fn demand_nodes_by_region(rows: &[RegionDemandRow]) -> HashMap<String, f64> {
-    let mut sessions: HashMap<String, i64> = HashMap::new();
+/// One account's demand that matched zero pools eligible to serve it —
+/// ADR-0045 §3's Residency constraint, §3's own "not a candidate, not a
+/// penalized candidate" framing: this demand is never silently folded
+/// into some other, ineligible pool's count. See [`attribute_demand`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct UnplaceableDemand {
+    pub region: String,
+    pub account_id: String,
+    pub nodes: u32,
+}
+
+/// Aggregates `rows` by `(region, account_id)`, then attributes each
+/// pair's demand to every pool in `doc.pools` whose region matches *and*
+/// whose [`crate::cost_model::Pool::residency_tags`] satisfy that
+/// account's own requirement (`doc.account_residency` — absent or empty
+/// means no requirement, eligible everywhere) — ADR-0045 §3's Residency
+/// constraint. A pair matching zero eligible pools in its own region is
+/// never silently dropped into the regional total; it comes back
+/// separately as [`UnplaceableDemand`].
+///
+/// When no account has a residency requirement at all, every pool in a
+/// region receives that region's full combined demand, exactly as
+/// before this constraint existed — including the pre-existing, already
+/// documented simplification that two pools sharing one region both see
+/// its full demand rather than splitting it; this change narrows what
+/// counts toward a pool, it does not newly arbitrate between several
+/// equally-eligible ones. See the module doc's "two placeholders"
+/// section for the sessions -> nodes formula this reuses unchanged.
+fn attribute_demand(
+    doc: &Document,
+    rows: &[RegionDemandRow],
+) -> (HashMap<String, u32>, Vec<UnplaceableDemand>) {
+    let mut sessions_by_region_account: HashMap<(String, String), i64> = HashMap::new();
     for row in rows {
         let total =
             row.rtt_under_20ms + row.rtt_20_to_50ms + row.rtt_50_to_100ms + row.rtt_over_100ms;
-        *sessions.entry(row.region.clone()).or_insert(0) += total;
+        *sessions_by_region_account
+            .entry((row.region.clone(), row.account_id.clone()))
+            .or_insert(0) += total;
     }
-    sessions
-        .into_iter()
-        .map(|(region, total)| {
-            #[allow(clippy::cast_precision_loss)]
-            let total = total as f64;
-            (
+
+    let mut sessions_by_pool: HashMap<String, i64> = HashMap::new();
+    let mut unplaceable = Vec::new();
+
+    for ((region, account_id), total_sessions) in sessions_by_region_account {
+        let required = doc
+            .account_residency
+            .get(&account_id)
+            .map_or(&[][..], Vec::as_slice);
+        let eligible_pool_ids: Vec<&str> = doc
+            .pools
+            .iter()
+            .filter(|(_, pool)| pool.region == region && pool.satisfies_residency(required))
+            .map(|(pool_id, _)| pool_id.as_str())
+            .collect();
+
+        if eligible_pool_ids.is_empty() {
+            unplaceable.push(UnplaceableDemand {
                 region,
-                (total / PLACEHOLDER_SESSIONS_PER_NODE).ceil().max(0.0),
-            )
-        })
-        .collect()
+                account_id,
+                nodes: sessions_to_nodes(total_sessions),
+            });
+            continue;
+        }
+
+        for pool_id in eligible_pool_ids {
+            *sessions_by_pool.entry(pool_id.to_owned()).or_insert(0) += total_sessions;
+        }
+    }
+
+    let demand_nodes = sessions_by_pool
+        .into_iter()
+        .map(|(pool_id, total)| (pool_id, sessions_to_nodes(total)))
+        .collect();
+    (demand_nodes, unplaceable)
+}
+
+/// See the module doc's "two placeholders" section — the crude
+/// sessions-per-node stand-in, unchanged by residency attribution.
+fn sessions_to_nodes(total_sessions: i64) -> u32 {
+    #[allow(clippy::cast_precision_loss)]
+    let total = total_sessions as f64;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let nodes = (total / PLACEHOLDER_SESSIONS_PER_NODE).ceil().max(0.0) as u32;
+    nodes
 }
 
 fn fetch<T: serde::de::DeserializeOwned>(
@@ -317,4 +395,123 @@ fn now_unix() -> Result<i64, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("system clock: {e}"))?;
     Ok(i64::try_from(since_epoch.as_secs()).unwrap_or(i64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+    use karst_scaler::cost_model::{CostModel, Pool, Provider};
+
+    fn pool(region: &str, residency_tags: &[&str]) -> Pool {
+        Pool {
+            provider: Provider::Onprem,
+            region: region.to_owned(),
+            cost_model: CostModel::default(),
+            min_nodes: 0,
+            nodes_max: None,
+            residency_tags: residency_tags.iter().map(|t| (*t).to_owned()).collect(),
+        }
+    }
+
+    fn row(region: &str, account_id: &str, sessions: i64) -> RegionDemandRow {
+        // All of one account's sessions in one RTT bucket -- attribution
+        // only cares about the per-(region, account) total.
+        RegionDemandRow {
+            region: region.to_owned(),
+            account_id: account_id.to_owned(),
+            rtt_under_20ms: sessions,
+            rtt_20_to_50ms: 0,
+            rtt_50_to_100ms: 0,
+            rtt_over_100ms: 0,
+        }
+    }
+
+    #[test]
+    fn an_account_with_no_residency_requirement_is_counted_in_every_pool_sharing_its_region() {
+        // The pre-existing, already-documented simplification: two pools
+        // in one region both see the region's full demand. This must
+        // hold unchanged when nothing has a residency requirement at
+        // all -- the regression case.
+        let mut doc = Document::default();
+        doc.pools.insert("a".to_owned(), pool("eu-west-1", &[]));
+        doc.pools.insert("b".to_owned(), pool("eu-west-1", &[]));
+        let rows = [row("eu-west-1", "acct-1", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert!(unplaceable.is_empty());
+        assert_eq!(demand.get("a").copied(), Some(5));
+        assert_eq!(demand.get("b").copied(), Some(5));
+    }
+
+    #[test]
+    fn an_ineligible_accounts_demand_is_excluded_from_a_mismatched_pool() {
+        let mut doc = Document::default();
+        doc.pools
+            .insert("eu-pool".to_owned(), pool("eu-west-1", &["eu"]));
+        doc.pools
+            .insert("plain-pool".to_owned(), pool("eu-west-1", &[]));
+        doc.account_residency
+            .insert("acct-eu".to_owned(), vec!["eu".to_owned()]);
+        let rows = [row("eu-west-1", "acct-eu", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert!(unplaceable.is_empty());
+        assert_eq!(demand.get("eu-pool").copied(), Some(5));
+        // Not eligible for acct-eu's demand -- its own tags don't satisfy
+        // the account's requirement, so it gets none of it.
+        assert_eq!(demand.get("plain-pool").copied(), None);
+    }
+
+    #[test]
+    fn demand_with_no_eligible_pool_anywhere_is_unplaceable_not_dropped_into_another_pool() {
+        let mut doc = Document::default();
+        doc.pools
+            .insert("plain-pool".to_owned(), pool("eu-west-1", &[]));
+        doc.account_residency
+            .insert("acct-eu".to_owned(), vec!["eu".to_owned()]);
+        let rows = [row("eu-west-1", "acct-eu", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert_eq!(demand.get("plain-pool").copied(), None);
+        assert_eq!(unplaceable.len(), 1);
+        let only = unplaceable.first().expect("one unplaceable entry");
+        assert_eq!(only.region, "eu-west-1");
+        assert_eq!(only.account_id, "acct-eu");
+        assert_eq!(only.nodes, 5);
+    }
+
+    #[test]
+    fn an_account_absent_from_account_residency_has_no_restriction() {
+        let mut doc = Document::default();
+        doc.pools.insert("a".to_owned(), pool("eu-west-1", &["eu"]));
+        // A different account does have a requirement, but acct-open
+        // (this test's account) has no entry at all.
+        doc.account_residency
+            .insert("acct-strict".to_owned(), vec!["us".to_owned()]);
+        let rows = [row("eu-west-1", "acct-open", 300)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert!(unplaceable.is_empty());
+        assert_eq!(demand.get("a").copied(), Some(3));
+    }
+
+    #[test]
+    fn demand_in_a_different_region_never_reaches_a_pool_elsewhere() {
+        let mut doc = Document::default();
+        doc.pools.insert("eu".to_owned(), pool("eu-west-1", &[]));
+        doc.pools.insert("us".to_owned(), pool("us-east-1", &[]));
+        let rows = [row("eu-west-1", "acct-1", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert!(unplaceable.is_empty());
+        assert_eq!(demand.get("eu").copied(), Some(5));
+        assert_eq!(demand.get("us").copied(), None);
+    }
 }

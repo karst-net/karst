@@ -37,6 +37,8 @@ use std::time::Duration;
 
 use karst_scaler::advise::Recommendation;
 
+use crate::advise_loop::UnplaceableDemand;
+
 /// How long a poll-for-shutdown iteration waits before checking again —
 /// mirrors `karstd::metrics_http`'s own constant.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -52,6 +54,11 @@ pub(crate) struct Snapshot {
     pub tick_unix: i64,
     pub recommendation: Recommendation,
     pub configured_nodes: HashMap<String, u32>,
+    /// ADR-0045 §3's Residency constraint: account/region demand that
+    /// matched zero pools eligible to serve it this tick — see
+    /// `advise_loop::attribute_demand`'s own doc comment for why this is
+    /// reported rather than silently folded into some other pool's count.
+    pub unplaceable_demand: Vec<UnplaceableDemand>,
 }
 
 /// Shared between `advise_loop`'s tick loop (writer) and this module's
@@ -227,6 +234,18 @@ fn render_prometheus(snap: &Snapshot) -> String {
         snap.recommendation.baseline_cost
     );
 
+    out.push_str("# HELP karst_scaler_unplaceable_demand_nodes ADR-0045 §3's Residency constraint: an account's demand this many nodes could not be placed on any pool this tick, by region and account. See docs/observability.md.\n");
+    out.push_str("# TYPE karst_scaler_unplaceable_demand_nodes gauge\n");
+    for u in &snap.unplaceable_demand {
+        let _ = writeln!(
+            out,
+            "karst_scaler_unplaceable_demand_nodes{{region=\"{}\",account=\"{}\"}} {}",
+            escape(&u.region),
+            escape(&u.account_id),
+            u.nodes
+        );
+    }
+
     out.push_str(
         "# HELP karst_scaler_last_tick_timestamp_seconds Unix time of the last completed tick.\n",
     );
@@ -303,6 +322,11 @@ mod tests {
                 baseline_cost: 500.0,
             },
             configured_nodes: HashMap::from([("aws-use1".to_owned(), 2)]),
+            unplaceable_demand: vec![UnplaceableDemand {
+                region: "eu-west-1".to_owned(),
+                account_id: "acct-eu".to_owned(),
+                nodes: 3,
+            }],
         }
     }
 
@@ -316,6 +340,9 @@ mod tests {
             "karst_scaler_binding_constraint{pool=\"aws-use1\",constraint=\"headroom\"} 1"
         ));
         assert!(text.contains("karst_scaler_baseline_cost_usd 500"));
+        assert!(text.contains(
+            "karst_scaler_unplaceable_demand_nodes{region=\"eu-west-1\",account=\"acct-eu\"} 3"
+        ));
         assert!(text.contains("karst_scaler_last_tick_timestamp_seconds 1700000000"));
     }
 

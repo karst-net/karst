@@ -275,6 +275,28 @@ pub struct Pool {
     /// physical limit is the usual reason to set this.
     #[serde(default)]
     pub nodes_max: Option<u32>,
+
+    /// ADR-0045 §3's Residency constraint: the compliance/jurisdiction
+    /// tags this pool satisfies, e.g. `["eu"]`. Empty (the default) means
+    /// no restriction — eligible for every account regardless of its own
+    /// requirement. See [`Document::account_residency`] for the other
+    /// half of the match, and `advise_loop`'s demand-attribution step
+    /// (not this crate's library code) for where this is actually
+    /// enforced — see `advise.rs`'s own module doc for why.
+    #[serde(default)]
+    pub residency_tags: Vec<String>,
+}
+
+impl Pool {
+    /// Whether this pool is an eligible destination for an account whose
+    /// own residency requirement is `required` — every tag in `required`
+    /// must be present in [`Self::residency_tags`] (superset match). An
+    /// empty `required` (no requirement at all) is always eligible,
+    /// regardless of this pool's own tags.
+    #[must_use]
+    pub fn satisfies_residency(&self, required: &[String]) -> bool {
+        required.iter().all(|tag| self.residency_tags.contains(tag))
+    }
 }
 
 /// The whole cost-model file: one `[pools.<id>]` table per pool, keyed by
@@ -295,6 +317,17 @@ pub struct Document {
     /// [`Self::validate`] where it can name the pool at fault.
     #[serde(default)]
     pub allowed_regions: HashMap<Provider, Vec<String>>,
+
+    /// `[account_residency]` — ADR-0045 §3's Residency constraint: which
+    /// tags ([`Pool::residency_tags`]) an account/aquifer's demand may
+    /// only be attributed to, keyed by account id. An account absent
+    /// here (or with an empty list) has no restriction. No per-account
+    /// declaration like this exists anywhere else in this system today
+    /// (confirmed, not assumed) — this is operator-maintained here, the
+    /// same "committed as a reviewable file" posture [`Self::allowed_regions`]
+    /// already has, not sourced from a live account/policy system.
+    #[serde(default)]
+    pub account_residency: HashMap<String, Vec<String>>,
 }
 
 impl Document {
@@ -361,6 +394,36 @@ impl Document {
                         commitment.meter
                     )));
                 }
+            }
+        }
+        self.check_account_residency()?;
+        Ok(())
+    }
+
+    /// ADR-0045 §3's Residency constraint: for every `account_residency`
+    /// entry with a non-empty tag list, at least one pool in this whole
+    /// document must satisfy it — catching "declared a requirement no
+    /// pool can ever meet" at config-load time, the same fail-closed,
+    /// name-the-offender posture [`Self::check_allowed_region`] already
+    /// has. Document-wide, not per-pool: a requirement is satisfiable by
+    /// *any* pool, not necessarily every pool.
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] naming the account and the tags no pool satisfies.
+    fn check_account_residency(&self) -> Result<(), Error> {
+        for (account_id, required) in &self.account_residency {
+            if required.is_empty() {
+                continue;
+            }
+            if !self
+                .pools
+                .values()
+                .any(|pool| pool.satisfies_residency(required))
+            {
+                return Err(Error::Invalid(format!(
+                    "account_residency.{account_id}: no pool in this document is tagged \
+                     {required:?} -- this account's demand could never be placed"
+                )));
             }
         }
         Ok(())
@@ -865,5 +928,81 @@ bands = [{ unit_price = 0.02 }]
         assert!(d.validate().is_ok());
         let pool = d.pools.get("p").expect("pool p");
         assert!(pool.cost_model.edges.contains_key(&EdgeClass::CrossRegion));
+    }
+
+    #[test]
+    fn residency_tags_and_account_residency_default_to_empty() {
+        // MINIMAL has neither section at all -- an existing deployment
+        // with no residency config must keep validating unchanged.
+        let d = Document::parse(MINIMAL).expect("parses");
+        assert!(d.validate().is_ok());
+        assert!(d
+            .pools
+            .get("onprem-mia")
+            .expect("pool onprem-mia")
+            .residency_tags
+            .is_empty());
+        assert!(d.account_residency.is_empty());
+    }
+
+    #[test]
+    fn satisfies_residency_is_a_superset_match() {
+        let text = format!("{MINIMAL}\n");
+        let d = Document::parse(&text).expect("parses");
+        let mut pool = d.pools.get("onprem-mia").expect("pool onprem-mia").clone();
+        pool.residency_tags = vec!["eu".to_owned(), "iso27001".to_owned()];
+
+        assert!(pool.satisfies_residency(&[]));
+        assert!(pool.satisfies_residency(&["eu".to_owned()]));
+        assert!(pool.satisfies_residency(&["eu".to_owned(), "iso27001".to_owned()]));
+        assert!(!pool.satisfies_residency(&["us".to_owned()]));
+        assert!(!pool.satisfies_residency(&["eu".to_owned(), "us".to_owned()]));
+    }
+
+    #[test]
+    fn an_account_with_no_pool_satisfying_its_residency_requirement_is_refused() {
+        let text = format!("{MINIMAL}\n[account_residency]\nacct-eu = [\"eu\"]\n");
+        let d = Document::parse(&text).expect("parses");
+        let err = d
+            .validate()
+            .expect_err("no pool is tagged eu, so acct-eu's demand could never be placed");
+        assert!(
+            format!("{err}").contains("account_residency.acct-eu"),
+            "{err}"
+        );
+        assert!(format!("{err}").contains("eu"), "{err}");
+    }
+
+    #[test]
+    fn an_account_requirement_satisfied_by_some_pool_validates() {
+        let text = r#"
+[account_residency]
+acct-eu = ["eu"]
+
+[pools.p]
+provider = "onprem"
+region = "x"
+residency_tags = ["eu"]
+
+[pools.p.cost_model.meters.m]
+mode = "graduated"
+bands = [{ unit_price = 0.0 }]
+"#;
+        let d = Document::parse(text).expect("parses");
+        assert!(d.validate().is_ok());
+        assert_eq!(
+            d.pools.get("p").expect("pool p").residency_tags,
+            vec!["eu".to_owned()]
+        );
+    }
+
+    #[test]
+    fn an_account_with_an_empty_residency_list_is_unrestricted() {
+        let text = format!("{MINIMAL}\n[account_residency]\nacct-any = []\n");
+        let d = Document::parse(&text).expect("parses");
+        // An empty list is explicitly "no requirement," not "no pool can
+        // ever satisfy it" -- must not be refused the way a non-empty,
+        // unsatisfiable list would be.
+        assert!(d.validate().is_ok());
     }
 }

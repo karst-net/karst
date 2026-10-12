@@ -274,6 +274,7 @@ first tick completes, never a fabricated empty body:
 | `karst_scaler_cost_delta_usd` | gauge | `pool` | `recommended_nodes`'s cost for the rest of the billing period minus `configured_nodes`'s — the ADR's own worked example ("aws-use1 configured for 2, Advisor recommends 5, bound by Headroom, +$340/mo") is this value. Positive means the Advisor recommends spending more. |
 | `karst_scaler_binding_constraint` | gauge | `pool`, `constraint` | `1` for whichever hard constraint explains `recommended_nodes` (`headroom`, `capacity`, or `none` — see `advise.rs`'s own module doc for which of §3's six named constraints this phase can actually produce and why). |
 | `karst_scaler_baseline_cost_usd` | gauge | *(none)* | Sum of every pool's naive-greedy-baseline cost this tick — the solver's own never-worse-than invariant, not "the bill." |
+| `karst_scaler_unplaceable_demand_nodes` | gauge | `region`, `account` | ADR-0045 §3's Residency constraint: this account's demand in this region matched zero pools whose `residency_tags` satisfy its requirement, this tick. Never folded into another pool's count — see `advise_loop.rs`'s `attribute_demand`. Any non-zero value here means real demand this deployment cannot currently serve within its own compliance declarations; investigate rather than ignore. |
 | `karst_scaler_last_tick_timestamp_seconds` | gauge | *(none)* | Unix time of the last tick that completed successfully. Stale relative to now by more than a few poll intervals means the loop is failing every tick (check the process's own stderr) or has stopped. |
 
 ```promql
@@ -285,4 +286,8 @@ sum(karst_scaler_cost_delta_usd)
 
 # The loop has gone quiet.
 time() - karst_scaler_last_tick_timestamp_seconds > 300
+
+# Any account/region whose demand this deployment cannot currently
+# place anywhere, given its own residency declarations.
+karst_scaler_unplaceable_demand_nodes > 0
 ```
