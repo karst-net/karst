@@ -56,7 +56,9 @@ selects no customer-facing cap amount.
   every outstanding grant has been surrendered or safely expired and fenced,
   and only when already-consumed spend fits below the new cap. A registry flag
   alone cannot revoke credits cached on an unreachable relay; consumed spend
-  cannot be undone by lowering a cap.
+  cannot be undone by lowering a cap. The current relay client does not yet
+  expose grant surrender, so an in-period decrease after grant issuance may
+  remain blocked until the next period.
 
 ### Central reservation, local enforcement
 

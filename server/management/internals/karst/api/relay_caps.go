@@ -132,7 +132,7 @@ func RegisterRelayCapEndpoints(router *mux.Router, manager permissions.Manager, 
 				case errors.Is(err, billing.ErrScheduleUnassigned):
 					err = status.Errorf(status.PreconditionFailed, "no billing schedule is assigned for this period")
 				case errors.Is(err, billing.ErrRelayCapDecrease):
-					err = status.Errorf(status.PreconditionFailed, "a current-period decrease waits until outstanding relay credits are safely returned")
+					err = status.Errorf(status.PreconditionFailed, "a current-period decrease is blocked while relay credits remain reserved; it may be unavailable until the next period")
 				case errors.Is(err, billing.ErrInvalidPeriod), errors.Is(err, billing.ErrInvalidRateSchedule):
 					err = status.Errorf(status.InvalidArgument, "relay cap settings are invalid for this billing schedule")
 				default:

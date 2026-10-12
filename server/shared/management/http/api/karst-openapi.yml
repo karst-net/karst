@@ -92,7 +92,7 @@ paths:
     put:
       operationId: setRelaySpendingCap
       tags: [billing]
-      description: Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. A safe decrease may take effect after outstanding uncapped leases expire.
+      description: Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases are rejected while relay credits remain reserved; since this release has no grant-surrender endpoint, a current-period decrease may remain unavailable until the next period. Increases remain available.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCapDraft'}}}}
       responses:
         '200': {description: Saved cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
