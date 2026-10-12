@@ -6,6 +6,7 @@ package karstusage_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/netbirdio/netbird/management/cmd/karstusage"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
+	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/store"
@@ -54,6 +57,18 @@ func execute(s *store.SqlStore, args ...string) (usage.CollectionStatus, error) 
 		return state, err
 	}
 	return state, json.Unmarshal(output.Bytes(), &state)
+}
+
+func executeRaw(s *store.SqlStore, args ...string) (string, error) {
+	var output bytes.Buffer
+	command := karstusage.NewCommands(func(cmd *cobra.Command, fn func(context.Context, store.Store) error) error {
+		return fn(cmd.Context(), s)
+	})
+	command.SetArgs(args)
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	err := command.Execute()
+	return output.String(), err
 }
 
 func TestCollectionCommandsScopeAndAudit(t *testing.T) {
@@ -150,4 +165,61 @@ func TestOperatorReconciliationRecordsIncompleteCoverage(t *testing.T) {
 	require.Equal(t, "karst.usage.collection.reconcile", entry.Action)
 	_, err = execute(s, "devices", "enable", "--account-id", "missing", "--actor", "operator", "--all-writers-instrumented")
 	require.Error(t, err)
+}
+
+func TestManagedRelayAuthorizationIsExplicitAuditedAndRevocable(t *testing.T) {
+	s := fixture(t)
+	key, err := identity.FromSeed(bytes.Repeat([]byte{8}, identity.SeedSize))
+	require.NoError(t, err)
+	mapping, err := usage.PersistRelayMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
+	require.NoError(t, err)
+	_, err = relayusage.NewStore(s.GetDB())
+	require.NoError(t, err)
+
+	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator-one")
+	require.NoError(t, err)
+	var authorized struct {
+		RelayID string `json:"relay_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &authorized))
+	require.NotEmpty(t, authorized.RelayID)
+
+	_, err = executeRaw(s, "relays", "allow-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-one")
+	require.NoError(t, err)
+	var allowed int64
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("relay_id = ? AND enabled = ?", authorized.RelayID, true).Count(&allowed).Error)
+	require.EqualValues(t, 1, allowed)
+
+	_, err = executeRaw(s, "relays", "revoke-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator-two")
+	require.NoError(t, err)
+	_, err = executeRaw(s, "relays", "revoke", "--relay-id", authorized.RelayID, "--actor", "operator-two")
+	require.NoError(t, err)
+	var enabled int64
+	require.NoError(t, s.GetDB().Table("karst_usage_managed_producers").Where("relay_id = ? AND enabled = ?", authorized.RelayID, true).Count(&enabled).Error)
+	require.Zero(t, enabled)
+	var entries []audit.Entry
+	require.NoError(t, s.GetDB().Order("seq").Find(&entries).Error)
+	require.Len(t, entries, 4)
+	require.Equal(t, "karst.usage.relay.authorize", entries[0].Action)
+	require.Equal(t, "karst.usage.relay.allow-mapping", entries[1].Action)
+	require.Equal(t, "operator:operator-two", entries[3].Actor)
+	require.Equal(t, "karst.usage.relay.revoke", entries[3].Action)
+}
+
+func TestManagedRelayCommandsValidateBeforeOpeningStore(t *testing.T) {
+	for _, args := range [][]string{
+		{"relays", "authorize", "--identity-key", "not-base64", "--deployment-id", "deployment-a", "--actor", "operator"},
+		{"relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(make([]byte, identity.PublicKeySize)), "--deployment-id", "deployment-a"},
+		{"relays", "revoke", "--relay-id", "bad", "--actor", "operator"},
+		{"relays", "allow-mapping", "--relay-id", "bad", "--deployment-id", "deployment-a", "--mapping-version", "x", "--actor", "operator"},
+	} {
+		command := karstusage.NewCommands(func(*cobra.Command, func(context.Context, store.Store) error) error {
+			t.Fatal("invalid relay command must not open storage")
+			return nil
+		})
+		command.SetArgs(args)
+		command.SetOut(io.Discard)
+		command.SetErr(io.Discard)
+		require.Error(t, command.Execute())
+	}
 }

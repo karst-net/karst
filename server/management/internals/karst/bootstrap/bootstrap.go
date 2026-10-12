@@ -40,6 +40,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
@@ -207,6 +208,10 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
 	relayStore.Metrics = karstMetrics
+	usageRelayStore, err := relayusage.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: relay usage store: %w", err)
+	}
 	turnStore, err := turncred.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: turn store: %w", err)
@@ -269,6 +274,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
+		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}
