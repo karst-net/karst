@@ -4,6 +4,8 @@
 package billing
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -76,4 +78,41 @@ func TestEvaluateRelayAlertsRejectsInvalidPeriodUsageAndCap(t *testing.T) {
 	cap := int64(1)
 	_, err = EvaluateRelayAlerts(report, noRelayPrice, &cap)
 	require.ErrorIs(t, err, ErrInvalidRateSchedule)
+}
+
+func TestRelayAlertStoreIsAccountScopedAndDeduplicatesThresholds(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "org-alert")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	schedule := testSchedule()
+	require.NoError(t, store.PutSchedule(ctx, schedule))
+	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
+	report := completeRelayReport(start, end, "9000000000")
+	alerts, err := EvaluateRelayAlerts(report, schedule, nil)
+	require.NoError(t, err)
+	require.NoError(t, store.RecordRelayAlerts(ctx, alerts))
+	require.NoError(t, store.RecordRelayAlerts(ctx, alerts))
+
+	stored, err := store.RelayAlerts(ctx, start, end)
+	require.NoError(t, err)
+	require.Equal(t, alerts, stored)
+	other, err := store.RelayAlerts(WithAccount(context.Background(), "org-other"), start, end)
+	require.NoError(t, err)
+	require.Empty(t, other)
+	if err := store.RecordRelayAlerts(context.Background(), alerts); !errors.Is(err, ErrNoBillingAccount) {
+		t.Fatalf("record without account scope = %v, want ErrNoBillingAccount", err)
+	}
+}
+
+func TestRelayAlertStoreRequiresAssignedSchedule(t *testing.T) {
+	store := testBillingStore(t)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	schedule := testSchedule()
+	report := completeRelayReport(start, end, "9000000000")
+	alerts, err := EvaluateRelayAlerts(report, schedule, nil)
+	require.NoError(t, err)
+	err = store.RecordRelayAlerts(WithAccount(context.Background(), "org-unassigned"), alerts)
+	require.ErrorIs(t, err, ErrScheduleUnassigned)
 }

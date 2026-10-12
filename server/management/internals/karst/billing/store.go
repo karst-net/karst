@@ -87,6 +87,20 @@ type invoiceRow struct {
 
 func (invoiceRow) TableName() string { return "karst_billing_invoices" }
 
+type relayAlertRow struct {
+	AccountID       string    `gorm:"primaryKey;size:128"`
+	PeriodStartUS   int64     `gorm:"primaryKey"`
+	ScheduleVersion string    `gorm:"primaryKey;size:128"`
+	Target          string    `gorm:"primaryKey;size:32"`
+	Threshold       uint8     `gorm:"primaryKey"`
+	PeriodEndUS     int64     `gorm:"not null"`
+	Digest          string    `gorm:"size:64;not null"`
+	Snapshot        []byte    `gorm:"not null"`
+	CreatedAt       time.Time `gorm:"not null"`
+}
+
+func (relayAlertRow) TableName() string { return "karst_billing_relay_alerts" }
+
 // Assignment identifies an immutable schedule snapshot for one explicit
 // account period. It does not imply that usage is complete or chargeable.
 type Assignment struct {
@@ -106,7 +120,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("billing: nil database")
 	}
-	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &relayCapRow{}, &relayCapRevisionRow{}, &relayCreditGrantRow{}); err != nil {
+	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &relayAlertRow{}, &relayCapRow{}, &relayCapRevisionRow{}, &relayCreditGrantRow{}); err != nil {
 		return nil, fmt.Errorf("billing: migrate schedules: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -299,6 +313,118 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 		return FinalInvoice{}, errors.New("billing: invalid finalized relay or total amount")
 	}
 	return invoice, nil
+}
+
+// RecordRelayAlerts durably records alert threshold crossings once per
+// account-period-schedule-target-threshold. Repeated evaluations are
+// idempotent. No notification transport is selected or invoked here.
+func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCandidate) error {
+	accountID, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, candidate := range candidates {
+			if err := validateRelayAlertCandidate(candidate); err != nil {
+				return err
+			}
+			assignment, err := (&Store{db: tx}).Assignment(ctx, candidate.PeriodStart, candidate.PeriodEnd)
+			if err != nil {
+				return err
+			}
+			if assignment.ScheduleVersion != candidate.ScheduleVersion {
+				return ErrScheduleUnassigned
+			}
+			snapshot, err := json.Marshal(candidate)
+			if err != nil {
+				return fmt.Errorf("billing: encode relay alert: %w", err)
+			}
+			digest := sha256.Sum256(snapshot)
+			row := relayAlertRow{
+				AccountID: accountID, PeriodStartUS: candidate.PeriodStart.UnixMicro(),
+				ScheduleVersion: candidate.ScheduleVersion, Target: candidate.Target, Threshold: candidate.Threshold,
+				PeriodEndUS: candidate.PeriodEnd.UnixMicro(), Digest: hex.EncodeToString(digest[:]),
+				Snapshot: snapshot, CreatedAt: time.Now().UTC(),
+			}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+				return fmt.Errorf("billing: record relay alert: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// EvaluateAndRecordRelayAlerts builds current-period crossings from the
+// assigned immutable schedule and persists them idempotently. A caller must
+// provide an authenticated account context and choose when reports are
+// reevaluated; delivery remains a separate concern.
+func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayusage.Report, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
+	_, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !validBillingTime(report.Start) {
+		return nil, ErrInvalidPeriod
+	}
+	periodStart := report.Start.UTC()
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	periodStartUS, periodEndUS, err := billingPeriodMicros(periodStart, periodEnd)
+	if err != nil || !isBillingCalendarMonth(periodStartUS, periodEndUS) || periodEnd.Year() > 9999 {
+		return nil, ErrInvalidPeriod
+	}
+	schedule, err := s.AssignedSchedule(ctx, periodStart, periodEnd)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := EvaluateRelayAlerts(report, schedule, capOverageMinor)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.RecordRelayAlerts(ctx, candidates); err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
+// RelayAlerts returns the account's stored relay alert candidates for one
+// calendar period. Authorization belongs to the caller; account scope is
+// always read from context.
+func (s *Store) RelayAlerts(ctx context.Context, start, end time.Time) ([]RelayAlertCandidate, error) {
+	accountID, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil || !isBillingCalendarMonth(startUS, endUS) {
+		return nil, ErrInvalidPeriod
+	}
+	var rows []relayAlertRow
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND period_start_us = ?", accountID, startUS).
+		Order("schedule_version, target, threshold").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("billing: list relay alerts: %w", err)
+	}
+	alerts := make([]RelayAlertCandidate, 0, len(rows))
+	for _, row := range rows {
+		if row.PeriodEndUS != endUS {
+			return nil, errors.New("billing: stored relay alert period is invalid")
+		}
+		digest := sha256.Sum256(row.Snapshot)
+		if hex.EncodeToString(digest[:]) != row.Digest {
+			return nil, errors.New("billing: relay alert snapshot digest mismatch")
+		}
+		var candidate RelayAlertCandidate
+		if err := json.Unmarshal(row.Snapshot, &candidate); err != nil {
+			return nil, fmt.Errorf("billing: decode relay alert: %w", err)
+		}
+		if err := validateRelayAlertCandidate(candidate); err != nil || candidate.PeriodStart.UnixMicro() != startUS || candidate.PeriodEnd.UnixMicro() != endUS || candidate.ScheduleVersion != row.ScheduleVersion || candidate.Target != row.Target || candidate.Threshold != row.Threshold {
+			return nil, errors.New("billing: stored relay alert snapshot is invalid")
+		}
+		alerts = append(alerts, candidate)
+	}
+	return alerts, nil
 }
 
 // WithDB binds the store to a caller-owned GORM transaction. Callers that

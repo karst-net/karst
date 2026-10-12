@@ -4,6 +4,7 @@
 package billing
 
 import (
+	"errors"
 	"math/big"
 	"time"
 
@@ -93,3 +94,33 @@ func relayReportComplete(report relayusage.Report) bool {
 	}
 	return true
 }
+
+func validateRelayAlertCandidate(candidate RelayAlertCandidate) error {
+	startUS, endUS, err := billingPeriodMicros(candidate.PeriodStart, candidate.PeriodEnd)
+	if err != nil || !isBillingCalendarMonth(startUS, endUS) || !validToken(candidate.ScheduleVersion) ||
+		(candidate.Target != "included_allowance" && candidate.Target != "spending_cap") ||
+		(candidate.Threshold != 75 && candidate.Threshold != 90 && candidate.Threshold != 100) ||
+		!validBillingTime(candidate.AsOf) || candidate.AsOf.Before(candidate.PeriodStart) || candidate.AsOf.After(candidate.PeriodEnd) {
+		return errInvalidRelayAlert
+	}
+	reported, ok := new(big.Int).SetString(candidate.ReportedBytes, 10)
+	if !ok || reported.Sign() < 0 || reported.String() != candidate.ReportedBytes {
+		return errInvalidRelayAlert
+	}
+	threshold, ok := new(big.Int).SetString(candidate.ThresholdBytes, 10)
+	if !ok || threshold.Sign() <= 0 || threshold.String() != candidate.ThresholdBytes || reported.Cmp(threshold) < 0 {
+		return errInvalidRelayAlert
+	}
+	return nil
+}
+
+func isBillingCalendarMonth(startUS, endUS int64) bool {
+	start := time.UnixMicro(startUS).UTC()
+	end := time.UnixMicro(endUS).UTC()
+	if start.Day() != 1 || start.Hour() != 0 || start.Minute() != 0 || start.Second() != 0 || start.Nanosecond() != 0 {
+		return false
+	}
+	return end.Equal(start.AddDate(0, 1, 0))
+}
+
+var errInvalidRelayAlert = errors.New("billing: invalid relay alert candidate")
