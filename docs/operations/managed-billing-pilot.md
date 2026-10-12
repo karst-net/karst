@@ -7,6 +7,9 @@ opt-in and billing is not yet live: a usage report does not finalize an invoice,
 charge customers, or enforce relay limits. Do not describe a usage report or
 assigned schedule as a bill.
 
+For approved customer-facing terms and current availability limits, see the
+[managed billing customer guide](managed-billing-customer-guide.md).
+
 ## Approved pilot rates and meter boundaries
 
 The approved pilot model uses graduated monthly device rates: $2.50 per device
