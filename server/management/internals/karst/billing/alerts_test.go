@@ -51,6 +51,20 @@ func TestEvaluateRelayAlertsUsesCappedRelayOverageBudget(t *testing.T) {
 	require.Equal(t, "18000000000", capAlerts[1].ThresholdBytes)
 }
 
+func TestMaxRelayBytesForOverageTruncatesAndAvoidsOverflow(t *testing.T) {
+	schedule := testSchedule()
+	bytes, err := MaxRelayBytesForOverage(schedule, 1)
+	require.NoError(t, err)
+	require.Equal(t, "10050000000", bytes.String())
+
+	bytes, err = MaxRelayBytesForOverage(schedule, int64(^uint64(0)>>1))
+	require.NoError(t, err)
+	require.True(t, bytes.IsUint64() == false, "large cap byte budget should remain exact beyond uint64")
+
+	_, err = MaxRelayBytesForOverage(schedule, -1)
+	require.ErrorIs(t, err, ErrInvalidRateSchedule)
+}
+
 func TestEvaluateRelayAlertsRejectsInvalidPeriodUsageAndCap(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	report := completeRelayReport(start, start.AddDate(0, 1, 0), "0")

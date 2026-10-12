@@ -26,6 +26,21 @@ type RelayAlertCandidate struct {
 	UsageComplete   bool      `json:"usage_complete"`
 }
 
+// MaxRelayBytesForOverage converts a nonnegative currency-minor-unit cap into
+// the largest whole-byte managed-relay budget that cannot exceed it. The
+// included allowance is added separately and does not consume the cap.
+func MaxRelayBytesForOverage(schedule RateSchedule, overageMinor int64) (*big.Int, error) {
+	if err := validateRateSchedule(schedule); err != nil {
+		return nil, err
+	}
+	if overageMinor < 0 || schedule.RelayMinorPerUnit == 0 {
+		return nil, ErrInvalidRateSchedule
+	}
+	overageBytes := new(big.Int).Mul(big.NewInt(overageMinor), new(big.Int).SetUint64(schedule.RelayUnitBytes))
+	overageBytes.Quo(overageBytes, big.NewInt(schedule.RelayMinorPerUnit))
+	return new(big.Int).Add(new(big.Int).SetUint64(schedule.RelayIncludedBytes), overageBytes), nil
+}
+
 // EvaluateRelayAlerts finds approved 75%, 90%, and 100% threshold crossings
 // for the included relay allowance and optional overage cap. It may return
 // lower-bound candidates for incomplete reports; UsageComplete makes that
@@ -74,9 +89,10 @@ func EvaluateRelayAlerts(report relayusage.Report, schedule RateSchedule, capOve
 	}
 	appendCrossings("included_allowance", new(big.Int).SetUint64(schedule.RelayIncludedBytes))
 	if capOverageMinor != nil {
-		overageBytes := new(big.Int).Mul(big.NewInt(*capOverageMinor), new(big.Int).SetUint64(schedule.RelayUnitBytes))
-		overageBytes.Quo(overageBytes, big.NewInt(schedule.RelayMinorPerUnit))
-		capBytes := new(big.Int).Add(new(big.Int).SetUint64(schedule.RelayIncludedBytes), overageBytes)
+		capBytes, err := MaxRelayBytesForOverage(schedule, *capOverageMinor)
+		if err != nil {
+			return nil, err
+		}
 		appendCrossings("spending_cap", capBytes)
 	}
 	return candidates, nil
