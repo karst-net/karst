@@ -94,9 +94,14 @@ selects no customer-facing cap amount.
   under the trusted-time/skew rule. Reclaim them only after expiry and fencing,
   or after an independently verifiable mechanism makes the relay unable to
   spend them.
-- Grant and debit state survives relay restart. If it cannot be recovered, the
-  relay fails closed for capped forwarding until it obtains a new fenced
-  generation and grant.
+- In this implementation, grant balances are held in process memory and each
+  process start uses a fresh random generation. After restart, the relay fails
+  closed until the new generation obtains a grant. Earlier issued grants stay
+  fully reserved at the control plane for the rest of the period; unused bytes
+  cannot be reused or surrendered. This preserves the cap invariant but can
+  strand allowance and reduce traffic availability. A later implementation
+  should durably recover grants or provide authenticated surrender/expiry and
+  fencing before reclaiming unused bytes.
 
 ### At the cap and recovery
 
@@ -104,7 +109,8 @@ selects no customer-facing cap amount.
   for that organization. Relayed sessions may stall or disconnect; direct
   peer-to-peer traffic and other organizations' relays continue. The customer
   must acknowledge this behavior before enabling the cap.
-- If the control plane is unavailable, a relay can spend only persisted grants.
+- If the control plane is unavailable, a running relay can spend only its
+  currently held grant balances.
   When these run out, managed-relay forwarding pauses locally for that
   organization. This bounds spend without making forwarding depend on an
   online billing service.

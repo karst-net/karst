@@ -85,8 +85,11 @@ the limit. Credit reservations are shared across relays for the account and
 period, and the local gate reserves bytes before it queues a destination
 write. If a relay runs out of valid credits or cannot refresh them, that
 managed mapping fails closed while other traffic continues. An unset cap
-retains uncapped forwarding under short leases. These controls do not yet
-collect payment. Unconfigured deployments create no relay spool and retain
+retains uncapped forwarding under short leases. Cap grant balances are held in
+memory: after relay restart, a fresh generation must obtain new credits, while
+old issued bytes stay reserved through the billing period. The total remains
+bounded by the cap, though unused reserved bytes may reduce availability.
+These controls do not yet collect payment. Unconfigured deployments create no relay spool and retain
 existing forwarding behavior. The mapping ledger table is additive, and no
 mappings are written unless the optional roster integration is explicitly
 supplied. On non-Unix platforms, enabling the spool currently fails at startup.

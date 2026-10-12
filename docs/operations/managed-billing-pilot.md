@@ -74,6 +74,9 @@ unset cap leaves that month uncapped. Current-period decreases take effect
 only after relay credit grants are safely returned; this release does not yet
 provide a grant-surrender endpoint, so a decrease may remain unavailable until
 the next period once credits have been issued. Increases remain available.
+Relay grant balances are currently in memory; a restart uses a fresh generation
+and keeps earlier issued bytes reserved until period end. The cap still bounds
+spend, but stranded credits can reduce availability after a restart.
 Review usage coverage alongside alerts because incomplete reports are lower
 bounds. Keep enforcement opt-in until this implementation has shipped and its
 behavior has been validated in a pilot, including reservation sizing against
