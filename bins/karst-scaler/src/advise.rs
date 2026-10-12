@@ -78,14 +78,42 @@
 //!
 //! §3's constraint table is written for the whole ADR, not for Phase 1
 //! alone, and three of its five named constraints have no scenario this
-//! phase's implementation can bind on:
+//! module's own sizing loop can bind on — two because they answer a
+//! question this module's `binding_constraint` doesn't ask, one because
+//! this phase adds no mechanism that would need it to:
 //!
-//! - **Latency** has no data model yet — nothing in [`crate::cost_model`] or
-//!   [`position`] represents a per-region RTT threshold to check against.
-//! - **Residency**, as §3 defines it, is a per-aquifer tag match; [`Pool`]
-//!   carries no tag, only §4c's deployment-wide allowlist, which is already
-//!   fully resolved before a `Document` validates at all (see above) — by
-//!   the time a pool reaches this module there is nothing left to exclude.
+//! - **Latency** ("for clients in region R, p95 RTT to nearest relay ≤
+//!   X ms") has a real data model now (`Document::latency_thresholds`,
+//!   checked against `advise_loop.rs`'s own per-region p95 estimate from
+//!   the §4a RTT histogram) — but more nodes in an *existing* pool does
+//!   not move it closer to clients, so there is no node-count answer to
+//!   a region whose nearest pool is simply too far away. §4a's own
+//!   worked example is exactly this: East Coast users at a West Coast
+//!   conference need a *new, closer* pool, not a bigger one where they
+//!   already are. The real remedy for a breach is proposing a new pool
+//!   nearer the clients (§4b's anchor-based region discovery), a
+//!   human/operator action this phase doesn't automate — so, like
+//!   Residency below, the check happens, the breach is surfaced
+//!   (`advise_loop.rs`'s own tick output and `metrics_http`'s
+//!   `karst_scaler_region_p95_rtt_ms`/`_region_latency_threshold_ms`
+//!   gauges), and `Constraint::Latency` still never comes out of
+//!   `size_pool` — there is no node count for it to bind on.
+//! - **Residency**, as §3 defines it, is a per-aquifer tag match
+//!   ([`Pool::residency_tags`] against [`crate::cost_model::Document::account_residency`]),
+//!   but it answers a different question than this module's own
+//!   `binding_constraint` does. `size_pool` explains *how many nodes* a
+//!   pool's already-attributed `demand_nodes` justifies; Residency
+//!   decides *which* pool an account's demand may be attributed to at
+//!   all, before any `PoolState` here ever exists. That attribution
+//!   happens in `advise_loop.rs` (bin-only, not this library module) —
+//!   the same boundary `demand_nodes` and `node_meter` themselves
+//!   already sit on (see the module doc's "scope this phase actually has
+//!   data for" section). Forcing that answer through `binding_constraint`
+//!   would misreport *why* a count is what it is, the same failure mode
+//!   [`Constraint::Capacity`]'s own paragraph below warns about for
+//!   `Headroom`. So: `Constraint::Residency` is still never produced
+//!   *here*, not because nothing enforces it, but because enforcement
+//!   has already happened by the time this module runs.
 //! - **Budget** cannot *trim* a pool's recommendation in this
 //!   implementation, on purpose: §3 states plainly that "nothing trades SLA
 //!   for savings unless the operator explicitly marks a constraint soft

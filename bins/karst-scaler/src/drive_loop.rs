@@ -57,14 +57,23 @@ fn tick(
     agent: &ureq::Agent,
     driver: &mut dyn Driver,
 ) -> Result<(), String> {
-    let (now, recommendation) = advise_loop::tick_recommendation(doc, positions, config, agent)?;
+    let outcome = advise_loop::tick_recommendation(doc, positions, config, agent)?;
 
     println!(
-        "tick_unix={now} pools={} total_cost_delta={:.2}",
-        recommendation.pools.len(),
-        recommendation.total_cost_delta
+        "tick_unix={} pools={} total_cost_delta={:.2}",
+        outcome.tick_unix,
+        outcome.recommendation.pools.len(),
+        outcome.recommendation.total_cost_delta
     );
-    for pool in &recommendation.pools {
+    if !outcome.unplaceable_demand.is_empty() {
+        println!(
+            "  residency: {} account/region pairs could not be placed on any pool \
+             (ADR-0045 §3 -- no pool satisfies their residency requirement)",
+            outcome.unplaceable_demand.len()
+        );
+    }
+    advise_loop::print_latency_breaches(doc, &outcome.region_p95_rtt_ms);
+    for pool in &outcome.recommendation.pools {
         reconcile(driver, &pool.pool_id, pool.desired_nodes)?;
     }
 
