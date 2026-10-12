@@ -794,8 +794,15 @@ jobs:
       # Upstream's own tests are how a cherry-picked security fix gets
       # validated. They need testdata fixtures, which a package-graph prune
       # silently removes and which neither build nor vet can detect.
+      #
+      # EnrollKey also matches here -- relayenroll_test.go/turnenroll_test.go
+      # (ADR-0045 §6/§7b) live in this same package and were found, while
+      # adding the latter, to never actually run in CI at all: no step
+      # anywhere exercised ./management/server/ with a filter broad enough
+      # to reach either file's test names, silently since relayenroll_test.go
+      # was added.
       - name: Enrollment security and upstream fixture smoke tests
-        run: go test -count=1 -run "Test_RegisterPeerByUser|TestEnrollment|TestDeviceInvitation" ./management/server/
+        run: go test -count=1 -run "Test_RegisterPeerByUser|TestEnrollment|TestDeviceInvitation|EnrollKey" ./management/server/
       # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
       # the coordination server is a vulnerability in the component that holds
       # every per-pair PSK.
