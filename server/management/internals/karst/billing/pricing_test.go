@@ -172,6 +172,16 @@ func TestCalculateRequiresMatchingCompleteReportPeriods(t *testing.T) {
 	require.False(t, estimate.UsageComplete)
 	require.Equal(t, []string{"relay_usage"}, estimate.Incomplete)
 	require.Nil(t, estimate.TotalExact)
+
+	subMicroStart := start.Add(500 * time.Nanosecond)
+	invalidBoundary := deviceSegment(start, end, 1)
+	invalidBoundary.Start = subMicroStart
+	devices = completeDeviceReport(start, end, invalidBoundary)
+	estimate, err = Calculate(devices, completeRelayReport(start, end, "0"), schedule)
+	require.NoError(t, err)
+	require.False(t, estimate.UsageComplete)
+	require.Equal(t, []string{"device_usage"}, estimate.Incomplete)
+	require.Nil(t, estimate.TotalExact)
 }
 
 func TestCalculateRejectsMalformedSchedules(t *testing.T) {
