@@ -140,6 +140,37 @@ fn default_region() -> String {
     "default".to_owned()
 }
 
+pub(crate) fn parse_https_origin(value: &str) -> Option<(&str, u16)> {
+    let authority = value.strip_prefix("https://")?;
+    if authority.is_empty()
+        || authority
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'?' | b'#' | b'@'))
+    {
+        return None;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let (host, suffix) = bracketed.split_once(']')?;
+        if host.is_empty() {
+            return None;
+        }
+        let port = if suffix.is_empty() {
+            443
+        } else {
+            suffix.strip_prefix(':')?.parse().ok()?
+        };
+        return (port > 0).then_some((host, port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, text)) => (host, text.parse().ok()?),
+        None => (authority, 443),
+    };
+    if host.is_empty() || host.contains(':') || port == 0 {
+        return None;
+    }
+    Some((host, port))
+}
+
 /// How this relay dials its mesh peers — §8.
 ///
 /// *Which* peers, and their addresses, come from the roster: they are admission
@@ -172,6 +203,11 @@ pub struct Metrics {
 pub struct Usage {
     /// Private persistent spool directory, shared by no other relay process.
     pub spool_dir: PathBuf,
+
+    /// Optional HTTPS control-plane origin for durable batch upload. Absent
+    /// keeps accounting local to the spool and starts no network worker.
+    #[serde(default)]
+    pub upload_url: Option<String>,
 }
 
 /// Where, and how often, to push self-reported telemetry — ADR-0021.
@@ -358,6 +394,11 @@ impl Config {
                 "config: usage.spool_dir must not be empty".to_owned(),
             ));
         }
+        if let Some(Some(url)) = self.usage.as_ref().map(|usage| usage.upload_url.as_ref()) {
+            if parse_https_origin(url).is_none() {
+                return Err(Error::Invalid("config: usage.upload_url must be an https:// origin without a path, query, fragment, or credentials".to_owned()));
+            }
+        }
         if let Some(metrics) = self.metrics {
             // **Refuse a metrics listener that shares the client port.** It
             // would put an unauthenticated `GET` on the socket carrying the
@@ -495,6 +536,27 @@ tls_key = "/etc/karst/relay.key"
         assert_eq!(c.identity_key, PathBuf::from("/etc/karst/relay.key"));
         assert_eq!(c.limits.queue_depth, 32);
         assert_eq!(c.limits.bytes_per_sec, 25 * 1_000_000 / 8);
+    }
+
+    #[test]
+    fn usage_upload_is_optional_and_requires_an_https_origin() {
+        let text = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example:8443\"\n"
+        );
+        let c = Config::parse(&text).expect("parses upload configuration");
+        assert_eq!(
+            c.usage.expect("usage configured").upload_url.as_deref(),
+            Some("https://control.example:8443")
+        );
+
+        let text = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example/api\"\n"
+        );
+        let c = Config::parse(&text).expect("parses invalid URL for validation");
+        assert!(
+            format!("{}", c.validate().expect_err("path is not an origin"))
+                .contains("usage.upload_url")
+        );
     }
 
     #[test]

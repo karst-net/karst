@@ -20,6 +20,22 @@ use crate::roster::UsageMapping;
 
 #[cfg(unix)]
 pub mod spool;
+#[cfg(unix)]
+pub mod upload;
+
+#[cfg(unix)]
+enum SpoolCommand {
+    Pending(tokio::sync::oneshot::Sender<std::io::Result<Vec<spool::BatchId>>>),
+    Read(
+        spool::BatchId,
+        tokio::sync::oneshot::Sender<std::io::Result<Vec<u8>>>,
+    ),
+    Ack(
+        spool::BatchId,
+        [u8; 32],
+        tokio::sync::oneshot::Sender<std::io::Result<()>>,
+    ),
+}
 
 /// Signed batch envelope. Its identity metadata and digest are signed with a
 /// context separate from Ponor and advisory telemetry.
@@ -123,6 +139,10 @@ impl Observer {
 pub struct Runtime {
     observer: Observer,
     task: tokio::task::JoinHandle<()>,
+    #[cfg(unix)]
+    uploader_cancel: tokio::sync::watch::Sender<bool>,
+    #[cfg(unix)]
+    uploader: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Runtime {
@@ -130,25 +150,48 @@ impl Runtime {
     /// # Errors
     /// Returns spool, locking, or filesystem errors before the listener starts.
     #[cfg(unix)]
-    pub fn start(path: &Path, identity: Arc<crate::sign::Identity>) -> std::io::Result<Self> {
+    pub fn start(
+        path: &Path,
+        identity: Arc<crate::sign::Identity>,
+        upload_url: Option<String>,
+    ) -> std::io::Result<Self> {
         let mut spool = spool::Spool::open(path)?;
         let unclean = spool.recovered_unclean();
         let lost = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = tokio::sync::mpsc::channel(OBSERVATION_QUEUE);
+        let (commands, command_rx) = tokio::sync::mpsc::channel(16);
+        let (uploader_cancel, cancel_rx) = tokio::sync::watch::channel(false);
         let task_lost = Arc::clone(&lost);
+        let consumer_identity = Arc::clone(&identity);
         let task = tokio::spawn(async move {
-            consume(receiver, task_lost, &mut spool, unclean, &identity).await;
+            consume(
+                receiver,
+                command_rx,
+                task_lost,
+                &mut spool,
+                unclean,
+                &consumer_identity,
+            )
+            .await;
         });
+        let uploader =
+            upload_url.map(|url| tokio::spawn(upload::run(url, identity, commands, cancel_rx)));
         Ok(Self {
             observer: Observer { sender, lost },
             task,
+            uploader_cancel,
+            uploader,
         })
     }
 
     /// # Errors
     /// Relay usage spooling currently requires a Unix filesystem.
     #[cfg(not(unix))]
-    pub fn start(_path: &Path, _identity: Arc<crate::sign::Identity>) -> std::io::Result<Self> {
+    pub fn start(
+        _path: &Path,
+        _identity: Arc<crate::sign::Identity>,
+        _upload_url: Option<String>,
+    ) -> std::io::Result<Self> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "relay usage spool requires Unix",
@@ -164,7 +207,21 @@ impl Runtime {
     /// # Errors
     /// Returns a panic from the background consumer task.
     pub async fn finish(self) -> Result<(), tokio::task::JoinError> {
-        let Self { observer, task } = self;
+        let Self {
+            observer,
+            task,
+            #[cfg(unix)]
+            uploader_cancel,
+            #[cfg(unix)]
+            uploader,
+        } = self;
+        #[cfg(unix)]
+        {
+            let _ = uploader_cancel.send(true);
+            if let Some(uploader) = uploader {
+                uploader.await?;
+            }
+        }
         drop(observer);
         task.await
     }
@@ -173,6 +230,7 @@ impl Runtime {
 #[cfg(unix)]
 async fn consume(
     mut receiver: tokio::sync::mpsc::Receiver<Observation>,
+    mut commands: tokio::sync::mpsc::Receiver<SpoolCommand>,
     lost: Arc<AtomicBool>,
     spool: &mut spool::Spool,
     unclean: bool,
@@ -187,11 +245,21 @@ async fn consume(
         window.mark_gap(Gap::ObservationLost);
     }
     let mut storage_lost = false;
+    let mut command_open = true;
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         let observation = tokio::select! {
             item = receiver.recv() => item,
+            command = commands.recv(), if command_open => {
+                match command {
+                    Some(SpoolCommand::Pending(reply)) => { let _ = reply.send(spool.pending()); }
+                    Some(SpoolCommand::Read(id, reply)) => { let _ = reply.send(spool.read(id)); }
+                    Some(SpoolCommand::Ack(id, digest, reply)) => { let _ = reply.send(spool.acknowledge(id, &digest)); }
+                    None => command_open = false,
+                }
+                continue;
+            }
             _ = ticker.tick() => {
                 let now = now_micros();
                 let target = now / BUCKET_MICROS * BUCKET_MICROS;
