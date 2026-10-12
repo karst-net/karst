@@ -153,6 +153,9 @@ func validDeviceReport(report usage.DeviceReport) bool {
 	startUS, endUS := report.Start.UnixMicro(), report.End.UnixMicro()
 	cursor := startUS
 	for _, segment := range report.Segments {
+		if !validBillingTime(segment.Start) || !validBillingTime(segment.End) {
+			return false
+		}
 		left, right := segment.Start.UnixMicro(), segment.End.UnixMicro()
 		if segment.Coverage != "complete" || segment.Devices == nil || left != cursor || right <= left || right > endUS || *segment.Devices < 0 {
 			return false
