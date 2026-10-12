@@ -11,11 +11,16 @@ use serde::{Deserialize, Serialize};
 /// `Secret` — everything `karst-relay enroll` needs that is not already in
 /// its own `relay.toml` (`region` is; see ADR-0045 §7 Phase 2 PR 4's own
 /// notes on why it is not duplicated here).
+///
+/// `address` is optional only for `karst-scaler-aws`'s sake — a
+/// `StatefulSet` pod's address (its stable per-pod DNS name) is always
+/// knowable in advance, so this driver always writes `Some`. See
+/// `karst-scaler-aws`'s own crate doc for why EC2 cannot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnrollBundle {
     pub control_api_base: String,
     pub token: String,
-    pub address: String,
+    pub address: Option<String>,
     pub tls_server_name: String,
 }
 
@@ -98,7 +103,7 @@ mod tests {
         let bundle = EnrollBundle {
             control_api_base: "https://control.example.test/api".to_owned(),
             token: "SOME-SECRET".to_owned(),
-            address: "relay-3.relay.karst-system.svc.cluster.local:443".to_owned(),
+            address: Some("relay-3.relay.karst-system.svc.cluster.local:443".to_owned()),
             tls_server_name: "relay-3.relay.karst-system.svc.cluster.local".to_owned(),
         };
         let text = bundle.to_toml().expect("serializes");

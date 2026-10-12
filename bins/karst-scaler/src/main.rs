@@ -130,10 +130,15 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
                 let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
                 build_k8s_driver(section, &config.control_api_base)?
             }
+            "aws" => {
+                let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
+                build_aws_driver(section, &config.control_api_base)?
+            }
             other => {
                 return Err(format!(
-                "{advise_config_path}: unknown driver.kind {other:?} (expected \"noop\" or \"k8s\")"
-            ))
+                    "{advise_config_path}: unknown driver.kind {other:?} (expected \"noop\", \
+                     \"k8s\", or \"aws\")"
+                ))
             }
         };
 
@@ -181,6 +186,65 @@ fn build_k8s_driver(
     Err(
         "this build of karst-scaler was not compiled with k8s driver support -- \
          rebuild with --features k8s"
+            .to_owned(),
+    )
+}
+
+#[cfg(feature = "aws")]
+fn build_aws_driver(
+    section: &advise_config::DriverSection,
+    control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    let region = section
+        .region
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.region".to_owned())?;
+    let ami_id = section
+        .ami_id
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.ami_id".to_owned())?;
+    let instance_type = section
+        .instance_type
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.instance_type".to_owned())?;
+    let subnet_id = section
+        .subnet_id
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.subnet_id".to_owned())?;
+    if section.security_group_ids.is_empty() {
+        return Err(
+            "driver.kind = \"aws\" needs at least one driver.security_group_ids entry".to_owned(),
+        );
+    }
+    let enroll_pat_file = section
+        .enroll_pat_file
+        .clone()
+        .ok_or_else(|| "driver.kind = \"aws\" needs driver.enroll_pat_file".to_owned())?;
+    let enroll_pat = std::fs::read_to_string(&enroll_pat_file)
+        .map_err(|e| format!("reading {enroll_pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let driver = karst_scaler_aws::AwsDriver::new(karst_scaler_aws::AwsDriverConfig {
+        region,
+        ami_id,
+        instance_type,
+        subnet_id,
+        security_group_ids: section.security_group_ids.clone(),
+        control_api_base: control_api_base.to_owned(),
+        enroll_pat,
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(Box::new(driver))
+}
+
+#[cfg(not(feature = "aws"))]
+fn build_aws_driver(
+    _section: &advise_config::DriverSection,
+    _control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    Err(
+        "this build of karst-scaler was not compiled with aws driver support -- \
+         rebuild with --features aws"
             .to_owned(),
     )
 }
