@@ -117,6 +117,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		Limitations: []string{
 			"Completeness covers explicitly authorized managed producer and account-mapping intervals only; managed relays absent from that operator inventory are outside the expected set.",
 			"Batch gap flags indicate measurement uncertainty even when every expected producer window arrived.",
+			"Missing sequence counts are relay-level diagnostics between account-associated batches; gaps can span periods when this account had no expected usage window and are not estimates of missing bytes.",
 		},
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

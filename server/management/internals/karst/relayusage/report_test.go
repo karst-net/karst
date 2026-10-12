@@ -63,6 +63,7 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.Equal(t, "1", report.Days[0].MissingSequences)
 	require.Equal(t, []string{"clock", "observation_lost"}, report.Days[0].GapReasons)
 	require.NotContains(t, report.Limitations, "")
+	require.Contains(t, report.Limitations, "Missing sequence counts are relay-level diagnostics between account-associated batches; gaps can span periods when this account had no expected usage window and are not estimates of missing bytes.")
 
 	other, err := store.Report(ctx, "account-2", start, end)
 	require.NoError(t, err)
