@@ -421,6 +421,12 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/turn/enroll-tokens", h.turnEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	// Deliberately on the parent router, not karstRouter -- see
+	// relaysEnroll's own doc comment (and turnEnroll's own, below) for why.
+	// limitRequestBody is applied explicitly since this route does not
+	// inherit karstRouter's own middleware stack.
+	router.Handle("/karst/v1/turn/enroll", limitRequestBody(http.HandlerFunc(h.turnEnroll))).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events", h.knownEventsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events", h.knownEventsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/known-events/{eventId}", h.knownEventsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -579,18 +585,19 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "Karst control permission denied"), w)
 				return
 			}
-			// ADR-0045 §6: the Scaler role exists to mint relay-enroll
-			// tokens, nothing else. roles.Scaler's own Create grant on
-			// modules.KarstControl is coarser than that (this RBAC model's
-			// only module granularity covers every mutation under
-			// /karst/v1, not just this one route — see roles.Scaler's own
-			// doc comment), so this hard allowlist is what actually keeps
-			// the role narrow, independent of whatever a future endpoint
-			// added under this same module gate would otherwise permit it
-			// to reach.
+			// ADR-0045 §6/§7b: the Scaler role exists to mint relay-enroll
+			// and turn-enroll tokens, nothing else. roles.Scaler's own
+			// Create grant on modules.KarstControl is coarser than that
+			// (this RBAC model's only module granularity covers every
+			// mutation under /karst/v1, not just these two routes — see
+			// roles.Scaler's own doc comment), so this hard allowlist is
+			// what actually keeps the role narrow, independent of whatever
+			// a future endpoint added under this same module gate would
+			// otherwise permit it to reach.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
-				if strings.TrimPrefix(r.URL.Path, "/api") != relayEnrollTokensPath {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll tokens"), w)
+				path := strings.TrimPrefix(r.URL.Path, "/api")
+				if path != relayEnrollTokensPath && path != turnEnrollTokensPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens"), w)
 					return
 				}
 			}
@@ -1551,10 +1558,12 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayEnrollTokensPath is the one route the Scaler role's hard allowlist
-// in karstAuthorization permits — see that allowlist's own comment and
-// relayEnrollTokensCreate below.
+// relayEnrollTokensPath and turnEnrollTokensPath are the only two routes
+// the Scaler role's hard allowlist in karstAuthorization permits — see
+// that allowlist's own comment, relayEnrollTokensCreate below, and
+// turnEnrollTokensCreate.
 const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
+const turnEnrollTokensPath = "/karst/v1/turn/enroll-tokens"
 
 // relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
 // §7 Phase 2) sends when it has just created a relay instance and needs a
@@ -1694,6 +1703,121 @@ func (h *handler) relaysEnroll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(h.relayResponseFor(r.Context(), *relay)); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+// turnEnrollTokenRequest is what provisions a new TURN server (today, an
+// operator's own script or console action; ADR-0045 §7b names a future
+// karst-scaler driver as the eventual caller, not built yet) sends to get
+// a credential that server redeems at turnEnroll below, in place of an
+// admin pasting its URI into the console (turnsCreate above). No PoolID
+// the way relayEnrollTokenRequest has one: no pool concept exists for
+// TURN servers anywhere in this system yet.
+type turnEnrollTokenRequest struct {
+	// ExpiresInSecs overrides the default expiry (see
+	// DefaultAccountManager.MintTurnEnrollKey) — 0 means "use the
+	// default," not "never expires," the same posture
+	// relayEnrollTokenRequest's own field has.
+	ExpiresInSecs int64 `json:"expires_in_secs,omitempty"`
+}
+
+type turnEnrollTokenResponse struct {
+	Token string `json:"token"`
+}
+
+// turnEnrollTokensCreate mints ADR-0045 §7b's TURN counterpart of
+// relayEnrollTokensCreate's own "short-lived, single-use enrollment
+// token" — see that function's own doc comment for the full reasoning,
+// which applies unchanged here.
+func (h *handler) turnEnrollTokensCreate(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	minter, ok := h.accounts.(interface {
+		MintTurnEnrollKey(context.Context, string, time.Duration) (string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn enrollment is not configured"), w)
+		return
+	}
+	var req turnEnrollTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	token, err := minter.MintTurnEnrollKey(r.Context(), user.AccountId, time.Duration(req.ExpiresInSecs)*time.Second)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(turnEnrollTokenResponse{Token: token}); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+// turnEnroll lets a newly-provisioned TURN server register itself with no
+// admin session — ADR-0045 §7b's TURN counterpart of relaysEnroll above;
+// see that function's own doc comment for why this is registered on the
+// parent router rather than karstRouter, and for the token being this
+// endpoint's entire authentication. Unlike a relay, a TURN server has no
+// identity key to assert at all (RFC 8656 authenticates the client to the
+// server, never the reverse — see turncred's own package doc), so there is
+// no analogous proof-of-possession gap to note here: the submitted
+// [turncred.Entry] (a URI and a region) carries no identity claim in the
+// first place.
+func (h *handler) turnEnroll(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		util.WriteError(r.Context(), status.Errorf(status.Unauthorized, "turn enrollment requires a bearer token"), w)
+		return
+	}
+	if h.turns == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
+		return
+	}
+	consumer, ok := h.accounts.(interface {
+		ConsumeTurnEnrollKey(context.Context, string) (string, string, error)
+	})
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn enrollment is not configured"), w)
+		return
+	}
+	accountID, keyID, err := consumer.ConsumeTurnEnrollKey(r.Context(), token)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var entry turncred.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	ctx := turncred.WithAccount(r.Context(), accountID)
+	turn, err := h.turns.Create(ctx, entry)
+	if errors.Is(err, turncred.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn server already exists"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(audit.WithAccount(ctx, accountID), keyID, "karst.turn.enroll", "turn", turn.ID); err != nil {
+			// Not fatal -- relaysEnroll's own comment gives the same
+			// reasoning: an audit outage must not turn a working
+			// admission path into an impossible one.
+			log.WithContext(r.Context()).Errorf("append turn-enroll audit event: %v", err)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }

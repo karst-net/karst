@@ -424,6 +424,40 @@ func (scanTurns) Create(context.Context, turncred.Entry) (*turncred.StoredTurnSe
 }
 func (scanTurns) Delete(context.Context, string) error { return nil }
 
+type scanTurnsExists struct{ scanTurns }
+
+func (scanTurnsExists) Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error) {
+	return nil, turncred.ErrExists
+}
+
+// scanTurnEnrollAccounts fakes the two ADR-0045 §7b methods
+// turnEnrollTokensCreate/turnEnroll type-assert for (MintTurnEnrollKey,
+// ConsumeTurnEnrollKey) -- the TURN counterpart of scanRelayEnrollAccounts.
+type scanTurnEnrollAccounts struct {
+	mintToken string
+	mintErr   error
+
+	consumeAccountID string
+	consumeKeyID     string
+	consumeErr       error
+}
+
+func (scanTurnEnrollAccounts) UpdateAccountPeers(context.Context, string, types.UpdateReason) {}
+
+func (s scanTurnEnrollAccounts) MintTurnEnrollKey(context.Context, string, time.Duration) (string, error) {
+	if s.mintErr != nil {
+		return "", s.mintErr
+	}
+	return s.mintToken, nil
+}
+
+func (s scanTurnEnrollAccounts) ConsumeTurnEnrollKey(context.Context, string) (string, string, error) {
+	if s.consumeErr != nil {
+		return "", "", s.consumeErr
+	}
+	return s.consumeAccountID, s.consumeKeyID, nil
+}
+
 type scanPermissions struct{ role types.UserRole }
 
 func (p scanPermissions) ValidateUserPermissions(ctx context.Context, _, _ string, _ modules.Module, operation operations.Operation) (bool, context.Context, error) {
@@ -618,6 +652,86 @@ func TestRelaysEnroll(t *testing.T) {
 	})
 }
 
+// ADR-0045 §7b: the Scaler role may mint turn-enroll tokens too, the same
+// relationship it has with relay-enroll tokens (TestRelayEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot).
+func TestTurnEnrollTokensCreate_ScalerAndAdminCanMintAdvisorCannot(t *testing.T) {
+	for _, tc := range []struct {
+		role     types.UserRole
+		wantCode int
+	}{
+		{types.UserRoleScaler, http.StatusCreated},
+		{types.UserRoleAdmin, http.StatusCreated},
+		{types.UserRoleOwner, http.StatusCreated},
+		{types.UserRoleAdvisor, http.StatusForbidden},
+		{types.UserRoleUser, http.StatusForbidden},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			router := mux.NewRouter()
+			accounts := scanTurnEnrollAccounts{mintToken: "TURN-ENROLL-SECRET"}
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, router)
+			req := httptest.NewRequest(http.MethodPost, turnEnrollTokensPath, strings.NewReader(`{}`))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
+			if tc.wantCode != http.StatusCreated {
+				return
+			}
+			var decoded turnEnrollTokenResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+			require.Equal(t, "TURN-ENROLL-SECRET", decoded.Token)
+		})
+	}
+}
+
+// ADR-0045 §7b: turnEnroll authenticates by bearer token alone, with no
+// session at all -- the TURN counterpart of TestRelaysEnroll.
+func TestTurnEnroll(t *testing.T) {
+	entryBody := `{"uri":"turn:turn.example.test:3478","region":"aws-use1"}`
+
+	t.Run("no bearer token is unauthenticated", func(t *testing.T) {
+		router := mux.NewRouter()
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, scanTurnEnrollAccounts{}, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	})
+
+	t.Run("an invalid token is refused", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanTurnEnrollAccounts{consumeErr: status.Errorf(status.PermissionDenied, "turn enroll key is invalid")}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer wrong-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	})
+
+	t.Run("a valid token registers the turn server into the token's own account", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanTurnEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer the-real-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	})
+
+	t.Run("an already-registered turn server is a precondition failure, same as turnsCreate", func(t *testing.T) {
+		router := mux.NewRouter()
+		accounts := scanTurnEnrollAccounts{consumeAccountID: "account-from-token", consumeKeyID: "key-1"}
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurnsExists{}, nil, nil, accounts, scanPermissions{role: types.UserRoleUser}, nil, nil, nil, "", nil, router)
+		req := httptest.NewRequest(http.MethodPost, "/karst/v1/turn/enroll", strings.NewReader(entryBody))
+		req.Header.Set("Authorization", "Bearer the-real-secret")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
+	})
+}
+
 // The member hostility test walks the same router that production serves. A
 // newly-added admin route therefore cannot silently become usable by Members.
 func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
@@ -637,15 +751,16 @@ func TestMemberCannotUseAnyAdminRouteButCanUseOwnPortal(t *testing.T) {
 		if strings.HasPrefix(template, "/karst/v1/domains") || strings.HasPrefix(template, "/karst/v1/invitations") {
 			return nil
 		}
-		// relaysEnroll (ADR-0045 §6) is bearer-token-gated, not
-		// session-gated -- it deliberately sits outside karstAuthorization
-		// (see its own doc comment), so a member's session cannot reach
-		// KarstControl's permission check to be denied by in the first
-		// place. It still correctly refuses a member with no enroll token
-		// (401, checked by TestRelaysEnroll* below) -- this walk's own
-		// "every admin route denies a session-bearing member" shape just
-		// does not apply to a route with no session-based gate at all.
-		if template == "/karst/v1/relays/enroll" {
+		// relaysEnroll (ADR-0045 §6) and turnEnroll (ADR-0045 §7b) are
+		// bearer-token-gated, not session-gated -- both deliberately sit
+		// outside karstAuthorization (see their own doc comments), so a
+		// member's session cannot reach KarstControl's permission check to
+		// be denied by in the first place. Each still correctly refuses a
+		// member with no enroll token (401, checked by TestRelaysEnroll/
+		// TestTurnEnroll below) -- this walk's own "every admin route
+		// denies a session-bearing member" shape just does not apply to a
+		// route with no session-based gate at all.
+		if template == "/karst/v1/relays/enroll" || template == "/karst/v1/turn/enroll" {
 			return nil
 		}
 		methods, err := route.GetMethods()
