@@ -113,7 +113,76 @@ func NewCommands(opener StoreOpener) *cobra.Command {
 	_ = assign.MarkFlagRequired("period-end")
 	root.AddCommand(assign)
 	root.AddCommand(newFinalizeCommand(opener))
+	root.AddCommand(newConfigurePaddleCommand(opener))
 	return root
+}
+
+func newConfigurePaddleCommand(opener StoreOpener) *cobra.Command {
+	var accountID, actor, customerID, productID string
+	var enabled bool
+	command := &cobra.Command{
+		Use: "configure-paddle", Short: "Explicitly enable or disable Paddle collection for one account", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !validLabel(accountID) || !validLabel(actor) {
+				return fmt.Errorf("provide valid --account-id and --actor values")
+			}
+			if enabled && (customerID == "" || productID == "") {
+				return fmt.Errorf("--enabled requires --paddle-customer-id and --paddle-product-id")
+			}
+			var configured billing.PaddleAccount
+			if err := opener(cmd, func(ctx context.Context, raw store.Store) error {
+				sql, ok := raw.(*store.SqlStore)
+				if !ok {
+					return fmt.Errorf("Paddle configuration requires a SQL store")
+				}
+				billingStore, err := billing.NewStore(sql.GetDB())
+				if err != nil {
+					return err
+				}
+				log, err := audit.New(sql.GetDB())
+				if err != nil {
+					return err
+				}
+				return sql.ExecuteInTransaction(ctx, func(tx store.Store) error {
+					sqlTx, ok := tx.(*store.SqlStore)
+					if !ok {
+						return fmt.Errorf("Paddle configuration requires a SQL transaction")
+					}
+					var account types.Account
+					if err := sqlTx.GetDB().WithContext(ctx).Select("id").Where("id = ?", accountID).Take(&account).Error; err != nil {
+						return fmt.Errorf("find account: %w", err)
+					}
+					accountCtx := billing.WithAccount(ctx, accountID)
+					configured, err = billingStore.WithDB(sqlTx.GetDB()).ConfigurePaddleAccount(accountCtx, enabled, customerID, productID)
+					if err != nil {
+						return err
+					}
+					detail, err := json.Marshal(struct {
+						Enabled    bool   `json:"enabled"`
+						CustomerID string `json:"customer_id,omitempty"`
+						ProductID  string `json:"product_id,omitempty"`
+					}{configured.Enabled, configured.CustomerID, configured.ProductID})
+					if err != nil {
+						return err
+					}
+					_, err = log.AppendInTransaction(audit.WithAccount(accountCtx, accountID), sqlTx.GetDB(), "operator:"+actor, "karst.billing.paddle.configure", accountID, string(detail))
+					return err
+				})
+			}); err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(configured)
+		},
+	}
+	command.Flags().StringVar(&accountID, "account-id", "", "Account whose Paddle collection configuration is changing")
+	command.Flags().StringVar(&actor, "actor", "", "Operator identity recorded in the audit log")
+	command.Flags().BoolVar(&enabled, "enabled", false, "Explicitly enable Paddle collection; omit to disable")
+	command.Flags().StringVar(&customerID, "paddle-customer-id", "", "Paddle customer ID for the account")
+	command.Flags().StringVar(&productID, "paddle-product-id", "", "Approved Paddle product ID for non-catalog invoice prices")
+	for _, flag := range []string{"account-id", "actor"} {
+		_ = command.MarkFlagRequired(flag)
+	}
+	return command
 }
 
 func newFinalizeCommand(opener StoreOpener) *cobra.Command {

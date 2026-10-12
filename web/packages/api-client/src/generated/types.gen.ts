@@ -79,6 +79,18 @@ export type RelayUsageReport = {
     limitations: Array<string>;
 };
 
+export type BillingPayment = {
+    period_start: string;
+    period_end: string;
+    currency: 'USD';
+    device_minor: number;
+    relay_minor: number;
+    total_minor: number;
+    state: 'not_queued' | 'ready' | 'submitting' | 'reconcile' | 'checkout' | 'paid' | 'past_due' | 'operator_hold';
+    checkout_url?: string;
+    updated_at: string;
+};
+
 export type RelayUsageDay = {
     date: string;
     reported_bytes: string;
@@ -875,13 +887,7 @@ export type SurrenderRelayCreditsErrors = {
      * Surrender conflicts with the previously accepted final report
      */
     409: unknown;
-    /**
-     * Error response
-     */
-    default: Error;
 };
-
-export type SurrenderRelayCreditsError = SurrenderRelayCreditsErrors[keyof SurrenderRelayCreditsErrors];
 
 export type SurrenderRelayCreditsResponses = {
     /**
@@ -891,6 +897,66 @@ export type SurrenderRelayCreditsResponses = {
 };
 
 export type SurrenderRelayCreditsResponse = SurrenderRelayCreditsResponses[keyof SurrenderRelayCreditsResponses];
+
+export type GetBillingPaymentData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * UTC calendar month in YYYY-MM form.
+         */
+        period: string;
+    };
+    url: '/billing/payments';
+};
+
+export type GetBillingPaymentErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetBillingPaymentError = GetBillingPaymentErrors[keyof GetBillingPaymentErrors];
+
+export type GetBillingPaymentResponses = {
+    /**
+     * Finalized invoice totals and current payment state
+     */
+    200: BillingPayment;
+};
+
+export type GetBillingPaymentResponse = GetBillingPaymentResponses[keyof GetBillingPaymentResponses];
+
+export type QueueBillingPaymentData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * UTC calendar month in YYYY-MM form.
+         */
+        period: string;
+    };
+    url: '/billing/payments';
+};
+
+export type QueueBillingPaymentErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type QueueBillingPaymentError = QueueBillingPaymentErrors[keyof QueueBillingPaymentErrors];
+
+export type QueueBillingPaymentResponses = {
+    /**
+     * Collection request accepted into the durable payment outbox
+     */
+    202: BillingPayment;
+};
+
+export type QueueBillingPaymentResponse = QueueBillingPaymentResponses[keyof QueueBillingPaymentResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;

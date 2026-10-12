@@ -5,7 +5,10 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -110,6 +113,77 @@ func TestWebhookWorkerAppliesEventsIdempotentlyAndIgnoresOutOfOrderState(t *test
 	got, err = store.Payment(ctx, start, end)
 	if err != nil || got.State != PaymentPaid {
 		t.Fatalf("out-of-order event rolled back payment: %+v, %v", got, err)
+	}
+}
+
+func TestPaddleAccountRequiresPerAccountOptInAndPreservesMappingOnDisable(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "paddle-config-org")
+	if _, err := store.PaddleAccount(ctx); !errors.Is(err, ErrPaddleAccountNotConfigured) {
+		t.Fatalf("missing config = %v", err)
+	}
+	disabled, err := store.ConfigurePaddleAccount(ctx, false, "", "")
+	if err != nil || disabled.Enabled {
+		t.Fatalf("default disabled config=%+v err=%v", disabled, err)
+	}
+	configured, err := store.ConfigurePaddleAccount(ctx, true, testPaddleCustomer, testPaddleProduct)
+	if err != nil || !configured.Enabled {
+		t.Fatalf("enable config=%+v err=%v", configured, err)
+	}
+	loaded, err := store.PaddleAccount(ctx)
+	if err != nil || loaded.CustomerID != testPaddleCustomer || loaded.ProductID != testPaddleProduct {
+		t.Fatalf("load config=%+v err=%v", loaded, err)
+	}
+	disabled, err = store.ConfigurePaddleAccount(ctx, false, "", "")
+	if err != nil || disabled.Enabled || disabled.CustomerID != testPaddleCustomer {
+		t.Fatalf("disable config=%+v err=%v", disabled, err)
+	}
+	if _, err := store.PaddleAccount(ctx); !errors.Is(err, ErrPaddleAccountNotConfigured) {
+		t.Fatalf("disabled config lookup=%v", err)
+	}
+	if _, err := store.PaddleAccount(WithAccount(context.Background(), "another-org")); !errors.Is(err, ErrPaddleAccountNotConfigured) {
+		t.Fatalf("cross-account config lookup=%v", err)
+	}
+}
+
+func TestPaymentWorkerOnlySubmitsExplicitlyConfiguredAccount(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	if _, err := store.QueuePayment(ctx, start, end); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			CustomData PaddleTransactionCustomData `json:"custom_data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"txn_01grnn4zta5a1mf02jjze7y2ys","status":"ready","customer_id":"` + testPaddleCustomer + `","currency_code":"USD","created_at":"2026-09-01T03:00:00Z","custom_data":{"karst_invoice_id":"` + body.CustomData.KarstInvoiceID + `"},"checkout":{"url":"https://pay.paddle.com/checkout/abc"}}}`))
+	}))
+	defer server.Close()
+	client, err := newPaddleClient("paddle-secret", server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessReadyPayments(ctx, client, 10); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("unconfigured account made %d provider requests", requests)
+	}
+	if _, err := store.ConfigurePaddleAccount(ctx, true, testPaddleCustomer, testPaddleProduct); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessReadyPayments(ctx, client, 10); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.Payment(ctx, start, end)
+	if err != nil || requests != 1 || intent.State != PaymentCheckout {
+		t.Fatalf("configured account: intent=%+v requests=%d err=%v", intent, requests, err)
 	}
 }
 

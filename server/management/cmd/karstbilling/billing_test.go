@@ -159,6 +159,41 @@ func TestFinalizeInvoiceRefusesIncompleteUsageAndCreatesNoCharge(t *testing.T) {
 	require.Zero(t, charged)
 }
 
+func TestConfigurePaddleIsExplicitScopedAndAudited(t *testing.T) {
+	s := fixture(t)
+	output, err := executeCommand(s, "configure-paddle", "--account-id", "account-a", "--actor", "pilot-operator", "--enabled",
+		"--paddle-customer-id", "ctm_01grnn4zta5a1mf02jjze7y2ys", "--paddle-product-id", "pro_01grnn4zta5a1mf02jjze7y2ys")
+	require.NoError(t, err)
+	var configured billing.PaddleAccount
+	require.NoError(t, json.Unmarshal([]byte(output), &configured))
+	require.True(t, configured.Enabled)
+	require.Equal(t, "account-a", configured.AccountID)
+
+	store, err := billing.NewStore(s.GetDB())
+	require.NoError(t, err)
+	account, err := store.PaddleAccount(billing.WithAccount(context.Background(), "account-a"))
+	require.NoError(t, err)
+	require.Equal(t, "ctm_01grnn4zta5a1mf02jjze7y2ys", account.CustomerID)
+	_, err = store.PaddleAccount(billing.WithAccount(context.Background(), "account-b"))
+	require.ErrorIs(t, err, billing.ErrPaddleAccountNotConfigured)
+
+	_, err = executeCommand(s, "configure-paddle", "--account-id", "account-a", "--actor", "pilot-operator")
+	require.NoError(t, err)
+	_, err = store.PaddleAccount(billing.WithAccount(context.Background(), "account-a"))
+	require.ErrorIs(t, err, billing.ErrPaddleAccountNotConfigured)
+
+	var entries []audit.Entry
+	require.NoError(t, s.GetDB().Where("action = ?", "karst.billing.paddle.configure").Order("seq").Find(&entries).Error)
+	require.Len(t, entries, 2)
+	require.Equal(t, "operator:pilot-operator", entries[0].Actor)
+	require.Equal(t, "account-a", entries[0].AccountID)
+	var detail struct {
+		Enabled bool `json:"enabled"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(entries[1].Detail), &detail))
+	require.False(t, detail.Enabled)
+}
+
 type paymentOutboxModelForTest struct {
 	InvoiceRef string `gorm:"primaryKey;size:67"`
 }

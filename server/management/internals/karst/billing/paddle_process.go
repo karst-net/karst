@@ -6,6 +6,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -115,4 +116,66 @@ func (s *Store) ReconcilePayment(ctx context.Context, client *PaddleClient, star
 		next = PaymentOperatorHold
 	}
 	return s.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentReconcile, next, transaction.ID, transaction.Checkout.URL)
+}
+
+// ProcessReadyPayments handles only explicitly opted-in accounts. It is safe
+// to run on every management replica because the transition to submitting is
+// compare-and-set and every create remains one-shot.
+func (s *Store) ProcessReadyPayments(ctx context.Context, client *PaddleClient, limit int) error {
+	if client == nil {
+		return nil
+	}
+	if limit <= 0 || limit > 1000 {
+		return errors.New("billing: invalid payment batch limit")
+	}
+	var rows []paymentOutboxRow
+	err := s.db.WithContext(ctx).Table("karst_billing_payment_outbox AS p").
+		Select("p.*").Joins("JOIN karst_billing_paddle_accounts AS a ON a.account_id = p.account_id AND a.enabled = ?", true).
+		Where("p.state = ?", PaymentReady).Order("p.updated_at ASC, p.invoice_ref ASC").Limit(limit).Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+	var failures error
+	for _, row := range rows {
+		accountCtx := WithAccount(ctx, row.AccountID)
+		providerAccount, err := s.PaddleAccount(accountCtx)
+		if err == nil {
+			start, end := time.UnixMicro(row.PeriodStart).UTC(), time.UnixMicro(row.PeriodEnd).UTC()
+			_, err = s.SubmitFinalizedInvoice(accountCtx, client, start, end, providerAccount.CustomerID, providerAccount.ProductID)
+		}
+		if err != nil {
+			failures = errors.Join(failures, fmt.Errorf("billing: process payment %s: %w", row.InvoiceRef, err))
+		}
+	}
+	return failures
+}
+
+// StartPaymentWorker submits queued invoices only when the caller supplied an
+// enabled Paddle client. The database's per-account opt-in is checked for each
+// item; absent or disabled configuration cannot create a provider request.
+func (s *Store) StartPaymentWorker(ctx context.Context, client *PaddleClient, interval time.Duration, onError func(error)) {
+	if client == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	process := func() {
+		if err := s.ProcessReadyPayments(ctx, client, 100); err != nil && onError != nil {
+			onError(err)
+		}
+	}
+	process()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				process()
+			}
+		}
+	}()
 }

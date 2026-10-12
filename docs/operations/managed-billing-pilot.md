@@ -103,6 +103,15 @@ billing configuration is required for deployments that do not opt in; relay
 forwarding and device membership behavior remain available without usage
 collection.
 
+Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
+server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
+store. `KARST_PADDLE_SANDBOX=true` selects Paddle's sandbox API. Configure an
+account's Paddle customer and approved product IDs explicitly with the audited
+`admin billing configure-paddle` command only after the account has opted in.
+The global credentials alone do not enroll or charge any account. The command
+does not itself create a payment; a finalized invoice must separately enter
+the payment outbox.
+
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool
 retention with the deployment's existing data-governance rules.

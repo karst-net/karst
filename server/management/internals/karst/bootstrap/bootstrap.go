@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -182,6 +183,27 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			return nil, fmt.Errorf("karst: configure Paddle webhook: %w", err)
 		}
 	}
+	paddleEnabled := false
+	if configured := os.Getenv("KARST_PADDLE_ENABLED"); configured != "" {
+		paddleEnabled, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_ENABLED must be a boolean: %w", err)
+		}
+	}
+	if paddleEnabled && paddleWebhookVerifier == nil {
+		return nil, fmt.Errorf("karst: Paddle collection requires KARST_PADDLE_WEBHOOK_SECRET")
+	}
+	paddleSandbox := false
+	if configured := os.Getenv("KARST_PADDLE_SANDBOX"); configured != "" {
+		paddleSandbox, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_SANDBOX must be a boolean: %w", err)
+		}
+	}
+	paddleClient, err := karstbilling.NewPaddleClient(paddleEnabled, paddleSandbox, os.Getenv("KARST_PADDLE_API_KEY"), nil)
+	if err != nil {
+		return nil, fmt.Errorf("karst: configure Paddle client: %w", err)
+	}
 	// Old portal grants bypassed consumption and can no longer be trusted.
 	// Invalidate them on upgrade, including grants whose ownership row was
 	// deleted by the old redemption path. Newly issued grants carry ownership
@@ -228,6 +250,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	}
 	billingStore.StartRetentionWorker(context.Background(), 24*time.Hour, func(err error) {
 		log.WithError(err).Error("karst: prune billing history")
+	})
+	billingStore.StartPaymentWorker(context.Background(), paddleClient, time.Minute, func(err error) {
+		log.WithError(err).Error("karst: process Paddle payment outbox")
 	})
 	billingStore.StartWebhookWorker(context.Background(), 5*time.Second, func(err error) {
 		log.WithError(err).Error("karst: process Paddle webhook inbox")
@@ -309,6 +334,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
 		karstapi.RegisterRelayAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
+		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)

@@ -117,6 +117,57 @@ func (e BedrockStatusMode) Valid() bool {
 	}
 }
 
+// Defines values for BillingPaymentCurrency.
+const (
+	BillingPaymentCurrencyUSD BillingPaymentCurrency = "USD"
+)
+
+// Valid indicates whether the value is a known member of the BillingPaymentCurrency enum.
+func (e BillingPaymentCurrency) Valid() bool {
+	switch e {
+	case BillingPaymentCurrencyUSD:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BillingPaymentState.
+const (
+	BillingPaymentStateCheckout     BillingPaymentState = "checkout"
+	BillingPaymentStateNotQueued    BillingPaymentState = "not_queued"
+	BillingPaymentStateOperatorHold BillingPaymentState = "operator_hold"
+	BillingPaymentStatePaid         BillingPaymentState = "paid"
+	BillingPaymentStatePastDue      BillingPaymentState = "past_due"
+	BillingPaymentStateReady        BillingPaymentState = "ready"
+	BillingPaymentStateReconcile    BillingPaymentState = "reconcile"
+	BillingPaymentStateSubmitting   BillingPaymentState = "submitting"
+)
+
+// Valid indicates whether the value is a known member of the BillingPaymentState enum.
+func (e BillingPaymentState) Valid() bool {
+	switch e {
+	case BillingPaymentStateCheckout:
+		return true
+	case BillingPaymentStateNotQueued:
+		return true
+	case BillingPaymentStateOperatorHold:
+		return true
+	case BillingPaymentStatePaid:
+		return true
+	case BillingPaymentStatePastDue:
+		return true
+	case BillingPaymentStateReady:
+		return true
+	case BillingPaymentStateReconcile:
+		return true
+	case BillingPaymentStateSubmitting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeviceInvitationState.
 const (
 	DeviceInvitationStateExpired  DeviceInvitationState = "expired"
@@ -752,6 +803,25 @@ type BedrockStatus struct {
 
 // BedrockStatusMode defines model for BedrockStatus.Mode.
 type BedrockStatusMode string
+
+// BillingPayment defines model for BillingPayment.
+type BillingPayment struct {
+	CheckoutUrl *string                `json:"checkout_url,omitempty"`
+	Currency    BillingPaymentCurrency `json:"currency"`
+	DeviceMinor int64                  `json:"device_minor"`
+	PeriodEnd   time.Time              `json:"period_end"`
+	PeriodStart time.Time              `json:"period_start"`
+	RelayMinor  int64                  `json:"relay_minor"`
+	State       BillingPaymentState    `json:"state"`
+	TotalMinor  int64                  `json:"total_minor"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+}
+
+// BillingPaymentCurrency defines model for BillingPayment.Currency.
+type BillingPaymentCurrency string
+
+// BillingPaymentState defines model for BillingPayment.State.
+type BillingPaymentState string
 
 // ChainVerification defines model for ChainVerification.
 type ChainVerification struct {
@@ -1409,6 +1479,18 @@ type ExportAudit200JSONResponseBody struct {
 type ListBedrockLogParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetBillingPaymentParams defines parameters for GetBillingPayment.
+type GetBillingPaymentParams struct {
+	// Period UTC calendar month in YYYY-MM form.
+	Period string `form:"period" json:"period"`
+}
+
+// QueueBillingPaymentParams defines parameters for QueueBillingPayment.
+type QueueBillingPaymentParams struct {
+	// Period UTC calendar month in YYYY-MM form.
+	Period string `form:"period" json:"period"`
 }
 
 // GetRelaySpendingCapParams defines parameters for GetRelaySpendingCap.

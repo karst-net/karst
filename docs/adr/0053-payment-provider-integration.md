@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0053: Payment-provider integration boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
-- **Deciders:** Pending
+- **Deciders:** #275
 - **Related:** #275, ADR-0049, ADR-0050, ADR-0051 (proposed), ADR-0052 (proposed)
 
 ---
@@ -16,13 +16,16 @@ to default off. ADR-0050 establishes the account-attributed device and managed
 relay usage source. #275 assigns account plans and payment state to the control
 plane and requires payment integration to stay outside live networking.
 
-The provider, merchant-of-record model, supported markets/currencies, seller
-and tax responsibilities, and invoice/event retention period remain undecided.
-Issue #275 approves a 14-day pilot grace period with billing-administrator
-notices and asynchronous retries. Payment failure does not suspend networking
-without a separately approved enforcement policy. Keep only provider
-references and minimum auditable invoice/payment state; never store card
-credentials or raw relay traffic.
+Paddle is selected as merchant of record and pilot provider. Checkout uses
+pre-tax USD rates, with applicable tax calculated and shown separately by
+Paddle. Live collection remains gated on business/domain approval, supported
+launch markets, and SaaS tax-category configuration. Retain finalized invoices
+and payment/audit state for seven years and normalized webhook events for
+thirteen months; never persist raw webhook bodies after signature verification.
+Issue #275 approves a 14-day pilot grace period: asynchronously retry on days
+1, 3, 7, and 12 after failure; send in-app notices to billing admins; then keep
+the service active after day 14 and mark the invoice past due for customer or
+operator resolution. Payment failure does not suspend networking.
 
 ## Decision
 
@@ -31,9 +34,9 @@ The internal account billing ledger remains the source of rates, billable usage,
 and invoice-line calculations. A provider collects payment and reports payment
 status; it does not calculate Karst usage or decide relay forwarding.
 
-This ADR does not select a provider, currency, retry schedule,
-refund/chargeback policy, seller/tax model, or invoice retention period.
-Payment-provider integration remains a proposal pending those decisions.
+Refund, chargeback, partial-payment, and cancellation policy remain undecided.
+Payment-provider integration remains gated on Paddle onboarding and the
+remaining launch checks above.
 
 ### Separation from networking and rollout
 
@@ -111,12 +114,13 @@ merchant-of-record model requires a reviewed customer/data migration.
 
 - A payment failure first changes local billing status and starts the selected
   retry/grace policy; it never calls the forwarding path.
-- The proposed default is a 14-day grace with customer billing-admin notices
-  and asynchronous retries. Keep the interval, retry schedule, notice channel,
-  and post-grace account action unapproved until #275 settles them.
+- The approved pilot uses a 14-day grace, with retries on days 1, 3, 7, and 12
+  after failure and in-app billing-admin notices. After day 14, keep service
+  active and mark the invoice past due for customer/operator resolution.
 - When payment succeeds, a verified event or reconciliation job updates local
   status idempotently. If collection still fails after the approved grace,
-  execute only the separately selected management-plane account policy.
+  keep service active and mark the invoice past due; payment state never
+  becomes a forwarding dependency.
 - Refunds, disputed payments, chargebacks, partial payments, cancellations,
   and correction invoices require explicit policies before production billing.
 
@@ -134,8 +138,9 @@ unconfigured deployments keep existing behavior.
 The control plane must maintain durable invoice and payment-state records,
 retry workers, webhook verification, and reconciliation. Provider choice affects
 merchant-of-record, tax, invoice presentation, support, and migration duties;
-a generic interface cannot erase those differences. No automatic suspension
-policy can be implemented until grace and entitlement decisions are approved.
+a generic interface cannot erase those differences. Payment state must never
+become a live forwarding dependency; the approved pilot keeps service active
+after grace.
 
 ### Reconsider if
 
