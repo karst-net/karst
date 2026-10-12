@@ -295,6 +295,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
+		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}

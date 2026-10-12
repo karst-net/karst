@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -325,6 +326,32 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		return nil
 	})
 	return returnGrant, err
+}
+
+// ReserveAuthorizedRelayCredits verifies the relay identity and its currently
+// enabled operator mapping in the same outer transaction that reserves the
+// account-wide credits. A mapping revocation cannot race between validation
+// and issuance.
+func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (RelayCreditGrant, error) {
+	if relayStore == nil {
+		return RelayCreditGrant{}, ErrCreditGrantConflict
+	}
+	requestedBytes, err := relayusage.DecodeRequestedCreditBytes(request)
+	if err != nil {
+		return RelayCreditGrant{}, err
+	}
+	var grant RelayCreditGrant
+	err = runBillingTransaction(ctx, s.db, func(tx *gorm.DB) error {
+		mapping, err := relayStore.WithDB(tx).AuthorizeCreditRequest(ctx, request)
+		if err != nil {
+			return err
+		}
+		accountCtx := WithAccount(ctx, mapping.AccountID)
+		grant, err = (&Store{db: tx}).ReserveRelayCredits(accountCtx, start, end,
+			request.RelayID, request.Generation, request.MappingVersion, request.RequestID, requestedBytes)
+		return err
+	})
+	return grant, err
 }
 
 // SurrenderRelayCredits releases unused credits only after the API has

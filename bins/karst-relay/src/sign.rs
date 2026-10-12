@@ -35,6 +35,9 @@ pub const USAGE_CTX: &[u8] = b"karst-relay-usage-v1";
 pub const USAGE_UPLOAD_CTX: &[u8] = b"karst-relay-usage-upload-v1";
 pub const USAGE_UPLOAD_METHOD: &str = "POST";
 pub const USAGE_UPLOAD_PATH: &str = "/karst/v1/usage/relay-batches";
+/// Relay-side managed cap grants are a distinct identity-key use.
+pub const CREDIT_REQUEST_CTX: &[u8] = b"karst-relay-credit-request-v1";
+pub const CREDIT_REQUEST_PATH: &str = "/karst/v1/billing/relay-credits";
 
 /// Domain label for a relay identifier — §5.2.
 const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
@@ -210,6 +213,20 @@ impl Identity {
             .map_err(|_| "signing the usage upload request failed")?;
         Ok(sig.encode().to_vec())
     }
+
+    /// Sign one idempotent byte-credit reservation for an authorized mapping.
+    /// # Errors
+    /// If the operating system's CSPRNG cannot be read.
+    pub fn sign_credit_request(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_randomized(message, CREDIT_REQUEST_CTX, &mut OsEntropy)
+            .map_err(|_| "signing the relay credit request failed")?;
+        Ok(sig.encode().to_vec())
+    }
 }
 
 /// Canonical fresh transport transcript for one immutable batch upload.
@@ -230,6 +247,39 @@ pub fn usage_upload_signing_input(
     message.extend_from_slice(&timestamp_micros.to_be_bytes());
     message.extend_from_slice(nonce);
     message.extend_from_slice(&digest);
+    message
+}
+
+/// Canonical cross-language transcript for one idempotent relay credit request.
+/// Keep in sync with Go's `relayusage.CreditRequest.SigningInput`.
+#[must_use]
+pub fn credit_request_signing_input(
+    relay_id: &str,
+    deployment_id: &str,
+    mapping_version: &str,
+    generation: &str,
+    request_id: &str,
+    requested_bytes: u64,
+) -> Vec<u8> {
+    let fields = [
+        "POST",
+        CREDIT_REQUEST_PATH,
+        relay_id,
+        deployment_id,
+        mapping_version,
+        generation,
+        request_id,
+    ];
+    let mut message = Vec::with_capacity(64 + fields.iter().map(|field| field.len()).sum::<usize>());
+    message.extend_from_slice(b"karst-relay-credit-request-v1\0");
+    for field in fields {
+        let Ok(length) = u16::try_from(field.len()) else {
+            return Vec::new();
+        };
+        message.extend_from_slice(&length.to_be_bytes());
+        message.extend_from_slice(field.as_bytes());
+    }
+    message.extend_from_slice(&requested_bytes.to_be_bytes());
     message
 }
 
@@ -491,6 +541,33 @@ mod tests {
         let nonce: [u8; 32] = nonce.try_into().expect("nonce length");
         let body = unhex(&vector.body_hex).expect("body hex");
         let input = usage_upload_signing_input(vector.timestamp_micros, &nonce, &body);
+        assert_eq!(hex(&input), vector.signing_input_hex);
+    }
+
+    #[test]
+    fn shared_credit_request_signing_vector_matches_go() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            relay_id: String,
+            deployment_id: String,
+            mapping_version: String,
+            generation: String,
+            request_id: String,
+            requested_bytes: u64,
+            signing_input_hex: String,
+        }
+        let vector: Vector = serde_json::from_str(include_str!(
+            "../../../spec/vectors/relay-credit-request-v1.json"
+        ))
+        .expect("valid credit request vector");
+        let input = credit_request_signing_input(
+            &vector.relay_id,
+            &vector.deployment_id,
+            &vector.mapping_version,
+            &vector.generation,
+            &vector.request_id,
+            vector.requested_bytes,
+        );
         assert_eq!(hex(&input), vector.signing_input_hex);
     }
 
