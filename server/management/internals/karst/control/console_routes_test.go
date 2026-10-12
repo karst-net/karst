@@ -20,6 +20,7 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
@@ -209,6 +210,17 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turns/{turnId}",
 		},
 		{
+			name: "record a known event", method: http.MethodPost,
+			path: "/karst/v1/known-events",
+			body: `{"label":"company all-hands","starts_at":"2026-03-01T00:00:00Z","ends_at":"2026-03-02T00:00:00Z"}`,
+			want: []int{http.StatusCreated}, template: "/karst/v1/known-events",
+		},
+		{
+			name: "remove a known event", method: http.MethodDelete,
+			path: "/karst/v1/known-events/unknown-event", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/known-events/{eventId}",
+		},
+		{
 			name: "configure an audit sink", method: http.MethodPost,
 			path: "/karst/v1/audit/sinks",
 			body: `{"kind":"webhook","endpoint":"https://siem.example.test/karst"}`,
@@ -362,13 +374,17 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("bedrock log: %v", err)
 	}
+	knownEventsStore, err := knownevents.NewStore(db)
+	if err != nil {
+		t.Fatalf("known events store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
 
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
-		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", router)
+		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore, router)
 	return router
 }
 
