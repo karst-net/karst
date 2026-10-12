@@ -68,7 +68,7 @@ explicit account-period schedule assignment; it does not collect payment. The
 operator can finalize only once the period is complete using the
 [assignment and finalization procedure](billing-schedule-assignment.md).
 
-implementation provides an audited in-app alert feed and an optional
+This implementation provides an audited in-app alert feed and an optional
 organization-wide managed-relay cap, with grants reserved across relays and
 forwarding paused when a capped relay has no credits. Owners/admins configure
 the cap for an assigned UTC month through `PUT /karst/v1/billing/relay-cap`;
