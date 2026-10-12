@@ -1,0 +1,9 @@
+{
+  "spec": "ADR-0050 relay usage batch signing input v1",
+  "description": "Canonical signing input for a 60-second empty complete heartbeat. Signatures are randomized and are intentionally not vector material.",
+  "EpochHex": "000102030405060708090a0b0c0d0e0f",
+  "Sequence": 42,
+  "PayloadHex": "4b52554d000100000000000000000000000003938700000000",
+  "PayloadSHA256Hex": "35d239ce28dec5123f6140c9eb231fb33fb3b794bb760ea15003b02473e23acc",
+  "SigningInputHex": "6b617273742d72656c61792d75736167652d62617463682d763100000102030405060708090a0b0c0d0e0f000000000000002a0000001935d239ce28dec5123f6140c9eb231fb33fb3b794bb760ea15003b02473e23acc4b52554d000100000000000000000000000003938700000000"
+}

@@ -79,6 +79,10 @@ const ControlContext = "karst-control-v1"
 // discipline is the one this file already established for ControlContext.
 const RelayTelemetryContext = "karst-relay-telemetry-v1"
 
+// RelayUsageContext domain-separates durable managed-relay accounting batches
+// (ADR-0050) from advisory relay telemetry and Ponor authentication.
+const RelayUsageContext = "karst-relay-usage-v1"
+
 var (
 	ErrKeySize = errors.New("identity: wrong key size")
 	ErrContext = errors.New("identity: context string exceeds 255 bytes")

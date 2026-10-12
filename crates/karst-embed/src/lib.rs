@@ -367,6 +367,12 @@ pub struct MeshTcpListener<'a> {
 impl<'a> MeshTcpListener<'a> {
     /// Block until a peer connects, then hand back a stream for it.
     ///
+    /// A socket is ready only after the TCP handshake completes: `is_active`
+    /// becomes true during `SYN-RECEIVED`, when it still cannot receive.
+    /// Returning it then lets the first `read` mistake the unfinished
+    /// handshake for EOF. We wait for receive readiness, including buffered
+    /// data if the peer closes immediately after sending it.
+    ///
     /// Each accepted connection gets a freshly `listen`ed socket for the
     /// next one, rather than reusing the just-accepted handle via
     /// `Userspace::tcp_listen_again` once it closes — simpler, at the cost
@@ -377,8 +383,11 @@ impl<'a> MeshTcpListener<'a> {
     /// # Errors
     /// The next port cannot be listened on.
     pub fn accept(&mut self) -> Result<(MeshTcpStream<'a>, SocketAddr), Error> {
+        let mut handshaking = false;
         loop {
-            if self.node.userspace.tcp_is_active(self.handle) {
+            if self.node.userspace.tcp_may_recv(self.handle)
+                || self.node.userspace.tcp_can_recv(self.handle)
+            {
                 let remote = self.node.userspace.tcp_remote(self.handle).ok_or_else(|| {
                     Error::Engine(
                         "accepted connection reported no remote overlay address".to_owned(),
@@ -399,6 +408,21 @@ impl<'a> MeshTcpListener<'a> {
                     remote,
                 ));
             }
+            // An abandoned SYN must not strand this listener forever. As in
+            // the daemon's TCP publisher, reclaim that socket and listen
+            // again once its handshake has reset or timed out.
+            let active = self.node.userspace.tcp_is_active(self.handle);
+            if handshaking && !active {
+                self.node.userspace.tcp_release(self.handle);
+                self.handle = self
+                    .node
+                    .userspace
+                    .listen_tcp(self.port)
+                    .map_err(|error| Error::Engine(error.to_string()))?;
+                handshaking = false;
+                continue;
+            }
+            handshaking |= active;
             std::thread::sleep(POLL_INTERVAL);
         }
     }

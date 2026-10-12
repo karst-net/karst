@@ -1024,6 +1024,8 @@ mod tests {
             "a listener that has seen a SYN reports itself inactive, so the \
              accept loop would never pick this connection up"
         );
+        // `MeshTcpListener::accept` must gate on receive readiness, not this
+        // active bit: it is still only SYN-RECEIVED at this point.
         assert!(
             !server.tcp_may_recv(listener),
             "the whole hazard is that `may_recv` is false here; if this ever \

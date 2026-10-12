@@ -27,6 +27,9 @@ const CTX: &[u8] = b"ponor-v1";
 /// what lets one key sign for more than one purpose without a signature for
 /// one ever being mistaken for the other.
 const TELEMETRY_CTX: &[u8] = b"karst-relay-telemetry-v1";
+/// Separate accounting purpose; a telemetry report can never be replayed as
+/// a billing batch under the same relay identity.
+pub const USAGE_CTX: &[u8] = b"karst-relay-usage-v1";
 
 /// Domain label for a relay identifier — §5.2.
 const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
@@ -173,6 +176,20 @@ impl Identity {
             .map_err(|_| "signing the telemetry report failed")?;
         Ok(sig.encode().to_vec())
     }
+
+    /// Sign an accounting envelope under its own domain-separated context.
+    /// # Errors
+    /// If the operating system's CSPRNG cannot be read.
+    pub fn sign_usage(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_randomized(message, USAGE_CTX, &mut OsEntropy)
+            .map_err(|_| "signing the usage batch failed")?;
+        Ok(sig.encode().to_vec())
+    }
 }
 
 impl Signer for Identity {
@@ -255,6 +272,22 @@ impl Verifier for PonorVerifier {
         };
         vk.verify_with_context(message, CTX, &sig)
     }
+}
+
+/// Verify a signed accounting envelope using the relay registry key.
+#[must_use]
+pub fn verify_usage(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    let Ok(pk) = <[u8; IDENTITY_PK_LEN]>::try_from(public_key) else {
+        return false;
+    };
+    let Ok(sg) = <[u8; SIG_LEN]>::try_from(signature) else {
+        return false;
+    };
+    let key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&pk.into());
+    let Some(sig) = ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&sg.into()) else {
+        return false;
+    };
+    key.verify_with_context(message, USAGE_CTX, &sig)
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -409,6 +442,26 @@ mod tests {
         let a = k.sign_telemetry(&msg).expect("signing");
         let b = k.sign_telemetry(&msg).expect("signing");
         assert_ne!(a, b, "signatures are deterministic — not hedged");
+    }
+
+    #[test]
+    fn usage_signatures_are_hedged_and_domain_separated() {
+        let k = identity(1);
+        let msg = [9u8; 48];
+        let a = k.sign_usage(&msg).expect("signing");
+        let b = k.sign_usage(&msg).expect("signing");
+        assert_ne!(a, b, "usage signatures are deterministic — not hedged");
+        assert!(verify_usage(k.public_key(), &msg, &a));
+        assert!(verify_usage(k.public_key(), &msg, &b));
+        assert!(!PonorVerifier.verify(k.public_key(), &msg, &a));
+        assert!(!verify_usage(
+            k.public_key(),
+            &msg,
+            &k.sign_telemetry(&msg).expect("telemetry")
+        ));
+        assert!(!verify_usage(k.public_key(), &[8u8; 48], &a));
+        assert!(!verify_usage(&[], &msg, &a));
+        assert!(!verify_usage(k.public_key(), &msg, &[]));
     }
 
     #[test]

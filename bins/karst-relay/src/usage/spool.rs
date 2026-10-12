@@ -2,7 +2,8 @@
 // Copyright the Karst contributors.
 
 //! Immutable, bounded batch files. Only a durable control-plane acknowledgment
-//! permits removal. Epoch allocation and batch signing live above this layer.
+//! permits removal. Epoch allocation lives here; signing happens once before
+//! bytes enter the spool so retries reproduce the exact same envelope.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -14,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 pub const MAX_SPOOL_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_BATCHES: usize = 1024;
+const MAX_SPOOLED_BATCH_BYTES: usize = MAX_BATCH_BYTES + 68 + karst_relay_proto::consts::SIG_LEN;
 
 /// Names contain only encoded epoch bytes and a sequence, never external paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -112,6 +114,25 @@ impl Spool {
         Ok(id)
     }
 
+    /// Persist a randomized signed envelope once so every upload retry replays
+    /// identical signature bytes. The returned digest covers the stored envelope
+    /// and is the value a durable acknowledgment must bind to.
+    /// # Errors
+    /// Returns window, signing, capacity, or filesystem errors.
+    pub fn seal_signed(
+        &mut self,
+        window: &Window,
+        identity: &crate::sign::Identity,
+    ) -> io::Result<(BatchId, [u8; 32])> {
+        let payload = window.encode().map_err(invalid)?;
+        let id = self.reserve()?;
+        let signed = super::SignedBatch::create(identity, id, &payload)
+            .map_err(|_| io::Error::other("usage batch signing failed"))?;
+        self.put(id, &signed.encoded)?;
+        let stored_digest: [u8; 32] = Sha256::digest(&signed.encoded).into();
+        Ok((id, stored_digest))
+    }
+
     /// Record clean producer shutdown after the final window is sealed. Any
     /// failure leaves the on-disk state unclean for the next process.
     /// # Errors
@@ -201,7 +222,7 @@ impl Spool {
     /// # Errors
     /// Returns bounds, conflict, integrity, or filesystem errors.
     pub fn put(&mut self, id: BatchId, payload: &[u8]) -> io::Result<()> {
-        if payload.is_empty() || payload.len() > MAX_BATCH_BYTES {
+        if payload.is_empty() || payload.len() > MAX_SPOOLED_BATCH_BYTES {
             return Err(invalid("batch size"));
         }
         match self.read(id) {
@@ -245,9 +266,9 @@ impl Spool {
     pub fn read(&self, id: BatchId) -> io::Result<Vec<u8>> {
         let file = options().read(true).open(self.path.join(id.name()))?;
         let mut bytes = Vec::new();
-        file.take((MAX_BATCH_BYTES + 33) as u64)
+        file.take((MAX_SPOOLED_BATCH_BYTES + 33) as u64)
             .read_to_end(&mut bytes)?;
-        if bytes.len() <= 32 || bytes.len() > MAX_BATCH_BYTES + 32 {
+        if bytes.len() <= 32 || bytes.len() > MAX_SPOOLED_BATCH_BYTES + 32 {
             return Err(invalid("invalid batch size"));
         }
         let (digest, payload) = bytes.split_at(32);
@@ -428,7 +449,9 @@ mod tests {
         let temp = Temp::new();
         let mut spool = Spool::open(&temp.0).expect("open");
         assert!(spool.put(ID, &[]).is_err());
-        assert!(spool.put(ID, &vec![0; MAX_BATCH_BYTES + 1]).is_err());
+        assert!(spool
+            .put(ID, &vec![0; MAX_SPOOLED_BATCH_BYTES + 1])
+            .is_err());
         assert!(!temp.0.join(ID.name()).exists());
     }
 
@@ -564,6 +587,30 @@ mod tests {
         let id = spool.seal(&window).expect("seal");
         assert_eq!(id.sequence, 0);
         assert_eq!(spool.read(id).expect("replay"), expected);
+    }
+
+    #[test]
+    fn signed_window_is_persisted_once_and_only_its_exact_digest_is_acknowledged() {
+        let temp = Temp::new();
+        let mut spool = Spool::open(&temp.0).expect("open");
+        let identity = crate::sign::Identity::from_seed(&[5; crate::sign::SEED_LEN]);
+        let mut acc = super::super::Accumulator::new(0).expect("window");
+        acc.record(1, DeliveryUsageForTest::make());
+        let window = acc.seal();
+
+        let (id, digest) = spool.seal_signed(&window, &identity).expect("seal signed");
+        let first = spool.read(id).expect("replay");
+        assert_eq!(first.get(..6).expect("header"), b"KRUS\0\x01");
+        assert_eq!(Sha256::digest(&first).as_slice(), digest.as_slice());
+        assert!(spool.acknowledge(id, &[0; 32]).is_err());
+        assert_eq!(spool.read(id).expect("wrong ack retains batch"), first);
+        drop(spool);
+        let mut spool = Spool::open(&temp.0).expect("restart");
+        assert_eq!(spool.read(id).expect("replay after restart"), first);
+        spool
+            .acknowledge(id, &digest)
+            .expect("matching durable ack");
+        assert_eq!(spool.pending().expect("backlog"), Vec::<BatchId>::new());
     }
 
     struct DeliveryUsageForTest;
