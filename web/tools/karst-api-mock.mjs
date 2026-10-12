@@ -184,6 +184,14 @@ const server = http.createServer((request, response) => {
     billingPayments = new Map();
     return noContent(response);
   }
+  if (path === "/__mock__/billing/payment-state" && method === "PUT") {
+    return readBody(request).then(({ period, state }) => {
+      const [year, month] = period.split("-").map(Number);
+      const payment = { period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", device_minor: 2500, relay_minor: 500, total_minor: 3000, state, checkout_url: "https://sandbox-buy.paddle.com/checkout/mock", updated_at: new Date().toISOString() };
+      billingPayments.set(period, payment);
+      return json(response, 200, payment);
+    });
+  }
   if (path === "/__mock__/fixture" && method === "PUT") {
     return readBody(request).then((body) => {
       const empty = Boolean(body.empty);

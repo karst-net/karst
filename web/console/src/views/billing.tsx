@@ -126,6 +126,7 @@ export function Billing() {
       {payment.value && <>
         <p>Finalized invoice for {reportMonth}: devices <strong>${formatUsdMinor(payment.value.device_minor)}</strong>, managed relay <strong>${formatUsdMinor(payment.value.relay_minor)}</strong>, total <strong>${formatUsdMinor(payment.value.total_minor)} USD before tax</strong>.</p>
         <p>Payment status: <strong>{payment.value.state.replaceAll("_", " ")}</strong>.</p>
+        {payment.value.state === "past_due" && <p role="alert"><strong>Payment failed.</strong> Your service remains active during the 14-day grace period. Check this page for updated payment status or use the checkout link below.</p>}
         {payment.value.state === "not_queued" && <button type="button" onClick={() => { setMessage(undefined); void runPayment(() => api.queueBillingPayment(reportMonth), "Paddle checkout request queued. Refresh payment status to see the checkout link."); }}>Prepare Paddle checkout</button>}
         {payment.value.checkout_url && (payment.value.state === "checkout" || payment.value.state === "past_due") && <p><a href={payment.value.checkout_url} target="_blank" rel="noreferrer">Continue to Paddle checkout</a></p>}
         {payment.value.state === "ready" && <p>The checkout request is queued. Refresh after it has been processed.</p>}
