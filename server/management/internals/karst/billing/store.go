@@ -316,8 +316,9 @@ func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice
 }
 
 // RecordRelayAlerts durably records alert threshold crossings once per
-// account-period-schedule-target-threshold. Repeated evaluations are
-// idempotent. No notification transport is selected or invoked here.
+// account-period-schedule-target-threshold. Repeated evaluations refresh the
+// stored lower-bound/freshness snapshot without creating another feed item.
+// No push notification transport is selected or invoked here.
 func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCandidate) error {
 	accountID, err := billingAccountFromContext(ctx)
 	if err != nil {
@@ -349,7 +350,10 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 				PeriodEndUS: candidate.PeriodEnd.UnixMicro(), Digest: hex.EncodeToString(digest[:]),
 				Snapshot: snapshot, CreatedAt: time.Now().UTC(),
 			}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "account_id"}, {Name: "period_start_us"}, {Name: "schedule_version"}, {Name: "target"}, {Name: "threshold"}},
+				DoUpdates: clause.AssignmentColumns([]string{"period_end_us", "digest", "snapshot"}),
+			}).Create(&row).Error; err != nil {
 				return fmt.Errorf("billing: record relay alert: %w", err)
 			}
 		}
@@ -358,9 +362,9 @@ func (s *Store) RecordRelayAlerts(ctx context.Context, candidates []RelayAlertCa
 }
 
 // EvaluateAndRecordRelayAlerts builds current-period crossings from the
-// assigned immutable schedule and persists them idempotently. A caller must
-// provide an authenticated account context and choose when reports are
-// reevaluated; delivery remains a separate concern.
+// assigned immutable schedule and persists them by deduplicated threshold. A
+// caller must provide an authenticated account context and choose when reports
+// are reevaluated.
 func (s *Store) EvaluateAndRecordRelayAlerts(ctx context.Context, report relayusage.Report, capOverageMinor *int64) ([]RelayAlertCandidate, error) {
 	_, err := billingAccountFromContext(ctx)
 	if err != nil {
@@ -560,6 +564,24 @@ func (s *Store) Assignment(ctx context.Context, start, end time.Time) (Assignmen
 		PeriodEnd:       time.UnixMicro(row.PeriodEndUS).UTC(),
 		ScheduleVersion: row.ScheduleVersion,
 	}, nil
+}
+
+// AssignedAccountPage returns an ordered, bounded page of accounts assigned
+// to one exact period. Account enumeration is reserved for background billing
+// work and must not be exposed by a customer-facing endpoint.
+func (s *Store) AssignedAccountPage(ctx context.Context, start, end time.Time, after string, limit int) ([]string, error) {
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil || !isBillingCalendarMonth(startUS, endUS) || len(after) > 128 || limit < 1 || limit > 1000 {
+		return nil, ErrInvalidPeriod
+	}
+	query := s.db.WithContext(ctx).Model(&rateAssignmentRow{}).
+		Where("period_start_us = ? AND period_end_us = ? AND account_id > ?", startUS, endUS, after).
+		Order("account_id ASC").Limit(limit)
+	var accounts []string
+	if err := query.Pluck("account_id", &accounts).Error; err != nil {
+		return nil, fmt.Errorf("billing: list assigned accounts: %w", err)
+	}
+	return accounts, nil
 }
 
 // AssignedSchedule loads the exact assigned snapshot for one period.

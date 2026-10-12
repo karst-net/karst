@@ -130,3 +130,36 @@ func TestRelayAlertStoreRequiresAssignedSchedule(t *testing.T) {
 	err = store.RecordRelayAlerts(WithAccount(context.Background(), "org-unassigned"), alerts)
 	require.ErrorIs(t, err, ErrScheduleUnassigned)
 }
+
+func TestRelayAlertRefreshKeepsOneThresholdAndUpdatesCoverage(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "org-alert-refresh")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	schedule := testSchedule()
+	require.NoError(t, store.PutSchedule(ctx, schedule))
+	require.NoError(t, store.AssignSchedule(ctx, start, end, schedule.Version))
+
+	incomplete := completeRelayReport(start, end, "9000000000")
+	incomplete.HistoryComplete = false
+	incomplete.Complete = false
+	incomplete.AsOf = start.Add(24 * time.Hour)
+	incomplete.End = incomplete.AsOf
+	first, err := EvaluateRelayAlerts(incomplete, schedule, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+	require.False(t, first[0].UsageComplete)
+	require.NoError(t, store.RecordRelayAlerts(ctx, first))
+
+	complete := completeRelayReport(start, end, "9500000000")
+	complete.AsOf = start.Add(48 * time.Hour)
+	complete.End = complete.AsOf
+	updated, err := EvaluateRelayAlerts(complete, schedule, nil)
+	require.NoError(t, err)
+	require.NoError(t, store.RecordRelayAlerts(ctx, updated))
+
+	stored, err := store.RelayAlerts(ctx, start, end)
+	require.NoError(t, err)
+	require.Len(t, stored, len(first), "threshold crossings remain one feed item per period")
+	require.Equal(t, updated, stored, "latest report refreshes the feed snapshot and completeness state")
+}

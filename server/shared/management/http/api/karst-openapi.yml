@@ -58,6 +58,27 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RelayUsageReport'}
         default: {$ref: '#/components/responses/Error'}
+  /usage/relay-alerts:
+    get:
+      operationId: getRelayBillingAlerts
+      tags: [usage]
+      description: |
+        Account-owner/admin in-app relay usage alert feed. The current period is
+        reevaluated when read; newly crossed 75%, 90%, and 100% thresholds are
+        persisted once per period. Account scope comes from authenticated
+        authorization and every read is audited. An incomplete report includes
+        a coverage warning, and its reported amounts are lower bounds.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}}
+      responses:
+        '200':
+          description: Account-scoped alert feed with usage coverage status
+          headers:
+            Cache-Control: {schema: {type: string}, description: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RelayAlertFeed'}
+        default: {$ref: '#/components/responses/Error'}
   /invitations:
     get:
       operationId: listDeviceInvitations
@@ -597,6 +618,31 @@ components:
         missing_windows: {type: integer, format: int64, minimum: 0}
         unexpected_windows: {type: integer, format: int64, minimum: 0}
         gap_reasons: {type: array, items: {type: string, enum: [unresolved_mapping, capacity, overflow, clock, observation_lost]}}
+    RelayAlertFeed:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, as_of, coverage_complete, alerts]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        as_of: {type: string, format: date-time}
+        coverage_complete: {type: boolean, description: False means amounts are lower bounds and must not be treated as final usage.}
+        coverage_warning: {type: string, description: Present when usage coverage is incomplete.}
+        alerts: {type: array, items: {$ref: '#/components/schemas/RelayAlertCandidate'}}
+    RelayAlertCandidate:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, schedule_version, target, threshold_percent, reported_bytes, threshold_bytes, as_of, usage_complete]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        schedule_version: {type: string}
+        target: {type: string, enum: [included_allowance, spending_cap]}
+        threshold_percent: {type: integer, enum: [75, 90, 100]}
+        reported_bytes: {type: string, pattern: '^[0-9]+$'}
+        threshold_bytes: {type: string, pattern: '^[0-9]+$'}
+        as_of: {type: string, format: date-time}
+        usage_complete: {type: boolean, description: False means this event was evaluated from lower-bound usage coverage.}
     DeviceInvitationDraft:
       type: object
       additionalProperties: false

@@ -30,6 +30,7 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
@@ -213,6 +214,13 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay usage store: %w", err)
 	}
+	billingStore, err := billing.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: billing store: %w", err)
+	}
+	go billing.RunRelayAlertWorker(context.Background(), billingStore, usageRelayStore, 5*time.Minute, func(err error) {
+		log.WithError(err).Error("karst: relay billing alert evaluation failed")
+	})
 	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
 	// future forecaster (and the NOC view's own time-series panels) have
 	// data to train/chart against -- see relayreg.Store's own doc comment
@@ -282,6 +290,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
 		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
+		karstapi.RegisterRelayAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
