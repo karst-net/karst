@@ -18,9 +18,13 @@ Relay metering counts customer payload bytes after a complete successful write
 to the destination transport; it excludes framing overhead, failed writes,
 queue drops, direct peer traffic, and internal relay-to-relay hops.
 
-These rates do not settle financial billing periods, device proration, rounding,
-or incomplete-period finalization. The approved relay measurement boundary is
-not a guarantee that every byte was received by the destination endpoint. See
+Billing uses UTC calendar months and exact eligible-time device proration.
+Incomplete usage stays open and unbilled; final invoice lines truncate down to
+currency minor units. Relay alerts are set for 75%, 90%, and 100% of allowance
+or cap once per threshold and period to billing administrators, with a coverage
+warning when data is incomplete. The alert delivery channel remains to be
+selected. The approved relay measurement boundary is not a guarantee that every
+byte was received by the destination endpoint. See
 the [device collection guide](device-usage.md) and [relay usage guide](relay-usage.md)
 for full coverage and failure semantics.
 
@@ -58,16 +62,15 @@ with no assignment remains unconfigured. The assignment makes the immutable
 rate snapshot available to the calculator; it does not finalize usage or
 authorize a charge.
 
-Before any invoice or enforcement launch, resolve the remaining decisions in
-[#275](https://github.com/karst-net/karst): billing calendar and proration,
-rounding and incomplete-period handling, alert delivery and thresholds,
-relay-cap period and cross-relay reservation/overshoot/recovery behavior,
-seller and tax responsibilities, payment-failure policy and provider, and
-self-hosted support terms. Until those decisions and their implementations are
-complete, leave alerts, spending caps, invoices, and payment collection out of
-customer operation. No billing configuration is required for deployments that
-do not opt in; relay forwarding and device membership behavior remain available
-without usage collection.
+Invoice input finalization requires complete device and relay reports and an
+explicit account-period schedule assignment; it does not collect payment.
+Before broad customer rollout, select an alert delivery channel, seller and tax
+responsibilities, payment provider, self-hosted support terms, and retention
+period, and validate cap reservation sizing from shadow data. Keep alerts,
+spending-cap enforcement, and payment collection out of customer operation
+until their implementations and operational checks are complete. No billing
+configuration is required for deployments that do not opt in; relay forwarding
+and device membership behavior remain available without usage collection.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool

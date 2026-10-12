@@ -28,10 +28,13 @@ customer sets one and acknowledges possible interruption of managed-relay
 forwarding. No cap behavior applies to an unconfigured account or self-hosted
 relay. Packet forwarding and credit renewal make no payment-provider calls.
 
-The proposed cap period is a UTC calendar month. Period, currency, rate
-schedule, allowance, cap amount, rounding, grant sizing, and clock-skew bound
-remain subject to #275 decisions and operational validation. This ADR selects
-no customer-facing price or cap amount.
+The cap period is an approved UTC calendar month. The cap remains absent unless
+an organization explicitly sets a USD relay-overage limit and acknowledges
+possible interruption. #275 approves central byte-credit reservations, reserve
+before forwarding, count ambiguous writes as consumed, and pause only capped
+managed-relay forwarding at exhaustion. Grant sizing, expiry, accounting-delay
+bounds, and clock-skew limits still require shadow data and operational
+validation. This ADR selects no customer-facing cap amount.
 
 ### Cap budget
 
@@ -43,7 +46,7 @@ no customer-facing price or cap amount.
   rate schedule means no cap enforcement.
 - Convert the maximum relay charge to a whole-byte budget using exact integer
   bytes and rational rates. Apply the included allowance and invoice rounding
-  rules, then round the permitted byte budget down so the billed relay charge
+  rules, then truncate the permitted byte budget down so the billed relay charge
   cannot exceed the customer's cap.
 - A setting change never rewrites prior periods. Increases may take effect
   once the new cap version and additional grants are durable. A decrease takes

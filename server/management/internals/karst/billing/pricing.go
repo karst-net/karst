@@ -50,8 +50,8 @@ type ExactAmount struct {
 
 // Estimate reports exact line items independently. An incomplete component is
 // nil, and TotalExact stays nil until both device and relay usage are complete.
-// It contains no rounded invoice amount; currency rounding remains an explicit
-// product decision.
+// It contains no finalized invoice amount. The invoice boundary truncates each
+// complete line down to currency minor units.
 type Estimate struct {
 	ScheduleVersion string
 	Currency        string
