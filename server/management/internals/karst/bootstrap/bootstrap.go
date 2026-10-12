@@ -193,12 +193,25 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if paddleEnabled && paddleWebhookVerifier == nil {
 		return nil, fmt.Errorf("karst: Paddle collection requires KARST_PADDLE_WEBHOOK_SECRET")
 	}
-	paddleSandbox := false
+	// Enabled collection defaults to Paddle sandbox. Production charging needs
+	// an independent operator approval flag so a missing/typoed environment
+	// setting cannot turn pilot traffic into live transactions.
+	paddleSandbox := paddleEnabled
 	if configured := os.Getenv("KARST_PADDLE_SANDBOX"); configured != "" {
 		paddleSandbox, err = strconv.ParseBool(configured)
 		if err != nil {
 			return nil, fmt.Errorf("karst: KARST_PADDLE_SANDBOX must be a boolean: %w", err)
 		}
+	}
+	paddleLiveApproved := false
+	if configured := os.Getenv("KARST_PADDLE_LIVE_APPROVED"); configured != "" {
+		paddleLiveApproved, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_LIVE_APPROVED must be a boolean: %w", err)
+		}
+	}
+	if err := validatePaddleMode(paddleEnabled, paddleSandbox, paddleLiveApproved); err != nil {
+		return nil, err
 	}
 	paddleClient, err := karstbilling.NewPaddleClient(paddleEnabled, paddleSandbox, os.Getenv("KARST_PADDLE_API_KEY"), nil)
 	if err != nil {

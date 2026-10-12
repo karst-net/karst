@@ -105,8 +105,11 @@ collection.
 
 Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
 server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
-store. `KARST_PADDLE_SANDBOX=true` selects Paddle's sandbox API. Configure an
-account's Paddle customer and approved product IDs explicitly with the audited
+store. Enabled collection defaults to Paddle sandbox. Production API access
+requires both `KARST_PADDLE_SANDBOX=false` and the separate operator approval
+`KARST_PADDLE_LIVE_APPROVED=true`; keep live mode off until Paddle onboarding,
+launch markets, and tax configuration are approved. Configure an account's
+Paddle customer and approved product IDs explicitly with the audited
 `admin billing configure-paddle` command only after the account has opted in.
 The global credentials alone do not enroll or charge any account. The command
 does not itself create a payment; a finalized invoice must separately enter
