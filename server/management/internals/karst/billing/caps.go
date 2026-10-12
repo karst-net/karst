@@ -27,7 +27,13 @@ var (
 	ErrCreditRequestConflict = errors.New("billing: relay credit request id reused with different inputs")
 	ErrCreditGrantNotFound   = errors.New("billing: relay credit grant not found")
 	ErrCreditGrantConflict   = errors.New("billing: relay credit grant conflicts with stored state")
+	ErrRelayCapPending       = errors.New("billing: relay spending cap activation is pending uncapped leases")
+	ErrRelayCapAlreadyActive = errors.New("billing: relay spending cap is already active")
 )
+
+const RelayUncappedLeaseMillis int64 = 15_000
+
+const relayUncappedLeaseDuration = time.Duration(RelayUncappedLeaseMillis) * time.Millisecond
 
 type relayCapRow struct {
 	AccountID       string    `gorm:"primaryKey;size:128"`
@@ -37,6 +43,7 @@ type relayCapRow struct {
 	OverageMinor    int64     `gorm:"not null"`
 	Revision        uint64    `gorm:"not null"`
 	Acknowledged    bool      `gorm:"not null"`
+	EffectiveAtUS   int64     `gorm:"not null;default:0"`
 	UpdatedBy       string    `gorm:"size:128;not null"`
 	UpdatedAt       time.Time `gorm:"not null"`
 }
@@ -51,6 +58,7 @@ type relayCapRevisionRow struct {
 	ScheduleVersion string    `gorm:"size:128;not null"`
 	OverageMinor    int64     `gorm:"not null"`
 	Acknowledged    bool      `gorm:"not null"`
+	EffectiveAtUS   int64     `gorm:"not null;default:0"`
 	Actor           string    `gorm:"size:128;not null"`
 	CreatedAt       time.Time `gorm:"not null"`
 }
@@ -78,6 +86,20 @@ type relayCreditGrantRow struct {
 
 func (relayCreditGrantRow) TableName() string { return "karst_billing_relay_credit_grants" }
 
+// relayUncappedLeaseRow fences the transition from ordinary forwarding to
+// credit-gated forwarding. A cap cannot become effective before all leases
+// issued while no cap existed have expired.
+type relayUncappedLeaseRow struct {
+	AccountID      string `gorm:"primaryKey;size:128"`
+	PeriodStartUS  int64  `gorm:"primaryKey"`
+	RelayID        string `gorm:"primaryKey;size:64"`
+	Generation     string `gorm:"primaryKey;size:32"`
+	MappingVersion string `gorm:"primaryKey;size:64"`
+	ExpiresAtUS    int64  `gorm:"not null;index"`
+}
+
+func (relayUncappedLeaseRow) TableName() string { return "karst_billing_relay_uncapped_leases" }
+
 // RelaySpendingCap is an explicit, acknowledged account-period setting. It
 // limits managed-relay overage only; the schedule's included allowance remains
 // available without consuming this cap.
@@ -92,6 +114,7 @@ type RelaySpendingCap struct {
 	Acknowledged    bool      `json:"acknowledged_interruption"`
 	UpdatedBy       string    `json:"updated_by"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	EffectiveAt     time.Time `json:"effective_at"`
 }
 
 // RelayCreditGrant is an account-period budget reservation bound to one relay
@@ -149,6 +172,16 @@ func (s *Store) SetRelaySpendingCap(ctx context.Context, start, end time.Time, o
 			row = relayCapRow{AccountID: accountID, PeriodStartUS: startUS, PeriodEndUS: endUS,
 				ScheduleVersion: schedule.Version, OverageMinor: overageMinor, Revision: 1,
 				Acknowledged: true, UpdatedBy: actor, UpdatedAt: now}
+			var latest relayUncappedLeaseRow
+			leaseErr := tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).
+				Order("expires_at_us DESC").Take(&latest).Error
+			if leaseErr != nil && !errors.Is(leaseErr, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("billing: inspect uncapped relay leases: %w", leaseErr)
+			}
+			row.EffectiveAtUS = now.UnixMicro()
+			if leaseErr == nil && latest.ExpiresAtUS > row.EffectiveAtUS {
+				row.EffectiveAtUS = latest.ExpiresAtUS
+			}
 			if err := tx.Create(&row).Error; err != nil {
 				return fmt.Errorf("billing: save relay spending cap: %w", err)
 			}
@@ -258,6 +291,9 @@ func (s *Store) ReserveRelayCredits(ctx context.Context, start, end time.Time, r
 		if cap.PeriodEndUS != endUS || !cap.Acknowledged {
 			return ErrRelayCapConflict
 		}
+		if cap.EffectiveAtUS > time.Now().UTC().UnixMicro() {
+			return ErrRelayCapPending
+		}
 		var existing relayCreditGrantRow
 		err := tx.Where("account_id = ? AND period_start_us = ? AND relay_id = ? AND generation = ? AND request_id = ?", accountID, startUS, relayID, generation, requestID).Take(&existing).Error
 		if err == nil {
@@ -352,6 +388,58 @@ func (s *Store) ReserveAuthorizedRelayCredits(ctx context.Context, relayStore *r
 		return err
 	})
 	return grant, err
+}
+
+// IssueAuthorizedRelayUncappedLease allows an opted-in relay to keep forwarding
+// while the account has no spending cap. Leases are short, persisted and
+// serialized with cap changes; enabling a cap waits for the latest lease to
+// expire, after which the relay must refresh before forwarding again.
+func (s *Store) IssueAuthorizedRelayUncappedLease(ctx context.Context, relayStore *relayusage.Store, start, end time.Time, request relayusage.CreditRequest) (time.Time, error) {
+	if relayStore == nil {
+		return time.Time{}, ErrCreditGrantConflict
+	}
+	if _, err := relayusage.DecodeRequestedCreditBytes(request); err != nil {
+		return time.Time{}, err
+	}
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil || !isRelayCapMonth(startUS, endUS) {
+		return time.Time{}, ErrInvalidPeriod
+	}
+	var expiresAt time.Time
+	err = runBillingTransaction(ctx, s.db, func(tx *gorm.DB) error {
+		mapping, err := relayStore.WithDB(tx).AuthorizeCreditRequest(ctx, request)
+		if err != nil {
+			return err
+		}
+		accountID := mapping.AccountID
+		if err := lockBillingAccount(tx, accountID); err != nil {
+			return err
+		}
+		var cap relayCapRow
+		err = tx.Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&cap).Error
+		if err == nil {
+			if cap.EffectiveAtUS > time.Now().UTC().UnixMicro() {
+				return ErrRelayCapPending
+			}
+			return ErrRelayCapAlreadyActive
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("billing: check cap before uncapped lease: %w", err)
+		}
+		now := time.Now().UTC()
+		expiresAt = now.Add(relayUncappedLeaseDuration).Truncate(time.Microsecond)
+		lease := relayUncappedLeaseRow{AccountID: accountID, PeriodStartUS: startUS,
+			RelayID: request.RelayID, Generation: request.Generation, MappingVersion: request.MappingVersion,
+			ExpiresAtUS: expiresAt.UnixMicro()}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "account_id"}, {Name: "period_start_us"}, {Name: "relay_id"}, {Name: "generation"}, {Name: "mapping_version"}},
+			DoUpdates: clause.AssignmentColumns([]string{"expires_at_us"}),
+		}).Create(&lease).Error; err != nil {
+			return fmt.Errorf("billing: save uncapped relay lease: %w", err)
+		}
+		return nil
+	})
+	return expiresAt, err
 }
 
 // SurrenderRelayCredits releases unused credits only after the API has
@@ -494,7 +582,7 @@ func addCanonicalBig(total *big.Int, decimal string) (*big.Int, error) {
 func relayCapDTO(row relayCapRow) RelaySpendingCap {
 	return RelaySpendingCap{AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(), PeriodEnd: time.UnixMicro(row.PeriodEndUS).UTC(),
 		ScheduleVersion: row.ScheduleVersion, Currency: "USD", OverageMinor: row.OverageMinor, Revision: row.Revision,
-		Acknowledged: row.Acknowledged, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt}
+		Acknowledged: row.Acknowledged, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt, EffectiveAt: time.UnixMicro(row.EffectiveAtUS).UTC()}
 }
 
 func relayGrantDTO(row relayCreditGrantRow, endUS int64) RelayCreditGrant {
@@ -506,7 +594,7 @@ func relayGrantDTO(row relayCreditGrantRow, endUS int64) RelayCreditGrant {
 func addRelayCapRevision(tx *gorm.DB, row relayCapRow, actor string, now time.Time) error {
 	revision := relayCapRevisionRow{AccountID: row.AccountID, PeriodStartUS: row.PeriodStartUS, Revision: row.Revision,
 		PeriodEndUS: row.PeriodEndUS, ScheduleVersion: row.ScheduleVersion, OverageMinor: row.OverageMinor,
-		Acknowledged: row.Acknowledged, Actor: actor, CreatedAt: now}
+		Acknowledged: row.Acknowledged, EffectiveAtUS: row.EffectiveAtUS, Actor: actor, CreatedAt: now}
 	if err := tx.Create(&revision).Error; err != nil {
 		return fmt.Errorf("billing: record relay cap revision: %w", err)
 	}

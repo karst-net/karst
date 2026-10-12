@@ -34,7 +34,9 @@ possible interruption. #275 approves central byte-credit reservations, reserve
 before forwarding, count ambiguous writes as consumed, and pause only capped
 managed-relay forwarding at exhaustion. Grant sizing, expiry, accounting-delay
 bounds, and clock-skew limits still require shadow data and operational
-validation. This ADR selects no customer-facing cap amount.
+validation. Invoice lines truncate down to currency minor units; byte budgets
+also truncate down so the cap cannot exceed its configured amount. This ADR
+selects no customer-facing cap amount.
 
 ### Cap budget
 
@@ -71,6 +73,16 @@ validation. This ADR selects no customer-facing cap amount.
 - The relay requests grants asynchronously and forwards no more billable bytes
   than its durable, unspent credits. It makes no synchronous allocator or
   payment-provider call in the packet path.
+- A cap-enabled relay first obtains a short, persisted uncapped lease for each
+  managed account mapping whose account has no cap. The lease response gives a
+  duration; the relay measures it from before the request using a monotonic
+  clock, so network latency only shortens the usable lease. When a cap is set,
+  the control plane stops issuing uncapped leases and records an effective time
+  no earlier than every outstanding lease expiry. At expiry, relays fail closed
+  for that mapping until they obtain capped credits. This avoids a stale
+  uncapped cache racing cap activation without a per-packet control-plane call.
+  The current lease duration is 15 seconds and remains subject to operational
+  validation.
 - The account-period invariant is that consumed bytes plus outstanding grants
   plus unallocated bytes never exceeds the cap-derived byte budget. Do not
   reassign credits held by an unreachable relay. Return unused bytes only

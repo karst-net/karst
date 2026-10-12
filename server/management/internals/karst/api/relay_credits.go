@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -66,14 +67,31 @@ func (h *relayCreditHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	grant, err := h.billing.ReserveAuthorizedRelayCredits(ctx, h.relays, start, end, request)
+	if errors.Is(err, billing.ErrRelayCapNotConfigured) {
+		until, leaseErr := h.billing.IssueAuthorizedRelayUncappedLease(ctx, h.relays, start, end, request)
+		if errors.Is(leaseErr, billing.ErrRelayCapAlreadyActive) {
+			grant, err = h.billing.ReserveAuthorizedRelayCredits(ctx, h.relays, start, end, request)
+		} else if leaseErr == nil {
+			w.Header().Set("X-Karst-Relay-Cap-Mode", "uncapped")
+			w.Header().Set("X-Karst-Relay-Cap-Lease-Millis", strconv.FormatInt(billing.RelayUncappedLeaseMillis, 10))
+			w.Header().Set("X-Karst-Relay-Cap-Until", strconv.FormatInt(until.UnixMicro(), 10))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		} else {
+			err = leaseErr
+		}
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, relayusage.ErrInvalidCreditRequest):
 			http.Error(w, "invalid relay cap request", http.StatusBadRequest)
 		case errors.Is(err, relayusage.ErrUnauthorized), errors.Is(err, relayusage.ErrProducerMissing), errors.Is(err, relayusage.ErrMappingNotAllowed):
 			http.Error(w, "relay cap request rejected", http.StatusForbidden)
-		case errors.Is(err, billing.ErrRelayCapNotConfigured), errors.Is(err, billing.ErrScheduleUnassigned):
-			http.Error(w, "relay cap credits are not enabled for this account", http.StatusPreconditionFailed)
+		case errors.Is(err, billing.ErrRelayCapPending):
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "relay cap activation is pending uncapped forwarding leases", http.StatusTooEarly)
+		case errors.Is(err, billing.ErrRelayCapNotConfigured):
+			http.Error(w, "relay cap state could not be leased", http.StatusServiceUnavailable)
 		case errors.Is(err, billing.ErrRelayCapExhausted):
 			http.Error(w, "relay spending cap exhausted", http.StatusTooManyRequests)
 		case errors.Is(err, billing.ErrCreditRequestConflict):

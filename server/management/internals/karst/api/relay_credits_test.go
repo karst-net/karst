@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,8 +46,6 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	schedule := billing.PilotRateSchedule()
 	require.NoError(t, billingStore.PutSchedule(accountCtx, schedule))
 	require.NoError(t, billingStore.AssignSchedule(accountCtx, start, end, schedule.Version))
-	_, err = billingStore.SetRelaySpendingCap(accountCtx, start, end, 200, true, "owner-1")
-	require.NoError(t, err)
 
 	mapping, err := usage.PersistRelayMapping(context.Background(), db, "deployment-a", "aquifer-a", "account-1")
 	require.NoError(t, err)
@@ -69,6 +68,29 @@ func TestRelayCreditEndpointIssuesOnlySignedAuthorizedRequests(t *testing.T) {
 	RegisterRelayCreditEndpoint(router, relays, billingStore)
 	response := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+	require.Equal(t, "uncapped", response.Header().Get("X-Karst-Relay-Cap-Mode"))
+	require.Equal(t, "15000", response.Header().Get("X-Karst-Relay-Cap-Lease-Millis"))
+	leaseUntilUS, err := strconv.ParseInt(response.Header().Get("X-Karst-Relay-Cap-Until"), 10, 64)
+	require.NoError(t, err)
+
+	cap, err := billingStore.SetRelaySpendingCap(accountCtx, start, end, 200, true, "owner-1")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, cap.EffectiveAt.UnixMicro(), leaseUntilUS, "a cap must wait for previously issued uncapped leases")
+	response = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusTooEarly, response.Code, response.Body.String())
+
+	// Move the persisted activation time forward in this test so the successful
+	// grant path can be exercised without sleeping through a real lease.
+	require.NoError(t, db.Table("karst_billing_relay_caps").Where("account_id = ? AND period_start_us = ?", "account-1", start.UnixMicro()).
+		Update("effective_at_us", time.Now().UTC().Add(-time.Second).UnixMicro()).Error)
+	response = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, relayusage.CreditRequestPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
