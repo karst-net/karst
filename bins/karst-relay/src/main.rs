@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use base64ct::{Base64, Encoding as _};
+use karst_relay::cloud_location;
 use karst_relay::config::Config;
 use karst_relay::roster::FileRoster;
 use karst_relay::sign::Identity;
@@ -159,13 +160,19 @@ fn command_pubkey(args: &[&str]) -> ExitCode {
 /// What a scaled-up relay's `enroll --bundle` file carries — everything
 /// `enroll` needs that is not already in its own `relay.toml` (`region`
 /// is; see ADR-0045 §7 Phase 2 PR 4's own notes on why it is not
-/// duplicated here). The scaler's own driver (`karst-scaler-k8s`) writes
-/// this exact shape.
+/// duplicated here). The scaler's own drivers (`karst-scaler-k8s`,
+/// `karst-scaler-aws`) write this exact shape.
+///
+/// `address` is absent when the driver that wrote this bundle could not
+/// know it in advance — `karst-scaler-aws`'s own crate doc explains why
+/// an EC2 instance's address is one such case. `command_enroll` resolves
+/// a missing `address` itself, via cloud instance metadata, rather than
+/// treating an absent address as a configuration error.
 #[derive(Debug, serde::Deserialize)]
 struct EnrollBundle {
     control_api_base: String,
     token: String,
-    address: String,
+    address: Option<String>,
     tls_server_name: String,
 }
 
@@ -208,6 +215,32 @@ fn enroll_args(args: &[&str]) -> Result<(PathBuf, PathBuf), String> {
     Ok((config, bundle))
 }
 
+/// Resolves `address` (`host:port`, where `host` may already be a
+/// literal IP or may be a DNS name) to one concrete `ip:port` --
+/// `relayreg.go`'s own `compile()` requires a literal
+/// `netip.ParseAddrPort`, matching `bins/karstd/src/netmap.rs::Relay::
+/// from_wire`'s own `SocketAddr`-only parse. `karst-scaler-k8s`'s own
+/// bundle writes a pod's stable DNS name here (chosen for its stability
+/// across pod restarts, which a raw pod IP does not have); an address
+/// that is already a literal socket address — including the one
+/// `command_enroll` resolves itself via cloud instance metadata when a
+/// bundle has none at all — resolves to itself. A blocking lookup, not
+/// async: `command_enroll` is otherwise a synchronous, one-shot CLI path
+/// (like its own `enroll()` below, which blocks on `ureq` the same way).
+///
+/// # Errors
+/// If `address` cannot be parsed/resolved at all, or resolves to no
+/// address.
+fn resolve_address(address: &str) -> Result<String, String> {
+    use std::net::ToSocketAddrs as _;
+    address
+        .to_socket_addrs()
+        .map_err(|e| format!("resolving: {e}"))?
+        .next()
+        .map(|addr| addr.to_string())
+        .ok_or_else(|| "resolved to no address".to_owned())
+}
+
 fn command_enroll(args: &[&str]) -> ExitCode {
     let (config_path_arg, bundle_path) = match enroll_args(args) {
         Ok(v) => v,
@@ -247,8 +280,45 @@ fn command_enroll(args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // A bundle with no `address` is one `karst-scaler-aws` wrote (see its
+    // own crate doc): an EC2 instance's address is unknowable to the
+    // driver before `RunInstances` returns, so `enroll` resolves its own
+    // via cloud instance metadata instead. The `Runtime` is built here,
+    // not held across the whole command, since this is the one place
+    // this otherwise-synchronous subcommand needs an async call at all.
+    let address = if let Some(address) = bundle.address {
+        address
+    } else {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("karst-relay: building the async runtime: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Some(address) = rt.block_on(cloud_location::self_address()) {
+            address
+        } else {
+            eprintln!(
+                "karst-relay: {}: no address, and this instance's own cloud metadata did \
+                 not yield one",
+                bundle_path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let address = match resolve_address(&address) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!(
+                "karst-relay: {}: address {address:?}: {e}",
+                bundle_path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let entry = RegistryEntry {
-        address: &bundle.address,
+        address: &address,
         tls_server_name: &bundle.tls_server_name,
         identity_key: Base64::encode_string(identity.public_key()),
         region: &cfg.region,
@@ -390,5 +460,31 @@ mod tests {
         let (config, bundle) = enroll_args(&["--bundle", "/tmp/e.toml"]).expect("ok");
         assert_eq!(config, PathBuf::from(DEFAULT_CONFIG));
         assert_eq!(bundle, PathBuf::from("/tmp/e.toml"));
+    }
+
+    #[test]
+    fn resolve_address_passes_a_literal_socket_address_through() {
+        assert_eq!(
+            resolve_address("203.0.113.5:443").expect("ok"),
+            "203.0.113.5:443"
+        );
+    }
+
+    #[test]
+    fn resolve_address_resolves_a_dns_name_to_a_literal_address() {
+        // `localhost` is resolved via /etc/hosts or the system resolver's
+        // own built-in loopback entry, not a real network lookup -- this
+        // is the same shape of fix `karst-scaler-k8s`'s own pod FQDN
+        // needs, exercised without a real DNS server.
+        let resolved = resolve_address("localhost:443").expect("ok");
+        assert!(
+            resolved == "127.0.0.1:443" || resolved == "[::1]:443",
+            "resolved to {resolved}"
+        );
+    }
+
+    #[test]
+    fn resolve_address_rejects_a_name_with_no_port() {
+        assert!(resolve_address("localhost").is_err());
     }
 }

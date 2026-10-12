@@ -64,31 +64,65 @@ pub(crate) struct BreakerSection {
 
 /// The `[driver]` TOML table.
 ///
-/// `namespace`/`enroll_pat_file` are only ever *read* by `main.rs`'s
-/// `#[cfg(feature = "k8s")]` build of `build_k8s_driver` -- a default
-/// build still parses and carries them (an operator's config must not
-/// silently lose fields depending on how the binary happened to be
-/// compiled), it just never looks at them, which is what this `allow`
-/// documents rather than lets rustc report as unused.
+/// Every field below other than `kind` is only ever *read* by whichever
+/// one of `main.rs`'s `#[cfg(feature = "k8s")]`/`#[cfg(feature = "aws")]`
+/// builders matches `kind` -- a default build still parses and carries
+/// all of them (an operator's config must not silently lose fields
+/// depending on how the binary happened to be compiled), it just never
+/// looks at them. Each field below is `allow(dead_code)`d individually,
+/// rather than once for the whole struct, because a single-feature build
+/// (just `k8s`, or just `aws`) genuinely never reads the other kind's own
+/// fields -- a struct-level `allow` would miss exactly that case.
 #[derive(Debug, Clone, Deserialize)]
-#[cfg_attr(not(feature = "k8s"), allow(dead_code))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DriverSection {
-    /// `"noop"` or `"k8s"` — anything else is refused at the point `drive`
-    /// starts. `"k8s"` on a `karst-scaler` built without the `k8s` Cargo
-    /// feature (see `karst-scaler-k8s`'s own crate doc) is refused the
-    /// same way, not silently downgraded to the no-op driver.
+    /// `"noop"`, `"k8s"`, or `"aws"` — anything else is refused at the
+    /// point `drive` starts. `"k8s"`/`"aws"` on a `karst-scaler` built
+    /// without the matching Cargo feature (see `karst-scaler-k8s`/
+    /// `karst-scaler-aws`'s own crate docs) is refused the same way, not
+    /// silently downgraded to the no-op driver.
     pub kind: String,
     /// Required when `kind = "k8s"`: the namespace every `StatefulSet`,
     /// `Pod`, and bundle `Secret` this driver touches lives in.
+    #[cfg_attr(not(feature = "k8s"), allow(dead_code))]
     #[serde(default)]
     pub namespace: Option<String>,
-    /// Required when `kind = "k8s"`: path to a file holding a
+    /// Required when `kind = "k8s"` or `"aws"`: path to a file holding a
     /// `UserRoleScaler`-scoped PAT (ADR-0045 §7 Phase 2 PR 3), trimmed of
     /// surrounding whitespace when read — same convention as `pat_file`
     /// above.
+    #[cfg_attr(not(any(feature = "k8s", feature = "aws")), allow(dead_code))]
     #[serde(default)]
     pub enroll_pat_file: Option<String>,
+    /// Required when `kind = "aws"`: the AWS region every EC2 call this
+    /// driver makes targets — ADR-0045 §4c's region allowlist makes this
+    /// a load-bearing fact `karst-scaler-aws` must be told explicitly,
+    /// not left to ambient discovery (see that crate's own
+    /// `AwsDriverConfig` doc).
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Required when `kind = "aws"`: the AMI every new instance of this
+    /// pool launches from — expected to already have `karst-relay`
+    /// installed and configured to run `enroll` from its own boot path.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub ami_id: Option<String>,
+    /// Required when `kind = "aws"`: the EC2 instance type new instances
+    /// launch as, e.g. `"t3.micro"`.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub instance_type: Option<String>,
+    /// Required when `kind = "aws"`: the subnet new instances launch
+    /// into.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub subnet_id: Option<String>,
+    /// Required when `kind = "aws"`: the security groups new instances
+    /// launch with. At least one entry.
+    #[cfg_attr(not(feature = "aws"), allow(dead_code))]
+    #[serde(default)]
+    pub security_group_ids: Vec<String>,
 }
 
 /// The `[metrics]` TOML table — same loopback-only posture as `karstd`'s own

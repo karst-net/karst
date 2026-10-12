@@ -201,7 +201,7 @@ impl Driver for K8sDriver {
                     control_api_base: self.control_api_base.clone(),
                     token,
                     tls_server_name: pod_fqdn(pool_id, ordinal, &self.namespace),
-                    address,
+                    address: Some(address),
                 };
                 let text = bundle
                     .to_toml()

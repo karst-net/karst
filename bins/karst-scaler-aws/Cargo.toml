@@ -1,0 +1,99 @@
+[package]
+name = "karst-scaler-aws"
+description = "ADR-0045 §5/§7 Phase 3: the AWS EC2 driver (optional, feature-gated from bins/karst-scaler)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+publish = false
+
+[lib]
+name = "karst_scaler_aws"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# Mirrors karst-scaler-k8s/Cargo.toml's own comment: karst-scaler depends on
+# this crate only behind its own `aws` feature (optional = true) -- an
+# operator who never asks for the AWS driver never compiles the AWS SDK/
+# tokio into their binary at all.
+[dependencies]
+# The Driver trait only -- see karst-scaler-driver's own crate doc for why
+# this is not a dependency on the whole karst-scaler crate.
+karst-scaler-driver = { path = "../../crates/karst-scaler-driver" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+# Driver's trait methods are deliberately not async (same reasoning as
+# karst-scaler-k8s) -- AwsDriver owns a `Runtime` and `block_on`s inside
+# each method rather than making every karst-scaler binary async for the
+# sake of one driver implementation.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# `aws-sdk-ec2` has no direct TLS/crypto dependency of its own -- the real
+# HTTP/TLS layer underneath both it and `aws-config` is
+# `aws-smithy-http-client`. Its `rustls-aws-lc` feature selects `aws-lc-rs`
+# with `prefer-post-quantum` -- confirmed via `cargo info
+# aws-smithy-http-client`'s own feature list, not assumed from the name --
+# matching every other crypto-provider choice in this workspace (see
+# karst-scaler-k8s/Cargo.toml's comment on the one real incident this
+# avoids repeating: `ring`/`aws-lc-rs` feature unification breaking
+# karst-dns's TLS-pinning tests under `cargo test --workspace`).
+#
+# `default-features = false` on all three AWS crates below is load-bearing,
+# not tidiness: `aws-sdk-ec2`'s own *default* feature set pulls in
+# `rustls` -> `aws-smithy-runtime/tls-rustls` -> `aws-smithy-http-client`'s
+# `legacy-rustls-ring` feature, i.e. `ring`, by default -- confirmed via
+# `cargo info aws-sdk-ec2`'s feature list, the exact same shape as the
+# `kube` incident above. `default-https-client` is the one that instead
+# pulls `rustls-aws-lc`. `aws-config`'s own `default` set separately pulls
+# `sso`, which depends directly on `ring` for an auth flow (browser SSO
+# login) this driver has no use for -- another reason not to take its
+# defaults.
+#
+# Pinned to exact versions, not "1": every AWS SDK/smithy crate releases in
+# lockstep and bumped its MSRV to 1.94.1 at once, one minor above this
+# workspace's own MSRV (1.88) -- the same `cargo info` gap `kube` already
+# taught this workspace to check for (that crate's own `cargo info` showed
+# `rust-version: 1.88` while `cargo build` still refused the latest
+# semver-compatible release). These are each the newest release still
+# declaring `rust-version <= 1.88`, confirmed via the crates.io API's own
+# per-version `rust_version` field (`cargo info <crate>@<version>` one at a
+# time would have worked too; the API was faster across this many crates).
+aws-sdk-ec2 = { version = "=1.177.0", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
+aws-config = { version = "=1.8.13", default-features = false, features = ["rt-tokio", "default-https-client", "behavior-version-latest"] }
+aws-smithy-http-client = { version = "=1.1.9", default-features = false, features = ["rustls-aws-lc"] }
+aws-types = "=1.3.11"
+aws-credential-types = "=1.2.11"
+# These four direct pins are not the whole story: aws-config/aws-sdk-ec2
+# each pull in roughly a dozen further `aws-smithy-*` crates transitively,
+# several of which *also* bumped past 1.88 in their own latest releases --
+# `cargo build` (not `cargo info`) is what actually caught this, the same
+# gap the `kube` pin above already taught this workspace to expect. Those
+# are pinned in `Cargo.lock` (via `cargo update -p <crate>@<ver> --precise
+# <lower-ver>`, repeated per crate until `cargo build -p karst-scaler-aws`
+# was clean), not here, since Cargo.toml cannot pin a dependency it does
+# not declare directly. A bare `cargo update` (no `-p`) will walk them
+# back up and reproduce the same MSRV error -- re-run the same precise
+# downgrades if that happens, rather than bumping this workspace's MSRV.
+# The mint-enrollment-token call (POST to the control server, a different
+# host than the EC2 API) stays on ureq, matching
+# karst-scaler-k8s/src/enroll.rs exactly -- one more HTTP stack alongside
+# the AWS SDK's own is exactly the kind of dependency weight this
+# workspace avoids paying twice for the same job.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-native-certs = "0.8"
+# Only for `bundle::tls_server_name`'s derivation -- already a dependency of
+# a dozen other crates in this workspace (e.g. crates/karst-crypto), not a
+# new addition to the overall build graph.
+sha2 = { version = "0.10", default-features = false }
+# Encoding the enroll bundle into `RunInstances`'s `UserData` field, which
+# (confirmed by reading aws-sdk-ec2's own generated code, not assumed from
+# its doc comment alone) is a plain `String` the caller must already have
+# base64-encoded -- `aws-sdk-ec2` does not do this for you. Same crate
+# `bins/karst-relay/src/main.rs` already uses for the registry's identity
+# key, not a new encoding dependency for this workspace.
+base64ct = { version = "1", features = ["alloc"] }
