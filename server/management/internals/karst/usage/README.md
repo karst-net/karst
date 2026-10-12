@@ -44,8 +44,23 @@ account. No request field can select an arbitrary account inside this handler.
 The legacy `billing_admin` enum has no implemented role grant and is not enabled
 by this endpoint.
 
-The requested interval is half-open, in the past, and no longer than 93 days;
-timestamps have microsecond precision. At most 10,000 changes/coverage periods
+`GET /api/karst/v1/usage/relays?start=<RFC3339>&end=<RFC3339>` applies the same
+account-owner/admin authorization, account scoping, audit, and no-store policy.
+Its half-open interval is limited to 93 past days and must align to whole
+minutes. The response is explicitly `coverage: "received_only"` and always
+`complete: false`: it sums received account-attributed batch totals, reports
+known batch gap flags, counts sequence holes only between received batches
+from the same relay epoch, and returns the first received window plus the most
+recent receipt timestamp so customers can assess freshness. The first received
+window is evidence of receipt, not a producer authorization start. Producer
+authorization intervals are not historically
+stored yet, so absent producers, missing head/tail sequences, and days with no
+received windows cannot be interpreted as zero traffic or complete coverage.
+This report is evidence for customers, not an invoice or billing input.
+
+For device reports, the requested interval is half-open, in the past, and no
+longer than 93 days; timestamps have microsecond precision. At most 10,000
+changes/coverage periods
 are fetched per query and at most 10,000 report segments returned. Dense windows
 are rejected with a request to narrow the interval, never silently truncated.
 Historical opening counts are aggregated in SQL using an account/time index.
