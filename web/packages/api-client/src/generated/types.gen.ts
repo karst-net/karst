@@ -76,7 +76,7 @@ export type RelayUsageReport = {
      */
     reported_bytes: string;
     /**
-     * Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.
+     * Sum of sequence numbers missing between received batches within each epoch for the authorized producer inventory during this window. Batches for other accounts are included because sequence numbers are producer-wide; head and tail gaps are unknown.
      */
     missing_sequences: string;
     days: Array<RelayUsageDay>;

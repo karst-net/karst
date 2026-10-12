@@ -72,6 +72,18 @@ type reportWindow struct {
 	ReceivedAt   time.Time
 }
 
+// reportSequence includes every batch from a producer authorized for this
+// account's report window, regardless of which account its mappings served.
+// Sequence numbers are producer-wide, so filtering them by account would turn
+// another account's valid batch into a false missing-sequence diagnostic.
+type reportSequence struct {
+	DeploymentID string
+	RelayID      string
+	Epoch        string
+	Sequence     string
+	StartUS      int64
+}
+
 type reportWindowRange struct {
 	StartUS int64
 	EndUS   int64
@@ -117,7 +129,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		Limitations: []string{
 			"Completeness covers explicitly authorized managed producer and account-mapping intervals only; managed relays absent from that operator inventory are outside the expected set.",
 			"Batch gap flags indicate measurement uncertainty even when every expected producer window arrived.",
-			"Missing sequence counts are relay-level diagnostics between account-associated batches; gaps can span periods when this account had no expected usage window and are not estimates of missing bytes.",
+			"Missing sequence counts are relay-level diagnostics across received batches for producers authorized for this account during the requested window. They may span periods with no expected account usage and are not estimates of missing bytes.",
 		},
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -136,6 +148,19 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 			return err
 		}
 		if len(periods) > maxReportRows {
+			return ErrReportLimit
+		}
+		var sequences []reportSequence
+		if err := tx.Table("karst_usage_relay_batches AS b").
+			Distinct("b.deployment_id, b.relay_id, b.epoch, b.sequence, b.start_us").
+			Joins("JOIN karst_usage_producer_mapping_periods AS p ON p.deployment_id = b.deployment_id AND p.relay_id = b.relay_id").
+			Where("p.account_id = ? AND p.start_us < ? AND (p.end_us IS NULL OR p.end_us > ?) AND b.start_us >= ? AND b.start_us < ?",
+				accountID, end.UnixMicro(), start.UnixMicro(), start.UnixMicro(), end.UnixMicro()).
+			Order("b.deployment_id, b.relay_id, b.epoch, b.sequence").
+			Limit(maxReportRows + 1).Find(&sequences).Error; err != nil {
+			return err
+		}
+		if len(sequences) > maxReportRows {
 			return ErrReportLimit
 		}
 		var windows []reportWindow
@@ -161,7 +186,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		if len(totals) > maxReportRows {
 			return ErrReportLimit
 		}
-		return composeRelayReport(&report, periods, windows, totals)
+		return composeRelayReport(&report, periods, windows, sequences, totals)
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return report, err
 }
@@ -169,7 +194,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 // composeRelayReport aggregates exact received totals and compares account-minute
 // receipts with retained authorization intervals. Sequence holes remain a
 // separate signal because late batches can arrive out of order.
-func composeRelayReport(report *Report, periods []producerMappingInterval, windows []reportWindow, totals []reportTotal) error {
+func composeRelayReport(report *Report, periods []producerMappingInterval, windows []reportWindow, sequences []reportSequence, totals []reportTotal) error {
 	days := make(map[string]*dayBuilder)
 	for date := report.Start.Truncate(24 * time.Hour); date.Before(report.End); date = date.Add(24 * time.Hour) {
 		key := date.Format("2006-01-02")
@@ -198,22 +223,20 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 	}
 	totalBytes := new(big.Int)
 	totalMissing := new(big.Int)
-	previous := make(map[string]uint64)
-	seen := make(map[string]bool)
 	type sequencedWindow struct {
-		window   reportWindow
+		window   reportSequence
 		sequence uint64
 	}
-	orderedWindows := make([]sequencedWindow, len(windows))
-	for i, window := range windows {
+	orderedSequences := make([]sequencedWindow, len(sequences))
+	for i, window := range sequences {
 		sequence, err := strconv.ParseUint(window.Sequence, 10, 64)
 		if err != nil {
 			return ErrReportData
 		}
-		orderedWindows[i] = sequencedWindow{window: window, sequence: sequence}
+		orderedSequences[i] = sequencedWindow{window: window, sequence: sequence}
 	}
-	sort.Slice(orderedWindows, func(i, j int) bool {
-		a, b := orderedWindows[i], orderedWindows[j]
+	sort.Slice(orderedSequences, func(i, j int) bool {
+		a, b := orderedSequences[i], orderedSequences[j]
 		keyA := a.window.DeploymentID + "\x00" + a.window.RelayID + "\x00" + a.window.Epoch
 		keyB := b.window.DeploymentID + "\x00" + b.window.RelayID + "\x00" + b.window.Epoch
 		if keyA != keyB {
@@ -277,8 +300,7 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		}
 	}
 	receivedExpected := make(map[string]struct{}, len(expected))
-	for _, orderedWindow := range orderedWindows {
-		window := orderedWindow.window
+	for _, window := range windows {
 		day := getDay(window.StartUS)
 		day.windows++
 		windowKey := reportWindowKey(window.DeploymentID, window.RelayID, window.StartUS)
@@ -309,11 +331,16 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		if window.Gaps != 0 {
 			day.gapWindows++
 		}
+	}
+	previous := make(map[string]uint64)
+	seen := make(map[string]bool)
+	for _, orderedWindow := range orderedSequences {
+		window := orderedWindow.window
 		producerKey := window.DeploymentID + "\x00" + window.RelayID + "\x00" + window.Epoch
 		sequence := orderedWindow.sequence
 		if seen[producerKey] && previous[producerKey] != ^uint64(0) && sequence > previous[producerKey]+1 {
 			missing := new(big.Int).SetUint64(sequence - previous[producerKey] - 1)
-			day.missingSequences.Add(day.missingSequences, missing)
+			getDay(window.StartUS).missingSequences.Add(getDay(window.StartUS).missingSequences, missing)
 			totalMissing.Add(totalMissing, missing)
 		}
 		previous[producerKey], seen[producerKey] = sequence, true

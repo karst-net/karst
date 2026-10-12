@@ -1055,7 +1055,7 @@ type RelayUsageReport struct {
 	LastReceivedAt *time.Time `json:"last_received_at"`
 	Limitations    []string   `json:"limitations"`
 
-	// MissingSequences Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.
+	// MissingSequences Sum of sequence numbers missing between received batches within each epoch for the authorized producer inventory during this window. Batches for other accounts are included because sequence numbers are producer-wide; head and tail gaps are unknown.
 	MissingSequences string `json:"missing_sequences"`
 
 	// MissingWindows Expected minute windows for which no producer batch was received.
