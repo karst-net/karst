@@ -47,8 +47,10 @@ no customer-facing price or cap amount.
   cannot exceed the customer's cap.
 - A setting change never rewrites prior periods. Increases may take effect
   once the new cap version and additional grants are durable. Decreases take
-  effect next period unless all existing grants have been surrendered or their
-  relay generation has been safely fenced.
+  effect next period unless all existing grants have been surrendered, or
+  their relay generations are fenced and the old grants have expired under the
+  trusted-time/skew rule. A registry flag alone cannot revoke credits cached
+  on an unreachable relay.
 
 ### Central reservation, local enforcement
 
@@ -67,9 +69,13 @@ no customer-facing price or cap amount.
   payment-provider call in the packet path.
 - The account-period invariant is that consumed bytes plus outstanding grants
   plus unallocated bytes never exceeds the cap-derived byte budget. Do not
-  reassign credits held by an unreachable relay. Return unused bytes only after
-  the relay durably surrenders the grant and can no longer spend it, or an
-  operator explicitly fences that relay generation.
+  reassign credits held by an unreachable relay. Return unused bytes only
+  after the relay durably surrenders the grant and can no longer spend it. For
+  an unreachable relay, a control-plane fence prevents new grants but does not
+  revoke cached offline credits; those remain reserved until the grant expires
+  under the trusted-time/skew rule. Reclaim them only after expiry and fencing,
+  or after an independently verifiable mechanism makes the relay unable to
+  spend them.
 - Grant and debit state survives relay restart. If it cannot be recovered, the
   relay fails closed for capped forwarding until it obtains a new fenced
   generation and grant.
