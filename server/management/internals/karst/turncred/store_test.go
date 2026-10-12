@@ -96,6 +96,37 @@ func TestDeleteRemovesAnEntry(t *testing.T) {
 	require.Empty(t, list)
 }
 
+func TestDeleteByURIRemovesTheMatchingEntry(t *testing.T) {
+	store := newStore(t)
+	ctx := turncred.WithAccount(context.Background(), "account-a")
+
+	_, err := store.Create(ctx, turncred.Entry{URI: "turn:turn.example.com:3478", Region: "us"})
+	require.NoError(t, err)
+
+	require.NoError(t, store.DeleteByURI(ctx, "turn:turn.example.com:3478"))
+
+	list, err := store.List(ctx)
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
+func TestDeleteByURIOfAnUnknownURIIsErrNotFound(t *testing.T) {
+	store := newStore(t)
+	ctx := turncred.WithAccount(context.Background(), "account-a")
+
+	err := store.DeleteByURI(ctx, "turn:never-registered.example.com:3478")
+	require.ErrorIs(t, err, turncred.ErrNotFound)
+}
+
+func TestDeleteByURIRejectsAMalformedURI(t *testing.T) {
+	store := newStore(t)
+	ctx := turncred.WithAccount(context.Background(), "account-a")
+
+	err := store.DeleteByURI(ctx, "not-a-turn-uri")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, turncred.ErrNotFound)
+}
+
 // Two accounts must never see each other's entries: an account-scoped
 // registry that leaked across accounts would hand one tenant's operator-typed
 // TURN servers (and eventually its minted credentials) to another.

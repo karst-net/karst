@@ -94,6 +94,24 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredTurnServer, err
 	return record, nil
 }
 
+// DeleteByURI removes the stored turn server whose ID is derived from uri
+// -- the deenroll counterpart of Create, for a caller that knows the URI
+// it registered (or will register) rather than the server's own generated
+// ID. ADR-0045 §7b's own scaler driver is the intended caller: unlike an
+// admin removing an entry by ID from a list the console already fetched,
+// a driver builds an instance's URI deterministically at create() time
+// (the same way karst-scaler-k8s already builds a relay's pod FQDN) and
+// has no reason to List first just to recover the ID Create would derive
+// from that same URI anyway.
+func (s *Store) DeleteByURI(ctx context.Context, uri string) error {
+	validated, err := Entry{URI: uri}.validate()
+	if err != nil {
+		return err
+	}
+	id := base64.RawURLEncoding.EncodeToString([]byte(validated.URI))
+	return s.Delete(ctx, id)
+}
+
 func (s *Store) List(ctx context.Context) ([]StoredTurnServer, error) {
 	accountID, err := accountFromContext(ctx)
 	if err != nil {
