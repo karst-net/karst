@@ -170,3 +170,23 @@ func TestStoreRejectsUnknownScheduleInvalidPeriodsAndOverlaps(t *testing.T) {
 		t.Fatalf("assign overlapping period = %v, want ErrAssignmentConflict", err)
 	}
 }
+
+func TestStoreRejectsTamperedScheduleSnapshots(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "org-1")
+	schedule := testSchedule()
+	if err := store.PutSchedule(ctx, schedule); err != nil {
+		t.Fatalf("put schedule: %v", err)
+	}
+	changed := []byte(`{"Version":"pilot-2026-01","Currency":"USD","DeviceTiers":[{"UpToDevices":0,"MinorPerPeriod":1}],"RelayIncludedBytes":0,"RelayUnitBytes":1,"RelayMinorPerUnit":0}`)
+	if err := store.db.Model(&rateScheduleRow{}).Where("version = ?", schedule.Version).Update("snapshot", changed).Error; err != nil {
+		t.Fatalf("tamper schedule snapshot: %v", err)
+	}
+	if _, err := store.Schedule(ctx, schedule.Version); err == nil {
+		t.Fatal("Schedule accepted a snapshot whose digest no longer matches")
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.AssignSchedule(ctx, start, start.AddDate(0, 1, 0), schedule.Version); err == nil {
+		t.Fatal("AssignSchedule accepted a corrupted rate snapshot")
+	}
+}

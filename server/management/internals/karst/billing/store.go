@@ -170,11 +170,7 @@ func (s *Store) AssignSchedule(ctx context.Context, start, end time.Time, versio
 	if err != nil {
 		return err
 	}
-	var schedule rateScheduleRow
-	if err := s.db.WithContext(ctx).Where("version = ?", version).Take(&schedule).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrScheduleNotFound
-		}
+	if _, err := s.Schedule(ctx, version); err != nil {
 		return fmt.Errorf("billing: verify assigned schedule: %w", err)
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
