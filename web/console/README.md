@@ -20,6 +20,7 @@ upstream is still a cherry-pick.
 | **Groups** | ✅ members, resources, source | ✅ | ✅ rename | ✅ | `/api/groups` |
 | **Access policy** | ✅ full version history | ✅ new version on save | ✅ validate, preview diff, test | ✅ roll back to any version | `/karst/v1/policy` |
 | **Relays** | ✅ address, region, admission health | ✅ with client-side address validation | — | ✅ remove | `/karst/v1/relays` |
+| **Billing** | ✅ device and managed-relay usage, coverage, alerts | ✅ optional acknowledged monthly relay cap | — | — | `/karst/v1/billing` |
 | **Network routes** | ✅ | ✅ | ✅ including enable/disable | ✅ | `/api/routes` |
 | **DNS settings** | ✅ | — | ✅ excluded groups | — | `/api/dns/settings` |
 | **Nameserver groups** | ✅ | ✅ | ✅ | ✅ | `/api/dns/nameservers` |

@@ -680,7 +680,7 @@ components:
         currency: {type: string, enum: [USD]}
         overage_limit_minor: {type: integer, format: int64, minimum: 0}
         acknowledged_interruption: {type: boolean}
-        effective_at: {type: string, format: date-time, description: Cap activation time after outstanding uncapped relay leases expire.}
+        effective_at: {type: string, format: date-time, description: Initial cap activation time after outstanding uncapped relay leases expire.}
     DeviceInvitationDraft:
       type: object
       additionalProperties: false
