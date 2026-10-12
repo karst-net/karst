@@ -16,9 +16,10 @@ to default off. ADR-0050 establishes the account-attributed device and managed
 relay usage source. #275 assigns account plans and payment state to the control
 plane and requires payment integration to stay outside live networking.
 
-The provider, merchant-of-record model, supported markets/currencies, seller
-and tax responsibilities, and invoice/event retention period remain undecided.
-Issue #275 approves a 14-day pilot grace period with billing-administrator
+Issue #275 selects a merchant-of-record seller model. The specific provider,
+supported markets/currencies, provider-specific tax and resale responsibilities,
+and invoice/event retention period remain undecided. Issue #275 approves a
+14-day pilot grace period with billing-administrator
 notices and asynchronous retries. Payment failure does not suspend networking
 without a separately approved enforcement policy. Keep only provider
 references and minimum auditable invoice/payment state; never store card
@@ -32,8 +33,10 @@ and invoice-line calculations. A provider collects payment and reports payment
 status; it does not calculate Karst usage or decide relay forwarding.
 
 This ADR does not select a provider, currency, retry schedule,
-refund/chargeback policy, seller/tax model, or invoice retention period.
-Payment-provider integration remains a proposal pending those decisions.
+refund/chargeback policy, or invoice retention period. The selected
+merchant-of-record model must be verified against the chosen provider's
+supported markets, seller terms, tax handling, and payout rules. Provider
+integration remains a proposal pending those details.
 
 ### Separation from networking and rollout
 
@@ -90,10 +93,9 @@ Payment-provider integration remains a proposal pending those decisions.
 The provider adapter must make seller-of-record and tax responsibilities
 explicit; they are not interchangeable configuration details.
 
-- **Direct Stripe Billing:** candidate where Karst remains the seller and can
-  handle applicable tax, refunds, disputes, and customer obligations. Stripe
-  Billing provides subscription and collection operations, but direct Stripe
-  processing does not make Stripe the merchant of record.
+- **Direct Stripe Billing:** excluded under the selected merchant-of-record
+  model because Karst would remain the seller. Reconsider only if the seller
+  model changes.
 - **Stripe Managed Payments:** candidate where its supported merchant-of-record
   markets and service terms fit. It adds a transaction fee to standard payment
   processing and Billing fees.

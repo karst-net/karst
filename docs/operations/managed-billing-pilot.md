@@ -64,9 +64,10 @@ authorize a charge.
 
 Invoice input finalization requires complete device and relay reports and an
 explicit account-period schedule assignment; it does not collect payment.
-Before broad customer rollout, select an alert delivery channel, seller and tax
-responsibilities, payment provider, self-hosted support terms, and retention
-period, and validate cap reservation sizing from shadow data. Keep alerts,
+Before broad customer rollout, the in-app alert channel and merchant-of-record
+seller model are selected. Confirm provider-specific seller and tax
+responsibilities, choose a payment provider, define self-hosted support terms
+and retention, and validate cap reservation sizing from shadow data. Keep alerts,
 spending-cap enforcement, and payment collection out of customer operation
 until their implementations and operational checks are complete. No billing
 configuration is required for deployments that do not opt in; relay forwarding
