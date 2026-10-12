@@ -40,7 +40,7 @@ func (a *relayUsageAuditCapture) Append(_ context.Context, userID, action, _, _ 
 func (s *relayUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (relayusage.Report, error) {
 	s.account, s.calls = account, s.calls+1
 	return relayusage.Report{Start: start, End: end, AsOf: end, AuthorizationHistoryStart: start, Coverage: "authorized_producers", HistoryComplete: false, Complete: false,
-		ReportedBytes: "123", MissingSequences: "0", Days: []relayusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
+		ReportedBytes: "123", Days: []relayusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
 		Limitations: []string{"producer coverage is not historized"}}, nil
 }
 
@@ -64,6 +64,7 @@ func TestRelayUsageReportIsAccountScopedAndAudited(t *testing.T) {
 				require.Equal(t, "viewer", auditLog.userID)
 				require.Equal(t, "karst.usage.relays.view", auditLog.action)
 				require.NotContains(t, response.Body.String(), "other")
+				require.NotContains(t, response.Body.String(), "missing_sequences", "producer-wide sequence holes could reveal cross-account relay activity")
 				var body map[string]any
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 				spec := loadKarstOpenAPISchemas(t)

@@ -1017,7 +1017,6 @@ type RelayUsageDay struct {
 	ExpectedWindows   int64                     `json:"expected_windows"`
 	GapReasons        []RelayUsageDayGapReasons `json:"gap_reasons"`
 	GapWindows        int64                     `json:"gap_windows"`
-	MissingSequences  string                    `json:"missing_sequences"`
 	MissingWindows    int64                     `json:"missing_windows"`
 	ReportedBytes     string                    `json:"reported_bytes"`
 	ReportedWindows   int64                     `json:"reported_windows"`
@@ -1054,9 +1053,6 @@ type RelayUsageReport struct {
 	// LastReceivedAt Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
 	LastReceivedAt *time.Time `json:"last_received_at"`
 	Limitations    []string   `json:"limitations"`
-
-	// MissingSequences Sum of sequence numbers missing between received batches within each epoch for the authorized producer inventory during this window. Batches for other accounts are included because sequence numbers are producer-wide; head and tail gaps are unknown.
-	MissingSequences string `json:"missing_sequences"`
 
 	// MissingWindows Expected minute windows for which no producer batch was received.
 	MissingWindows int64 `json:"missing_windows"`

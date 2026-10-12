@@ -75,10 +75,6 @@ export type RelayUsageReport = {
      * Exact decimal bytes reported in received batches only.
      */
     reported_bytes: string;
-    /**
-     * Sum of sequence numbers missing between received batches within each epoch for the authorized producer inventory during this window. Batches for other accounts are included because sequence numbers are producer-wide; head and tail gaps are unknown.
-     */
-    missing_sequences: string;
     days: Array<RelayUsageDay>;
     limitations: Array<string>;
 };
@@ -91,7 +87,6 @@ export type RelayUsageDay = {
     expected_windows: number;
     missing_windows: number;
     unexpected_windows: number;
-    missing_sequences: string;
     gap_reasons: Array<'unresolved_mapping' | 'capacity' | 'overflow' | 'clock' | 'observation_lost'>;
 };
 

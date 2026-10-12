@@ -567,7 +567,7 @@ components:
     RelayUsageReport:
       type: object
       additionalProperties: false
-      required: [start, end, as_of, authorization_history_start, coverage, history_complete, complete, expected_windows, missing_windows, unexpected_windows, first_received_window_start, last_received_at, reported_bytes, missing_sequences, days, limitations]
+      required: [start, end, as_of, authorization_history_start, coverage, history_complete, complete, expected_windows, missing_windows, unexpected_windows, first_received_window_start, last_received_at, reported_bytes, days, limitations]
       properties:
         start: {type: string, format: date-time}
         end: {type: string, format: date-time}
@@ -582,13 +582,12 @@ components:
         missing_windows: {type: integer, format: int64, minimum: 0, description: Expected minute windows for which no producer batch was received.}
         unexpected_windows: {type: integer, format: int64, minimum: 0, description: Received account windows outside retained authorization periods.}
         reported_bytes: {type: string, pattern: '^[0-9]+$', description: Exact decimal bytes reported in received batches only.}
-        missing_sequences: {type: string, pattern: '^[0-9]+$', description: Sum of sequence numbers missing between received batches within each epoch for the authorized producer inventory during this window. Batches for other accounts are included because sequence numbers are producer-wide; head and tail gaps are unknown.}
         days: {type: array, maxItems: 94, items: {$ref: '#/components/schemas/RelayUsageDay'}}
         limitations: {type: array, items: {type: string}}
     RelayUsageDay:
       type: object
       additionalProperties: false
-      required: [date, reported_bytes, reported_windows, gap_windows, expected_windows, missing_windows, unexpected_windows, missing_sequences, gap_reasons]
+      required: [date, reported_bytes, reported_windows, gap_windows, expected_windows, missing_windows, unexpected_windows, gap_reasons]
       properties:
         date: {type: string, format: date}
         reported_bytes: {type: string, pattern: '^[0-9]+$'}
@@ -597,7 +596,6 @@ components:
         expected_windows: {type: integer, format: int64, minimum: 0}
         missing_windows: {type: integer, format: int64, minimum: 0}
         unexpected_windows: {type: integer, format: int64, minimum: 0}
-        missing_sequences: {type: string, pattern: '^[0-9]+$'}
         gap_reasons: {type: array, items: {type: string, enum: [unresolved_mapping, capacity, overflow, clock, observation_lost]}}
     DeviceInvitationDraft:
       type: object
