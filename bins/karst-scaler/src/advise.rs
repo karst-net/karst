@@ -78,11 +78,26 @@
 //!
 //! §3's constraint table is written for the whole ADR, not for Phase 1
 //! alone, and three of its five named constraints have no scenario this
-//! module's own sizing loop can bind on — two because the data to check
-//! them doesn't exist yet, one because it binds somewhere else entirely:
+//! module's own sizing loop can bind on — two because they answer a
+//! question this module's `binding_constraint` doesn't ask, one because
+//! this phase adds no mechanism that would need it to:
 //!
-//! - **Latency** has no data model yet — nothing in [`crate::cost_model`] or
-//!   [`position`] represents a per-region RTT threshold to check against.
+//! - **Latency** ("for clients in region R, p95 RTT to nearest relay ≤
+//!   X ms") has a real data model now (`Document::latency_thresholds`,
+//!   checked against `advise_loop.rs`'s own per-region p95 estimate from
+//!   the §4a RTT histogram) — but more nodes in an *existing* pool does
+//!   not move it closer to clients, so there is no node-count answer to
+//!   a region whose nearest pool is simply too far away. §4a's own
+//!   worked example is exactly this: East Coast users at a West Coast
+//!   conference need a *new, closer* pool, not a bigger one where they
+//!   already are. The real remedy for a breach is proposing a new pool
+//!   nearer the clients (§4b's anchor-based region discovery), a
+//!   human/operator action this phase doesn't automate — so, like
+//!   Residency below, the check happens, the breach is surfaced
+//!   (`advise_loop.rs`'s own tick output and `metrics_http`'s
+//!   `karst_scaler_region_p95_rtt_ms`/`_region_latency_threshold_ms`
+//!   gauges), and `Constraint::Latency` still never comes out of
+//!   `size_pool` — there is no node count for it to bind on.
 //! - **Residency**, as §3 defines it, is a per-aquifer tag match
 //!   ([`Pool::residency_tags`] against [`crate::cost_model::Document::account_residency`]),
 //!   but it answers a different question than this module's own

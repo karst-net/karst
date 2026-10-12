@@ -328,6 +328,18 @@ pub struct Document {
     /// already has, not sourced from a live account/policy system.
     #[serde(default)]
     pub account_residency: HashMap<String, Vec<String>>,
+
+    /// `[latency_thresholds]` — ADR-0045 §3's Latency constraint: the
+    /// maximum acceptable p95 RTT, in milliseconds, for clients in a
+    /// given region, keyed by region. Unlike
+    /// [`Self::account_residency`], declaring a threshold for a region
+    /// with no pool in it at all is not refused — it is the useful case
+    /// of surfacing "we promised this and have zero presence there"
+    /// immediately, not a configuration error. Checked against
+    /// `advise_loop.rs`'s own per-region p95 estimate, not here (this
+    /// struct has no demand data to check it against at validate time).
+    #[serde(default)]
+    pub latency_thresholds: HashMap<String, f64>,
 }
 
 impl Document {
@@ -397,6 +409,27 @@ impl Document {
             }
         }
         self.check_account_residency()?;
+        self.check_latency_thresholds()?;
+        Ok(())
+    }
+
+    /// ADR-0045 §3's Latency constraint: every declared threshold must
+    /// be a positive number of milliseconds — zero or negative is not a
+    /// meaningful SLA bound. No pool-existence check, unlike
+    /// [`Self::check_account_residency`]: see [`Self::latency_thresholds`]'s
+    /// own doc for why.
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] naming the region and the bad value.
+    fn check_latency_thresholds(&self) -> Result<(), Error> {
+        for (region, threshold) in &self.latency_thresholds {
+            if *threshold <= 0.0 {
+                return Err(Error::Invalid(format!(
+                    "latency_thresholds.{region}: {threshold} is not a positive number \
+                     of milliseconds"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -1004,5 +1037,35 @@ bands = [{ unit_price = 0.0 }]
         // ever satisfy it" -- must not be refused the way a non-empty,
         // unsatisfiable list would be.
         assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn latency_thresholds_default_to_empty() {
+        let d = Document::parse(MINIMAL).expect("parses");
+        assert!(d.validate().is_ok());
+        assert!(d.latency_thresholds.is_empty());
+    }
+
+    #[test]
+    fn a_latency_threshold_with_no_pool_in_that_region_still_validates() {
+        // Deliberately not refused -- see Document::latency_thresholds's
+        // own doc comment: this is the useful case of declaring an SLA
+        // promise for a region with zero current presence.
+        let text = format!("{MINIMAL}\n[latency_thresholds]\n\"eu-west-1\" = 50.0\n");
+        let d = Document::parse(&text).expect("parses");
+        assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn a_zero_or_negative_latency_threshold_is_refused() {
+        for bad in ["0.0", "-10.0"] {
+            let text = format!("{MINIMAL}\n[latency_thresholds]\n\"us-east\" = {bad}\n");
+            let d = Document::parse(&text).expect("parses");
+            let err = d.validate().expect_err("non-positive threshold");
+            assert!(
+                format!("{err}").contains("latency_thresholds.us-east"),
+                "{err}"
+            );
+        }
     }
 }

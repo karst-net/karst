@@ -275,6 +275,8 @@ first tick completes, never a fabricated empty body:
 | `karst_scaler_binding_constraint` | gauge | `pool`, `constraint` | `1` for whichever hard constraint explains `recommended_nodes` (`headroom`, `capacity`, or `none` — see `advise.rs`'s own module doc for which of §3's six named constraints this phase can actually produce and why). |
 | `karst_scaler_baseline_cost_usd` | gauge | *(none)* | Sum of every pool's naive-greedy-baseline cost this tick — the solver's own never-worse-than invariant, not "the bill." |
 | `karst_scaler_unplaceable_demand_nodes` | gauge | `region`, `account` | ADR-0045 §3's Residency constraint: this account's demand in this region matched zero pools whose `residency_tags` satisfy its requirement, this tick. Never folded into another pool's count — see `advise_loop.rs`'s `attribute_demand`. Any non-zero value here means real demand this deployment cannot currently serve within its own compliance declarations; investigate rather than ignore. |
+| `karst_scaler_region_p95_rtt_ms` | gauge | `region` | ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT for clients in this region, from the bucketed RTT histogram (§4a) — a crude, bucket-boundary estimate, not a true percentile. Present for every region with at least one session this tick, whether or not a threshold is configured for it. |
+| `karst_scaler_region_latency_threshold_ms` | gauge | `region` | The configured `latency_thresholds` entry for this region, if any — static config, duplicated here the same reason `karst_scaler_configured_nodes` duplicates `pool.min_nodes`. Compare against `karst_scaler_region_p95_rtt_ms` to detect a breach; this module never computes the comparison itself (see `advise.rs`'s own module doc for why `Constraint::Latency` is never produced). |
 | `karst_scaler_last_tick_timestamp_seconds` | gauge | *(none)* | Unix time of the last tick that completed successfully. Stale relative to now by more than a few poll intervals means the loop is failing every tick (check the process's own stderr) or has stopped. |
 
 ```promql
@@ -290,4 +292,8 @@ time() - karst_scaler_last_tick_timestamp_seconds > 300
 # Any account/region whose demand this deployment cannot currently
 # place anywhere, given its own residency declarations.
 karst_scaler_unplaceable_demand_nodes > 0
+
+# Any region whose estimated p95 RTT exceeds its own configured
+# latency_thresholds entry.
+karst_scaler_region_p95_rtt_ms > on(region) karst_scaler_region_latency_threshold_ms
 ```

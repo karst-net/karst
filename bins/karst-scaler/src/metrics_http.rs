@@ -59,6 +59,17 @@ pub(crate) struct Snapshot {
     /// `advise_loop::attribute_demand`'s own doc comment for why this is
     /// reported rather than silently folded into some other pool's count.
     pub unplaceable_demand: Vec<UnplaceableDemand>,
+    /// ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT,
+    /// by region — see `advise_loop::region_p95_rtt_ms`. The raw signal,
+    /// not a pre-computed breach list: `render_prometheus` exposes this
+    /// and [`Self::latency_thresholds_ms`] as two separate gauges and
+    /// leaves the comparison to `PromQL`.
+    pub region_p95_rtt_ms: HashMap<String, f64>,
+    /// `Document::latency_thresholds`, duplicated here the same reason
+    /// [`Self::configured_nodes`] already duplicates `pool.min_nodes`:
+    /// static config `/metrics` needs alongside the live signal, with no
+    /// second channel to fetch it from.
+    pub latency_thresholds_ms: HashMap<String, f64>,
 }
 
 /// Shared between `advise_loop`'s tick loop (writer) and this module's
@@ -246,6 +257,26 @@ fn render_prometheus(snap: &Snapshot) -> String {
         );
     }
 
+    out.push_str("# HELP karst_scaler_region_p95_rtt_ms ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT for clients in this region, from the bucketed RTT histogram. See docs/observability.md.\n");
+    out.push_str("# TYPE karst_scaler_region_p95_rtt_ms gauge\n");
+    for (region, p95) in &snap.region_p95_rtt_ms {
+        let _ = writeln!(
+            out,
+            "karst_scaler_region_p95_rtt_ms{{region=\"{}\"}} {p95}",
+            escape(region),
+        );
+    }
+
+    out.push_str("# HELP karst_scaler_region_latency_threshold_ms ADR-0045 §3's Latency constraint: the configured maximum acceptable p95 RTT for this region (latency_thresholds). Compare against karst_scaler_region_p95_rtt_ms to alert on a breach.\n");
+    out.push_str("# TYPE karst_scaler_region_latency_threshold_ms gauge\n");
+    for (region, threshold) in &snap.latency_thresholds_ms {
+        let _ = writeln!(
+            out,
+            "karst_scaler_region_latency_threshold_ms{{region=\"{}\"}} {threshold}",
+            escape(region),
+        );
+    }
+
     out.push_str(
         "# HELP karst_scaler_last_tick_timestamp_seconds Unix time of the last completed tick.\n",
     );
@@ -327,6 +358,8 @@ mod tests {
                 account_id: "acct-eu".to_owned(),
                 nodes: 3,
             }],
+            region_p95_rtt_ms: HashMap::from([("eu-west-1".to_owned(), 120.0)]),
+            latency_thresholds_ms: HashMap::from([("eu-west-1".to_owned(), 50.0)]),
         }
     }
 
@@ -343,6 +376,8 @@ mod tests {
         assert!(text.contains(
             "karst_scaler_unplaceable_demand_nodes{region=\"eu-west-1\",account=\"acct-eu\"} 3"
         ));
+        assert!(text.contains("karst_scaler_region_p95_rtt_ms{region=\"eu-west-1\"} 120"));
+        assert!(text.contains("karst_scaler_region_latency_threshold_ms{region=\"eu-west-1\"} 50"));
         assert!(text.contains("karst_scaler_last_tick_timestamp_seconds 1700000000"));
     }
 

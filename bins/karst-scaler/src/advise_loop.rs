@@ -169,13 +169,14 @@ pub(crate) fn tick_recommendation(
     positions: &mut HashMap<String, Position>,
     config: &Config,
     agent: &ureq::Agent,
-) -> Result<(i64, advise::Recommendation, Vec<UnplaceableDemand>), String> {
+) -> Result<TickOutcome, String> {
     let now = now_unix()?;
     let period = period_key(now);
     let remaining_period_hours = hours_remaining_in_period(now);
 
     let regions: Vec<RegionDemandRow> = fetch(agent, config, "/karst/v1/demand/regions")?;
-    let (demand_by_pool, unplaceable) = attribute_demand(doc, &regions);
+    let (demand_by_pool, unplaceable_demand) = attribute_demand(doc, &regions);
+    let p95_by_region = region_p95_rtt_ms(&regions);
 
     // Nothing is ever observed into these positions today: Phase 1 has no
     // live feed of real per-node usage (that needs either Phase 2's driver
@@ -217,7 +218,28 @@ pub(crate) fn tick_recommendation(
         remaining_period_hours,
     };
     let recommendation = advise::advise(&problem).map_err(|e| e.to_string())?;
-    Ok((now, recommendation, unplaceable))
+    Ok(TickOutcome {
+        tick_unix: now,
+        recommendation,
+        unplaceable_demand,
+        region_p95_rtt_ms: p95_by_region,
+    })
+}
+
+/// One tick's full result — grouped into a struct, not a growing tuple,
+/// now that it carries two independent signals ([`UnplaceableDemand`]'s
+/// own Residency check, this module's own Latency estimate) alongside
+/// the sizing [`advise::Recommendation`] itself.
+pub(crate) struct TickOutcome {
+    pub tick_unix: i64,
+    pub recommendation: advise::Recommendation,
+    pub unplaceable_demand: Vec<UnplaceableDemand>,
+    /// ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT
+    /// per region, by region — see [`region_p95_rtt_ms`]. Compared
+    /// against [`Document::latency_thresholds`] by callers, not stored
+    /// pre-compared, the same "expose the raw signal" posture
+    /// `metrics_http`'s own Prometheus gauges take.
+    pub region_p95_rtt_ms: HashMap<String, f64>,
 }
 
 fn tick(
@@ -227,7 +249,7 @@ fn tick(
     agent: &ureq::Agent,
     snapshot: Option<&SharedSnapshot>,
 ) -> Result<(), String> {
-    let (now, recommendation, unplaceable) = tick_recommendation(doc, positions, config, agent)?;
+    let outcome = tick_recommendation(doc, positions, config, agent)?;
     let anchors: Vec<AnchorHistogramRow> = fetch(agent, config, "/karst/v1/demand/anchors")?;
 
     if let Some(shared) = snapshot {
@@ -237,10 +259,12 @@ fn tick(
             .map(|(pool_id, pool)| (pool_id.clone(), pool.min_nodes))
             .collect();
         let new_snapshot = Snapshot {
-            tick_unix: now,
-            recommendation: recommendation.clone(),
+            tick_unix: outcome.tick_unix,
+            recommendation: outcome.recommendation.clone(),
             configured_nodes,
-            unplaceable_demand: unplaceable.clone(),
+            unplaceable_demand: outcome.unplaceable_demand.clone(),
+            region_p95_rtt_ms: outcome.region_p95_rtt_ms.clone(),
+            latency_thresholds_ms: doc.latency_thresholds.clone(),
         };
         *shared
             .lock()
@@ -248,30 +272,32 @@ fn tick(
     }
 
     println!(
-        "tick_unix={now} pools={} total_cost_delta={:.2} baseline_cost={:.2}",
-        recommendation.pools.len(),
-        recommendation.total_cost_delta,
-        recommendation.baseline_cost
+        "tick_unix={} pools={} total_cost_delta={:.2} baseline_cost={:.2}",
+        outcome.tick_unix,
+        outcome.recommendation.pools.len(),
+        outcome.recommendation.total_cost_delta,
+        outcome.recommendation.baseline_cost
     );
-    for pool in &recommendation.pools {
+    for pool in &outcome.recommendation.pools {
         println!(
             "  pool={} desired_nodes={} cost_delta={:+.2} binding={:?}",
             pool.pool_id, pool.desired_nodes, pool.cost_delta, pool.binding_constraint
         );
     }
-    if !unplaceable.is_empty() {
+    if !outcome.unplaceable_demand.is_empty() {
         println!(
             "  residency: {} account/region pairs could not be placed on any pool \
              (ADR-0045 §3 -- no pool satisfies their residency requirement)",
-            unplaceable.len()
+            outcome.unplaceable_demand.len()
         );
-        for u in &unplaceable {
+        for u in &outcome.unplaceable_demand {
             println!(
                 "    account={} region={} nodes={}",
                 u.account_id, u.region, u.nodes
             );
         }
     }
+    print_latency_breaches(doc, &outcome.region_p95_rtt_ms);
     let anchor_total: i64 = anchors.iter().map(|a| a.count).sum();
     println!(
         "  anchors: {} rows, {anchor_total} total observations (candidate-region promotion not implemented)",
@@ -372,6 +398,105 @@ fn sessions_to_nodes(total_sessions: i64) -> u32 {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let nodes = (total / PLACEHOLDER_SESSIONS_PER_NODE).ceil().max(0.0) as u32;
     nodes
+}
+
+/// The four RTT bucket boundaries, in order -- `rtt_under_20ms`'s own
+/// upper bound, then `rtt_20_to_50ms`'s, then `rtt_50_to_100ms`'s. The
+/// open-ended last bucket (`rtt_over_100ms`) has no upper bound at all;
+/// see [`region_p95_rtt_ms`] for how that case is represented.
+const RTT_BUCKET_BOUNDS_MS: [f64; 3] = [20.0, 50.0, 100.0];
+
+/// ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT, by
+/// region, summed across every account (latency is a property of
+/// "clients in region R" collectively, unlike [`attribute_demand`]'s own
+/// per-account Residency attribution). A region with zero sessions this
+/// tick is omitted entirely from the result -- no signal, not a zero.
+///
+/// Estimated the same way `calculateP95FromHistogram` already does in
+/// `server/management/server/telemetry/account_aggregator.go`: walk the
+/// buckets in ascending order, report the first one whose cumulative
+/// count reaches `ceil(total * 0.95)`'s own upper bound. The open-ended
+/// last bucket has no upper bound to report -- [`f64::INFINITY`] instead
+/// of fabricating a number the histogram cannot actually support, which
+/// also makes "is this a breach" a plain `>` comparison with no special
+/// case at the call site.
+fn region_p95_rtt_ms(rows: &[RegionDemandRow]) -> HashMap<String, f64> {
+    let mut buckets: HashMap<String, [i64; 4]> = HashMap::new();
+    for row in rows {
+        let entry = buckets.entry(row.region.clone()).or_insert([0; 4]);
+        entry[0] += row.rtt_under_20ms;
+        entry[1] += row.rtt_20_to_50ms;
+        entry[2] += row.rtt_50_to_100ms;
+        entry[3] += row.rtt_over_100ms;
+    }
+
+    buckets
+        .into_iter()
+        .filter_map(|(region, counts)| {
+            let total: i64 = counts.iter().sum();
+            if total <= 0 {
+                return None;
+            }
+            #[allow(clippy::cast_precision_loss)]
+            let target = (total as f64 * 0.95).ceil();
+            let mut cumulative: i64 = 0;
+            for (i, count) in counts.iter().enumerate() {
+                cumulative += count;
+                #[allow(clippy::cast_precision_loss)]
+                if cumulative as f64 >= target {
+                    let p95 = RTT_BUCKET_BOUNDS_MS
+                        .get(i)
+                        .copied()
+                        .unwrap_or(f64::INFINITY);
+                    return Some((region, p95));
+                }
+            }
+            // Unreachable while `total > 0`: the loop above always
+            // reaches `cumulative == total >= target` by its last
+            // iteration. `f64::INFINITY` is still the honest answer if
+            // it somehow did not.
+            Some((region, f64::INFINITY))
+        })
+        .collect()
+}
+
+/// Every region in `p95_by_region` whose estimate exceeds
+/// `doc.latency_thresholds`'s own entry for it, if any — `(region,
+/// estimated_p95_ms, threshold_ms)`, sorted by region for deterministic
+/// output. A region with no configured threshold, or whose estimate is
+/// within it, is absent.
+fn latency_breaches<'a>(
+    doc: &Document,
+    p95_by_region: &'a HashMap<String, f64>,
+) -> Vec<(&'a str, f64, f64)> {
+    let mut breaches: Vec<(&str, f64, f64)> = p95_by_region
+        .iter()
+        .filter_map(|(region, p95)| {
+            let threshold = *doc.latency_thresholds.get(region)?;
+            (*p95 > threshold).then_some((region.as_str(), *p95, threshold))
+        })
+        .collect();
+    breaches.sort_by(|a, b| a.0.cmp(b.0));
+    breaches
+}
+
+/// Prints a breach line for each of [`latency_breaches`] — shared by
+/// `advise_loop::tick` and `drive_loop::tick` so both tick loops surface
+/// the same signal the same way, matching the Residency constraint's
+/// own unplaceable-demand print block.
+pub(crate) fn print_latency_breaches(doc: &Document, p95_by_region: &HashMap<String, f64>) {
+    let breaches = latency_breaches(doc, p95_by_region);
+    if breaches.is_empty() {
+        return;
+    }
+    println!(
+        "  latency: {} region(s) exceed their configured p95 RTT threshold \
+         (ADR-0045 §3)",
+        breaches.len()
+    );
+    for (region, p95, threshold) in breaches {
+        println!("    region={region} p95_ms={p95} threshold_ms={threshold}");
+    }
 }
 
 fn fetch<T: serde::de::DeserializeOwned>(
@@ -513,5 +638,104 @@ mod tests {
         assert!(unplaceable.is_empty());
         assert_eq!(demand.get("eu").copied(), Some(5));
         assert_eq!(demand.get("us").copied(), None);
+    }
+
+    #[test]
+    fn a_region_with_almost_all_sessions_under_20ms_estimates_the_first_bucket() {
+        // total=100, target=ceil(100*0.95)=95; cumulative after bucket 0
+        // alone (96) already reaches it, so bucket 0's own upper bound
+        // (20ms) is reported without needing bucket 1 at all.
+        let rows = [
+            row("eu-west-1", "acct-1", 96),
+            RegionDemandRow {
+                region: "eu-west-1".to_owned(),
+                account_id: "acct-2".to_owned(),
+                rtt_under_20ms: 0,
+                rtt_20_to_50ms: 4,
+                rtt_50_to_100ms: 0,
+                rtt_over_100ms: 0,
+            },
+        ];
+
+        let p95 = region_p95_rtt_ms(&rows);
+        assert_eq!(p95.get("eu-west-1").copied(), Some(20.0));
+    }
+
+    #[test]
+    fn a_region_whose_95th_percentile_just_crosses_into_the_second_bucket() {
+        // Same 94/6 split, but all in one row's own buckets -- the 95th
+        // percentile (ceil(100*0.95)=95) is only reached once bucket 1's
+        // own 6 is added to bucket 0's 94 (cumulative 100), so bucket 1's
+        // upper bound (50ms) is reported, not bucket 0's.
+        let rows = [RegionDemandRow {
+            region: "eu-west-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            rtt_under_20ms: 94,
+            rtt_20_to_50ms: 6,
+            rtt_50_to_100ms: 0,
+            rtt_over_100ms: 0,
+        }];
+
+        let p95 = region_p95_rtt_ms(&rows);
+        assert_eq!(p95.get("eu-west-1").copied(), Some(50.0));
+    }
+
+    #[test]
+    fn a_region_whose_95th_percentile_falls_in_the_open_ended_bucket_is_infinite() {
+        let rows = [RegionDemandRow {
+            region: "eu-west-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            rtt_under_20ms: 0,
+            rtt_20_to_50ms: 0,
+            rtt_50_to_100ms: 0,
+            rtt_over_100ms: 50,
+        }];
+
+        let p95 = region_p95_rtt_ms(&rows);
+        assert_eq!(p95.get("eu-west-1").copied(), Some(f64::INFINITY));
+    }
+
+    #[test]
+    fn a_region_with_zero_sessions_this_tick_is_omitted_not_zero() {
+        let rows = [RegionDemandRow {
+            region: "eu-west-1".to_owned(),
+            account_id: "acct-1".to_owned(),
+            rtt_under_20ms: 0,
+            rtt_20_to_50ms: 0,
+            rtt_50_to_100ms: 0,
+            rtt_over_100ms: 0,
+        }];
+
+        let p95 = region_p95_rtt_ms(&rows);
+        assert_eq!(p95.get("eu-west-1"), None);
+    }
+
+    #[test]
+    fn region_p95_sums_every_account_in_the_region_together() {
+        // Unlike attribute_demand, latency has no per-account dimension
+        // -- two accounts' sessions in the same region combine into one
+        // estimate.
+        let rows = [
+            row("eu-west-1", "acct-1", 50),
+            row("eu-west-1", "acct-2", 50),
+        ];
+        let p95 = region_p95_rtt_ms(&rows);
+        assert_eq!(p95.get("eu-west-1").copied(), Some(20.0));
+    }
+
+    #[test]
+    fn latency_breaches_reports_only_regions_exceeding_their_own_threshold() {
+        let mut doc = Document::default();
+        doc.latency_thresholds.insert("eu-west-1".to_owned(), 50.0);
+        doc.latency_thresholds.insert("us-east-1".to_owned(), 200.0);
+        let p95_by_region = HashMap::from([
+            ("eu-west-1".to_owned(), 120.0),  // exceeds its 50ms threshold
+            ("us-east-1".to_owned(), 80.0),   // within its 200ms threshold
+            ("ap-south-1".to_owned(), 999.0), // no threshold configured at all
+        ]);
+
+        let breaches = latency_breaches(&doc, &p95_by_region);
+
+        assert_eq!(breaches, vec![("eu-west-1", 120.0, 50.0)]);
     }
 }
