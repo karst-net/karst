@@ -4537,11 +4537,14 @@ fn exit_node_consent_survives_a_daemon_crash_and_restart() {
         String::from_utf8_lossy(&use_out.stdout),
         String::from_utf8_lossy(&use_out.stderr),
     );
-    assert!(
-        probe(),
-        "the exit route did not activate before any crash — nothing to \
-         recover from\n── node B ──\n{}",
-        status(&net, "b", NS_B)
+    // Selecting the route persists consent synchronously, but installing the
+    // kernel forwarding state is asynchronous. Wait for the observable
+    // behavior instead of assuming it completes within one probe.
+    wait_for(
+        &net,
+        "the recipient to reach the destination through the selected exit route",
+        Duration::from_secs(30),
+        probe,
     );
 
     // The crash: an abrupt kill, with no `karst exit-node use` run again

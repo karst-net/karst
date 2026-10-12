@@ -41,6 +41,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
@@ -208,6 +209,10 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		return nil, fmt.Errorf("karst: relay store: %w", err)
 	}
 	relayStore.Metrics = karstMetrics
+	usageRelayStore, err := relayusage.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: relay usage store: %w", err)
+	}
 	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
 	// future forecaster (and the NOC view's own time-series panels) have
 	// data to train/chart against -- see relayreg.Store's own doc comment
@@ -279,6 +284,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
+		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 	}}); err != nil {
 		return nil, fmt.Errorf("karst: register API extension: %w", err)
 	}

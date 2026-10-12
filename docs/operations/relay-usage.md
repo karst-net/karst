@@ -31,7 +31,7 @@ completion. A missing mapping remains unresolved; it must never become a zero
 usage claim. Only destination deliveries carry usage metadata. The common
 TCP/QUIC writer returns this metadata after a successful complete-frame write.
 
-## Not yet operational
+## Collection and local durability
 
 Collection is explicitly enabled in the relay TOML with a `usage.spool_dir`
 path. Successful complete writes enter a bounded nonblocking queue and feed the
@@ -46,21 +46,43 @@ check the shared signing-input vector. The Unix spool is bounded to
 256 MiB and 1,024 batches; full storage rejects new windows and marks a gap.
 No traffic is blocked when collection falls behind.
 
-Network upload, managed producer authorization, durable control-plane
-ingestion, and customer relay reports are not implemented yet. Signature
-verification alone does not grant billing authority; an operator-managed
-producer allowlist and mapping-scope check are required before ingestion.
-Charges and spending enforcement are also not implemented. Unconfigured
-deployments create no relay spool and retain existing forwarding behavior. The
-device ledger migration adds the mapping table, but no mappings are written
-unless the optional roster integration is explicitly supplied. On non-Unix
-platforms, enabling the spool currently fails at startup.
+## Control-plane upload and authorization
+
+The management API accepts signed batches at
+`POST /api/karst/v1/usage/relay-batches` with
+`Content-Type: application/octet-stream`. The `Authorization` header has the
+canonical form `KarstUsage <relay-id>.<timestamp-micros>.<nonce-hex>.<signature-base64>`.
+Each HTTP request has a fresh request signature and nonce, valid within five
+minutes of management-server time; a retry reuses the immutable batch bytes
+but signs a new request. The handler bounds the body before parsing. It returns
+204 only after durable ingestion, including an identical batch retry, and
+rejects replayed request nonces and conflicting batch identities.
+
+Signature verification identifies a relay key but does not grant billing
+authority. An operator must explicitly authorize its identity for one managed
+deployment and allow each exact mapping version before a batch can be ingested.
+The mapping version resolves to an account through the immutable control-plane
+ledger; relay-supplied account identifiers are never trusted. The management
+operator commands are `management admin usage relays authorize`, `allow-mapping`,
+`revoke-mapping`, and `revoke`. Each mutation and its audit entry commit in one
+database transaction. The `--actor` value is an audit label, not authentication;
+access to the administrative command itself must remain restricted.
+
+The control plane persists batch identities, per-account totals, and coverage
+rows transactionally. This establishes durable, replay-safe ingestion, but it
+does not yet expose relay totals or coverage through a customer or operator
+report. No relay uploader or retry loop is wired to the local spool yet, so the
+management endpoint currently has no production relay client. Charges and
+spending enforcement are also not implemented. Unconfigured deployments
+create no relay spool and retain existing forwarding behavior. The mapping
+ledger table is additive, and no mappings are written unless the optional
+roster integration is explicitly supplied. On non-Unix platforms, enabling
+the spool currently fails at startup.
 
 Next implementation work under [#275](https://github.com/karst-net/karst/issues/275):
 
-- Add a retrying upload transport and endpoint, authenticate each envelope,
-  authorize managed producer/mapping scope, accept identical retries without
-  adding bytes twice, and reject conflicts.
+- Wire a retrying relay upload transport to the endpoint, with fresh request
+  authentication on each attempt and acknowledgment-gated spool deletion.
 - Expose provisional account totals and coverage gaps, including unresolved
   mappings, missing producers, disk failures, clock anomalies, and late data.
 - Wire explicit operator activation and document resource bounds, retention,
@@ -75,8 +97,11 @@ estimated charge or a claim of exactly-once measurement.
 `cargo test -p karst-relay` covers relay behavior and the write boundary. The
 write tests inject failures and zero writes at every partial-frame position.
 Queue tests exclude mesh/control frames and preserve payload-only metadata.
-Go race tests in `management/internals/karst/usage` and
-`management/internals/karst/roster` cover historical mappings, retries,
+Go race tests in `management/internals/karst/relayusage` cover bounded upload
+parsing, fresh request authentication, operator producer/mapping authorization,
+nonce replay rejection, exact batch deduplication, conflicting content, and
+durable account totals/coverage. Tests in `management/internals/karst/usage`
+and `management/internals/karst/roster` cover historical mappings, retries,
 deployment isolation, rollback, and admission continuity on ledger failure.
 The shared `spec/vectors/relay-usage-roster-v1.toml` fixture checks that Rust
 reads references emitted by Go's durable publication path. These checks do

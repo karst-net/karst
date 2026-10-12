@@ -83,6 +83,11 @@ const RelayTelemetryContext = "karst-relay-telemetry-v1"
 // (ADR-0050) from advisory relay telemetry and Ponor authentication.
 const RelayUsageContext = "karst-relay-usage-v1"
 
+// RelayUsageUploadContext authenticates a fresh HTTP transmission of an
+// immutable batch. It is separate because a batch signature survives retries,
+// while each upload request must carry a fresh timestamp and nonce.
+const RelayUsageUploadContext = "karst-relay-usage-upload-v1"
+
 var (
 	ErrKeySize = errors.New("identity: wrong key size")
 	ErrContext = errors.New("identity: context string exceeds 255 bytes")

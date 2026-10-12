@@ -30,6 +30,11 @@ const TELEMETRY_CTX: &[u8] = b"karst-relay-telemetry-v1";
 /// Separate accounting purpose; a telemetry report can never be replayed as
 /// a billing batch under the same relay identity.
 pub const USAGE_CTX: &[u8] = b"karst-relay-usage-v1";
+/// Fresh transport requests bind a nonce, time, route, and body separately
+/// from the immutable batch signature used for retry identity.
+pub const USAGE_UPLOAD_CTX: &[u8] = b"karst-relay-usage-upload-v1";
+pub const USAGE_UPLOAD_METHOD: &str = "POST";
+pub const USAGE_UPLOAD_PATH: &str = "/karst/v1/usage/relay-batches";
 
 /// Domain label for a relay identifier — §5.2.
 const RELAY_ID_LABEL: &[u8] = b"karst-relay-id-v1";
@@ -190,6 +195,42 @@ impl Identity {
             .map_err(|_| "signing the usage batch failed")?;
         Ok(sig.encode().to_vec())
     }
+
+    /// Sign one fresh upload request; retries retain batch bytes but use a new
+    /// nonce and signature.
+    /// # Errors
+    /// If the operating system's CSPRNG cannot be read.
+    pub fn sign_usage_upload(
+        &self,
+        message: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn core::error::Error + Send + Sync>> {
+        let sig = self
+            .signing
+            .sign_randomized(message, USAGE_UPLOAD_CTX, &mut OsEntropy)
+            .map_err(|_| "signing the usage upload request failed")?;
+        Ok(sig.encode().to_vec())
+    }
+}
+
+/// Canonical fresh transport transcript for one immutable batch upload.
+/// Keep in sync with the Go relayusage.UploadSigningInput implementation.
+#[must_use]
+pub fn usage_upload_signing_input(
+    timestamp_micros: u64,
+    nonce: &[u8; 32],
+    encoded_batch: &[u8],
+) -> Vec<u8> {
+    let digest = Sha256::digest(encoded_batch);
+    let mut message = Vec::with_capacity(64 + encoded_batch.len());
+    message.extend_from_slice(b"karst-relay-usage-upload-request-v1\0");
+    message.extend_from_slice(&4u16.to_be_bytes());
+    message.extend_from_slice(USAGE_UPLOAD_METHOD.as_bytes());
+    message.extend_from_slice(&29u16.to_be_bytes());
+    message.extend_from_slice(USAGE_UPLOAD_PATH.as_bytes());
+    message.extend_from_slice(&timestamp_micros.to_be_bytes());
+    message.extend_from_slice(nonce);
+    message.extend_from_slice(&digest);
+    message
 }
 
 impl Signer for Identity {
@@ -288,6 +329,22 @@ pub fn verify_usage(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool
         return false;
     };
     key.verify_with_context(message, USAGE_CTX, &sig)
+}
+
+/// Verify the freshness signature on a usage upload request.
+#[must_use]
+pub fn verify_usage_upload(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    let Ok(pk) = <[u8; IDENTITY_PK_LEN]>::try_from(public_key) else {
+        return false;
+    };
+    let Ok(sg) = <[u8; SIG_LEN]>::try_from(signature) else {
+        return false;
+    };
+    let key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&pk.into());
+    let Some(sig) = ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&sg.into()) else {
+        return false;
+    };
+    key.verify_with_context(message, USAGE_UPLOAD_CTX, &sig)
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -411,6 +468,30 @@ mod tests {
         assert_ne!(a, b, "signatures are deterministic — not hedged");
         assert!(PonorVerifier.verify(k.public_key(), &msg, &a));
         assert!(PonorVerifier.verify(k.public_key(), &msg, &b));
+    }
+
+    #[test]
+    fn shared_usage_upload_signing_vector_matches_go() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "TimestampMicros")]
+            timestamp_micros: u64,
+            #[serde(rename = "NonceHex")]
+            nonce_hex: String,
+            #[serde(rename = "BodyHex")]
+            body_hex: String,
+            #[serde(rename = "SigningInputHex")]
+            signing_input_hex: String,
+        }
+        let vector: Vector = serde_json::from_str(include_str!(
+            "../../../spec/vectors/relay-usage-upload-v1.json"
+        ))
+        .expect("valid upload vector");
+        let nonce = unhex(&vector.nonce_hex).expect("nonce hex");
+        let nonce: [u8; 32] = nonce.try_into().expect("nonce length");
+        let body = unhex(&vector.body_hex).expect("body hex");
+        let input = usage_upload_signing_input(vector.timestamp_micros, &nonce, &body);
+        assert_eq!(hex(&input), vector.signing_input_hex);
     }
 
     #[test]
