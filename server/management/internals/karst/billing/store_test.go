@@ -190,3 +190,70 @@ func TestStoreRejectsTamperedScheduleSnapshots(t *testing.T) {
 		t.Fatal("AssignSchedule accepted a corrupted rate snapshot")
 	}
 }
+
+func TestFinalizeInvoiceTruncatesLineAmountsAndIsImmutable(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "org-invoice")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	third := start.Add(end.Sub(start) / 3)
+	schedule := RateSchedule{
+		Version: "fractional-invoice", Currency: "USD",
+		DeviceTiers: []DeviceTier{{MinorPerPeriod: 1}}, RelayUnitBytes: 3, RelayMinorPerUnit: 1,
+	}
+	if err := store.PutSchedule(ctx, schedule); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AssignSchedule(ctx, start, end, schedule.Version); err != nil {
+		t.Fatal(err)
+	}
+	devices := completeDeviceReport(start, end, deviceSegment(start, third, 1), deviceSegment(third, end, 0))
+	relays := completeRelayReport(start, end, "2")
+	invoice, err := store.FinalizeInvoice(ctx, devices, relays)
+	if err != nil {
+		t.Fatalf("finalize invoice: %v", err)
+	}
+	if invoice.DeviceExact != (ExactAmount{Numerator: "1", Denominator: "3"}) || invoice.RelayExact != (ExactAmount{Numerator: "2", Denominator: "3"}) || invoice.DeviceMinor != 0 || invoice.RelayMinor != 0 || invoice.TotalMinor != 0 {
+		t.Fatalf("invoice did not truncate each line down: %+v", invoice)
+	}
+	if invoice.SchemaVersion != "invoice-inputs-v1" || invoice.FinalizedAt.IsZero() {
+		t.Fatalf("invoice missing version/finalization time: %+v", invoice)
+	}
+	retried, err := store.FinalizeInvoice(ctx, devices, relays)
+	if err != nil || !sameInvoiceInputs(invoice, retried) || !invoice.FinalizedAt.Equal(retried.FinalizedAt) {
+		t.Fatalf("identical finalize retry = %+v, %v; want stored invoice %+v", retried, err, invoice)
+	}
+	loaded, err := store.Invoice(ctx, start, end)
+	if err != nil || !sameInvoiceInputs(invoice, loaded) {
+		t.Fatalf("load invoice = %+v, %v; want %+v", loaded, err, invoice)
+	}
+	changedRelayReport := completeRelayReport(start, end, "5")
+	if _, err := store.FinalizeInvoice(ctx, devices, changedRelayReport); !errors.Is(err, ErrInvoiceConflict) {
+		t.Fatalf("changed finalized inputs error = %v, want ErrInvoiceConflict", err)
+	}
+}
+
+func TestFinalizeInvoiceRequiresCompleteUsageAndAssignment(t *testing.T) {
+	store := testBillingStore(t)
+	ctx := WithAccount(context.Background(), "org-invoice")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	schedule := testSchedule()
+	if err := store.PutSchedule(ctx, schedule); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AssignSchedule(ctx, start, end, schedule.Version); err != nil {
+		t.Fatal(err)
+	}
+	devices := completeDeviceReport(start, end, deviceSegment(start, end, 0))
+	incompleteRelays := completeRelayReport(start, end, "0")
+	incompleteRelays.Complete = false
+	if _, err := store.FinalizeInvoice(ctx, devices, incompleteRelays); !errors.Is(err, ErrInvoiceIncomplete) {
+		t.Fatalf("incomplete estimate error = %v, want ErrInvoiceIncomplete", err)
+	}
+	completeRelays := completeRelayReport(start, end, "0")
+	unassigned := WithAccount(context.Background(), "org-unassigned")
+	if _, err := store.FinalizeInvoice(unassigned, devices, completeRelays); !errors.Is(err, ErrScheduleUnassigned) {
+		t.Fatalf("unassigned estimate error = %v, want ErrScheduleUnassigned", err)
+	}
+}

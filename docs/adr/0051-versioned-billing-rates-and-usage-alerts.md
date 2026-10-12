@@ -22,10 +22,13 @@ The pilot rate amounts are approved for modeling and explicit schedule
 assignment: $2.50 per device per month for devices 1–10, $1.50 for devices
 11–50, and $0.75 for each device above 50; managed relay traffic includes 10
 decimal GB per organization per month, then costs $0.20 per additional decimal
-GB. Billing-cycle boundaries, currency rounding, alert thresholds and delivery,
-and finalization of periods with incomplete reports remain unsettled. The
-repository has no production customer usage sample. Any sample counts below
-are explicit sensitivity scenarios, not forecasts.
+GB. Issue #275 now approves UTC calendar months, exact eligible-time proration,
+holding incomplete periods open, truncating each finalized line down to minor
+currency units, and relay alerts at 75%, 90%, and 100% once per threshold and
+period to billing administrators with coverage warnings. Delivery channel and
+data-driven operational tuning remain open. The repository has no production
+customer usage sample. Any sample counts below are explicit sensitivity
+scenarios, not forecasts.
 
 Cloud egress is only one variable cost. Published North America/Europe list
 rates currently indicate about $0.087–$0.09 per decimal GB for Azure/AWS after
@@ -57,9 +60,8 @@ behavior.
   retain that version with every preview and charge record. Rate changes take
   effect at a period boundary; retroactive repricing is not allowed.
 - Represent money using integer currency minor units and exact rational
-  arithmetic. Do not use binary floating point. The invoice-boundary rounding
-  rule remains undecided; no rounded invoice amount is produced until that rule
-  is approved.
+  arithmetic. Do not use binary floating point. At finalization, truncate each
+  nonnegative line amount down to the currency's minor unit; do not round up.
 
 ### Graduated device charge
 
@@ -70,15 +72,15 @@ behavior.
   and after revocation is excluded.
 - Calculate each segment from the eligible-device count and exact covered
   duration. Prorate each device's monthly rate by its fraction of the period,
-  sum the exact values across all segments, and round once at invoice creation.
+  sum the exact values across all segments, and truncate the resulting invoice
+  line down once at finalization.
 - The approved pilot device rates are $2.50 per device per month for devices
   1–10, $1.50 per device per month for devices 11–50, and $0.75 per device per
   month above 50. These are graduated bands: crossing a threshold does not
   reprice earlier devices.
 - Apply these as monthly rates, prorated by exact eligible duration within the
-  eventual billing period. The billing-cycle boundaries and proration calendar
-  convention still need approval; the calculator therefore accepts explicit
-  report periods and does not choose invoice boundaries.
+  UTC calendar-month billing period. The calculator accepts explicit report
+  periods and finalization verifies the approved calendar boundary.
 
 ### Pooled managed-relay charge
 
@@ -102,16 +104,16 @@ behavior.
 - Enable alerts by default for accounts with a billing schedule. A customer may
   adjust supported preferences after an alert channel and recipient model are
   selected.
-- Proposed relay thresholds are 75%, 90%, and 100% of the included allowance
-  or optional customer relay cap. These are starting hypotheses, not approved
-  defaults. Alert channels, device-charge alert semantics, and customer
-  preferences require a separate product decision.
+- Relay thresholds are 75%, 90%, and 100% of the included allowance or optional
+  customer relay cap, sent once per threshold per period to billing
+  administrators. Include a coverage warning when usage is incomplete. The
+  delivery channel remains to be selected; device-charge alerts are not part of
+  this approved relay-alert policy.
 - Include the report's `as_of` time and completeness state in every usage
   notification. When coverage is incomplete, describe received usage as a
   lower bound and do not present it as a final amount.
-- Do not finalize charges from incomplete reports until #275 selects a
-  late-data/grace policy. This ADR does not decide whether a period is held open,
-  provisionally charged, or corrected on a later invoice.
+- Keep incomplete usage periods open and unbilled. Do not estimate missing
+  usage or finalize a charge while the required reports are incomplete.
 
 ### Illustrative sensitivity scenarios
 

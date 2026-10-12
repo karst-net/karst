@@ -16,10 +16,13 @@ to default off. ADR-0050 establishes the account-attributed device and managed
 relay usage source. #275 assigns account plans and payment state to the control
 plane and requires payment integration to stay outside live networking.
 
-The provider, merchant-of-record model, supported markets/currencies, payment
-failure grace, invoice/data retention, and tax obligations have not been
-selected. A design can establish a provider boundary and safe processing model
-without choosing those commercial inputs.
+The provider, merchant-of-record model, supported markets/currencies, seller
+and tax responsibilities, and invoice/event retention period remain undecided.
+Issue #275 approves a 14-day pilot grace period with billing-administrator
+notices and asynchronous retries. Payment failure does not suspend networking
+without a separately approved enforcement policy. Keep only provider
+references and minimum auditable invoice/payment state; never store card
+credentials or raw relay traffic.
 
 ## Decision
 
@@ -28,9 +31,9 @@ The internal account billing ledger remains the source of rates, billable usage,
 and invoice-line calculations. A provider collects payment and reports payment
 status; it does not calculate Karst usage or decide relay forwarding.
 
-This ADR does not select a provider, currency, grace interval, retry schedule,
-refund/chargeback policy, tax jurisdiction, or invoice retention period. All
-values remain proposals pending #275 decisions.
+This ADR does not select a provider, currency, retry schedule,
+refund/chargeback policy, seller/tax model, or invoice retention period.
+Payment-provider integration remains a proposal pending those decisions.
 
 ### Separation from networking and rollout
 

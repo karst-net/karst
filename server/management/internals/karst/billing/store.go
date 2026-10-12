@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
@@ -26,6 +27,8 @@ var (
 	ErrScheduleUnassigned = errors.New("billing: no schedule assigned for period")
 	ErrAssignmentConflict = errors.New("billing: period overlaps or conflicts with an existing assignment")
 	ErrInvalidPeriod      = errors.New("billing: invalid explicit period")
+	ErrInvoiceIncomplete  = errors.New("billing: cannot finalize incomplete usage")
+	ErrInvoiceConflict    = errors.New("billing: finalized invoice inputs conflict")
 )
 
 type billingAccountContextKey struct{}
@@ -73,6 +76,17 @@ type billingAccountLock struct {
 
 func (billingAccountLock) TableName() string { return "karst_billing_account_locks" }
 
+type invoiceRow struct {
+	AccountID     string    `gorm:"primaryKey;size:128"`
+	PeriodStartUS int64     `gorm:"primaryKey"`
+	PeriodEndUS   int64     `gorm:"not null"`
+	Digest        string    `gorm:"size:64;not null"`
+	Snapshot      []byte    `gorm:"not null"`
+	FinalizedAt   time.Time `gorm:"not null"`
+}
+
+func (invoiceRow) TableName() string { return "karst_billing_invoices" }
+
 // Assignment identifies an immutable schedule snapshot for one explicit
 // account period. It does not imply that usage is complete or chargeable.
 type Assignment struct {
@@ -86,15 +100,205 @@ type Assignment struct {
 // Missing assignments have no billing effect.
 type Store struct{ db *gorm.DB }
 
-// NewStore migrates the billing schedule catalog and assignment tables.
+// NewStore migrates billing schedule, assignment, and finalized invoice-input
+// tables. Billing remains opt-in at the account level.
 func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("billing: nil database")
 	}
-	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}); err != nil {
+	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}); err != nil {
 		return nil, fmt.Errorf("billing: migrate schedules: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// FinalizeInvoice persists an immutable invoice-input snapshot for an assigned
+// account period. It is safe to retry with identical inputs; later changes to
+// usage or estimates cannot replace a finalized snapshot. This records amounts
+// only and does not create a provider charge or payment.
+func (s *Store) FinalizeInvoice(ctx context.Context, deviceReport usage.DeviceReport, relayReport relayusage.Report) (FinalInvoice, error) {
+	accountID, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	start, end := deviceReport.Start, deviceReport.End
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if !isUTCCalendarMonth(startUS, endUS) {
+		return FinalInvoice{}, ErrInvalidPeriod
+	}
+	estimate, err := s.Calculate(ctx, deviceReport, relayReport)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if !estimate.UsageComplete || len(estimate.Incomplete) != 0 || estimate.DeviceExact == nil || estimate.RelayExact == nil || estimate.TotalExact == nil {
+		return FinalInvoice{}, ErrInvoiceIncomplete
+	}
+	assignment, err := s.Assignment(ctx, start, end)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if estimate.ScheduleVersion != assignment.ScheduleVersion {
+		return FinalInvoice{}, ErrScheduleUnassigned
+	}
+	schedule, err := s.Schedule(ctx, assignment.ScheduleVersion)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if estimate.Currency != schedule.Currency {
+		return FinalInvoice{}, ErrInvalidRateSchedule
+	}
+	deviceInputHash, err := digestJSON(deviceReport)
+	if err != nil {
+		return FinalInvoice{}, fmt.Errorf("billing: hash device invoice input: %w", err)
+	}
+	relayInputHash, err := digestJSON(relayReport)
+	if err != nil {
+		return FinalInvoice{}, fmt.Errorf("billing: hash relay invoice input: %w", err)
+	}
+	deviceExact, err := parseExactNonnegative(*estimate.DeviceExact)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	relayExact, err := parseExactNonnegative(*estimate.RelayExact)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	totalExact, err := parseExactNonnegative(*estimate.TotalExact)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if new(big.Rat).Add(deviceExact, relayExact).Cmp(totalExact) != 0 {
+		return FinalInvoice{}, errors.New("billing: invoice total does not equal its line inputs")
+	}
+	deviceMinor, err := truncateMinor(deviceExact)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	relayMinor, err := truncateMinor(relayExact)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if deviceMinor > int64(^uint64(0)>>1)-relayMinor {
+		return FinalInvoice{}, errors.New("billing: invoice total exceeds supported amount")
+	}
+	invoice := FinalInvoice{
+		SchemaVersion: "invoice-inputs-v1", AccountID: accountID,
+		PeriodStart: time.UnixMicro(startUS).UTC(), PeriodEnd: time.UnixMicro(endUS).UTC(),
+		ScheduleVersion: schedule.Version, Currency: schedule.Currency,
+		DeviceUsage: deviceReport, RelayUsage: relayReport,
+		DeviceInputHash: deviceInputHash, RelayInputHash: relayInputHash,
+		DeviceExact: *estimate.DeviceExact, RelayExact: *estimate.RelayExact, TotalExact: *estimate.TotalExact,
+		DeviceMinor: deviceMinor, RelayMinor: relayMinor, TotalMinor: deviceMinor + relayMinor,
+		FinalizedAt: time.Now().UTC(),
+	}
+	snapshot, err := json.Marshal(invoice)
+	if err != nil {
+		return FinalInvoice{}, fmt.Errorf("billing: encode invoice: %w", err)
+	}
+	digest := sha256.Sum256(snapshot)
+	row := invoiceRow{AccountID: accountID, PeriodStartUS: startUS, PeriodEndUS: endUS, Digest: hex.EncodeToString(digest[:]), Snapshot: snapshot, FinalizedAt: invoice.FinalizedAt}
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+	if result.Error != nil {
+		return FinalInvoice{}, fmt.Errorf("billing: finalize invoice: %w", result.Error)
+	}
+	if result.RowsAffected != 0 {
+		return invoice, nil
+	}
+	stored, err := s.Invoice(ctx, start, end)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if !sameInvoiceInputs(invoice, stored) {
+		return FinalInvoice{}, ErrInvoiceConflict
+	}
+	return stored, nil
+}
+
+func isUTCCalendarMonth(startUS, endUS int64) bool {
+	start := time.UnixMicro(startUS).UTC()
+	end := time.UnixMicro(endUS).UTC()
+	if start.Day() != 1 || start.Hour() != 0 || start.Minute() != 0 || start.Second() != 0 || start.Nanosecond() != 0 {
+		return false
+	}
+	expectedEnd := start.AddDate(0, 1, 0)
+	return end.Equal(expectedEnd)
+}
+
+// Invoice returns and verifies an immutable finalized input snapshot.
+func (s *Store) Invoice(ctx context.Context, start, end time.Time) (FinalInvoice, error) {
+	accountID, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	var row invoiceRow
+	if err := s.db.WithContext(ctx).Where("account_id = ? AND period_start_us = ?", accountID, startUS).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return FinalInvoice{}, ErrInvoiceNotFound
+		}
+		return FinalInvoice{}, fmt.Errorf("billing: load invoice: %w", err)
+	}
+	if row.PeriodEndUS != endUS {
+		return FinalInvoice{}, ErrInvoiceNotFound
+	}
+	digest := sha256.Sum256(row.Snapshot)
+	if hex.EncodeToString(digest[:]) != row.Digest {
+		return FinalInvoice{}, errors.New("billing: invoice snapshot digest mismatch")
+	}
+	var invoice FinalInvoice
+	if err := json.Unmarshal(row.Snapshot, &invoice); err != nil {
+		return FinalInvoice{}, fmt.Errorf("billing: decode invoice: %w", err)
+	}
+	if invoice.AccountID != accountID || invoice.SchemaVersion != "invoice-inputs-v1" || invoice.PeriodStart.UnixMicro() != startUS || invoice.PeriodEnd.UnixMicro() != endUS || invoice.FinalizedAt.IsZero() || !isUTCCalendarMonth(startUS, endUS) {
+		return FinalInvoice{}, errors.New("billing: stored invoice snapshot is invalid")
+	}
+	deviceHash, err := digestJSON(invoice.DeviceUsage)
+	if err != nil || deviceHash != invoice.DeviceInputHash {
+		return FinalInvoice{}, errors.New("billing: device invoice input digest mismatch")
+	}
+	relayHash, err := digestJSON(invoice.RelayUsage)
+	if err != nil || relayHash != invoice.RelayInputHash {
+		return FinalInvoice{}, errors.New("billing: relay invoice input digest mismatch")
+	}
+	schedule, err := s.Schedule(ctx, invoice.ScheduleVersion)
+	if err != nil {
+		return FinalInvoice{}, err
+	}
+	if schedule.Currency != invoice.Currency {
+		return FinalInvoice{}, errors.New("billing: invoice currency differs from its schedule")
+	}
+	estimate, err := Calculate(invoice.DeviceUsage, invoice.RelayUsage, schedule)
+	if err != nil || !estimate.UsageComplete || estimate.DeviceExact == nil || estimate.RelayExact == nil || estimate.TotalExact == nil ||
+		*estimate.DeviceExact != invoice.DeviceExact || *estimate.RelayExact != invoice.RelayExact || *estimate.TotalExact != invoice.TotalExact {
+		return FinalInvoice{}, errors.New("billing: invoice amounts do not match their usage inputs")
+	}
+	deviceAmount, err := parseExactNonnegative(invoice.DeviceExact)
+	if err != nil {
+		return FinalInvoice{}, errors.New("billing: invalid finalized device exact amount")
+	}
+	relayAmount, err := parseExactNonnegative(invoice.RelayExact)
+	if err != nil {
+		return FinalInvoice{}, errors.New("billing: invalid finalized relay exact amount")
+	}
+	totalAmount, err := parseExactNonnegative(invoice.TotalExact)
+	if err != nil || new(big.Rat).Add(deviceAmount, relayAmount).Cmp(totalAmount) != 0 {
+		return FinalInvoice{}, errors.New("billing: invalid finalized total exact amount")
+	}
+	deviceMinor, err := truncateMinor(deviceAmount)
+	if err != nil || deviceMinor != invoice.DeviceMinor {
+		return FinalInvoice{}, errors.New("billing: invalid finalized device line amount")
+	}
+	relayMinor, err := truncateMinor(relayAmount)
+	if err != nil || relayMinor != invoice.RelayMinor || deviceMinor > int64(^uint64(0)>>1)-relayMinor || deviceMinor+relayMinor != invoice.TotalMinor {
+		return FinalInvoice{}, errors.New("billing: invalid finalized relay or total amount")
+	}
+	return invoice, nil
 }
 
 // WithDB binds the store to a caller-owned GORM transaction. Callers that
