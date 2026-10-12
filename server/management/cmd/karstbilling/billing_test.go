@@ -19,6 +19,7 @@ import (
 	"github.com/netbirdio/netbird/management/cmd/karstbilling"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/billing"
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 )
@@ -32,6 +33,7 @@ func fixture(t *testing.T) *store.SqlStore {
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = audit.New(s.GetDB())
 	require.NoError(t, err)
+	require.NoError(t, usage.Migrate(s.GetDB()))
 	require.NoError(t, s.SaveAccount(context.Background(), &types.Account{Id: "account-a", Network: types.NewNetwork()}))
 	return s
 }
@@ -130,4 +132,47 @@ func TestAssignPilotRollsBackWhenAuditFails(t *testing.T) {
 	var entries int64
 	require.NoError(t, s.GetDB().Model(&audit.Entry{}).Count(&entries).Error)
 	require.Zero(t, entries)
+}
+
+func TestFinalizeInvoiceRefusesIncompleteUsageAndCreatesNoCharge(t *testing.T) {
+	s := fixture(t)
+	_, err := executeCommand(s, "finalize-invoice", "--account-id", "account-a", "--actor", "pilot-operator",
+		"--period-start", "2026-01-01T00:00:00Z", "--period-end", "2026-02-01T00:00:00Z")
+	require.ErrorIs(t, err, billing.ErrScheduleUnassigned)
+
+	_, err = execute(s, "assign-pilot", "--account-id", "account-a", "--actor", "pilot-operator",
+		"--period-start", "2026-01-01T00:00:00Z", "--period-end", "2026-02-01T00:00:00Z")
+	require.NoError(t, err)
+	_, err = executeCommand(s, "finalize-invoice", "--account-id", "account-a", "--actor", "pilot-operator",
+		"--period-start", "2026-01-01T00:00:00Z", "--period-end", "2026-02-01T00:00:00Z")
+	require.ErrorIs(t, err, billing.ErrInvoiceIncomplete)
+
+	stored, err := billing.NewStore(s.GetDB())
+	require.NoError(t, err)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = stored.Invoice(billing.WithAccount(context.Background(), "account-a"), start, start.AddDate(0, 1, 0))
+	require.ErrorIs(t, err, billing.ErrInvoiceNotFound)
+	var finalized, charged int64
+	require.NoError(t, s.GetDB().Model(&audit.Entry{}).Where("action = ?", "karst.billing.invoice.finalize").Count(&finalized).Error)
+	require.NoError(t, s.GetDB().Model(&paymentOutboxModelForTest{}).Count(&charged).Error)
+	require.Zero(t, finalized)
+	require.Zero(t, charged)
+}
+
+type paymentOutboxModelForTest struct {
+	InvoiceRef string `gorm:"primaryKey;size:67"`
+}
+
+func (paymentOutboxModelForTest) TableName() string { return "karst_billing_payment_outbox" }
+
+func executeCommand(s *store.SqlStore, args ...string) (string, error) {
+	var output bytes.Buffer
+	command := karstbilling.NewCommands(func(cmd *cobra.Command, fn func(context.Context, store.Store) error) error {
+		return fn(cmd.Context(), s)
+	})
+	command.SetArgs(args)
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	err := command.Execute()
+	return output.String(), err
 }

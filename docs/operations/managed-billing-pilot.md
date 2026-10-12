@@ -2,10 +2,10 @@
 # Managed billing pilot readiness
 
 This page is an operator entry point for collecting shadow usage and preparing
-for a managed billing pilot. The metering and reporting paths exist, but usage
-collection is opt-in and billing is not yet live: collection does not create
-invoices, charge customers, or enforce relay limits. Do not describe a usage
-report or assigned schedule as a bill.
+for a managed billing pilot. Metering and reporting exist, but collection is
+opt-in and billing is not yet live: a usage report does not finalize an invoice,
+charge customers, or enforce relay limits. Do not describe a usage report or
+assigned schedule as a bill.
 
 ## Approved pilot rates and meter boundaries
 
@@ -65,6 +65,9 @@ authorize a charge.
 
 Invoice input finalization requires complete device and relay reports and an
 explicit account-period schedule assignment; it does not collect payment. The
+operator can finalize only once the period is complete using the
+[assignment and finalization procedure](billing-schedule-assignment.md).
+
 implementation provides an audited in-app alert feed and an optional
 organization-wide managed-relay cap, with grants reserved across relays and
 forwarding paused when a capped relay has no credits. Owners/admins configure
@@ -84,15 +87,22 @@ bounds. Keep enforcement opt-in until this implementation has shipped and its
 behavior has been validated in a pilot, including reservation sizing against
 shadow usage.
 
-Seller and tax responsibilities, the payment provider and failure/grace
-policy, self-hosted support terms, and retention period remain open in
-[#275](https://github.com/karst-net/karst/issues/275). Do not connect payment
-collection until those decisions are settled. No billing configuration is
-required for deployments that do not opt in; relay forwarding and device
-membership behavior remain available without usage collection.
+Paddle is the selected merchant of record and pilot provider. Rates are
+pre-tax USD; Paddle adds applicable tax and shows it separately. Retain
+finalized invoices and payment/audit state for seven years and normalized
+webhook events for thirteen months; never persist raw webhook bodies after
+signature verification. Live collection still requires Paddle account/domain
+approval, supported-market confirmation, and SaaS tax-category configuration.
+The pilot payment policy retries asynchronously on days 1, 3, 7, and 12 after
+failure and sends in-app notices to billing admins. At day 14, keep the service
+active and mark the invoice past due for customer/operator resolution; payment
+failure does not suspend networking. Paid self-hosted support terms remain
+pending. Keep spending-cap enforcement and payment collection unavailable to
+customers until their implementations and operational checks are complete. No
+billing configuration is required for deployments that do not opt in; relay
+forwarding and device membership behavior remain available without usage
+collection.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool
-retention with the deployment's existing data-governance rules. A billing-
-specific retention and deletion policy remains undecided and must be set before
-broad rollout.
+retention with the deployment's existing data-governance rules.

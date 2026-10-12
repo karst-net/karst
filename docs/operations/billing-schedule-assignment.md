@@ -36,7 +36,22 @@ accounts.
 
 The assignment only makes the immutable rate snapshot available to the
 calculator for that account and exact period. It is not proof that usage
-coverage is complete or chargeable. Invoice inputs and finalization, currency
-rounding, alerts, relay caps, and payment collection remain separate work under
-[#275](https://github.com/karst-net/karst/issues/275). Do not present the
-assignment output as an invoice or payment confirmation.
+coverage is complete or chargeable. After both device and managed-relay reports
+are complete for the UTC month, an operator can finalize the immutable invoice
+inputs:
+
+```sh
+karst-control --config /path/to/config.json admin billing finalize-invoice \
+  --account-id ACCOUNT_ID \
+  --actor OPERATOR \
+  --period-start 2026-10-01T00:00:00Z \
+  --period-end 2026-11-01T00:00:00Z
+```
+
+Finalization refuses incomplete reports, requires the existing explicit
+assignment, truncates each line down to minor units, and commits the immutable
+invoice snapshot with its audit record. An incomplete period remains open for
+later reporting; it is never estimated. The command does not create a Paddle
+transaction or collect payment. Its JSON output is the invoice-input snapshot,
+not proof that a customer was charged. See [#275](https://github.com/karst-net/karst/issues/275)
+for the broader payment and launch gates.
