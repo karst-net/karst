@@ -5,9 +5,11 @@ package billing
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +18,69 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPaddleWebhookHandlerPersistsOnlyVerifiedNormalizedEvent(t *testing.T) {
+	const secret = "pdl_ntfset_test_secret"
+	store := testBillingStore(t)
+	verifier, err := NewPaddleWebhookVerifier(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPaddleWebhookHandler(verifier, store)
+	body := []byte(`{"event_id":"evt_01grnn4zta5a1mf02jjze7y2ys","event_type":"transaction.completed","occurred_at":"2026-01-02T03:04:05Z","data":{"id":"txn_01grnn4zta5a1mf02jjze7y2ys","status":"completed","customer_id":"ctm_01grnn4zta5a1mf02jjze7y2ys","custom_data":{"karst_invoice_id":"ki_safe"},"private_note":"must not persist"}}`)
+	request := paddleSignedRequest(t, secret, time.Now(), body)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("webhook response = %d %s", response.Code, response.Body.String())
+	}
+	var rows []webhookInboxRow
+	if err := store.db.Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("stored rows = %d", len(rows))
+	}
+	var event NormalizedPaddleEvent
+	if err := json.Unmarshal(rows[0].Payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.EventID != "evt_01grnn4zta5a1mf02jjze7y2ys" || event.InvoiceRef != "ki_safe" || event.Status != "completed" {
+		t.Fatalf("normalized event = %+v", event)
+	}
+	if bytes.Contains(rows[0].Payload, []byte("private_note")) || bytes.Contains(rows[0].Payload, []byte("private")) {
+		t.Fatalf("raw provider fields were persisted: %s", rows[0].Payload)
+	}
+	duplicate := paddleSignedRequest(t, secret, time.Now(), body)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, duplicate)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("duplicate response = %d", response.Code)
+	}
+	if err := store.db.WithContext(context.Background()).Find(&rows).Error; err != nil || len(rows) != 1 {
+		t.Fatalf("duplicate created rows=%d err=%v", len(rows), err)
+	}
+}
+
+func TestPaddleWebhookHandlerRejectsUnverifiedAndUnconfiguredRequests(t *testing.T) {
+	store := testBillingStore(t)
+	verifier, err := NewPaddleWebhookVerifier("pdl_ntfset_test_secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPaddleWebhookHandler(verifier, store)
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/paddle", bytes.NewReader([]byte(`{}`)))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unsigned response = %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	NewPaddleWebhookHandler(nil, store).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled response = %d", response.Code)
+	}
+}
 
 func TestPaddleWebhookVerifierChecksFreshSignatureOverRawBody(t *testing.T) {
 	const secret = "pdl_ntfset_test_secret"

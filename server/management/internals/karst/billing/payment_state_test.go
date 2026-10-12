@@ -47,6 +47,10 @@ func TestPaymentOutboxRequiresFinalInvoiceAndIsIdempotent(t *testing.T) {
 	if err != nil || updated.State != PaymentReconcile {
 		t.Fatalf("ambiguous result transition = %+v, %v", updated, err)
 	}
+	var history int64
+	if err := store.db.Model(&paymentHistoryRow{}).Where("invoice_ref = ?", first.InvoiceReference).Count(&history).Error; err != nil || history != 3 {
+		t.Fatalf("payment transition history count=%d err=%v; want queued, submitting, reconcile", history, err)
+	}
 }
 
 func TestWebhookInboxDeduplicatesNormalizedEvents(t *testing.T) {
@@ -67,6 +71,48 @@ func TestWebhookInboxDeduplicatesNormalizedEvents(t *testing.T) {
 	}
 }
 
+func TestWebhookWorkerAppliesEventsIdempotentlyAndIgnoresOutOfOrderState(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	intent, err := store.QueuePayment(ctx, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err = store.SetPaymentCustomer(ctx, intent.InvoiceReference, testPaddleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentReady, PaymentSubmitting, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	eventAt := time.Date(2026, 2, 1, 1, 0, 0, 0, time.UTC)
+	event := NormalizedPaddleEvent{EventID: "evt_completed", EventType: "transaction.completed", OccurredAt: eventAt, TransactionID: "txn_01grnn4zta5a1mf02jjze7y2ys", CustomerID: testPaddleCustomer, InvoiceRef: intent.InvoiceReference, Status: "completed"}
+	if _, err := store.RecordWebhook(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Payment(ctx, start, end)
+	if err != nil || got.State != PaymentPaid || got.ProviderID != event.TransactionID {
+		t.Fatalf("applied webhook payment = %+v, %v", got, err)
+	}
+	processed, err := store.ProcessWebhook(ctx, event.EventID)
+	if err != nil || processed {
+		t.Fatalf("duplicate process = %v, %v", processed, err)
+	}
+	older := NormalizedPaddleEvent{EventID: "evt_past_due", EventType: "transaction.past_due", OccurredAt: eventAt.Add(-time.Minute), TransactionID: event.TransactionID, CustomerID: testPaddleCustomer, InvoiceRef: intent.InvoiceReference, Status: "past_due"}
+	if _, err := store.RecordWebhook(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.Payment(ctx, start, end)
+	if err != nil || got.State != PaymentPaid {
+		t.Fatalf("out-of-order event rolled back payment: %+v, %v", got, err)
+	}
+}
+
 func TestPruneBillingHistoryUsesApprovedCalendarCutoffs(t *testing.T) {
 	store := testBillingStore(t)
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
@@ -84,13 +130,21 @@ func TestPruneBillingHistoryUsesApprovedCalendarCutoffs(t *testing.T) {
 	if err := store.db.Create(&[]webhookInboxRow{oldEvent, newEvent}).Error; err != nil {
 		t.Fatal(err)
 	}
+	oldHistory := paymentHistoryRow{InvoiceRef: "old", FromState: PaymentReady, ToState: PaymentPaid, CreatedAt: now.AddDate(-7, 0, 0).Add(-time.Second)}
+	newHistory := oldHistory
+	newHistory.InvoiceRef = "new"
+	newHistory.CreatedAt = now.AddDate(-7, 0, 0)
+	if err := store.db.Create(&[]paymentHistoryRow{oldHistory, newHistory}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := store.PruneBillingHistory(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
-	var payments, events int64
+	var payments, events, history int64
 	store.db.Model(&paymentOutboxRow{}).Count(&payments)
 	store.db.Model(&webhookInboxRow{}).Count(&events)
-	if payments != 1 || events != 1 {
-		t.Fatalf("records at retention boundary: payments=%d events=%d, want 1 each", payments, events)
+	store.db.Model(&paymentHistoryRow{}).Count(&history)
+	if payments != 1 || events != 1 || history != 1 {
+		t.Fatalf("records at retention boundary: payments=%d events=%d history=%d, want 1 each", payments, events, history)
 	}
 }
