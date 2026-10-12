@@ -10,6 +10,12 @@ test("owners can inspect coverage and opt into an acknowledged relay cap", async
   await page.goto("/#/billing");
 
   await expect(page.getByRole("heading", { name: "Billing", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Invoice and payment" })).toBeVisible();
+  await expect(page.getByText(/before tax/)).toBeVisible();
+  await page.getByRole("button", { name: "Prepare Paddle checkout" }).click();
+  const checkout = page.getByRole("link", { name: "Continue to Paddle checkout" });
+  await expect(checkout).toHaveAttribute("href", "https://sandbox-buy.paddle.com/checkout/mock");
+  await expect(checkout).toHaveAttribute("target", "_blank");
   await expect(page.getByText("Incomplete coverage").first()).toBeVisible();
   await expect(page.getByText("Relay usage coverage is incomplete; threshold amounts are lower bounds.")).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "75%" })).toBeVisible();

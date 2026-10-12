@@ -27,6 +27,7 @@ const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deplo
 
 let fixture = buildFixture();
 let relayCaps = new Map();
+let billingPayments = new Map();
 let setupKeys = [];
 let invitations = [];
 // ADR-0032. Seeded with one small tree so the Domains view and the setup
@@ -180,6 +181,7 @@ const server = http.createServer((request, response) => {
   // mid-assertion or reset their unrelated resources.
   if (path === "/__mock__/billing/fixture" && method === "PUT") {
     relayCaps = new Map();
+    billingPayments = new Map();
     return noContent(response);
   }
   if (path === "/__mock__/fixture" && method === "PUT") {
@@ -332,6 +334,18 @@ const server = http.createServer((request, response) => {
     const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const end = new Date(Date.UTC(year, month, 1)).toISOString();
     return json(response, 200, { period_start: start, period_end: end, as_of: new Date().toISOString(), coverage_complete: false, coverage_warning: "Relay usage coverage is incomplete; threshold amounts are lower bounds.", alerts: [{ period_start: start, period_end: end, schedule_version: "pilot-v1", target: "included_allowance", threshold_percent: 75, reported_bytes: "15000000000", threshold_bytes: "11250000000", as_of: new Date().toISOString(), usage_complete: false }] });
+  }
+  if (karst === "/billing/payments" && method === "GET") {
+    const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
+    const [year, month] = period.split("-").map(Number);
+    return json(response, 200, billingPayments.get(period) ?? { period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", device_minor: 2500, relay_minor: 0, total_minor: 2500, state: "not_queued", updated_at: new Date().toISOString() });
+  }
+  if (karst === "/billing/payments" && method === "POST") {
+    const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
+    const [year, month] = period.split("-").map(Number);
+    const payment = { period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", device_minor: 2500, relay_minor: 500, total_minor: 3000, state: "checkout", checkout_url: "https://sandbox-buy.paddle.com/checkout/mock", updated_at: new Date().toISOString() };
+    billingPayments.set(period, payment);
+    return json(response, 202, payment);
   }
   if (karst === "/billing/relay-cap" && method === "GET") {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
