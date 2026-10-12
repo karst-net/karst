@@ -46,11 +46,12 @@ no customer-facing price or cap amount.
   rules, then round the permitted byte budget down so the billed relay charge
   cannot exceed the customer's cap.
 - A setting change never rewrites prior periods. Increases may take effect
-  once the new cap version and additional grants are durable. Decreases take
-  effect next period unless all existing grants have been surrendered, or
-  their relay generations are fenced and the old grants have expired under the
-  trusted-time/skew rule. A registry flag alone cannot revoke credits cached
-  on an unreachable relay.
+  once the new cap version and additional grants are durable. A decrease takes
+  effect next period by default. An in-period decrease is possible only after
+  every outstanding grant has been surrendered or safely expired and fenced,
+  and only when already-consumed spend fits below the new cap. A registry flag
+  alone cannot revoke credits cached on an unreachable relay; consumed spend
+  cannot be undone by lowering a cap.
 
 ### Central reservation, local enforcement
 
