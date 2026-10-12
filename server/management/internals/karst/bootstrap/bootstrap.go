@@ -281,6 +281,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
+		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)

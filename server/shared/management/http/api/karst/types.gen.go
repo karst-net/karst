@@ -300,6 +300,63 @@ func (e RelayHealthSource) Valid() bool {
 	}
 }
 
+// Defines values for RelayUsageDayGapReasons.
+const (
+	RelayUsageDayGapReasonsCapacity          RelayUsageDayGapReasons = "capacity"
+	RelayUsageDayGapReasonsClock             RelayUsageDayGapReasons = "clock"
+	RelayUsageDayGapReasonsObservationLost   RelayUsageDayGapReasons = "observation_lost"
+	RelayUsageDayGapReasonsOverflow          RelayUsageDayGapReasons = "overflow"
+	RelayUsageDayGapReasonsUnresolvedMapping RelayUsageDayGapReasons = "unresolved_mapping"
+)
+
+// Valid indicates whether the value is a known member of the RelayUsageDayGapReasons enum.
+func (e RelayUsageDayGapReasons) Valid() bool {
+	switch e {
+	case RelayUsageDayGapReasonsCapacity:
+		return true
+	case RelayUsageDayGapReasonsClock:
+		return true
+	case RelayUsageDayGapReasonsObservationLost:
+		return true
+	case RelayUsageDayGapReasonsOverflow:
+		return true
+	case RelayUsageDayGapReasonsUnresolvedMapping:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayUsageReportComplete.
+const (
+	RelayUsageReportCompleteFalse RelayUsageReportComplete = false
+)
+
+// Valid indicates whether the value is a known member of the RelayUsageReportComplete enum.
+func (e RelayUsageReportComplete) Valid() bool {
+	switch e {
+	case RelayUsageReportCompleteFalse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayUsageReportCoverage.
+const (
+	RelayUsageReportCoverageReceivedOnly RelayUsageReportCoverage = "received_only"
+)
+
+// Valid indicates whether the value is a known member of the RelayUsageReportCoverage enum.
+func (e RelayUsageReportCoverage) Valid() bool {
+	switch e {
+	case RelayUsageReportCoverageReceivedOnly:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ScalerPoolRecommendationBindingConstraint.
 const (
 	ScalerPoolRecommendationBindingConstraintAvailability ScalerPoolRecommendationBindingConstraint = "availability"
@@ -969,6 +1026,52 @@ type RelayLocation struct {
 	Lon   float32 `json:"lon"`
 }
 
+// RelayUsageDay defines model for RelayUsageDay.
+type RelayUsageDay struct {
+	Date             openapi_types.Date        `json:"date"`
+	GapReasons       []RelayUsageDayGapReasons `json:"gap_reasons"`
+	GapWindows       int64                     `json:"gap_windows"`
+	MissingSequences string                    `json:"missing_sequences"`
+	ReportedBytes    string                    `json:"reported_bytes"`
+	ReportedWindows  int64                     `json:"reported_windows"`
+}
+
+// RelayUsageDayGapReasons defines model for RelayUsageDay.GapReasons.
+type RelayUsageDayGapReasons string
+
+// RelayUsageReport defines model for RelayUsageReport.
+type RelayUsageReport struct {
+	AsOf time.Time `json:"as_of"`
+
+	// Complete Always false until expected producer intervals can be checked.
+	Complete RelayUsageReportComplete `json:"complete"`
+
+	// Coverage Only received batches are counted; producer coverage is not yet historized.
+	Coverage RelayUsageReportCoverage `json:"coverage"`
+	Days     []RelayUsageDay          `json:"days"`
+	End      time.Time                `json:"end"`
+
+	// FirstReceivedWindowStart Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
+	FirstReceivedWindowStart *time.Time `json:"first_received_window_start"`
+
+	// LastReceivedAt Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
+	LastReceivedAt *time.Time `json:"last_received_at"`
+	Limitations    []string   `json:"limitations"`
+
+	// MissingSequences Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.
+	MissingSequences string `json:"missing_sequences"`
+
+	// ReportedBytes Exact decimal bytes reported in received batches only.
+	ReportedBytes string    `json:"reported_bytes"`
+	Start         time.Time `json:"start"`
+}
+
+// RelayUsageReportComplete Always false until expected producer intervals can be checked.
+type RelayUsageReportComplete bool
+
+// RelayUsageReportCoverage Only received batches are counted; producer coverage is not yet historized.
+type RelayUsageReportCoverage string
+
 // ScalerPoolRecommendation defines model for ScalerPoolRecommendation.
 type ScalerPoolRecommendation struct {
 	BindingConstraint ScalerPoolRecommendationBindingConstraint `json:"binding_constraint"`
@@ -1193,6 +1296,12 @@ type ListPostureSessionsParamsPosture string
 
 // GetDeviceUsageParams defines parameters for GetDeviceUsage.
 type GetDeviceUsageParams struct {
+	Start time.Time `form:"start" json:"start"`
+	End   time.Time `form:"end" json:"end"`
+}
+
+// GetRelayUsageParams defines parameters for GetRelayUsage.
+type GetRelayUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
 	End   time.Time `form:"end" json:"end"`
 }

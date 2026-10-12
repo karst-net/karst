@@ -31,6 +31,47 @@ export type DeviceUsageSegment = {
     devices: number | null;
 };
 
+export type RelayUsageReport = {
+    start: string;
+    end: string;
+    as_of: string;
+    /**
+     * Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
+     */
+    first_received_window_start: string | null;
+    /**
+     * Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
+     */
+    last_received_at: string | null;
+    /**
+     * Only received batches are counted; producer coverage is not yet historized.
+     */
+    coverage: 'received_only';
+    /**
+     * Always false until expected producer intervals can be checked.
+     */
+    complete: false;
+    /**
+     * Exact decimal bytes reported in received batches only.
+     */
+    reported_bytes: string;
+    /**
+     * Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.
+     */
+    missing_sequences: string;
+    days: Array<RelayUsageDay>;
+    limitations: Array<string>;
+};
+
+export type RelayUsageDay = {
+    date: string;
+    reported_bytes: string;
+    reported_windows: number;
+    gap_windows: number;
+    missing_sequences: string;
+    gap_reasons: Array<'unresolved_mapping' | 'capacity' | 'overflow' | 'clock' | 'observation_lost'>;
+};
+
 export type DeviceInvitationDraft = {
     name: string;
     groups: Array<string>;
@@ -566,6 +607,34 @@ export type GetDeviceUsageResponses = {
 };
 
 export type GetDeviceUsageResponse = GetDeviceUsageResponses[keyof GetDeviceUsageResponses];
+
+export type GetRelayUsageData = {
+    body?: never;
+    path?: never;
+    query: {
+        start: string;
+        end: string;
+    };
+    url: '/usage/relays';
+};
+
+export type GetRelayUsageErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRelayUsageError = GetRelayUsageErrors[keyof GetRelayUsageErrors];
+
+export type GetRelayUsageResponses = {
+    /**
+     * Received relay usage snapshot with explicit coverage limitations
+     */
+    200: RelayUsageReport;
+};
+
+export type GetRelayUsageResponse = GetRelayUsageResponses[keyof GetRelayUsageResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;
