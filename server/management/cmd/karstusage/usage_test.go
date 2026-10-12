@@ -223,3 +223,35 @@ func TestManagedRelayCommandsValidateBeforeOpeningStore(t *testing.T) {
 		require.Error(t, command.Execute())
 	}
 }
+
+func TestManagedRelayAuditFailureRollsBackAuthorizationInterval(t *testing.T) {
+	s := fixture(t)
+	key, err := identity.FromSeed(bytes.Repeat([]byte{7}, identity.SeedSize))
+	require.NoError(t, err)
+	mapping, err := usage.PersistRelayMapping(context.Background(), s.GetDB(), "deployment-a", "aquifer-a", "a")
+	require.NoError(t, err)
+	_, err = relayusage.NewStore(s.GetDB())
+	require.NoError(t, err)
+	output, err := executeRaw(s, "relays", "authorize", "--identity-key", base64.StdEncoding.EncodeToString(key.Public()), "--deployment-id", "deployment-a", "--actor", "operator")
+	require.NoError(t, err)
+	var authorized struct {
+		RelayID string `json:"relay_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &authorized))
+
+	failure := errors.New("injected relay audit failure")
+	require.NoError(t, s.GetDB().Callback().Create().Before("gorm:create").Register("fail_relay_operator_audit", func(tx *gorm.DB) {
+		if tx.Statement.Table == (audit.Entry{}).TableName() {
+			tx.AddError(failure)
+		}
+	}))
+	_, err = executeRaw(s, "relays", "allow-mapping", "--relay-id", authorized.RelayID, "--deployment-id", mapping.DeploymentID, "--mapping-version", mapping.Version, "--actor", "operator")
+	require.ErrorIs(t, err, failure)
+	require.NoError(t, s.GetDB().Callback().Create().Remove("fail_relay_operator_audit"))
+
+	var allowed, intervals int64
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mappings").Where("relay_id = ?", authorized.RelayID).Count(&allowed).Error)
+	require.NoError(t, s.GetDB().Table("karst_usage_producer_mapping_periods").Where("relay_id = ?", authorized.RelayID).Count(&intervals).Error)
+	require.Zero(t, allowed)
+	require.Zero(t, intervals, "authorization history must roll back with the unaudited grant")
+}

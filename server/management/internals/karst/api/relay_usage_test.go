@@ -39,7 +39,7 @@ func (a *relayUsageAuditCapture) Append(_ context.Context, userID, action, _, _ 
 
 func (s *relayUsageReportStub) Report(_ context.Context, account string, start, end time.Time) (relayusage.Report, error) {
 	s.account, s.calls = account, s.calls+1
-	return relayusage.Report{Start: start, End: end, AsOf: end, Coverage: "received_only", Complete: false,
+	return relayusage.Report{Start: start, End: end, AsOf: end, AuthorizationHistoryStart: start, Coverage: "authorized_producers", HistoryComplete: false, Complete: false,
 		ReportedBytes: "123", MissingSequences: "0", Days: []relayusage.ReportDay{{Date: "2026-10-01", ReportedBytes: "123", ReportedWindows: 1, GapReasons: []string{}}},
 		Limitations: []string{"producer coverage is not historized"}}, nil
 }

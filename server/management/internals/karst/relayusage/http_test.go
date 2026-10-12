@@ -22,7 +22,8 @@ import (
 func TestUploadEndpointPersistsAndAcknowledgesBatch(t *testing.T) {
 	db, store, key, relayID, mapping := ingestionFixture(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	body := makeSignedBatch(t, key, [16]byte{1}, 0, mappingPayload(mapping, 42))
+	windowStart := uint64(now.UnixMicro() / int64(minuteMicros) * int64(minuteMicros))
+	body := makeSignedBatch(t, key, [16]byte{1}, 0, mappingPayloadAt(mapping, 42, windowStart))
 	auth := makeUploadAuth(t, key, relayID, body, now, [32]byte{7})
 	header := makeAuthHeader(auth)
 	router := mux.NewRouter()

@@ -18,6 +18,14 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	end := ingestNow.Truncate(time.Minute)
 	start := end.Add(-10 * time.Minute)
 	windowStart := start.Add(time.Minute)
+	var history authorizationHistory
+	require.NoError(t, db.Take(&history).Error)
+	history.StartedAtUS = start.UnixMicro()
+	require.NoError(t, db.Save(&history).Error)
+	var period producerMappingInterval
+	require.NoError(t, db.Take(&period).Error)
+	period.StartUS = start.UnixMicro()
+	require.NoError(t, db.Save(&period).Error)
 
 	first := makeSignedBatch(t, key, [16]byte{1}, 0, mappingPayloadAt(mapping, 123, uint64(windowStart.UnixMicro())))
 	firstAuth := makeUploadAuth(t, key, relayID, first, ingestNow, [32]byte{1})
@@ -34,8 +42,12 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 
 	report, err := store.Report(ctx, "account-1", start, end)
 	require.NoError(t, err)
-	require.Equal(t, "received_only", report.Coverage)
+	require.Equal(t, "authorized_producers", report.Coverage)
+	require.True(t, report.HistoryComplete)
 	require.False(t, report.Complete)
+	require.Equal(t, uint64(10), report.ExpectedWindows)
+	require.Equal(t, uint64(8), report.MissingWindows)
+	require.Zero(t, report.UnexpectedWindows)
 	require.Equal(t, "579", report.ReportedBytes)
 	require.Equal(t, "1", report.MissingSequences)
 	require.NotNil(t, report.FirstReceivedWindowStart)
@@ -46,6 +58,8 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.Equal(t, "579", report.Days[0].ReportedBytes)
 	require.Equal(t, uint64(2), report.Days[0].ReportedWindows)
 	require.Equal(t, uint64(1), report.Days[0].GapWindows)
+	require.Equal(t, uint64(10), report.Days[0].ExpectedWindows)
+	require.Equal(t, uint64(8), report.Days[0].MissingWindows)
 	require.Equal(t, "1", report.Days[0].MissingSequences)
 	require.Equal(t, []string{"clock", "observation_lost"}, report.Days[0].GapReasons)
 	require.NotContains(t, report.Limitations, "")
@@ -54,6 +68,8 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.NoError(t, err)
 	require.Equal(t, "0", other.ReportedBytes)
 	require.Zero(t, other.Days[0].ReportedWindows)
+	require.Zero(t, other.ExpectedWindows)
+	require.False(t, other.Complete, "no expected producer windows cannot establish zero usage")
 	require.Nil(t, other.FirstReceivedWindowStart)
 	require.Nil(t, other.LastReceivedAt)
 
@@ -74,4 +90,70 @@ func TestCustomerReportRejectsUnalignedFutureAndOversizedWindows(t *testing.T) {
 			t.Fatalf("report error for %v..%v = %v, want %v", bounds[0], bounds[1], err, ErrInvalidReport)
 		}
 	}
+}
+
+func TestCustomerReportIsCompleteWhenEveryAuthorizedWindowArrivedWithoutGaps(t *testing.T) {
+	db, store, key, relayID, mapping := ingestionFixture(t)
+	ctx := context.Background()
+	ingestNow := time.Now().UTC()
+	end := ingestNow.Truncate(time.Minute)
+	start := end.Add(-2 * time.Minute)
+	var history authorizationHistory
+	require.NoError(t, db.Take(&history).Error)
+	history.StartedAtUS = start.UnixMicro()
+	require.NoError(t, db.Save(&history).Error)
+	var period producerMappingInterval
+	require.NoError(t, db.Take(&period).Error)
+	period.StartUS = start.UnixMicro()
+	require.NoError(t, db.Save(&period).Error)
+	for sequence := uint64(4); sequence <= 5; sequence++ {
+		windowStart := start.Add(time.Duration(sequence-4) * time.Minute)
+		body := makeSignedBatch(t, key, [16]byte{2}, sequence, mappingPayloadAt(mapping, 0, uint64(windowStart.UnixMicro())))
+		auth := makeUploadAuth(t, key, relayID, body, ingestNow, [32]byte{byte(sequence)})
+		_, err := store.Ingest(ctx, "POST", UploadPath, auth, body, ingestNow)
+		require.NoError(t, err)
+	}
+
+	report, err := store.Report(ctx, "account-1", start, end)
+	require.NoError(t, err)
+	require.True(t, report.HistoryComplete)
+	require.True(t, report.Complete)
+	require.Equal(t, uint64(2), report.ExpectedWindows)
+	require.Zero(t, report.MissingWindows)
+	require.Zero(t, report.UnexpectedWindows)
+	require.Equal(t, "0", report.ReportedBytes)
+	require.Equal(t, "0", report.MissingSequences)
+}
+
+func TestCustomerReportMarksPeriodsBeforeAuthorizationHistoryUnknown(t *testing.T) {
+	db, store, _, _, _ := ingestionFixture(t)
+	end := time.Now().UTC().Truncate(time.Minute)
+	start := end.Add(-5 * time.Minute)
+	var history authorizationHistory
+	require.NoError(t, db.Take(&history).Error)
+	history.StartedAtUS = start.Add(2 * time.Minute).UnixMicro()
+	require.NoError(t, db.Save(&history).Error)
+
+	report, err := store.Report(context.Background(), "account-1", start, end)
+	require.NoError(t, err)
+	require.Equal(t, time.UnixMicro(history.StartedAtUS).UTC(), report.AuthorizationHistoryStart)
+	require.False(t, report.HistoryComplete)
+	require.False(t, report.Complete)
+	require.Contains(t, report.Limitations, "Authorization history begins during the requested period; producer coverage before the history cutover is unknown.")
+}
+
+func TestCustomerReportMergesOverlappingMappingPeriodsForOneProducer(t *testing.T) {
+	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	end := start.Add(2 * time.Minute)
+	firstEnd := start.Add(time.Minute).UnixMicro()
+	report := Report{Start: start, End: end, HistoryComplete: true}
+	periods := []producerMappingInterval{
+		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-a", AccountID: "account", StartUS: start.UnixMicro(), EndUS: &firstEnd},
+		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-b", AccountID: "account", StartUS: start.UnixMicro()},
+	}
+	require.NoError(t, composeRelayReport(&report, periods, nil, nil))
+	require.Equal(t, uint64(2), report.ExpectedWindows)
+	require.Equal(t, uint64(2), report.MissingWindows)
+	require.Len(t, report.Days, 1)
+	require.Equal(t, uint64(2), report.Days[0].ExpectedWindows)
 }

@@ -62,6 +62,29 @@ type AllowedMapping struct {
 
 func (AllowedMapping) TableName() string { return "karst_usage_producer_mappings" }
 
+// producerMappingInterval is durable authorization evidence used to decide
+// which account-minute windows an explicitly authorized managed producer was
+// expected to report. Closed intervals are retained; this does not assert that
+// every managed relay is enrolled.
+type producerMappingInterval struct {
+	ID           uint64 `gorm:"primaryKey"`
+	RelayID      string `gorm:"size:64;not null;uniqueIndex:idx_relay_usage_authorization_period"`
+	DeploymentID string `gorm:"size:128;not null;uniqueIndex:idx_relay_usage_authorization_period"`
+	Version      string `gorm:"size:64;not null;uniqueIndex:idx_relay_usage_authorization_period"`
+	AccountID    string `gorm:"size:128;not null;index"`
+	StartUS      int64  `gorm:"not null;uniqueIndex:idx_relay_usage_authorization_period"`
+	EndUS        *int64 `gorm:"index"`
+}
+
+func (producerMappingInterval) TableName() string { return "karst_usage_producer_mapping_periods" }
+
+type authorizationHistory struct {
+	ID          uint8 `gorm:"primaryKey"`
+	StartedAtUS int64 `gorm:"not null"`
+}
+
+func (authorizationHistory) TableName() string { return "karst_usage_authorization_history" }
+
 type receivedBatch struct {
 	DeploymentID string    `gorm:"primaryKey;size:128"`
 	RelayID      string    `gorm:"primaryKey;size:64"`
@@ -124,10 +147,43 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("relay usage: nil database")
 	}
-	if err := db.AutoMigrate(&ManagedProducer{}, &AllowedMapping{}, &receivedBatch{}, &receivedTotal{}, &receivedCoverage{}, &uploadNonce{}); err != nil {
+	if err := db.AutoMigrate(&ManagedProducer{}, &AllowedMapping{}, &receivedBatch{}, &receivedTotal{}, &receivedCoverage{}, &producerMappingInterval{}, &authorizationHistory{}, &uploadNonce{}); err != nil {
 		return nil, fmt.Errorf("relay usage: migrate: %w", err)
 	}
+	if err := initializeAuthorizationHistory(db); err != nil {
+		return nil, fmt.Errorf("relay usage: initialize authorization history: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// initializeAuthorizationHistory marks when relay authorization history became
+// trustworthy. Existing active producer/mapping pairs begin at this cutover;
+// no earlier authorization period is inferred during migration.
+func initializeAuthorizationHistory(db *gorm.DB) error {
+	ctx := context.Background()
+	nowUS := time.Now().UTC().Truncate(time.Microsecond).UnixMicro()
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		history := authorizationHistory{ID: 1, StartedAtUS: nowUS}
+		created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&history)
+		if created.Error != nil {
+			return created.Error
+		}
+		if created.RowsAffected == 0 {
+			return nil
+		}
+		var producers []ManagedProducer
+		if err := tx.Where("enabled = ?", true).Find(&producers).Error; err != nil {
+			return err
+		}
+		store := &Store{db: tx}
+		cutover := time.UnixMicro(history.StartedAtUS).UTC()
+		for _, producer := range producers {
+			if err := store.startEnabledMappingIntervals(ctx, producer.RelayID, cutover); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // AuthorizeProducer is for audited operator tooling only. It binds a key to a
@@ -144,7 +200,13 @@ func (s *Store) AuthorizeProducer(ctx context.Context, publicKey []byte, deploym
 		if existing.IdentityKey != key || existing.DeploymentID != deployment {
 			return "", ErrProducerConflict
 		}
-		if err := s.db.WithContext(ctx).Model(&existing).Updates(map[string]any{"enabled": true, "updated_at": time.Now().UTC()}).Error; err != nil {
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		if !existing.Enabled {
+			if err := s.db.WithContext(ctx).Model(&existing).Updates(map[string]any{"enabled": true, "updated_at": now}).Error; err != nil {
+				return "", err
+			}
+		}
+		if err := s.startEnabledMappingIntervals(ctx, relayID, now); err != nil {
 			return "", err
 		}
 		return relayID, nil
@@ -172,38 +234,121 @@ func (s *Store) AllowMapping(ctx context.Context, relayID, deployment, version s
 	if producer.DeploymentID != deployment {
 		return ErrMappingNotAllowed
 	}
-	if _, err := usage.ResolveRelayMapping(ctx, s.db, deployment, version); err != nil {
+	mapping, err := usage.ResolveRelayMapping(ctx, s.db, deployment, version)
+	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	var existing AllowedMapping
+	err = s.db.WithContext(ctx).Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, deployment, version).Take(&existing).Error
+	if err == nil && existing.Enabled {
+		return s.startMappingInterval(ctx, relayID, mapping, time.Now().UTC().Truncate(time.Microsecond))
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	row := AllowedMapping{RelayID: relayID, DeploymentID: deployment, Version: version, Enabled: true, AllowedAt: now}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "relay_id"}, {Name: "deployment_id"}, {Name: "version"}},
 		DoUpdates: clause.Assignments(map[string]any{"enabled": true, "allowed_at": now, "revoked_at": nil}),
-	}).Create(&row).Error
+	}).Create(&row).Error; err != nil {
+		return err
+	}
+	return s.startMappingInterval(ctx, relayID, mapping, now)
 }
 
 func (s *Store) RevokeMapping(ctx context.Context, relayID, deployment, version string) error {
-	result := s.db.WithContext(ctx).Model(&AllowedMapping{}).
-		Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, deployment, version).
-		Updates(map[string]any{"enabled": false, "revoked_at": time.Now().UTC()})
-	if result.Error != nil {
-		return result.Error
+	var mapping AllowedMapping
+	if err := s.db.WithContext(ctx).Where("relay_id = ? AND deployment_id = ? AND version = ?", relayID, deployment, version).Take(&mapping).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrMappingNotAllowed
+		}
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return ErrMappingNotAllowed
+	if !mapping.Enabled {
+		return nil
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.closeMappingInterval(ctx, relayID, deployment, version, now); err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&mapping).Updates(map[string]any{"enabled": false, "revoked_at": now}).Error
+}
+
+func (s *Store) RevokeProducer(ctx context.Context, relayID string) error {
+	var producer ManagedProducer
+	if err := s.db.WithContext(ctx).Where("relay_id = ?", relayID).Take(&producer).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrProducerMissing
+		}
+		return err
+	}
+	if !producer.Enabled {
+		return nil
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.closeProducerIntervals(ctx, relayID, now); err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&producer).Updates(map[string]any{"enabled": false, "updated_at": now}).Error
+}
+
+func (s *Store) startEnabledMappingIntervals(ctx context.Context, relayID string, at time.Time) error {
+	var mappings []AllowedMapping
+	if err := s.db.WithContext(ctx).Where("relay_id = ? AND enabled = ?", relayID, true).Find(&mappings).Error; err != nil {
+		return err
+	}
+	for _, allowed := range mappings {
+		mapping, err := usage.ResolveRelayMapping(ctx, s.db, allowed.DeploymentID, allowed.Version)
+		if err != nil {
+			return err
+		}
+		if err := s.startMappingInterval(ctx, relayID, mapping, at); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (s *Store) RevokeProducer(ctx context.Context, relayID string) error {
-	result := s.db.WithContext(ctx).Model(&ManagedProducer{}).Where("relay_id = ?", relayID).
-		Updates(map[string]any{"enabled": false, "updated_at": time.Now().UTC()})
-	if result.Error != nil {
-		return result.Error
+func (s *Store) startMappingInterval(ctx context.Context, relayID string, mapping usage.RelayMapping, at time.Time) error {
+	var active producerMappingInterval
+	err := s.db.WithContext(ctx).Where("relay_id = ? AND deployment_id = ? AND version = ? AND end_us IS NULL", relayID, mapping.DeploymentID, mapping.Version).Take(&active).Error
+	if err == nil {
+		if active.AccountID != mapping.AccountID {
+			return ErrMappingNotAllowed
+		}
+		return nil
 	}
-	if result.RowsAffected == 0 {
-		return ErrProducerMissing
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&producerMappingInterval{
+		RelayID: relayID, DeploymentID: mapping.DeploymentID, Version: mapping.Version,
+		AccountID: mapping.AccountID, StartUS: at.UnixMicro(),
+	}).Error
+}
+
+func (s *Store) closeMappingInterval(ctx context.Context, relayID, deployment, version string, at time.Time) error {
+	return s.closeAuthorizationIntervals(ctx, at, "relay_id = ? AND deployment_id = ? AND version = ?", relayID, deployment, version)
+}
+
+func (s *Store) closeProducerIntervals(ctx context.Context, relayID string, at time.Time) error {
+	return s.closeAuthorizationIntervals(ctx, at, "relay_id = ?", relayID)
+}
+
+func (s *Store) closeAuthorizationIntervals(ctx context.Context, at time.Time, where string, args ...any) error {
+	var active []producerMappingInterval
+	if err := s.db.WithContext(ctx).Where(where+" AND end_us IS NULL", args...).Find(&active).Error; err != nil {
+		return err
+	}
+	endUS := at.UnixMicro()
+	for _, interval := range active {
+		if endUS <= interval.StartUS {
+			return errors.New("relay usage: authorization clock regressed")
+		}
+		if err := s.db.WithContext(ctx).Model(&interval).Update("end_us", endUS).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -225,7 +370,7 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 		return result, err
 	}
 	maxWindowEnd := uint64(now.UnixMicro()) + uint64(uploadFreshness/time.Microsecond)
-	if batch.Window.EndMicros > maxWindowEnd {
+	if batch.Window.EndMicros > maxWindowEnd || batch.Window.StartMicros > math.MaxInt64 || batch.Window.EndMicros > math.MaxInt64 {
 		return result, ErrInvalidBatch
 	}
 	transcript, err := UploadSigningInput(method, path, auth.TimestampMicros, auth.Nonce, body)
@@ -278,6 +423,16 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 				}
 				return err
 			}
+			var periodCount int64
+			if err := tx.Model(&producerMappingInterval{}).
+				Where("relay_id = ? AND deployment_id = ? AND version = ? AND start_us < ? AND (end_us IS NULL OR end_us > ?)",
+					auth.RelayID, allowed.DeploymentID, allowed.Version, int64(batch.Window.EndMicros), int64(batch.Window.StartMicros)).
+				Count(&periodCount).Error; err != nil {
+				return err
+			}
+			if periodCount == 0 {
+				continue
+			}
 			resolvedScopes[allowed.Version] = resolved
 			accounts[resolved.AccountID] = struct{}{}
 		}
@@ -320,9 +475,6 @@ func (s *Store) Ingest(ctx context.Context, method, path string, auth UploadAuth
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
-		}
-		if batch.Window.StartMicros > math.MaxInt64 || batch.Window.EndMicros > math.MaxInt64 {
-			return ErrInvalidBatch
 		}
 		received := receivedBatch{DeploymentID: producer.DeploymentID, RelayID: auth.RelayID, Epoch: epoch, Sequence: sequence,
 			Digest: batch.Digest[:], StartUS: int64(batch.Window.StartMicros), EndUS: int64(batch.Window.EndMicros), Gaps: batch.Window.Gaps, ReceivedAt: now}

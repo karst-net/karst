@@ -327,30 +327,15 @@ func (e RelayUsageDayGapReasons) Valid() bool {
 	}
 }
 
-// Defines values for RelayUsageReportComplete.
-const (
-	RelayUsageReportCompleteFalse RelayUsageReportComplete = false
-)
-
-// Valid indicates whether the value is a known member of the RelayUsageReportComplete enum.
-func (e RelayUsageReportComplete) Valid() bool {
-	switch e {
-	case RelayUsageReportCompleteFalse:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for RelayUsageReportCoverage.
 const (
-	RelayUsageReportCoverageReceivedOnly RelayUsageReportCoverage = "received_only"
+	RelayUsageReportCoverageAuthorizedProducers RelayUsageReportCoverage = "authorized_producers"
 )
 
 // Valid indicates whether the value is a known member of the RelayUsageReportCoverage enum.
 func (e RelayUsageReportCoverage) Valid() bool {
 	switch e {
-	case RelayUsageReportCoverageReceivedOnly:
+	case RelayUsageReportCoverageAuthorizedProducers:
 		return true
 	default:
 		return false
@@ -1028,12 +1013,15 @@ type RelayLocation struct {
 
 // RelayUsageDay defines model for RelayUsageDay.
 type RelayUsageDay struct {
-	Date             openapi_types.Date        `json:"date"`
-	GapReasons       []RelayUsageDayGapReasons `json:"gap_reasons"`
-	GapWindows       int64                     `json:"gap_windows"`
-	MissingSequences string                    `json:"missing_sequences"`
-	ReportedBytes    string                    `json:"reported_bytes"`
-	ReportedWindows  int64                     `json:"reported_windows"`
+	Date              openapi_types.Date        `json:"date"`
+	ExpectedWindows   int64                     `json:"expected_windows"`
+	GapReasons        []RelayUsageDayGapReasons `json:"gap_reasons"`
+	GapWindows        int64                     `json:"gap_windows"`
+	MissingSequences  string                    `json:"missing_sequences"`
+	MissingWindows    int64                     `json:"missing_windows"`
+	ReportedBytes     string                    `json:"reported_bytes"`
+	ReportedWindows   int64                     `json:"reported_windows"`
+	UnexpectedWindows int64                     `json:"unexpected_windows"`
 }
 
 // RelayUsageDayGapReasons defines model for RelayUsageDay.GapReasons.
@@ -1043,16 +1031,25 @@ type RelayUsageDayGapReasons string
 type RelayUsageReport struct {
 	AsOf time.Time `json:"as_of"`
 
-	// Complete Always false until expected producer intervals can be checked.
-	Complete RelayUsageReportComplete `json:"complete"`
+	// AuthorizationHistoryStart Cutover when producer authorization coverage began to be recorded; earlier reporting intervals remain unknown.
+	AuthorizationHistoryStart time.Time `json:"authorization_history_start"`
 
-	// Coverage Only received batches are counted; producer coverage is not yet historized.
+	// Complete True only when authorization history covers the request
+	Complete bool `json:"complete"`
+
+	// Coverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
 	Coverage RelayUsageReportCoverage `json:"coverage"`
 	Days     []RelayUsageDay          `json:"days"`
 	End      time.Time                `json:"end"`
 
+	// ExpectedWindows Expected producer/account minute windows derived from retained authorization periods.
+	ExpectedWindows int64 `json:"expected_windows"`
+
 	// FirstReceivedWindowStart Earliest received window in the requested period; null when no batches were received. This is not the producer authorization start.
 	FirstReceivedWindowStart *time.Time `json:"first_received_window_start"`
+
+	// HistoryComplete True when the entire requested interval begins at or after the recorded authorization-history cutover.
+	HistoryComplete bool `json:"history_complete"`
 
 	// LastReceivedAt Receipt time of the most recently received batch in the requested period; use with as_of to assess report freshness.
 	LastReceivedAt *time.Time `json:"last_received_at"`
@@ -1061,15 +1058,18 @@ type RelayUsageReport struct {
 	// MissingSequences Sequence numbers missing between received batches within one relay epoch; head and tail gaps are unknown.
 	MissingSequences string `json:"missing_sequences"`
 
+	// MissingWindows Expected minute windows for which no producer batch was received.
+	MissingWindows int64 `json:"missing_windows"`
+
 	// ReportedBytes Exact decimal bytes reported in received batches only.
 	ReportedBytes string    `json:"reported_bytes"`
 	Start         time.Time `json:"start"`
+
+	// UnexpectedWindows Received account windows outside retained authorization periods.
+	UnexpectedWindows int64 `json:"unexpected_windows"`
 }
 
-// RelayUsageReportComplete Always false until expected producer intervals can be checked.
-type RelayUsageReportComplete bool
-
-// RelayUsageReportCoverage Only received batches are counted; producer coverage is not yet historized.
+// RelayUsageReportCoverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
 type RelayUsageReportCoverage string
 
 // ScalerPoolRecommendation defines model for ScalerPoolRecommendation.
