@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/netbirdio/netbird/management/internals/karst/usage"
 )
 
 func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompleteness(t *testing.T) {
@@ -51,7 +49,6 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.Equal(t, uint64(8), report.MissingWindows)
 	require.Zero(t, report.UnexpectedWindows)
 	require.Equal(t, "579", report.ReportedBytes)
-	require.Equal(t, "1", report.MissingSequences)
 	require.NotNil(t, report.FirstReceivedWindowStart)
 	require.Equal(t, windowStart, *report.FirstReceivedWindowStart)
 	require.NotNil(t, report.LastReceivedAt)
@@ -62,10 +59,9 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	require.Equal(t, uint64(1), report.Days[0].GapWindows)
 	require.Equal(t, uint64(10), report.Days[0].ExpectedWindows)
 	require.Equal(t, uint64(8), report.Days[0].MissingWindows)
-	require.Equal(t, "1", report.Days[0].MissingSequences)
 	require.Equal(t, []string{"clock", "observation_lost"}, report.Days[0].GapReasons)
 	require.NotContains(t, report.Limitations, "")
-	require.Contains(t, report.Limitations, "Missing sequence counts are relay-level diagnostics across received batches for producers authorized for this account during the requested window. They may span periods with no expected account usage and are not estimates of missing bytes.")
+	require.Equal(t, "Relay batch sequence diagnostics are not included because sequences are producer-wide and could reveal activity outside this account. Missing-minute counts and gap flags are scoped to the authorized account mappings.", report.Limitations[2])
 
 	other, err := store.Report(ctx, "account-2", start, end)
 	require.NoError(t, err)
@@ -79,63 +75,6 @@ func TestCustomerReportShowsReceivedTotalsAndKnownGapsWithoutClaimingCompletenes
 	var totalRows int64
 	require.NoError(t, db.Model(&receivedTotal{}).Count(&totalRows).Error)
 	require.EqualValues(t, 2, totalRows)
-}
-
-func TestCustomerReportSequenceDiagnosticIncludesOtherAccountBatch(t *testing.T) {
-	db, store, key, relayID, accountOneMapping := ingestionFixture(t)
-	ctx := context.Background()
-	ingestNow := time.Now().UTC()
-	end := ingestNow.Truncate(time.Minute)
-	start := end.Add(-3 * time.Minute)
-	var history authorizationHistory
-	require.NoError(t, db.Take(&history).Error)
-	history.StartedAtUS = start.UnixMicro()
-	require.NoError(t, db.Save(&history).Error)
-	var accountOnePeriod producerMappingInterval
-	require.NoError(t, db.Where("account_id = ?", "account-1").Take(&accountOnePeriod).Error)
-	accountOnePeriod.StartUS = start.UnixMicro()
-	accountOnePeriod.EndUS = new(int64)
-	*accountOnePeriod.EndUS = start.Add(time.Minute).UnixMicro()
-	require.NoError(t, db.Save(&accountOnePeriod).Error)
-	resumedAccountOnePeriod := accountOnePeriod
-	resumedAccountOnePeriod.ID = 0
-	resumedAccountOnePeriod.StartUS = start.Add(2 * time.Minute).UnixMicro()
-	resumedAccountOnePeriod.EndUS = nil
-	require.NoError(t, db.Create(&resumedAccountOnePeriod).Error)
-
-	accountTwoMapping, err := usage.PersistRelayMapping(ctx, db, "deployment-a", "aquifer-c", "account-2")
-	require.NoError(t, err)
-	require.NoError(t, store.AllowMapping(ctx, relayID, accountTwoMapping.DeploymentID, accountTwoMapping.Version))
-	var accountTwoPeriod producerMappingInterval
-	require.NoError(t, db.Where("account_id = ?", "account-2").Take(&accountTwoPeriod).Error)
-	accountTwoPeriod.StartUS = start.Add(time.Minute).UnixMicro()
-	accountTwoPeriod.EndUS = new(int64)
-	*accountTwoPeriod.EndUS = start.Add(2 * time.Minute).UnixMicro()
-	require.NoError(t, db.Save(&accountTwoPeriod).Error)
-
-	for _, item := range []struct {
-		sequence uint64
-		mapping  usage.RelayMapping
-		bytes    uint64
-	}{
-		{sequence: 1, mapping: accountOneMapping, bytes: 100},
-		{sequence: 2, mapping: accountTwoMapping, bytes: 200},
-		{sequence: 3, mapping: accountOneMapping, bytes: 300},
-	} {
-		windowStart := start.Add(time.Duration(item.sequence-1) * time.Minute)
-		body := makeSignedBatch(t, key, [16]byte{7}, item.sequence, mappingPayloadAt(item.mapping, item.bytes, uint64(windowStart.UnixMicro())))
-		auth := makeUploadAuth(t, key, relayID, body, ingestNow, [32]byte{byte(item.sequence)})
-		_, err := store.Ingest(ctx, "POST", UploadPath, auth, body, ingestNow)
-		require.NoError(t, err)
-	}
-
-	report, err := store.Report(ctx, "account-1", start, end)
-	require.NoError(t, err)
-	require.Equal(t, "400", report.ReportedBytes, "the other account's bytes stay outside this account's total")
-	require.Equal(t, "0", report.MissingSequences, "sequence 2 exists even though it belongs to another account")
-	require.Equal(t, uint64(2), report.Days[0].ExpectedWindows)
-	require.Equal(t, uint64(2), report.Days[0].ReportedWindows)
-	require.Zero(t, report.MissingWindows)
 }
 
 func TestCustomerReportRejectsUnalignedFutureAndOversizedWindows(t *testing.T) {
@@ -182,7 +121,6 @@ func TestCustomerReportIsCompleteWhenEveryAuthorizedWindowArrivedWithoutGaps(t *
 	require.Zero(t, report.MissingWindows)
 	require.Zero(t, report.UnexpectedWindows)
 	require.Equal(t, "0", report.ReportedBytes)
-	require.Equal(t, "0", report.MissingSequences)
 }
 
 func TestCustomerReportMarksPeriodsBeforeAuthorizationHistoryUnknown(t *testing.T) {
@@ -211,50 +149,9 @@ func TestCustomerReportMergesOverlappingMappingPeriodsForOneProducer(t *testing.
 		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-a", AccountID: "account", StartUS: start.UnixMicro(), EndUS: &firstEnd},
 		{DeploymentID: "deployment", RelayID: "relay", Version: "mapping-b", AccountID: "account", StartUS: start.UnixMicro()},
 	}
-	require.NoError(t, composeRelayReport(&report, periods, nil, nil, nil))
+	require.NoError(t, composeRelayReport(&report, periods, nil, nil))
 	require.Equal(t, uint64(2), report.ExpectedWindows)
 	require.Equal(t, uint64(2), report.MissingWindows)
 	require.Len(t, report.Days, 1)
 	require.Equal(t, uint64(2), report.Days[0].ExpectedWindows)
-}
-
-func TestCustomerReportCountsSequenceHolesNumerically(t *testing.T) {
-	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	windowStart := start.UnixMicro()
-	report := Report{Start: start, End: start.Add(time.Minute), HistoryComplete: true}
-	windows := []reportWindow{
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "10", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "2", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "11", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "1", StartUS: windowStart},
-	}
-
-	sequences := []reportSequence{
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "1", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "2", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "10", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "11", StartUS: windowStart},
-	}
-	require.NoError(t, composeRelayReport(&report, nil, windows, sequences, nil))
-	require.Equal(t, "7", report.MissingSequences, "sequences 3 through 9 are missing")
-	require.Len(t, report.Days, 1)
-	require.Equal(t, "7", report.Days[0].MissingSequences)
-}
-
-func TestCustomerReportSequenceDiagnosticsIncludeOtherAccountBatches(t *testing.T) {
-	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	windowStart := start.UnixMicro()
-	report := Report{Start: start, End: start.Add(time.Minute), HistoryComplete: true}
-	accountWindows := []reportWindow{
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "1", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "3", StartUS: windowStart},
-	}
-	allProducerSequences := []reportSequence{
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "1", StartUS: windowStart},
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "2", StartUS: windowStart}, // another account's batch
-		{DeploymentID: "deployment", RelayID: "relay", Epoch: "epoch", Sequence: "3", StartUS: windowStart},
-	}
-
-	require.NoError(t, composeRelayReport(&report, nil, accountWindows, allProducerSequences, nil))
-	require.Equal(t, "0", report.MissingSequences, "a valid batch for another account is still present in the producer sequence")
 }

@@ -36,7 +36,6 @@ type ReportDay struct {
 	ExpectedWindows   uint64   `json:"expected_windows"`
 	MissingWindows    uint64   `json:"missing_windows"`
 	UnexpectedWindows uint64   `json:"unexpected_windows"`
-	MissingSequences  string   `json:"missing_sequences"`
 	GapReasons        []string `json:"gap_reasons"`
 }
 
@@ -57,7 +56,6 @@ type Report struct {
 	MissingWindows            uint64      `json:"missing_windows"`
 	UnexpectedWindows         uint64      `json:"unexpected_windows"`
 	ReportedBytes             string      `json:"reported_bytes"`
-	MissingSequences          string      `json:"missing_sequences"`
 	Days                      []ReportDay `json:"days"`
 	Limitations               []string    `json:"limitations"`
 }
@@ -70,18 +68,6 @@ type reportWindow struct {
 	StartUS      int64
 	Gaps         uint8
 	ReceivedAt   time.Time
-}
-
-// reportSequence includes every batch from a producer authorized for this
-// account's report window, regardless of which account its mappings served.
-// Sequence numbers are producer-wide, so filtering them by account would turn
-// another account's valid batch into a false missing-sequence diagnostic.
-type reportSequence struct {
-	DeploymentID string
-	RelayID      string
-	Epoch        string
-	Sequence     string
-	StartUS      int64
 }
 
 type reportWindowRange struct {
@@ -106,7 +92,6 @@ type dayBuilder struct {
 	expectedWindows   uint64
 	missingWindows    uint64
 	unexpectedWindows uint64
-	missingSequences  *big.Int
 	gapReasons        map[string]struct{}
 }
 
@@ -125,11 +110,11 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 	}
 	report = Report{
 		Start: start, End: end, AsOf: now, Coverage: "authorized_producers", HistoryComplete: true,
-		ReportedBytes: "0", MissingSequences: "0", Days: []ReportDay{},
+		ReportedBytes: "0", Days: []ReportDay{},
 		Limitations: []string{
 			"Completeness covers explicitly authorized managed producer and account-mapping intervals only; managed relays absent from that operator inventory are outside the expected set.",
 			"Batch gap flags indicate measurement uncertainty even when every expected producer window arrived.",
-			"Missing sequence counts are relay-level diagnostics across received batches for producers authorized for this account during the requested window. They may span periods with no expected account usage and are not estimates of missing bytes.",
+			"Relay batch sequence diagnostics are not included because sequences are producer-wide and could reveal activity outside this account. Missing-minute counts and gap flags are scoped to the authorized account mappings.",
 		},
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -148,19 +133,6 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 			return err
 		}
 		if len(periods) > maxReportRows {
-			return ErrReportLimit
-		}
-		var sequences []reportSequence
-		if err := tx.Table("karst_usage_relay_batches AS b").
-			Distinct("b.deployment_id, b.relay_id, b.epoch, b.sequence, b.start_us").
-			Joins("JOIN karst_usage_producer_mapping_periods AS p ON p.deployment_id = b.deployment_id AND p.relay_id = b.relay_id").
-			Where("p.account_id = ? AND p.start_us < ? AND (p.end_us IS NULL OR p.end_us > ?) AND b.start_us >= ? AND b.start_us < ?",
-				accountID, end.UnixMicro(), start.UnixMicro(), start.UnixMicro(), end.UnixMicro()).
-			Order("b.deployment_id, b.relay_id, b.epoch, b.sequence").
-			Limit(maxReportRows + 1).Find(&sequences).Error; err != nil {
-			return err
-		}
-		if len(sequences) > maxReportRows {
 			return ErrReportLimit
 		}
 		var windows []reportWindow
@@ -186,7 +158,7 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 		if len(totals) > maxReportRows {
 			return ErrReportLimit
 		}
-		return composeRelayReport(&report, periods, windows, sequences, totals)
+		return composeRelayReport(&report, periods, windows, totals)
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return report, err
 }
@@ -194,17 +166,17 @@ func (s *Store) Report(ctx context.Context, accountID string, start, end time.Ti
 // composeRelayReport aggregates exact received totals and compares account-minute
 // receipts with retained authorization intervals. Sequence holes remain a
 // separate signal because late batches can arrive out of order.
-func composeRelayReport(report *Report, periods []producerMappingInterval, windows []reportWindow, sequences []reportSequence, totals []reportTotal) error {
+func composeRelayReport(report *Report, periods []producerMappingInterval, windows []reportWindow, totals []reportTotal) error {
 	days := make(map[string]*dayBuilder)
 	for date := report.Start.Truncate(24 * time.Hour); date.Before(report.End); date = date.Add(24 * time.Hour) {
 		key := date.Format("2006-01-02")
-		days[key] = &dayBuilder{date: key, bytes: new(big.Int), missingSequences: new(big.Int), gapReasons: make(map[string]struct{})}
+		days[key] = &dayBuilder{date: key, bytes: new(big.Int), gapReasons: make(map[string]struct{})}
 	}
 	getDay := func(startUS int64) *dayBuilder {
 		key := time.UnixMicro(startUS).UTC().Format("2006-01-02")
 		day := days[key]
 		if day == nil {
-			day = &dayBuilder{date: key, bytes: new(big.Int), missingSequences: new(big.Int), gapReasons: make(map[string]struct{})}
+			day = &dayBuilder{date: key, bytes: new(big.Int), gapReasons: make(map[string]struct{})}
 			days[key] = day
 		}
 		return day
@@ -222,31 +194,6 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		batchBytes[key].Add(batchBytes[key], value)
 	}
 	totalBytes := new(big.Int)
-	totalMissing := new(big.Int)
-	type sequencedWindow struct {
-		window   reportSequence
-		sequence uint64
-	}
-	orderedSequences := make([]sequencedWindow, len(sequences))
-	for i, window := range sequences {
-		sequence, err := strconv.ParseUint(window.Sequence, 10, 64)
-		if err != nil {
-			return ErrReportData
-		}
-		orderedSequences[i] = sequencedWindow{window: window, sequence: sequence}
-	}
-	sort.Slice(orderedSequences, func(i, j int) bool {
-		a, b := orderedSequences[i], orderedSequences[j]
-		keyA := a.window.DeploymentID + "\x00" + a.window.RelayID + "\x00" + a.window.Epoch
-		keyB := b.window.DeploymentID + "\x00" + b.window.RelayID + "\x00" + b.window.Epoch
-		if keyA != keyB {
-			return keyA < keyB
-		}
-		if a.sequence != b.sequence {
-			return a.sequence < b.sequence
-		}
-		return a.window.StartUS < b.window.StartUS
-	})
 	expected := make(map[string]int64)
 	rangesByProducer := make(map[string][]reportWindowRange)
 	for _, period := range periods {
@@ -332,19 +279,6 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 			day.gapWindows++
 		}
 	}
-	previous := make(map[string]uint64)
-	seen := make(map[string]bool)
-	for _, orderedWindow := range orderedSequences {
-		window := orderedWindow.window
-		producerKey := window.DeploymentID + "\x00" + window.RelayID + "\x00" + window.Epoch
-		sequence := orderedWindow.sequence
-		if seen[producerKey] && previous[producerKey] != ^uint64(0) && sequence > previous[producerKey]+1 {
-			missing := new(big.Int).SetUint64(sequence - previous[producerKey] - 1)
-			getDay(window.StartUS).missingSequences.Add(getDay(window.StartUS).missingSequences, missing)
-			totalMissing.Add(totalMissing, missing)
-		}
-		previous[producerKey], seen[producerKey] = sequence, true
-	}
 	for key, startUS := range expected {
 		if _, ok := receivedExpected[key]; ok {
 			continue
@@ -368,9 +302,9 @@ func composeRelayReport(report *Report, periods []producerMappingInterval, windo
 		report.ExpectedWindows += day.expectedWindows
 		report.Days = append(report.Days, ReportDay{Date: day.date, ReportedBytes: day.bytes.String(), ReportedWindows: day.windows,
 			GapWindows: day.gapWindows, ExpectedWindows: day.expectedWindows, MissingWindows: day.missingWindows, UnexpectedWindows: day.unexpectedWindows,
-			MissingSequences: day.missingSequences.String(), GapReasons: reasons})
+			GapReasons: reasons})
 	}
-	report.ReportedBytes, report.MissingSequences = totalBytes.String(), totalMissing.String()
+	report.ReportedBytes = totalBytes.String()
 	report.Complete = report.HistoryComplete && report.ExpectedWindows > 0 && report.MissingWindows == 0 && report.UnexpectedWindows == 0
 	for _, day := range report.Days {
 		if day.GapWindows != 0 {
