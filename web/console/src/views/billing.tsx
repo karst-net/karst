@@ -48,8 +48,11 @@ export function Billing() {
     return { devices, relays };
   }, [reportMonth]);
   const alerts = useResource(() => api.relayAlerts(reportMonth), [reportMonth]);
+  const payment = useResource(() => api.billingPayment(reportMonth), [reportMonth]);
+  const paymentNotices = useResource(() => api.billingPaymentNotices(reportMonth), [reportMonth]);
   const cap = useResource(() => api.relayCap(capMonth), [capMonth]);
   const { message, setMessage, run } = useMutation(cap.reload);
+  const { message: paymentMessage, setMessage: setPaymentMessage, run: runPayment } = useMutation(payment.reload);
   const [limit, setLimit] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
 
@@ -72,6 +75,7 @@ export function Billing() {
       return;
     }
     const draft: RelayCapDraft = { period: capMonth, overage_limit_minor, acknowledge_interruption: true };
+    setPaymentMessage(undefined);
     await run(() => api.setRelayCap(draft), `Relay spending cap saved for ${capMonth}.`);
   };
 
@@ -115,6 +119,38 @@ export function Billing() {
       </>}
     </section>
 
+    <section aria-labelledby="invoice-heading">
+      <h3 id="invoice-heading">Invoice and payment</h3>
+      <p className="lede">Only a finalized invoice can be paid. Paddle adds applicable tax and displays it separately at checkout. Payment status does not change network access.</p>
+      <section aria-labelledby="payment-notices-heading">
+        <h4 id="payment-notices-heading">Payment notices</h4>
+        {paymentNotices.loading && <p>Loading payment notices…</p>}
+        {paymentNotices.error && <ErrorMessage message={paymentNotices.error} />}
+        {paymentNotices.value && (paymentNotices.value.notices.length === 0
+          ? <p>No payment failure notices for {reportMonth}.</p>
+          : <ul aria-label="Payment failure notices">
+            {paymentNotices.value.notices.map((notice) => <li key={`${notice.period_start}-${notice.created_at}`}>
+              <strong>Payment failed for {notice.period_start.slice(0, 7)}.</strong> Your service remains active. Review the invoice and checkout status below.
+            </li>)}
+          </ul>)}
+      </section>
+      {payment.loading && <p>Loading invoice…</p>}
+      {payment.error && <p role="alert">{payment.error}</p>}
+      {payment.value && <>
+        <p>Finalized invoice for {reportMonth}: devices <strong>${formatUsdMinor(payment.value.device_minor)}</strong>, managed relay <strong>${formatUsdMinor(payment.value.relay_minor)}</strong>, total <strong>${formatUsdMinor(payment.value.total_minor)} USD before tax</strong>.</p>
+        <p>Payment status: <strong>{payment.value.state.replaceAll("_", " ")}</strong>.</p>
+        {payment.value.state === "past_due" && <p role="alert"><strong>Payment failed.</strong> Your service remains active during the 14-day grace period. Check this page for updated payment status or use the checkout link below.</p>}
+        {payment.value.state === "not_queued" && <button type="button" onClick={() => { setMessage(undefined); void runPayment(() => api.queueBillingPayment(reportMonth), "Paddle checkout request queued. Refresh payment status to see the checkout link."); }}>Prepare Paddle checkout</button>}
+        {payment.value.checkout_url && (payment.value.state === "checkout" || payment.value.state === "past_due") && <p><a href={payment.value.checkout_url} target="_blank" rel="noreferrer">Continue to Paddle checkout</a></p>}
+        {payment.value.state === "ready" && <p>The checkout request is queued. Refresh after it has been processed.</p>}
+        {payment.value.state === "submitting" && <p>Paddle is preparing the checkout.</p>}
+        {payment.value.state === "reconcile" && <p>The payment result is being reconciled. Do not submit another payment while this is unresolved.</p>}
+        {payment.value.state === "operator_hold" && <p>This payment needs operator review. Contact support before taking another payment action.</p>}
+        {payment.value.state === "paid" && <p>Payment received.</p>}
+        <button type="button" onClick={() => { void payment.reload(); void paymentNotices.reload(); }}>Refresh payment status</button>
+      </>}
+    </section>
+
     <section aria-labelledby="cap-heading">
       <h3 id="cap-heading">Optional relay spending cap</h3>
       <p className="lede">A cap limits managed-relay overage for this account and month. At the limit, managed-relay forwarding can pause; direct peer traffic and device access continue. No cap is applied unless you set one.</p>
@@ -133,7 +169,7 @@ export function Billing() {
         </form>
         {cap.value.enabled && capMonth === now && <p className="lede">A current-period decrease is accepted only after every relay grant has been safely surrendered and consumed usage fits under the lower limit. Clean relay shutdowns return unused credits; an unclean shutdown, unreachable relay, or failed surrender leaves its full reservation in place through period end.</p>}
       </>}
-      <Notice message={message} />
+      <Notice message={paymentMessage ?? message} />
     </section>
   </section>;
 }

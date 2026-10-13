@@ -15,6 +15,9 @@ time=$(date -u -d "$raw_time" +'%Y-%m-%d %H:%M:%S.%6N+00') ||
 	{ echo "pg-restore: --target-time '$raw_time' is not a date GNU date understands" >&2; exit 2; }
 [ ! -e "$PGDATA/postmaster.pid" ] || { echo "pg-restore: postgres is running" >&2; exit 1; }
 mv "$PGDATA" "$PGDATA.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"; cp -a "$backup" "$PGDATA"
+# Older physical backups may have a top-level mode copied from a umask-022
+# destination. PostgreSQL requires PGDATA to be private before startup.
+chmod 0700 "$PGDATA"
 rm -f "$PGDATA/standby.signal"
 echo "restore_command = 'cp $KARST_WAL_ARCHIVE_DIR/%f %p'" >> "$PGDATA/postgresql.auto.conf"
 echo "recovery_target_time = '$time'" >> "$PGDATA/postgresql.auto.conf"

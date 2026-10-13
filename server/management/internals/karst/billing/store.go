@@ -120,7 +120,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("billing: nil database")
 	}
-	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &relayAlertRow{}, &relayCapRow{}, &relayCapRevisionRow{}, &relayCreditGrantRow{}, &relayUncappedLeaseRow{}); err != nil {
+	if err := db.AutoMigrate(&rateScheduleRow{}, &rateAssignmentRow{}, &billingAccountLock{}, &invoiceRow{}, &relayAlertRow{}, &relayCapRow{}, &relayCapRevisionRow{}, &relayCreditGrantRow{}, &relayUncappedLeaseRow{}, &paymentOutboxRow{}, &paymentHistoryRow{}, &paddleAccountRow{}, &webhookInboxRow{}); err != nil {
 		return nil, fmt.Errorf("billing: migrate schedules: %w", err)
 	}
 	return &Store{db: db}, nil

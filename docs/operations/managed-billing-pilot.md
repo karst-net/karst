@@ -2,10 +2,15 @@
 # Managed billing pilot readiness
 
 This page is an operator entry point for collecting shadow usage and preparing
-for a managed billing pilot. The metering and reporting paths exist, but usage
-collection is opt-in and billing is not yet live: collection does not create
-invoices, charge customers, or enforce relay limits. Do not describe a usage
-report or assigned schedule as a bill.
+for a managed billing pilot. Metering and reporting exist, but collection is
+opt-in and billing is not yet live: a usage report does not finalize an invoice,
+charge customers, or enforce relay limits. Do not describe a usage report or
+assigned schedule as a bill.
+
+For approved customer-facing terms and current availability limits, see the
+[managed billing customer guide](managed-billing-customer-guide.md).
+For rollout, backup, and rollback guidance, see the
+[billing upgrade and migration guide](billing-upgrade-migration.md).
 
 ## Approved pilot rates and meter boundaries
 
@@ -65,7 +70,10 @@ authorize a charge.
 
 Invoice input finalization requires complete device and relay reports and an
 explicit account-period schedule assignment; it does not collect payment. The
-implementation provides an audited in-app alert feed and an optional
+operator can finalize only once the period is complete using the
+[assignment and finalization procedure](billing-schedule-assignment.md).
+
+The implementation provides an audited in-app alert feed and an optional
 organization-wide managed-relay cap, with grants reserved across relays and
 forwarding paused when a capped relay has no credits. Owners/admins configure
 the cap for an assigned UTC month through `PUT /karst/v1/billing/relay-cap`;
@@ -90,9 +98,24 @@ policy retries on days 1, 3, 7, and 12, provides in-app notices to billing
 admins, and keeps service active after day 14 while an invoice is past due.
 Paddle business/domain onboarding and SaaS tax-category approval remain gates
 before live collection. Self-hosted support terms remain open in
-[#275](https://github.com/karst-net/karst/issues/275). No billing configuration
-is required for deployments that do not opt in; relay forwarding and device
-membership behavior remain available without usage collection.
+[#275](https://github.com/karst-net/karst/issues/275). The current payment
+integration provides opt-in checkout and durable in-app failure notices;
+automated retries remain unimplemented while their execution model is pending
+in #275. No billing configuration is required for deployments that do not opt
+in; relay forwarding and device membership behavior remain available without
+usage collection.
+
+Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
+server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
+store. Enabled collection defaults to Paddle sandbox. Production API access
+requires both `KARST_PADDLE_SANDBOX=false` and the separate operator approval
+`KARST_PADDLE_LIVE_APPROVED=true`; keep live mode off until Paddle onboarding,
+launch markets, and tax configuration are approved. Configure an account's
+Paddle customer and approved product IDs explicitly with the audited
+`admin billing configure-paddle` command only after the account has opted in.
+The global credentials alone do not enroll or charge any account. The command
+does not itself create a payment; a finalized invoice must separately enter
+the payment outbox.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool

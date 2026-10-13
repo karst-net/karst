@@ -123,6 +123,37 @@ paths:
         '204': {description: Grant surrendered; only unused bytes are released}
         '404': {description: Grant is unknown or does not belong to this relay generation}
         '409': {description: Surrender conflicts with the previously accepted final report}
+  /billing/payments:
+    get:
+      operationId: getBillingPayment
+      tags: [billing]
+      description: Account-owner/admin view of one finalized invoice and its asynchronous Paddle payment state. Account scope always comes from authenticated authorization; the read is audited.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'}, description: UTC calendar month in YYYY-MM form.}
+      responses:
+        '200': {description: Finalized invoice totals and current payment state, headers: {Cache-Control: {schema: {type: string}, description: no-store}}, content: {application/json: {schema: {$ref: '#/components/schemas/BillingPayment'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: queueBillingPayment
+      tags: [billing]
+      description: Account-owner/admin explicitly requests collection for a finalized invoice. The request is durably queued and audited; Paddle calls happen asynchronously. Repeating a request for the same invoice does not create a second payment intent.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'}, description: UTC calendar month in YYYY-MM form.}
+      responses:
+        '202': {description: Collection request accepted into the durable payment outbox, headers: {Cache-Control: {schema: {type: string}, description: no-store}}, content: {application/json: {schema: {$ref: '#/components/schemas/BillingPayment'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /billing/payment-notices:
+    get:
+      operationId: getBillingPaymentNotices
+      tags: [billing]
+      description: Account-owner/admin view of persisted payment-failure notices for one invoice period. Notices come from durable payment-state history, are retained with payment audit state, and the read is audited. Account scope always comes from authenticated authorization.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'}, description: UTC calendar month in YYYY-MM form.}
+      responses:
+        '200':
+          description: Account-scoped persisted payment-failure notices
+          headers: {Cache-Control: {schema: {type: string}, description: no-store}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/BillingPaymentNoticeFeed'}}}
         default: {$ref: '#/components/responses/Error'}
   /invitations:
     get:
@@ -650,6 +681,34 @@ components:
         reported_bytes: {type: string, pattern: '^[0-9]+$', description: Exact decimal bytes reported in received batches only.}
         days: {type: array, maxItems: 94, items: {$ref: '#/components/schemas/RelayUsageDay'}}
         limitations: {type: array, items: {type: string}}
+    BillingPayment:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, currency, device_minor, relay_minor, total_minor, state, updated_at]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        currency: {type: string, enum: [USD]}
+        device_minor: {type: integer, format: int64, minimum: 0}
+        relay_minor: {type: integer, format: int64, minimum: 0}
+        total_minor: {type: integer, format: int64, minimum: 0}
+        state: {type: string, enum: [not_queued, ready, submitting, reconcile, checkout, paid, past_due, operator_hold]}
+        checkout_url: {type: string, format: uri}
+        updated_at: {type: string, format: date-time}
+    BillingPaymentNoticeFeed:
+      type: object
+      additionalProperties: false
+      required: [notices]
+      properties:
+        notices: {type: array, items: {$ref: '#/components/schemas/BillingPaymentFailureNotice'}}
+    BillingPaymentFailureNotice:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, created_at]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
     RelayUsageDay:
       type: object
       additionalProperties: false

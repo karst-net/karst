@@ -25,10 +25,12 @@ decimal GB per organization per month, then costs $0.20 per additional decimal
 GB. Issue #275 now approves UTC calendar months, exact eligible-time proration,
 holding incomplete periods open, truncating each finalized line down to minor
 currency units, and relay alerts at 75%, 90%, and 100% once per threshold and
-period to billing administrators with coverage warnings. Delivery channel and
-data-driven operational tuning remain open. The repository has no production
-customer usage sample. Any sample counts below are explicit sensitivity
-scenarios, not forecasts.
+period to billing administrators with coverage warnings. The pilot delivery
+channel is the audited in-app owner/admin feed, as selected in #275 and
+implemented in #315. Email and other notification channels are out of pilot
+scope. Data-driven operational tuning remains open. The repository has no
+production customer usage sample. Any sample counts below are explicit
+sensitivity scenarios, not forecasts.
 
 Cloud egress is only one variable cost. Published North America/Europe list
 rates currently indicate about $0.087–$0.09 per decimal GB for Azure/AWS after
@@ -45,10 +47,11 @@ Use an opt-in, versioned rate schedule and an alert evaluator. The pilot rates
 below are approved for explicit schedule assignment. Do not enable charges
 merely because this ADR is accepted; an account must have an explicitly
 assigned schedule. Usage alerts are on by default for scheduled accounts, as
-required by #275. The notification channel and recipient selection must be
-decided before alert delivery ships. Unconfigured accounts and self-hosted
-installations without an explicitly configured support schedule retain current
-behavior.
+required by #275. During the pilot, relay threshold alerts are delivered through
+the audited in-app owner/admin feed to billing administrators. Email and other
+external notification channels are out of scope. Unconfigured accounts and
+self-hosted installations without an explicitly configured support schedule
+retain current behavior.
 
 ### Rate schedule and effective dates
 
@@ -101,14 +104,14 @@ behavior.
 - Evaluate alerts from period-to-date device and relay usage against the
   account's assigned schedule and alert preferences. Deduplicate on account,
   period, schedule version, meter, and threshold so retries do not send repeats.
-- Enable alerts by default for accounts with a billing schedule. A customer may
-  adjust supported preferences after an alert channel and recipient model are
-  selected.
+- Enable alerts by default for accounts with a billing schedule. The pilot
+  provides the in-app feed to account owners and administrators; it does not
+  provide per-channel preferences or external notifications.
 - Relay thresholds are 75%, 90%, and 100% of the included allowance or optional
   customer relay cap, sent once per threshold per period to billing
-  administrators. Include a coverage warning when usage is incomplete. The
-  delivery channel remains to be selected; device-charge alerts are not part of
-  this approved relay-alert policy.
+  administrators through the in-app feed. Include a coverage warning when
+  usage is incomplete. Device-charge alerts are not part of this approved
+  relay-alert policy.
 - Include the report's `as_of` time and completeness state in every usage
   notification. When coverage is incomplete, describe received usage as a
   lower bound and do not present it as a final amount.
@@ -139,9 +142,10 @@ operational costs before publishing rates.
 
 - This mechanism does not collect payment, change subscription status, or make
   a payment provider a networking dependency.
-- This mechanism does not enforce relay spending caps. A separate ADR must
-  specify organization-wide reservations, relay crash behavior, overshoot bounds,
-  interruption, and recovery.
+- This mechanism does not enforce relay spending caps. ADR-0052 specifies the
+  separate organization-wide reservation and local forwarding gate; cap
+  enforcement remains opt-in and requires acknowledgment of possible relay
+  interruption.
 - It does not price optional self-hosted support; support coverage and price
   remain a separate product decision.
 - It does not bill estimated bytes or silently treat incomplete coverage as
@@ -175,15 +179,16 @@ retried without duplicate delivery and can communicate report uncertainty.
 
 No account can be billed until a schedule is assigned and the open commercial
 inputs are resolved. Holding incomplete reports open delays final billing, while
-charging them provisionally would require an approved correction policy. Alert
-delivery depends on a separately selected channel and customer preference model.
+charging them provisionally would require an approved correction policy. The
+pilot alert feed is in-app only; additional channels require a separate product
+decision.
 
 ### Reconsider if
 
 - Production shadow data shows that monthly periods or the proposed tier model
   produce confusing or costly corrections.
-- The selected payment provider or tax jurisdiction requires different currency
-  or invoice-boundary semantics.
+- Paddle's terms or a tax jurisdiction requires different currency or
+  invoice-boundary semantics.
 - Relay reports can support a stronger completeness/finalization guarantee
   than ADR-0050 currently provides.
 

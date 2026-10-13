@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, DeviceUsageReport, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -167,6 +167,9 @@ export const api = {
   deviceUsage: (start: string, end: string) => request<DeviceUsageReport>(`/usage/devices?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   relayUsage: (start: string, end: string) => request<RelayUsageReport>(`/usage/relays?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   relayAlerts: (period: string) => request<RelayAlertFeed>(`/usage/relay-alerts?period=${encodeURIComponent(period)}`),
+  billingPayment: (period: string) => request<BillingPayment>(`/billing/payments?period=${encodeURIComponent(period)}`),
+  billingPaymentNotices: (period: string) => request<BillingPaymentNoticeFeed>(`/billing/payment-notices?period=${encodeURIComponent(period)}`),
+  queueBillingPayment: (period: string) => request<BillingPayment>(`/billing/payments?period=${encodeURIComponent(period)}`, { method: "POST" }),
   relayCap: (period: string) => request<RelayCap>(`/billing/relay-cap?period=${encodeURIComponent(period)}`),
   setRelayCap: (draft: RelayCapDraft) => request<RelayCap>("/billing/relay-cap", { method: "PUT", body: body(draft) }),
 

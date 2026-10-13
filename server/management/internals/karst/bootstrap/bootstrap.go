@@ -17,7 +17,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,7 +32,7 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
-	"github.com/netbirdio/netbird/management/internals/karst/billing"
+	karstbilling "github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
@@ -174,6 +176,47 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: node store: %w", err)
 	}
+	var paddleWebhookVerifier *karstbilling.PaddleWebhookVerifier
+	if secret := os.Getenv("KARST_PADDLE_WEBHOOK_SECRET"); secret != "" {
+		paddleWebhookVerifier, err = karstbilling.NewPaddleWebhookVerifier(secret)
+		if err != nil {
+			return nil, fmt.Errorf("karst: configure Paddle webhook: %w", err)
+		}
+	}
+	paddleEnabled := false
+	if configured := os.Getenv("KARST_PADDLE_ENABLED"); configured != "" {
+		paddleEnabled, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_ENABLED must be a boolean: %w", err)
+		}
+	}
+	if paddleEnabled && paddleWebhookVerifier == nil {
+		return nil, fmt.Errorf("karst: Paddle collection requires KARST_PADDLE_WEBHOOK_SECRET")
+	}
+	// Enabled collection defaults to Paddle sandbox. Production charging needs
+	// an independent operator approval flag so a missing/typoed environment
+	// setting cannot turn pilot traffic into live transactions.
+	paddleSandbox := paddleEnabled
+	if configured := os.Getenv("KARST_PADDLE_SANDBOX"); configured != "" {
+		paddleSandbox, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_SANDBOX must be a boolean: %w", err)
+		}
+	}
+	paddleLiveApproved := false
+	if configured := os.Getenv("KARST_PADDLE_LIVE_APPROVED"); configured != "" {
+		paddleLiveApproved, err = strconv.ParseBool(configured)
+		if err != nil {
+			return nil, fmt.Errorf("karst: KARST_PADDLE_LIVE_APPROVED must be a boolean: %w", err)
+		}
+	}
+	if err := validatePaddleMode(paddleEnabled, paddleSandbox, paddleLiveApproved); err != nil {
+		return nil, err
+	}
+	paddleClient, err := karstbilling.NewPaddleClient(paddleEnabled, paddleSandbox, os.Getenv("KARST_PADDLE_API_KEY"), nil)
+	if err != nil {
+		return nil, fmt.Errorf("karst: configure Paddle client: %w", err)
+	}
 	// Old portal grants bypassed consumption and can no longer be trusted.
 	// Invalidate them on upgrade, including grants whose ownership row was
 	// deleted by the old redemption path. Newly issued grants carry ownership
@@ -214,11 +257,20 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: relay usage store: %w", err)
 	}
-	billingStore, err := billing.NewStore(db)
+	billingStore, err := karstbilling.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: billing store: %w", err)
 	}
-	go billing.RunRelayAlertWorker(context.Background(), billingStore, usageRelayStore, 5*time.Minute, func(err error) {
+	billingStore.StartRetentionWorker(context.Background(), 24*time.Hour, func(err error) {
+		log.WithError(err).Error("karst: prune billing history")
+	})
+	billingStore.StartPaymentWorker(context.Background(), paddleClient, time.Minute, func(err error) {
+		log.WithError(err).Error("karst: process Paddle payment outbox")
+	})
+	billingStore.StartWebhookWorker(context.Background(), 5*time.Second, func(err error) {
+		log.WithError(err).Error("karst: process Paddle webhook inbox")
+	})
+	go karstbilling.RunRelayAlertWorker(context.Background(), billingStore, usageRelayStore, 5*time.Minute, func(err error) {
 		log.WithError(err).Error("karst: relay billing alert evaluation failed")
 	})
 	// ADR-0045 §8 (Phase 3): retains demand history on an interval so a
@@ -287,11 +339,15 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// user session, the same reason RegisterEnrollmentMetadata already sits
 	// outside karstapi's own `/karst/v1` subrouter for its own auth check.
 	if err := s.RegisterAPIExtension(nbserver.APIExtension{Register: func(router *mux.Router) {
+		// This endpoint is intentionally outside account-session auth; Paddle's
+		// signature and freshness check is its sole authentication mechanism.
+		router.Handle("/karst/v1/webhooks/paddle", karstbilling.NewPaddleWebhookHandler(paddleWebhookVerifier, billingStore)).Methods(http.MethodPost)
 		karstapi.RegisterEnrollmentMetadata(router, static.PublicKey(), srvIdentity.Public())
 		karstapi.RegisterUsageEndpoints(router, s.PermissionsManager(), usage.Reporter{DB: db}, auditLog)
 		karstapi.RegisterRelayUsageEndpoints(router, s.PermissionsManager(), usageRelayStore, auditLog)
 		karstapi.RegisterRelayAlertEndpoints(router, s.PermissionsManager(), usageRelayStore, billingStore, auditLog)
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
+		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
