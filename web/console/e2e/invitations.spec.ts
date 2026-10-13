@@ -27,9 +27,12 @@ test("administrator creates one complete invitation, dismisses its secret, and r
       invitations[0].state = "revoked";
       await route.fulfill({ json: invitations[0] }); return;
     }
+    // #323: route.fulfill({ response }) alone forwards the response as-is
+    // -- no separate response.body() read racing test/worker teardown for
+    // any static asset this fallback serves (every API path above already
+    // returns before reaching here).
     const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
-    const body = await response.body();
-    await route.fulfill({ response, body });
+    await route.fulfill({ response });
   });
   await page.goto("https://console.example.test/#/setup");
   await page.getByLabel("Device name").fill("invitation-browser-laptop");
