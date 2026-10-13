@@ -341,7 +341,8 @@ func (scanRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return
 func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
 	return &relayreg.StoredRelay{}, nil
 }
-func (scanRelays) Delete(context.Context, string) error { return nil }
+func (scanRelays) Delete(context.Context, string) error          { return nil }
+func (scanRelays) DeleteByAddress(context.Context, string) error { return nil }
 func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
 	return nil, nil
 }
@@ -356,6 +357,14 @@ type scanRelaysExists struct{ scanRelays }
 
 func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
 	return nil, relayreg.ErrExists
+}
+
+// scanRelaysMissing reports every DeleteByAddress as not-found — the
+// relayDeenroll "no relay registered under that address" path (#319).
+type scanRelaysMissing struct{ scanRelays }
+
+func (scanRelaysMissing) DeleteByAddress(context.Context, string) error {
+	return relayreg.ErrNotFound
 }
 
 // scanRelayEnrollAccounts fakes the two ADR-0045 §7 Phase 2 methods
@@ -393,7 +402,8 @@ func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { ret
 func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
 	return &f[0], nil
 }
-func (fixedRelays) Delete(context.Context, string) error { return nil }
+func (fixedRelays) Delete(context.Context, string) error          { return nil }
+func (fixedRelays) DeleteByAddress(context.Context, string) error { return nil }
 func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
 	return nil, nil
 }
@@ -787,6 +797,59 @@ func TestScalerRoleCannotReachTurnsDeleteEvenThoughItCanReachTurnDeenroll(t *tes
 	router := mux.NewRouter()
 	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, router)
 	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/turns/some-id", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+}
+
+// Mirrors TestTurnDeenroll_ScalerAndAdminCanRemoveAdvisorCannot for the
+// relay side (#319) -- the Scaler hard-allowlist entry for
+// relayDeenrollPath (alongside this route) is what actually lets a
+// Scaler-role caller through to it.
+func TestRelayDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
+	for _, tc := range []struct {
+		role     types.UserRole
+		wantCode int
+	}{
+		{types.UserRoleScaler, http.StatusNoContent},
+		{types.UserRoleAdmin, http.StatusNoContent},
+		{types.UserRoleOwner, http.StatusNoContent},
+		{types.UserRoleAdvisor, http.StatusForbidden},
+		{types.UserRoleUser, http.StatusForbidden},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			router := mux.NewRouter()
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, router)
+			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.9:443"}`))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
+		})
+	}
+}
+
+// Confirms relayDeenroll passes relayreg.ErrNotFound through as 404, the
+// same contract relaysDelete already has, rather than masking it as a
+// generic error.
+func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, router)
+	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"address":"203.0.113.99:443"}`))
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+}
+
+// The Scaler role's own narrow allowlist must still refuse the ordinary
+// admin route for the exact same underlying resource -- gaining
+// relayDeenroll must not have widened reach to relaysDelete too.
+func TestScalerRoleCannotReachRelaysDeleteEvenThoughItCanReachRelayDeenroll(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, router)
+	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/relays/some-id", nil)
 	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)

@@ -199,6 +199,34 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteByAddress removes the registry entry whose Address matches exactly,
+// byte for byte — issue #319, for a Kubernetes-driven relay's own
+// destroy(): the driver computes a to-be-destroyed instance's address
+// deterministically (karst-scaler-k8s's own bundle.rs/driver.rs) but never
+// learns its registry id, which is derived from the relay's own identity
+// key (RelayID), generated at the relay's own boot, not from its address.
+//
+// Unlike DeleteByURI on turncred.Store (#320), the id here cannot be
+// derived from the input directly — a relay's id and its address are
+// independent values, where a TURN server's id *is* its URI's own
+// encoding. So this looks the row up by address first, then deletes by
+// the id it finds, reusing Delete for the invalidation/metrics side
+// effects that method already has right.
+func (s *Store) DeleteByAddress(ctx context.Context, address string) error {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	var existing StoredRelay
+	if err := s.db.Where("account_id = ? AND address = ?", accountID, address).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("relay registry: lookup by address: %w", err)
+	}
+	return s.Delete(ctx, existing.ID)
+}
+
 // FindByID looks up every registered relay with this id, across every
 // account — ADR-0021. Unlike every other method here, deliberately not
 // account-scoped: a relay authenticates a telemetry report by proving
