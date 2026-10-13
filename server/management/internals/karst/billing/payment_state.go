@@ -152,7 +152,7 @@ func (s *Store) Payment(ctx context.Context, start, end time.Time) (PaymentInten
 	return paymentIntent(row), nil
 }
 
-// PaymentFailureNotices returns account-scoped past-due transitions for one
+// PaymentFailureNotices returns account-scoped failed-payment events for one
 // invoice period. The payment history row is written atomically with webhook
 // processing and retained with payment audit state, so the notice survives
 // inbox pruning and duplicate event delivery.

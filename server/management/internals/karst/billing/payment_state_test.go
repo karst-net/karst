@@ -153,8 +153,15 @@ func TestPaymentFailureNoticesPersistAndStayAccountScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	notices, err = store.PaymentFailureNotices(ctx, start, end)
-	if err != nil || len(notices) != 1 {
-		t.Fatalf("repeated past-due event notices=%+v err=%v; want one transition notice", notices, err)
+	if err != nil || len(notices) != 2 {
+		t.Fatalf("distinct past-due events notices=%+v err=%v; want one notice per failed payment event", notices, err)
+	}
+	if _, err := store.ProcessWebhook(ctx, "evt_payment_failed_again"); err != nil {
+		t.Fatal(err)
+	}
+	notices, err = store.PaymentFailureNotices(ctx, start, end)
+	if err != nil || len(notices) != 2 {
+		t.Fatalf("duplicate event delivery notices=%+v err=%v; want no duplicate notice", notices, err)
 	}
 	otherAccount := WithAccount(context.Background(), "other-account")
 	notices, err = store.PaymentFailureNotices(otherAccount, start, end)

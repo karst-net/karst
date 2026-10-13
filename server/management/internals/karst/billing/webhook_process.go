@@ -76,6 +76,14 @@ func (s *Store) ProcessWebhook(ctx context.Context, eventID string) (bool, error
 			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: payment.State, ToState: target, EventID: event.EventID, CreatedAt: time.Now().UTC()}).Error; err != nil {
 				return err
 			}
+		} else if target == PaymentPastDue {
+			// Each distinct provider failure event can represent a later failed
+			// collection attempt. Preserve it as a payment-audit entry so the
+			// in-app notice feed can show it; duplicate event delivery is already
+			// stopped by ProcessedAt above.
+			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: PaymentPastDue, ToState: PaymentPastDue, EventID: event.EventID, CreatedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
 		}
 		return markWebhookProcessed(tx, &inbox, &processed)
 	})
