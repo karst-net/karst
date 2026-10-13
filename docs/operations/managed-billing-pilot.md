@@ -98,15 +98,18 @@ finalized invoices and payment/audit state for seven years and normalized
 webhook events for thirteen months; never persist raw webhook bodies after
 signature verification. Live collection still requires Paddle account/domain
 approval, supported-market confirmation, and SaaS tax-category configuration.
-The pilot payment policy retries asynchronously on days 1, 3, 7, and 12 after
-failure and sends in-app notices to billing admins. At day 14, keep the service
-active and mark the invoice past due for customer/operator resolution; payment
-failure does not suspend networking. Paid self-hosted support terms remain
-pending. Keep spending-cap enforcement and payment collection unavailable to
-customers until their implementations and operational checks are complete. No
-billing configuration is required for deployments that do not opt in; relay
-forwarding and device membership behavior remain available without usage
-collection.
+The approved pilot uses a 14-day grace, retries on days 1, 3, 7, and 12, and
+in-app billing-admin notices. After day 14, keep service active and mark the
+invoice past due for customer/operator resolution. The transaction model for
+retries remains pending a #275 decision; automated retry execution is not
+implemented. Payment failure does not suspend networking. Paid self-hosted
+support terms remain pending. The relay cap remains unset unless an
+organization explicitly opts in; use shadow-usage data to tune reservations
+before enabling it. Payment collection stays disabled by default and uses
+sandbox mode when explicitly enabled; live collection requires a separate
+operator approval and explicit account mapping. No billing configuration is
+required for deployments that do not opt in; relay forwarding and device
+membership behavior remain available without usage collection.
 
 Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
 server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
