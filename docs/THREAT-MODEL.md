@@ -145,6 +145,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Control-channel interception | TLS 1.3 with `X25519MLKEM768` | ADR-0001 | Config tests |
 | Stale netmap → silent connectivity loss (A8) | Netmap age surfaced in `karst status`; `karst doctor` diagnoses hint misses | ADR-0005 | Phase 3 |
 | Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views, including the NOC map (ADR-0046) | Phase 5 control API | Route × role secret/authorization scan |
+| An autoscaling decision provisions a new control replica, reaching T5's yield (full control-plane compromise) without first compromising any existing server | **Not mitigated.** Every control replica is symmetric and full-trust — ADR-0045 §7b: replicas "carry the signing keys and roster" — and there is no partial-trust replica tier today. Replica count and placement remain a fixed, operator-chosen, manually-provisioned decision (`docs/operations/ha.md`); no driver exists that can create or destroy one. ADR-0045 §7b named this gap and deferred it explicitly to this document | ADR-0045 §7b (scoped as a non-goal, not resolved) | N/A — enforced only by the absence of any such driver, not by a control. See §7 item 10 and R11 |
 
 ### B3 — Relay and TURN
 
@@ -224,6 +225,21 @@ Stated plainly, because a reviewer will find them anyway.
    capability, and the control plane still cannot force a device onto an
    exit route without that local operator's consent.
    [ADR-0024](adr/0024-exit-node-routing-reconsiders-adr-0023.md).
+10. **Control-replica count and placement are not autoscaled, and that is
+    deliberate, not an oversight.** A control replica carries the signing
+    keys and the full roster/netmap (ADR-0045 §7b) — scaling it the way
+    ADR-0045 scales relays would hand an autoscaling *decision*
+    the same reach as T5 (compromised coordination server), without an
+    attacker needing to compromise anything that already exists, because a
+    freshly created replica starts fully trusted on day one. The closest
+    existing residual risk, R2, covers compromise of an existing server; it
+    does not cover an attacker-influenced placement decision minting a new
+    one. [ADR-0045](adr/0045-cost-aware-geographic-scaling-across-providers.md)
+    §7b named this and deferred it to this document; this entry, §6/B2's new
+    row, and R11 below are that deferral being paid off. No mitigation is
+    proposed here because no implementation is proposed — resolving
+    placement-authorization is a **prerequisite** for any control-replica
+    driver, not a parallel workstream to one.
 
 ---
 
@@ -241,6 +257,7 @@ Stated plainly, because a reviewer will find them anyway.
 | R8 | Agility layer itself becomes attack surface | Low | Closed allowlist; downgrade case in ProVerif |
 | R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off. Usage reports require account owner/admin access, derive scope from authenticated context, audit every read, and prohibit caching. Retention and deletion policy remain activation prerequisites. |
 | R10 | An uninstrumented membership writer or database administrator invalidates usage accounting | Medium | Transactional membership hooks, coverage gaps, and explicit reconciliation; all replicas must run hooks before activation. Operator CLI authority comes from server configuration/database access, not its supplied actor label. Configuration and audit records commit atomically. No claim of tamper resistance against a compromised database/control server. |
+| R11 | An autoscaler, if one is ever built for control replicas, places a new full-trust replica somewhere adversary-favorable (a provider account, region, or network position the operator does not fully control), reaching T5's yield without compromising an existing server | High if ever built | **No mitigation; no implementation exists to mitigate.** Open — out of scope per ADR-0045 §7b until a placement-authorization design exists for replicas, analogous to the scrutiny §6/B2 already requires for node enrollment (Bedrock). See §7 item 10 and §9's gate |
 
 Device collection under ADR-0050 records enrollment generations and boundaries,
 not online activity or per-device traffic. Membership and ledger writes share a
@@ -271,6 +288,10 @@ These are **gates, not intentions**:
 - Continuous fuzzing of every parser via OSS-Fuzz.
 - Spoofed-source DoS suite and amplification assertions in CI.
 - Netmap secret-leakage scan in CI on every commit.
+- **No driver that can create or destroy a control replica ships** until R11
+  has an accepted mitigation design, not just this documentation of the risk
+  — this is a gate on *starting* that work, not an aspiration for finishing
+  it.
 
 ---
 
