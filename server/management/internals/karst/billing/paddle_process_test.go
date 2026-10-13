@@ -60,6 +60,23 @@ func TestSubmitFinalizedInvoicePersistsBeforeSingleProviderCreate(t *testing.T) 
 	}
 }
 
+func TestSubmitDraftTransactionRemainsAvailableThroughCheckout(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"txn_01grnn4zta5a1mf02jjze7y2ys","status":"draft","customer_id":"ctm_01grnn4zta5a1mf02jjze7y2ys","currency_code":"USD","created_at":"2026-09-01T03:00:00Z","custom_data":{"karst_invoice_id":"` + paddleInvoiceReference(mustInvoice(t, store, ctx, start, end)) + `"},"checkout":{"url":"https://pay.paddle.com/checkout/draft"}}}`))
+	}))
+	defer server.Close()
+	client, err := newPaddleClient("paddle-secret", server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.SubmitFinalizedInvoice(ctx, client, start, end, testPaddleCustomer, testPaddleProduct)
+	if err != nil || intent.State != PaymentCheckout || intent.CheckoutURL != "https://pay.paddle.com/checkout/draft" {
+		t.Fatalf("draft submit = %+v err=%v; want customer checkout", intent, err)
+	}
+}
+
 func TestSubmitAmbiguousProviderFailureMovesToReconciliation(t *testing.T) {
 	store, ctx, start, end := finalizedTestInvoice(t)
 	requests := 0
@@ -81,6 +98,36 @@ func TestSubmitAmbiguousProviderFailureMovesToReconciliation(t *testing.T) {
 	}
 	if _, err := store.ReconcilePayment(ctx, client, start, end, time.Now().UTC(), "ctm_01grnn4zta5a1mf02jjze7y2yz"); !errors.Is(err, ErrPaymentConflict) || requests != 1 {
 		t.Fatalf("reconciliation with unbound customer err=%v requests=%d", err, requests)
+	}
+}
+
+func TestReconcileDraftTransactionRestoresCheckout(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	requests := 0
+	createdAt := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			http.Error(w, "gateway timeout", http.StatusBadGateway)
+			return
+		}
+		ref := paddleInvoiceReference(mustInvoice(t, store, ctx, start, end))
+		_, _ = w.Write([]byte(`{"data":[{"id":"txn_01grnn4zta5a1mf02jjze7y2ys","status":"draft","customer_id":"` + testPaddleCustomer + `","currency_code":"USD","created_at":"` + createdAt + `","custom_data":{"karst_invoice_id":"` + ref + `"},"checkout":{"url":"https://pay.paddle.com/checkout/reconciled-draft"}}],"meta":{"pagination":{"has_more":false}}}`))
+	}))
+	defer server.Close()
+	client, err := newPaddleClient("paddle-secret", server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.SubmitFinalizedInvoice(ctx, client, start, end, testPaddleCustomer, testPaddleProduct)
+	if !errors.Is(err, ErrPaymentRequiresReconciliation) || intent.State != PaymentReconcile {
+		t.Fatalf("ambiguous submit = %+v err=%v; want reconciliation", intent, err)
+	}
+	createdAt = intent.AttemptStartedAt.Format(time.RFC3339Nano)
+	intent, err = store.ReconcilePayment(ctx, client, start, end, time.Now().UTC().Add(time.Second), testPaddleCustomer)
+	if err != nil || intent.State != PaymentCheckout || intent.CheckoutURL != "https://pay.paddle.com/checkout/reconciled-draft" || requests != 2 {
+		t.Fatalf("draft reconciliation = %+v err=%v requests=%d; want checkout and one lookup", intent, err, requests)
 	}
 }
 
