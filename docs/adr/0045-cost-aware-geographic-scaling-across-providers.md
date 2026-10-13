@@ -668,6 +668,12 @@ what "scale" means, and the order below is a judgment, not a commitment:
 | **Exit nodes and subnet routers** | Add/remove, but each is bound to a network or address range | Not interchangeable: an exit node's egress IP and a subnet router's reachable network are part of its identity. HA failover exists (`docs/subnet-routers-and-exit-nodes.md` §4's gateway-group recovery row); *placement* is a policy decision, not capacity. |
 | **Regional coordination/control replicas** | Add read replicas | Carry the signing keys and roster; scaling them enlarges the most sensitive trust boundary. Out of scope until the threat model covers it. |
 
+> **Addendum, 2026-10-13.** The threat model now covers this (#335 —
+> `THREAT-MODEL.md` §6/B2, §7 item 10, R11), and [ADR-0054](0054-control-replica-placement-authorization.md)
+> proposes the placement-authorization mechanism R11 requires before any
+> driver for this row may exist. This row's "out of scope" still holds — no
+> driver exists, and ADR-0054 is Proposed, not implemented.
+
 The abstraction must not bake in "relay" (§1's pool has a `kind`), but
 nothing beyond relays is designed here. Components that are *identity-bound*
 rather than *capacity-bound* are the likeliest to need a different model
