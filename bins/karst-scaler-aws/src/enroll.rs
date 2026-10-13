@@ -21,6 +21,11 @@ struct MintResponse {
     token: String,
 }
 
+#[derive(Debug, Serialize)]
+struct DeenrollRequest<'a> {
+    tls_server_name: &'a str,
+}
+
 /// An `Agent` with root certs loaded from the OS's own store via
 /// `rustls-native-certs` and `aws-lc-rs` installed as the crypto provider
 /// — identical to `karst-scaler-k8s/src/enroll.rs::build_agent`.
@@ -64,4 +69,37 @@ pub(crate) fn mint_token(
         .read_json()
         .map_err(|e| format!("POST {url}: decoding response: {e}"))?;
     Ok(response.token)
+}
+
+/// Removes `tls_server_name`'s own `relayreg.Store` row via
+/// `relayDeenroll` (#329) — see `AwsDriver::destroy`, the only caller,
+/// for why this is keyed by `tls_server_name` rather than the `address`
+/// `karst_scaler_k8s::enroll::deenroll` uses: an EC2 instance's own
+/// registered address is resolved by the relay itself via IMDS after
+/// boot, never known to this driver, unlike its `tls_server_name`
+/// (`bundle::tls_server_name`), which is derived from the enrollment
+/// token and knowable before the instance even exists.
+///
+/// A `404` (the row is already gone — e.g. a retried `destroy()` call)
+/// is treated as success, the same convention every other `deenroll`
+/// function in this workspace uses for the identical reason.
+///
+/// # Errors
+/// If the request fails, is refused, or the response is neither success
+/// nor 404.
+pub(crate) fn deenroll(
+    agent: &ureq::Agent,
+    control_api_base: &str,
+    pat: &str,
+    tls_server_name: &str,
+) -> Result<(), String> {
+    let url = format!("{control_api_base}/karst/v1/relays/deenroll");
+    match agent
+        .post(&url)
+        .header("Authorization", &format!("Bearer {pat}"))
+        .send_json(DeenrollRequest { tls_server_name })
+    {
+        Ok(_) | Err(ureq::Error::StatusCode(404)) => Ok(()),
+        Err(e) => Err(format!("POST {url}: {e}")),
+    }
 }

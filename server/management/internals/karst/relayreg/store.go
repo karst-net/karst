@@ -227,6 +227,32 @@ func (s *Store) DeleteByAddress(ctx context.Context, address string) error {
 	return s.Delete(ctx, existing.ID)
 }
 
+// DeleteByTLSServerName removes the registry entry whose TLSServerName
+// matches exactly — issue #329, the AWS driver's own counterpart to
+// DeleteByAddress (#319). An EC2 instance's own registered Address is
+// resolved by the relay itself via IMDS after boot, never known to (or
+// learnable by) the driver; its TLSServerName, by contrast, is derived
+// from the enrollment token and knowable before the instance even exists
+// (bundle::tls_server_name in bins/karst-scaler-aws), so this is the key
+// that driver's own destroy() can actually supply. Same two-step
+// lookup-then-Delete shape as DeleteByAddress, for the same reason: a
+// relay's registry id is derived from its identity key, independent of
+// either Address or TLSServerName.
+func (s *Store) DeleteByTLSServerName(ctx context.Context, tlsServerName string) error {
+	accountID, err := accountFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	var existing StoredRelay
+	if err := s.db.Where("account_id = ? AND tls_server_name = ?", accountID, tlsServerName).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("relay registry: lookup by tls_server_name: %w", err)
+	}
+	return s.Delete(ctx, existing.ID)
+}
+
 // FindByID looks up every registered relay with this id, across every
 // account — ADR-0021. Unlike every other method here, deliberately not
 // account-scoped: a relay authenticates a telemetry report by proving

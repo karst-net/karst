@@ -37,15 +37,34 @@
 //!
 //! ## Tag convention and IAM
 //!
-//! Every instance this driver creates carries one tag,
+//! Every instance this driver creates carries two tags:
 //! [`bundle::POOL_TAG_KEY`] = `pool_id` — mirroring the Kubernetes
 //! driver's own "`pool_id` is the one identifier, reused everywhere"
-//! convention. [`driver::AwsDriver::list`] and
-//! [`driver::AwsDriver::destroy`] both filter by it independently of
-//! whatever the planner believes exists, the same defense-in-depth
-//! posture `karst_scaler::breaker::BoundedDriver` already applies
-//! generically. See `deploy/aws/scaler/iam-policy.json` for the reference
-//! IAM policy this depends on.
+//! convention, and [`bundle::TLS_SERVER_NAME_TAG_KEY`] = that instance's
+//! own [`bundle::tls_server_name`] (issue #329 — see that constant's own
+//! doc for why). [`driver::AwsDriver::list`] and
+//! [`driver::AwsDriver::destroy`] both filter by the pool tag
+//! independently of whatever the planner believes exists, the same
+//! defense-in-depth posture `karst_scaler::breaker::BoundedDriver`
+//! already applies generically. See `deploy/aws/scaler/iam-policy.json`
+//! for the reference IAM policy this depends on.
+//!
+//! ## `destroy` also removes the `relayreg.Store` row (issue #329)
+//!
+//! `destroy` used to only call `TerminateInstances` — the instance's own
+//! registry row, if any, stayed behind forever, the identical leak #319
+//! found and fixed for the Kubernetes driver. That fix doesn't transfer
+//! here: `relayDeenroll`'s `DeleteByAddress` path needs the instance's
+//! own registered `address`, which this driver never learns (resolved by
+//! the relay itself via IMDS, after boot — see "Why `address` is
+//! optional" above). Reusing the control server's own `relayDeenroll`
+//! route's second key, `DeleteByTLSServerName`, instead: `destroy` reads
+//! back the instance's own [`bundle::TLS_SERVER_NAME_TAG_KEY`] tag
+//! (`describe_instances`, before terminating — the window in which that
+//! call is guaranteed to still work), terminates the instance, then
+//! calls `relayDeenroll` with that value. A missing tag (an instance a
+//! pre-#329 driver launched) is a known, visible, logged gap this only
+//! prevents going forward, not retroactively.
 //!
 //! [`create`]: driver::AwsDriver::create
 

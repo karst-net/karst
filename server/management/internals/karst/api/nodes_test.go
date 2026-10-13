@@ -341,8 +341,9 @@ func (scanRelays) List(context.Context) ([]relayreg.StoredRelay, error) { return
 func (scanRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
 	return &relayreg.StoredRelay{}, nil
 }
-func (scanRelays) Delete(context.Context, string) error          { return nil }
-func (scanRelays) DeleteByAddress(context.Context, string) error { return nil }
+func (scanRelays) Delete(context.Context, string) error                { return nil }
+func (scanRelays) DeleteByAddress(context.Context, string) error       { return nil }
+func (scanRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
 func (scanRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
 	return nil, nil
 }
@@ -359,11 +360,16 @@ func (scanRelaysExists) Create(context.Context, relayreg.Entry) (*relayreg.Store
 	return nil, relayreg.ErrExists
 }
 
-// scanRelaysMissing reports every DeleteByAddress as not-found — the
-// relayDeenroll "no relay registered under that address" path (#319).
+// scanRelaysMissing reports every DeleteByAddress/DeleteByTLSServerName as
+// not-found — the relayDeenroll "no relay registered under that key" path
+// (#319/#329).
 type scanRelaysMissing struct{ scanRelays }
 
 func (scanRelaysMissing) DeleteByAddress(context.Context, string) error {
+	return relayreg.ErrNotFound
+}
+
+func (scanRelaysMissing) DeleteByTLSServerName(context.Context, string) error {
 	return relayreg.ErrNotFound
 }
 
@@ -402,8 +408,9 @@ func (f fixedRelays) List(context.Context) ([]relayreg.StoredRelay, error) { ret
 func (f fixedRelays) Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error) {
 	return &f[0], nil
 }
-func (fixedRelays) Delete(context.Context, string) error          { return nil }
-func (fixedRelays) DeleteByAddress(context.Context, string) error { return nil }
+func (fixedRelays) Delete(context.Context, string) error                { return nil }
+func (fixedRelays) DeleteByAddress(context.Context, string) error       { return nil }
+func (fixedRelays) DeleteByTLSServerName(context.Context, string) error { return nil }
 func (fixedRelays) LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error) {
 	return nil, nil
 }
@@ -841,6 +848,42 @@ func TestRelayDeenroll_UnknownAddressIsNotFound(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+}
+
+// Mirrors TestRelayDeenroll_UnknownAddressIsNotFound for the AWS driver's
+// own key (#329): relayDeenroll must dispatch to DeleteByTLSServerName,
+// not just DeleteByAddress, when that's the field the request carries.
+func TestRelayDeenroll_UnknownTLSServerNameIsNotFound(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelaysMissing{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, router)
+	req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(`{"tls_server_name":"pool-never-registered.aws.karst.internal"}`))
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+}
+
+// relayDeenroll must refuse a request naming both keys, or neither --
+// exactly one driver-known key is meaningful per call, never a choice
+// the handler should silently make on the caller's behalf.
+func TestRelayDeenroll_RequiresExactlyOneOfAddressOrTLSServerName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"neither", `{}`},
+		{"both", `{"address":"203.0.113.9:443","tls_server_name":"pool-aaaaaa.aws.karst.internal"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := mux.NewRouter()
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, scanRelays{}, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, router)
+			req := httptest.NewRequest(http.MethodPost, relayDeenrollPath, strings.NewReader(tc.body))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		})
+	}
 }
 
 // The Scaler role's own narrow allowlist must still refuse the ordinary

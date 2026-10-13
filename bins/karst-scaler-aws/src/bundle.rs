@@ -38,6 +38,18 @@ impl EnrollBundle {
 /// believes exists — see the crate doc's "Tag convention and IAM" section.
 pub const POOL_TAG_KEY: &str = "karst:pool";
 
+/// The second tag every instance this driver creates carries, holding
+/// that instance's own [`tls_server_name`] — issue #329. `destroy()` has
+/// only ever had an EC2 instance id to act on, never the `token` that
+/// produced this value (ephemeral, discarded after `create()` returns),
+/// so there is nothing in the driver process itself to recompute it from
+/// later. Tagging the instance at launch, rather than persisting a
+/// separate `instance_id -> tls_server_name` map in the driver's own
+/// memory, means this survives a `karst-scaler drive` restart for free —
+/// AWS is already the durable store for this, the same way Kubernetes
+/// already is for `karst-scaler-k8s`'s own deterministic `pod_address`.
+pub const TLS_SERVER_NAME_TAG_KEY: &str = "karst:tls-server-name";
+
 /// A `tls_server_name` for one new instance of `pool_id`. Unlike
 /// `karst-scaler-k8s`'s `pod_fqdn` (a real, resolvable per-pod DNS name),
 /// this is never resolved as DNS: `bins/karst-relay/src/tls.rs`'s own crate
