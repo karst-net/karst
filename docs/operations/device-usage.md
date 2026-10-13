@@ -72,5 +72,11 @@ Account owners/admins can read coverage-aware device reports using
 Only complete intervals contribute to the exact device-microsecond total.
 Reports are metering evidence, not finalized invoices; reconciliation can change
 historical coverage. Collection periods are not financial billing periods.
-Retention, historical checkpoints, prices, and invoice finalization remain
-implementation work tracked in [#275](https://github.com/karst-net/karst/issues/275).
+Price calculation and invoice finalization are implemented for explicitly
+assigned UTC billing periods with complete device and relay reports; see the
+[managed billing pilot guide](managed-billing-pilot.md). Device lifecycle event
+retention/deletion and a verified checkpoint strategy remain open before large
+or long-running collections. Do not prune lifecycle history until an approved
+retention policy and a checkpoint design preserve the evidence required for
+reports and finalized invoice inputs; this remains tracked in
+[#275](https://github.com/karst-net/karst/issues/275).
