@@ -2371,6 +2371,7 @@ dependencies = [
  "karst-scaler-aws",
  "karst-scaler-driver",
  "karst-scaler-k8s",
+ "karst-scaler-turn-k8s",
  "rustls",
  "rustls-native-certs",
  "serde",
@@ -2416,6 +2417,21 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
+ "ureq",
+]
+
+[[package]]
+name = "karst-scaler-turn-k8s"
+version = "0.0.0"
+dependencies = [
+ "k8s-openapi",
+ "karst-scaler-driver",
+ "kube",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "tokio",
  "ureq",
 ]
 
