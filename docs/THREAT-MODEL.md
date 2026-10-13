@@ -145,7 +145,7 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Control-channel interception | TLS 1.3 with `X25519MLKEM768` | ADR-0001 | Config tests |
 | Stale netmap → silent connectivity loss (A8) | Netmap age surfaced in `karst status`; `karst doctor` diagnoses hint misses | ADR-0005 | Phase 3 |
 | Control-plane telemetry reveals direct endpoints and peer topology (A9) | Nodes report authenticated, bounded last-known path observations only; data is account-scoped, never includes credentials, and is restricted to authorized admin/auditor views, including the NOC map (ADR-0046) | Phase 5 control API | Route × role secret/authorization scan |
-| An autoscaling decision provisions a new control replica, reaching T5's yield (full control-plane compromise) without first compromising any existing server | **Not mitigated.** Every control replica is symmetric and full-trust — ADR-0045 §7b: replicas "carry the signing keys and roster" — and there is no partial-trust replica tier today. Replica count and placement remain a fixed, operator-chosen, manually-provisioned decision (`docs/operations/ha.md`); no driver exists that can create or destroy one. ADR-0045 §7b named this gap and deferred it explicitly to this document | ADR-0045 §7b (scoped as a non-goal, not resolved) | N/A — enforced only by the absence of any such driver, not by a control. See §7 item 10 and R11 |
+| An autoscaling decision provisions a new control replica, reaching T5's yield (full control-plane compromise) without first compromising any existing server | **Not yet mitigated; mitigation proposed.** Every control replica is symmetric and full-trust — ADR-0045 §7b: replicas "carry the signing keys and roster" — and there is no partial-trust replica tier today. Replica count and placement remain a fixed, operator-chosen, manually-provisioned decision (`docs/operations/ha.md`); no driver exists that can create or destroy one. ADR-0054 proposes a Bedrock-quorum-gated admission check before `karst_server_keys` is released to any new replica | ADR-0045 §7b (named the gap); ADR-0054 (Proposed mitigation, not implemented) | N/A today — enforced only by the absence of any such driver, not by a control. See §7 item 10 and R11 |
 
 ### B3 — Relay and TURN
 
@@ -236,9 +236,12 @@ Stated plainly, because a reviewer will find them anyway.
     does not cover an attacker-influenced placement decision minting a new
     one. [ADR-0045](adr/0045-cost-aware-geographic-scaling-across-providers.md)
     §7b named this and deferred it to this document; this entry, §6/B2's new
-    row, and R11 below are that deferral being paid off. No mitigation is
-    proposed here because no implementation is proposed — resolving
-    placement-authorization is a **prerequisite** for any control-replica
+    row, and R11 below are that deferral being paid off.
+    [ADR-0054](adr/0054-control-replica-placement-authorization.md) now
+    proposes a mitigation (Bedrock-quorum-signed replica admission,
+    deliberately not an automated key) — Proposed, not implemented, and only
+    ever protective for Bedrock-enabled deployments. Resolving
+    placement-authorization remains a **prerequisite** for any control-replica
     driver, not a parallel workstream to one.
 
 ---
@@ -257,7 +260,7 @@ Stated plainly, because a reviewer will find them anyway.
 | R8 | Agility layer itself becomes attack surface | Low | Closed allowlist; downgrade case in ProVerif |
 | R9 | Usage history exposes past account/device enrollment after live records are deleted | Medium | ADR-0050 collection defaults off. Usage reports require account owner/admin access, derive scope from authenticated context, audit every read, and prohibit caching. Retention and deletion policy remain activation prerequisites. |
 | R10 | An uninstrumented membership writer or database administrator invalidates usage accounting | Medium | Transactional membership hooks, coverage gaps, and explicit reconciliation; all replicas must run hooks before activation. Operator CLI authority comes from server configuration/database access, not its supplied actor label. Configuration and audit records commit atomically. No claim of tamper resistance against a compromised database/control server. |
-| R11 | An autoscaler, if one is ever built for control replicas, places a new full-trust replica somewhere adversary-favorable (a provider account, region, or network position the operator does not fully control), reaching T5's yield without compromising an existing server | High if ever built | **No mitigation; no implementation exists to mitigate.** Open — out of scope per ADR-0045 §7b until a placement-authorization design exists for replicas, analogous to the scrutiny §6/B2 already requires for node enrollment (Bedrock). See §7 item 10 and §9's gate |
+| R11 | An autoscaler, if one is ever built for control replicas, places a new full-trust replica somewhere adversary-favorable (a provider account, region, or network position the operator does not fully control), reaching T5's yield without compromising an existing server | High if ever built | **Design proposed, not implemented.** [ADR-0054](adr/0054-control-replica-placement-authorization.md) proposes gating replica admission behind a new Bedrock-quorum-signed `replica-sign`/`replica-revoke` pair, at authority weight — the same ceremony `node-sign` already uses, deliberately *not* an always-on automated key (ADR-0016's anchor-tier reasoning does not transfer: minting admission is T5-equivalent, not one-directional like anchoring). Protects only Bedrock-enabled deployments; a deployment with Bedrock off has no mitigation. §9's gate stands until ADR-0054 is implemented |
 
 Device collection under ADR-0050 records enrollment generations and boundaries,
 not online activity or per-device traffic. Membership and ledger writes share a
