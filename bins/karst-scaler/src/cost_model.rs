@@ -248,6 +248,26 @@ pub struct CostModel {
     pub commitments: Vec<Commitment>,
 }
 
+/// What kind of component a pool provisions — ADR-0045 §7b: "The
+/// abstraction must not bake in 'relay' (§1's pool has a `kind`)." Closed,
+/// like [`EdgeClass`]: a third component sharing the pool model (§7b's own
+/// table lists several candidates, none built) is a new decision each time,
+/// not a string an operator should be able to spell into existence
+/// unnoticed. [`Self::Relay`] is the default (see [`Default`] below) so
+/// every pool declared before this field existed keeps parsing unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PoolKind {
+    Relay,
+    Turn,
+}
+
+impl Default for PoolKind {
+    fn default() -> Self {
+        Self::Relay
+    }
+}
+
 /// A capacity pool — ADR-0045 §1.
 ///
 /// This is the Phase 0 slice of a pool plus Phase 1's floor/ceiling: enough
@@ -262,6 +282,15 @@ pub struct Pool {
     pub provider: Provider,
     pub region: String,
     pub cost_model: CostModel,
+
+    /// §7b's `kind` — which component this pool provisions. Defaults to
+    /// [`PoolKind::Relay`]: today's only real demand signal
+    /// (`/karst/v1/demand/regions`'s RTT histograms) is relay-sourced, and
+    /// `advise_loop::attribute_demand` only ever attributes it to a
+    /// `Relay`-kind pool — see that function's own doc comment for why a
+    /// `Turn`-kind pool must not receive it.
+    #[serde(default)]
+    pub kind: PoolKind,
 
     /// ADR-0045 §1's `min_nodes`: "floor: N+1 / always-on presence." The
     /// Advisor (§7 Phase 1) never recommends fewer than this many nodes for
@@ -559,6 +588,33 @@ bands = [{ up_to = 1000.0, unit_price = 0.0 }]
         let d = Document::parse(MINIMAL).expect("parses");
         assert!(d.validate().is_ok());
         assert_eq!(d.pools.len(), 1);
+    }
+
+    #[test]
+    fn a_pool_with_no_kind_defaults_to_relay() {
+        // Every pool declared before this field existed must keep parsing
+        // unchanged, as `Relay` -- today's only demand signal.
+        let d = Document::parse(MINIMAL).expect("parses");
+        let pool = d.pools.get("onprem-mia").expect("the one pool");
+        assert_eq!(pool.kind, PoolKind::Relay);
+    }
+
+    #[test]
+    fn a_pool_may_declare_itself_turn_kind() {
+        let text = MINIMAL.replace("[pools.onprem-mia]", "[pools.onprem-mia]\nkind = \"turn\"");
+        let d = Document::parse(&text).expect("parses");
+        let pool = d.pools.get("onprem-mia").expect("the one pool");
+        assert_eq!(pool.kind, PoolKind::Turn);
+    }
+
+    #[test]
+    fn an_unrecognized_kind_is_a_syntax_error() {
+        let text = MINIMAL.replace(
+            "[pools.onprem-mia]",
+            "[pools.onprem-mia]\nkind = \"exit-node\"",
+        );
+        let err = Document::parse(&text).expect_err("unknown pool kind");
+        assert!(matches!(err, Error::Syntax(_)), "{err:?}");
     }
 
     #[test]

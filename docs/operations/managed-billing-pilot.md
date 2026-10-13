@@ -73,7 +73,7 @@ explicit account-period schedule assignment; it does not collect payment. The
 operator can finalize only once the period is complete using the
 [assignment and finalization procedure](billing-schedule-assignment.md).
 
-This implementation provides an audited in-app alert feed and an optional
+The implementation provides an audited in-app alert feed and an optional
 organization-wide managed-relay cap, with grants reserved across relays and
 forwarding paused when a capped relay has no credits. Owners/admins configure
 the cap for an assigned UTC month through `PUT /karst/v1/billing/relay-cap`;
@@ -92,24 +92,18 @@ bounds. Keep enforcement opt-in until this implementation has shipped and its
 behavior has been validated in a pilot, including reservation sizing against
 shadow usage.
 
-Paddle is the selected merchant of record and pilot provider. Rates are
-pre-tax USD; Paddle adds applicable tax and shows it separately. Retain
-finalized invoices and payment/audit state for seven years and normalized
-webhook events for thirteen months; never persist raw webhook bodies after
-signature verification. Live collection still requires Paddle account/domain
-approval, supported-market confirmation, and SaaS tax-category configuration.
-The approved pilot uses a 14-day grace, retries on days 1, 3, 7, and 12, and
-in-app billing-admin notices. After day 14, keep service active and mark the
-invoice past due for customer/operator resolution. The transaction model for
-retries remains pending a #275 decision; automated retry execution is not
-implemented. Payment failure does not suspend networking. Paid self-hosted
-support terms remain pending. The relay cap remains unset unless an
-organization explicitly opts in; use shadow-usage data to tune reservations
-before enabling it. Payment collection stays disabled by default and uses
-sandbox mode when explicitly enabled; live collection requires a separate
-operator approval and explicit account mapping. No billing configuration is
-required for deployments that do not opt in; relay forwarding and device
-membership behavior remain available without usage collection.
+The pilot uses Paddle as merchant of record, with pre-tax USD rates and
+applicable tax shown separately at checkout. The approved payment-failure
+policy retries on days 1, 3, 7, and 12, provides in-app notices to billing
+admins, and keeps service active after day 14 while an invoice is past due.
+Paddle business/domain onboarding and SaaS tax-category approval remain gates
+before live collection. Self-hosted support terms remain open in
+[#275](https://github.com/karst-net/karst/issues/275). The current payment
+integration provides opt-in checkout and durable in-app failure notices;
+automated retries remain unimplemented while their execution model is pending
+in #275. No billing configuration is required for deployments that do not opt
+in; relay forwarding and device membership behavior remain available without
+usage collection.
 
 Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
 server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
@@ -125,4 +119,7 @@ the payment outbox.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool
-retention with the deployment's existing data-governance rules.
+retention with the deployment's existing data-governance rules. Retain
+finalized invoices and payment/audit state for seven years and normalized
+webhook events for thirteen months; never persist raw webhook bodies after
+signature verification.

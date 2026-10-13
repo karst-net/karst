@@ -43,7 +43,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 
 use karst_scaler::advise::{self, PoolState, Problem};
-use karst_scaler::cost_model::Document;
+use karst_scaler::cost_model::{Document, PoolKind};
 use karst_scaler::position::Position;
 use karst_scaler::simulate::{hours_remaining_in_period, period_key};
 
@@ -325,16 +325,27 @@ pub(crate) struct UnplaceableDemand {
 }
 
 /// Aggregates `rows` by `(region, account_id)`, then attributes each
-/// pair's demand to every pool in `doc.pools` whose region matches *and*
-/// whose [`crate::cost_model::Pool::residency_tags`] satisfy that
-/// account's own requirement (`doc.account_residency` — absent or empty
-/// means no requirement, eligible everywhere) — ADR-0045 §3's Residency
-/// constraint. A pair matching zero eligible pools in its own region is
-/// never silently dropped into the regional total; it comes back
+/// pair's demand to every `Relay`-kind pool in `doc.pools` whose region
+/// matches *and* whose [`crate::cost_model::Pool::residency_tags`] satisfy
+/// that account's own requirement (`doc.account_residency` — absent or
+/// empty means no requirement, eligible everywhere) — ADR-0045 §3's
+/// Residency constraint. A pair matching zero eligible pools in its own
+/// region is never silently dropped into the regional total; it comes back
 /// separately as [`UnplaceableDemand`].
 ///
-/// When no account has a residency requirement at all, every pool in a
-/// region receives that region's full combined demand, exactly as
+/// `rows` (`/karst/v1/demand/regions`) is relay session telemetry only —
+/// no equivalent signal exists for any other [`karst_scaler::cost_model::PoolKind`]
+/// yet (ADR-0045 §7b) — so a `Turn`-kind pool is never an eligible
+/// destination here, even when its region and residency tags would
+/// otherwise match. It is sized by its own `min_nodes`/`nodes_max` alone
+/// (`advise::advise`'s `effective_floor` with `demand_nodes` fixed at 0)
+/// until a TURN-specific demand signal exists. A region with only
+/// `Turn`-kind pools therefore reports its relay demand as unplaceable,
+/// the same as a region with no pool at all — correct, not a gap: nothing
+/// there can serve it.
+///
+/// When no account has a residency requirement at all, every eligible pool
+/// in a region receives that region's full combined demand, exactly as
 /// before this constraint existed — including the pre-existing, already
 /// documented simplification that two pools sharing one region both see
 /// its full demand rather than splitting it; this change narrows what
@@ -365,7 +376,11 @@ fn attribute_demand(
         let eligible_pool_ids: Vec<&str> = doc
             .pools
             .iter()
-            .filter(|(_, pool)| pool.region == region && pool.satisfies_residency(required))
+            .filter(|(_, pool)| {
+                pool.kind == PoolKind::Relay
+                    && pool.region == region
+                    && pool.satisfies_residency(required)
+            })
             .map(|(pool_id, _)| pool_id.as_str())
             .collect();
 
@@ -527,13 +542,18 @@ mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use karst_scaler::cost_model::{CostModel, Pool, Provider};
+    use karst_scaler::cost_model::{CostModel, Pool, PoolKind, Provider};
 
     fn pool(region: &str, residency_tags: &[&str]) -> Pool {
+        pool_with_kind(region, residency_tags, PoolKind::Relay)
+    }
+
+    fn pool_with_kind(region: &str, residency_tags: &[&str], kind: PoolKind) -> Pool {
         Pool {
             provider: Provider::Onprem,
             region: region.to_owned(),
             cost_model: CostModel::default(),
+            kind,
             min_nodes: 0,
             nodes_max: None,
             residency_tags: residency_tags.iter().map(|t| (*t).to_owned()).collect(),
@@ -608,6 +628,41 @@ mod tests {
         assert_eq!(only.region, "eu-west-1");
         assert_eq!(only.account_id, "acct-eu");
         assert_eq!(only.nodes, 5);
+    }
+
+    #[test]
+    fn a_turn_kind_pool_never_receives_relay_demand_even_when_region_and_residency_match() {
+        let mut doc = Document::default();
+        doc.pools.insert(
+            "turn-pool".to_owned(),
+            pool_with_kind("eu-west-1", &[], PoolKind::Turn),
+        );
+        let rows = [row("eu-west-1", "acct-1", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert_eq!(demand.get("turn-pool").copied(), None);
+        // No relay-kind pool exists anywhere in the region either, so this
+        // demand is unplaceable -- not silently handed to the TURN pool.
+        assert_eq!(unplaceable.len(), 1);
+    }
+
+    #[test]
+    fn a_relay_pool_still_gets_demand_a_co_located_turn_pool_does_not() {
+        let mut doc = Document::default();
+        doc.pools
+            .insert("relay-pool".to_owned(), pool("eu-west-1", &[]));
+        doc.pools.insert(
+            "turn-pool".to_owned(),
+            pool_with_kind("eu-west-1", &[], PoolKind::Turn),
+        );
+        let rows = [row("eu-west-1", "acct-1", 500)];
+
+        let (demand, unplaceable) = attribute_demand(&doc, &rows);
+
+        assert!(unplaceable.is_empty());
+        assert_eq!(demand.get("relay-pool").copied(), Some(5));
+        assert_eq!(demand.get("turn-pool").copied(), None);
     }
 
     #[test]
