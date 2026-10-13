@@ -91,6 +91,16 @@ export type BillingPayment = {
     updated_at: string;
 };
 
+export type BillingPaymentNoticeFeed = {
+    notices: Array<BillingPaymentFailureNotice>;
+};
+
+export type BillingPaymentFailureNotice = {
+    period_start: string;
+    period_end: string;
+    created_at: string;
+};
+
 export type RelayUsageDay = {
     date: string;
     reported_bytes: string;
@@ -957,6 +967,36 @@ export type QueueBillingPaymentResponses = {
 };
 
 export type QueueBillingPaymentResponse = QueueBillingPaymentResponses[keyof QueueBillingPaymentResponses];
+
+export type GetBillingPaymentNoticesData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * UTC calendar month in YYYY-MM form.
+         */
+        period: string;
+    };
+    url: '/billing/payment-notices';
+};
+
+export type GetBillingPaymentNoticesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetBillingPaymentNoticesError = GetBillingPaymentNoticesErrors[keyof GetBillingPaymentNoticesErrors];
+
+export type GetBillingPaymentNoticesResponses = {
+    /**
+     * Account-scoped persisted payment-failure notices
+     */
+    200: BillingPaymentNoticeFeed;
+};
+
+export type GetBillingPaymentNoticesResponse = GetBillingPaymentNoticesResponses[keyof GetBillingPaymentNoticesResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;

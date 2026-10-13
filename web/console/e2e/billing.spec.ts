@@ -20,6 +20,8 @@ test("owners can inspect coverage and opt into an acknowledged relay cap", async
   await page.request.put(`http://127.0.0.1:${apiPort}/__mock__/billing/payment-state`, { data: { period, state: "past_due" } });
   await page.getByRole("button", { name: "Refresh payment status" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Payment failed." })).toContainText("Your service remains active during the 14-day grace period");
+  await expect(page.getByRole("heading", { name: "Payment notices" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Payment failure notices" })).toContainText(`Payment failed for ${period}`);
   await expect(page.getByText("Incomplete coverage").first()).toBeVisible();
   await expect(page.getByText("Relay usage coverage is incomplete; threshold amounts are lower bounds.")).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "75%" })).toBeVisible();

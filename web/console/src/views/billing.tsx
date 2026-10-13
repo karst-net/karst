@@ -49,6 +49,7 @@ export function Billing() {
   }, [reportMonth]);
   const alerts = useResource(() => api.relayAlerts(reportMonth), [reportMonth]);
   const payment = useResource(() => api.billingPayment(reportMonth), [reportMonth]);
+  const paymentNotices = useResource(() => api.billingPaymentNotices(reportMonth), [reportMonth]);
   const cap = useResource(() => api.relayCap(capMonth), [capMonth]);
   const { message, setMessage, run } = useMutation(cap.reload);
   const { message: paymentMessage, setMessage: setPaymentMessage, run: runPayment } = useMutation(payment.reload);
@@ -121,6 +122,18 @@ export function Billing() {
     <section aria-labelledby="invoice-heading">
       <h3 id="invoice-heading">Invoice and payment</h3>
       <p className="lede">Only a finalized invoice can be paid. Paddle adds applicable tax and displays it separately at checkout. Payment status does not change network access.</p>
+      <section aria-labelledby="payment-notices-heading">
+        <h4 id="payment-notices-heading">Payment notices</h4>
+        {paymentNotices.loading && <p>Loading payment notices…</p>}
+        {paymentNotices.error && <ErrorMessage message={paymentNotices.error} />}
+        {paymentNotices.value && (paymentNotices.value.notices.length === 0
+          ? <p>No payment failure notices for {reportMonth}.</p>
+          : <ul aria-label="Payment failure notices">
+            {paymentNotices.value.notices.map((notice) => <li key={`${notice.period_start}-${notice.created_at}`}>
+              <strong>Payment failed for {notice.period_start.slice(0, 7)}.</strong> Your service remains active. Review the invoice and checkout status below.
+            </li>)}
+          </ul>)}
+      </section>
       {payment.loading && <p>Loading invoice…</p>}
       {payment.error && <p role="alert">{payment.error}</p>}
       {payment.value && <>
@@ -134,7 +147,7 @@ export function Billing() {
         {payment.value.state === "reconcile" && <p>The payment result is being reconciled. Do not submit another payment while this is unresolved.</p>}
         {payment.value.state === "operator_hold" && <p>This payment needs operator review. Contact support before taking another payment action.</p>}
         {payment.value.state === "paid" && <p>Payment received.</p>}
-        <button type="button" onClick={payment.reload}>Refresh payment status</button>
+        <button type="button" onClick={() => { void payment.reload(); void paymentNotices.reload(); }}>Refresh payment status</button>
       </>}
     </section>
 

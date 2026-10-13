@@ -69,10 +69,11 @@ finalized.
 The approved payment policy is to retry on days 1, 3, 7, and 12 after a failed
 payment, notify billing administrators in-app, and keep the service active
 after day 14 while the invoice remains past due. Payment failure never
-suspends networking. Automated retry execution and payment-failure notice
-delivery are still under implementation; the service must not be represented
-as providing those actions until that work is complete. Live collection also
-requires provider onboarding, supported-market confirmation, and tax-category
+suspends networking. The billing page now shows a persisted notice when an
+invoice first becomes past due. Automated retry execution and notices for
+later retry attempts are still under implementation; the one-time invoice
+versus subscription/dunning choice remains open. Live collection also requires
+provider onboarding, supported-market confirmation, and tax-category
 configuration.
 
 ## Self-hosted deployments

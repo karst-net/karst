@@ -116,6 +116,53 @@ func TestWebhookWorkerAppliesEventsIdempotentlyAndIgnoresOutOfOrderState(t *test
 	}
 }
 
+func TestPaymentFailureNoticesPersistAndStayAccountScoped(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	intent, err := store.QueuePayment(ctx, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetPaymentCustomer(ctx, intent.InvoiceReference, testPaddleCustomer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentReady, PaymentSubmitting, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	eventAt := start.Add(2 * time.Hour)
+	event := NormalizedPaddleEvent{EventID: "evt_payment_failed", EventType: "transaction.payment_failed", OccurredAt: eventAt, TransactionID: "txn_01grnn4zta5a1mf02jjze7y2ys", CustomerID: testPaddleCustomer, InvoiceRef: intent.InvoiceReference, Status: "past_due"}
+	if _, err := store.RecordWebhook(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	notices, err := store.PaymentFailureNotices(ctx, start, end)
+	if err != nil || len(notices) != 1 {
+		t.Fatalf("payment notices=%+v err=%v; want one notice", notices, err)
+	}
+	if !notices[0].PeriodStart.Equal(start) || !notices[0].PeriodEnd.Equal(end) || notices[0].CreatedAt.IsZero() {
+		t.Fatalf("unexpected failure notice: %+v", notices[0])
+	}
+	if _, err := store.ProcessWebhook(ctx, event.EventID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordWebhook(ctx, NormalizedPaddleEvent{EventID: "evt_payment_failed_again", EventType: "transaction.past_due", OccurredAt: eventAt.Add(time.Hour), TransactionID: event.TransactionID, CustomerID: event.CustomerID, InvoiceRef: event.InvoiceRef, Status: "past_due"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	notices, err = store.PaymentFailureNotices(ctx, start, end)
+	if err != nil || len(notices) != 1 {
+		t.Fatalf("repeated past-due event notices=%+v err=%v; want one transition notice", notices, err)
+	}
+	otherAccount := WithAccount(context.Background(), "other-account")
+	notices, err = store.PaymentFailureNotices(otherAccount, start, end)
+	if err != nil || len(notices) != 0 {
+		t.Fatalf("cross-account notices=%+v err=%v; want empty feed", notices, err)
+	}
+}
+
 func TestPaddleAccountRequiresPerAccountOptInAndPreservesMappingOnDisable(t *testing.T) {
 	store := testBillingStore(t)
 	ctx := WithAccount(context.Background(), "paddle-config-org")

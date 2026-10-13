@@ -84,6 +84,14 @@ type PaymentIntent struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// PaymentFailureNotice is a customer-safe view of a persisted transition to
+// past-due. It contains no provider identifiers or webhook payload data.
+type PaymentFailureNotice struct {
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // QueuePayment requires a persisted, finalized invoice and creates a stable,
 // unique outbox entry. It performs no provider call.
 func (s *Store) QueuePayment(ctx context.Context, start, end time.Time) (PaymentIntent, error) {
@@ -142,6 +150,43 @@ func (s *Store) Payment(ctx context.Context, start, end time.Time) (PaymentInten
 		return PaymentIntent{}, err
 	}
 	return paymentIntent(row), nil
+}
+
+// PaymentFailureNotices returns account-scoped past-due transitions for one
+// invoice period. The payment history row is written atomically with webhook
+// processing and retained with payment audit state, so the notice survives
+// inbox pruning and duplicate event delivery.
+func (s *Store) PaymentFailureNotices(ctx context.Context, start, end time.Time) ([]PaymentFailureNotice, error) {
+	accountID, err := billingAccountFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	startUS, endUS, err := billingPeriodMicros(start, end)
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		PeriodStartUS int64     `gorm:"column:period_start_us"`
+		PeriodEndUS   int64     `gorm:"column:period_end_us"`
+		CreatedAt     time.Time `gorm:"column:created_at"`
+	}
+	err = s.db.WithContext(ctx).Table("karst_billing_payment_history AS h").
+		Select("p.period_start AS period_start_us, p.period_end AS period_end_us, h.created_at").
+		Joins("JOIN karst_billing_payment_outbox AS p ON p.invoice_ref = h.invoice_ref").
+		Where("p.account_id = ? AND p.period_start = ? AND p.period_end = ? AND h.to_state = ?", accountID, startUS, endUS, PaymentPastDue).
+		Order("h.created_at ASC, h.id ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	notices := make([]PaymentFailureNotice, 0, len(rows))
+	for _, row := range rows {
+		notices = append(notices, PaymentFailureNotice{
+			PeriodStart: time.UnixMicro(row.PeriodStartUS).UTC(),
+			PeriodEnd:   time.UnixMicro(row.PeriodEndUS).UTC(),
+			CreatedAt:   row.CreatedAt.UTC(),
+		})
+	}
+	return notices, nil
 }
 
 // UpdatePaymentState uses a compare-and-set transition so concurrent workers

@@ -28,6 +28,7 @@ const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deplo
 let fixture = buildFixture();
 let relayCaps = new Map();
 let billingPayments = new Map();
+let paymentNotices = new Map();
 let setupKeys = [];
 let invitations = [];
 // ADR-0032. Seeded with one small tree so the Domains view and the setup
@@ -182,6 +183,7 @@ const server = http.createServer((request, response) => {
   if (path === "/__mock__/billing/fixture" && method === "PUT") {
     relayCaps = new Map();
     billingPayments = new Map();
+    paymentNotices = new Map();
     return noContent(response);
   }
   if (path === "/__mock__/billing/payment-state" && method === "PUT") {
@@ -189,6 +191,7 @@ const server = http.createServer((request, response) => {
       const [year, month] = period.split("-").map(Number);
       const payment = { period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", device_minor: 2500, relay_minor: 500, total_minor: 3000, state, checkout_url: "https://sandbox-buy.paddle.com/checkout/mock", updated_at: new Date().toISOString() };
       billingPayments.set(period, payment);
+      paymentNotices.set(period, { notices: state === "past_due" ? [{ period_start: payment.period_start, period_end: payment.period_end, created_at: payment.updated_at }] : [] });
       return json(response, 200, payment);
     });
   }
@@ -354,6 +357,10 @@ const server = http.createServer((request, response) => {
     const payment = { period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", device_minor: 2500, relay_minor: 500, total_minor: 3000, state: "checkout", checkout_url: "https://sandbox-buy.paddle.com/checkout/mock", updated_at: new Date().toISOString() };
     billingPayments.set(period, payment);
     return json(response, 202, payment);
+  }
+  if (karst === "/billing/payment-notices" && method === "GET") {
+    const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
+    return json(response, 200, paymentNotices.get(period) ?? { notices: [] });
   }
   if (karst === "/billing/relay-cap" && method === "GET") {
     const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);

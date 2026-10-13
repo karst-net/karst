@@ -28,6 +28,7 @@ type customerPaymentStore interface {
 	PaddleAccount(context.Context) (billing.PaddleAccount, error)
 	QueuePayment(context.Context, time.Time, time.Time) (billing.PaymentIntent, error)
 	Payment(context.Context, time.Time, time.Time) (billing.PaymentIntent, error)
+	PaymentFailureNotices(context.Context, time.Time, time.Time) ([]billing.PaymentFailureNotice, error)
 	Invoice(context.Context, time.Time, time.Time) (billing.FinalInvoice, error)
 }
 
@@ -48,6 +49,57 @@ type customerPaymentView struct {
 // The queue mutation and audit record share one SQL transaction; the provider
 // request runs later in the outbox worker.
 func RegisterPaymentEndpoints(router *mux.Router, manager permissions.Manager, db *gorm.DB, payments customerPaymentStore, log *audit.Log, collectionEnabled bool) {
+	notices := router.PathPrefix("/karst/v1/billing/payment-notices").Subrouter()
+	notices.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			if manager == nil {
+				util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "billing authorization is not configured"), w)
+				return
+			}
+			karstAuthorization(manager)(next).ServeHTTP(w, r)
+		})
+	})
+	notices.HandleFunc("", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "method must be GET"), w)
+			return
+		}
+		user, err := nbcontext.GetUserAuthFromContext(r.Context())
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		role, ok := nbcontext.RoleFromContext(r.Context())
+		if !ok || !isBillingRole(types.UserRole(role)) {
+			util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "billing notices require an account owner or administrator"), w)
+			return
+		}
+		period, err := parsePaymentPeriod(r)
+		if err != nil {
+			util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "period must be one YYYY-MM UTC calendar month"), w)
+			return
+		}
+		if payments == nil || log == nil {
+			util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "billing notice or audit storage is not configured"), w)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		accountCtx := billing.WithAccount(ctx, user.AccountId)
+		periodEnd := period.AddDate(0, 1, 0)
+		items, err := payments.PaymentFailureNotices(accountCtx, period, periodEnd)
+		if err != nil {
+			paymentAPIError(ctx, w, err)
+			return
+		}
+		if _, err := log.Append(ctx, user.UserId, "karst.billing.payment_notices.view", "billing/payment-notices/"+period.Format("2006-01"), ""); err != nil {
+			util.WriteError(ctx, status.Errorf(status.Internal, "could not audit billing notice access"), w)
+			return
+		}
+		util.WriteJSONObject(ctx, w, map[string]any{"notices": items})
+	}).Methods(http.MethodGet, http.MethodOptions)
+
 	routes := router.PathPrefix("/karst/v1/billing/payments").Subrouter()
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
