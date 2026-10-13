@@ -4,7 +4,7 @@
 - **Status:** Accepted (pilot provider: Paddle; live collection remains gated)
 - **Date:** 2026-10-12
 - **Deciders:** Billing decisions recorded in #275
-- **Related:** #275, ADR-0049, ADR-0050, ADR-0051 (proposed), ADR-0052 (proposed)
+- **Related:** #275, ADR-0049, ADR-0050, ADR-0051 (accepted), ADR-0052 (accepted)
 
 ---
 

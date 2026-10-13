@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0051: Versioned billing rates and usage alerts
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
-- **Deciders:** Pending
+- **Deciders:** Billing decisions recorded in #275
 - **Related:** #275, ADR-0049, ADR-0050
 
 ---

@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0052: Optional managed-relay spending caps
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
-- **Deciders:** Pending
-- **Related:** #275, ADR-0038, ADR-0049, ADR-0050, ADR-0051 (proposed)
+- **Deciders:** Billing decisions recorded in #275
+- **Related:** #275, ADR-0038, ADR-0049, ADR-0050, ADR-0051 (accepted)
 
 ---
 
@@ -23,7 +23,7 @@ not yet arrived or on a live control-plane request for every forwarded packet.
 
 ## Decision
 
-Propose an opt-in byte-credit allocator. A cap remains disabled until a
+Use an opt-in byte-credit allocator. A cap remains disabled until a
 customer sets one and acknowledges possible interruption of managed-relay
 forwarding. No cap behavior applies to an unconfigured account or self-hosted
 relay. Packet forwarding and credit renewal make no payment-provider calls.
