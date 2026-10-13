@@ -93,19 +93,25 @@ an unclean restart, failed surrender, or loss of reachability, old issued bytes
 stay reserved through period end and a fresh generation obtains new credits.
 The total remains bounded by the cap, though unused reserved bytes may reduce
 availability.
-These controls do not yet collect payment. Unconfigured deployments create no relay spool and retain
-existing forwarding behavior. The mapping ledger table is additive, and no
-mappings are written unless the optional roster integration is explicitly
-supplied. On non-Unix platforms, enabling the spool currently fails at startup.
+Usage metering and relay caps do not themselves collect payment. Unconfigured
+deployments create no relay spool and retain existing forwarding behavior. The
+mapping ledger table is additive, and no mappings are written unless the
+optional roster integration is explicitly supplied. On non-Unix platforms,
+enabling the spool currently fails at startup.
 
-Remaining work under [#275](https://github.com/karst-net/karst/issues/275):
+## Remaining pilot work
 
-- Add operator reconciliation workflows for unexpected windows, missing or
-  late batches, and producer inventory gaps; preserve evidence for disk failures,
-  clock anomalies, and unresolved mappings.
-- Resolve seller/tax responsibility, payment provider and failure policy, and
-  self-hosted support terms before implementing payment collection.
-- Document retention, recovery, and downgrade before managed rollout.
+The current billing decisions, Paddle integration, audited payment notices,
+retention policy, customer usage reporting, and migration guidance are recorded
+in the [managed billing pilot readiness guide](managed-billing-pilot.md). The
+remaining work tracked by [#275](https://github.com/karst-net/karst/issues/275)
+is to select the payment-retry execution model and self-hosted support terms,
+tune relay grant size and expiry from 30–90 days of shadow measurements, validate
+cap recovery, and complete an upgrade/backup-restore/rollback rehearsal on a
+separate unconfigured deployment. Live collection remains gated on Paddle
+onboarding, supported-market selection, and SaaS tax-category approval.
+Incomplete or late usage must remain visible as unknown coverage and must not be
+estimated or manually changed into billable bytes.
 
 There is no atomic network-write/disk-write transaction. A crash between them
 can lose observations. This must remain visible uncertainty, rather than an
@@ -116,11 +122,11 @@ estimated charge or a claim of exactly-once measurement.
 `cargo test -p karst-relay` covers relay behavior and the write boundary. The
 write tests inject failures and zero writes at every partial-frame position.
 Queue tests exclude mesh/control frames and preserve payload-only metadata.
-Go race tests in `management/internals/karst/relayusage` cover bounded upload
+Go race tests in `server/management/internals/karst/relayusage` cover bounded upload
 parsing, fresh request authentication, operator producer/mapping authorization,
 nonce replay rejection, exact batch deduplication, conflicting content, and
-durable account totals/coverage. Tests in `management/internals/karst/usage`
-and `management/internals/karst/roster` cover historical mappings, retries,
+durable account totals/coverage. Tests in `server/management/internals/karst/usage`
+and `server/management/internals/karst/roster` cover historical mappings, retries,
 deployment isolation, rollback, and admission continuity on ledger failure.
 The shared `spec/vectors/relay-usage-roster-v1.toml` fixture checks that Rust
 reads references emitted by Go's durable publication path. These checks do
