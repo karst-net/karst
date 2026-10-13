@@ -186,6 +186,12 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusCreated}, template: "/karst/v1/relays/enroll-tokens",
 		},
 		{
+			name: "de-enroll a relay", method: http.MethodPost,
+			path: "/karst/v1/relays/deenroll",
+			body: `{"address":"203.0.113.9:443"}`,
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/relays/deenroll",
+		},
+		{
 			// No real token is minted for this case (see skipRoleChecks's
 			// own doc comment) -- without one, both an admin and a member
 			// session get the same answer a relay with no token at all

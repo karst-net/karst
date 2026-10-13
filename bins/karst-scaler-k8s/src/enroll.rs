@@ -18,6 +18,11 @@ struct MintResponse {
     token: String,
 }
 
+#[derive(Debug, Serialize)]
+struct DeenrollRequest<'a> {
+    address: &'a str,
+}
+
 /// An `Agent` with root certs loaded from the OS's own store via
 /// `rustls-native-certs` and `aws-lc-rs` installed as the crypto provider
 /// — identical to `bins/karst-scaler/src/advise_loop.rs::build_agent`; see
@@ -64,4 +69,37 @@ pub(crate) fn mint_token(
         .read_json()
         .map_err(|e| format!("POST {url}: decoding response: {e}"))?;
     Ok(response.token)
+}
+
+/// Removes `address`'s own `relayreg.Store` row via `relayDeenroll`
+/// (#319) — see `K8sDriver::destroy`, the only caller, for why this runs
+/// after the `StatefulSet` patch, not before (a failed patch after a
+/// successful deenroll would leave a replacement pod spawning against an
+/// already-consumed enroll token; a failed deenroll after a successful
+/// patch just leaves the pre-#319 leaked row, no worse than before this
+/// existed).
+///
+/// A `404` (the row is already gone — e.g. a retried `destroy()` call) is
+/// treated as success, the same convention
+/// `karst_scaler_turn_k8s::enroll::deenroll` uses for the identical
+/// reason.
+///
+/// # Errors
+/// If the request fails, is refused, or the response is neither success
+/// nor 404.
+pub(crate) fn deenroll(
+    agent: &ureq::Agent,
+    control_api_base: &str,
+    pat: &str,
+    address: &str,
+) -> Result<(), String> {
+    let url = format!("{control_api_base}/karst/v1/relays/deenroll");
+    match agent
+        .post(&url)
+        .header("Authorization", &format!("Bearer {pat}"))
+        .send_json(DeenrollRequest { address })
+    {
+        Ok(_) | Err(ureq::Error::StatusCode(404)) => Ok(()),
+        Err(e) => Err(format!("POST {url}: {e}")),
+    }
 }

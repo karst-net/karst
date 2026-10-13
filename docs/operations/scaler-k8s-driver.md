@@ -83,6 +83,39 @@ Kubernetes's own semantics, not a choice this driver makes.
 refuses a request naming any other pod rather than silently scaling down
 a different one than asked.
 
+## `destroy` also removes the `relayreg.Store` row (issue #319)
+
+Before this, `destroy` only patched the `StatefulSet` down and cleaned up
+the bundle `Secret` key — the scaled-down relay's own `relayreg.Store` row
+stayed behind forever, since nothing else in this system ever removes it
+either (`karst-relay` has no self-deregistration RPC, and `NetmapRelays`
+applies no staleness filter). Every scale-down leaked a permanent orphan
+into every client's netmap.
+
+`destroy` now also calls `POST /karst/v1/relays/deenroll` with the exact
+address the removed instance was enrolled under — [`bundle::pod_address`],
+the same function `create()` uses to build that address in the first
+place, so the two can never compute it differently. This runs *after* the
+`StatefulSet` patch, not before: the pod `drain()` already terminated is
+gone either way, so patching first and deenrolling second means a failed
+deenroll only reproduces the pre-#319 leak (acceptable, already the status
+quo), while the reverse order would risk a failed patch leaving a
+replacement pod spawning against an already-consumed enroll token (worse).
+A deenroll failure is a real `DriverError`, not swallowed the way the
+bundle-`Secret`-key cleanup already was — this is the leak #319 exists to
+close, not a cosmetic loose end.
+
+No new RBAC: `relayDeenroll` is a control-server HTTP call authenticated
+by the same `enroll_pat_file`-backed PAT `create()` already uses, not a
+Kubernetes API call, so `deploy/kubernetes/scaler/rbac.yaml` needs no
+change for it.
+
+**Not fixed by this**: `karst-scaler-aws` (#295/#304) has the identical
+leak, but cannot use this same mechanism — unlike a `StatefulSet` pod's
+address, an EC2 instance's registered address is resolved by the relay
+itself via IMDS after boot, never known to (or learnable by) the driver.
+Filed separately as #329.
+
 ## Configuring `karst-scaler drive` to use this driver
 
 ```toml

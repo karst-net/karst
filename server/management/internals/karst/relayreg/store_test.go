@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -267,5 +268,73 @@ func TestLatestTelemetryIsScopedToTheAskingAccount(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("got %+v, want nil — acct-b's relay has never reported", got)
+	}
+}
+
+// mustCreateWithAddress is mustCreate but for DeleteByAddress's own tests,
+// which need addresses that actually differ between rows — mustCreate's
+// fixed "203.0.113.7:443" is fine for every other test here, which never
+// looks up by address.
+func mustCreateWithAddress(t *testing.T, s *Store, accountID string, seed byte, address string) *StoredRelay {
+	t.Helper()
+	relay, err := s.Create(WithAccount(context.Background(), accountID), Entry{
+		Address:       address,
+		TLSServerName: "relay.example.com",
+		IdentityKey:   testKey(seed),
+		Region:        "eu",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return relay
+}
+
+func TestDeleteByAddressRemovesTheMatchingEntry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	kept := mustCreateWithAddress(t, s, "acct-a", 0xaa, "203.0.113.1:443")
+	mustCreateWithAddress(t, s, "acct-a", 0xbb, "203.0.113.2:443")
+
+	if err := s.DeleteByAddress(ctx, "203.0.113.2:443"); err != nil {
+		t.Fatalf("delete by address: %v", err)
+	}
+
+	remaining, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != kept.ID {
+		t.Fatalf("got %+v, want only the untouched relay at 203.0.113.1:443", remaining)
+	}
+}
+
+func TestDeleteByAddressOfAnUnknownAddressIsErrNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	mustCreateWithAddress(t, s, "acct-a", 0xcc, "203.0.113.3:443")
+
+	err := s.DeleteByAddress(ctx, "203.0.113.99:443")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete by address: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteByAddressIsScopedToTheAskingAccount(t *testing.T) {
+	s := newTestStore(t)
+	mustCreateWithAddress(t, s, "acct-a", 0xdd, "203.0.113.4:443")
+
+	// acct-b asking to remove acct-a's relay by its address must not find it.
+	err := s.DeleteByAddress(WithAccount(context.Background(), "acct-b"), "203.0.113.4:443")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete by address across accounts: got %v, want ErrNotFound", err)
+	}
+
+	// Confirmed still there under its real account.
+	remaining, err := s.List(WithAccount(context.Background(), "acct-a"))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("got %+v, want acct-a's relay untouched", remaining)
 	}
 }

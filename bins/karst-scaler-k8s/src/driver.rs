@@ -16,7 +16,9 @@ use serde_json::json;
 
 use karst_scaler_driver::{Driver, DriverError, Instance, InstanceState};
 
-use crate::bundle::{bundle_secret_name, pod_fqdn, pod_name, secret_key, EnrollBundle};
+use crate::bundle::{
+    bundle_secret_name, pod_address, pod_fqdn, pod_name, secret_key, EnrollBundle,
+};
 use crate::enroll;
 
 /// Errors constructing a [`K8sDriver`] — everything after that surfaces as
@@ -196,7 +198,7 @@ impl Driver for K8sDriver {
                     pool_id,
                 )
                 .map_err(DriverError::Other)?;
-                let address = format!("{}:443", pod_fqdn(pool_id, ordinal, &self.namespace));
+                let address = pod_address(pool_id, ordinal, &self.namespace);
                 let bundle = EnrollBundle {
                     control_api_base: self.control_api_base.clone(),
                     token,
@@ -298,6 +300,21 @@ impl Driver for K8sDriver {
                 .patch(pool_id, &PatchParams::default(), &sts_patch)
                 .await
                 .map_err(to_driver_error)?;
+
+            // Removes this instance's own relayreg.Store row (#319) --
+            // deliberately after the StatefulSet patch above, not before;
+            // see enroll::deenroll's own doc comment for why that order
+            // matters. Propagated as a real error, unlike the secret
+            // cleanup below: a failed registry removal is the exact leak
+            // #319 exists to close, not a cosmetic loose end.
+            let address = pod_address(pool_id, highest, &self.namespace);
+            enroll::deenroll(
+                &self.http,
+                &self.control_api_base,
+                &self.enroll_pat,
+                &address,
+            )
+            .map_err(DriverError::Other)?;
 
             // Best-effort cleanup: the key is already single-use (the
             // control server enforces that), so leaving it behind is

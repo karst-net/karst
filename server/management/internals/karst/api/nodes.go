@@ -269,6 +269,11 @@ type relayReader interface {
 	List(context.Context) ([]relayreg.StoredRelay, error)
 	Create(context.Context, relayreg.Entry) (*relayreg.StoredRelay, error)
 	Delete(context.Context, string) error
+	// DeleteByAddress is ADR-0045 §7's own driver-initiated teardown path
+	// (issue #319) — see relayDeenroll and relayreg.Store.DeleteByAddress's
+	// own doc comment for why this is keyed by address, not id, unlike
+	// turnReader.DeleteByURI.
+	DeleteByAddress(context.Context, string) error
 	// LatestTelemetry is ADR-0021's read side: a relay's most recent
 	// self-report, or nil if it has never reported.
 	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
@@ -408,6 +413,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/relays/{relayId}", h.relaysDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/{relayId}/health", h.relayHealth).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/relays/enroll-tokens", h.relayEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/relays/deenroll", h.relayDeenroll).Methods(http.MethodPost, http.MethodOptions)
 	// Deliberately on the parent router, not karstRouter -- see
 	// relaysEnroll's own doc comment for why. limitRequestBody is applied
 	// explicitly since this route does not inherit karstRouter's own
@@ -588,23 +594,24 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				return
 			}
 			// ADR-0045 §6/§7b: the Scaler role exists to mint relay-enroll
-			// and turn-enroll tokens, and to ask for a TURN server it
-			// enrolled to be de-enrolled, nothing else. roles.Scaler's own
-			// Create grant on modules.KarstControl is coarser than that
+			// and turn-enroll tokens, and to ask for a relay or TURN server
+			// it enrolled to be de-enrolled, nothing else. roles.Scaler's
+			// own Create grant on modules.KarstControl is coarser than that
 			// (this RBAC model's only module granularity covers every
-			// mutation under /karst/v1, not just these three routes — see
+			// mutation under /karst/v1, not just these four routes — see
 			// roles.Scaler's own doc comment), so this hard allowlist is
 			// what actually keeps the role narrow, independent of whatever
 			// a future endpoint added under this same module gate would
-			// otherwise permit it to reach. turnDeenroll is deliberately a
-			// POST (operations.Create), not the DELETE turnsDelete already
-			// is -- roles.Scaler's own Delete grant stays false; see that
-			// function's own doc comment for why this is a request shaped
-			// like a Create rather than a widened Delete grant.
+			// otherwise permit it to reach. turnDeenroll/relayDeenroll are
+			// deliberately POSTs (operations.Create), not the DELETE
+			// turnsDelete/relaysDelete already are -- roles.Scaler's own
+			// Delete grant stays false; see turnDeenroll's own doc comment
+			// (and relayDeenroll's, issue #319) for why these are requests
+			// shaped like a Create rather than a widened Delete grant.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
 				path := strings.TrimPrefix(r.URL.Path, "/api")
-				if path != relayEnrollTokensPath && path != turnEnrollTokensPath && path != turnDeenrollPath {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens, or request turn de-enrollment"), w)
+				if path != relayEnrollTokensPath && path != turnEnrollTokensPath && path != turnDeenrollPath && path != relayDeenrollPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens, or request relay or turn de-enrollment"), w)
 					return
 				}
 			}
@@ -1565,13 +1572,61 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayEnrollTokensPath, turnEnrollTokensPath and turnDeenrollPath are the
-// only three routes the Scaler role's hard allowlist in karstAuthorization
-// permits — see that allowlist's own comment, relayEnrollTokensCreate
-// below, turnEnrollTokensCreate, and turnDeenroll.
+// relayDeenrollRequest is what a karst-scaler Kubernetes (or AWS) relay
+// driver sends to remove the registry entry for a relay instance it has
+// destroyed (issue #319). Keyed by address, not id, mirroring
+// turnDeenrollRequest's own shape and for the same underlying reason --
+// the driver computes a to-be-destroyed instance's own address
+// deterministically at create() time and has no reason to List first just
+// to recover the id relaysDelete expects. Unlike a TURN instance's uri,
+// though, a relay's registry id cannot be derived from its address either
+// -- see relayreg.Store.DeleteByAddress's own doc comment for why that
+// matters to how this request is handled, not just how it is shaped.
+type relayDeenrollRequest struct {
+	Address string `json:"address"`
+}
+
+// relayDeenroll lets the Scaler role remove a relayreg.Store entry without
+// the generic Delete grant relaysDelete needs -- see this route's own
+// entry in the Scaler hard-allowlist (above, in karstAuthorization) for
+// why this is shaped as a POST/Create request rather than a widened
+// Delete permission, the same reasoning turnDeenroll's own doc comment
+// gives for TURN. Runs through the ordinary karstRouter/karstAuthorization
+// stack: the caller is karst-scaler's own drive loop, which already holds
+// a session-bearing Scaler PAT.
+func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.relays == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
+		return
+	}
+	var req relayDeenrollRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.relays.DeleteByAddress(r.Context(), req.Address); errors.Is(err, relayreg.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// relayEnrollTokensPath, turnEnrollTokensPath, turnDeenrollPath and
+// relayDeenrollPath are the only four routes the Scaler role's hard
+// allowlist in karstAuthorization permits — see that allowlist's own
+// comment, relayEnrollTokensCreate below, turnEnrollTokensCreate,
+// turnDeenroll, and relayDeenroll.
 const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
 const turnEnrollTokensPath = "/karst/v1/turn/enroll-tokens"
 const turnDeenrollPath = "/karst/v1/turn/deenroll"
+const relayDeenrollPath = "/karst/v1/relays/deenroll"
 
 // relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
 // §7 Phase 2) sends when it has just created a relay instance and needs a

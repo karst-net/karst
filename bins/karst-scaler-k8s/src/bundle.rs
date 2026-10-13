@@ -67,6 +67,17 @@ pub fn pod_fqdn(pool_id: &str, ordinal: u32, namespace: &str) -> String {
     )
 }
 
+/// The literal `address` ordinal `i` is enrolled under — [`pod_fqdn`] plus
+/// the fixed `:443` port `create()` writes into every bundle. A single
+/// function for both `create()` (which writes this into the bundle) and
+/// `destroy()` (which must pass this exact string to `relayDeenroll`,
+/// issue #319) so the two can never drift apart the way two independent
+/// `format!` call sites could.
+#[must_use]
+pub fn pod_address(pool_id: &str, ordinal: u32, namespace: &str) -> String {
+    format!("{}:443", pod_fqdn(pool_id, ordinal, namespace))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
@@ -95,6 +106,14 @@ mod tests {
         assert_eq!(
             pod_fqdn("relay", 2, "karst-system"),
             "relay-2.relay.karst-system.svc.cluster.local"
+        );
+    }
+
+    #[test]
+    fn pod_address_is_the_fqdn_with_the_fixed_create_time_port() {
+        assert_eq!(
+            pod_address("relay", 2, "karst-system"),
+            "relay-2.relay.karst-system.svc.cluster.local:443"
         );
     }
 
