@@ -130,6 +130,10 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
                 let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
                 build_k8s_driver(section, &config.control_api_base)?
             }
+            "turn-k8s" => {
+                let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
+                build_turn_k8s_driver(section, &config.control_api_base)?
+            }
             "aws" => {
                 let section = driver_section.as_ref().unwrap_or_else(|| unreachable!());
                 build_aws_driver(section, &config.control_api_base)?
@@ -137,7 +141,7 @@ fn run_drive(advise_config_path: &str) -> Result<(), String> {
             other => {
                 return Err(format!(
                     "{advise_config_path}: unknown driver.kind {other:?} (expected \"noop\", \
-                     \"k8s\", or \"aws\")"
+                     \"k8s\", \"turn-k8s\", or \"aws\")"
                 ))
             }
         };
@@ -186,6 +190,51 @@ fn build_k8s_driver(
     Err(
         "this build of karst-scaler was not compiled with k8s driver support -- \
          rebuild with --features k8s"
+            .to_owned(),
+    )
+}
+
+#[cfg(feature = "turn-k8s")]
+fn build_turn_k8s_driver(
+    section: &advise_config::DriverSection,
+    control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    let namespace = section
+        .namespace
+        .clone()
+        .ok_or_else(|| "driver.kind = \"turn-k8s\" needs driver.namespace".to_owned())?;
+    let enroll_pat_file = section
+        .enroll_pat_file
+        .clone()
+        .ok_or_else(|| "driver.kind = \"turn-k8s\" needs driver.enroll_pat_file".to_owned())?;
+    let credential_ttl_secs = section.credential_ttl_secs.ok_or_else(|| {
+        "driver.kind = \"turn-k8s\" needs driver.credential_ttl_secs -- must equal the control \
+         server's own turncred.Minter TTL"
+            .to_owned()
+    })?;
+    let enroll_pat = std::fs::read_to_string(&enroll_pat_file)
+        .map_err(|e| format!("reading {enroll_pat_file}: {e}"))?
+        .trim()
+        .to_owned();
+    let driver =
+        karst_scaler_turn_k8s::K8sTurnDriver::new(karst_scaler_turn_k8s::K8sTurnDriverConfig {
+            namespace,
+            control_api_base: control_api_base.to_owned(),
+            enroll_pat,
+            credential_ttl: std::time::Duration::from_secs(credential_ttl_secs),
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(Box::new(driver))
+}
+
+#[cfg(not(feature = "turn-k8s"))]
+fn build_turn_k8s_driver(
+    _section: &advise_config::DriverSection,
+    _control_api_base: &str,
+) -> Result<Box<dyn karst_scaler::driver::Driver>, String> {
+    Err(
+        "this build of karst-scaler was not compiled with turn-k8s driver support -- \
+         rebuild with --features turn-k8s"
             .to_owned(),
     )
 }
