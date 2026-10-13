@@ -16,7 +16,7 @@ use base64ct::{Base64, Encoding as _};
 
 use karst_scaler_driver::{Driver, DriverError, Instance, InstanceState};
 
-use crate::bundle::{tls_server_name, EnrollBundle, POOL_TAG_KEY};
+use crate::bundle::{tls_server_name, EnrollBundle, POOL_TAG_KEY, TLS_SERVER_NAME_TAG_KEY};
 use crate::enroll;
 
 /// Errors constructing an [`AwsDriver`] — everything after that surfaces
@@ -174,6 +174,32 @@ impl AwsDriver {
             .find_map(|i| i.state().and_then(aws_sdk_ec2::types::InstanceState::name))
             .cloned())
     }
+
+    /// Reads back `id`'s own [`TLS_SERVER_NAME_TAG_KEY`] tag — issue
+    /// #329, `destroy`'s only way to recover the key `relayDeenroll`
+    /// needs, since nothing in this driver process remembers it from
+    /// `create()` (the `token` it was derived from is long discarded, and
+    /// a separate in-memory map would not survive a `karst-scaler drive`
+    /// restart the way reading it back from AWS does). `None` means the
+    /// tag is missing, not that the call failed — expected for any
+    /// instance a pre-#329 driver launched, which never had it.
+    async fn describe_tls_server_name(&self, id: &str) -> Result<Option<String>, DriverError> {
+        let output = self
+            .client
+            .describe_instances()
+            .instance_ids(id)
+            .send()
+            .await
+            .map_err(to_driver_error)?;
+        Ok(output
+            .reservations()
+            .iter()
+            .flat_map(aws_sdk_ec2::types::Reservation::instances)
+            .flat_map(aws_sdk_ec2::types::Instance::tags)
+            .find(|t| t.key() == Some(TLS_SERVER_NAME_TAG_KEY))
+            .and_then(|t| t.value())
+            .map(str::to_owned))
+    }
 }
 
 impl Driver for AwsDriver {
@@ -238,6 +264,12 @@ impl Driver for AwsDriver {
                 let tag_spec = TagSpecification::builder()
                     .resource_type(ResourceType::Instance)
                     .tags(Tag::builder().key(POOL_TAG_KEY).value(pool_id).build())
+                    .tags(
+                        Tag::builder()
+                            .key(TLS_SERVER_NAME_TAG_KEY)
+                            .value(&bundle.tls_server_name)
+                            .build(),
+                    )
                     .build();
 
                 let mut request = self
@@ -311,12 +343,46 @@ impl Driver for AwsDriver {
 
     fn destroy(&mut self, _pool_id: &str, id: &str) -> Result<(), DriverError> {
         self.rt.block_on(async {
+            // Read back this instance's own tls_server_name *before*
+            // terminating it -- issue #329. Once terminated, AWS only
+            // guarantees describe_instances keeps returning the
+            // instance's data for a limited, undocumented window; reading
+            // it first while the instance is still fully alive avoids
+            // depending on that window at all. A describe failure here
+            // leaves the instance untouched: safe to retry, no leak
+            // created either way.
+            let tls_server_name = self.describe_tls_server_name(id).await?;
+
             self.client
                 .terminate_instances()
                 .instance_ids(id)
                 .send()
                 .await
                 .map_err(to_driver_error)?;
+
+            // Removes this instance's own relayreg.Store row. Runs after
+            // termination, not before, for the same reason
+            // karst_scaler_k8s::driver::K8sDriver::destroy orders its own
+            // StatefulSet patch before its deenroll call: a failed
+            // deenroll after a successful terminate just reproduces the
+            // pre-#319/#329 leak (acceptable, already the status quo);
+            // the reverse order risks nothing better and one real way
+            // worse (terminating an instance this call never actually
+            // reached). A missing tag (an instance a pre-#329 driver
+            // launched, before this tag existed) is a known, visible gap
+            // this fix only prevents going forward -- not silently
+            // treated as success.
+            match tls_server_name {
+                Some(name) => {
+                    enroll::deenroll(&self.http, &self.control_api_base, &self.enroll_pat, &name)
+                        .map_err(DriverError::Other)?;
+                }
+                None => eprintln!(
+                    "karst-scaler-aws: instance {id} has no {TLS_SERVER_NAME_TAG_KEY} tag -- \
+                     its relayreg.Store row, if any, could not be removed (launched before #329?)"
+                ),
+            }
+
             Ok(())
         })
     }

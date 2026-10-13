@@ -274,6 +274,11 @@ type relayReader interface {
 	// own doc comment for why this is keyed by address, not id, unlike
 	// turnReader.DeleteByURI.
 	DeleteByAddress(context.Context, string) error
+	// DeleteByTLSServerName is DeleteByAddress's own counterpart for the
+	// AWS driver (issue #329) — see relayreg.Store.DeleteByTLSServerName's
+	// own doc comment for why that driver needs a different key than the
+	// Kubernetes driver does.
+	DeleteByTLSServerName(context.Context, string) error
 	// LatestTelemetry is ADR-0021's read side: a relay's most recent
 	// self-report, or nil if it has never reported.
 	LatestTelemetry(context.Context, string) (*relayreg.RelayTelemetryRecord, error)
@@ -1582,8 +1587,21 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 // though, a relay's registry id cannot be derived from its address either
 // -- see relayreg.Store.DeleteByAddress's own doc comment for why that
 // matters to how this request is handled, not just how it is shaped.
+//
+// Exactly one of Address/TLSServerName must be set -- the two keys two
+// different drivers each already have deterministically at their own
+// create() time, never both: the Kubernetes driver's own
+// StatefulSet-pod-DNS-name address (#319) is knowable before an EC2
+// instance's own registered address is (resolved by the relay itself via
+// IMDS, after boot -- never known to that driver), but an EC2 instance's
+// own TLSServerName (derived from its enrollment token, see
+// bins/karst-scaler-aws's own bundle::tls_server_name) is knowable just as
+// early as the Kubernetes driver's address is (#329). One request shape
+// serving both, rather than two near-identical routes for the same
+// underlying operation.
 type relayDeenrollRequest struct {
-	Address string `json:"address"`
+	Address       string `json:"address,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
 }
 
 // relayDeenroll lets the Scaler role remove a relayreg.Store entry without
@@ -1608,7 +1626,17 @@ func (h *handler) relayDeenroll(w http.ResponseWriter, r *http.Request) {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	if err := h.relays.DeleteByAddress(r.Context(), req.Address); errors.Is(err, relayreg.ErrNotFound) {
+	var err error
+	switch {
+	case req.Address != "" && req.TLSServerName == "":
+		err = h.relays.DeleteByAddress(r.Context(), req.Address)
+	case req.TLSServerName != "" && req.Address == "":
+		err = h.relays.DeleteByTLSServerName(r.Context(), req.TLSServerName)
+	default:
+		util.WriteErrorResponse("exactly one of address or tls_server_name is required", http.StatusBadRequest, w)
+		return
+	}
+	if errors.Is(err, relayreg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "relay not found"), w)
 		return
 	} else if err != nil {

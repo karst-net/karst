@@ -289,6 +289,74 @@ func mustCreateWithAddress(t *testing.T, s *Store, accountID string, seed byte, 
 	return relay
 }
 
+// mustCreateWithTLSServerName is mustCreateWithAddress's own counterpart
+// for DeleteByTLSServerName's tests (#329) -- which need TLSServerName
+// values that actually differ between rows, unlike mustCreate's fixed
+// "relay.example.com".
+func mustCreateWithTLSServerName(t *testing.T, s *Store, accountID string, seed byte, tlsServerName string) *StoredRelay {
+	t.Helper()
+	relay, err := s.Create(WithAccount(context.Background(), accountID), Entry{
+		Address:       "203.0.113.50:443",
+		TLSServerName: tlsServerName,
+		IdentityKey:   testKey(seed),
+		Region:        "eu",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	return relay
+}
+
+func TestDeleteByTLSServerNameRemovesTheMatchingEntry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	kept := mustCreateWithTLSServerName(t, s, "acct-a", 0xee, "pool-aaaaaa.aws.karst.internal")
+	mustCreateWithTLSServerName(t, s, "acct-a", 0xff, "pool-bbbbbb.aws.karst.internal")
+
+	if err := s.DeleteByTLSServerName(ctx, "pool-bbbbbb.aws.karst.internal"); err != nil {
+		t.Fatalf("delete by tls_server_name: %v", err)
+	}
+
+	remaining, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != kept.ID {
+		t.Fatalf("got %+v, want only the untouched relay at pool-aaaaaa...", remaining)
+	}
+}
+
+func TestDeleteByTLSServerNameOfAnUnknownNameIsErrNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithAccount(context.Background(), "acct-a")
+	mustCreateWithTLSServerName(t, s, "acct-a", 0x12, "pool-cccccc.aws.karst.internal")
+
+	err := s.DeleteByTLSServerName(ctx, "pool-never-registered.aws.karst.internal")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete by tls_server_name: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteByTLSServerNameIsScopedToTheAskingAccount(t *testing.T) {
+	s := newTestStore(t)
+	mustCreateWithTLSServerName(t, s, "acct-a", 0x34, "pool-dddddd.aws.karst.internal")
+
+	// acct-b asking to remove acct-a's relay by its tls_server_name must
+	// not find it.
+	err := s.DeleteByTLSServerName(WithAccount(context.Background(), "acct-b"), "pool-dddddd.aws.karst.internal")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete by tls_server_name across accounts: got %v, want ErrNotFound", err)
+	}
+
+	remaining, err := s.List(WithAccount(context.Background(), "acct-a"))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("got %+v, want acct-a's relay untouched", remaining)
+	}
+}
+
 func TestDeleteByAddressRemovesTheMatchingEntry(t *testing.T) {
 	s := newTestStore(t)
 	ctx := WithAccount(context.Background(), "acct-a")
