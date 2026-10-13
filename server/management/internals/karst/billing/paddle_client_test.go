@@ -158,3 +158,20 @@ func TestPaddleFindTransactionsFailsClosedWhenResultsAreTruncated(t *testing.T) 
 		t.Fatalf("truncated lookup error = %v", err)
 	}
 }
+
+func TestPaddleSavedPaymentMethodLookupIsBoundedAndConsentAware(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/customers/ctm_01grnn4zta5a1mf02jjze7y2yz/payment-methods" || r.URL.Query().Get("per_page") != "30" {
+			t.Errorf("saved-method request = %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"paymtd_01grnn4zta5a1mf02jjze7y2yz"}],"meta":{"pagination":{"has_more":false}}}`))
+	}))
+	defer server.Close()
+	client := &PaddleClient{baseURL: server.URL, apiKey: "token", httpClient: server.Client()}
+	hasMethod, err := client.HasSavedPaymentMethod(context.Background(), "ctm_01grnn4zta5a1mf02jjze7y2yz")
+	if err != nil || !hasMethod || requests != 1 {
+		t.Fatalf("saved-method lookup = %v, %v, requests=%d", hasMethod, err, requests)
+	}
+}

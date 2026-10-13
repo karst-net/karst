@@ -136,6 +136,19 @@ func TestPaymentFailureNoticesPersistAndStayAccountScoped(t *testing.T) {
 	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
 		t.Fatal(err)
 	}
+	var retries []paymentAttemptRow
+	if err := store.db.Where("invoice_ref = ? AND number > 0", intent.InvoiceReference).Order("number ASC").Find(&retries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(retries) != len(paymentRetryDays) {
+		t.Fatalf("scheduled retry count=%d; want %d", len(retries), len(paymentRetryDays))
+	}
+	for index, days := range paymentRetryDays {
+		want := eventAt.AddDate(0, 0, days)
+		if retries[index].Number != index+1 || retries[index].State != paymentRetryQueued || !retries[index].ScheduledAt.Equal(want) {
+			t.Fatalf("retry %d = %+v; want queued at %s", index+1, retries[index], want)
+		}
+	}
 	notices, err := store.PaymentFailureNotices(ctx, start, end)
 	if err != nil || len(notices) != 1 {
 		t.Fatalf("payment notices=%+v err=%v; want one notice", notices, err)

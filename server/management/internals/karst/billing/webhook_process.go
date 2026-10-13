@@ -56,24 +56,58 @@ func (s *Store) ProcessWebhook(ctx context.Context, eventID string) (bool, error
 		if payment.ProviderCustomerID == "" || event.CustomerID != payment.ProviderCustomerID {
 			return ErrWebhookConflict
 		}
-		if payment.ProviderID != "" && payment.ProviderID != event.TransactionID {
+		if event.AttemptNumber < 0 || event.AttemptNumber > len(paymentRetryDays) {
 			return ErrWebhookConflict
 		}
-		if payment.LastProviderEventUS > inbox.OccurredUS || (payment.State == PaymentPaid && target != PaymentPaid) {
+		if err := ensureInitialPaymentAttempt(tx, payment); err != nil {
+			return err
+		}
+		var attempt paymentAttemptRow
+		if err := tx.First(&attempt, "invoice_ref = ? AND number = ?", event.InvoiceRef, event.AttemptNumber).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) && event.AttemptNumber > 0 {
+				return ErrWebhookConflict
+			}
+			return err
+		}
+		if attempt.ProviderID != "" && attempt.ProviderID != event.TransactionID {
+			return ErrWebhookConflict
+		}
+		if attempt.LastProviderEventUS > inbox.OccurredUS || (payment.State == PaymentPaid && target != PaymentPaid) {
 			return markWebhookProcessed(tx, &inbox, &processed)
 		}
-		if payment.State != target && !validPaymentTransition(payment.State, target) {
+		if payment.State != target && payment.LatestAttempt == event.AttemptNumber && !validPaymentTransition(payment.State, target) {
 			return ErrInvalidPaymentState
 		}
-		updates := map[string]any{"provider_id": event.TransactionID, "last_provider_event_us": inbox.OccurredUS, "updated_at": time.Now().UTC()}
-		if payment.State != target {
-			updates["state"] = target
+		now := time.Now().UTC()
+		attemptUpdates := map[string]any{"provider_id": event.TransactionID, "last_provider_event_us": inbox.OccurredUS, "updated_at": now}
+		if target == PaymentPastDue || target == PaymentPaid || target == PaymentCheckout || target == PaymentOperatorHold {
+			attemptUpdates["state"] = target
+		}
+		if err := tx.Model(&paymentAttemptRow{}).Where("invoice_ref = ? AND number = ?", event.InvoiceRef, event.AttemptNumber).Updates(attemptUpdates).Error; err != nil {
+			return err
+		}
+		// Any successful attempt pays the invoice. Other attempt events can be
+		// audited without moving the customer-visible invoice backwards.
+		updates := map[string]any{"updated_at": now}
+		if inbox.OccurredUS > payment.LastProviderEventUS {
+			updates["last_provider_event_us"] = inbox.OccurredUS
+		}
+		if target == PaymentPaid || payment.LatestAttempt == event.AttemptNumber {
+			updates["state"], updates["provider_id"] = target, event.TransactionID
+			if payment.State == PaymentPaid && target != PaymentPaid {
+				delete(updates, "state")
+				delete(updates, "provider_id")
+			}
 		}
 		if err := tx.Model(&paymentOutboxRow{}).Where("invoice_ref = ?", event.InvoiceRef).Updates(updates).Error; err != nil {
 			return err
 		}
-		if payment.State != target {
-			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: payment.State, ToState: target, EventID: event.EventID, CreatedAt: time.Now().UTC()}).Error; err != nil {
+		fromState := attempt.State
+		if payment.LatestAttempt == event.AttemptNumber {
+			fromState = payment.State
+		}
+		if fromState != target {
+			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: fromState, ToState: target, EventID: event.EventID, CreatedAt: now}).Error; err != nil {
 				return err
 			}
 		} else if target == PaymentPastDue {
@@ -81,7 +115,18 @@ func (s *Store) ProcessWebhook(ctx context.Context, eventID string) (bool, error
 			// collection attempt. Preserve it as a payment-audit entry so the
 			// in-app notice feed can show it; duplicate event delivery is already
 			// stopped by ProcessedAt above.
-			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: PaymentPastDue, ToState: PaymentPastDue, EventID: event.EventID, CreatedAt: time.Now().UTC()}).Error; err != nil {
+			if err := tx.Create(&paymentHistoryRow{InvoiceRef: event.InvoiceRef, FromState: PaymentPastDue, ToState: PaymentPastDue, EventID: event.EventID, CreatedAt: now}).Error; err != nil {
+				return err
+			}
+		}
+		if target == PaymentPastDue && payment.FirstFailureAtUS == nil {
+			if err := schedulePaymentRetriesTx(tx, &payment, time.UnixMicro(inbox.OccurredUS)); err != nil {
+				return err
+			}
+		}
+		if target == PaymentPaid || target == PaymentCheckout || target == PaymentOperatorHold {
+			if err := tx.Model(&paymentAttemptRow{}).Where("invoice_ref = ? AND number > ? AND state = ?", event.InvoiceRef, event.AttemptNumber, paymentRetryQueued).
+				Updates(map[string]any{"state": paymentRetrySkipped, "updated_at": now}).Error; err != nil {
 				return err
 			}
 		}

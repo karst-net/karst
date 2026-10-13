@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -101,9 +102,18 @@ func NewPaddleWebhookHandler(verifier *PaddleWebhookVerifier, inbox webhookInbox
 			return
 		}
 		invoiceRef, _ := envelope.Data.CustomData["karst_invoice_id"].(string)
+		attemptNumber := 0
+		if value, ok := envelope.Data.CustomData["karst_attempt_number"]; ok {
+			n, valid := value.(float64)
+			if !valid || n < 0 || n > float64(len(paymentRetryDays)) || math.Trunc(n) != n {
+				http.Error(w, "invalid webhook event", http.StatusBadRequest)
+				return
+			}
+			attemptNumber = int(n)
+		}
 		event := NormalizedPaddleEvent{EventID: envelope.EventID, EventType: envelope.EventType,
 			OccurredAt: envelope.OccurredAt, TransactionID: envelope.Data.ID,
-			CustomerID: envelope.Data.CustomerID, InvoiceRef: invoiceRef, Status: envelope.Data.Status}
+			CustomerID: envelope.Data.CustomerID, InvoiceRef: invoiceRef, AttemptNumber: attemptNumber, Status: envelope.Data.Status}
 		if _, err := inbox.RecordWebhook(r.Context(), event); err != nil {
 			http.Error(w, "could not persist webhook event", http.StatusInternalServerError)
 			return
