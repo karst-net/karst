@@ -50,6 +50,8 @@ func TestPruneFinalizedPeriodCheckpointsOpeningCount(t *testing.T) {
 	reportStart, reportEnd := retentionEnd.Add(-48*time.Hour), retentionEnd.Add(-12*time.Hour)
 	require.NoError(t, db.Create(&usage.Period{ID: "coverage", AccountID: "a", StartUS: reportStart.UnixMicro(), Complete: true}).Error)
 	r := usage.Reporter{DB: db, Now: func() time.Time { return retentionEnd }}
+	_, err = r.Devices(context.Background(), "a", start, start.Add(time.Hour))
+	require.ErrorIs(t, err, usage.ErrCheckpoint, "a historical window before the earliest pruned checkpoint must fail closed")
 	report, err := r.Devices(context.Background(), "a", reportStart, reportEnd)
 	require.NoError(t, err)
 	require.True(t, report.Complete)

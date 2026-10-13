@@ -268,6 +268,13 @@ func checkpointAt(db *gorm.DB, accountID string, atUS int64) (checkpointState, e
 		}
 		selected = row
 	}
+	if selected.Sequence == 0 && len(rows) > 0 {
+		// A checkpoint proves that its covered source prefix has been pruned.
+		// A request starting before the first boundary cannot safely recover its
+		// opening count from the remaining ledger, so fail closed instead of
+		// fabricating a plausible zero or incomplete report.
+		return checkpointState{}, ErrCheckpoint
+	}
 	return selected, nil
 }
 
