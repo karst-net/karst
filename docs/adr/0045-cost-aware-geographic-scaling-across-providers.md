@@ -911,7 +911,13 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
 3. **Which SLA metric is operator-meaningful?** p95 RTT to nearest relay is
    measurable by clients but is not the same as an application SLA. The
    vocabulary in §3 should be validated against real operators before it is
-   frozen.
+   frozen. **Addendum, 2026-10-13:** the question set to run that validation
+   with is prepared in
+   [`docs/operations/sla-vocabulary-validation.md`](../operations/sla-vocabulary-validation.md),
+   grounded in how SD-WAN SLA profiles elsewhere split latency, jitter, and
+   packet loss into separate thresholds — a gap this vocabulary may share.
+   Preparing the instrument is not running it; this question remains open
+   until a real operator actually answers it.
 4. **Spot / preemptible capacity.** Large savings, but preemption interacts
    badly with long-lived sessions and with N+1 accounting. Out of scope for
    Phases 0–2 unless Phase 1 shows the savings justify the complexity.
