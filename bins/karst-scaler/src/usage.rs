@@ -23,10 +23,23 @@
 //! auditable by a human reading the file next to it should not need a
 //! dependency to read its own input.
 //!
+//! An optional 6th column, `aquifer`, names which aquifer a record's usage
+//! belongs to — ADR-0045 Open Question #6, resolved for **internal
+//! reporting only**: a pool shared by several aquifers (ADR-0038) can have
+//! its blended, already-tiered cost split back out per aquifer in
+//! [`crate::simulate::PoolReport::by_aquifer`]. Absent or blank means
+//! "unattributed" — that usage still counts toward the pool's priced total,
+//! it is simply excluded from the per-aquifer breakdown rather than guessed
+//! at. This is **not** a customer-facing chargeback computation: see
+//! `docs/adr/0045-cost-aware-geographic-scaling-across-providers.md`'s
+//! Open Question #6 for why those are different problems.
+//!
 //! ```text
-//! # timestamp,pool,kind,key,quantity
+//! # timestamp,pool,kind,key,quantity[,aquifer]
 //! 1759536000,onprem-mia,meter,egress_gb,420.5
 //! 1759536000,onprem-mia,edge,cross-region,12.0
+//! 1759536000,shared-fra,meter,egress_gb,300.0,aquifer-acme
+//! 1759536000,shared-fra,meter,egress_gb,100.0,aquifer-beta
 //! ```
 
 use crate::cost_model::EdgeClass;
@@ -65,12 +78,17 @@ pub struct Record {
     pub pool: String,
     pub metric: Metric,
     pub quantity: f64,
+    /// The aquifer this usage belongs to, if the feed attributes it.
+    /// `None` (absent column, or present but blank) means unattributed —
+    /// see the module doc for what that does and does not exclude it from.
+    pub aquifer: Option<String>,
 }
 
 /// Parse a usage file's text.
 ///
 /// Blank lines and lines starting with `#` are skipped. Every other line is
-/// `timestamp,pool,kind,key,quantity` with `kind` one of `meter` or `edge`.
+/// `timestamp,pool,kind,key,quantity` with `kind` one of `meter` or `edge`,
+/// plus an optional trailing `aquifer` column.
 ///
 /// # Errors
 /// [`Error::Syntax`] naming the offending line.
@@ -83,14 +101,21 @@ pub fn parse(text: &str) -> Result<Vec<Record>, Error> {
             continue;
         }
         let fields: Vec<&str> = line.split(',').map(str::trim).collect();
-        let [timestamp, pool, kind, key, quantity] = fields.as_slice() else {
-            return Err(Error::Syntax(
-                line_no,
-                format!(
-                    "want 5 comma-separated fields (timestamp,pool,kind,key,quantity), got {}",
-                    fields.len()
-                ),
-            ));
+        let (timestamp, pool, kind, key, quantity, aquifer) = match fields.as_slice() {
+            [timestamp, pool, kind, key, quantity] => (timestamp, pool, kind, key, quantity, None),
+            [timestamp, pool, kind, key, quantity, aquifer] => {
+                (timestamp, pool, kind, key, quantity, Some(*aquifer))
+            }
+            _ => {
+                return Err(Error::Syntax(
+                    line_no,
+                    format!(
+                        "want 5 or 6 comma-separated fields \
+                         (timestamp,pool,kind,key,quantity[,aquifer]), got {}",
+                        fields.len()
+                    ),
+                ))
+            }
         };
         let timestamp: i64 = timestamp.parse().map_err(|_| {
             Error::Syntax(
@@ -130,6 +155,9 @@ pub fn parse(text: &str) -> Result<Vec<Record>, Error> {
             pool: (*pool).to_owned(),
             metric,
             quantity,
+            // A present-but-blank column is the same as an absent one: both
+            // mean "unattributed," not "attributed to the empty string."
+            aquifer: aquifer.filter(|a| !a.is_empty()).map(ToOwned::to_owned),
         });
     }
     Ok(records)
@@ -172,6 +200,7 @@ mod tests {
                 pool: "onprem-mia".to_owned(),
                 metric: Metric::Meter("egress_gb".to_owned()),
                 quantity: 420.5,
+                aquifer: None,
             }
         );
     }
@@ -180,6 +209,25 @@ mod tests {
     fn an_edge_record_round_trips() {
         let records = parse("1759536000,onprem-mia,edge,cross-region,12.0").expect("parses");
         assert_eq!(records[0].metric, Metric::Edge(EdgeClass::CrossRegion));
+    }
+
+    #[test]
+    fn an_aquifer_tagged_record_round_trips() {
+        let records =
+            parse("1759536000,shared-fra,meter,egress_gb,300.0,aquifer-acme").expect("parses");
+        assert_eq!(records[0].aquifer, Some("aquifer-acme".to_owned()));
+    }
+
+    #[test]
+    fn a_blank_trailing_aquifer_column_means_unattributed() {
+        let records = parse("1759536000,shared-fra,meter,egress_gb,300.0,").expect("parses");
+        assert_eq!(records[0].aquifer, None);
+    }
+
+    #[test]
+    fn an_absent_aquifer_column_also_means_unattributed() {
+        let records = parse("1759536000,shared-fra,meter,egress_gb,300.0").expect("parses");
+        assert_eq!(records[0].aquifer, None);
     }
 
     #[test]

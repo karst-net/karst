@@ -90,6 +90,55 @@ pub struct PoolReport {
     /// used."
     pub commitments: f64,
     pub total: f64,
+    /// ADR-0045 Open Question #6, resolved for **internal reporting only**:
+    /// each aquifer's share of `total`, computed per (metric, period)
+    /// bucket as that aquifer's share of the bucket's *original* quantity
+    /// (before any commitment consumption), applied to whatever that
+    /// bucket actually cost — the pool's real blended, post-tier rate,
+    /// never a hypothetical rate each aquifer would face alone. A
+    /// commitment's flat charge is allocated the same way, by the
+    /// committed meter's aquifer shares in that period, because commitment
+    /// consumption has no real per-aquifer ordering to allocate by instead.
+    ///
+    /// Quantity with no aquifer tag is **excluded here, not guessed at** —
+    /// it is still counted in `total` and `meters`/`edges`, so
+    /// `by_aquifer.values().sum()` is less than `total` whenever any usage
+    /// in this pool was unattributed, by exactly that usage's share of
+    /// cost. A pool with no aquifer-tagged usage at all leaves this empty.
+    ///
+    /// **Not a chargeback computation.** A pool shared by several aquifers
+    /// usually prices *cheaper* blended than any one aquifer would alone —
+    /// this field passes that shared discount through to every
+    /// contributor equally. A customer-facing bill must not do that
+    /// silently; see `docs/adr/0045-cost-aware-geographic-scaling-across-providers.md`
+    /// Open Question #6.
+    pub by_aquifer: BTreeMap<String, f64>,
+}
+
+/// Split `cost` — whatever this (pool, metric, period) bucket actually
+/// priced to — across the aquifers that contributed to it, in proportion to
+/// each one's share of the bucket's original quantity. A no-op if the
+/// bucket has no aquifer-tagged usage at all.
+fn allocate_by_aquifer(
+    pool_report: &mut PoolReport,
+    aquifer_usage: &BTreeMap<(String, MetricKey, i64), BTreeMap<String, f64>>,
+    original_usage: &BTreeMap<(String, MetricKey, i64), f64>,
+    key: &(String, MetricKey, i64),
+    cost: f64,
+) {
+    let Some(per_aquifer) = aquifer_usage.get(key) else {
+        return;
+    };
+    let Some(&total_quantity) = original_usage.get(key) else {
+        return;
+    };
+    if total_quantity <= 0.0 {
+        return;
+    }
+    for (aquifer, &quantity) in per_aquifer {
+        *pool_report.by_aquifer.entry(aquifer.clone()).or_insert(0.0) +=
+            cost * quantity / total_quantity;
+    }
 }
 
 /// The whole simulated run.
@@ -119,6 +168,12 @@ impl std::fmt::Display for Report {
                 writeln!(f, "  commitments: {:.2}", report.commitments)?;
             }
             writeln!(f, "  total: {:.2}", report.total)?;
+            if !report.by_aquifer.is_empty() {
+                writeln!(f, "  by aquifer (internal reporting only, not a bill):")?;
+                for (aquifer, cost) in &report.by_aquifer {
+                    writeln!(f, "    {aquifer}: {cost:.2}")?;
+                }
+            }
         }
         write!(f, "grand total: {:.2}", self.grand_total())
     }
@@ -139,6 +194,11 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
     // billed event (one instance-hour, one allocation) — summing first and
     // rounding the total would answer a different question.
     let mut usage: BTreeMap<(String, MetricKey, i64), f64> = BTreeMap::new();
+    // Each bucket's quantity broken down by aquifer — a record with no
+    // aquifer tag contributes to `usage` above but not here, which is what
+    // makes it excluded from `by_aquifer` rather than misattributed.
+    let mut aquifer_usage: BTreeMap<(String, MetricKey, i64), BTreeMap<String, f64>> =
+        BTreeMap::new();
     // Every period that produced *any* usage for a pool, in pool order —
     // the set a commitment's "charged every period" is evaluated against.
     // Phase 0 has no independent notion of a period a pool existed for but
@@ -163,13 +223,27 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
         let rounded = round_up(record.quantity, schedule.minimum_increment);
         let period = period_key(record.timestamp);
         let key = (record.pool.clone(), MetricKey::from(&record.metric), period);
-        *usage.entry(key).or_insert(0.0) += rounded;
+        *usage.entry(key.clone()).or_insert(0.0) += rounded;
+        if let Some(aquifer) = &record.aquifer {
+            *aquifer_usage
+                .entry(key)
+                .or_default()
+                .entry(aquifer.clone())
+                .or_insert(0.0) += rounded;
+        }
 
         let periods = pool_periods.entry(record.pool.clone()).or_default();
         if !periods.contains(&period) {
             periods.push(period);
         }
     }
+
+    // A snapshot of each bucket's full quantity before pass 2 consumes
+    // some of it against commitments — `allocate_by_aquifer` always
+    // allocates by a bucket's *original* share, not by what happened to be
+    // left over after a commitment ate part of it, because commitment
+    // consumption has no per-aquifer ordering to attribute that choice to.
+    let original_usage = usage.clone();
 
     let mut report = Report::default();
 
@@ -198,6 +272,13 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
                     MetricKey::Meter(commitment.meter.clone()),
                     period,
                 );
+                allocate_by_aquifer(
+                    pool_report,
+                    &aquifer_usage,
+                    &original_usage,
+                    &key,
+                    commitment.price,
+                );
                 if let Some(remaining) = usage.get_mut(&key) {
                     *remaining = (*remaining - commitment.quantity).max(0.0);
                 }
@@ -207,7 +288,7 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
     }
 
     // Pass 3: price what the commitments left behind.
-    for ((pool_id, metric, _period), quantity) in usage {
+    for ((pool_id, metric, period), quantity) in usage {
         let pool = doc.pools.get(&pool_id).ok_or_else(|| {
             Error::Invalid(format!(
                 "usage names pool {pool_id:?}, which the cost model does not define"
@@ -220,7 +301,9 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
         })?;
         let cost = price_quantity(schedule, quantity)
             .map_err(|e| Error::Invalid(format!("pool {pool_id:?}, {metric}: {e}")))?;
-        let pool_report = report.pools.entry(pool_id).or_default();
+        let pool_report = report.pools.entry(pool_id.clone()).or_default();
+        let key = (pool_id, metric.clone(), period);
+        allocate_by_aquifer(pool_report, &aquifer_usage, &original_usage, &key, cost);
         match metric {
             MetricKey::Meter(id) => *pool_report.meters.entry(id).or_insert(0.0) += cost,
             MetricKey::Edge(class) => *pool_report.edges.entry(class).or_insert(0.0) += cost,
@@ -553,6 +636,98 @@ price = 5.0
         // commitment's flat 5.0.
         assert_eq!(report.pools["p"].meters["instance_hours"], 20.0);
         assert_eq!(report.pools["p"].total, 25.0);
+    }
+
+    #[test]
+    fn a_pool_with_no_aquifer_tagged_usage_has_an_empty_by_aquifer_map() {
+        // ADR-0045 Open Question #6: a pool nobody tagged is the overwhelming
+        // common case (a single-tenant pool), and must behave exactly as it
+        // did before this field existed.
+        let d = doc(r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+[pools.p.cost_model.meters.egress_gb]
+mode = "graduated"
+bands = [{ unit_price = 0.1 }]
+"#);
+        let records = usage::parse("1,p,meter,egress_gb,100.0").expect("parses");
+        let report = simulate(&d, &records).expect("simulates");
+        assert!(report.pools["p"].by_aquifer.is_empty());
+        assert_eq!(report.pools["p"].total, 10.0);
+    }
+
+    #[test]
+    fn aquifer_tagged_usage_splits_a_volume_pools_blended_cost_proportionally() {
+        // Volume pricing reprices the *whole* quantity at the tier the total
+        // reaches (the non-convexity `volume_pricing_reprices_the_whole_quantity_at_the_tier_reached`
+        // already covers) -- the case this test exists for. 60 GB alone
+        // would price at the 0.2 tier (12.0); 40 GB alone would too (8.0);
+        // combined, 100 GB crosses the 50 GB boundary into the 0.1 tier and
+        // blended-prices at 10.0 total -- cheaper per GB than either
+        // aquifer would face alone. Each aquifer's by_aquifer share must
+        // reflect that shared discount, not a hypothetical standalone price.
+        let d = doc(r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+[pools.p.cost_model.meters.egress_gb]
+mode = "volume"
+bands = [{ up_to = 50.0, unit_price = 0.2 }, { unit_price = 0.1 }]
+"#);
+        let text = "1,p,meter,egress_gb,60.0,acme\n1,p,meter,egress_gb,40.0,beta\n";
+        let records = usage::parse(text).expect("parses");
+        let report = simulate(&d, &records).expect("simulates");
+        assert_eq!(report.pools["p"].meters["egress_gb"], 10.0);
+        assert!((report.pools["p"].by_aquifer["acme"] - 6.0).abs() < 1e-9);
+        assert!((report.pools["p"].by_aquifer["beta"] - 4.0).abs() < 1e-9);
+        assert!(
+            (report.pools["p"].by_aquifer.values().sum::<f64>() - report.pools["p"].total).abs()
+                < 1e-9
+        );
+    }
+
+    #[test]
+    fn untagged_usage_is_excluded_from_by_aquifer_but_still_counted_in_total() {
+        let d = doc(r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+[pools.p.cost_model.meters.egress_gb]
+mode = "graduated"
+bands = [{ unit_price = 0.1 }]
+"#);
+        // 80 GB tagged to acme, 20 GB left unattributed, same bucket.
+        let text = "1,p,meter,egress_gb,80.0,acme\n1,p,meter,egress_gb,20.0\n";
+        let records = usage::parse(text).expect("parses");
+        let report = simulate(&d, &records).expect("simulates");
+        assert_eq!(report.pools["p"].total, 10.0);
+        // acme's share is 80/100 of the bucket's cost, not 100% of it.
+        assert!((report.pools["p"].by_aquifer["acme"] - 8.0).abs() < 1e-9);
+        assert_eq!(report.pools["p"].by_aquifer.len(), 1);
+    }
+
+    #[test]
+    fn a_commitments_flat_charge_is_allocated_by_the_committed_meters_aquifer_shares() {
+        let d = doc(r#"
+[pools.p]
+provider = "onprem"
+region = "us-east-1"
+[pools.p.cost_model.meters.instance_hours]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+[[pools.p.cost_model.commitments]]
+meter = "instance_hours"
+quantity = 100.0
+price = 5.0
+"#);
+        // acme used 60 of the 100 committed hours, beta 40 -- a 60/40 split.
+        let text = "1,p,meter,instance_hours,60.0,acme\n1,p,meter,instance_hours,40.0,beta\n";
+        let records = usage::parse(text).expect("parses");
+        let report = simulate(&d, &records).expect("simulates");
+        assert_eq!(report.pools["p"].total, 5.0);
+        assert!((report.pools["p"].by_aquifer["acme"] - 3.0).abs() < 1e-9);
+        assert!((report.pools["p"].by_aquifer["beta"] - 2.0).abs() < 1e-9);
     }
 
     #[test]

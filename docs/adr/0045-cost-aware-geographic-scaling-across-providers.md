@@ -921,12 +921,40 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
 4. **Spot / preemptible capacity.** Large savings, but preemption interacts
    badly with long-lived sessions and with N+1 accounting. Out of scope for
    Phases 0–2 unless Phase 1 shows the savings justify the complexity.
+   **Addendum, 2026-10-13:** that gate was never actually evaluated — nothing
+   in `bins/karst-scaler` modeled spot pricing or reclaim rate at all. Split
+   out to its own issue, [#339](https://github.com/karst-net/karst/issues/339):
+   a data-only simulator extension (synthetic reclaim-rate model, spot
+   pricing alongside on-demand) to check the gate before any driver work is
+   considered. Still out of scope here until #339 closes it one way or the
+   other.
 5. **Commitment planning is a different problem** (buy a one-year plan or
    not). The planner consumes commitments; recommending them is out of scope
    here, though Phase 0's simulator is the right place to evaluate one.
-6. **Multi-aquifer cost attribution.** ADR-0038 gives per-aquifer capacity;
-   chargeback of shared pool cost across aquifers (relevant to the
-   multi-tenant case, #166) is a separate decision.
+6. **~~Multi-aquifer cost attribution.~~ Resolved for internal reporting,
+   2026-10-13 — not for customer-facing chargeback.** ADR-0038 gives
+   per-aquifer capacity and already meters bytes per aquifer
+   (`aquifer_meters`) for fairness enforcement; the gap was translating that
+   into the simulator's own tiered, stateful cost model (§2: "prices are
+   stateful"). `usage::Record` gained an optional `aquifer` column, and the
+   new `simulate::PoolReport::by_aquifer` allocates each (metric, period)
+   bucket's **already-priced, blended** cost across the aquifers that
+   contributed to it, by their share of that bucket's quantity — never by
+   repricing each aquifer's usage independently, which a tiered schedule
+   makes meaningless (`price(a) + price(b) ≠ price(a+b)`). Usage with no
+   aquifer tag is excluded from the breakdown, not guessed at. A
+   commitment's flat charge is allocated the same way, by the committed
+   meter's aquifer shares that period, since commitment consumption has no
+   real per-aquifer ordering to allocate by instead.
+
+   **This passes a shared pool's blended-rate discount through to every
+   contributing aquifer equally — deliberate for internal reporting, and
+   the reason this is not a chargeback computation.** If this becomes
+   customer-facing chargeback, each tenant's bill must **not** include a
+   share of a bulk discount other tenants' usage happened to earn — that
+   needs each aquifer billed at the rate it would face standalone, a
+   different and harder computation, scoped separately if and when that
+   product need is confirmed (relevant to the multi-tenant case, #166).
 7. **Default retention for demand history** (§8): long enough to see
    seasonality, short enough to bound the sensitivity.
 8. **~~GCP and Azure equivalents of §4b's AWS anchor mechanism.~~
