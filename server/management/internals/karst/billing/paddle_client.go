@@ -29,6 +29,7 @@ const (
 	paddleSandboxAPI    = "https://sandbox-api.paddle.com"
 	paddleResponseLimit = 1 << 20
 	paddleLookupWindow  = 7 * 24 * time.Hour
+	paddlePageLimit     = 10
 )
 
 // PaddleClient makes single-attempt calls to Paddle Billing. It intentionally
@@ -98,7 +99,10 @@ func (c *PaddleClient) CreateTransaction(ctx context.Context, request PaddleTran
 	collectionMode := paddle.CollectionModeAutomatic
 	transaction, err := c.sdk.CreateTransaction(ctx, &paddle.CreateTransactionRequest{
 		CustomerID: &customerID, CurrencyCode: &currencyCode, CollectionMode: &collectionMode,
-		Items: items, CustomData: paddle.CustomData{"karst_invoice_id": request.CustomData.KarstInvoiceID},
+		Items: items, CustomData: paddle.CustomData{
+			"karst_invoice_id":     request.CustomData.KarstInvoiceID,
+			"karst_attempt_number": request.CustomData.KarstAttemptNumber,
+		},
 	})
 	if err != nil {
 		return PaddleTransaction{}, fmt.Errorf("billing: create Paddle transaction: %w", err)
@@ -131,7 +135,8 @@ func (c *PaddleClient) CreateTransaction(ctx context.Context, request PaddleTran
 func validatePaddleTransactionRequest(request PaddleTransactionRequest) error {
 	if !validPaddleID(request.CustomerID, "ctm_") || request.CollectionMode != "automatic" ||
 		request.CurrencyCode != "USD" || len(request.Items) == 0 || len(request.Items) > 100 ||
-		!strings.HasPrefix(request.CustomData.KarstInvoiceID, "ki_") {
+		!strings.HasPrefix(request.CustomData.KarstInvoiceID, "ki_") ||
+		request.CustomData.KarstAttemptNumber < 0 || request.CustomData.KarstAttemptNumber > len(paymentRetryDays) {
 		return ErrInvalidPaddleInvoice
 	}
 	for _, item := range request.Items {
@@ -149,10 +154,18 @@ func validatePaddleTransactionRequest(request PaddleTransactionRequest) error {
 // Karst metadata at the provider and fails closed if Paddle reports more rows
 // than were returned.
 func (c *PaddleClient) FindTransactionsByInvoice(ctx context.Context, customerID, invoiceReference string, createdAfter, createdBefore time.Time) ([]PaddleTransaction, error) {
+	return c.FindTransactionsByAttempt(ctx, customerID, invoiceReference, 0, createdAfter, createdBefore)
+}
+
+// FindTransactionsByAttempt reconciles one possibly ambiguous create. Karst
+// metadata is compared locally after listing a bounded set for the provider
+// customer; no new transaction is created by this lookup.
+func (c *PaddleClient) FindTransactionsByAttempt(ctx context.Context, customerID, invoiceReference string, attemptNumber int, createdAfter, createdBefore time.Time) ([]PaddleTransaction, error) {
 	if c == nil || c.httpClient == nil || c.apiKey == "" {
 		return nil, ErrPaddleAPIUnavailable
 	}
 	if !validPaddleID(customerID, "ctm_") || !strings.HasPrefix(invoiceReference, "ki_") ||
+		attemptNumber < 0 || attemptNumber > len(paymentRetryDays) ||
 		!createdAfter.Before(createdBefore) || createdAfter.IsZero() || createdBefore.IsZero() ||
 		createdBefore.Sub(createdAfter) > paddleLookupWindow {
 		return nil, ErrInvalidPaddleInvoice
@@ -172,7 +185,7 @@ func (c *PaddleClient) FindTransactionsByInvoice(ctx context.Context, customerID
 	}
 	matches := make([]PaddleTransaction, 0, 1)
 	for _, transaction := range envelope.Data {
-		if transaction.CustomerID == customerID && transaction.CustomData.KarstInvoiceID == invoiceReference {
+		if transaction.CustomerID == customerID && transaction.CustomData.KarstInvoiceID == invoiceReference && transaction.CustomData.KarstAttemptNumber == attemptNumber {
 			if !validPaddleID(transaction.ID, "txn_") {
 				return nil, ErrPaddleResponseInvalid
 			}
@@ -183,6 +196,47 @@ func (c *PaddleClient) FindTransactionsByInvoice(ctx context.Context, customerID
 		}
 	}
 	return matches, nil
+}
+
+// HasSavedPaymentMethod checks Paddle's authoritative saved-payment-method
+// list. Paddle only creates these records after the customer has explicitly
+// opted in through Checkout, so Karst never stores card data or an independent
+// consent flag. A transient/incomplete lookup fails closed and does not create
+// an automatic-collection transaction.
+func (c *PaddleClient) HasSavedPaymentMethod(ctx context.Context, customerID string) (bool, error) {
+	if c == nil || c.httpClient == nil || c.apiKey == "" {
+		return false, ErrPaddleAPIUnavailable
+	}
+	if !validPaddleID(customerID, "ctm_") {
+		return false, ErrInvalidPaddleInvoice
+	}
+	var after string
+	for page := 0; page < paddlePageLimit; page++ {
+		query := url.Values{}
+		query.Set("per_page", "30")
+		if after != "" {
+			query.Set("after", after)
+		}
+		path := "/customers/" + url.PathEscape(customerID) + "/payment-methods?" + query.Encode()
+		var envelope paddlePaymentMethodListEnvelope
+		if err := c.doJSON(ctx, http.MethodGet, path, nil, &envelope); err != nil {
+			return false, err
+		}
+		for _, method := range envelope.Data {
+			if !validPaddleID(method.ID, "paymtd_") {
+				return false, ErrPaddleResponseInvalid
+			}
+			return true, nil
+		}
+		if !envelope.Meta.Pagination.HasMore {
+			return false, nil
+		}
+		if len(envelope.Data) == 0 || envelope.Data[len(envelope.Data)-1].ID == "" {
+			return false, ErrPaddleLookupIncomplete
+		}
+		after = envelope.Data[len(envelope.Data)-1].ID
+	}
+	return false, ErrPaddleLookupIncomplete
 }
 
 // PaddleTransaction is the minimal provider state Karst needs to reconcile
@@ -201,6 +255,17 @@ type PaddleTransaction struct {
 
 type paddleTransactionListEnvelope struct {
 	Data []PaddleTransaction `json:"data"`
+	Meta struct {
+		Pagination struct {
+			HasMore bool `json:"has_more"`
+		} `json:"pagination"`
+	} `json:"meta"`
+}
+
+type paddlePaymentMethodListEnvelope struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
 	Meta struct {
 		Pagination struct {
 			HasMore bool `json:"has_more"`

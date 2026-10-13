@@ -161,8 +161,17 @@ func (s *Store) StartPaymentWorker(ctx context.Context, client *PaddleClient, in
 		interval = time.Minute
 	}
 	process := func() {
-		if err := s.ProcessReadyPayments(ctx, client, 100); err != nil && onError != nil {
-			onError(err)
+		now := time.Now().UTC()
+		var runErr error
+		for _, err := range []error{
+			s.ProcessReadyPayments(ctx, client, 100),
+			s.ReconcilePendingPaymentAttempts(ctx, client, now, 100),
+			s.ProcessScheduledPaymentRetries(ctx, client, now, 100),
+		} {
+			runErr = errors.Join(runErr, err)
+		}
+		if runErr != nil && onError != nil {
+			onError(runErr)
 		}
 	}
 	process()

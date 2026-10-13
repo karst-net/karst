@@ -22,36 +22,60 @@ const (
 	PaymentPaid         = "paid"
 	PaymentPastDue      = "past_due"
 	PaymentOperatorHold = "operator_hold"
+	paymentRetryQueued  = "queued"
+	paymentRetrySkipped = "skipped"
 )
 
+var paymentRetryDays = [...]int{1, 3, 7, 12}
+
 var (
-	ErrPaymentNotFound     = errors.New("billing: payment outbox record not found")
-	ErrPaymentConflict     = errors.New("billing: payment outbox record conflicts with finalized invoice")
-	ErrWebhookConflict     = errors.New("billing: webhook event conflicts with previously received event")
-	ErrInvalidPaymentState = errors.New("billing: invalid payment state transition")
+	ErrPaymentNotFound      = errors.New("billing: payment outbox record not found")
+	ErrPaymentConflict      = errors.New("billing: payment outbox record conflicts with finalized invoice")
+	ErrWebhookConflict      = errors.New("billing: webhook event conflicts with previously received event")
+	ErrInvalidPaymentState  = errors.New("billing: invalid payment state transition")
+	ErrPaymentRetryConflict = errors.New("billing: payment retry state conflicts")
 )
 
 // paymentOutboxRow is durable intent. A transition to submitting is written
 // before making the provider request; after a crash or ambiguous response the
 // record must be reconciled by invoice reference, never blindly resubmitted.
 type paymentOutboxRow struct {
-	InvoiceRef          string    `gorm:"primaryKey;size:67"`
-	AccountID           string    `gorm:"size:128;not null;index:idx_billing_payment_retention"`
-	PeriodStart         int64     `gorm:"not null"`
-	PeriodEnd           int64     `gorm:"not null"`
-	Currency            string    `gorm:"size:3;not null"`
-	AmountMinor         int64     `gorm:"not null"`
-	InvoiceHash         string    `gorm:"size:64;not null"`
-	State               string    `gorm:"size:32;not null;index"`
-	ProviderID          string    `gorm:"size:128"`
-	ProviderCustomerID  string    `gorm:"size:128"`
-	CheckoutURL         string    `gorm:"size:2048"`
+	InvoiceRef          string `gorm:"primaryKey;size:67"`
+	AccountID           string `gorm:"size:128;not null;index:idx_billing_payment_retention"`
+	PeriodStart         int64  `gorm:"not null"`
+	PeriodEnd           int64  `gorm:"not null"`
+	Currency            string `gorm:"size:3;not null"`
+	AmountMinor         int64  `gorm:"not null"`
+	InvoiceHash         string `gorm:"size:64;not null"`
+	State               string `gorm:"size:32;not null;index"`
+	ProviderID          string `gorm:"size:128"`
+	ProviderCustomerID  string `gorm:"size:128"`
+	CheckoutURL         string `gorm:"size:2048"`
+	LatestAttempt       int    `gorm:"not null;default:0"`
+	FirstFailureAtUS    *int64
 	AttemptStartedAt    time.Time `gorm:"index"`
 	LastProviderEventUS int64     `gorm:"not null;default:0"`
 	UpdatedAt           time.Time `gorm:"not null;index:idx_billing_payment_retention"`
 }
 
 func (paymentOutboxRow) TableName() string { return "karst_billing_payment_outbox" }
+
+// paymentAttemptRow is the durable one-time transaction intent for one
+// initial or scheduled collection attempt. The (invoice, number) key makes a
+// retry unique across concurrent workers and process restarts.
+type paymentAttemptRow struct {
+	InvoiceRef          string    `gorm:"primaryKey;size:67"`
+	Number              int       `gorm:"primaryKey"`
+	State               string    `gorm:"size:32;not null;index:idx_billing_retry_due,priority:1"`
+	ScheduledAt         time.Time `gorm:"not null;index:idx_billing_retry_due,priority:2"`
+	AttemptStartedAt    time.Time `gorm:"index"`
+	ProviderID          string    `gorm:"size:128"`
+	CheckoutURL         string    `gorm:"size:2048"`
+	LastProviderEventUS int64     `gorm:"not null;default:0"`
+	UpdatedAt           time.Time `gorm:"not null"`
+}
+
+func (paymentAttemptRow) TableName() string { return "karst_billing_payment_attempts" }
 
 // paymentHistoryRow preserves the durable, minimal state-transition audit for
 // seven years independently of the shorter webhook delivery inbox retention.
@@ -114,7 +138,10 @@ func (s *Store) QueuePayment(ctx context.Context, start, end time.Time) (Payment
 			return result.Error
 		}
 		if result.RowsAffected == 1 {
-			return tx.Create(&paymentHistoryRow{InvoiceRef: ref, FromState: "", ToState: PaymentReady, CreatedAt: row.UpdatedAt}).Error
+			if err := tx.Create(&paymentHistoryRow{InvoiceRef: ref, FromState: "", ToState: PaymentReady, CreatedAt: row.UpdatedAt}).Error; err != nil {
+				return err
+			}
+			return tx.Create(&paymentAttemptRow{InvoiceRef: ref, Number: 0, State: PaymentReady, ScheduledAt: row.UpdatedAt, UpdatedAt: row.UpdatedAt}).Error
 		}
 		var existing paymentOutboxRow
 		if err := tx.First(&existing, "invoice_ref = ?", ref).Error; err != nil {
@@ -124,7 +151,7 @@ func (s *Store) QueuePayment(ctx context.Context, start, end time.Time) (Payment
 			return ErrPaymentConflict
 		}
 		row = existing
-		return nil
+		return ensureInitialPaymentAttempt(tx, existing)
 	})
 	if err != nil {
 		return PaymentIntent{}, fmt.Errorf("billing: queue payment: %w", err)
@@ -227,6 +254,22 @@ func (s *Store) UpdatePaymentState(ctx context.Context, reference, expected, nex
 		if err := tx.Create(&paymentHistoryRow{InvoiceRef: reference, FromState: expected, ToState: next, CreatedAt: now}).Error; err != nil {
 			return err
 		}
+		if err := ensureInitialPaymentAttempt(tx, row); err != nil {
+			return err
+		}
+		attemptUpdates := map[string]any{"state": next, "updated_at": now}
+		if next == PaymentSubmitting {
+			attemptUpdates["attempt_started_at"] = now
+		}
+		if providerID != "" {
+			attemptUpdates["provider_id"] = providerID
+		}
+		if checkoutURL != "" {
+			attemptUpdates["checkout_url"] = checkoutURL
+		}
+		if err := tx.Model(&paymentAttemptRow{}).Where("invoice_ref = ? AND number = 0", reference).Updates(attemptUpdates).Error; err != nil {
+			return err
+		}
 		row.State = next
 		row.UpdatedAt = now
 		if next == PaymentSubmitting {
@@ -305,6 +348,14 @@ func paymentIntent(row paymentOutboxRow) PaymentIntent {
 	return PaymentIntent{InvoiceReference: row.InvoiceRef, AccountID: row.AccountID, PeriodStart: time.UnixMicro(row.PeriodStart).UTC(), PeriodEnd: time.UnixMicro(row.PeriodEnd).UTC(), Currency: row.Currency, AmountMinor: row.AmountMinor, InvoiceSHA256: row.InvoiceHash, State: row.State, ProviderID: row.ProviderID, ProviderCustomerID: row.ProviderCustomerID, CheckoutURL: row.CheckoutURL, AttemptStartedAt: row.AttemptStartedAt, UpdatedAt: row.UpdatedAt}
 }
 
+func ensureInitialPaymentAttempt(tx *gorm.DB, payment paymentOutboxRow) error {
+	row := paymentAttemptRow{InvoiceRef: payment.InvoiceRef, Number: 0, State: payment.State,
+		ScheduledAt: payment.UpdatedAt, AttemptStartedAt: payment.AttemptStartedAt,
+		ProviderID: payment.ProviderID, CheckoutURL: payment.CheckoutURL,
+		LastProviderEventUS: payment.LastProviderEventUS, UpdatedAt: payment.UpdatedAt}
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
+}
+
 // NormalizedPaddleEvent is the only webhook representation persisted. Do not
 // add raw request/body fields: Paddle signatures are verified before parsing.
 type NormalizedPaddleEvent struct {
@@ -314,6 +365,7 @@ type NormalizedPaddleEvent struct {
 	TransactionID string    `json:"transaction_id,omitempty"`
 	CustomerID    string    `json:"customer_id,omitempty"`
 	InvoiceRef    string    `json:"invoice_reference,omitempty"`
+	AttemptNumber int       `json:"attempt_number,omitempty"`
 	Status        string    `json:"status,omitempty"`
 }
 

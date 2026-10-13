@@ -135,17 +135,19 @@ behavior has been validated in a pilot, including reservation sizing against
 shadow usage.
 
 The pilot uses Paddle as merchant of record, with pre-tax USD rates and
-applicable tax shown separately at checkout. The approved payment-failure
-policy retries on days 1, 3, 7, and 12, provides in-app notices to billing
-admins, and keeps service active after day 14 while an invoice is past due.
-Paddle business/domain onboarding and SaaS tax-category approval remain gates
-before live collection. Self-hosted support terms remain open in
-[#275](https://github.com/karst-net/karst/issues/275). The current payment
-integration provides opt-in checkout and durable in-app failure notices;
-automated retries remain unimplemented while their execution model is pending
-in #275. No billing configuration is required for deployments that do not opt
-in; relay forwarding and device membership behavior remain available without
-usage collection.
+applicable tax shown separately at checkout. Karst manages one-time transaction
+retries on days 1, 3, 7, and 12 after the first provider failure, provides
+in-app notices to billing admins, and keeps service active after day 14 while
+an invoice is past due. Automatic collection uses a saved payment method only
+when Paddle confirms Checkout consent. If none is available, the retry creates
+a customer-action Checkout link and stops later automatic attempts. Paddle
+business/domain onboarding and SaaS tax-category approval remain gates before
+live collection. Paid self-hosted support is approved at $1,200/year for six
+remote support hours, with weekday first response within two business days and
+additional pre-approved work at $200/hour; it has no on-call or resolution SLA
+and does not change software licensing. No billing configuration is required
+for deployments that do not opt in; relay forwarding and device membership
+behavior remain available without usage collection.
 
 Paddle API collection is disabled unless `KARST_PADDLE_ENABLED=true` and a
 server-side `KARST_PADDLE_API_KEY` is supplied through the deployment's secret
@@ -160,8 +162,10 @@ does not itself create a payment; a finalized invoice must separately enter
 the payment outbox.
 
 To stop device collection, disable it using the audited command before
-downgrading to a release without collection hooks. Coordinate ledger and spool
-retention with the deployment's existing data-governance rules. Retain
-finalized invoices and payment/audit state for seven years and normalized
-webhook events for thirteen months; never persist raw webhook bodies after
-signature verification.
+downgrading to a release without collection hooks. Keep raw device lifecycle
+events until the relevant invoice period is finalized and for thirteen months
+after period end. Then prune only after a verified per-account checkpoint
+preserves the opening enrolled-device count, event sequence boundary, and
+digest against the source ledger. Retain finalized invoice inputs and
+payment/audit state for seven years and normalized webhook events for thirteen
+months; never persist raw webhook bodies after signature verification.

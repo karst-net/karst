@@ -136,6 +136,19 @@ func TestPaymentFailureNoticesPersistAndStayAccountScoped(t *testing.T) {
 	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
 		t.Fatal(err)
 	}
+	var retries []paymentAttemptRow
+	if err := store.db.Where("invoice_ref = ? AND number > 0", intent.InvoiceReference).Order("number ASC").Find(&retries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(retries) != len(paymentRetryDays) {
+		t.Fatalf("scheduled retry count=%d; want %d", len(retries), len(paymentRetryDays))
+	}
+	for index, days := range paymentRetryDays {
+		want := eventAt.AddDate(0, 0, days)
+		if retries[index].Number != index+1 || retries[index].State != paymentRetryQueued || !retries[index].ScheduledAt.Equal(want) {
+			t.Fatalf("retry %d = %+v; want queued at %s", index+1, retries[index], want)
+		}
+	}
 	notices, err := store.PaymentFailureNotices(ctx, start, end)
 	if err != nil || len(notices) != 1 {
 		t.Fatalf("payment notices=%+v err=%v; want one notice", notices, err)
@@ -167,6 +180,93 @@ func TestPaymentFailureNoticesPersistAndStayAccountScoped(t *testing.T) {
 	notices, err = store.PaymentFailureNotices(otherAccount, start, end)
 	if err != nil || len(notices) != 0 {
 		t.Fatalf("cross-account notices=%+v err=%v; want empty feed", notices, err)
+	}
+}
+
+func TestScheduledPaymentRetryWithoutSavedMethodReturnsCheckoutAndStops(t *testing.T) {
+	store, ctx, start, end := finalizedTestInvoice(t)
+	intent, err := store.QueuePayment(ctx, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetPaymentCustomer(ctx, intent.InvoiceReference, testPaddleCustomer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfigurePaddleAccount(ctx, true, testPaddleCustomer, "pro_01gsz4t5hdjse848p5f9t9hf5h"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentReady, PaymentSubmitting, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	eventAt := start.Add(2 * time.Hour)
+	event := NormalizedPaddleEvent{EventID: "evt_retry_schedule", EventType: "transaction.past_due", OccurredAt: eventAt,
+		TransactionID: "txn_01grnn4zta5a1mf02jjze7y2ys", CustomerID: testPaddleCustomer, InvoiceRef: intent.InvoiceReference, Status: "past_due"}
+	if _, err := store.RecordWebhook(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ProcessPendingWebhooks(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	var creates, methodLookups int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/customers/"+testPaddleCustomer+"/payment-methods":
+			methodLookups++
+			_, _ = w.Write([]byte(`{"data":[],"meta":{"pagination":{"has_more":false}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/transactions":
+			creates++
+			var request PaddleTransactionRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode retry create: %v", err)
+			}
+			if request.CustomData.KarstInvoiceID != intent.InvoiceReference || request.CustomData.KarstAttemptNumber != 1 {
+				t.Errorf("retry metadata = %+v", request.CustomData)
+			}
+			response, _ := json.Marshal(map[string]any{"data": map[string]any{
+				"id": "txn_01grnn4zta5a1mf02jjze7y2yz", "status": "ready", "customer_id": testPaddleCustomer,
+				"currency_code": "USD", "created_at": eventAt.AddDate(0, 0, 1).Format(time.RFC3339),
+				"custom_data": request.CustomData, "checkout": map[string]string{"url": "https://pay.paddle.com/checkout/retry"},
+			}})
+			_, _ = w.Write(response)
+		default:
+			t.Errorf("unexpected Paddle retry request %s %s", r.Method, r.URL)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := newPaddleClient("token", server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := eventAt.AddDate(0, 0, paymentRetryDays[0])
+	if err := store.ProcessScheduledPaymentRetries(ctx, client, due.Add(-time.Microsecond), 10); err != nil {
+		t.Fatal(err)
+	}
+	if creates != 0 || methodLookups != 0 {
+		t.Fatalf("early retry made API calls: creates=%d method lookups=%d", creates, methodLookups)
+	}
+	if err := store.ProcessScheduledPaymentRetries(ctx, client, due, 10); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Payment(ctx, start, end)
+	if err != nil || got.State != PaymentCheckout || got.CheckoutURL != "https://pay.paddle.com/checkout/retry" {
+		t.Fatalf("retry result = %+v, %v", got, err)
+	}
+	if creates != 1 || methodLookups != 1 {
+		t.Fatalf("retry API counts: creates=%d method lookups=%d; want 1 each", creates, methodLookups)
+	}
+	var attempts []paymentAttemptRow
+	if err := store.db.Where("invoice_ref = ? AND number > 0", intent.InvoiceReference).Order("number ASC").Find(&attempts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != len(paymentRetryDays) || attempts[0].State != PaymentCheckout {
+		t.Fatalf("attempt states = %+v", attempts)
+	}
+	for _, attempt := range attempts[1:] {
+		if attempt.State != paymentRetrySkipped {
+			t.Fatalf("later attempt %d state=%s, want skipped", attempt.Number, attempt.State)
+		}
 	}
 }
 

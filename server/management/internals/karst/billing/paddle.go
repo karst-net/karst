@@ -53,7 +53,8 @@ type PaddleBillingCycle struct {
 }
 
 type PaddleTransactionCustomData struct {
-	KarstInvoiceID string `json:"karst_invoice_id"`
+	KarstInvoiceID     string `json:"karst_invoice_id"`
+	KarstAttemptNumber int    `json:"karst_attempt_number,omitempty"`
 }
 
 // BuildPaddleTransactionRequest maps a verified finalized invoice to one
@@ -62,7 +63,17 @@ type PaddleTransactionCustomData struct {
 // The function has no side effects; callers must persist an outbox record
 // before sending this request and reconcile ambiguous creates by KarstInvoiceID.
 func BuildPaddleTransactionRequest(invoice FinalInvoice, customerID, productID string) (PaddleTransactionRequest, error) {
+	return BuildPaddleAttemptRequest(invoice, customerID, productID, 0)
+}
+
+// BuildPaddleAttemptRequest maps a finalized invoice and one durable attempt
+// number to a one-time Paddle transaction. Attempt zero is the customer-
+// initiated initial collection; retries use numbers 1 through 4. The stable
+// invoice reference is preserved separately so webhook reconciliation can
+// identify both the invoice and exact attempt.
+func BuildPaddleAttemptRequest(invoice FinalInvoice, customerID, productID string, attemptNumber int) (PaddleTransactionRequest, error) {
 	if !validPaddleID(customerID, "ctm_") || !validPaddleID(productID, "pro_") ||
+		attemptNumber < 0 || attemptNumber > len(paymentRetryDays) ||
 		invoice.AccountID == "" || invoice.SchemaVersion != "invoice-inputs-v1" ||
 		invoice.Currency != "USD" || invoice.FinalizedAt.IsZero() ||
 		!isUTCCalendarMonth(invoice.PeriodStart.UnixMicro(), invoice.PeriodEnd.UnixMicro()) ||
@@ -86,7 +97,7 @@ func BuildPaddleTransactionRequest(invoice FinalInvoice, customerID, productID s
 	return PaddleTransactionRequest{
 		CustomerID: customerID, CollectionMode: "automatic", CurrencyCode: "USD",
 		Items:      items,
-		CustomData: PaddleTransactionCustomData{KarstInvoiceID: paddleInvoiceReference(invoice)},
+		CustomData: PaddleTransactionCustomData{KarstInvoiceID: paddleInvoiceReference(invoice), KarstAttemptNumber: attemptNumber},
 	}, nil
 }
 

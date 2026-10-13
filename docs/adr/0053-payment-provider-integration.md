@@ -27,8 +27,10 @@ does not suspend networking. Keep only provider references and minimum
 auditable invoice/payment state; never store card credentials or raw relay
 traffic. Retain finalized invoices and audit/payment state for seven years,
 normalized webhook events for thirteen months, and no raw webhook body after
-signature verification. Whether retries use Paddle subscriptions or scheduled
-re-issuance of one-time invoice checkouts remains to be decided in #275.
+signature verification. Retain device lifecycle rows through invoice
+finalization and thirteen months past period end; prune older rows only after
+verified per-account checkpoints preserve boundary device count, event
+sequence, and ledger digest.
 
 ## Decision
 
@@ -36,9 +38,14 @@ Use Paddle Billing for pilot collection through an asynchronous adapter owned
 by the management control plane. The internal account billing ledger remains
 the source of rates, billable usage, and invoice-line calculations. The
 current adapter creates one one-time Paddle transaction for each finalized
-monthly invoice and uses Paddle Checkout for customer payment. The retry
-cadence is approved, but the mechanism is pending the #275 decision above;
-never create another transaction while a prior attempt may have succeeded.
+monthly invoice and uses Paddle Checkout for customer payment. Karst manages
+the approved one-time retry schedule: create a distinct automatic-collection
+transaction on days 1, 3, 7, and 12 after the first provider-reported failure,
+keyed by invoice and attempt number. Retry collection may use only a Paddle
+saved payment method, which proves the customer opted in through Checkout.
+Without a saved method, create one fresh Checkout attempt for customer action
+and stop later automatic attempts. Reconcile every ambiguous create against
+its exact invoice and attempt before another create.
 Paddle calculates applicable tax and reports collection status; it does not
 calculate Karst usage or decide relay forwarding. The billing console presents
 the returned checkout link and reads payment state from the webhook-backed
@@ -85,6 +92,13 @@ collection.
   inconclusive, hold the operation for an operator instead of risking a
   duplicate charge. Record final Paddle IDs and status, and surface terminal
   failures to operators.
+- Store each collection attempt separately under `(invoice, attempt number)`.
+  Anchor retry days to the first provider failure's `occurred_at` time in UTC,
+  and create all scheduled entries atomically with that accepted failure
+  event. A successful attempt pays the invoice even if its webhook arrives
+  after a later attempt began. Older failure events update their own audit
+  entry but cannot move the invoice back from paid. Payment workers must never
+  suspend service, including after day 14.
 - Treat an external invoice as a collection artifact, not a replacement for
   Karst's internal pricing/usage calculation. Corrections create auditable
   adjustments or a new invoice; they do not rewrite finalized source records.
@@ -143,9 +157,12 @@ requires an explicit seller/tax decision and reviewed customer/data migration.
 - A payment failure first changes local billing status and starts the selected
   retry/grace policy; it never calls the forwarding path.
 - The approved pilot uses a 14-day grace, retries on days 1, 3, 7, and 12, and
-  in-app billing-admin notices. After day 14, keep service active and mark the
-  invoice past due for customer/operator resolution. The transaction model for
-  retries remains pending a #275 decision.
+  in-app billing-admin notices. Retry creation uses distinct one-time Paddle
+  automatic-collection transactions with attempt-specific metadata. Paddle's
+  saved-method record is the consent evidence: retry collection only when the
+  customer opted in during Checkout. Otherwise expose a new Checkout link and
+  stop further automatic attempts. After day 14, keep service active and mark
+  the invoice past due for customer/operator resolution.
 - When payment succeeds, a verified event or reconciliation job updates local
   status idempotently. If collection still fails after the approved grace,
   keep service active and mark the invoice past due; payment state never
