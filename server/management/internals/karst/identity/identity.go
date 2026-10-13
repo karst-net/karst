@@ -88,6 +88,14 @@ const RelayUsageContext = "karst-relay-usage-v1"
 // while each upload request must carry a fresh timestamp and nonce.
 const RelayUsageUploadContext = "karst-relay-usage-upload-v1"
 
+// RelayCreditRequestContext domain-separates authenticated cross-relay cap
+// reservation requests from usage uploads and transport authentication.
+const RelayCreditRequestContext = "karst-relay-credit-request-v1"
+
+// RelayCreditSurrenderContext authenticates a relay's final, conservative
+// consumed-byte count for one previously issued grant.
+const RelayCreditSurrenderContext = "karst-relay-credit-surrender-v1"
+
 var (
 	ErrKeySize = errors.New("identity: wrong key size")
 	ErrContext = errors.New("identity: context string exceeds 255 bytes")

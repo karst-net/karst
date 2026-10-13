@@ -7,7 +7,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: { proxy: { "/api": "http://127.0.0.1:4010" } },
+  server: { proxy: { "/api": `http://127.0.0.1:${process.env.KARST_API_MOCK_PORT ?? 4010}` } },
   // maplibre-gl constructs its worker from a relative `new URL(..., import.meta.url)`
   // at module-evaluation time; Vite's dev-time dependency pre-bundling moves the
   // module to node_modules/.vite/deps/, which resolves that URL to a location the

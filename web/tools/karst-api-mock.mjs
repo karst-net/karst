@@ -26,6 +26,7 @@ const seedGroups = () => [
 const seedTokens = () => ({ "user-it": [{ id: "token-fixture-1", name: "ci-deploy", expiration_date: "2026-11-20T12:00:00Z", created_at: "2026-08-01T12:00:00Z", last_used: "2026-08-22T06:00:00Z" }] });
 
 let fixture = buildFixture();
+let relayCaps = new Map();
 let setupKeys = [];
 let invitations = [];
 // ADR-0032. Seeded with one small tree so the Domains view and the setup
@@ -174,6 +175,13 @@ const server = http.createServer((request, response) => {
   if (path === "/__mock__/bedrock/uncovered" && method === "PUT") {
     return readBody(request).then((body) => { bedrock.uncovered_handles = body.uncovered_handles ?? []; return json(response, 200, bedrock); });
   }
+  // Keep cap fixtures scoped to billing tests. Resetting the shared console
+  // fixture while other Playwright workers are using it must not erase a cap
+  // mid-assertion or reset their unrelated resources.
+  if (path === "/__mock__/billing/fixture" && method === "PUT") {
+    relayCaps = new Map();
+    return noContent(response);
+  }
   if (path === "/__mock__/fixture" && method === "PUT") {
     return readBody(request).then((body) => {
       const empty = Boolean(body.empty);
@@ -307,6 +315,38 @@ const server = http.createServer((request, response) => {
   // ── the Karst contract ────────────────────────────────────────────────────
   if (!path.startsWith(prefix)) return error(response, 404, "not_found", "unknown mock path");
   const karst = path.slice(prefix.length) || "/";
+
+  if (method === "GET" && karst === "/usage/devices") {
+    const start = url.searchParams.get("start") ?? "";
+    const end = url.searchParams.get("end") ?? "";
+    return json(response, 200, { start, end, as_of: new Date().toISOString(), complete: false, device_microseconds: "86400000000", segments: [{ start, end, coverage: "incomplete", devices: null }] });
+  }
+  if (method === "GET" && karst === "/usage/relays") {
+    const start = url.searchParams.get("start") ?? "";
+    const end = url.searchParams.get("end") ?? "";
+    return json(response, 200, { start, end, as_of: new Date().toISOString(), authorization_history_start: "2026-01-01T00:00:00Z", first_received_window_start: start, last_received_at: new Date().toISOString(), coverage: "authorized_producers", history_complete: true, complete: false, expected_windows: 60, missing_windows: 4, unexpected_windows: 0, reported_bytes: "15000000000", days: [], limitations: ["Some producer windows have not arrived."] });
+  }
+  if (method === "GET" && karst === "/usage/relay-alerts") {
+    const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
+    const [year, month] = period.split("-").map(Number);
+    const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+    const end = new Date(Date.UTC(year, month, 1)).toISOString();
+    return json(response, 200, { period_start: start, period_end: end, as_of: new Date().toISOString(), coverage_complete: false, coverage_warning: "Relay usage coverage is incomplete; threshold amounts are lower bounds.", alerts: [{ period_start: start, period_end: end, schedule_version: "pilot-v1", target: "included_allowance", threshold_percent: 75, reported_bytes: "15000000000", threshold_bytes: "11250000000", as_of: new Date().toISOString(), usage_complete: false }] });
+  }
+  if (karst === "/billing/relay-cap" && method === "GET") {
+    const period = url.searchParams.get("period") ?? new Date().toISOString().slice(0, 7);
+    const [year, month] = period.split("-").map(Number);
+    return json(response, 200, relayCaps.get(period) ?? { enabled: false, period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", acknowledged_interruption: false });
+  }
+  if (karst === "/billing/relay-cap" && method === "PUT") {
+    return readBody(request).then((draft) => {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(draft.period) || !Number.isSafeInteger(draft.overage_limit_minor) || draft.overage_limit_minor < 0 || draft.acknowledge_interruption !== true) return error(response, 400, "invalid_argument", "invalid relay cap settings");
+      const [year, month] = draft.period.split("-").map(Number);
+      const cap = { enabled: true, period_start: new Date(Date.UTC(year, month - 1, 1)).toISOString(), period_end: new Date(Date.UTC(year, month, 1)).toISOString(), currency: "USD", overage_limit_minor: draft.overage_limit_minor, acknowledged_interruption: true, effective_at: new Date(Date.now() + 15_000).toISOString() };
+      relayCaps.set(draft.period, cap);
+      return json(response, 200, cap);
+    });
+  }
 
   // The portal namespace is deliberately separate from the administrative
   // router. Fixtures only expose the member's own devices; there is no user

@@ -4,7 +4,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
+import type { CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -47,6 +47,66 @@ export const getRelayUsage = <ThrowOnError extends boolean = false>(options: Opt
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/usage/relays',
     ...options
+});
+
+/**
+ * Account-owner/admin in-app relay usage alert feed. The current period is
+ * reevaluated when read; newly crossed 75%, 90%, and 100% thresholds are
+ * persisted once per period. Account scope comes from authenticated
+ * authorization and every read is audited. An incomplete report includes
+ * a coverage warning, and its reported amounts are lower bounds.
+ *
+ */
+export const getRelayBillingAlerts = <ThrowOnError extends boolean = false>(options: Options<GetRelayBillingAlertsData, ThrowOnError>): RequestResult<GetRelayBillingAlertsResponses, GetRelayBillingAlertsErrors, ThrowOnError> => (options.client ?? client).get<GetRelayBillingAlertsResponses, GetRelayBillingAlertsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/usage/relay-alerts',
+    ...options
+});
+
+/**
+ * Account-owner/admin view of the optional organization-wide managed relay cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
+ */
+export const getRelaySpendingCap = <ThrowOnError extends boolean = false>(options: Options<GetRelaySpendingCapData, ThrowOnError>): RequestResult<GetRelaySpendingCapResponses, GetRelaySpendingCapErrors, ThrowOnError> => (options.client ?? client).get<GetRelaySpendingCapResponses, GetRelaySpendingCapErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/billing/relay-cap',
+    ...options
+});
+
+/**
+ * Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued relay grants to be surrendered and consumed usage to fit below the new limit. Relays surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable relay remain reserved for the period. Increases remain available.
+ */
+export const setRelaySpendingCap = <ThrowOnError extends boolean = false>(options: Options<SetRelaySpendingCapData, ThrowOnError>): RequestResult<SetRelaySpendingCapResponses, SetRelaySpendingCapErrors, ThrowOnError> => (options.client ?? client).put<SetRelaySpendingCapResponses, SetRelaySpendingCapErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/billing/relay-cap',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Relay-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; relay-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
+ */
+export const requestRelayCredits = <ThrowOnError extends boolean = false>(options: Options<RequestRelayCreditsData, ThrowOnError>): RequestResult<RequestRelayCreditsResponses, RequestRelayCreditsErrors, ThrowOnError> => (options.client ?? client).post<RequestRelayCreditsResponses, RequestRelayCreditsErrors, ThrowOnError>({
+    url: '/billing/relay-credits',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Relay-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed relay does not surrender grants, so their full reservation remains until period end.
+ */
+export const surrenderRelayCredits = <ThrowOnError extends boolean = false>(options: Options<SurrenderRelayCreditsData, ThrowOnError>): RequestResult<SurrenderRelayCreditsResponses, SurrenderRelayCreditsErrors, ThrowOnError> => (options.client ?? client).post<SurrenderRelayCreditsResponses, SurrenderRelayCreditsErrors, ThrowOnError>({
+    url: '/billing/relay-credits/{grant_id}/surrender',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 export const listDeviceInvitations = <ThrowOnError extends boolean = false>(options?: Options<ListDeviceInvitationsData, ThrowOnError>): RequestResult<ListDeviceInvitationsResponses, ListDeviceInvitationsErrors, ThrowOnError> => (options?.client ?? client).get<ListDeviceInvitationsResponses, ListDeviceInvitationsErrors, ThrowOnError>({

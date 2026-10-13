@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayLocation, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, DeviceUsageReport, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -163,6 +163,13 @@ export type BedrockBundle = { format: "bedrock-signed-bundle-v1"; payload: strin
 export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string };
 
 export const api = {
+  // ── managed billing ───────────────────────────────────────────────────────
+  deviceUsage: (start: string, end: string) => request<DeviceUsageReport>(`/usage/devices?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  relayUsage: (start: string, end: string) => request<RelayUsageReport>(`/usage/relays?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  relayAlerts: (period: string) => request<RelayAlertFeed>(`/usage/relay-alerts?period=${encodeURIComponent(period)}`),
+  relayCap: (period: string) => request<RelayCap>(`/billing/relay-cap?period=${encodeURIComponent(period)}`),
+  setRelayCap: (draft: RelayCapDraft) => request<RelayCap>("/billing/relay-cap", { method: "PUT", body: body(draft) }),
+
   invitations: () => request<DeviceInvitation[]>("/invitations"),
   // domainId places the enrolling device in that mesh domain (ADR-0032)
   // rather than the account's implicit root; omit it for prior behavior.

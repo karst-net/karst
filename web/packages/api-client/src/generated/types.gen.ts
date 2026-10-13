@@ -90,6 +90,93 @@ export type RelayUsageDay = {
     gap_reasons: Array<'unresolved_mapping' | 'capacity' | 'overflow' | 'clock' | 'observation_lost'>;
 };
 
+export type RelayAlertFeed = {
+    period_start: string;
+    period_end: string;
+    as_of: string;
+    /**
+     * False means amounts are lower bounds and must not be treated as final usage.
+     */
+    coverage_complete: boolean;
+    /**
+     * Present when usage coverage is incomplete.
+     */
+    coverage_warning?: string;
+    alerts: Array<RelayAlertCandidate>;
+};
+
+export type RelayAlertCandidate = {
+    period_start: string;
+    period_end: string;
+    schedule_version: string;
+    target: 'included_allowance' | 'spending_cap';
+    threshold_percent: 75 | 90 | 100;
+    reported_bytes: string;
+    threshold_bytes: string;
+    as_of: string;
+    /**
+     * False means this event was evaluated from lower-bound usage coverage.
+     */
+    usage_complete: boolean;
+};
+
+export type RelayCapDraft = {
+    period: string;
+    /**
+     * USD cents; byte budgets truncate down.
+     */
+    overage_limit_minor: number;
+    acknowledge_interruption: true;
+};
+
+export type RelayCreditRequest = {
+    relay_id: string;
+    deployment_id: string;
+    mapping_version: string;
+    generation: string;
+    request_id: string;
+    requested_bytes: string;
+    signature: string;
+};
+
+export type RelayCreditGrant = {
+    grant_id: string;
+    account_id: string;
+    period_start: string;
+    period_end: string;
+    relay_id: string;
+    generation: string;
+    mapping_version: string;
+    schedule_version: string;
+    cap_revision: number;
+    requested_bytes: string;
+    granted_bytes: string;
+    created_at: string;
+};
+
+export type RelayCreditSurrender = {
+    grant_id: string;
+    relay_id: string;
+    deployment_id: string;
+    mapping_version: string;
+    generation: string;
+    consumed_bytes: string;
+    signature: string;
+};
+
+export type RelayCap = {
+    enabled: boolean;
+    period_start: string;
+    period_end: string;
+    currency: 'USD';
+    overage_limit_minor?: number;
+    acknowledged_interruption: boolean;
+    /**
+     * Initial cap activation time after outstanding uncapped relay leases expire.
+     */
+    effective_at?: string;
+};
+
 export type DeviceInvitationDraft = {
     name: string;
     groups: Array<string>;
@@ -653,6 +740,157 @@ export type GetRelayUsageResponses = {
 };
 
 export type GetRelayUsageResponse = GetRelayUsageResponses[keyof GetRelayUsageResponses];
+
+export type GetRelayBillingAlertsData = {
+    body?: never;
+    path?: never;
+    query: {
+        period: string;
+    };
+    url: '/usage/relay-alerts';
+};
+
+export type GetRelayBillingAlertsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRelayBillingAlertsError = GetRelayBillingAlertsErrors[keyof GetRelayBillingAlertsErrors];
+
+export type GetRelayBillingAlertsResponses = {
+    /**
+     * Account-scoped alert feed with usage coverage status
+     */
+    200: RelayAlertFeed;
+};
+
+export type GetRelayBillingAlertsResponse = GetRelayBillingAlertsResponses[keyof GetRelayBillingAlertsResponses];
+
+export type GetRelaySpendingCapData = {
+    body?: never;
+    path?: never;
+    query: {
+        period: string;
+    };
+    url: '/billing/relay-cap';
+};
+
+export type GetRelaySpendingCapErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRelaySpendingCapError = GetRelaySpendingCapErrors[keyof GetRelaySpendingCapErrors];
+
+export type GetRelaySpendingCapResponses = {
+    /**
+     * Current cap setting
+     */
+    200: RelayCap;
+};
+
+export type GetRelaySpendingCapResponse = GetRelaySpendingCapResponses[keyof GetRelaySpendingCapResponses];
+
+export type SetRelaySpendingCapData = {
+    body: RelayCapDraft;
+    path?: never;
+    query?: never;
+    url: '/billing/relay-cap';
+};
+
+export type SetRelaySpendingCapErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetRelaySpendingCapError = SetRelaySpendingCapErrors[keyof SetRelaySpendingCapErrors];
+
+export type SetRelaySpendingCapResponses = {
+    /**
+     * Saved cap setting
+     */
+    200: RelayCap;
+};
+
+export type SetRelaySpendingCapResponse = SetRelaySpendingCapResponses[keyof SetRelaySpendingCapResponses];
+
+export type RequestRelayCreditsData = {
+    body: RelayCreditRequest;
+    path?: never;
+    query?: never;
+    url: '/billing/relay-credits';
+};
+
+export type RequestRelayCreditsErrors = {
+    /**
+     * Cap activation is waiting for existing uncapped leases
+     */
+    425: unknown;
+    /**
+     * Account-wide relay byte budget is exhausted
+     */
+    429: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type RequestRelayCreditsError = RequestRelayCreditsErrors[keyof RequestRelayCreditsErrors];
+
+export type RequestRelayCreditsResponses = {
+    /**
+     * Account-wide reservation
+     */
+    200: RelayCreditGrant;
+    /**
+     * Short uncapped lease
+     */
+    204: void;
+};
+
+export type RequestRelayCreditsResponse = RequestRelayCreditsResponses[keyof RequestRelayCreditsResponses];
+
+export type SurrenderRelayCreditsData = {
+    body: RelayCreditSurrender;
+    path: {
+        grant_id: string;
+    };
+    query?: never;
+    url: '/billing/relay-credits/{grant_id}/surrender';
+};
+
+export type SurrenderRelayCreditsErrors = {
+    /**
+     * Grant is unknown or does not belong to this relay generation
+     */
+    404: unknown;
+    /**
+     * Surrender conflicts with the previously accepted final report
+     */
+    409: unknown;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SurrenderRelayCreditsError = SurrenderRelayCreditsErrors[keyof SurrenderRelayCreditsErrors];
+
+export type SurrenderRelayCreditsResponses = {
+    /**
+     * Grant surrendered; only unused bytes are released
+     */
+    204: void;
+};
+
+export type SurrenderRelayCreditsResponse = SurrenderRelayCreditsResponses[keyof SurrenderRelayCreditsResponses];
 
 export type ListDeviceInvitationsData = {
     body?: never;
