@@ -57,7 +57,7 @@ func (s *Store) SubmitFinalizedInvoice(ctx context.Context, client *PaddleClient
 		next = PaymentPaid
 	case "past_due":
 		next = PaymentPastDue
-	case "ready", "billed":
+	case "draft", "ready", "billed":
 		next = PaymentCheckout
 	default:
 		intent, stateErr := s.UpdatePaymentState(ctx, intent.InvoiceReference, PaymentSubmitting, PaymentOperatorHold, transaction.ID, transaction.Checkout.URL)
@@ -110,7 +110,7 @@ func (s *Store) ReconcilePayment(ctx context.Context, client *PaddleClient, star
 		next = PaymentPaid
 	case "past_due":
 		next = PaymentPastDue
-	case "ready", "billed":
+	case "draft", "ready", "billed":
 		next = PaymentCheckout
 	default:
 		next = PaymentOperatorHold
