@@ -208,6 +208,18 @@ pub struct Usage {
     /// keeps accounting local to the spool and starts no network worker.
     #[serde(default)]
     pub upload_url: Option<String>,
+
+    /// Explicitly opt managed-relay destination writes into account-wide
+    /// byte-credit enforcement. Defaults off; a missing setting preserves the
+    /// existing forwarding behavior.
+    #[serde(default)]
+    pub enforce_spending_caps: bool,
+
+    /// Bytes requested per account-mapping grant. Required when cap
+    /// enforcement is enabled so operators consciously choose the maximum
+    /// amount one relay may reserve at once.
+    #[serde(default)]
+    pub cap_grant_bytes: Option<u64>,
 }
 
 /// Where, and how often, to push self-reported telemetry — ADR-0021.
@@ -384,6 +396,7 @@ impl Config {
     ///
     /// # Errors
     /// [`Error::Invalid`] naming the setting at fault.
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), Error> {
         if self
             .usage
@@ -397,6 +410,34 @@ impl Config {
         if let Some(Some(url)) = self.usage.as_ref().map(|usage| usage.upload_url.as_ref()) {
             if parse_https_origin(url).is_none() {
                 return Err(Error::Invalid("config: usage.upload_url must be an https:// origin without a path, query, fragment, or credentials".to_owned()));
+            }
+        }
+        if let Some(usage) = &self.usage {
+            if usage.enforce_spending_caps {
+                if usage.upload_url.is_none() {
+                    return Err(Error::Invalid(
+                        "config: usage.enforce_spending_caps requires usage.upload_url".to_owned(),
+                    ));
+                }
+                let Some(grant_bytes) = usage.cap_grant_bytes else {
+                    return Err(Error::Invalid(
+                        "config: usage.enforce_spending_caps requires usage.cap_grant_bytes"
+                            .to_owned(),
+                    ));
+                };
+                if grant_bytes < karst_relay_proto::consts::FRAME_PAYLOAD_MAX as u64
+                    || grant_bytes > 1_000_000_000
+                {
+                    return Err(Error::Invalid(format!(
+                        "config: usage.cap_grant_bytes must be between {} and 1000000000",
+                        karst_relay_proto::consts::FRAME_PAYLOAD_MAX
+                    )));
+                }
+            } else if usage.cap_grant_bytes.is_some() {
+                return Err(Error::Invalid(
+                    "config: usage.cap_grant_bytes requires usage.enforce_spending_caps = true"
+                        .to_owned(),
+                ));
             }
         }
         if let Some(metrics) = self.metrics {
@@ -544,10 +585,13 @@ tls_key = "/etc/karst/relay.key"
             "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example:8443\"\n"
         );
         let c = Config::parse(&text).expect("parses upload configuration");
+        let usage = c.usage.expect("usage configured");
         assert_eq!(
-            c.usage.expect("usage configured").upload_url.as_deref(),
+            usage.upload_url.as_deref(),
             Some("https://control.example:8443")
         );
+        assert!(!usage.enforce_spending_caps);
+        assert_eq!(usage.cap_grant_bytes, None);
 
         let text = format!(
             "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example/api\"\n"
@@ -556,6 +600,45 @@ tls_key = "/etc/karst/relay.key"
         assert!(
             format!("{}", c.validate().expect_err("path is not an origin"))
                 .contains("usage.upload_url")
+        );
+    }
+
+    #[test]
+    fn spending_cap_enforcement_requires_explicit_control_and_grant_settings() {
+        let missing_url = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nenforce_spending_caps = true\ncap_grant_bytes = 65536\n"
+        );
+        let config = Config::parse(&missing_url).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("missing URL")).contains("usage.upload_url")
+        );
+
+        let missing_grant = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example\"\nenforce_spending_caps = true\n"
+        );
+        let config = Config::parse(&missing_grant).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("missing grant size"))
+                .contains("usage.cap_grant_bytes")
+        );
+
+        let too_small = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\nupload_url = \"https://control.example\"\nenforce_spending_caps = true\ncap_grant_bytes = 1\n"
+        );
+        let config = Config::parse(&too_small).expect("parses");
+        assert!(format!(
+            "{}",
+            config.validate().expect_err("grant smaller than a packet")
+        )
+        .contains("usage.cap_grant_bytes"));
+
+        let inactive_grant = format!(
+            "{MINIMAL}\n[usage]\nspool_dir = \"/var/lib/karst/usage\"\ncap_grant_bytes = 65536\n"
+        );
+        let config = Config::parse(&inactive_grant).expect("parses");
+        assert!(
+            format!("{}", config.validate().expect_err("grant requires opt-in"))
+                .contains("usage.enforce_spending_caps")
         );
     }
 

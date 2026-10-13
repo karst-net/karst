@@ -34,7 +34,9 @@ possible interruption. #275 approves central byte-credit reservations, reserve
 before forwarding, count ambiguous writes as consumed, and pause only capped
 managed-relay forwarding at exhaustion. Grant sizing, expiry, accounting-delay
 bounds, and clock-skew limits still require shadow data and operational
-validation. This ADR selects no customer-facing cap amount.
+validation. Invoice lines truncate down to currency minor units; byte budgets
+also truncate down so the cap cannot exceed its configured amount. This ADR
+selects no customer-facing cap amount.
 
 ### Cap budget
 
@@ -54,7 +56,9 @@ validation. This ADR selects no customer-facing cap amount.
   every outstanding grant has been surrendered or safely expired and fenced,
   and only when already-consumed spend fits below the new cap. A registry flag
   alone cannot revoke credits cached on an unreachable relay; consumed spend
-  cannot be undone by lowering a cap.
+  cannot be undone by lowering a cap. The current relay client does not yet
+  expose grant surrender, so an in-period decrease after grant issuance may
+  remain blocked until the next period.
 
 ### Central reservation, local enforcement
 
@@ -63,26 +67,42 @@ validation. This ADR selects no customer-facing cap amount.
   period, rate version, relay identity/generation, and byte limit. Retries are
   idempotent; they cannot mint credits twice.
 - A grant is bound to one authenticated relay generation and period. The relay
-  durably stores the grant before use and reserves destination-write bytes
-  before forwarding. Completed writes become consumed. Failed writes release
-  reservations only after durable state prevents later reuse. If a crash leaves
-  a write ambiguous, treat its reserved bytes as consumed until reconciliation:
-  this can stop traffic early, but cannot increase the cap.
+  holds the grant in process memory and counts every admitted payload as
+  consumed before it is queued to the destination, including queue drops and
+  ambiguous writes. This can stop traffic early, but cannot increase the cap.
 - The relay requests grants asynchronously and forwards no more billable bytes
   than its durable, unspent credits. It makes no synchronous allocator or
   payment-provider call in the packet path.
+- A cap-enabled relay first obtains a short, persisted uncapped lease for each
+  managed account mapping whose account has no cap. The lease response gives a
+  duration; the relay measures it from before the request using a monotonic
+  clock, so network latency only shortens the usable lease. When a cap is set,
+  the control plane stops issuing uncapped leases and records an effective time
+  no earlier than every outstanding lease expiry. At expiry, relays fail closed
+  for that mapping until they obtain capped credits. This avoids a stale
+  uncapped cache racing cap activation without a per-packet control-plane call.
+  The current lease duration is 15 seconds and remains subject to operational
+  validation.
 - The account-period invariant is that consumed bytes plus outstanding grants
   plus unallocated bytes never exceeds the cap-derived byte budget. Do not
   reassign credits held by an unreachable relay. Return unused bytes only
-  after the relay durably surrenders the grant and can no longer spend it. For
+  after the relay surrenders the grant and can no longer spend it. For
   an unreachable relay, a control-plane fence prevents new grants but does not
   revoke cached offline credits; those remain reserved until the grant expires
   under the trusted-time/skew rule. Reclaim them only after expiry and fencing,
   or after an independently verifiable mechanism makes the relay unable to
   spend them.
-- Grant and debit state survives relay restart. If it cannot be recovered, the
-  relay fails closed for capped forwarding until it obtains a new fenced
-  generation and grant.
+- In this implementation, grant balances are held in process memory and each
+  process start uses a fresh random generation. On clean shutdown, the relay
+  first detaches the forwarding gate, waits for credit requests to finish, then
+  signs a final count for each remaining grant. The control plane returns only
+  unused bytes after verifying the relay identity, enabled producer, exact
+  mapping, grant ID, and generation. Every byte reserved before a destination
+  write remains counted, even if delivery was ambiguous. Identical surrender
+  retries are idempotent. After an unclean restart or failed surrender, earlier
+  issued grants remain fully reserved through period end; no stale generation
+  is fenced or credited speculatively. This preserves the cap invariant but can
+  strand allowance and reduce traffic availability.
 
 ### At the cap and recovery
 
@@ -90,7 +110,8 @@ validation. This ADR selects no customer-facing cap amount.
   for that organization. Relayed sessions may stall or disconnect; direct
   peer-to-peer traffic and other organizations' relays continue. The customer
   must acknowledge this behavior before enabling the cap.
-- If the control plane is unavailable, a relay can spend only persisted grants.
+- If the control plane is unavailable, a running relay can spend only its
+  currently held grant balances.
   When these run out, managed-relay forwarding pauses locally for that
   organization. This bounds spend without making forwarding depend on an
   online billing service.

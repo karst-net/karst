@@ -6,7 +6,6 @@ package billing
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ import (
 
 func testBillingStore(t *testing.T) *Store {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:billing-store-%s?mode=memory&cache=shared", t.Name())), &gorm.Config{Logger: logger.Discard})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "billing-store.db")), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

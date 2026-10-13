@@ -13,6 +13,7 @@
 
 pub mod cloud_location;
 pub mod config;
+pub mod credits;
 pub mod http;
 pub mod hub;
 pub mod limits;

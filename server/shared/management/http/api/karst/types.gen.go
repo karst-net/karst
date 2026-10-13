@@ -261,6 +261,75 @@ func (e RelayLocationSource) Valid() bool {
 	}
 }
 
+// Defines values for RelayAlertCandidateTarget.
+const (
+	RelayAlertCandidateTargetIncludedAllowance RelayAlertCandidateTarget = "included_allowance"
+	RelayAlertCandidateTargetSpendingCap       RelayAlertCandidateTarget = "spending_cap"
+)
+
+// Valid indicates whether the value is a known member of the RelayAlertCandidateTarget enum.
+func (e RelayAlertCandidateTarget) Valid() bool {
+	switch e {
+	case RelayAlertCandidateTargetIncludedAllowance:
+		return true
+	case RelayAlertCandidateTargetSpendingCap:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayAlertCandidateThresholdPercent.
+const (
+	RelayAlertCandidateThresholdPercentN100 RelayAlertCandidateThresholdPercent = 100
+	RelayAlertCandidateThresholdPercentN75  RelayAlertCandidateThresholdPercent = 75
+	RelayAlertCandidateThresholdPercentN90  RelayAlertCandidateThresholdPercent = 90
+)
+
+// Valid indicates whether the value is a known member of the RelayAlertCandidateThresholdPercent enum.
+func (e RelayAlertCandidateThresholdPercent) Valid() bool {
+	switch e {
+	case RelayAlertCandidateThresholdPercentN100:
+		return true
+	case RelayAlertCandidateThresholdPercentN75:
+		return true
+	case RelayAlertCandidateThresholdPercentN90:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayCapCurrency.
+const (
+	RelayCapCurrencyUSD RelayCapCurrency = "USD"
+)
+
+// Valid indicates whether the value is a known member of the RelayCapCurrency enum.
+func (e RelayCapCurrency) Valid() bool {
+	switch e {
+	case RelayCapCurrencyUSD:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayCapDraftAcknowledgeInterruption.
+const (
+	RelayCapDraftAcknowledgeInterruptionTrue RelayCapDraftAcknowledgeInterruption = true
+)
+
+// Valid indicates whether the value is a known member of the RelayCapDraftAcknowledgeInterruption enum.
+func (e RelayCapDraftAcknowledgeInterruption) Valid() bool {
+	switch e {
+	case RelayCapDraftAcknowledgeInterruptionTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayHealthAdmissionState.
 const (
 	RelayHealthAdmissionStateConfirmed RelayHealthAdmissionState = "confirmed"
@@ -980,6 +1049,69 @@ type Relay struct {
 // RelayLocationSource Which source location came from (ADR-0048) -- detected (cloud instance metadata) overrides declared (operator-entered) when both exist. Absent along with location when neither source has one. Server-derived; never accepted from callers, so it lives here rather than on RelayCreate.
 type RelayLocationSource string
 
+// RelayAlertCandidate defines model for RelayAlertCandidate.
+type RelayAlertCandidate struct {
+	AsOf             time.Time                           `json:"as_of"`
+	PeriodEnd        time.Time                           `json:"period_end"`
+	PeriodStart      time.Time                           `json:"period_start"`
+	ReportedBytes    string                              `json:"reported_bytes"`
+	ScheduleVersion  string                              `json:"schedule_version"`
+	Target           RelayAlertCandidateTarget           `json:"target"`
+	ThresholdBytes   string                              `json:"threshold_bytes"`
+	ThresholdPercent RelayAlertCandidateThresholdPercent `json:"threshold_percent"`
+
+	// UsageComplete False means this event was evaluated from lower-bound usage coverage.
+	UsageComplete bool `json:"usage_complete"`
+}
+
+// RelayAlertCandidateTarget defines model for RelayAlertCandidate.Target.
+type RelayAlertCandidateTarget string
+
+// RelayAlertCandidateThresholdPercent defines model for RelayAlertCandidate.ThresholdPercent.
+type RelayAlertCandidateThresholdPercent int
+
+// RelayAlertFeed defines model for RelayAlertFeed.
+type RelayAlertFeed struct {
+	Alerts []RelayAlertCandidate `json:"alerts"`
+	AsOf   time.Time             `json:"as_of"`
+
+	// CoverageComplete False means amounts are lower bounds and must not be treated as final usage.
+	CoverageComplete bool `json:"coverage_complete"`
+
+	// CoverageWarning Present when usage coverage is incomplete.
+	CoverageWarning *string   `json:"coverage_warning,omitempty"`
+	PeriodEnd       time.Time `json:"period_end"`
+	PeriodStart     time.Time `json:"period_start"`
+}
+
+// RelayCap defines model for RelayCap.
+type RelayCap struct {
+	AcknowledgedInterruption bool             `json:"acknowledged_interruption"`
+	Currency                 RelayCapCurrency `json:"currency"`
+
+	// EffectiveAt Initial cap activation time after outstanding uncapped relay leases expire.
+	EffectiveAt       *time.Time `json:"effective_at,omitempty"`
+	Enabled           bool       `json:"enabled"`
+	OverageLimitMinor *int64     `json:"overage_limit_minor,omitempty"`
+	PeriodEnd         time.Time  `json:"period_end"`
+	PeriodStart       time.Time  `json:"period_start"`
+}
+
+// RelayCapCurrency defines model for RelayCap.Currency.
+type RelayCapCurrency string
+
+// RelayCapDraft defines model for RelayCapDraft.
+type RelayCapDraft struct {
+	AcknowledgeInterruption RelayCapDraftAcknowledgeInterruption `json:"acknowledge_interruption"`
+
+	// OverageLimitMinor USD cents; byte budgets truncate down.
+	OverageLimitMinor int64  `json:"overage_limit_minor"`
+	Period            string `json:"period"`
+}
+
+// RelayCapDraftAcknowledgeInterruption defines model for RelayCapDraft.AcknowledgeInterruption.
+type RelayCapDraftAcknowledgeInterruption bool
+
 // RelayCreate defines model for RelayCreate.
 type RelayCreate struct {
 	Address       string         `json:"address"`
@@ -987,6 +1119,44 @@ type RelayCreate struct {
 	Location      *RelayLocation `json:"location,omitempty"`
 	Region        string         `json:"region"`
 	TlsServerName *string        `json:"tls_server_name,omitempty"`
+}
+
+// RelayCreditGrant defines model for RelayCreditGrant.
+type RelayCreditGrant struct {
+	AccountId       string    `json:"account_id"`
+	CapRevision     int64     `json:"cap_revision"`
+	CreatedAt       time.Time `json:"created_at"`
+	Generation      string    `json:"generation"`
+	GrantId         string    `json:"grant_id"`
+	GrantedBytes    string    `json:"granted_bytes"`
+	MappingVersion  string    `json:"mapping_version"`
+	PeriodEnd       time.Time `json:"period_end"`
+	PeriodStart     time.Time `json:"period_start"`
+	RelayId         string    `json:"relay_id"`
+	RequestedBytes  string    `json:"requested_bytes"`
+	ScheduleVersion string    `json:"schedule_version"`
+}
+
+// RelayCreditRequest defines model for RelayCreditRequest.
+type RelayCreditRequest struct {
+	DeploymentId   string `json:"deployment_id"`
+	Generation     string `json:"generation"`
+	MappingVersion string `json:"mapping_version"`
+	RelayId        string `json:"relay_id"`
+	RequestId      string `json:"request_id"`
+	RequestedBytes string `json:"requested_bytes"`
+	Signature      []byte `json:"signature"`
+}
+
+// RelayCreditSurrender defines model for RelayCreditSurrender.
+type RelayCreditSurrender struct {
+	ConsumedBytes  string `json:"consumed_bytes"`
+	DeploymentId   string `json:"deployment_id"`
+	Generation     string `json:"generation"`
+	GrantId        string `json:"grant_id"`
+	MappingVersion string `json:"mapping_version"`
+	RelayId        string `json:"relay_id"`
+	Signature      []byte `json:"signature"`
 }
 
 // RelayHealth defines model for RelayHealth.
@@ -1241,6 +1411,11 @@ type ListBedrockLogParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetRelaySpendingCapParams defines parameters for GetRelaySpendingCap.
+type GetRelaySpendingCapParams struct {
+	Period string `form:"period" json:"period"`
+}
+
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
 	Tag      *Tag                     `form:"tag,omitempty" json:"tag,omitempty"`
@@ -1296,6 +1471,11 @@ type GetDeviceUsageParams struct {
 	End   time.Time `form:"end" json:"end"`
 }
 
+// GetRelayBillingAlertsParams defines parameters for GetRelayBillingAlerts.
+type GetRelayBillingAlertsParams struct {
+	Period string `form:"period" json:"period"`
+}
+
 // GetRelayUsageParams defines parameters for GetRelayUsage.
 type GetRelayUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
@@ -1313,6 +1493,15 @@ type SetBedrockModeJSONRequestBody = BedrockModeWrite
 
 // ImportBedrockResponsesJSONRequestBody defines body for ImportBedrockResponses for application/json ContentType.
 type ImportBedrockResponsesJSONRequestBody = SignedBundle
+
+// SetRelaySpendingCapJSONRequestBody defines body for SetRelaySpendingCap for application/json ContentType.
+type SetRelaySpendingCapJSONRequestBody = RelayCapDraft
+
+// RequestRelayCreditsJSONRequestBody defines body for RequestRelayCredits for application/json ContentType.
+type RequestRelayCreditsJSONRequestBody = RelayCreditRequest
+
+// SurrenderRelayCreditsJSONRequestBody defines body for SurrenderRelayCredits for application/json ContentType.
+type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
 // CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
 type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft

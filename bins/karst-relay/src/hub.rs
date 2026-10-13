@@ -21,6 +21,12 @@ use karst_relay_proto::{Admitted, AquiferId, Frame, Reason, Roster};
 use crate::limits::{Budget, Meter};
 use crate::roster::{FileRoster, UsageMapping};
 
+/// Synchronously reserves local relay credits before queueing a managed
+/// destination write. Implementations must not perform network or disk I/O.
+pub trait CreditGate: std::fmt::Debug + Send + Sync {
+    fn reserve(&self, mapping: &UsageMapping, bytes: u64) -> bool;
+}
+
 /// A queued delivery is evidence only after its complete frame is written.
 #[derive(Debug)]
 pub struct Outbound {
@@ -84,6 +90,8 @@ pub enum Dropped {
     SelfAddressed,
     /// The destination's write queue was full — §7.3.
     QueueFull,
+    /// The managed destination mapping has no active spending-cap credits.
+    SpendingCapLimited,
 }
 
 /// A frame that is legal on the wire but not on this connection.
@@ -252,6 +260,8 @@ pub struct Hub {
     /// aquifer nobody uses never allocates one. Empty and never consulted
     /// when [`Config::aquifer_budget`] is `None`.
     aquifer_meters: HashMap<AquiferId, Meter>,
+    /// Optional local byte-credit gate. Absent is the unchanged default path.
+    credit_gate: Option<std::sync::Arc<dyn CreditGate>>,
     /// Connections whose queue has grown since the caller last asked.
     ///
     /// The hub is pull-based, so an I/O layer needs to know *which* sockets to
@@ -273,8 +283,14 @@ impl Hub {
             by_mesh: HashMap::new(),
             presence: HashMap::new(),
             aquifer_meters: HashMap::new(),
+            credit_gate: None,
             dirty: BTreeSet::new(),
         }
+    }
+
+    /// Install the opt-in local credit gate before the listener starts.
+    pub fn set_credit_gate(&mut self, gate: Option<std::sync::Arc<dyn CreditGate>>) {
+        self.credit_gate = gate;
     }
 
     /// Connections with something new to write, cleared by the call.
@@ -620,6 +636,18 @@ impl Hub {
         frame: &Frame<'_>,
         mapping: Option<UsageMapping>,
     ) -> Option<Dropped> {
+        if let (Some(gate), Some(mapping), Frame::RecvPacket { payload, .. }) =
+            (&self.credit_gate, mapping.as_ref(), frame)
+        {
+            let targets_client = self
+                .conns
+                .get(&to)
+                .is_some_and(|conn| conn.node_id().is_some());
+            if targets_client && !gate.reserve(mapping, payload.len() as u64) {
+                self.count_undeliverable(from);
+                return Some(Dropped::SpendingCapLimited);
+            }
+        }
         if self.enqueue_attributed(to, frame, mapping) {
             None
         } else {
@@ -997,6 +1025,20 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct TestCreditGate {
+        allow: bool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CreditGate for TestCreditGate {
+        fn reserve(&self, _: &UsageMapping, _: u64) -> bool {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.allow
+        }
+    }
+
     impl Roster for TestRoster {
         fn client(&self, node_id: &Id) -> Option<RosterEntry> {
             self.aquifers.get(node_id).map(|t| RosterEntry {
@@ -1115,6 +1157,60 @@ mod tests {
             }
             ref other => panic!("expected RecvPacket, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn spending_cap_gate_only_reserves_attributed_local_destination_writes() {
+        let (mut hub, roster) = two_clients();
+        let gate = std::sync::Arc::new(TestCreditGate {
+            allow: false,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        hub.set_credit_gate(Some(gate.clone()));
+        let mapping = UsageMapping {
+            deployment: "managed".to_owned(),
+            version: "a".repeat(64),
+            aquifer: "t1".to_owned(),
+        };
+        let payload = [7u8; 100];
+
+        let capped = hub
+            .on_frame_inner(
+                A,
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                1,
+                Some(mapping),
+            )
+            .expect("legal");
+        assert_eq!(capped, Some(Dropped::SpendingCapLimited));
+        assert_eq!(
+            hub.pending(B),
+            0,
+            "a refused packet must not reach the queue"
+        );
+
+        let unconfigured = hub
+            .on_frame_inner(
+                A,
+                &Frame::SendPacket {
+                    dst_id: id(0xb2),
+                    payload: &payload,
+                },
+                &roster,
+                2,
+                None,
+            )
+            .expect("legal");
+        assert_eq!(
+            unconfigured, None,
+            "unconfigured forwarding keeps its old behavior"
+        );
+        assert_eq!(gate.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(hub.pending(B), 1);
     }
 
     #[test]

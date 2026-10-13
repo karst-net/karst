@@ -58,6 +58,72 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RelayUsageReport'}
         default: {$ref: '#/components/responses/Error'}
+  /usage/relay-alerts:
+    get:
+      operationId: getRelayBillingAlerts
+      tags: [usage]
+      description: |
+        Account-owner/admin in-app relay usage alert feed. The current period is
+        reevaluated when read; newly crossed 75%, 90%, and 100% thresholds are
+        persisted once per period. Account scope comes from authenticated
+        authorization and every read is audited. An incomplete report includes
+        a coverage warning, and its reported amounts are lower bounds.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}}
+      responses:
+        '200':
+          description: Account-scoped alert feed with usage coverage status
+          headers:
+            Cache-Control: {schema: {type: string}, description: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RelayAlertFeed'}
+        default: {$ref: '#/components/responses/Error'}
+  /billing/relay-cap:
+    get:
+      operationId: getRelaySpendingCap
+      tags: [billing]
+      description: Account-owner/admin view of the optional organization-wide managed relay cap for one UTC calendar month. Every read is audited. An unset cap is returned as enabled=false.
+      parameters:
+        - {name: period, in: query, required: true, schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}}
+      responses:
+        '200': {description: Current cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setRelaySpendingCap
+      tags: [billing]
+      description: Set the monthly USD managed-relay overage limit. Requires acknowledging that capped relay forwarding can pause at the limit. Only current and future assigned months are accepted. Decreases require all issued relay grants to be surrendered and consumed usage to fit below the new limit. Relays surrender unused credits during clean shutdown; credits from an uncleanly stopped or unreachable relay remain reserved for the period. Increases remain available.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCapDraft'}}}}
+      responses:
+        '200': {description: Saved cap setting, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCap'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /billing/relay-credits:
+    post:
+      operationId: requestRelayCredits
+      tags: [billing]
+      security: []
+      description: Relay-only signed ML-DSA request. The control plane resolves account ownership from the currently enabled producer and exact allowed mapping; relay-supplied account identifiers are never trusted. When no cap is configured, returns a short uncapped lease. This endpoint is independent of packet forwarding.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditRequest'}}}}
+      responses:
+        '200': {description: Account-wide reservation, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditGrant'}}}}
+        '204': {description: Short uncapped lease, headers: {X-Karst-Relay-Cap-Mode: {schema: {type: string, enum: [uncapped]}}, X-Karst-Relay-Cap-Lease-Millis: {schema: {type: integer, minimum: 1}}}}
+        '425': {description: Cap activation is waiting for existing uncapped leases}
+        '429': {description: Account-wide relay byte budget is exhausted}
+        default: {$ref: '#/components/responses/Error'}
+  /billing/relay-credits/{grant_id}/surrender:
+    parameters:
+      - {name: grant_id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{32}$'}}
+    post:
+      operationId: surrenderRelayCredits
+      tags: [billing]
+      security: []
+      description: Relay-only signed final report after the local forwarding gate has stopped spending this grant. Consumed bytes include every payload reserved before queueing a destination write, including ambiguous writes. Identical retries are idempotent; a different consumed count conflicts. A crashed relay does not surrender grants, so their full reservation remains until period end.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayCreditSurrender'}}}}
+      responses:
+        '204': {description: Grant surrendered; only unused bytes are released}
+        '404': {description: Grant is unknown or does not belong to this relay generation}
+        '409': {description: Surrender conflicts with the previously accepted final report}
+        default: {$ref: '#/components/responses/Error'}
   /invitations:
     get:
       operationId: listDeviceInvitations
@@ -597,6 +663,91 @@ components:
         missing_windows: {type: integer, format: int64, minimum: 0}
         unexpected_windows: {type: integer, format: int64, minimum: 0}
         gap_reasons: {type: array, items: {type: string, enum: [unresolved_mapping, capacity, overflow, clock, observation_lost]}}
+    RelayAlertFeed:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, as_of, coverage_complete, alerts]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        as_of: {type: string, format: date-time}
+        coverage_complete: {type: boolean, description: False means amounts are lower bounds and must not be treated as final usage.}
+        coverage_warning: {type: string, description: Present when usage coverage is incomplete.}
+        alerts: {type: array, items: {$ref: '#/components/schemas/RelayAlertCandidate'}}
+    RelayAlertCandidate:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, schedule_version, target, threshold_percent, reported_bytes, threshold_bytes, as_of, usage_complete]
+      properties:
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        schedule_version: {type: string}
+        target: {type: string, enum: [included_allowance, spending_cap]}
+        threshold_percent: {type: integer, enum: [75, 90, 100]}
+        reported_bytes: {type: string, pattern: '^[0-9]+$'}
+        threshold_bytes: {type: string, pattern: '^[0-9]+$'}
+        as_of: {type: string, format: date-time}
+        usage_complete: {type: boolean, description: False means this event was evaluated from lower-bound usage coverage.}
+    RelayCapDraft:
+      type: object
+      additionalProperties: false
+      required: [period, overage_limit_minor, acknowledge_interruption]
+      properties:
+        period: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
+        overage_limit_minor: {type: integer, format: int64, minimum: 0, description: USD cents; byte budgets truncate down.}
+        acknowledge_interruption: {type: boolean, enum: [true]}
+    RelayCreditRequest:
+      type: object
+      additionalProperties: false
+      required: [relay_id, deployment_id, mapping_version, generation, request_id, requested_bytes, signature]
+      properties:
+        relay_id: {type: string, minLength: 1, maxLength: 64}
+        deployment_id: {type: string, minLength: 1, maxLength: 128}
+        mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        generation: {type: string, pattern: '^[0-9a-f]{32}$'}
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        requested_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
+        signature: {type: string, format: byte}
+    RelayCreditGrant:
+      type: object
+      required: [grant_id, account_id, period_start, period_end, relay_id, generation, mapping_version, schedule_version, cap_revision, requested_bytes, granted_bytes, created_at]
+      properties:
+        grant_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        account_id: {type: string}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        relay_id: {type: string}
+        generation: {type: string, pattern: '^[0-9a-f]{32}$'}
+        mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        schedule_version: {type: string}
+        cap_revision: {type: integer, format: int64, minimum: 1}
+        requested_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
+        granted_bytes: {type: string, pattern: '^[1-9][0-9]*$'}
+        created_at: {type: string, format: date-time}
+    RelayCreditSurrender:
+      type: object
+      additionalProperties: false
+      required: [grant_id, relay_id, deployment_id, mapping_version, generation, consumed_bytes, signature]
+      properties:
+        grant_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        relay_id: {type: string, minLength: 1, maxLength: 64}
+        deployment_id: {type: string, minLength: 1, maxLength: 128}
+        mapping_version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        generation: {type: string, pattern: '^[0-9a-f]{32}$'}
+        consumed_bytes: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        signature: {type: string, format: byte}
+    RelayCap:
+      type: object
+      additionalProperties: false
+      required: [enabled, period_start, period_end, currency, acknowledged_interruption]
+      properties:
+        enabled: {type: boolean}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        currency: {type: string, enum: [USD]}
+        overage_limit_minor: {type: integer, format: int64, minimum: 0}
+        acknowledged_interruption: {type: boolean}
+        effective_at: {type: string, format: date-time, description: Initial cap activation time after outstanding uncapped relay leases expire.}
     DeviceInvitationDraft:
       type: object
       additionalProperties: false
