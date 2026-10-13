@@ -512,6 +512,45 @@ bands = [{ unit_price = 1.0 }]
     }
 
     #[test]
+    fn a_turn_kind_pools_region_is_re_checked_exactly_like_a_relay_pools() {
+        // #311's own scope asked this to be confirmed, not assumed:
+        // check_region (and BoundedDriver::new's independent re-validation
+        // of it, exercised above for a relay-kind pool) reads a pool's
+        // `(provider, region)` -- never its `kind` -- so a Turn-kind pool
+        // must be refused by exactly the same path. This is the only
+        // scope item #311 left that wasn't closed by a prior PR.
+        let dir = tempdir();
+        let turn_cost_model = AWS_COST_MODEL
+            .replace("us-east-1\"]", "eu-west-1\"]")
+            .replacen("[pools.p]\n", "[pools.p]\nkind = \"turn\"\n", 1);
+        let doc = {
+            let path = write(dir.path(), "probe.toml", &turn_cost_model);
+            Document::load(&path).expect("parses")
+        };
+        assert_eq!(
+            doc.pools.get("p").expect("pool p").kind,
+            crate::cost_model::PoolKind::Turn,
+            "fixture actually declares a turn-kind pool"
+        );
+
+        let limits = "[pools.p]\nnodes_max_per_period = 10\nbudget_cap_per_period = 1000.0\ncost_per_node_estimate = 1.0\n";
+        let cost_model_path = write(dir.path(), "cost-model.toml", &turn_cost_model);
+        let limits_path = write(dir.path(), "limits.toml", limits);
+        let state_path = dir.path().join("state.toml");
+        let err = BoundedDriver::<NoopDriver>::new(
+            NoopDriver::new(),
+            &cost_model_path,
+            &limits_path,
+            &state_path,
+        )
+        .expect_err("a turn-kind pool's region is re-checked the same as a relay-kind pool's");
+        assert!(
+            format!("{err}").contains("us-east-1") || format!("{err}").contains("eu-west-1"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_refused_create_never_calls_the_inner_driver() {
         let dir = tempdir();
         let limits = "[pools.p]\nnodes_max_per_period = 0\nbudget_cap_per_period = 1000.0\ncost_per_node_estimate = 1.0\n";
