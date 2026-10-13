@@ -60,6 +60,48 @@ to every comparison. The cost scenarios and public list-price references in
 [#275](https://github.com/karst-net/karst/issues/275) are sensitivity cases,
 not a margin forecast or evidence of representative customer demand.
 
+### Record comparable shadow usage
+
+Use one record per account alias, deployment alias, and UTC calendar month.
+Keep the source reports and provider exports in the deployment's restricted
+operations store; use aliases here rather than customer names or provider
+credentials. Capture the report `as_of` values and the provider export's own
+period and generation time so late data is visible.
+
+For devices, record `complete`, `device_microseconds`, and the durations of
+`complete`, `incomplete`, and `uncollected` segments. For relay usage, record
+`coverage`, `history_complete`, `complete`, `reported_bytes`,
+`expected_windows`, `missing_windows`, `unexpected_windows`, the sum of daily
+`gap_windows`, and `last_received_at`. Keep each coverage state beside its
+value; incomplete or absent data is unknown, not zero. These names match the
+account-scoped usage APIs. A report is still metering evidence, not an invoice.
+
+For cloud egress, record provider, project/account alias, region, service,
+egress class or route, measured bytes, billed amount and currency, any free
+allowance or credits, and the exact export or billing-line reference. Note
+whether the source isolates the managed relay process and traffic direction.
+If the provider only exposes deployment-wide egress, label its cost
+unallocated; do not split it across accounts or infer it from Karst payload
+bytes. Leave unavailable values explicitly unavailable; do not encode missing
+exports or unallocatable cost as zero. Compare matching UTC periods and state
+the scope of each measure. Karst
+counts customer payload bytes after a complete successful destination write;
+provider egress can also include framing, retries, control traffic, and other
+services. Those differences are expected and must remain explicit.
+
+A copyable CSV header for a restricted worksheet is:
+
+```text
+account_alias,deployment_alias,period_start_utc,period_end_utc,collected_at_utc,device_as_of_utc,device_complete,device_microseconds,device_complete_duration_us,device_incomplete_duration_us,device_uncollected_duration_us,relay_as_of_utc,relay_coverage,relay_history_complete,relay_complete,relay_reported_bytes,relay_expected_windows,relay_missing_windows,relay_unexpected_windows,relay_gap_windows,relay_last_received_at_utc,provider,provider_project_alias,provider_region,provider_service,provider_egress_class,provider_period_start_utc,provider_period_end_utc,provider_generated_at_utc,provider_egress_bytes,provider_billed_amount,provider_currency,provider_allowance_or_credits,provider_export_reference,provider_scope_notes
+```
+
+Do not use provider egress as billable relay usage or use shadow records to
+finalize an invoice. Do not turn on a spending cap solely to collect shadow
+data. Validate grant exhaustion, surrender, restart, and recovery separately
+on an explicitly designated non-production deployment. Report observed ranges
+and sample coverage; do not present a small or incomplete pilot as a forecast
+for the wider customer base.
+
 ## Billing and enforcement gates
 
 Only assign a rate schedule explicitly for an account and exact period using

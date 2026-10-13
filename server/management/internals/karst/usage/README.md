@@ -7,8 +7,11 @@ the SQL membership store. Collection defaults off. Operators manage collection
 with `karst-control admin usage devices`; see the
 [rollout guide](../../../../../docs/operations/device-usage.md). Account owners and admins can
 read coverage-aware reports; no public configuration endpoint is provided.
-The implementation tracker remains open for relay metering, pricing,
-alerts, spending caps, and payments.
+The core device and relay metering, pricing, alerts, spending-cap, and payment
+slices are implemented. Issue #275 remains open for rollout validation, device
+event retention/checkpoint design, retry execution, and self-hosted support
+terms; see the
+[managed billing pilot readiness guide](../../../../../docs/operations/managed-billing-pilot.md).
 
 `Migrate` creates additive ledger, collection, coverage, and discrepancy tables.
 `Append` requires an existing GORM SQL
