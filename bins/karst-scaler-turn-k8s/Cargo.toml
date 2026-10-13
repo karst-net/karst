@@ -1,0 +1,53 @@
+[package]
+name = "karst-scaler-turn-k8s"
+description = "ADR-0045 §7b (issue #311): the Kubernetes TURN driver (optional, feature-gated from bins/karst-scaler)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+publish = false
+
+[lib]
+name = "karst_scaler_turn_k8s"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# Deliberately its own crate, feature-gated from bins/karst-scaler, for the
+# exact reason karst-scaler-k8s/Cargo.toml's own comment gives: an operator
+# who never asks for a TURN driver never compiles kube/tokio/k8s-openapi
+# into their binary at all. Not merged into karst-scaler-k8s itself despite
+# the heavy overlap (StatefulSet/Secret/pod-ordinal conventions,
+# kube::Client plumbing) because the two drivers enroll/drain/destroy
+# through genuinely different control-server endpoints and timing
+# (relay-enroll vs turn-enroll/turn-deenroll, a bounded pod-delete wait vs
+# a credential-TTL-bounded deferred teardown -- see driver.rs's own doc) --
+# sharing one crate would mean every relay-only build pulling in TURN-only
+# code and vice versa, the same "no feature should cost another feature's
+# dependency weight" posture the k8s/aws split already established.
+[dependencies]
+karst-scaler-driver = { path = "../../crates/karst-scaler-driver" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Needs rt-multi-thread, not just rt: drain() spawns a detached background
+# task (the credential-TTL-bounded deferred destroy, driver.rs's own doc)
+# that must keep running on a worker thread while the main thread's own
+# block_on calls for other Driver methods continue -- a single-threaded
+# current-thread runtime would starve one or the other.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Same version pin and feature selection as karst-scaler-k8s/Cargo.toml,
+# for the identical reason (its own comment): 4.0.0 is the newest release
+# that still builds on this workspace's MSRV, and aws-lc-rs avoids
+# reintroducing the ring conflict that broke karst-dns's tests once.
+kube = { version = "=4.0.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+k8s-openapi = { version = "0.28", features = ["latest"] }
+# The enroll/deenroll calls (a different host than the k8s API server
+# kube::Client talks to) stay on ureq, matching karst-scaler-k8s's own
+# enroll.rs and bins/karst-scaler's advise_loop.rs::build_agent.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-native-certs = "0.8"

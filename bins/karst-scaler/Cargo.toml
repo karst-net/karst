@@ -24,14 +24,17 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
-# ADR-0045 §7 Phase 2 PR 4 / §7 Phase 3: the Kubernetes and AWS drivers are
-# each an optional dependency behind their own feature, not a plain one --
-# see karst-scaler-k8s/Cargo.toml's and karst-scaler-aws/Cargo.toml's own
-# comments. `cargo build -p karst-scaler` (no features) never compiles
-# `kube`/`k8s-openapi` or the AWS SDK; `--features k8s`/`--features aws`
-# opts into each independently.
+# ADR-0045 §7 Phase 2 PR 4 / §7 Phase 3 / §7b (issue #311): the Kubernetes
+# relay driver, Kubernetes TURN driver, and AWS driver are each an optional
+# dependency behind their own feature, not a plain one -- see
+# karst-scaler-k8s/Cargo.toml's, karst-scaler-turn-k8s/Cargo.toml's, and
+# karst-scaler-aws/Cargo.toml's own comments. `cargo build -p karst-scaler`
+# (no features) never compiles `kube`/`k8s-openapi` or the AWS SDK;
+# `--features k8s`/`--features turn-k8s`/`--features aws` opts into each
+# independently.
 [features]
 k8s = ["karst-scaler-k8s"]
+turn-k8s = ["karst-scaler-turn-k8s"]
 aws = ["karst-scaler-aws"]
 
 # Phase 0 is an offline tool: no network stack, no async runtime, no cloud
@@ -80,4 +83,5 @@ serde_json = "1"
 # doc for why (breaking a cycle with the optional dependency below).
 karst-scaler-driver = { path = "../../crates/karst-scaler-driver" }
 karst-scaler-k8s = { path = "../karst-scaler-k8s", optional = true }
+karst-scaler-turn-k8s = { path = "../karst-scaler-turn-k8s", optional = true }
 karst-scaler-aws = { path = "../karst-scaler-aws", optional = true }
