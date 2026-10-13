@@ -8,33 +8,36 @@ with `karst-control admin usage devices`; see the
 [rollout guide](../../../../../docs/operations/device-usage.md). Account owners and admins can
 read coverage-aware reports; no public configuration endpoint is provided.
 The core device and relay metering, pricing, alerts, spending-cap, and payment
-slices are implemented. Issue #275 remains open for rollout validation, device
-event retention/checkpoint design, retry execution, and self-hosted support
-terms; see the
+slices are implemented. Issue #275 remains open for rollout validation and
+shadow-data-driven cap tuning; see the
 [managed billing pilot readiness guide](../../../../../docs/operations/managed-billing-pilot.md).
 
-`Migrate` creates additive ledger, collection, coverage, and discrepancy tables.
+`Migrate` creates additive ledger, checkpoint, collection, coverage, and
+discrepancy tables.
 `Append` requires an existing GORM SQL
 transaction and a stable account-scoped event ID. The membership operation and
 append must use that same transaction, and the caller must propagate errors.
-Repeating identical content is safe; changing an existing event's content or
-reusing a revoked enrollment generation fails. A per-account stream serializes
-writers and rejects regressing effective timestamps. Retry database serialization
-or deadlock errors by retrying the entire membership transaction.
+Repeating identical content is safe while its raw event remains retained;
+replays older than a verified checkpoint are rejected rather than recreating
+pruned history. Changing an existing event's content or reusing a revoked
+enrollment generation fails. A per-account stream serializes writers and
+rejects regressing effective timestamps. Retry database serialization or
+deadlock errors by retrying the entire membership transaction.
 
 The immutable event table records enrollment and revocation boundaries, at UTC
 microsecond precision. Re-enrollment uses a fresh generation. Reconnect and key
 rotation are not events. Ledger rows have no cascading relationship to live
-account or peer records. Retention/deletion policy remains a rollout decision.
+account or peer records. Finalized-invoice retention and verified checkpoint
+pruning are described below.
 
 `Timeline` returns half-open constant-count intervals from recorded events. It
 preserves the changes needed for a later graduated-pricing calculation and does
 not multiply nanosecond durations into a potentially overflowing integer total.
 It is an internal evidence query with no authorization or collection-coverage
 claim. An empty timeline's zero count is not proof of zero billable usage. The
-internal query reads account history and is not exposed by the API. The public
-reporter uses the bounded queries described below; a checkpoint strategy remains
-necessary before retained history becomes large.
+internal query reads account history and is not exposed by the API. It uses the
+same verified checkpoints as the public reporter after old raw events have
+been pruned.
 
 ## Authorized usage reports
 
@@ -72,9 +75,10 @@ longer than 93 days; timestamps have microsecond precision. At most 10,000
 changes/coverage periods
 are fetched per query and at most 10,000 report segments returned. Dense windows
 are rejected with a request to narrow the interval, never silently truncated.
-Historical opening counts are aggregated in SQL using an account/time index.
-Coverage and events share a repeatable-read snapshot, with a ten-second API
-deadline. Large retained histories still need a verified checkpoint strategy.
+Historical opening counts use the latest verified checkpoint at or before the
+requested start, plus later raw events, in SQL. Coverage, checkpoints, and events
+share a repeatable-read snapshot, with a ten-second API deadline. The checkpoint
+sequence and digest chain are validated before they contribute to a report.
 
 Each segment is `complete`, `incomplete`, or `uncollected`. Only complete segments
 carry a device count; others carry `null`, including a never-enabled account.
@@ -145,7 +149,19 @@ business transaction, not only the accounting append.
   peers before managed billing launch; this primitive counts persisted peer IDs.
 - Support account reassignment explicitly if it is exposed; do not move metered
   peers through raw SQL or cross-account imports.
-- Define retention policy and a verified checkpoint strategy for large histories.
+- Retain raw lifecycle events until their invoice is finalized and for thirteen
+  months after that UTC billing period ends. The billing retention worker
+  verifies the immutable invoice snapshot before it asks the usage ledger to
+  checkpoint and prune that month. Periods without a finalized invoice are not
+  pruned.
+- Before deletion, the checkpoint records the boundary device count, event
+  sequence, and a chained SHA-256 digest over canonical source-ledger rows. The
+  checkpoint and event deletion commit atomically. Reports use the checkpoint
+  for later windows; raw history remains available for older periods until each
+  period independently qualifies for pruning.
+- Finalized invoice evidence and payment/audit state remain seven years;
+  normalized webhook events remain thirteen months. Raw webhook bodies are not
+  persisted after signature verification.
 - Validate MySQL behavior before enabling collection on that backend.
 - Before downgrading to code without hooks, disable every collecting account and
   retain the ledger tables. Upgrading again requires new activation snapshots;

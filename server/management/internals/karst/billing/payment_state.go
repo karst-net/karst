@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -419,6 +420,9 @@ func (s *Store) PruneBillingHistory(ctx context.Context, now time.Time) error {
 	}
 	invoiceCutoff := now.UTC().AddDate(-7, 0, 0)
 	eventCutoff := now.UTC().AddDate(0, -13, 0)
+	if err := s.pruneFinalizedDeviceEvents(ctx, now.UTC(), eventCutoff); err != nil {
+		return err
+	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("updated_at < ?", invoiceCutoff).Delete(&paymentOutboxRow{}).Error; err != nil {
 			return err
@@ -434,6 +438,36 @@ func (s *Store) PruneBillingHistory(ctx context.Context, now time.Time) error {
 		}
 		return nil
 	})
+}
+
+// pruneFinalizedDeviceEvents prunes each raw lifecycle month only after a
+// verified immutable invoice exists and its 13-month post-period retention has
+// elapsed. Unassigned, incomplete, or otherwise unfinalized periods remain
+// untouched. The invoice itself remains available for seven years.
+func (s *Store) pruneFinalizedDeviceEvents(ctx context.Context, now, cutoff time.Time) error {
+	var rows []invoiceRow
+	if err := s.db.WithContext(ctx).Where("period_end_us <= ?", cutoff.UnixMicro()).
+		Order("account_id, period_start_us").Find(&rows).Error; err != nil {
+		return fmt.Errorf("billing: list finalized invoices for device retention: %w", err)
+	}
+	for _, row := range rows {
+		if !isUTCCalendarMonth(row.PeriodStartUS, row.PeriodEndUS) {
+			return errors.New("billing: invalid finalized invoice period during device retention")
+		}
+		start := time.UnixMicro(row.PeriodStartUS).UTC()
+		end := time.UnixMicro(row.PeriodEndUS).UTC()
+		invoice, err := s.Invoice(WithAccount(ctx, row.AccountID), start, end)
+		if err != nil {
+			return fmt.Errorf("billing: verify finalized invoice before device retention: %w", err)
+		}
+		if !invoice.FinalizedAt.Equal(row.FinalizedAt) {
+			return errors.New("billing: finalized invoice timestamp mismatch during device retention")
+		}
+		if _, err := usage.PruneFinalizedPeriod(ctx, s.db, row.AccountID, start, end, invoice.FinalizedAt, now); err != nil {
+			return fmt.Errorf("billing: prune device events for %s period %s: %w", row.AccountID, start.Format("2006-01"), err)
+		}
+	}
+	return nil
 }
 
 // StartRetentionWorker prunes history at startup and on the requested cadence.

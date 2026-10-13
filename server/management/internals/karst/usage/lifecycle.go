@@ -9,6 +9,7 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -31,6 +32,7 @@ var (
 	ErrInvalid     = errors.New("usage: invalid lifecycle change")
 	ErrConflict    = errors.New("usage: lifecycle conflict")
 	ErrTransaction = errors.New("usage: membership transaction required")
+	ErrCheckpoint  = errors.New("usage: device event checkpoint is invalid")
 )
 
 // Change is an immutable event. ID is the caller's stable retry key, scoped to
@@ -64,11 +66,11 @@ type event struct {
 
 func (event) TableName() string { return "karst_usage_device_events" }
 
-// Migrate creates the additive ledger and coverage tables. Tables have no
-// cascading foreign keys to live membership: a
-// deletion must not destroy historical evidence.
+// Migrate creates the additive ledger, checkpoint, and coverage tables. Tables
+// have no cascading foreign keys to live membership: a deletion must not
+// destroy historical evidence.
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&stream{}, &event{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{}, &RelayMapping{})
+	return db.AutoMigrate(&stream{}, &event{}, &deviceCheckpoint{}, &collection{}, &Period{}, &enrollment{}, &Discrepancy{}, &RelayMapping{})
 }
 
 func validTime(t time.Time) bool {
@@ -84,7 +86,9 @@ func validID(s string) bool { return len(s) > 0 && len(s) <= 128 }
 //
 // Per-account writes serialize on a stream row. Retry a serialization/deadlock
 // failure by retrying the entire membership transaction. A committed event can
-// be replayed with identical content even after later events have been written.
+// be replayed with identical content while its raw row is retained. After a
+// checkpoint covers its timestamp, a missing retry is rejected rather than
+// recreating pruned history.
 func Append(tx *gorm.DB, c Change) error {
 	if tx == nil || tx.Statement == nil {
 		return ErrTransaction
@@ -120,6 +124,13 @@ func Append(tx *gorm.DB, c Change) error {
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
+	}
+	checkpoints, err := readCheckpoints(db, c.AccountID)
+	if err != nil {
+		return err
+	}
+	if len(checkpoints) != 0 && c.At.UnixMicro() <= checkpoints[len(checkpoints)-1].BoundaryUS {
+		return fmt.Errorf("%w: event predates retained checkpoint", ErrConflict)
 	}
 	var state stream
 	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("account_id = ?", c.AccountID).Take(&state).Error; err != nil {
@@ -165,47 +176,60 @@ func Timeline(ctx context.Context, db *gorm.DB, accountID string, start, end tim
 	if !validID(accountID) || !validTime(start) || !validTime(end) || !start.Before(end) {
 		return nil, ErrInvalid
 	}
-	// One ordered statement gives a consistent event set without mixing a
-	// separately queried opening count with concurrently committed events.
-	var rows []event
-	if err := db.WithContext(ctx).Where("account_id = ? AND at_us < ?", accountID, end.UnixMicro()).
-		Order("sequence").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	cursor := start.UTC()
-	var count int64
 	var segments []Segment
-	for _, row := range rows {
-		at := time.UnixMicro(row.AtUS).UTC()
-		if at.After(cursor) {
-			segments = append(segments, Segment{Start: cursor, End: at, Devices: count})
-			cursor = at
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		checkpoint, err := checkpointAt(tx, accountID, start.UnixMicro())
+		if err != nil {
+			return err
 		}
-		switch row.Kind {
-		case Enrolled:
-			if count == math.MaxInt64 {
-				return nil, ErrConflict
+		count, lastSequence, err := openingCount(tx, accountID, start.UnixMicro(), checkpoint)
+		if err != nil {
+			return err
+		}
+		var rows []event
+		if err := tx.Where("account_id = ? AND sequence > ? AND at_us > ? AND at_us < ?", accountID, checkpoint.Sequence, start.UnixMicro(), end.UnixMicro()).
+			Order("sequence").Find(&rows).Error; err != nil {
+			return err
+		}
+		cursor := start.UTC()
+		for _, row := range rows {
+			if row.Sequence != lastSequence+1 {
+				return ErrCheckpoint
 			}
-			count++
-		case Revoked:
-			count--
-		default:
-			return nil, ErrConflict
+			lastSequence = row.Sequence
+			at := time.UnixMicro(row.AtUS).UTC()
+			if at.After(cursor) {
+				segments = append(segments, Segment{Start: cursor, End: at, Devices: count})
+				cursor = at
+			}
+			switch row.Kind {
+			case Enrolled:
+				if count == math.MaxInt64 {
+					return ErrConflict
+				}
+				count++
+			case Revoked:
+				count--
+			default:
+				return ErrConflict
+			}
+			if count < 0 {
+				return ErrConflict
+			}
 		}
-		if count < 0 {
-			return nil, ErrConflict
+		segments = append(segments, Segment{Start: cursor, End: end.UTC(), Devices: count})
+		// Changes at the same instant can leave the count unchanged. Merge
+		// adjacent segments without returning zero-length or redundant intervals.
+		merged := segments[:0]
+		for _, segment := range segments {
+			if len(merged) > 0 && merged[len(merged)-1].Devices == segment.Devices {
+				merged[len(merged)-1].End = segment.End
+			} else {
+				merged = append(merged, segment)
+			}
 		}
-	}
-	segments = append(segments, Segment{Start: cursor, End: end.UTC(), Devices: count})
-	// Changes at the same instant can leave the count unchanged. Merge their
-	// adjacent segments without returning zero-length or redundant intervals.
-	merged := segments[:0]
-	for _, segment := range segments {
-		if len(merged) > 0 && merged[len(merged)-1].Devices == segment.Devices {
-			merged[len(merged)-1].End = segment.End
-		} else {
-			merged = append(merged, segment)
-		}
-	}
-	return merged, nil
+		segments = merged
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	return segments, err
 }
