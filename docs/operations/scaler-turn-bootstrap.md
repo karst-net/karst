@@ -68,6 +68,32 @@ Optional: `KARST_TURN_REGION` (default: unset, which `turncred`'s own
 the two Karst-required lines), `KARST_TURN_GENERATED_CONF` (default:
 `/etc/turnserver.generated.conf`).
 
+## Per-pod delivery: `KARST_TURN_ENV_FILE`
+
+A `StatefulSet`'s pod template is one shared spec — it cannot give each
+pod a different literal value for `KARST_TURN_ENROLL_TOKEN`/
+`KARST_TURN_URI`. Before checking the required variables above, this
+script sources `KARST_TURN_ENV_FILE` if it exists (default:
+`/etc/karst/enroll/$(hostname).env` — a `StatefulSet` pod's hostname is
+always its own pod name), setting whatever variables that file defines.
+This is exactly what `karst-scaler-turn-k8s` (ADR-0045 §7b, issue #311)
+uses: it patches one `Secret` with one key per new pod ordinal
+(`<pod-name>.env`, a plain `KEY='value'` file, shell-quoted), projected
+by a `Secret` volume as one file per key — the same per-ordinal-`Secret`-
+key pattern `karst-scaler-k8s`'s own bundle `Secret` already uses for
+relays, just a sourceable file instead of a TOML one.
+
+`KARST_TURN_STATIC_AUTH_SECRET` is deliberately never in that file: it
+is the same value for every instance (the shared-secret design above),
+so it belongs on the pod template directly (or a separately mounted,
+not-per-ordinal `Secret`) rather than duplicated per ordinal by a
+driver that has no reason to know it.
+
+A deployment running this image without a driver (hand-provisioned,
+`KARST_TURN_ENROLL_TOKEN`/`KARST_TURN_URI` set directly on the
+container) never has this file and skips straight to the required-var
+checks unchanged.
+
 ## Verified by running
 
 Built the image from `coturn/coturn:4.6` and ran the entrypoint against a
@@ -81,6 +107,12 @@ local fake control server standing in for the real one:
   before ever writing a config or starting `turnserver` — confirmed
   nothing is left half-configured.
 - Extra arguments passed to `docker run` reach `turnserver` unchanged.
+- A mounted `KARST_TURN_ENV_FILE` (a real container, `-v`-mounted
+  directory, `--hostname` set to a pod-like name) is sourced and its
+  values reach the enroll call and the generated config exactly as a
+  pod-template-supplied value would, with `KARST_TURN_STATIC_AUTH_SECRET`
+  still coming from the container's own environment, not the mounted
+  file.
 
 Not verified here: a real control server round trip (only a fake one),
 and real coturn TURN-REST credential validation against a minted

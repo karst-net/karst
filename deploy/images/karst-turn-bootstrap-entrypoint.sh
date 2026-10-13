@@ -22,6 +22,22 @@
 
 set -eu
 
+# If a per-pod bundle file is mounted, source it before the required-var
+# checks below so its values can supply them -- karst-scaler-turn-k8s's
+# own Secret-volume-with-per-ordinal-keys delivery (a StatefulSet's one
+# shared pod template cannot reference a different Secret key per pod any
+# other way; see that crate's own bundle.rs doc comment). Defaults to a
+# path derived from this pod's own hostname, matching
+# karst-scaler-k8s's own "$(POD_NAME).toml" convention -- a StatefulSet
+# pod's hostname is always its own pod name. A deployment that sets
+# KARST_TURN_URI etc. directly (no driver, no mounted bundle) never has
+# this file and skips straight to the checks below unchanged.
+KARST_TURN_ENV_FILE="${KARST_TURN_ENV_FILE:-/etc/karst/enroll/$(hostname).env}"
+if [ -f "$KARST_TURN_ENV_FILE" ]; then
+    # shellcheck disable=SC1090  # the path is only known at runtime
+    . "$KARST_TURN_ENV_FILE"
+fi
+
 : "${KARST_CONTROL_API_BASE:?set to the control servers own API base, e.g. https://control.example.test/api}"
 : "${KARST_TURN_ENROLL_TOKEN:?set to a single-use token minted by POST /karst/v1/turn/enroll-tokens (a UserRoleScaler- or admin-session-minted token)}"
 : "${KARST_TURN_URI:?set to this instances own turn: or turns: URI, e.g. turn:turn-0.turn.example.test:3478 -- must match whatever coturn actually listens on, and whatever a driver will later pass to /karst/v1/turn/deenroll}"
