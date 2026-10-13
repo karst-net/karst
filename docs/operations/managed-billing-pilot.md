@@ -84,15 +84,19 @@ bounds. Keep enforcement opt-in until this implementation has shipped and its
 behavior has been validated in a pilot, including reservation sizing against
 shadow usage.
 
-Seller and tax responsibilities, the payment provider and failure/grace
-policy, self-hosted support terms, and retention period remain open in
-[#275](https://github.com/karst-net/karst/issues/275). Do not connect payment
-collection until those decisions are settled. No billing configuration is
-required for deployments that do not opt in; relay forwarding and device
+The pilot uses Paddle as merchant of record, with pre-tax USD rates and
+applicable tax shown separately at checkout. The approved payment-failure
+policy retries on days 1, 3, 7, and 12, provides in-app notices to billing
+admins, and keeps service active after day 14 while an invoice is past due.
+Paddle business/domain onboarding and SaaS tax-category approval remain gates
+before live collection. Self-hosted support terms remain open in
+[#275](https://github.com/karst-net/karst/issues/275). No billing configuration
+is required for deployments that do not opt in; relay forwarding and device
 membership behavior remain available without usage collection.
 
 To stop device collection, disable it using the audited command before
 downgrading to a release without collection hooks. Coordinate ledger and spool
-retention with the deployment's existing data-governance rules. A billing-
-specific retention and deletion policy remains undecided and must be set before
-broad rollout.
+retention with the deployment's existing data-governance rules. Retain
+finalized invoices and payment/audit state for seven years and normalized
+webhook events for thirteen months; never persist raw webhook bodies after
+signature verification.
