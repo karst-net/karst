@@ -260,4 +260,28 @@ func TestDeviceUsagePostgresAtomicActivation(t *testing.T) {
 	require.True(t, report.Complete)
 	require.NotEmpty(t, report.Segments)
 	require.EqualValues(t, 12, *report.Segments[len(report.Segments)-1].Devices)
+
+	// Exercise checkpoint creation, raw-event deletion, and report reconstruction
+	// on PostgreSQL as well as SQLite. This also verifies the per-account stream
+	// lock used by a pruning transaction.
+	periodStart := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	for _, change := range []usage.Change{
+		{ID: "archive-enroll", AccountID: "archive", GenerationID: "archive-generation", Kind: usage.Enrolled, At: periodStart.Add(time.Hour)},
+		{ID: "archive-revoke", AccountID: "archive", GenerationID: "archive-generation", Kind: usage.Revoked, At: periodStart.Add(2 * time.Hour)},
+	} {
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return usage.Append(tx, change) }))
+	}
+	retentionEnd := periodEnd.AddDate(0, 13, 0)
+	removed, err := usage.PruneFinalizedPeriod(ctx, db, "archive", periodStart, periodEnd, periodEnd.Add(time.Hour), retentionEnd)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, removed)
+	nextEvent := usage.Change{ID: "archive-next", AccountID: "archive", GenerationID: "archive-next-generation", Kind: usage.Enrolled, At: retentionEnd.Add(-24 * time.Hour)}
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return usage.Append(tx, nextEvent) }))
+	reportStart, reportEnd := retentionEnd.Add(-48*time.Hour), retentionEnd.Add(-12*time.Hour)
+	require.NoError(t, db.Create(&usage.Period{ID: uuid.NewString(), AccountID: "archive", StartUS: reportStart.UnixMicro(), Complete: true}).Error)
+	checkpointed, err := (usage.Reporter{DB: db, Now: func() time.Time { return retentionEnd }}).Devices(ctx, "archive", reportStart, reportEnd)
+	require.NoError(t, err)
+	require.True(t, checkpointed.Complete)
+	require.Equal(t, "43200000000", checkpointed.DeviceMicroseconds)
 }

@@ -11,6 +11,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/netbirdio/netbird/management/internals/karst/usage"
+	"gorm.io/gorm"
 )
 
 func TestPaymentOutboxRequiresFinalInvoiceAndIsIdempotent(t *testing.T) {
@@ -374,5 +377,120 @@ func TestPruneBillingHistoryUsesApprovedCalendarCutoffs(t *testing.T) {
 	store.db.Model(&paymentHistoryRow{}).Count(&history)
 	if payments != 1 || events != 1 || history != 1 {
 		t.Fatalf("records at retention boundary: payments=%d events=%d history=%d, want 1 each", payments, events, history)
+	}
+}
+
+func TestPruneBillingHistoryRequiresVerifiedExpiredInvoiceForDeviceEvents(t *testing.T) {
+	store := testBillingStore(t)
+	if err := usage.Migrate(store.db); err != nil {
+		t.Fatal(err)
+	}
+	baseNow := time.Now().UTC()
+	monthStart := func(monthsAgo int) time.Time {
+		month := time.Date(baseNow.Year(), baseNow.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return month.AddDate(0, -monthsAgo, 0)
+	}
+	appendPair := func(account string, start time.Time) {
+		t.Helper()
+		for _, change := range []usage.Change{
+			{ID: account + "-enroll", AccountID: account, GenerationID: account + "-generation", Kind: usage.Enrolled, At: start.Add(time.Hour)},
+			{ID: account + "-revoke", AccountID: account, GenerationID: account + "-generation", Kind: usage.Revoked, At: start.Add(2 * time.Hour)},
+		} {
+			if err := store.db.Transaction(func(tx *gorm.DB) error { return usage.Append(tx, change) }); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	finalize := func(account string, start time.Time) {
+		t.Helper()
+		end := start.AddDate(0, 1, 0)
+		ctx := WithAccount(context.Background(), account)
+		if err := store.PutSchedule(ctx, testSchedule()); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AssignSchedule(ctx, start, end, testSchedule().Version); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.FinalizeInvoice(ctx,
+			completeDeviceReport(start, end, deviceSegment(start, end, 1)),
+			completeRelayReport(start, end, "0")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	expiredStart := monthStart(15)
+	appendPair("expired", expiredStart)
+	finalize("expired", expiredStart)
+
+	recentStart := monthStart(10)
+	appendPair("recent", recentStart)
+	finalize("recent", recentStart)
+
+	unfinalizedStart := monthStart(15)
+	appendPair("unfinalized", unfinalizedStart)
+
+	if err := store.PruneBillingHistory(context.Background(), time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for account, want := range map[string]int64{"expired": 0, "recent": 2, "unfinalized": 2} {
+		var got int64
+		if err := store.db.Table("karst_usage_device_events").Where("account_id = ?", account).Count(&got).Error; err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s raw event count=%d; want %d", account, got, want)
+		}
+	}
+	var checkpoints int64
+	if err := store.db.Table("karst_usage_device_checkpoints").Where("account_id = ?", "expired").Count(&checkpoints).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints != 1 {
+		t.Fatalf("expired account checkpoints=%d; want 1", checkpoints)
+	}
+	start, end := expiredStart, expiredStart.AddDate(0, 1, 0)
+	if _, err := store.Invoice(WithAccount(context.Background(), "expired"), start, end); err != nil {
+		t.Fatalf("invoice evidence should remain readable for seven years: %v", err)
+	}
+}
+
+func TestPruneBillingHistoryKeepsEventsWhenInvoiceEvidenceIsInvalid(t *testing.T) {
+	store := testBillingStore(t)
+	if err := usage.Migrate(store.db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -15, 0)
+	end := month.AddDate(0, 1, 0)
+	ctx := WithAccount(context.Background(), "tampered")
+	if err := store.PutSchedule(ctx, testSchedule()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AssignSchedule(ctx, month, end, testSchedule().Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FinalizeInvoice(ctx, completeDeviceReport(month, end, deviceSegment(month, end, 1)), completeRelayReport(month, end, "0")); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []usage.Change{
+		{ID: "tampered-enroll", AccountID: "tampered", GenerationID: "generation", Kind: usage.Enrolled, At: month.Add(time.Hour)},
+		{ID: "tampered-revoke", AccountID: "tampered", GenerationID: "generation", Kind: usage.Revoked, At: month.Add(2 * time.Hour)},
+	} {
+		if err := store.db.Transaction(func(tx *gorm.DB) error { return usage.Append(tx, change) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.db.Model(&invoiceRow{}).Where("account_id = ? AND period_start_us = ?", "tampered", month.UnixMicro()).Update("snapshot", []byte("corrupt")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PruneBillingHistory(context.Background(), time.Now().UTC().Add(time.Second)); err == nil {
+		t.Fatal("retention accepted an invalid finalized invoice")
+	}
+	var count int64
+	if err := store.db.Table("karst_usage_device_events").Where("account_id = ?", "tampered").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("invalid invoice allowed pruning: retained events=%d; want 2", count)
 	}
 }

@@ -74,9 +74,13 @@ Reports are metering evidence, not finalized invoices; reconciliation can change
 historical coverage. Collection periods are not financial billing periods.
 Price calculation and invoice finalization are implemented for explicitly
 assigned UTC billing periods with complete device and relay reports; see the
-[managed billing pilot guide](managed-billing-pilot.md). Device lifecycle event
-retention/deletion and a verified checkpoint strategy remain open before large
-or long-running collections. Do not prune lifecycle history until an approved
-retention policy and a checkpoint design preserve the evidence required for
-reports and finalized invoice inputs; this remains tracked in
-[#275](https://github.com/karst-net/karst/issues/275).
+[managed billing pilot guide](managed-billing-pilot.md). Raw lifecycle events
+are retained until their invoice is finalized and for thirteen months after
+that UTC billing period ends. The billing retention worker verifies the
+immutable invoice snapshot before it asks the usage ledger to checkpoint and
+prune that month. Periods without a finalized invoice are not pruned. Before
+deletion, the checkpoint records the boundary device count, event sequence, and
+a chained SHA-256 digest over canonical source-ledger rows; the checkpoint and
+event deletion commit atomically. Finalized invoice evidence and payment/audit
+state remain seven years, while normalized webhook events remain thirteen
+months. Raw webhook bodies are not persisted after signature verification.

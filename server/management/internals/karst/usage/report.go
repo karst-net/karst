@@ -72,25 +72,31 @@ func (r Reporter) Devices(ctx context.Context, accountID string, start, end time
 		if len(periods) > MaxReportSegments {
 			return ErrReportLimit
 		}
-		// Aggregate history in SQL; transfer only changes inside the window.
-		// Both queries share this repeatable-read snapshot with coverage.
-		var opening int64
-		if err := tx.Model(&event{}).Select("COALESCE(SUM(CASE WHEN kind = ? THEN 1 ELSE -1 END), 0)", Enrolled).
-			Where("account_id = ? AND at_us <= ?", accountID, start.UnixMicro()).Scan(&opening).Error; err != nil {
+		checkpoint, err := checkpointAt(tx, accountID, start.UnixMicro())
+		if err != nil {
 			return err
 		}
-		if opening < 0 {
-			return ErrConflict
+		// The checkpoint and remaining events share this repeatable-read
+		// snapshot with coverage. Sequence continuity detects a missing ledger
+		// row instead of silently reporting a plausible but incorrect count.
+		opening, lastSequence, err := openingCount(tx, accountID, start.UnixMicro(), checkpoint)
+		if err != nil {
+			return err
 		}
 		var events []event
-		if err := tx.Where("account_id = ? AND at_us > ? AND at_us < ?", accountID, start.UnixMicro(), end.UnixMicro()).
+		if err := tx.Where("account_id = ? AND sequence > ? AND at_us > ? AND at_us < ?", accountID, checkpoint.Sequence, start.UnixMicro(), end.UnixMicro()).
 			Order("sequence").Limit(MaxReportSegments + 1).Find(&events).Error; err != nil {
 			return err
 		}
 		if len(events) > MaxReportSegments {
 			return ErrReportLimit
 		}
-		var err error
+		for _, row := range events {
+			if row.Sequence != lastSequence+1 {
+				return ErrCheckpoint
+			}
+			lastSequence = row.Sequence
+		}
 		report, err = composeReport(start.UTC(), end.UTC(), asOf, opening, events, periods)
 		return err
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
