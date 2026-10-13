@@ -215,6 +215,12 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusCreated}, template: "/karst/v1/turn/enroll-tokens",
 		},
 		{
+			name: "de-enroll a turn server", method: http.MethodPost,
+			path: "/karst/v1/turn/deenroll",
+			body: `{"uri":"turn:unknown-turn.example.test:3478"}`,
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turn/deenroll",
+		},
+		{
 			// Same shape as "enroll a relay with a token" above -- no real
 			// token is minted for this case, so this exercises only that
 			// the route exists and answers 401 with no bearer token, not

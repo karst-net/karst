@@ -293,6 +293,7 @@ type turnReader interface {
 	List(context.Context) ([]turncred.StoredTurnServer, error)
 	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
 	Delete(context.Context, string) error
+	DeleteByURI(context.Context, string) error
 }
 
 // knownEventReader is ADR-0045 §8 (Phase 3)'s operator-entered calendar --
@@ -422,6 +423,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/turn/enroll-tokens", h.turnEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/turn/deenroll", h.turnDeenroll).Methods(http.MethodPost, http.MethodOptions)
 	// Deliberately on the parent router, not karstRouter -- see
 	// relaysEnroll's own doc comment (and turnEnroll's own, below) for why.
 	// limitRequestBody is applied explicitly since this route does not
@@ -586,18 +588,23 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 				return
 			}
 			// ADR-0045 §6/§7b: the Scaler role exists to mint relay-enroll
-			// and turn-enroll tokens, nothing else. roles.Scaler's own
+			// and turn-enroll tokens, and to ask for a TURN server it
+			// enrolled to be de-enrolled, nothing else. roles.Scaler's own
 			// Create grant on modules.KarstControl is coarser than that
 			// (this RBAC model's only module granularity covers every
-			// mutation under /karst/v1, not just these two routes — see
+			// mutation under /karst/v1, not just these three routes — see
 			// roles.Scaler's own doc comment), so this hard allowlist is
 			// what actually keeps the role narrow, independent of whatever
 			// a future endpoint added under this same module gate would
-			// otherwise permit it to reach.
+			// otherwise permit it to reach. turnDeenroll is deliberately a
+			// POST (operations.Create), not the DELETE turnsDelete already
+			// is -- roles.Scaler's own Delete grant stays false; see that
+			// function's own doc comment for why this is a request shaped
+			// like a Create rather than a widened Delete grant.
 			if role, ok := nbcontext.RoleFromContext(ctx); ok && types.UserRole(role) == types.UserRoleScaler {
 				path := strings.TrimPrefix(r.URL.Path, "/api")
-				if path != relayEnrollTokensPath && path != turnEnrollTokensPath {
-					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens"), w)
+				if path != relayEnrollTokensPath && path != turnEnrollTokensPath && path != turnDeenrollPath {
+					util.WriteError(r.Context(), status.Errorf(status.PermissionDenied, "the scaler role may only mint relay-enroll or turn-enroll tokens, or request turn de-enrollment"), w)
 					return
 				}
 			}
@@ -1558,12 +1565,13 @@ func (h *handler) relaysDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// relayEnrollTokensPath and turnEnrollTokensPath are the only two routes
-// the Scaler role's hard allowlist in karstAuthorization permits — see
-// that allowlist's own comment, relayEnrollTokensCreate below, and
-// turnEnrollTokensCreate.
+// relayEnrollTokensPath, turnEnrollTokensPath and turnDeenrollPath are the
+// only three routes the Scaler role's hard allowlist in karstAuthorization
+// permits — see that allowlist's own comment, relayEnrollTokensCreate
+// below, turnEnrollTokensCreate, and turnDeenroll.
 const relayEnrollTokensPath = "/karst/v1/relays/enroll-tokens"
 const turnEnrollTokensPath = "/karst/v1/turn/enroll-tokens"
+const turnDeenrollPath = "/karst/v1/turn/deenroll"
 
 // relayEnrollTokenRequest is what karst-scaler's own drive loop (ADR-0045
 // §7 Phase 2) sends when it has just created a relay instance and needs a
@@ -2263,6 +2271,48 @@ func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// turnDeenrollRequest is what a karst-scaler TURN driver (ADR-0045 §7b,
+// issue #311 -- not built yet) sends to remove the registry entry for a
+// TURN instance it is draining or has destroyed. Keyed by uri, not id:
+// the driver builds an instance's uri deterministically at create() time
+// (see turncred.Store.DeleteByURI's own doc comment) and has no reason to
+// List first just to recover the id turnsDelete expects.
+type turnDeenrollRequest struct {
+	URI string `json:"uri"`
+}
+
+// turnDeenroll lets the Scaler role remove a turncred.Store entry without
+// the generic Delete grant turnsDelete needs -- see this route's own
+// entry in the Scaler hard-allowlist (above, in karstAuthorization) for
+// why this is shaped as a POST/Create request rather than a widened
+// Delete permission. Unlike turnEnroll, this runs through the ordinary
+// karstRouter/karstAuthorization stack: the caller here is karst-scaler's
+// own drive loop, which already holds a session-bearing Scaler PAT, not
+// an unenrolled instance with no credential at all.
+func (h *handler) turnDeenroll(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.turns == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "turn registry is not configured"), w)
+		return
+	}
+	var req turnDeenrollRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.turns.DeleteByURI(r.Context(), req.URI); errors.Is(err, turncred.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "turn server not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

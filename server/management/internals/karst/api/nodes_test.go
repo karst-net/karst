@@ -422,13 +422,18 @@ func (scanTurns) List(context.Context) ([]turncred.StoredTurnServer, error) { re
 func (scanTurns) Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error) {
 	return &turncred.StoredTurnServer{}, nil
 }
-func (scanTurns) Delete(context.Context, string) error { return nil }
+func (scanTurns) Delete(context.Context, string) error      { return nil }
+func (scanTurns) DeleteByURI(context.Context, string) error { return nil }
 
 type scanTurnsExists struct{ scanTurns }
 
 func (scanTurnsExists) Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error) {
 	return nil, turncred.ErrExists
 }
+
+type scanTurnsMissing struct{ scanTurns }
+
+func (scanTurnsMissing) DeleteByURI(context.Context, string) error { return turncred.ErrNotFound }
 
 // scanTurnEnrollAccounts fakes the two ADR-0045 §7b methods
 // turnEnrollTokensCreate/turnEnroll type-assert for (MintTurnEnrollKey,
@@ -730,6 +735,62 @@ func TestTurnEnroll(t *testing.T) {
 		router.ServeHTTP(response, req)
 		require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
 	})
+}
+
+// ADR-0045 §7b (issue #311): the Scaler role may ask for a TURN server it
+// enrolled to be de-enrolled, the one exception to roles.Scaler's own
+// Delete grant staying false -- turnDeenroll is a POST, so this reaches
+// the same Create-shaped permission relayEnrollTokensCreate/
+// turnEnrollTokensCreate already have, then the hard allowlist (updated
+// alongside this route) is what actually lets a Scaler-role caller
+// through to it.
+func TestTurnDeenroll_ScalerAndAdminCanRemoveAdvisorCannot(t *testing.T) {
+	for _, tc := range []struct {
+		role     types.UserRole
+		wantCode int
+	}{
+		{types.UserRoleScaler, http.StatusNoContent},
+		{types.UserRoleAdmin, http.StatusNoContent},
+		{types.UserRoleOwner, http.StatusNoContent},
+		{types.UserRoleAdvisor, http.StatusForbidden},
+		{types.UserRoleUser, http.StatusForbidden},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			router := mux.NewRouter()
+			RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, nil, scanPermissions{role: tc.role}, nil, nil, nil, "", nil, router)
+			req := httptest.NewRequest(http.MethodPost, turnDeenrollPath, strings.NewReader(`{"uri":"turn:turn.example.test:3478"}`))
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			require.Equal(t, tc.wantCode, response.Code, response.Body.String())
+		})
+	}
+}
+
+// Confirms turnDeenroll passes turncred.ErrNotFound through as 404, the
+// same contract turnsDelete already has, rather than masking it as a
+// generic error.
+func TestTurnDeenroll_UnknownURIIsNotFound(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurnsMissing{}, nil, nil, nil, scanPermissions{role: types.UserRoleAdmin}, nil, nil, nil, "", nil, router)
+	req := httptest.NewRequest(http.MethodPost, turnDeenrollPath, strings.NewReader(`{"uri":"turn:never-registered.example.test:3478"}`))
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+}
+
+// The Scaler role's own narrow allowlist must still refuse the ordinary
+// admin route for the exact same underlying resource -- gaining
+// turnDeenroll must not have widened reach to turnsDelete too.
+func TestScalerRoleCannotReachTurnsDeleteEvenThoughItCanReachTurnDeenroll(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, nil, nil, nil, scanTurns{}, nil, nil, nil, scanPermissions{role: types.UserRoleScaler}, nil, nil, nil, "", nil, router)
+	req := httptest.NewRequest(http.MethodDelete, "/karst/v1/turns/some-id", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "user-a"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }
 
 // The member hostility test walks the same router that production serves. A
