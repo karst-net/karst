@@ -823,6 +823,18 @@ type BillingPaymentCurrency string
 // BillingPaymentState defines model for BillingPayment.State.
 type BillingPaymentState string
 
+// BillingPaymentFailureNotice defines model for BillingPaymentFailureNotice.
+type BillingPaymentFailureNotice struct {
+	CreatedAt   time.Time `json:"created_at"`
+	PeriodEnd   time.Time `json:"period_end"`
+	PeriodStart time.Time `json:"period_start"`
+}
+
+// BillingPaymentNoticeFeed defines model for BillingPaymentNoticeFeed.
+type BillingPaymentNoticeFeed struct {
+	Notices []BillingPaymentFailureNotice `json:"notices"`
+}
+
 // ChainVerification defines model for ChainVerification.
 type ChainVerification struct {
 	FirstBadSequence *int      `json:"first_bad_sequence,omitempty"`
@@ -1479,6 +1491,12 @@ type ExportAudit200JSONResponseBody struct {
 type ListBedrockLogParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetBillingPaymentNoticesParams defines parameters for GetBillingPaymentNotices.
+type GetBillingPaymentNoticesParams struct {
+	// Period UTC calendar month in YYYY-MM form.
+	Period string `form:"period" json:"period"`
 }
 
 // GetBillingPaymentParams defines parameters for GetBillingPayment.
