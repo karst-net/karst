@@ -557,6 +557,7 @@ mod tests {
             min_nodes: 0,
             nodes_max: None,
             residency_tags: residency_tags.iter().map(|t| (*t).to_owned()).collect(),
+            spot: None,
         }
     }
 

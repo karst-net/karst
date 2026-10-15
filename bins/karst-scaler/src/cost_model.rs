@@ -217,6 +217,42 @@ pub struct PriceSchedule {
     pub minimum_increment: Option<f64>,
 }
 
+/// Spot/preemptible pricing and reclaim-rate modeling for one pool —
+/// ADR-0045 Open Question #4, data-only (issue #339): no driver reads this
+/// today, only [`crate::simulate::evaluate_spot`]. Attaches to the one
+/// meter that bills per node-hour (`meter`) — spot pricing is a property
+/// of compute, not of egress or any other meter a pool might also have a
+/// schedule for, and the headroom this models is counted in that meter's
+/// own unit.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpotModel {
+    /// Which meter in this pool's `cost_model.meters` this applies to.
+    /// Must name a meter the pool actually has a price schedule for —
+    /// checked by [`Document::validate`], not here.
+    pub meter: MeterId,
+    /// Fraction of the meter's on-demand unit price paid while running on
+    /// spot/preemptible capacity, e.g. `0.3` = 30% of on-demand (a 70%
+    /// discount). A fixed ratio is Open Question #4's own "reasonable
+    /// first approximation" — real spot pricing is itself variable.
+    pub price_ratio: f64,
+    /// Baseline probability a single spot node is reclaimed in any given
+    /// hour, independent of every other node — the hazard rate absent
+    /// correlation.
+    pub reclaim_rate_per_hour: f64,
+    /// `0.0` (every reclaim is independent) to `1.0` (every reclaim event
+    /// takes this pool's entire spot capacity at once) — Open Question
+    /// #4's correlated-failure concern: "a provider pulling an AZ's spot
+    /// pool tends to do it during a demand spike." Scales how much of
+    /// `reclaim_rate_per_hour`'s hazard manifests as pool-wide events
+    /// rather than independent single-node ones; it does not change the
+    /// expected *count* of nodes reclaimed, only how clustered in time
+    /// they are — which is exactly what overstates N+1 redundancy. `0.0`
+    /// (the default) is the independent baseline.
+    #[serde(default)]
+    pub correlation: f64,
+}
+
 /// A prepaid quantity at a (possibly discounted) price — ADR-0045 §2's
 /// "commitments" paragraph: "a reserved or savings-plan quantity is a
 /// prepaid band at price zero (or a discounted rate) that the optimizer
@@ -314,6 +350,14 @@ pub struct Pool {
     /// enforced — see `advise.rs`'s own module doc for why.
     #[serde(default)]
     pub residency_tags: Vec<String>,
+
+    /// ADR-0045 Open Question #4 (issue #339): spot/preemptible pricing
+    /// and reclaim-rate modeling for this pool, evaluated only by
+    /// [`crate::simulate::evaluate_spot`] — no driver reads this today.
+    /// `None` (the default) means this pool is never considered for spot
+    /// capacity.
+    #[serde(default)]
+    pub spot: Option<SpotModel>,
 }
 
 impl Pool {
@@ -408,6 +452,7 @@ impl Document {
                     )));
                 }
             }
+            check_spot_model(pool_id, pool)?;
             for (meter, schedule) in &pool.cost_model.meters {
                 validate_schedule(
                     &format!("pools.{pool_id}.cost_model.meters.{meter}"),
@@ -514,6 +559,47 @@ impl Document {
         }
         Ok(())
     }
+}
+
+/// Checks what [`SpotModel`]'s own `Deserialize` cannot: that it names a
+/// meter this pool actually prices, and that its three numeric fields are
+/// each in the range the model this pool's doc comment describes actually
+/// needs — a `price_ratio` of `0.0` or `1.0`+ (free, or no discount at
+/// all) or an out-of-`[0.0, 1.0]` probability would silently produce a
+/// meaningless estimate rather than a refused one.
+///
+/// # Errors
+/// [`Error::Invalid`] naming the pool and field at fault.
+fn check_spot_model(pool_id: &str, pool: &Pool) -> Result<(), Error> {
+    let Some(spot) = &pool.spot else {
+        return Ok(());
+    };
+    if !pool.cost_model.meters.contains_key(&spot.meter) {
+        return Err(Error::Invalid(format!(
+            "pools.{pool_id}.spot: names meter {:?}, which this pool has no price schedule for",
+            spot.meter
+        )));
+    }
+    if !(spot.price_ratio > 0.0 && spot.price_ratio < 1.0) {
+        return Err(Error::Invalid(format!(
+            "pools.{pool_id}.spot.price_ratio: {} must be strictly between 0.0 and 1.0 \
+             (spot that costs as much as on-demand, or is free, is not worth modeling)",
+            spot.price_ratio
+        )));
+    }
+    if !(0.0..=1.0).contains(&spot.reclaim_rate_per_hour) {
+        return Err(Error::Invalid(format!(
+            "pools.{pool_id}.spot.reclaim_rate_per_hour: {} is not a probability in [0.0, 1.0]",
+            spot.reclaim_rate_per_hour
+        )));
+    }
+    if !(0.0..=1.0).contains(&spot.correlation) {
+        return Err(Error::Invalid(format!(
+            "pools.{pool_id}.spot.correlation: {} is not in [0.0, 1.0]",
+            spot.correlation
+        )));
+    }
+    Ok(())
 }
 
 /// Bands must be non-empty, ascending by `up_to`, and exactly the last one
@@ -1110,6 +1196,99 @@ bands = [{ unit_price = 0.0 }]
         let text = format!("{MINIMAL}\n[latency_thresholds]\n\"eu-west-1\" = 50.0\n");
         let d = Document::parse(&text).expect("parses");
         assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn a_pool_with_no_spot_model_defaults_to_none() {
+        let d = Document::parse(MINIMAL).expect("parses");
+        assert!(d.pools.get("onprem-mia").expect("pool").spot.is_none());
+    }
+
+    #[test]
+    fn a_valid_spot_model_is_accepted() {
+        let text = format!(
+            "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"egress_gb\"\n\
+             price_ratio = 0.3\nreclaim_rate_per_hour = 0.01\ncorrelation = 0.2\n"
+        );
+        let d = Document::parse(&text).expect("parses");
+        assert!(d.validate().is_ok());
+        let spot = d
+            .pools
+            .get("onprem-mia")
+            .expect("pool")
+            .spot
+            .as_ref()
+            .expect("spot model");
+        assert_eq!(spot.meter, "egress_gb");
+    }
+
+    #[test]
+    fn correlation_defaults_to_zero() {
+        let text = format!(
+            "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"egress_gb\"\n\
+             price_ratio = 0.3\nreclaim_rate_per_hour = 0.01\n"
+        );
+        let d = Document::parse(&text).expect("parses");
+        assert!(d.validate().is_ok());
+        let correlation = d
+            .pools
+            .get("onprem-mia")
+            .expect("pool")
+            .spot
+            .as_ref()
+            .expect("spot")
+            .correlation;
+        assert!(correlation.abs() < 1e-9, "{correlation}");
+    }
+
+    #[test]
+    fn a_spot_model_naming_an_unpriced_meter_is_refused() {
+        let text = format!(
+            "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"instance_hours\"\n\
+             price_ratio = 0.3\nreclaim_rate_per_hour = 0.01\n"
+        );
+        let d = Document::parse(&text).expect("parses");
+        let err = d.validate().expect_err("unpriced meter");
+        assert!(format!("{err}").contains("instance_hours"), "{err}");
+    }
+
+    #[test]
+    fn a_spot_price_ratio_outside_zero_one_exclusive_is_refused() {
+        for bad in ["0.0", "1.0", "1.5", "-0.1"] {
+            let text = format!(
+                "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"egress_gb\"\n\
+                 price_ratio = {bad}\nreclaim_rate_per_hour = 0.01\n"
+            );
+            let d = Document::parse(&text).expect("parses");
+            let err = d
+                .validate()
+                .expect_err(&format!("price_ratio {bad} should be refused"));
+            assert!(format!("{err}").contains("price_ratio"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_spot_reclaim_rate_outside_zero_one_is_refused() {
+        let text = format!(
+            "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"egress_gb\"\n\
+             price_ratio = 0.3\nreclaim_rate_per_hour = 1.5\n"
+        );
+        let d = Document::parse(&text).expect("parses");
+        let err = d
+            .validate()
+            .expect_err("reclaim_rate_per_hour out of range");
+        assert!(format!("{err}").contains("reclaim_rate_per_hour"), "{err}");
+    }
+
+    #[test]
+    fn a_spot_correlation_outside_zero_one_is_refused() {
+        let text = format!(
+            "{MINIMAL}\n[pools.onprem-mia.spot]\nmeter = \"egress_gb\"\n\
+             price_ratio = 0.3\nreclaim_rate_per_hour = 0.01\ncorrelation = -0.1\n"
+        );
+        let d = Document::parse(&text).expect("parses");
+        let err = d.validate().expect_err("correlation out of range");
+        assert!(format!("{err}").contains("correlation"), "{err}");
     }
 
     #[test]

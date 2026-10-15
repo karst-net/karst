@@ -928,6 +928,21 @@ These are real unknowns to resolve in Phase 0, not rhetorical ones.
    pricing alongside on-demand) to check the gate before any driver work is
    considered. Still out of scope here until #339 closes it one way or the
    other.
+   **Addendum, 2026-10-15:** #339 shipped the extension —
+   `cost_model::SpotModel` (`pools.*.spot`: meter, `price_ratio`,
+   `reclaim_rate_per_hour`, `correlation`) and
+   `simulate::evaluate_spot`/`karst-scaler spot-report`, reporting a pool's
+   headroom (strictly above its `min_nodes` floor), the savings running it
+   on spot would have produced, and the forced re-homes a synthetic,
+   analytic reclaim model estimates for it, together rather than one
+   without the other — `correlation` changes how clustered those re-homes
+   are, never their expected count, which is the actual shape of "overstates
+   real redundancy" above. No real telemetry was available to run it
+   against; `docs/measurements/spot-capacity-evaluation-2026-10-15.md`
+   documents a synthetic fixture instead and is explicit that it checks the
+   tool, not a real deployment's numbers. The gate is checkable now; still
+   open until a real operator runs it against their own recorded usage —
+   #339 stays open for that, driver work stays out of scope until it does.
 5. **Commitment planning is a different problem** (buy a one-year plan or
    not). The planner consumes commitments; recommending them is out of scope
    here, though Phase 0's simulator is the right place to evaluate one.

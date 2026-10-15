@@ -1,0 +1,11 @@
+# Synthetic fixture: three calendar months of one AWS relay pool's
+# instance-hours, modeled as one record per month at that month's average
+# concurrent node count * hours in that month. January and March are
+# ordinary load (avg 8 and 9 nodes); February carries a demand spike
+# (avg 14 nodes) -- the shape issue #339 asks to be checked against:
+# does headroom (and therefore spot eligibility) hold up when demand is
+# high, or does the floor eat all of it right when spot reclaims are most
+# likely to correlate with a provider-wide demand spike?
+1768435200,aws-use1,meter,instance_hours,5952.0
+1771113600,aws-use1,meter,instance_hours,9408.0
+1773619200,aws-use1,meter,instance_hours,6696.0
