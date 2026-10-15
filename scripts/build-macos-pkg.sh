@@ -296,7 +296,7 @@ rm -rf "$iconset"
 # generates: a composited/vector-drawn menu bar icon was tried and
 # rejected on real hardware for reading poorly at menu bar size.
 echo "==> staging menu bar state icons"
-for state in loading not-running no-peers relayed direct; do
+for state in loading not-running direct; do
   cp "$root/packaging/macos/KarstStatus/Resources/menu-$state.png" \
     "$app/Contents/Resources/menu-$state.png"
 done

@@ -184,10 +184,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let (markState, establishedCount) = Self.connectivitySummary(for: status.peers)
         let label: String
-        switch markState {
-        case .noPeers: label = "no peers"
-        case .relayed: label = "\(establishedCount) via relay/TURN"
-        default: label = "\(establishedCount) direct"
+        if status.peers.isEmpty {
+            label = "no peers configured"
+        } else if establishedCount == 0 {
+            label = "no peers"
+        } else {
+            label = "\(establishedCount) connected"
         }
 
         let rate = throughputRate(for: status.peers)
@@ -196,21 +198,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu(for: status)
     }
 
-    /// This device's own connectivity, classified from every peer's state
-    /// and transport — the status bar icon/title's own classification,
-    /// factored out so the menu's aggregate summary line (#207) computes
-    /// the identical thing rather than a second, driftable copy of it.
+    /// This device's own connectivity, classified from every peer's state —
+    /// the status bar icon/title's own classification, factored out so the
+    /// menu's aggregate summary line (#207) computes the identical thing
+    /// rather than a second, driftable copy of it.
     ///
-    /// A mix of direct and relayed peers still reports the relayed state —
-    /// the whole point of `Transport` not collapsing to a bool
-    /// (`engine.rs`'s doc comment on it) is that "slower and through a
-    /// third party" must stay visible, not be averaged away by a healthier
-    /// peer sitting next to it.
+    /// Transport (direct vs. relay/TURN) no longer affects this
+    /// classification — the menu bar mark now only distinguishes "at least
+    /// one peer established, or none configured to begin with" from "peers
+    /// are configured but unreachable," dropping the separate relayed state
+    /// the mark used to carry (per-peer transport is still in
+    /// `PeerStatus.transport` for anything that wants it).
+    ///
+    /// No peers *configured* is not a failure — a lone device on the mesh
+    /// is a perfectly normal topology, not "disconnected," so it reads as
+    /// `.direct` too. Peers configured but none *established* is the real
+    /// problem case and keeps the `.notRunning` look.
     private static func connectivitySummary(for peers: [PeerStatus]) -> (state: MarkState, established: Int) {
+        guard !peers.isEmpty else { return (.direct, 0) }
         let established = peers.filter { $0.state.hasPrefix("established") }
-        guard !established.isEmpty else { return (.noPeers, 0) }
-        let relayed = established.contains { $0.transport == "relay" || $0.transport == "turn" }
-        return (relayed ? .relayed : .direct, established.count)
+        guard !established.isEmpty else { return (.notRunning, 0) }
+        return (.direct, established.count)
     }
 
     /// Template images so AppKit re-tints them for light/dark menu bars and
@@ -223,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    /// The five menu-bar states. Each names a bundled
+    /// The three menu-bar states. Each names a bundled
     /// `Contents/Resources/menu-<state>.png` (`scripts/build-macos-pkg.sh`
     /// stages them — not a SwiftPM `resources:` entry, since
     /// `Bundle.module`'s lookup differs depending on whether this is
@@ -231,13 +239,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// and this way sidesteps that entirely). A code-drawn version of these
     /// (composited SF Symbols, then hand-built vector shapes) was tried and
     /// rejected on real hardware — neither read cleanly at menu bar size —
-    /// so this is deliberately dumb: five flat image files, each a
+    /// so this is deliberately dumb: three flat image files, each a
     /// hand-designed asset rather than something this code generates.
+    ///
+    /// `.notRunning` doubles as "the tunnel is up but no peer is
+    /// established" (`connectivitySummary`'s fallback) as well as its
+    /// literal name — the dedicated no-peers mark was dropped, and from a
+    /// glance at the menu bar, "connected to nothing" and "not running"
+    /// look the same; the text next to it (`render`'s `label`) still tells
+    /// them apart.
     private enum MarkState: String {
         case loading = "menu-loading"
         case notRunning = "menu-not-running"
-        case noPeers = "menu-no-peers"
-        case relayed = "menu-relayed"
         case direct = "menu-direct"
     }
 
@@ -337,22 +350,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let (markState, establishedCount) = Self.connectivitySummary(for: peers)
         let title: String
         switch markState {
-        case .noPeers:
+        case .notRunning:
             title = peers.count == 1 ? "1 peer configured, not connected" : "\(peers.count) peers configured, none connected"
-        case .relayed, .direct:
-            let transport = markState == .relayed ? "via relay/TURN" : "direct"
+        case .direct:
             title = establishedCount == peers.count
-                ? "\(establishedCount) peers connected (\(transport))"
-                : "\(establishedCount) of \(peers.count) peers connected (\(transport))"
+                ? "\(establishedCount) peers connected"
+                : "\(establishedCount) of \(peers.count) peers connected"
         default:
-            // Unreachable: connectivitySummary only ever returns .noPeers,
-            // .direct or .relayed — the other two MarkState cases exist for
-            // the status bar icon before a status has ever been fetched.
+            // Unreachable: connectivitySummary only ever returns .notRunning
+            // or .direct — .loading exists only for the status bar icon
+            // before a status has ever been fetched.
             title = "\(peers.count) peers configured"
         }
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.image = Self.symbolImage(
-            markState == .relayed ? "circle.lefthalf.filled" : (markState == .direct ? "circle.fill" : "circle"),
+            markState == .direct ? "circle.fill" : "circle",
             accessibilityDescription: title
         )
         return item
