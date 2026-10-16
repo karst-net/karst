@@ -30,6 +30,15 @@ production Tailscale tunnel), one shared instrument
 production karst deployment — committed with the harness because reproducing
 it safely against shared, in-use lab hosts is most of what it took to get.
 
+`spot-capacity-evaluation-2026-10-15.md` is issue #339 / ADR-0045 Open
+Question #4: a different kind of entry again, since there was no running
+karst fleet to pull real spot/preemptible usage from — the fixture beside
+it (`spot-capacity-evaluation-2026-10-15-cost-model.toml`,
+`-usage.log`) is a documented synthetic input, committed because the
+question it answers is whether `karst-scaler spot-report` itself correctly
+weighs savings against reclaim churn, not a claim about any real
+deployment's actual numbers.
+
 ## Runs
 
 | File | Result |
@@ -41,6 +50,7 @@ it safely against shared, in-use lab hosts is most of what it took to get.
 | `udp-gro-2026-09-12.md` | issue #120 Phase B, shipped — real two-host run of the production `UDP_GRO` implementation: **995,228 datagrams from genuinely coalesced reads, zero corrupted**, closing the correctness question the earlier reverted attempt got wrong |
 | `quic-relay-2026-09-12.md` | issue #122 / ADR-0020, clean-loopback only — QUIC's handshake costs ~45% more median latency than TCP+TLS but a much shorter tail (worst case 5–6 ms vs 31–34 ms), and forwards 5–13% faster once established; the loss-recovery property the transport is actually for is not measured here and is left as a documented follow-up |
 | `vpn-comparison-2026-09-30.md` | issue #201 — karst, WireGuard, Nebula, Headscale, and real Tailscale within a fairly narrow band on an uncontended LAN (806–900 Mbps TCP, sub-ms ping); NAT/relay-forced paths, multi-stream scaling, and reconvergence timing left as documented follow-ups |
+| `spot-capacity-evaluation-2026-10-15.md` | issue #339 / ADR-0045 Open Question #4 — `karst-scaler spot-report`, new in this issue, against a documented synthetic fixture: ~49% savings on one pool's headroom at an illustrative discount/reclaim-rate pairing, for ~2.3 modeled forced re-homes over three months; closes "can this gate be checked at all," not "should we build the driver," which still needs a real operator's own telemetry |
 
 Both ran between `turing` and `lovelace` (48-core Xeon, Ubuntu 24.04) over a
 3×1G bonded link, under continuous `iperf3` load so that every rekey happened

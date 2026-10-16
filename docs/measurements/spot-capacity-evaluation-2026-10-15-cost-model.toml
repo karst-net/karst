@@ -1,0 +1,26 @@
+# Synthetic fixture for docs/measurements/spot-capacity-evaluation-2026-10-15.md
+# -- no real provider telemetry was available in the environment that ran
+# this (same documented gap ADR-0045's Kubernetes/AWS driver work already
+# carries); see that file for how these numbers were chosen.
+
+[allowed_regions]
+aws = ["us-east-1"]
+
+[pools.aws-use1]
+provider = "aws"
+region = "us-east-1"
+min_nodes = 3
+
+[pools.aws-use1.cost_model.meters.instance_hours]
+mode = "graduated"
+bands = [{ unit_price = 0.0416 }]
+
+[pools.aws-use1.cost_model.meters.egress_gb]
+mode = "graduated"
+bands = [{ up_to = 10000.0, unit_price = 0.09 }, { unit_price = 0.085 }]
+
+[pools.aws-use1.spot]
+meter = "instance_hours"
+price_ratio = 0.3
+reclaim_rate_per_hour = 0.00015
+correlation = 0.4

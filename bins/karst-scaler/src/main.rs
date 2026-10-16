@@ -11,6 +11,11 @@
 //! karst-scaler simulate COST_MODEL.toml USAGE_LOG
 //!     replay recorded usage against a cost model; print spend per pool,
 //!     per meter, per edge, and a grand total
+//! karst-scaler spot-report COST_MODEL.toml USAGE_LOG
+//!     ADR-0045 Open Question #4 (issue #339): for every pool with a
+//!     [pools.*.spot] model, estimate headroom, on-demand vs. spot cost,
+//!     and expected forced re-homes; see `simulate::evaluate_spot`'s own
+//!     module doc
 //! karst-scaler check COST_MODEL.toml
 //!     parse and validate a cost-model file without simulating anything
 //! karst-scaler advise ADVISE_CONFIG.toml
@@ -60,6 +65,7 @@ fn main() -> ExitCode {
 
     let result = match refs.as_slice() {
         ["simulate", cost_model, usage_log] => run_simulate(cost_model, usage_log),
+        ["spot-report", cost_model, usage_log] => run_spot_report(cost_model, usage_log),
         ["check", cost_model] => run_check(cost_model),
         ["advise", advise_config] => run_advise(advise_config),
         ["drive", advise_config] => run_drive(advise_config),
@@ -85,6 +91,11 @@ fn usage_text() {
   simulate COST_MODEL.toml USAGE_LOG
                               replay recorded usage against a cost model;
                               print spend per pool, per meter, per edge
+  spot-report COST_MODEL.toml USAGE_LOG
+                              ADR-0045 Open Question #4 (issue #339): for
+                              every pool with a [pools.*.spot] model,
+                              estimate headroom, on-demand vs. spot cost,
+                              and expected forced re-homes
   check COST_MODEL.toml       parse and validate a cost-model file only
   advise ADVISE_CONFIG.toml  poll the control server's demand endpoints on
                               an interval; log a node-count recommendation
@@ -343,6 +354,15 @@ fn run_simulate(cost_model_path: &str, usage_path: &str) -> Result<(), String> {
     let records =
         usage::load(Path::new(usage_path)).map_err(|e| format!("reading {usage_path}: {e}"))?;
     let report = simulate::simulate(&doc, &records).map_err(|e| e.to_string())?;
+    println!("{report}");
+    Ok(())
+}
+
+fn run_spot_report(cost_model_path: &str, usage_path: &str) -> Result<(), String> {
+    let doc = load_cost_model(cost_model_path)?;
+    let records =
+        usage::load(Path::new(usage_path)).map_err(|e| format!("reading {usage_path}: {e}"))?;
+    let report = simulate::evaluate_spot(&doc, &records).map_err(|e| e.to_string())?;
     println!("{report}");
     Ok(())
 }

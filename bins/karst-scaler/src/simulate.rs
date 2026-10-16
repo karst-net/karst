@@ -314,6 +314,240 @@ pub fn simulate(doc: &Document, records: &[Record]) -> Result<Report, Error> {
     Ok(report)
 }
 
+/// One pool's spot/preemptible evaluation — ADR-0045 Open Question #4
+/// (issue #339). Populated only for a pool that declares
+/// [`crate::cost_model::Pool::spot`]; a pool with none is absent from
+/// [`SpotReport::pools`] entirely, not zeroed.
+#[derive(Debug, Default, Clone)]
+pub struct PoolSpotReport {
+    pub meter: String,
+    /// Average concurrent nodes this meter billed for, time-weighted
+    /// across every period this pool reported usage in (summed node-hours
+    /// / summed hours of those periods).
+    pub avg_total_nodes: f64,
+    /// The slice of `avg_total_nodes` strictly above `min_nodes` — never
+    /// the N+1 floor itself, matching issue #339's own scope.
+    pub avg_headroom_nodes: f64,
+    /// `avg_headroom_nodes / avg_total_nodes`, or `0.0` if this pool
+    /// reported no usage for this meter at all.
+    pub headroom_fraction: f64,
+    /// The on-demand marginal cost of running `avg_headroom_nodes` on
+    /// this meter's schedule, summed over every period —
+    /// `price(total) - price(total - headroom)` per period, which
+    /// (unlike pricing the headroom quantity alone) stays correct under
+    /// [`crate::cost_model::Mode::Volume`]'s whole-quantity repricing too.
+    pub on_demand_cost: f64,
+    /// `on_demand_cost * price_ratio`.
+    pub spot_cost: f64,
+    /// `on_demand_cost - spot_cost`. Ignores free allowances and
+    /// commitments already consumed by the floor's own usage — a
+    /// documented simplification (see [`evaluate_spot`]'s own doc), not
+    /// an oversight.
+    pub savings: f64,
+    /// Expected forced re-homes implied by the reclaim model, summed over
+    /// every period: independent single-node reclaims plus the node
+    /// count lost in every expected correlated event.
+    pub expected_reclaims: f64,
+    /// Of `expected_reclaims`, how many came from a correlated
+    /// (pool-wide, simultaneous) event rather than an independent
+    /// single-node one — the number Open Question #4's "overstates real
+    /// redundancy" concern is actually about: not the total count, but
+    /// how much of it arrives in one simultaneous batch instead of
+    /// spread out.
+    pub expected_correlated_reclaims: f64,
+}
+
+/// The whole spot/preemptible evaluation run — see [`evaluate_spot`].
+#[derive(Debug, Default, Clone)]
+pub struct SpotReport {
+    pub pools: BTreeMap<String, PoolSpotReport>,
+}
+
+impl SpotReport {
+    #[must_use]
+    pub fn total_savings(&self) -> f64 {
+        self.pools.values().map(|p| p.savings).sum()
+    }
+}
+
+impl std::fmt::Display for SpotReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.pools.is_empty() {
+            return writeln!(f, "no pool declares a [pools.*.spot] model");
+        }
+        for (pool_id, r) in &self.pools {
+            writeln!(f, "pool {pool_id} (spot meter {}):", r.meter)?;
+            writeln!(
+                f,
+                "  avg nodes: {:.2} total, {:.2} headroom ({:.1}% of pool)",
+                r.avg_total_nodes,
+                r.avg_headroom_nodes,
+                r.headroom_fraction * 100.0
+            )?;
+            writeln!(
+                f,
+                "  cost of headroom: {:.2} on-demand, {:.2} spot, {:.2} savings",
+                r.on_demand_cost, r.spot_cost, r.savings
+            )?;
+            writeln!(
+                f,
+                "  expected re-homes: {:.2} ({:.2} from correlated/multi-node events)",
+                r.expected_reclaims, r.expected_correlated_reclaims
+            )?;
+        }
+        write!(
+            f,
+            "total savings across every spot-modeled pool: {:.2}",
+            self.total_savings()
+        )
+    }
+}
+
+/// Evaluate ADR-0045 Open Question #4 for every pool that declares a
+/// [`crate::cost_model::SpotModel`] — issue #339's own scope: a data-only
+/// estimate of what running headroom on spot/preemptible capacity would
+/// save and what it would cost in forced re-homes, so that gate can
+/// actually be checked instead of assumed. No driver changes, and no
+/// effect on [`simulate`]'s own report: this is a separate, independent
+/// read of the same usage.
+///
+/// # Headroom
+/// For each period a pool reported this meter's usage in, headroom is
+/// whatever node-hours that period's total exceeds `min_nodes * hours in
+/// that period` — the N+1 floor itself is never considered for spot,
+/// matching the issue's own scope ("strictly above its N+1 floor, never
+/// the floor itself").
+///
+/// # What this ignores
+/// Free allowances and commitments already consumed by the floor's own
+/// usage are not separated out here — `on_demand_cost` is the marginal
+/// cost of the headroom slice against the schedule's bands alone, which
+/// slightly overstates savings whenever a commitment or free allowance
+/// would otherwise have covered part of that headroom. Named here as a
+/// first-approximation simplification, not an oversight: issue #339 asks
+/// for an estimate to decide whether driver work is worth scoping, not a
+/// bill.
+///
+/// # Reclaim model
+/// Deliberately an analytic expectation, not a Monte Carlo replay: for
+/// each period, `avg_spot_nodes = headroom_hours / hours_in_period`, and
+/// - independent reclaims = `avg_spot_nodes * reclaim_rate_per_hour *
+///   (1 - correlation) * hours_in_period`
+/// - correlated events = `reclaim_rate_per_hour * correlation *
+///   hours_in_period`, each one taking `avg_spot_nodes` nodes at once
+///
+/// `correlation` does not change the expected *count* of nodes reclaimed
+/// (both terms still sum to `avg_spot_nodes * reclaim_rate_per_hour *
+/// hours_in_period` at either edge of `correlation`) — only how much of
+/// that count arrives in one simultaneous event instead of spread out,
+/// which is precisely Open Question #4's "overstates real redundancy"
+/// concern, not a claim that spot capacity causes more total churn.
+///
+/// # Errors
+/// [`Error::Invalid`] if usage exceeds what a bounded schedule can price
+/// — the same condition [`simulate`] itself reports.
+pub fn evaluate_spot(doc: &Document, records: &[Record]) -> Result<SpotReport, Error> {
+    let mut report = SpotReport::default();
+    for (pool_id, pool) in &doc.pools {
+        let Some(spot) = &pool.spot else { continue };
+        // `cost_model::Document::validate` already proved this exists;
+        // looked up again rather than carried along, matching `simulate`
+        // itself (see its pass 2's own comment) so this path names its
+        // own error rather than relying on that proof holding across a
+        // refactor.
+        let schedule = pool.cost_model.meters.get(&spot.meter).ok_or_else(|| {
+            Error::Invalid(format!(
+                "pool {pool_id:?}: spot.meter {:?} has no price schedule",
+                spot.meter
+            ))
+        })?;
+
+        let mut by_period: BTreeMap<i64, f64> = BTreeMap::new();
+        for record in records {
+            if record.pool != *pool_id || record.metric != Metric::Meter(spot.meter.clone()) {
+                continue;
+            }
+            let rounded = round_up(record.quantity, schedule.minimum_increment);
+            *by_period.entry(period_key(record.timestamp)).or_insert(0.0) += rounded;
+        }
+
+        let mut pool_report = PoolSpotReport {
+            meter: spot.meter.clone(),
+            ..PoolSpotReport::default()
+        };
+        let mut total_node_hours = 0.0_f64;
+        let mut headroom_node_hours = 0.0_f64;
+        let mut total_hours = 0.0_f64;
+
+        for (period, quantity) in by_period {
+            let hours = hours_in_calendar_month(period);
+            let floor_hours = f64::from(pool.min_nodes) * hours;
+            let headroom_hours = (quantity - floor_hours).max(0.0);
+
+            total_node_hours += quantity;
+            headroom_node_hours += headroom_hours;
+            total_hours += hours;
+
+            if headroom_hours <= 0.0 {
+                continue;
+            }
+
+            let full_cost = price_quantity(schedule, quantity)
+                .map_err(|e| Error::Invalid(format!("pool {pool_id:?}, {}: {e}", spot.meter)))?;
+            let floor_cost = price_quantity(schedule, quantity - headroom_hours)
+                .map_err(|e| Error::Invalid(format!("pool {pool_id:?}, {}: {e}", spot.meter)))?;
+            pool_report.on_demand_cost += (full_cost - floor_cost).max(0.0);
+
+            let avg_spot_nodes = headroom_hours / hours;
+            let independent =
+                avg_spot_nodes * spot.reclaim_rate_per_hour * (1.0 - spot.correlation) * hours;
+            let correlated_events = spot.reclaim_rate_per_hour * spot.correlation * hours;
+            let correlated = correlated_events * avg_spot_nodes;
+            pool_report.expected_reclaims += independent + correlated;
+            pool_report.expected_correlated_reclaims += correlated;
+        }
+
+        pool_report.spot_cost = pool_report.on_demand_cost * spot.price_ratio;
+        pool_report.savings = pool_report.on_demand_cost - pool_report.spot_cost;
+        pool_report.avg_total_nodes = if total_hours > 0.0 {
+            total_node_hours / total_hours
+        } else {
+            0.0
+        };
+        pool_report.avg_headroom_nodes = if total_hours > 0.0 {
+            headroom_node_hours / total_hours
+        } else {
+            0.0
+        };
+        pool_report.headroom_fraction = if pool_report.avg_total_nodes > 0.0 {
+            pool_report.avg_headroom_nodes / pool_report.avg_total_nodes
+        } else {
+            0.0
+        };
+
+        report.pools.insert(pool_id.clone(), pool_report);
+    }
+    Ok(report)
+}
+
+/// Total hours in the calendar month `period` (as produced by
+/// [`period_key`]) — the denominator [`evaluate_spot`] uses to turn a
+/// period's summed node-hours into an average concurrent node count.
+fn hours_in_calendar_month(period: i64) -> f64 {
+    let year = period.div_euclid(12);
+    let month = period.rem_euclid(12) + 1;
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let start = days_from_civil(year, month, 1);
+    let end = days_from_civil(next_year, next_month, 1);
+    #[allow(clippy::cast_precision_loss)] // whole-process-lifetime magnitudes only
+    let hours = ((end - start) * 86_400) as f64 / 3600.0;
+    hours
+}
+
 fn schedule_for<'a>(pool: &'a Pool, metric: &Metric) -> Option<&'a PriceSchedule> {
     match metric {
         Metric::Meter(id) => pool.cost_model.meters.get(id),
@@ -832,6 +1066,158 @@ minimum_increment = 1.0
         let records = usage::parse(text).expect("parses");
         let report = simulate(&d, &records).expect("simulates");
         assert_eq!(report.pools["p"].meters["instance_hours"], 2.0);
+    }
+
+    fn spot_doc(min_nodes: u32, price_ratio: f64, reclaim_rate: f64, correlation: f64) -> Document {
+        let text = format!(
+            r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+min_nodes = {min_nodes}
+[pools.p.cost_model.meters.instance_hours]
+mode = "graduated"
+bands = [{{ unit_price = 1.0 }}]
+[pools.p.spot]
+meter = "instance_hours"
+price_ratio = {price_ratio}
+reclaim_rate_per_hour = {reclaim_rate}
+correlation = {correlation}
+"#
+        );
+        doc(&text)
+    }
+
+    #[test]
+    fn a_pool_with_no_spot_model_is_absent_from_the_report() {
+        let d = doc(r#"
+[pools.p]
+provider = "onprem"
+region = "x"
+[pools.p.cost_model.meters.instance_hours]
+mode = "graduated"
+bands = [{ unit_price = 1.0 }]
+"#);
+        let records = usage::parse("1,p,meter,instance_hours,100.0").expect("parses");
+        let report = evaluate_spot(&d, &records).expect("evaluates");
+        assert!(report.pools.is_empty());
+    }
+
+    #[test]
+    fn headroom_cost_and_savings_match_hand_computed_numbers() {
+        // January 2026: 744 hours. 5 avg nodes (3720 node-hours), min_nodes
+        // 2 (1488 node-hours floor) -> 3 avg nodes of headroom (2232
+        // node-hours), at $1/hr flat: on-demand cost of headroom is 2232.0.
+        let d = spot_doc(2, 0.3, 0.01, 0.0);
+        let jan = 1_768_435_200_i64; // 2026-01-15T00:00:00Z
+        let records =
+            usage::parse(&format!("{jan},p,meter,instance_hours,3720.0")).expect("parses");
+        let report = evaluate_spot(&d, &records).expect("evaluates");
+        let p = &report.pools["p"];
+        assert!(
+            (p.avg_total_nodes - 5.0).abs() < 1e-9,
+            "{}",
+            p.avg_total_nodes
+        );
+        assert!(
+            (p.avg_headroom_nodes - 3.0).abs() < 1e-9,
+            "{}",
+            p.avg_headroom_nodes
+        );
+        assert!(
+            (p.headroom_fraction - 0.6).abs() < 1e-9,
+            "{}",
+            p.headroom_fraction
+        );
+        assert!(
+            (p.on_demand_cost - 2232.0).abs() < 1e-6,
+            "{}",
+            p.on_demand_cost
+        );
+        assert!((p.spot_cost - 669.6).abs() < 1e-6, "{}", p.spot_cost);
+        assert!((p.savings - 1562.4).abs() < 1e-6, "{}", p.savings);
+    }
+
+    #[test]
+    fn correlation_redistributes_reclaims_without_changing_their_total() {
+        let jan = 1_768_435_200_i64;
+        let records =
+            usage::parse(&format!("{jan},p,meter,instance_hours,3720.0")).expect("parses");
+
+        let independent = spot_doc(2, 0.3, 0.01, 0.0);
+        let r = evaluate_spot(&independent, &records).expect("evaluates");
+        let p = &r.pools["p"];
+        assert!(
+            (p.expected_reclaims - 22.32).abs() < 1e-6,
+            "{}",
+            p.expected_reclaims
+        );
+        assert_eq!(p.expected_correlated_reclaims, 0.0);
+
+        let correlated = spot_doc(2, 0.3, 0.01, 1.0);
+        let r = evaluate_spot(&correlated, &records).expect("evaluates");
+        let p = &r.pools["p"];
+        // Same expected total reclaim count as the fully independent case
+        // -- correlation only changes how clustered they are, never the
+        // count, matching evaluate_spot's own doc comment.
+        assert!(
+            (p.expected_reclaims - 22.32).abs() < 1e-6,
+            "{}",
+            p.expected_reclaims
+        );
+        assert!(
+            (p.expected_correlated_reclaims - 22.32).abs() < 1e-6,
+            "{}",
+            p.expected_correlated_reclaims
+        );
+    }
+
+    #[test]
+    fn usage_entirely_below_the_floor_has_no_headroom_cost_or_churn() {
+        // 2 avg nodes against a min_nodes floor of 2 -- no headroom at all.
+        let d = spot_doc(2, 0.3, 0.01, 0.0);
+        let jan = 1_768_435_200_i64;
+        let records =
+            usage::parse(&format!("{jan},p,meter,instance_hours,1488.0")).expect("parses");
+        let report = evaluate_spot(&d, &records).expect("evaluates");
+        let p = &report.pools["p"];
+        assert!((p.avg_total_nodes - 2.0).abs() < 1e-9);
+        assert_eq!(p.avg_headroom_nodes, 0.0);
+        assert_eq!(p.on_demand_cost, 0.0);
+        assert_eq!(p.savings, 0.0);
+        assert_eq!(p.expected_reclaims, 0.0);
+    }
+
+    #[test]
+    fn multiple_periods_are_combined_time_weighted() {
+        // January (744h) at 5 avg nodes, February (672h, 2026 is not a leap
+        // year) at 3 avg nodes -- combined average must weight by each
+        // period's own hours, not average the two node counts unweighted.
+        let jan = 1_768_435_200_i64;
+        let feb = 1_771_113_600_i64;
+        let d = spot_doc(0, 0.3, 0.01, 0.0);
+        let text = format!(
+            "{jan},p,meter,instance_hours,{}\n{feb},p,meter,instance_hours,{}\n",
+            5.0 * 744.0,
+            3.0 * 672.0
+        );
+        let records = usage::parse(&text).expect("parses");
+        let report = evaluate_spot(&d, &records).expect("evaluates");
+        let p = &report.pools["p"];
+        let expected = (5.0 * 744.0 + 3.0 * 672.0) / (744.0 + 672.0);
+        assert!(
+            (p.avg_total_nodes - expected).abs() < 1e-9,
+            "{}",
+            p.avg_total_nodes
+        );
+    }
+
+    #[test]
+    fn hours_in_calendar_month_matches_known_months() {
+        assert!((hours_in_calendar_month(period_key(0)) - 744.0).abs() < 1e-9); // Jan 1970
+        assert!(
+            (hours_in_calendar_month(period_key(31 * 86_400)) - 672.0).abs() < 1e-9 // Feb 1970
+        );
     }
 
     #[test]
