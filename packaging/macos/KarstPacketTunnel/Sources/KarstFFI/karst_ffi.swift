@@ -944,7 +944,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_karst_ffi_checksum_func_device_name() != 29690) {
+    if (uniffi_karst_ffi_checksum_func_device_name() != 32663) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_karst_ffi_checksum_func_enroll_invitation() != 12341) {
