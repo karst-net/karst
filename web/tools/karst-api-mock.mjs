@@ -72,6 +72,12 @@ let groupLocations = [
   { group_id: "group-gateways", lat: 50.1109, lon: 8.6821, label: "Frankfurt" },
 ];
 let controlPlaneLocation = { lat: 37.7749, lon: -122.4194, label: "Control room" };
+// ADR-0008 §4's TURN registry. Seeded with one declared-location entry so
+// the Turns view and the "turn" NOC-map marker kind both have something to
+// show without the "empty" fixture path, matching every other resource here.
+let turns = [
+  { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
+];
 let tokens = seedTokens();
 let memberDevices = [{ handle: "member-laptop", name: "SRE laptop", platform: "Linux", last_seen_at: "2026-08-22T20:32:00Z" }];
 const memberAccess = [{ destination: "db-prod:5432", rule: 4, group: "group:sre", changed_at: "2026-08-12T10:00:00Z", changed_by: "alice@example.test" }];
@@ -504,18 +510,33 @@ const server = http.createServer((request, response) => {
   if (relayMatch && method === "GET" && karst.endsWith("/health")) return json(response, 200, fixture.relays.find((item) => item.id === relayMatch[1])?.health ?? fixture.relays[0].health);
   if (relayMatch && method === "DELETE") return remove(fixture.relays, relayMatch[1], response);
 
+  // ADR-0008 §4's TURN registry. turncred.go's own validate() requires a
+  // turn: or turns: URI and nothing else; mirrored here so a malformed URI
+  // is rejected the same way the real server rejects it.
+  if (method === "GET" && karst === "/turns") return json(response, 200, turns);
+  if (method === "POST" && karst === "/turns") {
+    return readBody(request).then((entry) => {
+      if (!/^turns?:/.test(entry.uri ?? "")) return error(response, 422, "invalid_argument", "uri must start with turn: or turns:");
+      if (turns.some((turn) => turn.uri === entry.uri)) return error(response, 412, "already_exists", "turn server already exists");
+      const turn = { id: id("turn"), uri: entry.uri, region: entry.region ?? "default", location: entry.location ?? undefined };
+      turns.push(turn);
+      return json(response, 201, turn);
+    });
+  }
+  const turnMatch = karst.match(/^\/turns\/([^/]+)$/);
+  if (turnMatch && method === "DELETE") return remove(turns, turnMatch[1], response);
+
   // NOC view (#241 Phase 1a, extended to ADR-0046 §1's full component list)
-  // -- one discriminated union assembled from relays, route gateway groups
-  // with a declared location, and the account's control-plane/Bedrock
-  // declared locations. No TURN-server fixture state exists yet (the
-  // mock never grew one; the Turns page itself has nothing to show
-  // against this mock either), so the "turn" kind is simply absent here,
-  // same "unmocked, not broken" posture nodeMatch's own paths route takes
-  // for anything else this fixture doesn't model.
+  // -- one discriminated union assembled from relays, TURN servers, route
+  // gateway groups with a declared location, and the account's
+  // control-plane/Bedrock declared locations.
   if (method === "GET" && karst === "/noc/components") {
     const result = [];
     for (const relay of fixture.relays) {
       result.push({ kind: "relay", id: relay.id, label: relay.location?.label || relay.region, health: relay.health.admission_state, location: relay.location });
+    }
+    for (const turn of turns) {
+      result.push({ kind: "turn", id: turn.id, label: turn.location?.label || turn.uri, location: turn.location });
     }
     for (const gl of groupLocations) {
       const servedBy = routes.filter((route) => route.enabled && route.peer_groups.includes(gl.group_id)).map((route) => route.network_id);
