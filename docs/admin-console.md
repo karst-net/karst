@@ -118,14 +118,19 @@ and is the place to update when a deferral is later picked up.
   subnet routers, TURN, Bedrock, and the control plane itself (#241's own
   Phase 3) and client per-region/per-aquifer aggregates (ADR-0046 §2, #241's
   Phase 4) are not on this page yet — it shows relays only.
-- **Known trade-off: the basemap is a coarse, hand-authored placeholder, and
-  MapLibre GL adds real bundle weight.** `public/noc-world-outline.geojson`
-  is a handful of deliberately schematic continent silhouettes, not a real
-  geographic dataset — chosen over fetching a third-party dataset of unknown
-  license. Swapping in a properly licensed, simplified dataset (e.g. a
-  trimmed Natural Earth 1:110m extract, license-checked first) is a
-  follow-up, not done here. Separately, adding MapLibre GL — this console's
-  first mapping dependency and first library over ~500 KB gzipped — pushed
+- **Done: the basemap is now Natural Earth's 1:110m admin-0 country
+  boundaries**, not the original hand-authored placeholder. Converted from
+  the `world-atlas` npm package's TopoJSON (ISC-licensed packaging of
+  public-domain Natural Earth data — no attribution required) to GeoJSON
+  with `topojson-client` at build time, trimmed to `{name, geometry}` and
+  rounded to 3 decimal places; still a bundled static asset fetched from
+  nowhere but the console's own origin, per ADR-0047 §5.
+  `public/noc-world-outline.geojson` grew from ~1.3 KB to ~190 KB
+  accordingly (~64 KB gzipped) — Caddy does not currently compress
+  responses (no `encode` directive), so that's the real wire cost today.
+  **Known trade-off: MapLibre GL adds real bundle weight.** Adding it —
+  this console's first mapping dependency and first library over
+  ~500 KB gzipped — pushed
   the main bundle past Vite's default chunk-size warning; this console has
   no code-splitting convention today (every other dependency, including
   CodeMirror, ships in the one main bundle), so the NOC page is not
