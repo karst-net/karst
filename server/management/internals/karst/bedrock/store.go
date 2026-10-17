@@ -32,6 +32,17 @@ type Configuration struct {
 	Mode      string `gorm:"not null"`
 	Quorum    uint   `gorm:"not null"`
 	UpdatedAt time.Time
+
+	// LocationLat/LocationLon/LocationLabel is this account's declared
+	// NOC-map position for Bedrock (ADR-0046 §1), the same flat nullable
+	// column shape relayreg.StoredRelay's own location fields use. There is
+	// no multi-instance Bedrock service to place individually -- see
+	// package cplocation's doc comment for the matching reasoning about the
+	// control plane -- so, like Configuration itself, this is one
+	// account-scoped declared point, not a list.
+	LocationLat   *float64 `json:"-"`
+	LocationLon   *float64 `json:"-"`
+	LocationLabel string   `json:"-"`
 }
 
 func (Configuration) TableName() string { return "karst_bedrock_configuration" }
@@ -70,6 +81,21 @@ func (s *Store) Configuration(ctx context.Context, accountID string) (*Configura
 		return nil, fmt.Errorf("bedrock: configuration: %w", err)
 	}
 	return &c, nil
+}
+
+// SetLocation declares (or clears, with lat/lon/label all zero) this
+// account's Bedrock location on the NOC map. Separate from SetMode's own
+// mutation path -- a location is operator-declared display data, not part
+// of the enforcement state SetMode's acknowledgment guard protects.
+func (s *Store) SetLocation(ctx context.Context, accountID string, lat, lon float64, label string) (*Configuration, error) {
+	if _, err := s.Configuration(ctx, accountID); err != nil {
+		return nil, err
+	}
+	updates := map[string]any{"location_lat": lat, "location_lon": lon, "location_label": label}
+	if err := s.db.WithContext(ctx).Model(&Configuration{}).Where("account_id = ?", accountID).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("bedrock: set location: %w", err)
+	}
+	return s.Configuration(ctx, accountID)
 }
 
 // EnabledAccounts returns the account IDs whose Bedrock mode is not ModeOff

@@ -22,17 +22,18 @@ import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
 import { Relays } from "./views/relays";
 import { Turns } from "./views/turns";
+import { Locations } from "./views/locations";
 import { Settings } from "./views/settings";
 import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "setup" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "noc" | "scaler" | "billing" | "settings";
+type Route = "setup" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "locations" | "noc" | "scaler" | "billing" | "settings";
 
 const nav: Array<[Route, string]> = [
   ["setup", "First-run setup"], ["domains", "Domains"], ["machines", "Machines"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
 const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "setup");
@@ -64,6 +65,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "audit" && <Audit />}
       {route === "relays" && <Relays />}
       {route === "turns" && <Turns />}
+      {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}
       {route === "scaler" && <Scaler />}
       {route === "billing" && <Billing />}

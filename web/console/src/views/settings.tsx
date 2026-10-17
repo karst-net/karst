@@ -15,6 +15,9 @@ export function Settings() {
   const { message, setMessage, run } = useMutation(tokens.reload);
   const [draft, setDraft] = useState<{ name: string; expires_in: number }>();
   const [issued, setIssued] = useState<string>();
+  const controlPlaneLocation = useResource(api.controlPlaneLocation);
+  const { message: locationMessage, setMessage: setLocationMessage, run: runLocation } = useMutation(controlPlaneLocation.reload);
+  const [locationDraft, setLocationDraft] = useState<{ lat: string; lon: string; label: string }>();
 
   if (me.loading) return <p>Loading settings…</p>;
   if (me.error) return <Failure message={me.error} retry={me.reload} />;
@@ -36,6 +39,14 @@ export function Settings() {
     if (!user) return;
     if (!confirm(`Revoke ${token.name}? Anything using it stops working immediately.`)) return;
     void run(() => api.deleteToken(user.id, token.id), `${token.name} was revoked.`);
+  };
+  const saveControlPlaneLocation = async () => {
+    if (!locationDraft) return;
+    const lat = Number(locationDraft.lat), lon = Number(locationDraft.lon);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setLocationMessage("Latitude must be a number between -90 and 90."); return; }
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setLocationMessage("Longitude must be a number between -180 and 180."); return; }
+    const label = locationDraft.label.trim() || undefined;
+    if (await runLocation(() => api.setControlPlaneLocation({ lat, lon, label }), "The control plane's location was declared.")) setLocationDraft(undefined);
   };
 
   return <section>
@@ -70,6 +81,25 @@ export function Settings() {
         <tr><td><code>{account.value.id}</code></td><td>{account.value.domain || "—"}</td><td><Observed at={account.value.created_at} /></td></tr>
       </Rows>}
     <p className="lede">Single sign-on, SCIM provisioning and webhooks are configured on the coordination server rather than here — they are server startup configuration, and a console that pretended to own them would be editing a file it cannot read. See <code>management.json</code> and the getting-started guide.</p>
+
+    <h3>Control plane location</h3>
+    <p className="lede">Where this account's control plane is, shown on the NOC map. Optional, operator-declared — never inferred. There is no per-replica placement registry yet (see ADR-0054), so this is one declared point for the account, not one per replica.</p>
+    {controlPlaneLocation.loading ? <p>Loading…</p> : controlPlaneLocation.error
+      ? <Failure message={controlPlaneLocation.error} retry={controlPlaneLocation.reload} />
+      : <>
+        <p>{controlPlaneLocation.value ? (controlPlaneLocation.value.label || `${controlPlaneLocation.value.lat}, ${controlPlaneLocation.value.lon}`) : <span className="lede">No location declared</span>}</p>
+        <div className="actions"><button onClick={() => setLocationDraft({ lat: controlPlaneLocation.value ? String(controlPlaneLocation.value.lat) : "", lon: controlPlaneLocation.value ? String(controlPlaneLocation.value.lon) : "", label: controlPlaneLocation.value?.label ?? "" })}>{controlPlaneLocation.value ? "Edit location" : "Set location"}</button></div>
+      </>}
+    <Notice message={locationMessage} />
+
+    <Dialog open={Boolean(locationDraft)} title="Declare the control plane's location" onClose={() => setLocationDraft(undefined)}>
+      <form onSubmit={(event) => { event.preventDefault(); void saveControlPlaneLocation(); }}>
+        <label>Latitude<input aria-label="Control plane latitude" placeholder="37.7749" value={locationDraft?.lat ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, lat: event.target.value })} /></label>
+        <label>Longitude<input aria-label="Control plane longitude" placeholder="-122.4194" value={locationDraft?.lon ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, lon: event.target.value })} /></label>
+        <label>Location label<input aria-label="Control plane location label" placeholder="Control room" value={locationDraft?.label ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, label: event.target.value })} /></label>
+        <div className="actions"><button type="button" onClick={() => setLocationDraft(undefined)}>Cancel</button><button className="primary" type="submit">Save location</button></div>
+      </form>
+    </Dialog>
 
     <Dialog open={Boolean(draft)} title="Create personal access token" onClose={() => setDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>

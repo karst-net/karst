@@ -47,6 +47,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/netbirdio/netbird/management/internals/karst/geo"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
 
@@ -116,27 +117,16 @@ type Entry struct {
 }
 
 // Location is a point an operator declares for a relay, never derived from
-// [Entry.Address] — see [Entry.Location].
-type Location struct {
-	Lat   float64 `json:"lat"`
-	Lon   float64 `json:"lon"`
-	Label string  `json:"label,omitempty"`
-}
+// [Entry.Address] — see [Entry.Location]. Alias of [geo.Location]: every
+// other component type that gained a declared location after this package
+// (package geo's own doc comment) shares the exact same shape and bounds
+// check, but a relay's own JSON/proto wire shape is unchanged by the alias.
+type Location = geo.Location
 
-// ValidLocation bounds-checks a latitude/longitude pair. Shared by every
-// path that accepts a location — an operator-declared [Entry.Location] here
-// and a relay-detected one over telemetry (ADR-0048) — so a typo or a
-// corrupted detection is rejected with the same named-field message
-// regardless of which path produced it.
-func ValidLocation(lat, lon float64) error {
-	if lat < -90 || lat > 90 {
-		return fmt.Errorf("location.lat is %v, want -90..90", lat)
-	}
-	if lon < -180 || lon > 180 {
-		return fmt.Errorf("location.lon is %v, want -180..180", lon)
-	}
-	return nil
-}
+// ValidLocation bounds-checks a latitude/longitude pair — see
+// [geo.ValidLocation], which this aliases for the same reason [Location]
+// does.
+func ValidLocation(lat, lon float64) error { return geo.ValidLocation(lat, lon) }
 
 type document struct {
 	Relays []Entry `json:"relays"`

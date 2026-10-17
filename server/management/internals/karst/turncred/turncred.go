@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netbirdio/netbird/management/internals/karst/geo"
 	"github.com/netbirdio/netbird/shared/management/proto"
 	hmac "github.com/netbirdio/netbird/shared/relay/auth/hmac"
 )
@@ -50,6 +51,11 @@ type Entry struct {
 	// Region this server serves. Empty means DefaultRegion, matching
 	// relayreg's convention.
 	Region string `json:"region"`
+
+	// Location is this TURN server's operator-declared NOC-map position
+	// (ADR-0046 §1), mirroring relayreg.Entry.Location. Nil means
+	// "location unknown" -- never inferred from URI.
+	Location *geo.Location `json:"location,omitempty"`
 }
 
 // DefaultRegion mirrors relayreg.DefaultRegion: both empty-region defaults
@@ -105,6 +111,11 @@ func Parse(raw []byte) ([]Entry, error) {
 }
 
 func (e Entry) validate() (Entry, error) {
+	if e.Location != nil {
+		if err := geo.ValidLocation(e.Location.Lat, e.Location.Lon); err != nil {
+			return Entry{}, err
+		}
+	}
 	// Not net/url.Parse: RFC 7065's turnURI grammar is
 	// "turn:" host [ ":" port ] [ "?transport=..." ], with no "//" — Go's
 	// net/url treats that as an opaque URI and leaves Host empty, which
@@ -134,7 +145,7 @@ func (e Entry) validate() (Entry, error) {
 	if region == "" {
 		region = DefaultRegion
 	}
-	return Entry{URI: e.URI, Region: region}, nil
+	return Entry{URI: e.URI, Region: region, Location: e.Location}, nil
 }
 
 // Credential is a minted TURN-REST username/password pair. It deliberately

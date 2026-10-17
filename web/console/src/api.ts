@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -246,13 +246,35 @@ export const api = {
   addRelay: (entry: { address: string; tls_server_name: string; identity_key: string; region: string; location?: RelayLocation }) => request<Relay>("/relays", { method: "POST", body: body(entry) }),
   removeRelay: (id: string) => request<void>(`/relays/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  // ── NOC view (#241 Phase 1a, ADR-0046/ADR-0047) ─────────────────────────────
-  // Reuses the Relay type -- these are the same relay data the Relays page
-  // shows, reshaped for a map instead of a table. Both calls are audit-logged
-  // server-side on every request, since they're GETs the console's generic
-  // mutation-audit middleware never sees.
-  nocComponents: () => request<Relay[]>("/noc/components"),
+  // ── NOC view (#241 Phase 1a, ADR-0046/ADR-0047, extended to ADR-0046 §1's
+  // full component list) ──────────────────────────────────────────────────
+  // nocComponents is audit-logged server-side on every request, since it's a
+  // GET the console's generic mutation-audit middleware never sees.
+  nocComponents: () => request<NocComponent[]>("/noc/components"),
   nocRelay: (id: string) => request<Relay>(`/noc/relays/${encodeURIComponent(id)}`),
+
+  // ── NOC map: admin-authorized "possible locations" registry ────────────────
+  // Additive, not a foreign key -- see locationreg's own doc comment. These
+  // are the hollow/empty markers the map draws whether or not anything is
+  // deployed there yet.
+  locations: () => request<NocLocation[]>("/locations"),
+  addLocation: (entry: LocationCreate) => request<NocLocation>("/locations", { method: "POST", body: body(entry) }),
+  removeLocation: (id: string) => request<void>(`/locations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── NOC map: a route gateway group's declared location ─────────────────────
+  // What places an exit-node/subnet-router marker -- a route only ever names
+  // peer_groups, never a single machine, so the location is declared on the
+  // group, not the route (see package grouplocation's own doc comment).
+  groupLocations: () => request<GroupLocation[]>("/group-locations"),
+  setGroupLocation: (groupId: string, entry: { lat: number; lon: number; label?: string }) => request<GroupLocation>(`/group-locations/${encodeURIComponent(groupId)}`, { method: "PUT", body: body(entry) }),
+  removeGroupLocation: (groupId: string) => request<void>(`/group-locations/${encodeURIComponent(groupId)}`, { method: "DELETE" }),
+
+  // ── NOC map: the control plane's own declared location ─────────────────────
+  controlPlaneLocation: () => request<RelayLocation | undefined>("/control-plane/location"),
+  setControlPlaneLocation: (entry: { lat: number; lon: number; label?: string }) => request<RelayLocation>("/control-plane/location", { method: "PUT", body: body(entry) }),
+
+  // ── NOC map: Bedrock's own declared location ────────────────────────────────
+  setBedrockLocation: (entry: { lat: number; lon: number; label?: string }) => request<RelayLocation>("/bedrock/location", { method: "PUT", body: body(entry) }),
 
   // ── scaler advisor (ADR-0045 §7 Phase 1) ───────────────────────────────────
   // Audit-logged server-side on every request, same as nocComponents/
@@ -262,7 +284,7 @@ export const api = {
 
   // ── turn servers ───────────────────────────────────────────────────────────
   turns: () => request<TurnServer[]>("/turns"),
-  addTurn: (entry: { uri: string; region: string }) => request<TurnServer>("/turns", { method: "POST", body: body(entry) }),
+  addTurn: (entry: { uri: string; region: string; location?: RelayLocation }) => request<TurnServer>("/turns", { method: "POST", body: body(entry) }),
   removeTurn: (id: string) => request<void>(`/turns/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── auth keys ──────────────────────────────────────────────────────────────

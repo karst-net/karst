@@ -4,7 +4,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
+import type { CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateLocationData, CreateLocationErrors, CreateLocationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteGroupLocationData, DeleteGroupLocationErrors, DeleteGroupLocationResponses, DeleteLocationData, DeleteLocationErrors, DeleteLocationResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetControlPlaneLocationData, GetControlPlaneLocationErrors, GetControlPlaneLocationResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListGroupLocationsData, ListGroupLocationsErrors, ListGroupLocationsResponses, ListLocationsData, ListLocationsErrors, ListLocationsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, SetBedrockLocationData, SetBedrockLocationErrors, SetBedrockLocationResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetControlPlaneLocationData, SetControlPlaneLocationErrors, SetControlPlaneLocationResponses, SetGroupLocationData, SetGroupLocationErrors, SetGroupLocationResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -349,12 +349,82 @@ export const getRelayHealth = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
- * The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047) -- every relay this account can see, reshaped through the same response every other relay endpoint uses. Every call is audit-logged (karst.noc.view) explicitly, since this is a GET.
+ * The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047, extended to ADR-0046 §1's full component list) -- every relay, TURN server, exit-node/subnet-router gateway group, and the account's control-plane/Bedrock declared locations this account can see, reshaped into one discriminated union. Every call is audit-logged (karst.noc.view) explicitly, since this is a GET.
  */
 export const nocComponents = <ThrowOnError extends boolean = false>(options?: Options<NocComponentsData, ThrowOnError>): RequestResult<NocComponentsResponses, NocComponentsErrors, ThrowOnError> => (options?.client ?? client).get<NocComponentsResponses, NocComponentsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/noc/components',
     ...options
+});
+
+export const listLocations = <ThrowOnError extends boolean = false>(options?: Options<ListLocationsData, ThrowOnError>): RequestResult<ListLocationsResponses, ListLocationsErrors, ThrowOnError> => (options?.client ?? client).get<ListLocationsResponses, ListLocationsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/locations',
+    ...options
+});
+
+export const createLocation = <ThrowOnError extends boolean = false>(options: Options<CreateLocationData, ThrowOnError>): RequestResult<CreateLocationResponses, CreateLocationErrors, ThrowOnError> => (options.client ?? client).post<CreateLocationResponses, CreateLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/locations',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const deleteLocation = <ThrowOnError extends boolean = false>(options: Options<DeleteLocationData, ThrowOnError>): RequestResult<DeleteLocationResponses, DeleteLocationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteLocationResponses, DeleteLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/locations/{locationId}',
+    ...options
+});
+
+export const listGroupLocations = <ThrowOnError extends boolean = false>(options?: Options<ListGroupLocationsData, ThrowOnError>): RequestResult<ListGroupLocationsResponses, ListGroupLocationsErrors, ThrowOnError> => (options?.client ?? client).get<ListGroupLocationsResponses, ListGroupLocationsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/group-locations',
+    ...options
+});
+
+export const deleteGroupLocation = <ThrowOnError extends boolean = false>(options: Options<DeleteGroupLocationData, ThrowOnError>): RequestResult<DeleteGroupLocationResponses, DeleteGroupLocationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteGroupLocationResponses, DeleteGroupLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/group-locations/{groupId}',
+    ...options
+});
+
+export const setGroupLocation = <ThrowOnError extends boolean = false>(options: Options<SetGroupLocationData, ThrowOnError>): RequestResult<SetGroupLocationResponses, SetGroupLocationErrors, ThrowOnError> => (options.client ?? client).put<SetGroupLocationResponses, SetGroupLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/group-locations/{groupId}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const getControlPlaneLocation = <ThrowOnError extends boolean = false>(options?: Options<GetControlPlaneLocationData, ThrowOnError>): RequestResult<GetControlPlaneLocationResponses, GetControlPlaneLocationErrors, ThrowOnError> => (options?.client ?? client).get<GetControlPlaneLocationResponses, GetControlPlaneLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/control-plane/location',
+    ...options
+});
+
+export const setControlPlaneLocation = <ThrowOnError extends boolean = false>(options: Options<SetControlPlaneLocationData, ThrowOnError>): RequestResult<SetControlPlaneLocationResponses, SetControlPlaneLocationErrors, ThrowOnError> => (options.client ?? client).put<SetControlPlaneLocationResponses, SetControlPlaneLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/control-plane/location',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const setBedrockLocation = <ThrowOnError extends boolean = false>(options: Options<SetBedrockLocationData, ThrowOnError>): RequestResult<SetBedrockLocationResponses, SetBedrockLocationErrors, ThrowOnError> => (options.client ?? client).put<SetBedrockLocationResponses, SetBedrockLocationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/bedrock/location',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

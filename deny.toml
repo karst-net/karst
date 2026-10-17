@@ -40,6 +40,19 @@ allow-wildcard-paths = true
 [advisories]
 version = 2
 yanked = "deny"
+# RUSTSEC-2026-0370/-0371/-0372: zvariant, zvariant_derive and zbus_names were
+# folded into zbus itself as of 6.0.0 and stopped shipping standalone
+# releases -- "unmaintained", not a vulnerability; each advisory says "No
+# safe upgrade is available!" for the crate it names. The real fix is
+# karst-dns (crates/karst-dns/src/host/{networkmanager,resolved}.rs) moving
+# off zbus 5's `zbus::blocking::{Connection, Proxy}` API, which zbus 6
+# removed entirely in favour of an async-only `zruntime` runtime with a
+# different feature set (no `async-io`/`blocking-api`) -- a NetworkManager/
+# systemd-resolved D-Bus integration rewrite, not a version bump. Tracked as
+# a real migration rather than done silently here; ignored for now so a
+# newly-published advisory for an unrelated, unmaintained-but-unbroken
+# transitive dependency doesn't block every PR in the meantime.
+ignore = ["RUSTSEC-2026-0370", "RUSTSEC-2026-0371", "RUSTSEC-2026-0372"]
 
 [sources]
 unknown-registry = "deny"

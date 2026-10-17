@@ -58,6 +58,26 @@ const policySchema = {
 };
 let routes = fixture.routes.map((route) => ({ ...route }));
 let nameservers = fixture.nameservers.map((group) => ({ ...group }));
+// NOC map: admin-authorized "possible locations" registry (additive, not a
+// foreign key -- see locationreg's own doc comment) and the per-group/
+// control-plane declared locations that place an exit-node/subnet-router or
+// control-plane marker. Seeded so the NOC view has something of each new
+// kind to show without the "empty" fixture path.
+let locations = [
+  { id: "location-fixture-syd", lat: -33.8688, lon: 151.2093, label: "Sydney", kind: "aws-local-zone" },
+];
+// Matches fixture.routes' own gateway group (group-gateways, seedGroups
+// above) so the "route" marker kind has a route to actually be placed by.
+let groupLocations = [
+  { group_id: "group-gateways", lat: 50.1109, lon: 8.6821, label: "Frankfurt" },
+];
+let controlPlaneLocation = { lat: 37.7749, lon: -122.4194, label: "Control room" };
+// ADR-0008 §4's TURN registry. Seeded with one declared-location entry so
+// the Turns view and the "turn" NOC-map marker kind both have something to
+// show without the "empty" fixture path, matching every other resource here.
+let turns = [
+  { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
+];
 let tokens = seedTokens();
 let memberDevices = [{ handle: "member-laptop", name: "SRE laptop", platform: "Linux", last_seen_at: "2026-08-22T20:32:00Z" }];
 const memberAccess = [{ destination: "db-prod:5432", rule: 4, group: "group:sre", changed_at: "2026-08-12T10:00:00Z", changed_by: "alice@example.test" }];
@@ -490,16 +510,99 @@ const server = http.createServer((request, response) => {
   if (relayMatch && method === "GET" && karst.endsWith("/health")) return json(response, 200, fixture.relays.find((item) => item.id === relayMatch[1])?.health ?? fixture.relays[0].health);
   if (relayMatch && method === "DELETE") return remove(fixture.relays, relayMatch[1], response);
 
-  // NOC view (#241 Phase 1a) -- the same relay data /relays serves, reshaped
-  // for a map rather than a table. No separate fixture state: there is
-  // nothing here a console operator with relay-read access couldn't already
-  // see on the Relays page.
-  if (method === "GET" && karst === "/noc/components") return json(response, 200, fixture.relays);
+  // ADR-0008 §4's TURN registry. turncred.go's own validate() requires a
+  // turn: or turns: URI and nothing else; mirrored here so a malformed URI
+  // is rejected the same way the real server rejects it.
+  if (method === "GET" && karst === "/turns") return json(response, 200, turns);
+  if (method === "POST" && karst === "/turns") {
+    return readBody(request).then((entry) => {
+      if (!/^turns?:/.test(entry.uri ?? "")) return error(response, 422, "invalid_argument", "uri must start with turn: or turns:");
+      if (turns.some((turn) => turn.uri === entry.uri)) return error(response, 412, "already_exists", "turn server already exists");
+      const turn = { id: id("turn"), uri: entry.uri, region: entry.region ?? "default", location: entry.location ?? undefined };
+      turns.push(turn);
+      return json(response, 201, turn);
+    });
+  }
+  const turnMatch = karst.match(/^\/turns\/([^/]+)$/);
+  if (turnMatch && method === "DELETE") return remove(turns, turnMatch[1], response);
+
+  // NOC view (#241 Phase 1a, extended to ADR-0046 §1's full component list)
+  // -- one discriminated union assembled from relays, TURN servers, route
+  // gateway groups with a declared location, and the account's
+  // control-plane/Bedrock declared locations.
+  if (method === "GET" && karst === "/noc/components") {
+    const result = [];
+    for (const relay of fixture.relays) {
+      result.push({ kind: "relay", id: relay.id, label: relay.location?.label || relay.region, health: relay.health.admission_state, location: relay.location });
+    }
+    for (const turn of turns) {
+      result.push({ kind: "turn", id: turn.id, label: turn.location?.label || turn.uri, location: turn.location });
+    }
+    for (const gl of groupLocations) {
+      const servedBy = routes.filter((route) => route.enabled && route.peer_groups.includes(gl.group_id)).map((route) => route.network_id);
+      if (servedBy.length === 0) continue;
+      result.push({ kind: "route", id: gl.group_id, label: gl.label || servedBy.join(", "), location: { lat: gl.lat, lon: gl.lon, label: gl.label } });
+    }
+    result.push({ kind: "control_plane", id: "control-plane", label: controlPlaneLocation?.label || "Control plane", location: controlPlaneLocation ?? undefined });
+    result.push({ kind: "bedrock", id: "bedrock", label: bedrock.location?.label || "Bedrock", location: bedrock.location });
+    return json(response, 200, result);
+  }
   const nocRelayMatch = karst.match(/^\/noc\/relays\/([^/]+)$/);
   if (nocRelayMatch && method === "GET") {
     const relay = fixture.relays.find((item) => item.id === nocRelayMatch[1]);
     if (!relay) return error(response, 404, "not_found", "relay not found");
     return json(response, 200, relay);
+  }
+
+  // NOC map: admin-authorized "possible locations" registry.
+  if (method === "GET" && karst === "/locations") return json(response, 200, locations);
+  if (method === "POST" && karst === "/locations") {
+    return readBody(request).then((entry) => {
+      if (typeof entry.lat !== "number" || typeof entry.lon !== "number") return error(response, 422, "invalid_argument", "lat and lon are required numbers");
+      const location = { id: id("location"), lat: entry.lat, lon: entry.lon, label: entry.label ?? undefined, kind: entry.kind ?? undefined };
+      locations.push(location);
+      return json(response, 201, location);
+    });
+  }
+  const locationMatch = karst.match(/^\/locations\/([^/]+)$/);
+  if (locationMatch && method === "DELETE") return remove(locations, locationMatch[1], response);
+
+  // NOC map: a route gateway group's declared location.
+  if (method === "GET" && karst === "/group-locations") return json(response, 200, groupLocations);
+  const groupLocationMatch = karst.match(/^\/group-locations\/([^/]+)$/);
+  if (groupLocationMatch && method === "PUT") {
+    return readBody(request).then((entry) => {
+      if (typeof entry.lat !== "number" || typeof entry.lon !== "number") return error(response, 422, "invalid_argument", "lat and lon are required numbers");
+      const groupId = groupLocationMatch[1];
+      const declared = { group_id: groupId, lat: entry.lat, lon: entry.lon, label: entry.label ?? undefined };
+      groupLocations = [...groupLocations.filter((gl) => gl.group_id !== groupId), declared];
+      return json(response, 200, declared);
+    });
+  }
+  if (groupLocationMatch && method === "DELETE") {
+    const before = groupLocations.length;
+    groupLocations = groupLocations.filter((gl) => gl.group_id !== groupLocationMatch[1]);
+    if (groupLocations.length === before) return error(response, 404, "not_found", "group location not found");
+    return noContent(response);
+  }
+
+  // NOC map: the control plane's own declared location.
+  if (method === "GET" && karst === "/control-plane/location") return controlPlaneLocation ? json(response, 200, controlPlaneLocation) : noContent(response);
+  if (method === "PUT" && karst === "/control-plane/location") {
+    return readBody(request).then((entry) => {
+      if (typeof entry.lat !== "number" || typeof entry.lon !== "number") return error(response, 422, "invalid_argument", "lat and lon are required numbers");
+      controlPlaneLocation = { lat: entry.lat, lon: entry.lon, label: entry.label ?? undefined };
+      return json(response, 200, controlPlaneLocation);
+    });
+  }
+
+  // NOC map: Bedrock's own declared location.
+  if (method === "PUT" && karst === "/bedrock/location") {
+    return readBody(request).then((entry) => {
+      if (typeof entry.lat !== "number" || typeof entry.lon !== "number") return error(response, 422, "invalid_argument", "lat and lon are required numbers");
+      bedrock.location = { lat: entry.lat, lon: entry.lon, label: entry.label ?? undefined };
+      return json(response, 200, bedrock.location);
+    });
   }
 
   // Scaler Advisor view (ADR-0045 §7 Phase 1 PR 5) -- karst-control's own

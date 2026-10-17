@@ -14,6 +14,27 @@
   --success: #176b3a;
   --warning: #8a4b00;
   --focus: #005fcc;
+  /* Categorical palette for the NOC map's component-kind markers (ADR-0046
+     §1) -- relay/turn/route/control_plane/bedrock, in that fixed order.
+     Shape (a glyph) carries identity; these five are the secondary color
+     channel, never the only cue. First three slots (chart-1..3) are this
+     palette's own validated-all-pairs prefix; chart-4/chart-5 are a
+     documented exception past that cap (dataviz skill, `references/
+     palette.md` "Categorical palette" -- past three slots the full
+     all-pairs CVD/normal-vision floors cannot clear for any ordering, so a
+     plain 5-way categorical chart would fold the rest into "Other"). That
+     escape doesn't apply here: a NOC component's kind is never read from
+     color alone -- the glyph is the same shape at every zoom level and
+     every marker's legend entry pairs glyph with color -- which is
+     the validator's own stated condition for keeping a 6-8 ΔE pair (see
+     the same reference's "Status palette" note on icon+label mitigation).
+     See scripts/validate_palette.js "<chart-1..5 hex>" --mode light/dark
+     --pairs all for the numbers this traded off. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
   --radius: 0.45rem;
   --space-1: 0.5rem;
   --space-2: 1rem;
@@ -39,6 +60,11 @@
     --success: #9be4b5;
     --warning: #ffd18a;
     --focus: #8fd3ff;
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-5: #d55181;
   }
 }
 
@@ -54,4 +80,9 @@
   --success: #9be4b5;
   --warning: #ffd18a;
   --focus: #8fd3ff;
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
 }
