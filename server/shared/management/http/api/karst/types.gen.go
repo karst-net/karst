@@ -246,6 +246,54 @@ func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
 	}
 }
 
+// Defines values for NocComponentHealth.
+const (
+	NocComponentHealthConfirmed NocComponentHealth = "confirmed"
+	NocComponentHealthStale     NocComponentHealth = "stale"
+	NocComponentHealthUnknown   NocComponentHealth = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the NocComponentHealth enum.
+func (e NocComponentHealth) Valid() bool {
+	switch e {
+	case NocComponentHealthConfirmed:
+		return true
+	case NocComponentHealthStale:
+		return true
+	case NocComponentHealthUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NocComponentKind.
+const (
+	NocComponentKindBedrock      NocComponentKind = "bedrock"
+	NocComponentKindControlPlane NocComponentKind = "control_plane"
+	NocComponentKindRelay        NocComponentKind = "relay"
+	NocComponentKindRoute        NocComponentKind = "route"
+	NocComponentKindTurn         NocComponentKind = "turn"
+)
+
+// Valid indicates whether the value is a known member of the NocComponentKind enum.
+func (e NocComponentKind) Valid() bool {
+	switch e {
+	case NocComponentKindBedrock:
+		return true
+	case NocComponentKindControlPlane:
+		return true
+	case NocComponentKindRelay:
+		return true
+	case NocComponentKindRoute:
+		return true
+	case NocComponentKindTurn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NodePostureStatus.
 const (
 	NodePostureStatusLatticeOnly NodePostureStatus = "lattice_only"
@@ -794,6 +842,7 @@ type BedrockStatus struct {
 	Disabled         *bool             `json:"disabled,omitempty"`
 	Head             *string           `json:"head,omitempty"`
 	HeadSeq          *int              `json:"head_seq,omitempty"`
+	Location         *RelayLocation    `json:"location,omitempty"`
 	Mode             BedrockStatusMode `json:"mode"`
 	Quorum           int               `json:"quorum"`
 	Roots            []Authority       `json:"roots"`
@@ -952,6 +1001,35 @@ type Flow struct {
 	Source      string `json:"source"`
 }
 
+// GroupLocation defines model for GroupLocation.
+type GroupLocation struct {
+	GroupId *string `json:"group_id,omitempty"`
+	Label   *string `json:"label,omitempty"`
+	Lat     float32 `json:"lat"`
+	Lon     float32 `json:"lon"`
+}
+
+// Location defines model for Location.
+type Location struct {
+	// Id Derived from the entry's own content; never accepted from callers.
+	Id *string `json:"id,omitempty"`
+
+	// Kind Free-text grouping tag ("datacenter", "aws-region", "aws-local-zone", ...), not validated against a fixed list.
+	Kind  *string `json:"kind,omitempty"`
+	Label *string `json:"label,omitempty"`
+	Lat   float32 `json:"lat"`
+	Lon   float32 `json:"lon"`
+}
+
+// LocationCreate defines model for LocationCreate.
+type LocationCreate struct {
+	// Kind Free-text grouping tag ("datacenter", "aws-region", "aws-local-zone", ...), not validated against a fixed list.
+	Kind  *string `json:"kind,omitempty"`
+	Label *string `json:"label,omitempty"`
+	Lat   float32 `json:"lat"`
+	Lon   float32 `json:"lon"`
+}
+
 // MyDevice defines model for MyDevice.
 type MyDevice struct {
 	Handle     string     `json:"handle"`
@@ -968,6 +1046,21 @@ type MySession struct {
 	Ip        *string    `json:"ip,omitempty"`
 	StartedAt time.Time  `json:"started_at"`
 }
+
+// NocComponent defines model for NocComponent.
+type NocComponent struct {
+	Health   *NocComponentHealth `json:"health,omitempty"`
+	Id       string              `json:"id"`
+	Kind     NocComponentKind    `json:"kind"`
+	Label    string              `json:"label"`
+	Location *RelayLocation      `json:"location,omitempty"`
+}
+
+// NocComponentHealth defines model for NocComponent.Health.
+type NocComponentHealth string
+
+// NocComponentKind defines model for NocComponent.Kind.
+type NocComponentKind string
 
 // Node defines model for Node.
 type Node struct {
@@ -1388,8 +1481,9 @@ type SshGrant struct {
 // TurnServer defines model for TurnServer.
 type TurnServer struct {
 	// Id Derived from uri; never accepted from callers.
-	Id     *string `json:"id,omitempty"`
-	Region *string `json:"region,omitempty"`
+	Id       *string        `json:"id,omitempty"`
+	Location *RelayLocation `json:"location,omitempty"`
+	Region   *string        `json:"region,omitempty"`
 
 	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
 	Uri string `json:"uri"`
@@ -1397,7 +1491,8 @@ type TurnServer struct {
 
 // TurnServerCreate defines model for TurnServerCreate.
 type TurnServerCreate struct {
-	Region *string `json:"region,omitempty"`
+	Location *RelayLocation `json:"location,omitempty"`
+	Region   *string        `json:"region,omitempty"`
 
 	// Uri A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
 	Uri string `json:"uri"`
@@ -1588,6 +1683,9 @@ type CreateAuditSinkJSONRequestBody = AuditSinkWrite
 // ImportBedrockBootstrapJSONRequestBody defines body for ImportBedrockBootstrap for application/json ContentType.
 type ImportBedrockBootstrapJSONRequestBody = BedrockBootstrapBundle
 
+// SetBedrockLocationJSONRequestBody defines body for SetBedrockLocation for application/json ContentType.
+type SetBedrockLocationJSONRequestBody = RelayLocation
+
 // SetBedrockModeJSONRequestBody defines body for SetBedrockMode for application/json ContentType.
 type SetBedrockModeJSONRequestBody = BedrockModeWrite
 
@@ -1603,8 +1701,17 @@ type RequestRelayCreditsJSONRequestBody = RelayCreditRequest
 // SurrenderRelayCreditsJSONRequestBody defines body for SurrenderRelayCredits for application/json ContentType.
 type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
+// SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
+type SetControlPlaneLocationJSONRequestBody = RelayLocation
+
+// SetGroupLocationJSONRequestBody defines body for SetGroupLocation for application/json ContentType.
+type SetGroupLocationJSONRequestBody = LocationCreate
+
 // CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
 type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft
+
+// CreateLocationJSONRequestBody defines body for CreateLocation for application/json ContentType.
+type CreateLocationJSONRequestBody = LocationCreate
 
 // RenameMyDeviceJSONRequestBody defines body for RenameMyDevice for application/json ContentType.
 type RenameMyDeviceJSONRequestBody = DeviceRename
