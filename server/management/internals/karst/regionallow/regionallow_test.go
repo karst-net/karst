@@ -112,3 +112,60 @@ func TestParseEmptyDocumentIsAllowedRegionsNil(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, doc)
 }
+
+func TestAddRegionAllowsOnePair(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.AddRegion(ctx, "aws", "us-east-1"))
+
+	doc, err := store.AllowedRegions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, regionallow.Document{"aws": {"us-east-1"}}, doc)
+}
+
+func TestAddRegionOnTopOfReconcile(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.Reconcile(ctx, regionallow.Document{"aws": {"us-east-1"}}))
+	require.NoError(t, store.AddRegion(ctx, "aws", "us-west-2"))
+
+	doc, err := store.AllowedRegions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, regionallow.Document{"aws": {"us-east-1", "us-west-2"}}, doc)
+}
+
+func TestAddRegionRejectsDuplicate(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.AddRegion(ctx, "aws", "us-east-1"))
+	require.ErrorIs(t, store.AddRegion(ctx, "aws", "us-east-1"), regionallow.ErrExists)
+}
+
+func TestAddRegionRejectsEmptyFields(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	require.Error(t, store.AddRegion(ctx, "", "us-east-1"))
+	require.Error(t, store.AddRegion(ctx, "aws", ""))
+}
+
+func TestRemoveRegionRevokesOnePair(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, store.AddRegion(ctx, "aws", "us-east-1"))
+	require.NoError(t, store.AddRegion(ctx, "aws", "us-west-2"))
+	require.NoError(t, store.RemoveRegion(ctx, "aws", "us-east-1"))
+
+	doc, err := store.AllowedRegions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, regionallow.Document{"aws": {"us-west-2"}}, doc)
+}
+
+func TestRemoveRegionNotFound(t *testing.T) {
+	store := newStore(t)
+	require.ErrorIs(t, store.RemoveRegion(context.Background(), "aws", "us-east-1"), regionallow.ErrNotFound)
+}

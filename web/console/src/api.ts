@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
 import { accessToken, loadConfig, login, renewOnce } from "./auth";
 
 const base = "/api/karst/v1";
@@ -281,6 +281,9 @@ export const api = {
   // demandRegions/demandAnchors above, since it's a GET the console's
   // generic mutation-audit middleware never sees.
   scalerRecommendations: () => request<ScalerRecommendations>("/scaler/recommendations"),
+  allowedRegions: () => request<AllowedRegion[]>("/regions"),
+  addAllowedRegion: (entry: AllowedRegion) => request<AllowedRegion>("/regions", { method: "POST", body: body(entry) }),
+  removeAllowedRegion: (provider: string, region: string) => request<void>(`/regions/${encodeURIComponent(provider)}/${encodeURIComponent(region)}`, { method: "DELETE" }),
 
   // ── turn servers ───────────────────────────────────────────────────────────
   turns: () => request<TurnServer[]>("/turns"),

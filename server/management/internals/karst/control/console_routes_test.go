@@ -26,6 +26,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
@@ -241,6 +242,17 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/group-locations/{groupId}",
 		},
 		{
+			name: "allow a region", method: http.MethodPost,
+			path: "/karst/v1/regions",
+			body: `{"provider":"aws","region":"us-east-1"}`,
+			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/regions",
+		},
+		{
+			name: "revoke a region", method: http.MethodDelete,
+			path: "/karst/v1/regions/aws/unknown-region", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/regions/{provider}/{region}",
+		},
+		{
 			name: "declare the control plane's location", method: http.MethodPut,
 			path: "/karst/v1/control-plane/location",
 			body: `{"lat":37.7749,"lon":-122.4194,"label":"Control room"}`,
@@ -408,6 +420,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
 		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
 		"karst_locations", "karst_group_locations", "karst_control_plane_location",
+		"karst_allowed_regions",
 	} {
 		_ = db.Exec("DROP TABLE IF EXISTS " + table).Error
 	}
@@ -456,6 +469,10 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("control plane location store: %v", err)
 	}
+	regionAllowStore, err := regionallow.NewStore(db)
+	if err != nil {
+		t.Fatalf("region allowlist store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
@@ -463,7 +480,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, router)
 	return router
 }
 

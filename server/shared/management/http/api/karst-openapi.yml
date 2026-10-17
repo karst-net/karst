@@ -526,6 +526,39 @@ paths:
       responses:
         '200': {description: The Advisor's latest completed tick, content: {application/json: {schema: {$ref: '#/components/schemas/ScalerRecommendations'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /regions:
+    get:
+      operationId: listAllowedRegions
+      tags: [scaler]
+      description: >-
+        ADR-0045 §4c's deployment-wide region allowlist (package
+        regionallow). Governs what is projected into every node's netmap
+        as KarstAllowedRegions and fail-closed validation of incoming §4b
+        anchor-RTT demand reports -- a different list from the one
+        karst-scaler's own driver reads to decide where it may actually
+        provision capacity, kept intentionally out of the control plane's
+        trust domain (ADR-0045 §6).
+      responses:
+        '200': {description: The current allowlist, flattened and sorted, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AllowedRegion'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAllowedRegion
+      tags: [scaler]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AllowedRegion'}}}}
+      responses:
+        '201': {description: Allowed region, content: {application/json: {schema: {$ref: '#/components/schemas/AllowedRegion'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /regions/{provider}/{region}:
+    parameters:
+      - {name: provider, in: path, required: true, schema: {type: string}}
+      - {name: region, in: path, required: true, schema: {type: string}}
+    delete:
+      operationId: deleteAllowedRegion
+      tags: [scaler]
+      responses:
+        '204': {description: Region revoked}
+        default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
       operationId: listTurnServers
@@ -1056,6 +1089,15 @@ components:
       type: object
       required: [tick_unix, recommendation, configured_nodes]
       properties: {tick_unix: {type: integer}, recommendation: {$ref: '#/components/schemas/ScalerRecommendation'}, configured_nodes: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 'pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).'}}
+    # One (provider, region) pair on ADR-0045 §4c's deployment-wide region
+    # allowlist (package regionallow). provider/region are both opaque,
+    # unvalidated strings -- not checked against any known-provider or
+    # known-region list, matching Location's own "kind" field precedent.
+    AllowedRegion:
+      type: object
+      required: [provider, region]
+      additionalProperties: false
+      properties: {provider: {type: string, description: 'e.g. "aws", "aws-gov-cloud", "azure", "azure-gov-cloud", "gcp" -- not validated against this set.'}, region: {type: string, description: 'A provider region code, or an AWS local zone code -- both are opaque strings here.'}}
     TurnServerCreate:
       type: object
       required: [uri]

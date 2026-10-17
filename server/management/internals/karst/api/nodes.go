@@ -141,6 +141,11 @@ type handler struct {
 	// same "depend on behavior, not the concrete store" convention
 	// tenancyReader/domainManager/accountUpdater already use in this file.
 	routes routeLister
+	// regions is the console's region-allowlist editor (issue #349) -- nil
+	// in a deployment that has not configured a region allowlist store, see
+	// regionsList/regionsCreate/regionsDelete. The same *regionallow.Store
+	// as h.anchors, under the wider regionAllowReadWriter interface.
+	regions regionAllowReadWriter
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -384,6 +389,18 @@ type demandReader interface {
 	AnchorHistogram(context.Context) ([]regionallow.AnchorHistogramEntry, error)
 }
 
+// regionAllowReadWriter is the console's region-allowlist editor surface
+// (issue #349) — the same *regionallow.Store concrete value as demandReader
+// above, but under a wider interface. Kept separate rather than widening
+// demandReader itself: that route is Advisor-role-gated read access to the
+// RTT histogram, this one is an admin CRUD surface over a different table
+// in the same package, and blurring the two would blur their RBAC posture.
+type regionAllowReadWriter interface {
+	AllowedRegions(ctx context.Context) (regionallow.Document, error)
+	AddRegion(ctx context.Context, provider, region string) error
+	RemoveRegion(ctx context.Context, provider, region string) error
+}
+
 type turnReader interface {
 	List(context.Context) ([]turncred.StoredTurnServer, error)
 	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
@@ -451,8 +468,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -518,6 +535,9 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -2659,6 +2679,96 @@ func (h *handler) locationsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.locations.Delete(r.Context(), mux.Vars(r)["locationId"]); errors.Is(err, locationreg.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "location not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// allowedRegion is the wire shape for the console's region-allowlist editor
+// (issue #349) -- a flattened, sorted (provider, region) pair rather than
+// regionallow.Document's nested map, which is easier for a console table to
+// render and easier to key a DELETE path on.
+type allowedRegion struct {
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+}
+
+// regionsList/regionsCreate/regionsDelete manage ADR-0045 §4c's
+// deployment-wide region allowlist (package regionallow) -- the same
+// list/create/delete shape as locationsList/locationsCreate/
+// locationsDelete, keyed by the pair's own natural (provider, region) key
+// rather than a generated id.
+func (h *handler) regionsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.regions == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "region allowlist store is not configured"), w)
+		return
+	}
+	doc, err := h.regions.AllowedRegions(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	providers := make([]string, 0, len(doc))
+	for provider := range doc {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	result := make([]allowedRegion, 0, len(doc))
+	for _, provider := range providers {
+		regions := append([]string(nil), doc[provider]...)
+		sort.Strings(regions)
+		for _, region := range regions {
+			result = append(result, allowedRegion{Provider: provider, Region: region})
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+func (h *handler) regionsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.regions == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "region allowlist store is not configured"), w)
+		return
+	}
+	var entry allowedRegion
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.regions.AddRegion(r.Context(), entry.Provider, entry.Region); errors.Is(err, regionallow.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "region already allowed"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(entry); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+func (h *handler) regionsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.regions == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "region allowlist store is not configured"), w)
+		return
+	}
+	vars := mux.Vars(r)
+	if err := h.regions.RemoveRegion(r.Context(), vars["provider"], vars["region"]); errors.Is(err, regionallow.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "region not allowed"), w)
 		return
 	} else if err != nil {
 		util.WriteError(r.Context(), err, w)

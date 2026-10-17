@@ -72,6 +72,12 @@ let groupLocations = [
   { group_id: "group-gateways", lat: 50.1109, lon: 8.6821, label: "Frankfurt" },
 ];
 let controlPlaneLocation = { lat: 37.7749, lon: -122.4194, label: "Control room" };
+// ADR-0045 §4c's deployment-wide region allowlist (package regionallow).
+// Seeded with one pair so the Scaler view's "Allowed regions" section has
+// something to show without the "empty" fixture path.
+let allowedRegions = [
+  { provider: "aws", region: "us-east-1" },
+];
 // ADR-0008 §4's TURN registry. Seeded with one declared-location entry so
 // the Turns view and the "turn" NOC-map marker kind both have something to
 // show without the "empty" fixture path, matching every other resource here.
@@ -622,6 +628,25 @@ const server = http.createServer((request, response) => {
       },
       configured_nodes: { "aws-use1": 2, "onprem-dc1": 3 },
     });
+  }
+
+  // ADR-0045 §4c's deployment-wide region allowlist (package regionallow).
+  if (method === "GET" && karst === "/regions") return json(response, 200, allowedRegions);
+  if (method === "POST" && karst === "/regions") {
+    return readBody(request).then((entry) => {
+      if (!entry.provider || !entry.region) return error(response, 422, "invalid_argument", "provider and region are required");
+      if (allowedRegions.some((r) => r.provider === entry.provider && r.region === entry.region)) return error(response, 412, "already_exists", "region already allowed");
+      const allowed = { provider: entry.provider, region: entry.region };
+      allowedRegions.push(allowed);
+      return json(response, 201, allowed);
+    });
+  }
+  const regionMatch = karst.match(/^\/regions\/([^/]+)\/([^/]+)$/);
+  if (regionMatch && method === "DELETE") {
+    const before = allowedRegions.length;
+    allowedRegions = allowedRegions.filter((r) => !(r.provider === regionMatch[1] && r.region === regionMatch[2]));
+    if (allowedRegions.length === before) return error(response, 404, "not_found", "region not allowed");
+    return noContent(response);
   }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);

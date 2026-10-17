@@ -17,10 +17,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	// ErrExists is returned by AddRegion for a (provider, region) pair
+	// already on the allowlist.
+	ErrExists = errors.New("allowed regions: region already allowed")
+	// ErrNotFound is returned by RemoveRegion for a (provider, region) pair
+	// not currently on the allowlist.
+	ErrNotFound = errors.New("allowed regions: region not allowed")
 )
 
 // Document is {provider: [region, ...]}, matching karst-scaler's own
@@ -133,6 +144,50 @@ func (s *Store) Reconcile(ctx context.Context, wanted Document) error {
 		}
 		return nil
 	})
+}
+
+// AddRegion allows one more (provider, region) pair, for the console's
+// region-allowlist editor (issue #349) -- a single-row addition alongside
+// Reconcile's own whole-document replace, which boot-time file loading
+// keeps using unchanged. Neither goes through the other: reading the
+// current document and calling Reconcile here would race a concurrent
+// edit, so this writes the one row directly.
+func (s *Store) AddRegion(ctx context.Context, provider, region string) error {
+	if provider == "" || region == "" {
+		return fmt.Errorf("allowed regions: provider and region must not be empty")
+	}
+	db := s.db.WithContext(ctx)
+	var existing regionRow
+	if err := db.Where("provider = ? AND region = ?", provider, region).First(&existing).Error; err == nil {
+		return ErrExists
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("allowed regions: lookup: %w", err)
+	}
+	// The preflight above gives a clear response in the ordinary case; the
+	// conflict clause handles two simultaneous adds without exposing a
+	// driver-specific unique-constraint message to either caller -- same
+	// discipline as relayreg.Store.Create.
+	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&regionRow{Provider: provider, Region: region})
+	if result.Error != nil {
+		return fmt.Errorf("allowed regions: add %s/%s: %w", provider, region, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrExists
+	}
+	return nil
+}
+
+// RemoveRegion revokes one (provider, region) pair, for the console's
+// region-allowlist editor (issue #349).
+func (s *Store) RemoveRegion(ctx context.Context, provider, region string) error {
+	result := s.db.WithContext(ctx).Where("provider = ? AND region = ?", provider, region).Delete(&regionRow{})
+	if result.Error != nil {
+		return fmt.Errorf("allowed regions: remove %s/%s: %w", provider, region, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AllowedRegions returns the current allowlist, with each provider's

@@ -733,6 +733,15 @@ type AcknowledgmentMismatch struct {
 	RequiredCutOffHandles []string `json:"required_cut_off_handles"`
 }
 
+// AllowedRegion defines model for AllowedRegion.
+type AllowedRegion struct {
+	// Provider e.g. "aws", "aws-gov-cloud", "azure", "azure-gov-cloud", "gcp" -- not validated against this set.
+	Provider string `json:"provider"`
+
+	// Region A provider region code, or an AWS local zone code -- both are opaque strings here.
+	Region string `json:"region"`
+}
+
 // AnchorHistogramEntry defines model for AnchorHistogramEntry.
 type AnchorHistogramEntry struct {
 	Bucket   string `json:"bucket"`
@@ -1730,6 +1739,9 @@ type TestPolicyJSONRequestBody = PolicyWrite
 
 // ValidatePolicyJSONRequestBody defines body for ValidatePolicy for application/json ContentType.
 type ValidatePolicyJSONRequestBody = PolicyWrite
+
+// CreateAllowedRegionJSONRequestBody defines body for CreateAllowedRegion for application/json ContentType.
+type CreateAllowedRegionJSONRequestBody = AllowedRegion
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
