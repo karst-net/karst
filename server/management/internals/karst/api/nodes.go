@@ -32,7 +32,11 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/geo"
+	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
@@ -44,6 +48,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
 	"github.com/netbirdio/netbird/management/server/types"
+	"github.com/netbirdio/netbird/route"
 	karstcontract "github.com/netbirdio/netbird/shared/management/http/api/karst"
 	"github.com/netbirdio/netbird/shared/management/http/util"
 	"github.com/netbirdio/netbird/shared/management/status"
@@ -119,6 +124,54 @@ type handler struct {
 	// nil in a deployment that has not configured one, see
 	// knownEventsList/knownEventsCreate/knownEventsDelete.
 	knownEvents knownEventReader
+	// locations is the NOC map's admin-authorized "possible locations"
+	// registry -- nil in a deployment that has not configured one, see
+	// locationsList/locationsCreate/locationsDelete.
+	locations locationReader
+	// groupLocations declares where a route's gateway groups are, for NOC
+	// map exit-node/subnet-router markers -- see package grouplocation's
+	// own doc comment for why this is keyed by group, not by route.
+	groupLocations groupLocationReader
+	// controlPlaneLocation is this account's declared NOC-map position for
+	// the control plane -- see package cplocation's own doc comment.
+	controlPlaneLocation cpLocationReader
+	// routes backs the "route" kind in nocComponents: which gateway groups
+	// are actually in use by an enabled exit or subnet route, and what to
+	// call that route. A narrow slice of the fork's own AccountManager, the
+	// same "depend on behavior, not the concrete store" convention
+	// tenancyReader/domainManager/accountUpdater already use in this file.
+	routes routeLister
+}
+
+// locationReader is the admin-authorized-locations registry's read/write
+// surface this package depends on -- see package locationreg.
+type locationReader interface {
+	Create(ctx context.Context, entry locationreg.Entry) (*locationreg.StoredLocation, error)
+	List(ctx context.Context) ([]locationreg.StoredLocation, error)
+	Delete(ctx context.Context, id string) error
+}
+
+// groupLocationReader is a route gateway group's declared-location store --
+// see package grouplocation.
+type groupLocationReader interface {
+	Set(ctx context.Context, entry grouplocation.Entry) (*grouplocation.StoredGroupLocation, error)
+	List(ctx context.Context) ([]grouplocation.StoredGroupLocation, error)
+	Delete(ctx context.Context, groupID string) error
+}
+
+// cpLocationReader is the control plane's declared-location store -- see
+// package cplocation.
+type cpLocationReader interface {
+	Set(ctx context.Context, lat, lon float64, label string) (*cplocation.StoredLocation, error)
+	Get(ctx context.Context) (*cplocation.StoredLocation, error)
+	Delete(ctx context.Context) error
+}
+
+// routeLister is the fork's own route listing, narrowed the same way
+// peerReader/tenancyReader already narrow the rest of AccountManager this
+// package depends on.
+type routeLister interface {
+	ListRoutes(ctx context.Context, accountID, userID string) ([]*route.Route, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -154,6 +207,38 @@ type relayResponse struct {
 	// provenance-tagging shape rather than inventing a new one. Omitted
 	// along with Location when neither source has a value.
 	LocationSource string `json:"location_source,omitempty"`
+}
+
+// turnResponse adds a TURN server's declared location to the stored record
+// -- StoredTurnServer's own LocationLat/Lon/Label columns are json:"-" for
+// the same reason relayreg.StoredRelay's are, so every read path needs this
+// wrapper rather than encoding the store row directly.
+type turnResponse struct {
+	turncred.StoredTurnServer
+	Location *geo.Location `json:"location,omitempty"`
+}
+
+func turnResponseFor(turn turncred.StoredTurnServer) turnResponse {
+	return turnResponse{StoredTurnServer: turn, Location: turn.LocationFor()}
+}
+
+// nocComponent is the NOC map's discriminated union (ADR-0046 §1's full
+// component list) -- one shape every kind reshapes into, so the console's
+// map rendering does not need five different response types to draw five
+// kinds of marker.
+type nocComponent struct {
+	Kind string `json:"kind"` // "relay" | "turn" | "route" | "control_plane" | "bedrock"
+	ID   string `json:"id"`
+	// Label is a human-readable name for the marker/legend: a relay's
+	// location label or region, a TURN server's URI, the route
+	// identifier(s) a gateway group serves, or a fixed name for the
+	// account-scoped singletons.
+	Label string `json:"label"`
+	// Health is relayHealth.AdmissionState's own vocabulary
+	// (confirmed/stale/unknown), empty for every kind that has no
+	// telemetry-derived health to report.
+	Health   string        `json:"health,omitempty"`
+	Location *geo.Location `json:"location,omitempty"`
 }
 
 func unknownRelayHealth() relayHealth {
@@ -344,6 +429,9 @@ type bedrockReader interface {
 	Configuration(context.Context, string) (*bedrock.Configuration, error)
 	SetMode(ctx context.Context, accountID, mode string, acknowledged []string,
 		state *bedrock.State, enrolled map[string]bedrock.PeerKeys, at int64) (*bedrock.Configuration, error)
+	// SetLocation declares this account's Bedrock position on the NOC map
+	// (ADR-0046 §1) -- see bedrock.Store.SetLocation.
+	SetLocation(ctx context.Context, accountID string, lat, lon float64, label string) (*bedrock.Configuration, error)
 }
 
 const maxRequestBodyBytes = 1 << 20
@@ -363,8 +451,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -433,6 +521,15 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/locations", h.locationsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/locations", h.locationsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/locations/{locationId}", h.locationsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/group-locations", h.groupLocationsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/group-locations/{groupId}", h.groupLocationsSet).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/group-locations/{groupId}", h.groupLocationsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/control-plane/location", h.controlPlaneLocationGet).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/control-plane/location", h.controlPlaneLocationSet).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/bedrock/location", h.bedrockLocationSet).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/turn/enroll-tokens", h.turnEnrollTokensCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turn/deenroll", h.turnDeenroll).Methods(http.MethodPost, http.MethodOptions)
 	// Deliberately on the parent router, not karstRouter -- see
@@ -584,8 +681,7 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 			// authorization for these resource-scoped surfaces.
 			path := strings.TrimPrefix(r.URL.Path, "/api")
 			if strings.HasPrefix(path, "/karst/v1/me/") || strings.HasPrefix(path, "/karst/v1/domains") || strings.HasPrefix(path, "/karst/v1/invitations") || strings.HasPrefix(path, "/karst/v1/nodes") {
-				scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(r.Context(), user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
-				next.ServeHTTP(w, r.WithContext(scoped))
+				next.ServeHTTP(w, r.WithContext(scopeToAccount(r.Context(), user.AccountId)))
 				return
 			}
 			op := operationForRequest(r.Method, r.URL.Path)
@@ -620,10 +716,25 @@ func karstAuthorization(manager permissions.Manager) mux.MiddlewareFunc {
 					return
 				}
 			}
-			scoped := audit.WithAccount(turncred.WithAccount(relayreg.WithAccount(karstpolicy.WithAccount(knownevents.WithAccount(ctx, user.AccountId), user.AccountId), user.AccountId), user.AccountId), user.AccountId)
-			next.ServeHTTP(w, r.WithContext(scoped))
+			next.ServeHTTP(w, r.WithContext(scopeToAccount(ctx, user.AccountId)))
 		})
 	}
+}
+
+// scopeToAccount applies every Karst-owned package's own WithAccount to one
+// context, once -- karstAuthorization's two call sites previously nested
+// these by hand, which is exactly the kind of chain a new registry's
+// WithAccount is easy to forget to add to one site but not the other.
+func scopeToAccount(ctx context.Context, accountID string) context.Context {
+	ctx = knownevents.WithAccount(ctx, accountID)
+	ctx = karstpolicy.WithAccount(ctx, accountID)
+	ctx = relayreg.WithAccount(ctx, accountID)
+	ctx = turncred.WithAccount(ctx, accountID)
+	ctx = locationreg.WithAccount(ctx, accountID)
+	ctx = grouplocation.WithAccount(ctx, accountID)
+	ctx = cplocation.WithAccount(ctx, accountID)
+	ctx = audit.WithAccount(ctx, accountID)
+	return ctx
 }
 
 func operationForRequest(method, path string) operations.Operation {
@@ -1452,6 +1563,9 @@ func (h *handler) bedrockStatus(w http.ResponseWriter, r *http.Request) {
 		"mode": configuration.Mode, "quorum": configuration.Quorum,
 		"roots": []any{}, "authorities": []any{}, "uncovered_handles": uncovered,
 	}
+	if configuration.LocationLat != nil {
+		body["location"] = geo.Location{Lat: *configuration.LocationLat, Lon: *configuration.LocationLon, Label: configuration.LocationLabel}
+	}
 	if state != nil {
 		body["quorum"] = state.Q
 		body["zone"] = state.Zone
@@ -1913,12 +2027,13 @@ func (h *handler) turnEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// nocComponents is the NOC view's map data source — #241 Phase 1a,
-// ADR-0046/ADR-0047. It is deliberately just relay data reshaped through the
-// same relayResponseFor every other relay endpoint uses, not a new read
-// path: the NOC view shows nothing a console operator with relay-read access
-// could not already see on the Relays page, only drawn on a map instead of
-// a table.
+// nocComponents is the NOC view's map data source (#241 Phase 1a,
+// ADR-0046/ADR-0047, extended to ADR-0046 §1's full component list): every
+// relay, TURN server, exit-node/subnet-router gateway group, and the
+// account's control-plane/Bedrock declared locations, reshaped into the one
+// nocComponent union the map draws. Shows nothing a console operator with
+// read access to each underlying page could not already see there, only
+// drawn on a map instead of five separate tables.
 //
 // Audit logging here is explicit rather than left to auditMutations
 // (nodes.go's mutation-logging middleware), because that middleware
@@ -1930,19 +2045,82 @@ func (h *handler) nocComponents(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.relays == nil {
-		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "relay registry is not configured"), w)
-		return
+
+	var result []nocComponent
+
+	if h.relays != nil {
+		relays, err := h.relays.List(r.Context())
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		for _, relay := range relays {
+			resp := h.relayResponseFor(r.Context(), relay)
+			label := resp.Region
+			if resp.Location != nil && resp.Location.Label != "" {
+				label = resp.Location.Label
+			}
+			result = append(result, nocComponent{Kind: "relay", ID: resp.ID, Label: label, Health: resp.Health.AdmissionState, Location: resp.Location})
+		}
 	}
-	relays, err := h.relays.List(r.Context())
-	if err != nil {
-		util.WriteError(r.Context(), err, w)
-		return
+
+	if h.turns != nil {
+		turns, err := h.turns.List(r.Context())
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		for _, turn := range turns {
+			location := turn.LocationFor()
+			label := turn.URI
+			if location != nil && location.Label != "" {
+				label = location.Label
+			}
+			result = append(result, nocComponent{Kind: "turn", ID: turn.ID, Label: label, Location: location})
+		}
 	}
-	result := make([]relayResponse, 0, len(relays))
-	for _, relay := range relays {
-		result = append(result, h.relayResponseFor(r.Context(), relay))
+
+	if h.groupLocations != nil && h.routes != nil {
+		groupComponents, err := h.routeGroupComponents(r.Context(), user.AccountId, user.UserId)
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		result = append(result, groupComponents...)
 	}
+
+	if h.controlPlaneLocation != nil {
+		location, err := h.controlPlaneLocation.Get(r.Context())
+		if err != nil && !errors.Is(err, cplocation.ErrNotFound) {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		component := nocComponent{Kind: "control_plane", ID: "control-plane", Label: "Control plane"}
+		if err == nil {
+			component.Location = &geo.Location{Lat: location.Lat, Lon: location.Lon, Label: location.Label}
+			if location.Label != "" {
+				component.Label = location.Label
+			}
+		}
+		result = append(result, component)
+	}
+
+	if h.bedrock != nil {
+		cfg, err := h.bedrock.Configuration(r.Context(), user.AccountId)
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		component := nocComponent{Kind: "bedrock", ID: "bedrock", Label: "Bedrock"}
+		if cfg.LocationLat != nil {
+			component.Location = &geo.Location{Lat: *cfg.LocationLat, Lon: *cfg.LocationLon, Label: cfg.LocationLabel}
+			if cfg.LocationLabel != "" {
+				component.Label = cfg.LocationLabel
+			}
+		}
+		result = append(result, component)
+	}
+
 	if h.audit != nil {
 		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.noc.view", "components", ""); err != nil {
 			util.WriteError(r.Context(), err, w)
@@ -1950,6 +2128,65 @@ func (h *handler) nocComponents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// routeGroupComponents resolves the "route" kind: one marker per gateway
+// group that both has a declared location and is actually named in
+// peer_groups by at least one enabled exit or subnet route. A group with a
+// declared location that no enabled route currently uses is not placed --
+// it is still visible wherever groups are listed, just not asserted here to
+// be an active gateway.
+func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID string) ([]nocComponent, error) {
+	groupLocations, err := h.groupLocations.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupLocations) == 0 {
+		return nil, nil
+	}
+	locationByGroup := make(map[string]grouplocation.StoredGroupLocation, len(groupLocations))
+	for _, gl := range groupLocations {
+		locationByGroup[gl.GroupID] = gl
+	}
+
+	routes, err := h.routes.ListRoutes(ctx, accountID, userID)
+	if err != nil {
+		return nil, err
+	}
+	netIDsByGroup := make(map[string][]string)
+	for _, r := range routes {
+		if !r.Enabled {
+			continue
+		}
+		for _, groupID := range r.PeerGroups {
+			if _, declared := locationByGroup[groupID]; !declared {
+				continue
+			}
+			netIDsByGroup[groupID] = append(netIDsByGroup[groupID], string(r.NetID))
+		}
+	}
+
+	result := make([]nocComponent, 0, len(netIDsByGroup))
+	for groupID, netIDs := range netIDsByGroup {
+		sort.Strings(netIDs)
+		gl := locationByGroup[groupID]
+		label := strings.Join(netIDs, ", ")
+		if gl.Label != "" {
+			label = gl.Label
+		}
+		result = append(result, nocComponent{
+			Kind:     "route",
+			ID:       groupID,
+			Label:    label,
+			Location: &geo.Location{Lat: gl.Lat, Lon: gl.Lon, Label: gl.Label},
+		})
+	}
+	// Deterministic order: every other list in this response is already
+	// ordered by its own store (List's own "Order(id)"/"Order(group_id)");
+	// this one is built from a map and must not depend on Go's randomized
+	// iteration.
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
 }
 
 // nocRelay is the NOC map's drill-down for one relay — the marker-click
@@ -2309,7 +2546,11 @@ func (h *handler) turnsList(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	util.WriteJSONObject(r.Context(), w, turns)
+	result := make([]turnResponse, 0, len(turns))
+	for _, turn := range turns {
+		result = append(result, turnResponseFor(turn))
+	}
+	util.WriteJSONObject(r.Context(), w, result)
 }
 func (h *handler) turnsCreate(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
@@ -2336,7 +2577,7 @@ func (h *handler) turnsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(turn); err != nil {
+	if err := json.NewEncoder(w).Encode(turnResponseFor(*turn)); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }
@@ -2357,6 +2598,205 @@ func (h *handler) turnsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// locationsList/locationsCreate/locationsDelete manage the NOC map's
+// admin-authorized "possible locations" registry (package locationreg) --
+// the same list/create/delete shape as relaysList/relaysCreate/relaysDelete.
+func (h *handler) locationsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.locations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "location registry is not configured"), w)
+		return
+	}
+	locations, err := h.locations.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, locations)
+}
+func (h *handler) locationsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.locations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "location registry is not configured"), w)
+		return
+	}
+	var entry locationreg.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	location, err := h.locations.Create(r.Context(), entry)
+	if errors.Is(err, locationreg.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "location already exists"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(location); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+func (h *handler) locationsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.locations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "location registry is not configured"), w)
+		return
+	}
+	if err := h.locations.Delete(r.Context(), mux.Vars(r)["locationId"]); errors.Is(err, locationreg.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "location not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route
+// gateway group's declared NOC-map location (package grouplocation).
+func (h *handler) groupLocationsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.groupLocations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "group location store is not configured"), w)
+		return
+	}
+	locations, err := h.groupLocations.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, locations)
+}
+func (h *handler) groupLocationsSet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.groupLocations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "group location store is not configured"), w)
+		return
+	}
+	var entry grouplocation.Entry
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	entry.GroupID = mux.Vars(r)["groupId"]
+	location, err := h.groupLocations.Set(r.Context(), entry)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, location)
+}
+func (h *handler) groupLocationsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.groupLocations == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "group location store is not configured"), w)
+		return
+	}
+	if err := h.groupLocations.Delete(r.Context(), mux.Vars(r)["groupId"]); errors.Is(err, grouplocation.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "group location not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// controlPlaneLocationGet/controlPlaneLocationSet manage the control
+// plane's own declared NOC-map location (package cplocation).
+func (h *handler) controlPlaneLocationGet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.controlPlaneLocation == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "control plane location is not configured"), w)
+		return
+	}
+	location, err := h.controlPlaneLocation.Get(r.Context())
+	if errors.Is(err, cplocation.ErrNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, location)
+}
+func (h *handler) controlPlaneLocationSet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.controlPlaneLocation == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "control plane location is not configured"), w)
+		return
+	}
+	var entry geo.Location
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	location, err := h.controlPlaneLocation.Set(r.Context(), entry.Lat, entry.Lon, entry.Label)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, location)
+}
+
+// bedrockLocationSet declares this account's Bedrock location on the NOC
+// map -- see bedrock.Store.SetLocation.
+func (h *handler) bedrockLocationSet(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.bedrock == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Bedrock is not configured"), w)
+		return
+	}
+	var entry geo.Location
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	cfg, err := h.bedrock.SetLocation(r.Context(), user.AccountId, entry.Lat, entry.Lon, entry.Label)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	location := geo.Location{Lat: entry.Lat, Lon: entry.Lon, Label: entry.Label}
+	if cfg.LocationLat != nil {
+		location = geo.Location{Lat: *cfg.LocationLat, Lon: *cfg.LocationLon, Label: cfg.LocationLabel}
+	}
+	util.WriteJSONObject(r.Context(), w, location)
 }
 
 // turnDeenrollRequest is what a karst-scaler TURN driver (ADR-0045 §7b,

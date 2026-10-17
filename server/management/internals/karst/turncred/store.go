@@ -11,6 +11,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/netbirdio/netbird/management/internals/karst/geo"
 )
 
 var (
@@ -42,6 +44,13 @@ type StoredTurnServer struct {
 	ID        string `gorm:"primaryKey" json:"id"`
 	URI       string `gorm:"not null" json:"uri"`
 	Region    string `gorm:"not null" json:"region"`
+
+	// LocationLat/LocationLon/LocationLabel -- see relayreg.StoredRelay's
+	// own fields of the same name for why these are flat nullable columns
+	// rather than an embedded struct.
+	LocationLat   *float64 `json:"-"`
+	LocationLon   *float64 `json:"-"`
+	LocationLabel string   `json:"-"`
 }
 
 func (StoredTurnServer) TableName() string { return "karst_turn_servers" }
@@ -74,6 +83,10 @@ func (s *Store) Create(ctx context.Context, entry Entry) (*StoredTurnServer, err
 		ID:        base64.RawURLEncoding.EncodeToString([]byte(validated.URI)),
 		URI:       validated.URI,
 		Region:    validated.Region,
+	}
+	if validated.Location != nil {
+		lat, lon := validated.Location.Lat, validated.Location.Lon
+		record.LocationLat, record.LocationLon, record.LocationLabel = &lat, &lon, validated.Location.Label
 	}
 	var existing StoredTurnServer
 	if err := s.db.Where("account_id = ? AND id = ?", accountID, record.ID).First(&existing).Error; err == nil {
@@ -149,7 +162,21 @@ func (s *Store) Entries(ctx context.Context) ([]Entry, error) {
 	}
 	out := make([]Entry, 0, len(records))
 	for _, record := range records {
-		out = append(out, Entry{URI: record.URI, Region: record.Region})
+		entry := Entry{URI: record.URI, Region: record.Region}
+		if record.LocationLat != nil {
+			entry.Location = &geo.Location{Lat: *record.LocationLat, Lon: *record.LocationLon, Label: record.LocationLabel}
+		}
+		out = append(out, entry)
 	}
 	return out, nil
+}
+
+// LocationFor resolves one stored server's declared NOC-map position, the
+// turncred counterpart of a relay's own locationFor (api/nodes.go) --
+// turncred has no telemetry, so there is no detected alternative to prefer.
+func (r StoredTurnServer) LocationFor() *geo.Location {
+	if r.LocationLat == nil {
+		return nil
+	}
+	return &geo.Location{Lat: *r.LocationLat, Lon: *r.LocationLon, Label: r.LocationLabel}
 }

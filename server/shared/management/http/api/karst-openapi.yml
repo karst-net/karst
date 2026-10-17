@@ -397,12 +397,85 @@ paths:
       operationId: nocComponents
       tags: [noc]
       description: >-
-        The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047) --
-        every relay this account can see, reshaped through the same response
-        every other relay endpoint uses. Every call is audit-logged
+        The NOC view's map data source (#241 Phase 1a, ADR-0046/ADR-0047,
+        extended to ADR-0046 §1's full component list) -- every relay, TURN
+        server, exit-node/subnet-router gateway group, and the account's
+        control-plane/Bedrock declared locations this account can see,
+        reshaped into one discriminated union. Every call is audit-logged
         (karst.noc.view) explicitly, since this is a GET.
       responses:
-        '200': {description: Relays with their declared location (if any) and health, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Relay'}}}}}
+        '200': {description: Every NOC component this account can see, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/NocComponent'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /locations:
+    get:
+      operationId: listLocations
+      tags: [noc]
+      responses:
+        '200': {description: Admin-authorized locations registry, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Location'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createLocation
+      tags: [noc]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/LocationCreate'}}}}
+      responses:
+        '201': {description: Authorized location, content: {application/json: {schema: {$ref: '#/components/schemas/Location'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /locations/{locationId}:
+    parameters: [{name: locationId, in: path, required: true, schema: {type: string}}]
+    delete:
+      operationId: deleteLocation
+      tags: [noc]
+      responses:
+        '204': {description: Location removed}
+        default: {$ref: '#/components/responses/Error'}
+  /group-locations:
+    get:
+      operationId: listGroupLocations
+      tags: [noc]
+      responses:
+        '200': {description: Every gateway group with a declared location, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/GroupLocation'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /group-locations/{groupId}:
+    parameters: [{name: groupId, in: path, required: true, schema: {type: string}}]
+    put:
+      operationId: setGroupLocation
+      tags: [noc]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/LocationCreate'}}}}
+      responses:
+        '200': {description: Declared group location, content: {application/json: {schema: {$ref: '#/components/schemas/GroupLocation'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteGroupLocation
+      tags: [noc]
+      responses:
+        '204': {description: Group location removed}
+        default: {$ref: '#/components/responses/Error'}
+  /control-plane/location:
+    get:
+      operationId: getControlPlaneLocation
+      tags: [noc]
+      responses:
+        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '204': {description: No location declared yet}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setControlPlaneLocation
+      tags: [noc]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+      responses:
+        '200': {description: Declared control-plane location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /bedrock/location:
+    put:
+      operationId: setBedrockLocation
+      tags: [noc, bedrock]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+      responses:
+        '200': {description: Declared Bedrock location, content: {application/json: {schema: {$ref: '#/components/schemas/RelayLocation'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
         default: {$ref: '#/components/responses/Error'}
   /noc/relays/{relayId}:
     parameters: [{$ref: '#/components/parameters/relayId'}]
@@ -987,9 +1060,39 @@ components:
       type: object
       required: [uri]
       additionalProperties: false
-      properties: {uri: {type: string, description: 'A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.'}, region: {type: string}}
+      properties: {uri: {type: string, description: 'A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.'}, region: {type: string}, location: {$ref: '#/components/schemas/RelayLocation'}}
     TurnServer:
       allOf: [{$ref: '#/components/schemas/TurnServerCreate'}, {type: object, required: [id], properties: {id: {type: string, readOnly: true, description: Derived from uri; never accepted from callers.}}}]
+    # The NOC map's admin-authorized "possible locations" registry (ADR-0046
+    # §1 extension) -- a site an operator has declared this deployment may
+    # place infrastructure at, independent of whether anything is deployed
+    # there yet. Additive, not a foreign key: a Relay/TurnServer/etc. may
+    # still declare a location that is not in this registry.
+    LocationCreate:
+      type: object
+      required: [lat, lon]
+      additionalProperties: false
+      properties: {lat: {type: number, minimum: -90, maximum: 90}, lon: {type: number, minimum: -180, maximum: 180}, label: {type: string}, kind: {type: string, description: 'Free-text grouping tag ("datacenter", "aws-region", "aws-local-zone", ...), not validated against a fixed list.'}}
+    Location:
+      allOf: [{$ref: '#/components/schemas/LocationCreate'}, {type: object, required: [id], properties: {id: {type: string, readOnly: true, description: Derived from the entry's own content; never accepted from callers.}}}]
+    # One gateway group's declared NOC-map location (package grouplocation)
+    # -- what places an exit-node/subnet-router marker, since a route only
+    # ever names peer_groups, never a single machine.
+    GroupLocation:
+      type: object
+      required: [group_id, lat, lon]
+      properties: {group_id: {type: string, readOnly: true}, lat: {type: number, minimum: -90, maximum: 90}, lon: {type: number, minimum: -180, maximum: 180}, label: {type: string}}
+    # The NOC map's one discriminated-union response shape (ADR-0046 §1's
+    # full component list) -- see api/nodes.go's own nocComponent doc comment.
+    NocComponent:
+      type: object
+      required: [kind, id, label]
+      properties:
+        kind: {type: string, enum: [relay, turn, route, control_plane, bedrock]}
+        id: {type: string}
+        label: {type: string}
+        health: {type: string, enum: [confirmed, stale, unknown]}
+        location: {$ref: '#/components/schemas/RelayLocation'}
     BedrockStatus:
       type: object
       required: [mode, quorum, roots, authorities, uncovered_handles]
@@ -998,7 +1101,7 @@ components:
       # A client that computes its own list from node liveness gets a 409:
       # coverage is a property of the signed log, not of whether a node is up.
       # The fields below zone are present only once a log has been verified.
-      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, quorum: {type: integer, minimum: 1}, roots: {type: array, items: {$ref: '#/components/schemas/Authority'}}, authorities: {type: array, items: {$ref: '#/components/schemas/Authority'}}, uncovered_handles: {type: array, items: {type: string}, uniqueItems: true}, zone: {type: string}, head: {type: string}, head_seq: {type: integer, minimum: 0}, disabled: {type: boolean}, covered_count: {type: integer, minimum: 0}}
+      properties: {mode: {type: string, enum: [off, advisory, enforcing]}, quorum: {type: integer, minimum: 1}, roots: {type: array, items: {$ref: '#/components/schemas/Authority'}}, authorities: {type: array, items: {$ref: '#/components/schemas/Authority'}}, uncovered_handles: {type: array, items: {type: string}, uniqueItems: true}, zone: {type: string}, head: {type: string}, head_seq: {type: integer, minimum: 0}, disabled: {type: boolean}, covered_count: {type: integer, minimum: 0}, location: {$ref: '#/components/schemas/RelayLocation'}}
     Authority:
       type: object
       required: [id, name, status]

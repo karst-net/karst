@@ -2,9 +2,9 @@
 // Copyright the Karst contributors.
 
 import { useRef, useState } from "react";
-import { Observed } from "@karst-net/ui";
+import { Dialog, Observed } from "@karst-net/ui";
 import { api, ApiError } from "../api";
-import { Failure, Notice, Rows, useResource } from "../common";
+import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 export function Bedrock() {
   const resource = useResource(api.bedrock);
@@ -17,6 +17,8 @@ export function Bedrock() {
   const [exchanging, setExchanging] = useState(false);
   const responseInput = useRef<HTMLInputElement>(null);
   const bootstrapInput = useRef<HTMLInputElement>(null);
+  const { message: locationMessage, setMessage: setLocationMessage, run: runLocation } = useMutation(resource.reload);
+  const [locationDraft, setLocationDraft] = useState<{ lat: string; lon: string; label: string }>();
 
   const reloadSigningState = () => { requests.reload(); log.reload(); resource.reload(); nodes.reload(); };
 
@@ -102,6 +104,15 @@ export function Bedrock() {
     }
   };
 
+  const saveLocation = async () => {
+    if (!locationDraft) return;
+    const lat = Number(locationDraft.lat), lon = Number(locationDraft.lon);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setLocationMessage("Latitude must be a number between -90 and 90."); return; }
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setLocationMessage("Longitude must be a number between -180 and 180."); return; }
+    const label = locationDraft.label.trim() || undefined;
+    if (await runLocation(() => api.setBedrockLocation({ lat, lon, label }), "Bedrock's location was declared.")) setLocationDraft(undefined);
+  };
+
   if (resource.loading || nodes.loading) return <p>Loading network lock…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const status = resource.value;
@@ -152,6 +163,21 @@ export function Bedrock() {
           </tr>)}
         </Rows>}
     <p className="lede">Requests are signed offline with <code>karst-bedrock sign</code> on a machine that never touches this server, then imported. The console cannot sign; that is the point of it.</p>
+
+    <h3>NOC map location</h3>
+    <p className="lede">Where Bedrock's signer/anchor activity for this account is based, shown on the NOC map. Optional, operator-declared — never inferred.</p>
+    <p>{status?.location ? (status.location.label || `${status.location.lat}, ${status.location.lon}`) : <span className="lede">No location declared</span>}</p>
+    <div className="actions"><button onClick={() => setLocationDraft({ lat: status?.location ? String(status.location.lat) : "", lon: status?.location ? String(status.location.lon) : "", label: status?.location?.label ?? "" })}>{status?.location ? "Edit location" : "Set location"}</button></div>
+    <Notice message={locationMessage} />
+
+    <Dialog open={Boolean(locationDraft)} title="Declare Bedrock's location" onClose={() => setLocationDraft(undefined)}>
+      <form onSubmit={(event) => { event.preventDefault(); void saveLocation(); }}>
+        <label>Latitude<input aria-label="Bedrock latitude" placeholder="37.7749" value={locationDraft?.lat ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, lat: event.target.value })} /></label>
+        <label>Longitude<input aria-label="Bedrock longitude" placeholder="-122.4194" value={locationDraft?.lon ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, lon: event.target.value })} /></label>
+        <label>Location label<input aria-label="Bedrock location label" placeholder="Signer room" value={locationDraft?.label ?? ""} onChange={(event) => setLocationDraft((current) => current && { ...current, label: event.target.value })} /></label>
+        <div className="actions"><button type="button" onClick={() => setLocationDraft(undefined)}>Cancel</button><button className="primary" type="submit">Save location</button></div>
+      </form>
+    </Dialog>
 
     <h3>Signed log</h3>
     {log.error ? <p>The log is unavailable: {log.error}</p>

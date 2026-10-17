@@ -41,10 +41,19 @@ export function Groups() {
     if (!policy.value) return undefined;
     try { return JSON.parse(policy.value.document) as PolicyDocument; } catch { return undefined; }
   })();
-  const { message, setMessage, run } = useMutation(resource.reload);
+  // A group's declared location is Karst-owned (package grouplocation), not
+  // a field on this fork-owned Group record -- a best-effort, id-matched
+  // cross-reference, the same posture selectorFor's own policy-document
+  // cross-reference already takes. It is what places an exit-node/
+  // subnet-router marker on the NOC map for whichever route names this
+  // group in its peer_groups.
+  const groupLocations = useResource(api.groupLocations);
+  const locationByGroup = new Map((groupLocations.value ?? []).map((gl) => [gl.group_id, gl]));
+  const { message, setMessage, run } = useMutation(() => { resource.reload(); groupLocations.reload(); });
   const [creating, setCreating] = useState<string>();
   const [renaming, setRenaming] = useState<{ group: Group; name: string }>();
   const [viewing, setViewing] = useState<Group>();
+  const [locating, setLocating] = useState<{ group: Group; lat: string; lon: string; label: string }>();
 
   if (resource.loading) return <p>Loading groups…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
@@ -71,6 +80,18 @@ export function Groups() {
     if (!confirm(warning)) return;
     void run(() => api.deleteGroup(group.id), `Group ${group.name} was deleted.`);
   };
+  const saveLocation = async () => {
+    if (!locating) return;
+    const lat = Number(locating.lat), lon = Number(locating.lon);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setMessage("Latitude must be a number between -90 and 90."); return; }
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setMessage("Longitude must be a number between -180 and 180."); return; }
+    const label = locating.label.trim() || undefined;
+    if (await run(() => api.setGroupLocation(locating.group.id, { lat, lon, label }), `${locating.group.name}'s location was declared.`)) setLocating(undefined);
+  };
+  const clearLocation = (group: Group) => {
+    if (!confirm(`Clear ${group.name}'s declared location? Any exit-node/subnet-router marker this group places on the NOC map disappears.`)) return;
+    void run(() => api.removeGroupLocation(group.id), `${group.name}'s declared location was cleared.`);
+  };
 
   return <section>
     <h2>Groups</h2>
@@ -79,9 +100,10 @@ export function Groups() {
     <Notice message={message} />
     {groups.length === 0
       ? <EmptyState title="No groups">Groups from your identity provider will appear here.</EmptyState>
-      : <Rows head={<><th>Name</th><th>Members</th><th>Resources</th><th>Source</th><th>Access rules</th><th>Actions</th></>}>
+      : <Rows head={<><th>Name</th><th>Members</th><th>Resources</th><th>Source</th><th>Access rules</th><th>Location</th><th>Actions</th></>}>
         {groups.map((group) => {
           const referencing = rulesReferencing(document, selectorFor(group));
+          const location = locationByGroup.get(group.id);
           return <tr key={group.id}>
             <td><strong>{group.name}</strong><br /><code>{group.id}</code></td>
             <td>{group.peers_count}</td>
@@ -90,12 +112,14 @@ export function Groups() {
             <td>{referencing.length > 0
               ? <button onClick={() => setViewing(group)}>{referencing.length} rule{referencing.length === 1 ? "" : "s"}</button>
               : <span className="lede">None</span>}</td>
-            <td>{editable(group)
-              ? <div className="actions">
-                <button onClick={() => setRenaming({ group, name: group.name })}>Rename</button>
-                <button className="danger" onClick={() => remove(group)}>Delete</button>
-              </div>
-              : <span className="lede">{group.name === "All" ? "Built in" : "Managed by the identity provider"}</span>}</td>
+            <td>{location ? (location.label || `${location.lat}, ${location.lon}`) : <span className="lede">No location</span>}</td>
+            <td><div className="actions">
+              {editable(group) && <button onClick={() => setRenaming({ group, name: group.name })}>Rename</button>}
+              <button onClick={() => setLocating({ group, lat: location ? String(location.lat) : "", lon: location ? String(location.lon) : "", label: location?.label ?? "" })}>{location ? "Edit location" : "Set location"}</button>
+              {location && <button onClick={() => clearLocation(group)}>Clear location</button>}
+              {editable(group) && <button className="danger" onClick={() => remove(group)}>Delete</button>}
+              {!editable(group) && <span className="lede">{group.name === "All" ? "Built in" : "Managed by the identity provider"}</span>}
+            </div></td>
           </tr>;
         })}
       </Rows>}
@@ -113,6 +137,16 @@ export function Groups() {
         <label>Group name<input aria-label="New group name" value={renaming?.name ?? ""} onChange={(event) => setRenaming((current) => current && { ...current, name: event.target.value })} /></label>
         <p className="lede">This changes nothing in the access policy document: it names groups independently, by whatever string an admin wrote into its own "groups" section. If this group's old name is referenced there, update the policy to match.</p>
         <div className="actions"><button type="button" onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" type="submit">Save name</button></div>
+      </form>
+    </Dialog>
+
+    <Dialog open={Boolean(locating)} title={locating ? `Declare ${locating.group.name}'s location` : ""} onClose={() => setLocating(undefined)}>
+      <form onSubmit={(event) => { event.preventDefault(); void saveLocation(); }}>
+        <p className="lede">This is where this group's machines are, for the NOC map only — it places a marker for any exit-node or subnet-router route whose routing group is this one.</p>
+        <label>Latitude<input aria-label="Group latitude" placeholder="51.5072" value={locating?.lat ?? ""} onChange={(event) => setLocating((current) => current && { ...current, lat: event.target.value })} /></label>
+        <label>Longitude<input aria-label="Group longitude" placeholder="-0.1276" value={locating?.lon ?? ""} onChange={(event) => setLocating((current) => current && { ...current, lon: event.target.value })} /></label>
+        <label>Location label<input aria-label="Group location label" placeholder="London" value={locating?.label ?? ""} onChange={(event) => setLocating((current) => current && { ...current, label: event.target.value })} /></label>
+        <div className="actions"><button type="button" onClick={() => setLocating(undefined)}>Cancel</button><button className="primary" type="submit">Save location</button></div>
       </form>
     </Dialog>
 

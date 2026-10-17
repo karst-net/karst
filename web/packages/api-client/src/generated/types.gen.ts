@@ -492,6 +492,7 @@ export type TurnServerCreate = {
      */
     uri: string;
     region?: string;
+    location?: RelayLocation;
 };
 
 export type TurnServer = TurnServerCreate & {
@@ -499,6 +500,38 @@ export type TurnServer = TurnServerCreate & {
      * Derived from uri; never accepted from callers.
      */
     readonly id: string;
+};
+
+export type LocationCreate = {
+    lat: number;
+    lon: number;
+    label?: string;
+    /**
+     * Free-text grouping tag ("datacenter", "aws-region", "aws-local-zone", ...), not validated against a fixed list.
+     */
+    kind?: string;
+};
+
+export type Location = LocationCreate & {
+    /**
+     * Derived from the entry's own content; never accepted from callers.
+     */
+    readonly id: string;
+};
+
+export type GroupLocation = {
+    readonly group_id: string;
+    lat: number;
+    lon: number;
+    label?: string;
+};
+
+export type NocComponent = {
+    kind: 'relay' | 'turn' | 'route' | 'control_plane' | 'bedrock';
+    id: string;
+    label: string;
+    health?: 'confirmed' | 'stale' | 'unknown';
+    location?: RelayLocation;
 };
 
 export type BedrockStatus = {
@@ -512,6 +545,7 @@ export type BedrockStatus = {
     head_seq?: number;
     disabled?: boolean;
     covered_count?: number;
+    location?: RelayLocation;
 };
 
 export type Authority = {
@@ -669,6 +703,14 @@ export type RelayWritable = RelayCreate & {
 };
 
 export type TurnServerWritable = TurnServerCreate;
+
+export type LocationWritable = LocationCreate;
+
+export type GroupLocationWritable = {
+    lat: number;
+    lon: number;
+    label?: string;
+};
 
 export type AuditSinkWritable = AuditSinkWrite;
 
@@ -1797,12 +1839,263 @@ export type NocComponentsError = NocComponentsErrors[keyof NocComponentsErrors];
 
 export type NocComponentsResponses = {
     /**
-     * Relays with their declared location (if any) and health
+     * Every NOC component this account can see
      */
-    200: Array<Relay>;
+    200: Array<NocComponent>;
 };
 
 export type NocComponentsResponse = NocComponentsResponses[keyof NocComponentsResponses];
+
+export type ListLocationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/locations';
+};
+
+export type ListLocationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListLocationsError = ListLocationsErrors[keyof ListLocationsErrors];
+
+export type ListLocationsResponses = {
+    /**
+     * Admin-authorized locations registry
+     */
+    200: Array<Location>;
+};
+
+export type ListLocationsResponse = ListLocationsResponses[keyof ListLocationsResponses];
+
+export type CreateLocationData = {
+    body: LocationCreate;
+    path?: never;
+    query?: never;
+    url: '/locations';
+};
+
+export type CreateLocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateLocationError = CreateLocationErrors[keyof CreateLocationErrors];
+
+export type CreateLocationResponses = {
+    /**
+     * Authorized location
+     */
+    201: Location;
+};
+
+export type CreateLocationResponse = CreateLocationResponses[keyof CreateLocationResponses];
+
+export type DeleteLocationData = {
+    body?: never;
+    path: {
+        locationId: string;
+    };
+    query?: never;
+    url: '/locations/{locationId}';
+};
+
+export type DeleteLocationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteLocationError = DeleteLocationErrors[keyof DeleteLocationErrors];
+
+export type DeleteLocationResponses = {
+    /**
+     * Location removed
+     */
+    204: void;
+};
+
+export type DeleteLocationResponse = DeleteLocationResponses[keyof DeleteLocationResponses];
+
+export type ListGroupLocationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/group-locations';
+};
+
+export type ListGroupLocationsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListGroupLocationsError = ListGroupLocationsErrors[keyof ListGroupLocationsErrors];
+
+export type ListGroupLocationsResponses = {
+    /**
+     * Every gateway group with a declared location
+     */
+    200: Array<GroupLocation>;
+};
+
+export type ListGroupLocationsResponse = ListGroupLocationsResponses[keyof ListGroupLocationsResponses];
+
+export type DeleteGroupLocationData = {
+    body?: never;
+    path: {
+        groupId: string;
+    };
+    query?: never;
+    url: '/group-locations/{groupId}';
+};
+
+export type DeleteGroupLocationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteGroupLocationError = DeleteGroupLocationErrors[keyof DeleteGroupLocationErrors];
+
+export type DeleteGroupLocationResponses = {
+    /**
+     * Group location removed
+     */
+    204: void;
+};
+
+export type DeleteGroupLocationResponse = DeleteGroupLocationResponses[keyof DeleteGroupLocationResponses];
+
+export type SetGroupLocationData = {
+    body: LocationCreate;
+    path: {
+        groupId: string;
+    };
+    query?: never;
+    url: '/group-locations/{groupId}';
+};
+
+export type SetGroupLocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetGroupLocationError = SetGroupLocationErrors[keyof SetGroupLocationErrors];
+
+export type SetGroupLocationResponses = {
+    /**
+     * Declared group location
+     */
+    200: GroupLocation;
+};
+
+export type SetGroupLocationResponse = SetGroupLocationResponses[keyof SetGroupLocationResponses];
+
+export type GetControlPlaneLocationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/control-plane/location';
+};
+
+export type GetControlPlaneLocationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetControlPlaneLocationError = GetControlPlaneLocationErrors[keyof GetControlPlaneLocationErrors];
+
+export type GetControlPlaneLocationResponses = {
+    /**
+     * Declared control-plane location
+     */
+    200: RelayLocation;
+    /**
+     * No location declared yet
+     */
+    204: void;
+};
+
+export type GetControlPlaneLocationResponse = GetControlPlaneLocationResponses[keyof GetControlPlaneLocationResponses];
+
+export type SetControlPlaneLocationData = {
+    body: RelayLocation;
+    path?: never;
+    query?: never;
+    url: '/control-plane/location';
+};
+
+export type SetControlPlaneLocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetControlPlaneLocationError = SetControlPlaneLocationErrors[keyof SetControlPlaneLocationErrors];
+
+export type SetControlPlaneLocationResponses = {
+    /**
+     * Declared control-plane location
+     */
+    200: RelayLocation;
+};
+
+export type SetControlPlaneLocationResponse = SetControlPlaneLocationResponses[keyof SetControlPlaneLocationResponses];
+
+export type SetBedrockLocationData = {
+    body: RelayLocation;
+    path?: never;
+    query?: never;
+    url: '/bedrock/location';
+};
+
+export type SetBedrockLocationErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetBedrockLocationError = SetBedrockLocationErrors[keyof SetBedrockLocationErrors];
+
+export type SetBedrockLocationResponses = {
+    /**
+     * Declared Bedrock location
+     */
+    200: RelayLocation;
+};
+
+export type SetBedrockLocationResponse = SetBedrockLocationResponses[keyof SetBedrockLocationResponses];
 
 export type NocRelayData = {
     body?: never;

@@ -20,7 +20,10 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
+	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
@@ -216,6 +219,40 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/turns/{turnId}",
 		},
 		{
+			name: "register an authorized location", method: http.MethodPost,
+			path: "/karst/v1/locations",
+			body: `{"lat":51.5072,"lon":-0.1276,"label":"London","kind":"datacenter"}`,
+			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/locations",
+		},
+		{
+			name: "remove an authorized location", method: http.MethodDelete,
+			path: "/karst/v1/locations/unknown-location", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/locations/{locationId}",
+		},
+		{
+			name: "declare a gateway group's location", method: http.MethodPut,
+			path: "/karst/v1/group-locations/unknown-group",
+			body: `{"lat":51.5072,"lon":-0.1276,"label":"London"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/group-locations/{groupId}",
+		},
+		{
+			name: "remove a gateway group's declared location", method: http.MethodDelete,
+			path: "/karst/v1/group-locations/unknown-group", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/group-locations/{groupId}",
+		},
+		{
+			name: "declare the control plane's location", method: http.MethodPut,
+			path: "/karst/v1/control-plane/location",
+			body: `{"lat":37.7749,"lon":-122.4194,"label":"Control room"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/control-plane/location",
+		},
+		{
+			name: "declare Bedrock's location", method: http.MethodPut,
+			path: "/karst/v1/bedrock/location",
+			body: `{"lat":37.7749,"lon":-122.4194,"label":"Signer room"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/bedrock/location",
+		},
+		{
 			name: "mint a turn enroll token", method: http.MethodPost,
 			path: "/karst/v1/turn/enroll-tokens", body: `{}`,
 			want: []int{http.StatusCreated}, template: "/karst/v1/turn/enroll-tokens",
@@ -370,6 +407,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	for _, table := range []string{
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
 		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
+		"karst_locations", "karst_group_locations", "karst_control_plane_location",
 	} {
 		_ = db.Exec("DROP TABLE IF EXISTS " + table).Error
 	}
@@ -406,13 +444,26 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("known events store: %v", err)
 	}
+	locationStore, err := locationreg.NewStore(db)
+	if err != nil {
+		t.Fatalf("location registry: %v", err)
+	}
+	groupLocationStore, err := grouplocation.NewStore(db)
+	if err != nil {
+		t.Fatalf("group location store: %v", err)
+	}
+	controlPlaneLocationStore, err := cplocation.NewStore(db)
+	if err != nil {
+		t.Fatalf("control plane location store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
 
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
-		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore, router)
+		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, router)
 	return router
 }
 
