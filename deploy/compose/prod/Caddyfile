@@ -21,6 +21,12 @@
 		on_demand
 	}
 
+	# Nothing here was compressed before the NOC basemap (public/
+	# noc-world-outline.geojson) grew from ~1.3 KB to ~190 KB; gzip gets
+	# that back down to ~64 KB on the wire for every client that sends
+	# Accept-Encoding, which is effectively all of them.
+	encode gzip
+
 	# Keycloak is started with --http-relative-path=/auth, so it already
 	# expects requests under that prefix. `handle`, not `handle_path`: the
 	# prefix must reach the backend unstripped.
