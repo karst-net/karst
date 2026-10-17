@@ -7,12 +7,23 @@
 // this page shows only what ADR-0021's existing telemetry already carries,
 // drawn on a map instead of the Relays page's table.
 import { useEffect, useRef, useState } from "react";
-import { LngLatBounds, Map as MapLibreMap, type GeoJSONSource, type MapGeoJSONFeature, type MapLayerMouseEvent } from "maplibre-gl";
+import { LngLatBounds, Map as MapLibreMap, setWorkerUrl, type GeoJSONSource, type MapGeoJSONFeature, type MapLayerMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { Relay } from "@karst-net/api-client";
 import { Dialog, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, formatBytes, usePolledResource } from "../common";
+
+// maplibre-gl resolves its worker's own URL at runtime relative to wherever
+// its *own* module ends up being served from -- but that resolution is a
+// dynamic template, not a literal relative path, so Vite's static-asset
+// analysis never sees it as a worker chunk to copy into the build. Left
+// alone, the worker 404s in production ("Worker failed to load"), even
+// though the map otherwise renders. The `?url` import above is a literal
+// Vite CAN see, so it copies/hashes the file and gives us the real URL to
+// hand to maplibre-gl's own override instead of letting it guess.
+setWorkerUrl(workerUrl);
 
 // Matches the Relays page's own mapping (views/relays.tsx) -- the NOC view
 // shows the same health ADR-0021 already derives, not a second opinion on it.
@@ -23,11 +34,23 @@ const healthState = (relay: Relay): StatusState =>
 // typical scrape cadence, named there as the reference point.
 const pollIntervalMs = 30_000;
 
-// A hand-authored, deliberately coarse set of continent silhouettes -- not a
-// geographic dataset, and not meant to be read as one. ADR-0047 §5 requires
-// the basemap to be bundled with zero runtime network dependency; a properly
-// licensed, higher-fidelity dataset is a follow-up (see docs/admin-console.md),
-// not something to fetch from a third party without knowing its license.
+// Natural Earth's 1:110m admin-0 country boundaries, trimmed to {name,
+// geometry} and rounded to 3 decimal places (~111m, far finer than this
+// basemap is ever rendered at). Sourced from the `world-atlas` npm package
+// (ISC-licensed packaging of public-domain Natural Earth data -- no
+// attribution required) and converted from its TopoJSON with
+// topojson-client at build time, not fetched from either at runtime.
+// Still a bundled static asset with zero runtime network dependency, per
+// ADR-0047 §5 -- just no longer the original hand-authored placeholder.
+//
+// Rings crossing the antimeridian (Russia's far east, Fiji, Antarctica's
+// closing edge) are pre-unwrapped at the same build step: MapLibre plots
+// raw longitude as x with no dateline awareness, so a ring that snaps
+// from e.g. 179.9 back to -179.9 at the seam draws as a line clear across
+// the map instead of the short real hop across 180°. A few rings
+// therefore legitimately run past +180/-180 on purpose (Russia's main
+// ring up to ~190) -- that is the fix, not a bug to "correct" back into
+// [-180,180].
 const worldOutlineURL = "/noc-world-outline.geojson";
 
 // Resolved once at map construction, matching policy-editor.tsx's own reason
