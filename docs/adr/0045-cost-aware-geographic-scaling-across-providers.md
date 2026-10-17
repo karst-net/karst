@@ -879,11 +879,16 @@ corner:
   deprecation, rate limiting a bare TCP handshake, or moving it behind
   anycast, which §4b's shared-address check is there to catch) — that
   provider's arm would need a different anchor, not just a config change.
-- Operators ask for self-service editing of `allowed_regions` through the
-  console rather than a boot-time file — the same "file-loaded,
-  operator-only, no HTTP endpoint in this pass" deferral ADR-0037 already
-  made for tenancy grants, and the same answer applies here until this
-  shape has seen real use.
+- ~~Operators ask for self-service editing of `allowed_regions` through
+  the console rather than a boot-time file~~ — **shipped** (issue #349):
+  `regionallow.Store` gained `AddRegion`/`RemoveRegion`, exposed as
+  `GET`/`POST /regions` and `DELETE /regions/{provider}/{region}`, with a
+  console editor on the Scaler view. The boot-time
+  `KARST_ALLOWED_REGIONS_FILE` path is unchanged and still seeds the
+  table on first boot — this is additive, not a replacement. Still true
+  as written: this is the deployment-wide netmap-projection/anchor-RTT
+  allowlist only, a different list from karst-scaler's own
+  operator-maintained provisioning file (§6's trust-domain separation).
 
 ---
 

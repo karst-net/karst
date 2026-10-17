@@ -486,6 +486,17 @@ export type ScalerRecommendations = {
     };
 };
 
+export type AllowedRegion = {
+    /**
+     * e.g. "aws", "aws-gov-cloud", "azure", "azure-gov-cloud", "gcp" -- not validated against this set.
+     */
+    provider: string;
+    /**
+     * A provider region code, or an AWS local zone code -- both are opaque strings here.
+     */
+    region: string;
+};
+
 export type TurnServerCreate = {
     /**
      * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
@@ -2198,6 +2209,88 @@ export type ScalerRecommendationsResponses = {
 };
 
 export type ScalerRecommendationsResponse = ScalerRecommendationsResponses[keyof ScalerRecommendationsResponses];
+
+export type ListAllowedRegionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/regions';
+};
+
+export type ListAllowedRegionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListAllowedRegionsError = ListAllowedRegionsErrors[keyof ListAllowedRegionsErrors];
+
+export type ListAllowedRegionsResponses = {
+    /**
+     * The current allowlist
+     */
+    200: Array<AllowedRegion>;
+};
+
+export type ListAllowedRegionsResponse = ListAllowedRegionsResponses[keyof ListAllowedRegionsResponses];
+
+export type CreateAllowedRegionData = {
+    body: AllowedRegion;
+    path?: never;
+    query?: never;
+    url: '/regions';
+};
+
+export type CreateAllowedRegionErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateAllowedRegionError = CreateAllowedRegionErrors[keyof CreateAllowedRegionErrors];
+
+export type CreateAllowedRegionResponses = {
+    /**
+     * Allowed region
+     */
+    201: AllowedRegion;
+};
+
+export type CreateAllowedRegionResponse = CreateAllowedRegionResponses[keyof CreateAllowedRegionResponses];
+
+export type DeleteAllowedRegionData = {
+    body?: never;
+    path: {
+        provider: string;
+        region: string;
+    };
+    query?: never;
+    url: '/regions/{provider}/{region}';
+};
+
+export type DeleteAllowedRegionErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteAllowedRegionError = DeleteAllowedRegionErrors[keyof DeleteAllowedRegionErrors];
+
+export type DeleteAllowedRegionResponses = {
+    /**
+     * Region revoked
+     */
+    204: void;
+};
+
+export type DeleteAllowedRegionResponse = DeleteAllowedRegionResponses[keyof DeleteAllowedRegionResponses];
 
 export type ListTurnServersData = {
     body?: never;
