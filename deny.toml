@@ -25,6 +25,19 @@ allow = [
     # shipping `Karst.app`. See ADR-0029's Context for why this is a
     # deliberate inclusion, not an oversight.
     "MPL-2.0",
+    # CDLA-Permissive-2.0 reaches the tree through `webpki-root-certs`, a
+    # Mozilla root-CA-certificate data bundle `rustls-platform-verifier`
+    # depends on — itself pulled in unconditionally by `kube-client` 4.2.0's
+    # own `rustls-tls` feature (new in that release; 4.0.0's `rustls-tls`
+    # had no such dependency), via `bins/karst-scaler-k8s` and
+    # `bins/karst-scaler-turn-k8s` (issue #353). It is a data license, not a
+    # software license — the Linux Foundation's permissive sibling to
+    # CDLA-Sharing, imposing attribution only, with no copyleft, source-
+    # availability, or non-commercial restriction — so it does not fall
+    # under any of LICENSING.md's "Rejected everywhere" categories. Added
+    # deliberately rather than discovered, same posture as 0BSD/MPL-2.0
+    # above.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 
