@@ -303,3 +303,34 @@ func TestListDelegations(t *testing.T) {
 	_, err = mgr.ListDelegations(ctx, testAccountID, "outsider", root.ID)
 	require.Error(t, err, "an unrelated member has no read access to this domain's delegations")
 }
+
+func TestRecreatedDomainDoesNotInheritDeletedDomainDelegations(t *testing.T) {
+	mgr, _, cleanup := setupTest(t)
+	defer cleanup()
+	ctx := context.Background()
+	original, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "engineering")
+	require.NoError(t, err)
+	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "owner", original.ID, "member")
+	require.NoError(t, err)
+	require.NoError(t, mgr.DeleteDomain(ctx, testAccountID, "owner", original.ID))
+	replacement, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "engineering")
+	require.NoError(t, err)
+	require.NotEqual(t, original.ID, replacement.ID)
+	require.Equal(t, original.Path, replacement.Path)
+
+	_, err = mgr.GetDomain(ctx, testAccountID, "member", replacement.ID)
+	require.Error(t, err, "a matching DNS path must not resurrect a deleted domain's grant")
+	_, err = mgr.CreateDomain(ctx, testAccountID, "member", replacement.ID, "build")
+	require.Error(t, err)
+	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "member", replacement.ID, "member")
+	require.Error(t, err)
+	visible, err := mgr.ListDomains(ctx, testAccountID, "member")
+	require.NoError(t, err)
+	require.Empty(t, visible)
+
+	// Explicitly delegating the new identity is required to restore access.
+	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "owner", replacement.ID, "member")
+	require.NoError(t, err)
+	_, err = mgr.GetDomain(ctx, testAccountID, "member", replacement.ID)
+	require.NoError(t, err)
+}

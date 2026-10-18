@@ -402,7 +402,7 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 		domainPath = d.Path
 	}
 
-	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.SetupKeys, operations.Create)
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainID, modules.SetupKeys, operations.Create)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -474,15 +474,6 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 	return key, nil
 }
 
-func visibleToBindings(bindings []*meshdomain.DomainRoleBinding, domainPath string) bool {
-	for _, b := range bindings {
-		if b.Covers(domainPath) {
-			return true
-		}
-	}
-	return false
-}
-
 // ListDeviceInvitations is CreateDeviceInvitation's read counterpart, kept
 // separate from the fork's own ListSetupKeys (used far more broadly, for
 // reusable "Auth keys" credentials a domain-delegated admin has no business
@@ -523,9 +514,14 @@ func (am *DefaultAccountManager) ListDeviceInvitations(ctx context.Context, acco
 	if len(bindings) == 0 {
 		return nil, status.NewPermissionDeniedError()
 	}
+	domains, err := am.Store.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return nil, err
+	}
+	scope := meshdomain.NewAdminScope(accountID, userID, domains, bindings)
 	visible := make([]*types.SetupKey, 0, len(invitations))
 	for _, key := range invitations {
-		if key.DomainPath != "" && visibleToBindings(bindings, key.DomainPath) {
+		if scope.Covers(key.DomainID) {
 			visible = append(visible, key)
 		}
 	}
@@ -547,7 +543,7 @@ func (am *DefaultAccountManager) RevokeDeviceInvitation(ctx context.Context, acc
 		return nil, status.Errorf(status.NotFound, "invitation not found")
 	}
 
-	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, key.DomainPath, modules.SetupKeys, operations.Update)
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, key.DomainID, modules.SetupKeys, operations.Update)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
