@@ -25,6 +25,23 @@ A node advertised as a route's gateway needs, on Linux:
   `/proc/sys/net/ipv{4,6}/.../forwarding` itself if a route needs the family
   and the host has not already turned it on. It only flips what it needs: an
   IPv4-only route never touches the IPv6 sysctl.
+- **A `DOCKER-USER` accept rule for the return leg, if the host also runs
+  Docker.** Docker installs its own `ip filter` table with a `FORWARD` base
+  chain at `priority filter` (0) and **`policy drop`** — a *separate* table
+  from `karst_routes` (below), evaluated *after* it at the same `forward`
+  hook, since `karst_routes`'s own chain registers at `priority filter - 10`.
+  An `accept` verdict in `karst_routes` does not stop Docker's table from
+  independently evaluating — and, if nothing in `DOCKER-USER` matches,
+  dropping — the same packet. Docker's own docs call for exactly this: add
+  the host's own accept rules to `DOCKER-USER`, which runs before Docker's
+  own rules. The outbound leg needs `iifname "karst0" accept`; the **return**
+  leg needs the mirror, `oifname "karst0" accept` — easy to add only the
+  first and consider the host fixed, since outbound (client → gateway →
+  internet) now visibly works while the return leg fails silently (issue
+  #345): the gateway's own forwarding accept-rule counter increments, but
+  `karst0`'s kernel TX counter never does, because Docker's table drops it
+  one hook-priority later. `karstd` never touches `DOCKER-USER` itself — an
+  operator table, same as any other.
 
 None of this is preflighted against a route that never arrives — readiness is
 reported per reconciliation, in `karst status`'s `[routing]` block
@@ -133,3 +150,14 @@ anything. A non-administrator can see the current exit but cannot change it.
   lists the priority it is installed at), which is what keeps it from
   shadowing the host's own default route for control, relay, and TURN
   traffic.
+- **The outbound leg works (`tcpdump` on the gateway's physical interface
+  shows a complete round trip) but the client never gets a reply, and
+  `ip -s link show karst0`'s `TX` counter never moves** even though
+  `nft list table inet karst_routes`'s own `oifname "karst0" ct state
+  established,related accept` rule's counter does — this is §1's Docker/
+  `DOCKER-USER` gap (issue #345), not a `karstd` bug: check
+  `nft list ruleset` for an `ip`/`ip6` table with a `FORWARD` chain whose
+  `policy` is `drop` (Docker's, if installed, is the usual culprit;
+  firewalld and ufw install their own equivalents), and confirm
+  `DOCKER-USER` has an `oifname "karst0" accept` rule, not only the
+  `iifname "karst0"` one the outbound leg needs.
