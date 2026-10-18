@@ -606,7 +606,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with: { repo-token: "${{ secrets.GITHUB_TOKEN }}" }
       # No `targets:` input on purpose. It would add them to `stable`, which is
-      # not the toolchain that builds: `rust-toolchain.toml` pins 1.88 and
+      # not the toolchain that builds: `rust-toolchain.toml` pins 1.89 and
       # cargo reads the file. `scripts/build-macos-pkg.sh` runs its own
       # `rustup target add`, which honours the pin — do not "simplify" that
       # away in favour of this action, which is exactly the mistake the `macos`

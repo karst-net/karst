@@ -54,9 +54,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # defaults.
 #
 # Pinned to exact versions, not "1": every AWS SDK/smithy crate releases in
-# lockstep and bumped its MSRV to 1.94.1 at once, one minor above this
-# workspace's own MSRV (1.88) -- the same `cargo info` gap `kube` already
-# taught this workspace to check for (that crate's own `cargo info` showed
+# lockstep and bumped its MSRV to 1.94.1 at once, above this workspace's own
+# MSRV (1.89) -- the same `cargo info` gap `kube` already taught this
+# workspace to check for (that crate's own `cargo info` showed
 # `rust-version: 1.88` while `cargo build` still refused the latest
 # semver-compatible release). These are each the newest release still
 # declaring `rust-version <= 1.88`, confirmed via the crates.io API's own

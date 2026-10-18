@@ -4,7 +4,7 @@
 
 # Build from the repository root:
 #   docker build -f deploy/images/karst-relay.Dockerfile -t ghcr.io/karst-net/karst-relay:dev .
-FROM rust:1.88-bookworm AS build
+FROM rust:1.89-bookworm AS build
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libprotobuf-dev protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*

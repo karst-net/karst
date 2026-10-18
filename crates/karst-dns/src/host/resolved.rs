@@ -9,8 +9,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use zbus::blocking::{Connection, Proxy};
-use zbus::zvariant::OwnedObjectPath;
+use zbus::{Connection, OwnedObjectPath, Proxy};
 
 const DESTINATION: &str = "org.freedesktop.resolve1";
 const PATH: &str = "/org/freedesktop/resolve1";
@@ -47,7 +46,7 @@ impl Resolved {
             return Err(ResolvedError::InvalidInterface);
         }
         Ok(Self {
-            connection: Connection::system()?,
+            connection: zbus::block_on(Connection::system())?,
             ifindex,
             expected: None,
         })
@@ -68,21 +67,41 @@ impl Resolved {
         }
         let dns = vec![dns_address(stub.ip())];
         let expected_domains = domains(zone, search_domains);
-        {
-            let proxy = self.proxy()?;
-            proxy.call::<_, _, ()>("SetLinkDNS", &(self.ifindex, dns))?;
-            proxy.call::<_, _, ()>("SetLinkDomains", &(self.ifindex, expected_domains.clone()))?;
-            proxy.call::<_, _, ()>("SetLinkDefaultRoute", &(self.ifindex, false))?;
-        }
+        zbus::block_on(self.apply_async(dns, expected_domains.clone()))?;
         self.expected = Some((vec![dns_address(stub.ip())], expected_domains));
+        Ok(())
+    }
+
+    async fn apply_async(
+        &self,
+        dns: DnsAddresses,
+        expected_domains: Domains,
+    ) -> Result<(), ResolvedError> {
+        let proxy = self.proxy().await?;
+        proxy
+            .call::<_, _, ()>("SetLinkDNS", &(self.ifindex, dns))
+            .await?;
+        proxy
+            .call::<_, _, ()>("SetLinkDomains", &(self.ifindex, expected_domains))
+            .await?;
+        proxy
+            .call::<_, _, ()>("SetLinkDefaultRoute", &(self.ifindex, false))
+            .await?;
         Ok(())
     }
 
     /// Remove only DNS state that KarstDNS put on this tunnel link.
     pub fn revert(&mut self) -> Result<(), ResolvedError> {
-        self.proxy()?
-            .call::<_, _, ()>("RevertLink", &self.ifindex)?;
+        zbus::block_on(self.revert_async())?;
         self.expected = None;
+        Ok(())
+    }
+
+    async fn revert_async(&self) -> Result<(), ResolvedError> {
+        self.proxy()
+            .await?
+            .call::<_, _, ()>("RevertLink", &self.ifindex)
+            .await?;
         Ok(())
     }
 
@@ -90,14 +109,18 @@ impl Resolved {
     /// applied. This is read-only and catches a resolver manager that has
     /// subsequently replaced link DNS policy.
     pub fn observe(&self) -> Result<bool, ResolvedError> {
+        zbus::block_on(self.observe_async())
+    }
+
+    async fn observe_async(&self) -> Result<bool, ResolvedError> {
         let Some((expected_dns, expected_domains)) = &self.expected else {
             return Ok(false);
         };
-        let path: OwnedObjectPath = self.proxy()?.call("GetLink", &self.ifindex)?;
-        let link = Proxy::new(&self.connection, DESTINATION, path, LINK_INTERFACE)?;
-        let dns: DnsAddresses = link.get_property("DNS")?;
-        let domains: Domains = link.get_property("Domains")?;
-        let default_route: bool = link.get_property("DefaultRoute")?;
+        let path: OwnedObjectPath = self.proxy().await?.call("GetLink", &self.ifindex).await?;
+        let link = Proxy::new(&self.connection, DESTINATION, path, LINK_INTERFACE).await?;
+        let dns: DnsAddresses = link.get_property("DNS").await?;
+        let domains: Domains = link.get_property("Domains").await?;
+        let default_route: bool = link.get_property("DefaultRoute").await?;
         Ok(matches_expected(
             &dns,
             &domains,
@@ -107,8 +130,8 @@ impl Resolved {
         ))
     }
 
-    fn proxy(&self) -> Result<Proxy<'_>, ResolvedError> {
-        Ok(Proxy::new(&self.connection, DESTINATION, PATH, INTERFACE)?)
+    async fn proxy(&self) -> Result<Proxy<'_>, ResolvedError> {
+        Ok(Proxy::new(&self.connection, DESTINATION, PATH, INTERFACE).await?)
     }
 }
 

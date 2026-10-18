@@ -12,18 +12,16 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use zbus::blocking::{Connection, Proxy};
-use zbus::zvariant::{
-    serialized::{Context, Data},
-    OwnedObjectPath, OwnedValue, Value, LE,
-};
+use zbus::wire::serialized::{Context, Data};
+use zbus::wire::{to_bytes, LE};
+use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant};
 
 const DESTINATION: &str = "org.freedesktop.NetworkManager";
 const MANAGER_PATH: &str = "/org/freedesktop/NetworkManager";
 const MANAGER_INTERFACE: &str = "org.freedesktop.NetworkManager";
 const DEVICE_INTERFACE: &str = "org.freedesktop.NetworkManager.Device";
 
-type Settings = HashMap<String, HashMap<String, OwnedValue>>;
+type Settings = HashMap<String, HashMap<String, OwnedVariant>>;
 const REVERT_PATH: &str = "/run/karst/networkmanager-dns-revert";
 
 /// NetworkManager connection snapshot changed only in memory for one device.
@@ -37,14 +35,19 @@ pub struct NetworkManager {
 }
 
 /// Errors from NetworkManager or value construction.
+///
+/// zbus 6 unified `zvariant`'s own error type into [`zbus::Error`], so a
+/// value-encoding failure (`owned`, [`Self::persist`]) arrives as [`Bus`]
+/// too, same as a live D-Bus call failure — there is no second variant to
+/// tell them apart by type the way zbus 5 needed.
+///
+/// [`Bus`]: NetworkManagerError::Bus
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkManagerError {
     #[error("the NetworkManager device has no IPv4 settings")]
     MissingIpv4,
     #[error("D-Bus call to NetworkManager failed: {0}")]
     Bus(#[from] zbus::Error),
-    #[error("cannot encode NetworkManager DNS setting: {0}")]
-    Variant(#[from] zbus::zvariant::Error),
     #[error("cannot persist NetworkManager DNS recovery state: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -61,19 +64,26 @@ impl NetworkManager {
         interface: &str,
         state_path: impl Into<PathBuf>,
     ) -> Result<Self, NetworkManagerError> {
-        let connection = Connection::system()?;
-        let manager = Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE)?;
-        let device: OwnedObjectPath = manager.call("GetDeviceByIpIface", &interface)?;
+        zbus::block_on(Self::connect_with_state_async(interface, state_path.into()))
+    }
+
+    async fn connect_with_state_async(
+        interface: &str,
+        state_path: PathBuf,
+    ) -> Result<Self, NetworkManagerError> {
+        let connection = Connection::system().await?;
+        let manager = Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE).await?;
+        let device: OwnedObjectPath = manager.call("GetDeviceByIpIface", &interface).await?;
         let mut result = Self {
             connection,
             device,
             original: None,
-            state_path: state_path.into(),
+            state_path,
             expected: None,
         };
         // A state file exists only if a previous process got as far as
         // changing NM. Restore before it can install a new snapshot.
-        result.recover()?;
+        result.recover_async().await?;
         Ok(result)
     }
 
@@ -88,14 +98,26 @@ impl NetworkManager {
         zone: &str,
         search_domains: &[String],
     ) -> Result<(), NetworkManagerError> {
-        let (mut settings, _version): (Settings, u64) =
-            self.proxy()?.call("GetAppliedConnection", &0u32)?;
+        zbus::block_on(self.apply_async(stub, zone, search_domains))
+    }
+
+    async fn apply_async(
+        &mut self,
+        stub: SocketAddr,
+        zone: &str,
+        search_domains: &[String],
+    ) -> Result<(), NetworkManagerError> {
+        let (mut settings, _version): (Settings, u64) = self
+            .proxy()
+            .await?
+            .call("GetAppliedConnection", &0u32)
+            .await?;
         if self.original.is_none() {
             self.persist(&settings)?;
             self.original = Some(settings.clone());
         }
         configure(&mut settings, stub, zone, search_domains)?;
-        self.reapply(settings)?;
+        self.reapply(settings).await?;
         self.expected = Some((
             stub.ip().to_string(),
             format!("~{}", zone.trim_end_matches('.')),
@@ -105,10 +127,14 @@ impl NetworkManager {
 
     /// Restore the applied-connection snapshot captured before [`Self::apply`].
     pub fn revert(&mut self) -> Result<(), NetworkManagerError> {
+        zbus::block_on(self.revert_async())
+    }
+
+    async fn revert_async(&mut self) -> Result<(), NetworkManagerError> {
         let Some(settings) = self.original.take() else {
             return Ok(());
         };
-        self.reapply(settings)?;
+        self.reapply(settings).await?;
         remove_state(&self.state_path)?;
         self.expected = None;
         Ok(())
@@ -117,10 +143,18 @@ impl NetworkManager {
     /// Read the applied connection back from NetworkManager and verify the
     /// route-only stub settings Karst installed are still present.
     pub fn observe(&self) -> Result<bool, NetworkManagerError> {
+        zbus::block_on(self.observe_async())
+    }
+
+    async fn observe_async(&self) -> Result<bool, NetworkManagerError> {
         let Some((stub, route)) = &self.expected else {
             return Ok(false);
         };
-        let (settings, _): (Settings, u64) = self.proxy()?.call("GetAppliedConnection", &0u32)?;
+        let (settings, _): (Settings, u64) = self
+            .proxy()
+            .await?
+            .call("GetAppliedConnection", &0u32)
+            .await?;
         Ok(matches_expected(&settings, stub, route))
     }
 
@@ -128,43 +162,54 @@ impl NetworkManager {
     /// D-Bus object path, preventing one old TUN instance from overwriting a
     /// different NetworkManager device that happens to start later.
     pub fn recover(&mut self) -> Result<bool, NetworkManagerError> {
+        zbus::block_on(self.recover_async())
+    }
+
+    async fn recover_async(&mut self) -> Result<bool, NetworkManagerError> {
         let Some((device, settings)) = load_state(&self.state_path)? else {
             return Ok(false);
         };
         if device != self.device.as_str() {
             return Ok(false);
         }
-        self.reapply(settings)?;
+        self.reapply(settings).await?;
         remove_state(&self.state_path)?;
         Ok(true)
     }
 
-    fn reapply(&self, settings: Settings) -> Result<(), NetworkManagerError> {
+    async fn reapply(&self, settings: Settings) -> Result<(), NetworkManagerError> {
         // The version is optimiztic-concurrency metadata. Read it immediately
         // before every write: a persisted pre-Karst version is necessarily
         // stale after the initial Reapply.
-        let (_, version): (Settings, u64) = self.proxy()?.call("GetAppliedConnection", &0u32)?;
-        self.proxy()?
-            .call::<_, _, ()>("Reapply", &(settings, version, 1u32))?;
+        let (_, version): (Settings, u64) = self
+            .proxy()
+            .await?
+            .call("GetAppliedConnection", &0u32)
+            .await?;
+        self.proxy()
+            .await?
+            .call::<_, _, ()>("Reapply", &(settings, version, 1u32))
+            .await?;
         Ok(())
     }
 
     fn persist(&self, settings: &Settings) -> Result<(), NetworkManagerError> {
-        let bytes = zbus::zvariant::to_bytes(
-            Context::new_dbus(LE, 0),
+        let bytes = to_bytes(
+            Context::new(LE, 0),
             &(self.device.as_str().to_owned(), settings),
         )?;
         write_atomic(&self.state_path, bytes.bytes())?;
         Ok(())
     }
 
-    fn proxy(&self) -> Result<Proxy<'_>, NetworkManagerError> {
+    async fn proxy(&self) -> Result<Proxy<'_>, NetworkManagerError> {
         Ok(Proxy::new(
             &self.connection,
             DESTINATION,
             self.device.clone(),
             DEVICE_INTERFACE,
-        )?)
+        )
+        .await?)
     }
 }
 
@@ -174,12 +219,10 @@ fn load_state(path: &Path) -> Result<Option<(String, Settings)>, NetworkManagerE
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let data = Data::new(bytes, Context::new_dbus(LE, 0));
+    let data = Data::new(bytes, Context::new(LE, 0));
     let (snapshot, used): ((String, Settings), usize) = data.deserialize()?;
     if used != data.len() {
-        return Err(
-            zbus::zvariant::Error::Message("trailing NetworkManager DNS state".into()).into(),
-        );
+        return Err(zbus::Error::Failure("trailing NetworkManager DNS state".into()).into());
     }
     Ok(Some(snapshot))
 }
@@ -225,7 +268,7 @@ fn configure(
     // numeric ipv4.dns property); this also refuses an accidental port.
     ipv4.insert("dns-data".to_owned(), owned(vec![stub.ip().to_string()])?);
     ipv4.insert("dns-search".to_owned(), owned(domains)?);
-    ipv4.insert("dns-priority".to_owned(), OwnedValue::from(-50i32));
+    ipv4.insert("dns-priority".to_owned(), OwnedVariant::from(-50i32));
     Ok(())
 }
 
@@ -245,11 +288,11 @@ fn matches_expected(settings: &Settings, stub: &str, route: &str) -> bool {
         && matches!(domains, Some(values) if values.iter().any(|value| value == route))
 }
 
-fn owned<T>(value: T) -> Result<OwnedValue, zbus::zvariant::Error>
+fn owned<T>(value: T) -> Result<OwnedVariant, zbus::Error>
 where
-    T: zbus::zvariant::Type + Into<Value<'static>>,
+    T: zbus::Type + Into<Variant<'static>>,
 {
-    OwnedValue::try_from(Value::new(value))
+    OwnedVariant::try_from(Variant::new(value))
 }
 
 #[cfg(test)]
@@ -311,8 +354,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("karst-nm-state-{}", std::process::id()));
         let state = root.join("revert");
         let settings: Settings = HashMap::from([(String::from("ipv4"), HashMap::new())]);
-        let bytes = zbus::zvariant::to_bytes(
-            Context::new_dbus(LE, 0),
+        let bytes = to_bytes(
+            Context::new(LE, 0),
             &(
                 String::from("/org/freedesktop/NetworkManager/Devices/9"),
                 &settings,

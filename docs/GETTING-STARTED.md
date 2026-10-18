@@ -80,7 +80,7 @@ sudo apt-get install -y build-essential pkg-config protobuf-compiler
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-The toolchain version is pinned by `rust-toolchain.toml` (1.88) and rustup will
+The toolchain version is pinned by `rust-toolchain.toml` (1.89) and rustup will
 fetch it. `protoc` is not optional: `karst-control-client` generates its gRPC
 client from the same `.proto` the Go server compiles, so a build without it
 fails in that crate rather than at the end.
