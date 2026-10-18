@@ -101,20 +101,14 @@ func (am *DefaultAccountManager) GetAdminPeers(ctx context.Context, accountID, u
 		return nil, err
 	}
 
+	domains, err := am.Store.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return nil, err
+	}
+	scope := meshdomain.NewAdminScope(accountID, userID, domains, bindings)
 	delegatedPeers := make([]*nbpeer.Peer, 0, len(allPeers))
 	for _, candidate := range allPeers {
-		if candidate.DomainID == "" {
-			continue
-		}
-		domainPath, err := am.domainPath(ctx, accountID, candidate.DomainID)
-		if err != nil {
-			return nil, err
-		}
-		allowed, _, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.Peers, operations.Read)
-		if err != nil {
-			return nil, status.NewPermissionValidationError(err)
-		}
-		if allowed {
+		if scope.Covers(candidate.DomainID) {
 			delegatedPeers = append(delegatedPeers, candidate)
 		}
 	}
@@ -292,21 +286,6 @@ func (am *DefaultAccountManager) resolvePeerLocation(ctx context.Context, peer *
 	}
 }
 
-// UpdatePeer updates peer. Only Peer.Name, Peer.SSHEnabled, Peer.LoginExpirationEnabled and Peer.InactivityExpirationEnabled can be updated.
-// domainPath resolves domainID to its mesh domain Path (ADR-0032), or ""
-// for domainID == "" (the account's implicit root) -- the shared shape every
-// ValidateDomainScopedPermission call needs.
-func (am *DefaultAccountManager) domainPath(ctx context.Context, accountID, domainID string) (string, error) {
-	if domainID == "" {
-		return "", nil
-	}
-	d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)
-	if err != nil {
-		return "", err
-	}
-	return d.Path, nil
-}
-
 // peerDomainScopeAllowed checks Peers:Update against a peer's current domain
 // and, when this update also moves it, the destination domain too -- a
 // domain-scoped delegated admin (ADR-0032) can manage a peer already in
@@ -315,21 +294,14 @@ func (am *DefaultAccountManager) domainPath(ctx context.Context, accountID, doma
 // destination as a release from the source, so both ends need the caller's
 // authorization, not just one.
 func (am *DefaultAccountManager) peerDomainScopeAllowed(ctx context.Context, accountID, userID, fromDomainID, toDomainID string) (bool, context.Context, error) {
-	fromPath, err := am.domainPath(ctx, accountID, fromDomainID)
-	if err != nil {
-		return false, ctx, err
-	}
-	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, fromPath, modules.Peers, operations.Update)
+	allowed, ctx, err := am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, fromDomainID, modules.Peers, operations.Update)
 	if err != nil || !allowed || toDomainID == fromDomainID {
 		return allowed, ctx, err
 	}
-	toPath, err := am.domainPath(ctx, accountID, toDomainID)
-	if err != nil {
-		return false, ctx, err
-	}
-	return am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, toPath, modules.Peers, operations.Update)
+	return am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, toDomainID, modules.Peers, operations.Update)
 }
 
+// UpdatePeer updates a peer's name, domain placement, SSH, and expiration settings.
 func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, userID string, update *nbpeer.Peer) (*nbpeer.Peer, error) {
 	existing, err := am.Store.GetPeerByID(ctx, store.LockingStrengthNone, accountID, update.ID)
 	if err != nil {
@@ -705,11 +677,7 @@ func (am *DefaultAccountManager) DeletePeer(ctx context.Context, accountID, peer
 		return status.NewPermissionValidationError(err)
 	}
 	if !allowed && peer.DomainID != "" {
-		domainPath, err := am.domainPath(ctx, accountID, peer.DomainID)
-		if err != nil {
-			return err
-		}
-		allowed, ctx, err = am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, modules.Peers, operations.Delete)
+		allowed, ctx, err = am.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, peer.DomainID, modules.Peers, operations.Delete)
 		if err != nil {
 			return status.NewPermissionValidationError(err)
 		}

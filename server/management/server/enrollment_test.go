@@ -430,6 +430,16 @@ func TestDeviceInvitationDelegatedAdminListsAndRevokesOwnDomainOnly(t *testing.T
 	own, err := am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "own-device", []string{group.ID}, engineering.ID)
 	require.NoError(t, err)
 
+	// Stale/forged naming metadata cannot remove own access or expose an
+	// unrelated invitation. Authorization follows DomainID, including on
+	// revocation, rather than either invitation's cached DomainPath.
+	ownStored := storedEnrollment(t, am, own.Key)
+	ownStored.DomainPath = "outdated-path"
+	require.NoError(t, am.Store.SaveSetupKey(ctx, ownStored))
+	unrelatedStored := storedEnrollment(t, am, unrelated.Key)
+	unrelatedStored.DomainPath = engineering.Path
+	require.NoError(t, am.Store.SaveSetupKey(ctx, unrelatedStored))
+
 	visible, err := am.ListDeviceInvitations(ctx, member.AccountID, member.Id)
 	require.NoError(t, err)
 	ids := make([]string, len(visible))

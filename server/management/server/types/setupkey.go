@@ -43,18 +43,17 @@ type SetupKey struct {
 	// overwhelming common case and behaves exactly as before this field
 	// existed.
 	DomainID string `gorm:"index"`
-	// DomainPath is DomainID's mesh domain Path, copied at issuance the same
-	// way DomainRoleBinding.DomainPath is -- it is what a domain-scoped
-	// delegated admin's subtree-containment check runs against for this
-	// invitation, without a second lookup for every key in a list.
-	DomainPath         string
-	Key                string
-	KeySecret          string `gorm:"index"`
-	Name               string
-	Type               SetupKeyType
-	CreatedAt          time.Time
-	ExpiresAt          *time.Time
-	UpdatedAt          time.Time `gorm:"autoUpdateTime:false"`
+	// DomainPath records naming metadata at issuance. DomainID and the
+	// current domain parent graph determine administrative access; this
+	// cached string is never an authorization source.
+	DomainPath string
+	Key        string
+	KeySecret  string `gorm:"index"`
+	Name       string
+	Type       SetupKeyType
+	CreatedAt  time.Time
+	ExpiresAt  *time.Time
+	UpdatedAt  time.Time `gorm:"autoUpdateTime:false"`
 	// Revoked indicates whether the key was revoked or not (we don't remove them for tracking purposes)
 	Revoked bool
 	// UsedTimes indicates how many times the key was used

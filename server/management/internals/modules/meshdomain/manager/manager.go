@@ -67,7 +67,7 @@ func (m *managerImpl) CreateDomain(ctx context.Context, accountID, userID, paren
 		parentPath = parent.Path
 	}
 
-	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, parentPath, modules.Domains, operations.Create)
+	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, parentID, modules.Domains, operations.Create)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -130,13 +130,11 @@ func (m *managerImpl) ListDomains(ctx context.Context, accountID, userID string)
 	if len(bindings) == 0 {
 		return nil, status.NewPermissionDeniedError()
 	}
+	scope := meshdomain.NewAdminScope(accountID, userID, all, bindings)
 	visible := make([]*meshdomain.Domain, 0, len(all))
 	for _, d := range all {
-		for _, b := range bindings {
-			if b.Covers(d.Path) {
-				visible = append(visible, d)
-				break
-			}
+		if scope.Covers(d.ID) {
+			visible = append(visible, d)
 		}
 	}
 	return visible, nil
@@ -147,7 +145,7 @@ func (m *managerImpl) GetDomain(ctx context.Context, accountID, userID, domainID
 	if err != nil {
 		return nil, err
 	}
-	allowed, _, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.Path, modules.Domains, operations.Read)
+	allowed, _, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.ID, modules.Domains, operations.Read)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -163,7 +161,7 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 		return err
 	}
 
-	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.Path, modules.Domains, operations.Delete)
+	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.ID, modules.Domains, operations.Delete)
 	if err != nil {
 		return status.NewPermissionValidationError(err)
 	}
@@ -208,7 +206,7 @@ func (m *managerImpl) DelegateDomainAdmin(ctx context.Context, accountID, userID
 	// to who administers it, and it is the same permission a domain admin
 	// already needs to otherwise manage that subtree -- deliberately not a
 	// wider grant than the delegator already holds there.
-	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.Path, modules.Domains, operations.Update)
+	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.ID, modules.Domains, operations.Update)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
@@ -237,7 +235,7 @@ func (m *managerImpl) RevokeDomainDelegation(ctx context.Context, accountID, use
 		return err
 	}
 
-	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, binding.DomainPath, modules.Domains, operations.Update)
+	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, binding.DomainID, modules.Domains, operations.Update)
 	if err != nil {
 		return status.NewPermissionValidationError(err)
 	}
@@ -254,7 +252,7 @@ func (m *managerImpl) ListDelegations(ctx context.Context, accountID, userID, do
 		return nil, err
 	}
 
-	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.Path, modules.Domains, operations.Read)
+	allowed, ctx, err := m.permissionsManager.ValidateDomainScopedPermission(ctx, accountID, userID, target.ID, modules.Domains, operations.Read)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
 	}
