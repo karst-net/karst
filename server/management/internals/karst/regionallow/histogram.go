@@ -22,7 +22,11 @@ const (
 	BucketOver100ms = "over_100ms"
 )
 
-func bucketFor(rttMs uint32) string {
+// BucketFor maps a measured RTT, in milliseconds, to its bucket name.
+// Exported so ephemeralanchor's own histogram can reuse these exact
+// boundaries rather than redefining them — ADR-0045 §4d reuses §4a/§4b's
+// bucketing for the same kind of measurement.
+func BucketFor(rttMs uint32) string {
 	switch {
 	case rttMs < 20:
 		return BucketUnder20ms
@@ -69,7 +73,7 @@ type AnchorHistogramEntry struct {
 // isolation cannot absorb, and a read-then-write stays identical across every
 // SQL backend gorm's store.go supports.
 func (s *Store) RecordAnchorRTT(ctx context.Context, provider, region string, rttMs uint32) error {
-	bucket := bucketFor(rttMs)
+	bucket := BucketFor(rttMs)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row bucketRow
 		err := tx.Where("provider = ? AND region = ? AND bucket = ?", provider, region, bucket).Take(&row).Error

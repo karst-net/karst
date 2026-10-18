@@ -39,6 +39,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
@@ -146,6 +147,14 @@ type handler struct {
 	// regionsList/regionsCreate/regionsDelete. The same *regionallow.Store
 	// as h.anchors, under the wider regionAllowReadWriter interface.
 	regions regionAllowReadWriter
+	// ephemeralAnchors is ADR-0045 §4d's ephemeral-anchor list and
+	// duty-cycle schedule editor -- nil in a deployment that has not
+	// configured KARST_EPHEMERAL_ANCHORS_FILE, see
+	// ephemeralAnchorsList/Create/Delete/Schedule/ScheduleSet. Named
+	// distinctly from h.anchors/h.regions above (an unrelated collision:
+	// h.anchors is demandReader, a different table in a different
+	// package) rather than reusing either.
+	ephemeralAnchors ephemeralAnchorReadWriter
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -401,6 +410,19 @@ type regionAllowReadWriter interface {
 	RemoveRegion(ctx context.Context, provider, region string) error
 }
 
+// ephemeralAnchorReadWriter is the ADR-0045 §4d ephemeral-anchor editor
+// surface -- a future console editor's CRUD, and the surface
+// bins/karst-anchor-scheduler polls (a UserRoleAdvisor-scoped PAT reaches
+// this cleanly: like /regions above, this route carries only the blanket
+// KarstControl auth check below, no extra per-handler role check).
+type ephemeralAnchorReadWriter interface {
+	Anchors(ctx context.Context) ([]ephemeralanchor.AnchorEntry, error)
+	AddAnchor(ctx context.Context, entry ephemeralanchor.AnchorEntry) error
+	RemoveAnchor(ctx context.Context, label string) error
+	Schedule(ctx context.Context) (windowPeriodSeconds, dutyCycleSeconds uint32, err error)
+	SetSchedule(ctx context.Context, windowPeriodSeconds, dutyCycleSeconds uint32) error
+}
+
 type turnReader interface {
 	List(context.Context) ([]turncred.StoredTurnServer, error)
 	Create(context.Context, turncred.Entry) (*turncred.StoredTurnServer, error)
@@ -468,8 +490,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -538,6 +560,11 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/ephemeral-anchors", h.ephemeralAnchorsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/ephemeral-anchors", h.ephemeralAnchorsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/ephemeral-anchors/schedule", h.ephemeralAnchorsSchedule).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/ephemeral-anchors/schedule", h.ephemeralAnchorsScheduleSet).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/ephemeral-anchors/{label}", h.ephemeralAnchorsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/turns", h.turnsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/turns/{turnId}", h.turnsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -2696,6 +2723,26 @@ type allowedRegion struct {
 	Region   string `json:"region"`
 }
 
+// ephemeralAnchor is the wire shape for the ephemeral-anchor editor,
+// ADR-0045 §4d. Region/InstanceID are operator/scheduler-only fields --
+// never projected into the netmap, see ephemeralanchor.AnchorEntry's own
+// doc comment -- but are part of this admin-facing shape, since
+// bins/karst-anchor-scheduler needs them to call EC2's own APIs.
+type ephemeralAnchor struct {
+	Label      string `json:"label"`
+	Region     string `json:"region,omitempty"`
+	InstanceID string `json:"instance_id"`
+	Address    string `json:"address"`
+	Port       uint32 `json:"port,omitempty"`
+}
+
+// ephemeralAnchorSchedule is the wire shape for the one deployment-wide
+// duty-cycle schedule.
+type ephemeralAnchorSchedule struct {
+	WindowPeriodSeconds uint32 `json:"window_period_seconds"`
+	DutyCycleSeconds    uint32 `json:"duty_cycle_seconds"`
+}
+
 // regionsList/regionsCreate/regionsDelete manage ADR-0045 §4c's
 // deployment-wide region allowlist (package regionallow) -- the same
 // list/create/delete shape as locationsList/locationsCreate/
@@ -2775,6 +2822,115 @@ func (h *handler) regionsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ephemeralAnchorsList/Create/Delete/Schedule/ScheduleSet manage ADR-0045
+// §4d's ephemeral-anchor list and duty-cycle schedule (package
+// ephemeralanchor) -- the same list/create/delete shape regionsList/
+// regionsCreate/regionsDelete use above, keyed by each anchor's own
+// natural label rather than a generated id.
+func (h *handler) ephemeralAnchorsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.ephemeralAnchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor store is not configured"), w)
+		return
+	}
+	entries, err := h.ephemeralAnchors.Anchors(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	result := make([]ephemeralAnchor, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, ephemeralAnchor{Label: e.Label, Region: e.Region, InstanceID: e.InstanceID, Address: e.Address, Port: e.Port})
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+func (h *handler) ephemeralAnchorsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.ephemeralAnchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor store is not configured"), w)
+		return
+	}
+	var entry ephemeralAnchor
+	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	add := ephemeralanchor.AnchorEntry{Label: entry.Label, Region: entry.Region, InstanceID: entry.InstanceID, Address: entry.Address, Port: entry.Port}
+	if err := h.ephemeralAnchors.AddAnchor(r.Context(), add); errors.Is(err, ephemeralanchor.ErrExists) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor already exists"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(entry); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+func (h *handler) ephemeralAnchorsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.ephemeralAnchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor store is not configured"), w)
+		return
+	}
+	vars := mux.Vars(r)
+	if err := h.ephemeralAnchors.RemoveAnchor(r.Context(), vars["label"]); errors.Is(err, ephemeralanchor.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "ephemeral anchor not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (h *handler) ephemeralAnchorsSchedule(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.ephemeralAnchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor store is not configured"), w)
+		return
+	}
+	windowPeriodSeconds, dutyCycleSeconds, err := h.ephemeralAnchors.Schedule(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, ephemeralAnchorSchedule{WindowPeriodSeconds: windowPeriodSeconds, DutyCycleSeconds: dutyCycleSeconds})
+}
+func (h *handler) ephemeralAnchorsScheduleSet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.ephemeralAnchors == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "ephemeral anchor store is not configured"), w)
+		return
+	}
+	var schedule ephemeralAnchorSchedule
+	if err := json.NewDecoder(r.Body).Decode(&schedule); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.ephemeralAnchors.SetSchedule(r.Context(), schedule.WindowPeriodSeconds, schedule.DutyCycleSeconds); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, schedule)
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

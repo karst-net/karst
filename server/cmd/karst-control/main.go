@@ -37,6 +37,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
@@ -99,6 +100,13 @@ const karstTenancyGrantsEnv = "KARST_TENANCY_GRANTS_FILE"
 // stood up, reconciled on every boot like the relay/TURN registries and
 // tenancy grants above.
 const karstAllowedRegionsEnv = "KARST_ALLOWED_REGIONS_FILE"
+
+// karstEphemeralAnchorsEnv names ADR-0045 §4d's ephemeral-anchor list and
+// duty-cycle schedule file. Unset means no ephemeral anchor is ever probed
+// by any node, and bins/karst-anchor-scheduler makes no AWS call at all for
+// any zone — the identical fail-closed default karstAllowedRegionsEnv's own
+// doc comment describes, not a special case.
+const karstEphemeralAnchorsEnv = "KARST_EPHEMERAL_ANCHORS_FILE"
 
 // karstScalerAdvisorURLEnv names ADR-0045 §7 Phase 1 PR 5's own
 // server-to-server dial target: where karst-scaler advise's own loopback
@@ -228,6 +236,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
 		os.Exit(1)
 	}
+	ephemeralAnchors, err := loadEphemeralAnchors()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "karst: %v\n", err)
+		os.Exit(1)
+	}
 	scalerAdvisorURL := strings.TrimSuffix(os.Getenv(karstScalerAdvisorURLEnv), "/")
 
 	demandHistoryInterval := karstDemandHistoryDefaultInterval
@@ -274,7 +287,7 @@ func main() {
 	cmd.SetNewServer(func(cfg *nbserver.Config) nbserver.Server {
 		rejectLegacyTurnConfig(cfg)
 		s := nbserver.NewServer(cfg)
-		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention)
+		k, err := bootstrap.Install(s, pol, relays, turnServers, turnMinter, tenancyGrants, allowedRegions, ephemeralAnchors, scalerAdvisorURL, demandHistoryInterval, demandHistoryRetention)
 		if err != nil {
 			// Failing to start is deliberate. A management server that comes up
 			// without KarstControlService looks healthy and silently accepts no
@@ -492,6 +505,25 @@ func loadAllowedRegions() (regionallow.Document, error) {
 		count += len(regions)
 	}
 	log.Infof("karst: loaded %d allowed region(s) across %d provider(s) from %s", count, len(doc), path)
+	return doc, nil
+}
+
+// loadEphemeralAnchors reads ADR-0045 §4d's ephemeral-anchor list and
+// duty-cycle schedule file. Unset returns the zero Document, which
+// bootstrap.Install's Reconcile treats as "revoke every anchor and zero the
+// schedule" -- correct both for a deployment that never configured this and
+// for one that just unset it.
+func loadEphemeralAnchors() (ephemeralanchor.Document, error) {
+	path := os.Getenv(karstEphemeralAnchorsEnv)
+	if path == "" {
+		return ephemeralanchor.Document{}, nil
+	}
+	doc, err := ephemeralanchor.Load(path)
+	if err != nil {
+		return ephemeralanchor.Document{}, err
+	}
+	log.Infof("karst: loaded %d ephemeral anchor(s) from %s, duty cycle %ds every %ds",
+		len(doc.Anchors), path, doc.DutyCycleSeconds, doc.WindowPeriodSeconds)
 	return doc, nil
 }
 

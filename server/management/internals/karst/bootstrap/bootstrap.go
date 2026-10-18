@@ -44,6 +44,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
@@ -135,7 +136,7 @@ type Karst struct {
 // loopback /recommendations endpoint is reachable from this server's host.
 // Empty means the GET /karst/v1/scaler/recommendations endpoint is
 // configured-but-absent — see RegisterEndpoints' own doc comment.
-func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
+func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.KarstRelay, turnServers []turncred.Entry, turnMinter *turncred.Minter, tenancyGrants []tenancy.Grant, allowedRegions regionallow.Document, ephemeralAnchors ephemeralanchor.Document, scalerAdvisorURL string, demandHistoryInterval, demandHistoryRetention time.Duration) (*Karst, error) {
 	sql, ok := s.Store().(*store.SqlStore)
 	if !ok {
 		// Karst owns three tables of its own and reaches the database through
@@ -344,6 +345,19 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err := regionAllowStore.Reconcile(context.Background(), allowedRegions); err != nil {
 		return nil, fmt.Errorf("karst: region allowlist: reconcile: %w", err)
 	}
+	// ADR-0045 §4d: the ephemeral-anchor list and duty-cycle schedule.
+	// Reconciled declaratively against ephemeralAnchors on every boot, the
+	// identical convention regionAllowStore just above uses -- a zero
+	// Document (KARST_EPHEMERAL_ANCHORS_FILE unset) clears any anchors a
+	// previous run left and zeroes the schedule, this package's own
+	// fail-closed default rather than a special case.
+	ephemeralAnchorStore, err := ephemeralanchor.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: ephemeral anchor store: %w", err)
+	}
+	if err := ephemeralAnchorStore.Reconcile(context.Background(), ephemeralAnchors); err != nil {
+		return nil, fmt.Errorf("karst: ephemeral anchors: reconcile: %w", err)
+	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -368,7 +382,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
@@ -411,8 +425,9 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			TurnServers: turnServers,
 			TurnMinter:  turnMinter,
 			TurnStore:   turnStore,
-			Bedrock:     bedrockLog,
-			RegionAllow: regionAllowStore,
+			Bedrock:          bedrockLog,
+			RegionAllow:      regionAllowStore,
+			EphemeralAnchors: ephemeralAnchorStore,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
 	}

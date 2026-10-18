@@ -1949,6 +1949,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "karst-anchor-scheduler"
+version = "0.0.0"
+dependencies = [
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-ec2",
+ "aws-smithy-http-client",
+ "aws-types",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "ureq",
+]
+
+[[package]]
 name = "karst-bedrock"
 version = "0.0.0"
 dependencies = [

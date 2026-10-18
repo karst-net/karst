@@ -23,8 +23,8 @@ use karst_control_client::{
     handle::handle,
     netmap::{
         netmap_version, peer_digest, AllowedRegionsEntryView, BedrockHeadView, DNSConfigView,
-        DNSRouteView, DNSUpstreamView, FilterRuleView, NetmapContent, PeerEntry, RelayView,
-        RouteView,
+        DNSRouteView, DNSUpstreamView, EphemeralAnchorsEntryView, FilterRuleView, NetmapContent,
+        PeerEntry, RelayView, RouteView,
     },
     psk::{pair, PSK_LEN},
 };
@@ -78,6 +78,14 @@ struct VersionCase {
     /// nil-vs-empty discipline `ssh_filter_present` carries above.
     #[serde(default)]
     allowed_regions: Option<Vec<VersionAllowedRegionsEntry>>,
+    /// ADR-0045 §4d's ephemeral-anchor list. Same nil-vs-empty discipline
+    /// as `allowed_regions` above.
+    #[serde(default)]
+    ephemeral_anchors: Option<Vec<VersionEphemeralAnchorsEntry>>,
+    /// Hashed even when `ephemeral_anchors` is absent -- a schedule-only
+    /// edit must still move the version.
+    #[serde(default)]
+    ephemeral_anchor_schedule: VersionEphemeralAnchorSchedule,
     version: u64,
 }
 
@@ -87,6 +95,23 @@ struct VersionCase {
 struct VersionAllowedRegionsEntry {
     provider: String,
     regions: Vec<String>,
+}
+
+/// One ephemeral anchor — ADR-0045 §4d — as the version hash sees it.
+#[derive(Deserialize, Debug, Clone)]
+struct VersionEphemeralAnchorsEntry {
+    label: String,
+    address: String,
+    port: u16,
+}
+
+/// The deployment-wide duty-cycle schedule as the version hash sees it.
+#[derive(Deserialize, Debug, Clone, Default)]
+struct VersionEphemeralAnchorSchedule {
+    #[serde(default)]
+    window_period_seconds: u32,
+    #[serde(default)]
+    duty_cycle_seconds: u32,
 }
 
 /// The Bedrock log tip as the version hash sees it — `bedrock-v1.md` §5.
@@ -622,6 +647,7 @@ fn bedrock_head<'a>(c: &VersionCase, hash: &'a [u8]) -> BedrockHeadView<'a> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
     let wire = c.peers.as_deref().unwrap_or_default();
     let entries: Vec<PeerEntry<'_>> = wire
@@ -712,6 +738,16 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
             regions: &entry.regions,
         })
         .collect();
+    let ephemeral_anchors: Vec<EphemeralAnchorsEntryView<'_>> = c
+        .ephemeral_anchors
+        .iter()
+        .flatten()
+        .map(|entry| EphemeralAnchorsEntryView {
+            label: &entry.label,
+            address: &entry.address,
+            port: entry.port,
+        })
+        .collect();
 
     netmap_version(&NetmapContent {
         psk_epoch: c.psk_epoch,
@@ -728,6 +764,9 @@ fn version_of(c: &VersionCase, held: &VersionInputs) -> u64 {
         dns: dns_config(c, &dns_routes, &config_upstreams),
         bedrock_head: bedrock_head(c, &bedrock_hash),
         allowed_regions: &allowed_regions,
+        ephemeral_anchors: &ephemeral_anchors,
+        ephemeral_anchor_window_period_seconds: c.ephemeral_anchor_schedule.window_period_seconds,
+        ephemeral_anchor_duty_cycle_seconds: c.ephemeral_anchor_schedule.duty_cycle_seconds,
     })
 }
 

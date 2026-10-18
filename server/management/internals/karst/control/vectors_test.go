@@ -81,7 +81,30 @@ type versionCase struct {
 	// one, the same nil-vs-empty discipline SSHFilterPresent exists for
 	// elsewhere in this struct.
 	AllowedRegions []versionAllowedRegionsEntry `json:"allowed_regions,omitempty"`
-	Version        uint64                       `json:"version"`
+	// EphemeralAnchors is ADR-0045 §4d's ephemeral-anchor list. Omitted (not
+	// merely empty) when the deployment has not configured one, the same
+	// discipline AllowedRegions documents.
+	EphemeralAnchors []versionEphemeralAnchorsEntry `json:"ephemeral_anchors,omitempty"`
+	// EphemeralAnchorSchedule is hashed even when EphemeralAnchors is empty:
+	// a schedule-only edit must still move the version, or a node would
+	// never learn a new duty cycle.
+	EphemeralAnchorSchedule versionEphemeralAnchorSchedule `json:"ephemeral_anchor_schedule,omitempty"`
+	Version                 uint64                         `json:"version"`
+}
+
+// versionEphemeralAnchorsEntry is one ephemeral anchor as the version hash
+// sees it — ADR-0045 §4d.
+type versionEphemeralAnchorsEntry struct {
+	Label   string `json:"label"`
+	Address string `json:"address"`
+	Port    uint32 `json:"port"`
+}
+
+// versionEphemeralAnchorSchedule is the deployment-wide duty-cycle schedule
+// as the version hash sees it.
+type versionEphemeralAnchorSchedule struct {
+	WindowPeriodSeconds uint32 `json:"window_period_seconds,omitempty"`
+	DutyCycleSeconds    uint32 `json:"duty_cycle_seconds,omitempty"`
 }
 
 // versionAllowedRegionsEntry is one provider's slice of ADR-0045 §4c's
@@ -822,6 +845,43 @@ func TestVectors(t *testing.T) {
 				},
 			},
 		},
+		{
+			// ADR-0045 §4d. Two ephemeral anchors with a duty-cycle
+			// schedule.
+			name: "an ephemeral anchor list with a duty-cycle schedule",
+			resp: &proto.KarstNetmapResponse{
+				PskEpoch:  9,
+				NodeId:    []byte("node-one"),
+				DnsName:   "alpha",
+				Addresses: []string{"100.64.0.1"},
+				EphemeralAnchors: &proto.KarstEphemeralAnchors{
+					Anchors: []*proto.KarstEphemeralAnchors_Entry{
+						{Label: "aws:us-west-2-den-1a", Address: "10.0.0.1", Port: 22},
+						{Label: "aws:us-east-1-bos-1a", Address: "10.0.0.2", Port: 22},
+					},
+					WindowPeriodSeconds: 900,
+					DutyCycleSeconds:    300,
+				},
+			},
+		},
+		{
+			// A schedule alone, with no anchors, must still produce a
+			// version distinct from one with neither — an admin who sets a
+			// duty cycle before adding any anchor must still see that reach
+			// a node once an anchor is later added, not get stuck on a
+			// stale version from before the schedule existed.
+			name: "an ephemeral anchor schedule with no anchors",
+			resp: &proto.KarstNetmapResponse{
+				PskEpoch:  9,
+				NodeId:    []byte("node-one"),
+				DnsName:   "alpha",
+				Addresses: []string{"100.64.0.1"},
+				EphemeralAnchors: &proto.KarstEphemeralAnchors{
+					WindowPeriodSeconds: 900,
+					DutyCycleSeconds:    300,
+				},
+			},
+		},
 	} {
 		vc := versionCase{
 			PskEpoch:  tc.resp.GetPskEpoch(),
@@ -905,6 +965,17 @@ func TestVectors(t *testing.T) {
 				Provider: entry.GetProvider(),
 				Regions:  entry.GetRegions(),
 			})
+		}
+		for _, entry := range tc.resp.GetEphemeralAnchors().GetAnchors() {
+			vc.EphemeralAnchors = append(vc.EphemeralAnchors, versionEphemeralAnchorsEntry{
+				Label:   entry.GetLabel(),
+				Address: entry.GetAddress(),
+				Port:    entry.GetPort(),
+			})
+		}
+		vc.EphemeralAnchorSchedule = versionEphemeralAnchorSchedule{
+			WindowPeriodSeconds: tc.resp.GetEphemeralAnchors().GetWindowPeriodSeconds(),
+			DutyCycleSeconds:    tc.resp.GetEphemeralAnchors().GetDutyCycleSeconds(),
 		}
 		got.Cases.NetmapVersion = append(got.Cases.NetmapVersion, vc)
 	}

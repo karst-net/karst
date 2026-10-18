@@ -391,6 +391,11 @@ pub struct Client {
     /// which produces a request byte-identical to one from before this field
     /// existed.
     anchor_rtt: Vec<pb::KarstAnchorRtt>,
+    /// ADR-0045 §4d: the identical queued-observation shape `anchor_rtt`
+    /// above uses, for ephemeral-anchor RTTs instead of provider-region
+    /// anchor RTTs — see
+    /// [`set_ephemeral_anchor_rtt_observations`](Self::set_ephemeral_anchor_rtt_observations).
+    ephemeral_anchor_rtt: Vec<pb::KarstEphemeralAnchorRtt>,
     /// The node's PHREATIC public keys, registered so peers can be given them.
     kem_public: Vec<u8>,
     /// Empty until the first registration completes.
@@ -529,6 +534,7 @@ impl Client {
             home_relay: Vec::new(),
             sessions: Vec::new(),
             anchor_rtt: Vec::new(),
+            ephemeral_anchor_rtt: Vec::new(),
             endpoint: section.server.clone(),
             pins,
             node_id: if registered {
@@ -1036,6 +1042,19 @@ impl Client {
         self.anchor_rtt = reports;
     }
 
+    /// Replace the last locally measured ephemeral-anchor RTTs — ADR-0045
+    /// §4d. Identical discipline to
+    /// [`set_anchor_rtt_observations`](Self::set_anchor_rtt_observations):
+    /// an empty `Vec` (the default, and every node that has not enabled
+    /// `[probe] anchor_probe`, or whose server has no ephemeral anchor
+    /// configured) reports nothing.
+    pub fn set_ephemeral_anchor_rtt_observations(
+        &mut self,
+        reports: Vec<pb::KarstEphemeralAnchorRtt>,
+    ) {
+        self.ephemeral_anchor_rtt = reports;
+    }
+
     /// GitHub issue #170: the second of the three client-side spans — the
     /// direct counterpart of `karst-control`'s own `karst.netmap.push` span,
     /// covering the round trip and this node's local
@@ -1056,6 +1075,7 @@ impl Client {
             home_relay: self.home_relay.clone(),
             sessions: self.sessions.clone(),
             anchor_rtt: self.anchor_rtt.clone(),
+            ephemeral_anchor_rtt: self.ephemeral_anchor_rtt.clone(),
         };
         let raw = self
             .request(conn, KIND_NETMAP, &req.encode_to_vec())
