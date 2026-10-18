@@ -21,6 +21,8 @@ export function createAuth(basePath = "/") {
 
   let manager: UserManager | undefined;
   let currentUser: User | undefined;
+  let renewal: Promise<boolean> | undefined;
+  let redirecting = false;
 
   function getManager(config: AuthConfig): UserManager {
     if (manager) return manager;
@@ -38,6 +40,9 @@ export function createAuth(basePath = "/") {
     manager.events.addUserLoaded((user) => { currentUser = user; });
     manager.events.addUserUnloaded(() => { currentUser = undefined; });
     manager.events.addSilentRenewError((error) => { console.error("karst: silent renew failed", error); });
+    manager.events.addAccessTokenExpired(() => {
+      void renewOnce(config).then((renewed) => { if (!renewed) login(config); });
+    });
     return manager;
   }
 
@@ -57,7 +62,7 @@ export function createAuth(basePath = "/") {
       const hash = sessionStorage.getItem(postLoginHashKey) ?? "";
       sessionStorage.removeItem(postLoginHashKey);
       history.replaceState(null, "", basePath + hash);
-      return "authenticated";
+      return accessToken() ? "authenticated" : "anonymous";
     }
 
     try {
@@ -65,12 +70,18 @@ export function createAuth(basePath = "/") {
     } catch {
       currentUser = undefined;
     }
-    return currentUser ? "authenticated" : "anonymous";
+    return accessToken() ? "authenticated" : "anonymous";
   }
 
   function login(config: AuthConfig): void {
+    if (redirecting) return;
+    redirecting = true;
+    currentUser = undefined;
     sessionStorage.setItem(postLoginHashKey, location.hash);
-    void getManager(config).signinRedirect();
+    void getManager(config).signinRedirect().catch((error) => {
+      redirecting = false;
+      console.error("karst: login redirect failed", error);
+    });
   }
 
   function logout(config: AuthConfig): void {
@@ -79,18 +90,49 @@ export function createAuth(basePath = "/") {
   }
 
   /** One retry after a fresh silent renew; the caller treats a second 401 as real. */
-  async function renewOnce(config: AuthConfig): Promise<boolean> {
-    try {
-      currentUser = (await getManager(config).signinSilent()) ?? undefined;
-    } catch {
-      currentUser = undefined;
+  function renewOnce(config: AuthConfig): Promise<boolean> {
+    renewal ??= (async () => {
+      try {
+        currentUser = (await getManager(config).signinSilent()) ?? undefined;
+      } catch {
+        currentUser = undefined;
+      }
+      return !!accessToken();
+    })().finally(() => { renewal = undefined; });
+    return renewal;
+  }
+
+  /** Never send an anonymous API request after an authenticated session expires. */
+  async function authenticatedFetch(url: string, init?: RequestInit): Promise<Response> {
+    const config = await loadConfig();
+    if (!config.oidcAuthority || !config.oidcClientId) return fetch(url, init);
+    const expired = () => {
+      login(config);
+      return new Error("Your session has expired. Please sign in again.");
+    };
+    if (redirecting) throw expired();
+    // A missing token must be renewed before the request, even if the server
+    // would accept an anonymous request and return a default account.
+    if (!accessToken() && !await renewOnce(config)) throw expired();
+    const send = () => {
+      const token = accessToken();
+      if (!token || redirecting) throw expired();
+      const headers = new Headers(init?.headers);
+      headers.set("authorization", `Bearer ${token}`);
+      return fetch(url, { ...init, headers });
+    };
+    let response = await send();
+    if (response.status === 401) {
+      if (!await renewOnce(config)) throw expired();
+      response = await send();
+      if (response.status === 401) throw expired();
     }
-    return currentUser !== undefined;
+    return response;
   }
 
   async function silentCallback(config: AuthConfig): Promise<void> {
     await getManager(config).signinSilentCallback();
   }
-  return { loadConfig, accessToken, bootstrap, login, logout, renewOnce, silentCallback };
+  return { loadConfig, accessToken, authenticatedFetch, bootstrap, login, logout, renewOnce, silentCallback };
 
 }
