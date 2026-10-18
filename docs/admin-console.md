@@ -128,6 +128,11 @@ and is the place to update when a deferral is later picked up.
   `public/noc-world-outline.geojson` grew from ~1.3 KB to ~190 KB
   accordingly (~64 KB gzipped) — Caddy does not currently compress
   responses (no `encode` directive), so that's the real wire cost today.
+  The map now uses MapLibre's globe projection and adds worldwide Natural
+  Earth admin-1 state/province borders as thinner dashed lines beneath solid
+  national outlines, with both styles identified in the legend. The new
+  simplified boundary asset adds about 2.9 MB uncompressed. Provenance and
+  regeneration instructions are in `web/console/public/noc-boundaries.md`.
   **Known trade-off: MapLibre GL adds real bundle weight.** Adding it —
   this console's first mapping dependency and first library over
   ~500 KB gzipped — pushed
