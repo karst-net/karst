@@ -46,14 +46,18 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # does, confirmed against kube's own feature list (not assumed) before this
 # dependency was added.
 #
-# Pinned to exactly 4.0.0, not "4": 4.1/4.2 need rustc 1.89. This workspace's
-# own MSRV (Cargo.toml's rust-version) has since moved to 1.89 too (the
-# zbus 6 migration, issue #347), so 4.1/4.2 may now build here as well --
-# unconfirmed, since relaxing this pin is a separate exercise from that
-# migration. 4.0.0 is the newest release confirmed to build under the MSRV
-# this pin was originally chosen for (via `cargo info kube@<version>` across
-# 4.0/4.1/4.2, not guessed).
-kube = { version = "=4.0.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+# Pinned to exactly 4.2.0, not "4" (issue #353, revisited after the zbus 6
+# migration moved this workspace's MSRV to 1.89): 4.2.0 is the newest
+# release (there is no 4.1.0) and the only other one besides 4.0.0, so this
+# is also the newest kube gets until its next release. Confirmed by
+# `cargo build`, not just `cargo info`'s declared `rust-version` -- the
+# same gap bins/karst-scaler-aws/Cargo.toml's own comment already flags for
+# a different crate family. 4.2.0's `rustls-tls` feature also pulls in
+# `rustls-platform-verifier` (new in this release; 4.0.0's `rustls-tls`
+# did not), which is what actually needed CDLA-Permissive-2.0 added to
+# deny.toml -- not an MSRV gap at all, once the MSRV one was already
+# cleared.
+kube = { version = "=4.2.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 # The mint-enrollment-token call (POST to the control server, a different
 # host than the k8s API server kube::Client talks to, so that client can't

@@ -40,10 +40,11 @@ serde_json = "1"
 # current-thread runtime would starve one or the other.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # Same version pin and feature selection as karst-scaler-k8s/Cargo.toml,
-# for the identical reason (its own comment): 4.0.0 is the newest release
-# that still builds on this workspace's MSRV, and aws-lc-rs avoids
-# reintroducing the ring conflict that broke karst-dns's tests once.
-kube = { version = "=4.0.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
+# for the identical reason (its own comment, issue #353): 4.2.0 is the
+# newest release this workspace's MSRV and license allowlist now both
+# clear, and aws-lc-rs avoids reintroducing the ring conflict that broke
+# karst-dns's tests once.
+kube = { version = "=4.2.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 # The enroll/deenroll calls (a different host than the k8s API server
 # kube::Client talks to) stay on ureq, matching karst-scaler-k8s's own
