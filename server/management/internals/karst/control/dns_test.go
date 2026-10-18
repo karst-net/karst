@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	nbdns "github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/proto"
 )
@@ -171,5 +172,25 @@ func TestDNSProjectionUsesAccountNetworkZoneByDefault(t *testing.T) {
 	}
 	if config.GetZone() != "aquifer.karst" || !config.GetMagicDns() {
 		t.Fatalf("network DNS zone projection = %#v", config)
+	}
+}
+
+func TestDNSProjectionUsesExplicitRootSuffix(t *testing.T) {
+	root, err := meshdomain.NewRoot("account", "karst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := &types.Account{Id: "account", RootDomainID: root.ID, RootDomain: root, Network: &types.Network{Dns: "legacy.example"}}
+	h := NetmapHandler{DNSZone: "deployment-override.example", DNS: dnsAccounts{account}}
+	config, err := h.dnsConfig(context.Background(), account.Id, "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Zone != "karst" || !config.MagicDns {
+		t.Fatalf("expected the explicit root suffix, got %v", config)
+	}
+	account.RootDomain = nil
+	if _, err := h.dnsConfig(context.Background(), account.Id, "peer"); err == nil {
+		t.Fatal("missing explicit-root metadata must fail rather than choose another suffix")
 	}
 }

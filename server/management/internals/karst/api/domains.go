@@ -30,14 +30,16 @@ type domainManager interface {
 }
 
 type domainResponse struct {
-	ID       string `json:"id"`
-	ParentID string `json:"parent_id,omitempty"`
-	Label    string `json:"label"`
-	Path     string `json:"path"`
+	IsRoot    bool   `json:"is_root"`
+	DNSSuffix string `json:"dns_suffix,omitempty"`
+	ID        string `json:"id"`
+	ParentID  string `json:"parent_id,omitempty"`
+	Label     string `json:"label"`
+	Path      string `json:"path"`
 }
 
 func domainView(d *meshdomain.Domain) domainResponse {
-	return domainResponse{ID: d.ID, ParentID: d.ParentID, Label: d.Label, Path: d.Path}
+	return domainResponse{IsRoot: d.IsRoot(), DNSSuffix: d.DNSSuffix, ID: d.ID, ParentID: d.ParentID, Label: d.Label, Path: d.Path}
 }
 
 type delegationResponse struct {

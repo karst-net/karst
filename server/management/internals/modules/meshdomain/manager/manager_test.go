@@ -324,9 +324,8 @@ func TestRecreatedDomainDoesNotInheritDeletedDomainDelegations(t *testing.T) {
 	require.Error(t, err)
 	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "member", replacement.ID, "member")
 	require.Error(t, err)
-	visible, err := mgr.ListDomains(ctx, testAccountID, "member")
-	require.NoError(t, err)
-	require.Empty(t, visible)
+	_, err = mgr.ListDomains(ctx, testAccountID, "member")
+	require.Error(t, err, "deleted-domain bindings are removed with their domain")
 
 	// Explicitly delegating the new identity is required to restore access.
 	_, err = mgr.DelegateDomainAdmin(ctx, testAccountID, "owner", replacement.ID, "member")

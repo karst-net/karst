@@ -614,9 +614,15 @@ func TestUpdatePeer_MovesBetweenDomainsAndRequalifiesLabel(t *testing.T) {
 	// entirely.
 	update = moved.Copy()
 	update.DomainID = ""
+	unchanged, err := am.UpdatePeer(ctx, member.AccountID, "owner", update)
+	require.NoError(t, err)
+	require.Equal(t, sales.ID, unchanged.DomainID, "an omitted Go placement field preserves the domain")
+	accountRoot, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	update.DomainID = accountRoot.ID
 	backToRoot, err := am.UpdatePeer(ctx, member.AccountID, "owner", update)
 	require.NoError(t, err)
-	require.Equal(t, "", backToRoot.DomainID)
+	require.Equal(t, accountRoot.ID, backToRoot.DomainID)
 	require.Equal(t, "movable", backToRoot.DNSLabel)
 
 	// A PUT that never mentions domain at all -- Copy() carries the current
@@ -847,4 +853,59 @@ func TestDeviceInvitationCanBeRevokedAfterGroupRemoval(t *testing.T) {
 	_, err = enrollPeer(am, key.Key, "revoked-with-removed-group")
 	require.Error(t, err)
 	require.Zero(t, storedEnrollment(t, am, key.Key).UsedTimes)
+}
+
+func TestEnrollmentExplicitDefaultRoot(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	root, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	require.NotNil(t, root)
+	require.Equal(t, "karst", root.DNSSuffix)
+	group := &types.Group{ID: "root-devices", AccountID: member.AccountID, Name: "Root devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	invitation, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "laptop", []string{group.ID}, "")
+	require.NoError(t, err)
+	require.Equal(t, root.ID, storedEnrollment(t, am, invitation.Key).DomainID)
+	device, err := enrollPeer(am, invitation.Key, "client-hostname")
+	require.NoError(t, err)
+	require.Equal(t, root.ID, device.DomainID)
+	require.Equal(t, "laptop", device.DNSLabel)
+	suffix, err := am.GetDNSDomain(ctx, member.AccountID)
+	require.NoError(t, err)
+	require.Equal(t, "laptop.karst", device.FQDN(suffix))
+	portalKey, err := am.CreateEnrollmentKey(ctx, member.AccountID, member.Id)
+	require.NoError(t, err)
+	personal, err := enrollPeer(am, portalKey.Key, "personal")
+	require.NoError(t, err)
+	require.Equal(t, root.ID, personal.DomainID)
+	domains := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	child, err := domains.CreateDomain(ctx, member.AccountID, "owner", "", "engineering")
+	require.NoError(t, err)
+	require.Equal(t, root.ID, child.ParentID)
+	require.Equal(t, "engineering", child.Path, "root suffix must never appear in a relative domain path")
+	require.Error(t, domains.DeleteDomain(ctx, member.AccountID, "owner", root.ID))
+	_, err = am.CreateDeviceInvitation(ctx, member.AccountID, member.Id, "unauthorized", []string{group.ID}, "")
+	require.Error(t, err, "default selection must not grant a member root enrollment authority")
+}
+
+func TestEnrollmentRejectsOverlongQualifiedName(t *testing.T) {
+	am, _, err := createManager(t)
+	require.NoError(t, err)
+	ctx := context.Background()
+	account := newAccountWithId(ctx, "long-name-account", "long-name-owner", "", "", "", false)
+	suffix := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 40)
+	account.RootDomain.DNSSuffix = suffix
+	account.Settings.DNSDomain = suffix
+	account.Network.Dns = suffix
+	require.NoError(t, am.Store.SaveAccount(ctx, account))
+	group := &types.Group{ID: "long-name-devices", AccountID: account.Id, Name: "Long name devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	invitation, err := am.CreateDeviceInvitation(ctx, account.Id, "long-name-owner", strings.Repeat("n", 58), []string{group.ID}, "")
+	require.NoError(t, err)
+	_, err = enrollPeer(am, invitation.Key, "long-device")
+	require.ErrorContains(t, err, "253")
+	require.Zero(t, storedEnrollment(t, am, invitation.Key).UsedTimes)
+	_, err = am.Store.GetPeerByPeerPubKey(ctx, store.LockingStrengthNone, "long-device")
+	require.Error(t, err)
 }

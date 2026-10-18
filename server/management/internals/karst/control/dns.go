@@ -34,6 +34,13 @@ func (h *NetmapHandler) dnsConfig(ctx context.Context, accountID, peerID string)
 		config.Zone = account.Network.Dns
 		config.MagicDns = config.Zone != ""
 	}
+	if account.RootDomainID != "" {
+		if account.RootDomain == nil || account.RootDomain.ID != account.RootDomainID || !account.RootDomain.IsRoot() {
+			return nil, fmt.Errorf("account root DNS configuration is missing")
+		}
+		config.Zone = account.RootDomain.DNSSuffix
+		config.MagicDns = config.Zone != ""
+	}
 	peerGroups := account.GetPeerGroups(peerID)
 	groupIDs := make([]string, 0, len(account.NameServerGroups))
 	for id := range account.NameServerGroups {

@@ -665,7 +665,6 @@ func TestDefaultAccountManager_GetAccountIDFromToken(t *testing.T) {
 func TestDefaultAccountManager_SyncUserJWTGroups(t *testing.T) {
 	userId := "user-id"
 	domain := "test.domain"
-	_ = newAccountWithId(context.Background(), "", userId, domain, "", "", false)
 	manager, _, err := createManager(t)
 	require.NoError(t, err, "unable to create account manager")
 	accountID, err := manager.GetAccountIDByUserID(context.Background(), auth.UserAuth{UserId: userId, Domain: domain})
@@ -1123,7 +1122,7 @@ func TestAccountManager_AddPeer(t *testing.T) {
 	assert.NotNil(t, ev)
 	assert.Equal(t, account.Id, ev.AccountID)
 	assert.Equal(t, peer.Name, ev.Meta["name"])
-	assert.Equal(t, peer.FQDN(account.Domain), ev.Meta["fqdn"])
+	assert.Equal(t, peer.FQDN(account.RootDomain.DNSSuffix), ev.Meta["fqdn"])
 	assert.Equal(t, setupKey.Id, ev.InitiatorID)
 	assert.Equal(t, peer.ID, ev.TargetID)
 	assert.Equal(t, peer.IP.String(), fmt.Sprint(ev.Meta["ip"]))
@@ -1192,7 +1191,7 @@ func TestAccountManager_AddPeerWithUserID(t *testing.T) {
 	assert.NotNil(t, ev)
 	assert.Equal(t, account.Id, ev.AccountID)
 	assert.Equal(t, peer.Name, ev.Meta["name"])
-	assert.Equal(t, peer.FQDN(account.Domain), ev.Meta["fqdn"])
+	assert.Equal(t, peer.FQDN(account.RootDomain.DNSSuffix), ev.Meta["fqdn"])
 	assert.Equal(t, userID, ev.InitiatorID)
 	assert.Equal(t, peer.ID, ev.TargetID)
 	assert.Equal(t, peer.IP.String(), fmt.Sprint(ev.Meta["ip"]))
@@ -1533,7 +1532,7 @@ func TestAccountManager_DeletePeer(t *testing.T) {
 	assert.NotNil(t, ev)
 	assert.Equal(t, account.Id, ev.AccountID)
 	assert.Equal(t, peer.Name, ev.Meta["name"])
-	assert.Equal(t, peer.FQDN(account.Domain), ev.Meta["fqdn"])
+	assert.Equal(t, peer.FQDN(account.RootDomain.DNSSuffix), ev.Meta["fqdn"])
 	assert.Equal(t, userID, ev.InitiatorID)
 	assert.Equal(t, peer.ID, ev.TargetID)
 	assert.Equal(t, peer.IP.String(), fmt.Sprint(ev.Meta["ip"]))
@@ -2319,7 +2318,7 @@ func TestDefaultAccountManager_UpdateAccountSettings_PeerApproval(t *testing.T) 
 	}
 }
 
-func TestDefaultAccountManager_UpdateAccountSettings_DNSDomainConflict(t *testing.T) {
+func TestDefaultAccountManager_UpdateAccountSettings_DNSDomainRequiresRootRename(t *testing.T) {
 	manager, _, err := createManager(t)
 	require.NoError(t, err, "unable to create account manager")
 
@@ -2344,8 +2343,8 @@ func TestDefaultAccountManager_UpdateAccountSettings_DNSDomainConflict(t *testin
 		PeerLoginExpirationEnabled: false,
 		Extra:                      &types.ExtraSettings{},
 	})
-	require.Error(t, err, "expecting to fail when DNS domain conflicts with custom zone")
-	assert.Contains(t, err.Error(), "conflicts with existing custom DNS zone")
+	require.Error(t, err, "legacy settings must not bypass root naming safeguards")
+	assert.Contains(t, err.Error(), "DNS suffix changes require the root naming API")
 }
 
 func TestAccount_GetExpiredPeers(t *testing.T) {
@@ -3967,7 +3966,7 @@ func TestDefaultAccountManager_GetAccountOnboarding(t *testing.T) {
 	})
 
 	t.Run("should return account onboarding when onboard don't exist", func(t *testing.T) {
-		account.Id = "with-zero-onboarding"
+		account = newAccountWithId(context.Background(), "with-zero-onboarding", userID, "", "", "", false)
 		account.Onboarding = types.AccountOnboarding{}
 		err = manager.Store.SaveAccount(context.Background(), account)
 		require.NoError(t, err)

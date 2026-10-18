@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0032: Admin-assigned names as the real mesh identity; hierarchical domains with delegated sub-administration
 
-- **Status:** Accepted; current decision revised 2026-10-18, runtime implementation pending #362
+- **Status:** Accepted; current decision revised 2026-10-18, runtime implementation in progress (#362)
 - **Date:** 2026-09-19
 - **Deciders:** TBD
 - **Related:** ADR-0010 (naming convention this ADR follows: "standard
@@ -228,6 +228,29 @@ and visible DNS disruption during rename without aliases. Existing account
 names take precedence over imposing the new-account default. Account-level
 Aquifer/Bedrock isolation stays under ADR-0033; this decision needs no changes
 to Ponor tenant forwarding or cryptographic trust protocols.
+
+### Implementation update: explicit root provisioning and migration
+
+The account now persists `RootDomainID`, and the domain's nullable unique
+`RootAccountID` marker enforces at most one root per account across SQL engines.
+The root stores `DNSSuffix` separately from child labels and has an empty
+relative path. New account persistence creates the root atomically. SQL
+account-manager initialization converts existing accounts before warmup;
+repeat initialization retains root IDs. Both GORM and PostgreSQL-specific
+account reads load the root metadata.
+
+Default enrollment, root-aware domain creation, API root metadata, and console
+pickers use real IDs. Deleting an account removes its domain tree; deleting a
+child removes its delegation bindings. Settings updates that omit DNS preserve
+the root suffix, while explicit suffix changes require the future rename API.
+Omitted Go peer-placement fields preserve placement; explicit HTTP empty-string
+moves are rejected. The resolver projects the explicit root suffix rather than
+allowing an independent deployment override to replace it.
+
+The [upgrade notes](../mesh-domains.md#upgrade-and-migration) describe the
+coordinated upgrade and conflict diagnostics. Root rename preview/commit,
+observed client convergence, and compliance integration remain follow-up work;
+#362 remains open.
 
 ## Historical context and original decision (2026-09-19)
 

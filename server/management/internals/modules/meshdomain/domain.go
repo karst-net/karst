@@ -16,6 +16,7 @@ import (
 	"github.com/rs/xid"
 
 	nbdns "github.com/netbirdio/netbird/dns"
+	"golang.org/x/net/idna"
 )
 
 // Domain is one node in an account's mesh-naming tree. A peer placed in a
@@ -27,9 +28,15 @@ import (
 // the (immutable) parent chain, so every read is a single row lookup rather
 // than a walk -- this is what makes qualifying a peer's name on every netmap
 // build cheap.
+const DefaultRootSuffix = "karst"
+
 type Domain struct {
-	ID        string `gorm:"primaryKey"`
-	AccountID string `gorm:"index"`
+	// RootAccountID is set only on the account root. Nullable uniqueness allows
+	// any number of children but at most one root per account on every SQL engine.
+	RootAccountID *string `gorm:"uniqueIndex:idx_mesh_domain_account_root" json:"-"`
+	DNSSuffix     string
+	ID            string `gorm:"primaryKey"`
+	AccountID     string `gorm:"index"`
 	// ParentID is empty for a top-level domain. A non-empty ParentID must
 	// name another Domain in the same account.
 	ParentID string `gorm:"index"`
@@ -68,6 +75,19 @@ func NewDomain(accountID, parentID, label, parentPath string) *Domain {
 // Validate checks Label in isolation. Sibling-uniqueness and parent-account
 // checks need store access and live in the manager instead.
 func (d *Domain) Validate() error {
+	if d.IsRoot() {
+		suffix, err := CanonicalSuffix(d.DNSSuffix)
+		if err != nil {
+			return err
+		}
+		if d.AccountID == "" || *d.RootAccountID != d.AccountID || d.ParentID != "" || d.Path != "" || d.Label != "" || suffix != d.DNSSuffix {
+			return errors.New("root must have an account-owned canonical suffix and empty parent, label, and relative path")
+		}
+		return nil
+	}
+	if d.DNSSuffix != "" {
+		return errors.New("only the root may carry a DNS suffix")
+	}
 	if len(d.Label) > 63 {
 		return errors.New("domain label exceeds maximum length of 63 characters")
 	}
@@ -90,4 +110,55 @@ func (d *Domain) QualifyLabel(label string) string {
 // EventMeta returns activity event meta related to the domain.
 func (d *Domain) EventMeta() map[string]any {
 	return map[string]any{"label": d.Label, "path": d.Path, "parent_id": d.ParentID}
+}
+
+// IsRoot distinguishes the DNS suffix from ordinary child labels.
+func (d *Domain) IsRoot() bool { return d != nil && d.RootAccountID != nil }
+
+func NewRoot(accountID, suffix string) (*Domain, error) {
+	canonical, err := CanonicalSuffix(suffix)
+	if err != nil {
+		return nil, err
+	}
+	root := &Domain{ID: xid.New().String(), AccountID: accountID, RootAccountID: &accountID, DNSSuffix: canonical}
+	return root, root.Validate()
+}
+
+// CanonicalSuffix accepts private single-label roots as well as full DNS names.
+func CanonicalSuffix(suffix string) (string, error) {
+	ascii, err := idna.Lookup.ToASCII(strings.TrimSuffix(strings.TrimSpace(suffix), "."))
+	ascii = strings.ToLower(ascii)
+	if err != nil || ascii == "" || len(ascii) > 253 {
+		return "", errors.New("invalid mesh DNS suffix")
+	}
+	for _, label := range strings.Split(ascii, ".") {
+		if len(label) == 0 || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", errors.New("invalid mesh DNS suffix label")
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return "", errors.New("invalid mesh DNS suffix character")
+			}
+		}
+	}
+	return ascii, nil
+}
+
+// ValidatePeerName preserves the existing host-label grammar (which permits
+// generated leading/trailing hyphens) while checking the complete DNS name.
+func ValidatePeerName(relative, suffix string) error {
+	if relative == "" || len(relative+"."+suffix) > 253 {
+		return errors.New("mesh device name is empty or exceeds 253 characters")
+	}
+	for _, label := range strings.Split(strings.ToLower(relative), ".") {
+		if len(label) == 0 || len(label) > 63 || strings.Trim(label, "-") == "" {
+			return errors.New("invalid mesh device label")
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return errors.New("invalid mesh device name character")
+			}
+		}
+	}
+	return nil
 }

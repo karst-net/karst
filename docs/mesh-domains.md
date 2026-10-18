@@ -2,9 +2,10 @@
 
 # Mesh domains, identity, and access
 
-This page records the agreed product model. The explicit root, root rename,
-and compliance integration described here require follow-up implementation;
-they are not a description of capabilities already shipped.
+This page records the agreed product model. Explicit-root provisioning,
+migration, and default enrollment are implemented. Root renaming and device
+compliance integration remain follow-up work; their behavior below is the
+agreed contract, not an available console operation.
 
 Tracked work: [ADR reconciliation (#361)](https://github.com/karst-net/karst/issues/361),
 [domain implementation (#362)](https://github.com/karst-net/karst/issues/362),
@@ -39,6 +40,33 @@ online clients change suffix on their next successful configuration refresh,
 cached answers may survive their TTL, and offline clients update on reconnect.
 Plan the address change accordingly. Rollback is another validated rename;
 identities and permissions remain stable.
+
+## Upgrade and migration
+
+Back up the database and stop all management replicas before upgrading. Mixed
+old/new writers and downgrade against a migrated database are unsupported.
+Startup migrates each account in a transaction before cache warmup or request
+handling. It creates an explicit root from the effective legacy suffix, attaches
+formerly top-level domains beneath it without changing relative paths, and
+backfills machines and enrollment keys that used the implicit root. Existing
+machine labels, IDs, addresses, invitation targets, and delegated scopes remain
+unchanged. Empty accounts with no configured suffix use `karst`.
+
+If active settings disagree, or graph/resource references are invalid, startup
+stops with the affected account and setting/reference in its diagnostic. Review
+`settings_dns_domain`, `network_dns`, and the active server `--dns-domain`
+fallback against the names clients use. Reconcile conflicts explicitly; do not
+silently choose a suffix or delete active resources to make migration pass.
+Stale delegation references must be revoked before migration. Historical,
+unusable invitations may retain deleted-domain metadata; usable ones must
+reference a valid domain. After correction, restart: completed accounts retain
+their root IDs and failed account transactions leave no partial root/backfill.
+
+New account creation persists the account and root atomically. Root metadata is
+returned by the domains API (`is_root`, `dns_suffix`), and the root has an empty
+relative `path`. Omitted invitation/enrollment targets use its stable ID;
+moving a device back to it requires that explicit ID. Legacy suffix-setting
+writes cannot bypass the future root-rename preview/confirmation flow.
 
 ## Relationships
 

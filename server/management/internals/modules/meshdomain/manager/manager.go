@@ -53,6 +53,15 @@ func NewManager(store store.Store, accountManager account.Manager, permissionsMa
 }
 
 func (m *managerImpl) CreateDomain(ctx context.Context, accountID, userID, parentID, label string) (*meshdomain.Domain, error) {
+	if parentID == "" {
+		root, err := m.store.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if root != nil {
+			parentID = root.ID
+		}
+	}
 	var parent *meshdomain.Domain
 	if parentID != "" {
 		var err error
@@ -169,6 +178,10 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 		return status.NewPermissionDeniedError()
 	}
 
+	if target.IsRoot() {
+		return status.Errorf(status.PreconditionFailed, "the account root cannot be deleted")
+	}
+
 	err = m.store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
 		// Issuance and enrollment take this lock before writing references.
 		// Check dependencies only after acquiring it, so a racing invitation
@@ -199,6 +212,15 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 		for _, key := range keys {
 			if key.DomainID == domainID && key.IsValid() {
 				return status.Errorf(status.PreconditionFailed, "domain still has an active enrollment key; revoke it first")
+			}
+		}
+		bindings, err := transaction.GetDomainRoleBindingsByDomain(ctx, accountID, domainID)
+		if err != nil {
+			return err
+		}
+		for _, binding := range bindings {
+			if err := transaction.DeleteDomainRoleBinding(ctx, accountID, binding.ID); err != nil {
+				return err
 			}
 		}
 		return transaction.DeleteDomain(ctx, accountID, domainID)

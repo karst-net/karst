@@ -289,6 +289,28 @@ func (s *SqlStore) SaveAccount(ctx context.Context, account *types.Account) erro
 	// todo: remove this check after the issue is resolved
 	s.checkAccountDomainBeforeSave(ctx, account.Id, account.Domain)
 
+	if account.RootDomainID != "" {
+		for _, peer := range account.Peers {
+			if peer.DomainID == "" {
+				peer.DomainID = account.RootDomainID
+			}
+		}
+		for _, key := range account.SetupKeys {
+			if key.DomainID == "" {
+				key.DomainID = account.RootDomainID
+			}
+		}
+		for i := range account.PeersG {
+			if account.PeersG[i].DomainID == "" {
+				account.PeersG[i].DomainID = account.RootDomainID
+			}
+		}
+		for i := range account.SetupKeysG {
+			if account.SetupKeysG[i].DomainID == "" {
+				account.SetupKeysG[i].DomainID = account.RootDomainID
+			}
+		}
+	}
 	generateAccountSQLTypes(account)
 
 	// Encrypt sensitive user data before saving
@@ -303,6 +325,9 @@ func (s *SqlStore) SaveAccount(ctx context.Context, account *types.Account) erro
 	}
 
 	err := s.membershipTransaction(ctx, account.Id, false, func(tx *gorm.DB) error {
+		if err := saveRootInAccountTransaction(tx, account); err != nil {
+			return err
+		}
 		result := tx.Select(clause.Associations).Delete(account.Policies, "account_id = ?", account.Id)
 		if result.Error != nil {
 			return result.Error
@@ -398,6 +423,11 @@ func (s *SqlStore) DeleteAccount(ctx context.Context, account *types.Account) er
 	start := time.Now()
 
 	err := s.membershipTransaction(ctx, account.Id, true, func(tx *gorm.DB) error {
+		for _, model := range []any{&meshdomain.DomainRoleBinding{}, &meshdomain.Domain{}} {
+			if err := tx.Where("account_id = ?", account.Id).Delete(model).Error; err != nil {
+				return err
+			}
+		}
 		result := tx.Select(clause.Associations).Delete(account.Policies, "account_id = ?", account.Id)
 		if result.Error != nil {
 			return result.Error
@@ -454,8 +484,8 @@ func (s *SqlStore) SavePeer(ctx context.Context, accountID string, peer *nbpeer.
 
 	err := s.transaction(func(tx *gorm.DB) error {
 		// check if peer exists before saving
-		var peerID string
-		result := tx.Model(&nbpeer.Peer{}).Select("id").Take(&peerID, accountAndIDQueryCondition, accountID, peer.ID)
+		var existing nbpeer.Peer
+		result := tx.Model(&nbpeer.Peer{}).Select("id", "domain_id").Take(&existing, accountAndIDQueryCondition, accountID, peer.ID)
 		if result.Error != nil {
 			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 				return status.Errorf(status.NotFound, peerNotFoundFMT, peer.ID)
@@ -463,10 +493,13 @@ func (s *SqlStore) SavePeer(ctx context.Context, accountID string, peer *nbpeer.
 			return result.Error
 		}
 
-		if peerID == "" {
+		if existing.ID == "" {
 			return status.Errorf(status.NotFound, peerNotFoundFMT, peer.ID)
 		}
 
+		if peerCopy.DomainID == "" {
+			peerCopy.DomainID = existing.DomainID
+		}
 		result = tx.Model(&nbpeer.Peer{}).Where(accountAndIDQueryCondition, accountID, peer.ID).Save(peerCopy)
 		if result.Error != nil {
 			return status.Errorf(status.Internal, "failed to save peer to store: %v", result.Error)
@@ -1109,6 +1142,16 @@ func (s *SqlStore) getAccountGorm(ctx context.Context, accountID string) (*types
 		return nil, status.NewGetAccountFromStoreError(result.Error)
 	}
 
+	if account.RootDomainID != "" {
+		root, err := s.GetDomainByID(ctx, LockingStrengthNone, accountID, account.RootDomainID)
+		if err != nil {
+			return nil, err
+		}
+		if !root.IsRoot() {
+			return nil, fmt.Errorf("account %s has an invalid root reference", accountID)
+		}
+		account.RootDomain = root
+	}
 	account.SetupKeys = make(map[string]*types.SetupKey, len(account.SetupKeysG))
 	for _, key := range account.SetupKeysG {
 		if key.UpdatedAt.IsZero() {
@@ -1183,6 +1226,13 @@ func (s *SqlStore) getAccountPgx(ctx context.Context, accountID string) (*types.
 	account, err := s.getAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
+	}
+	if account.RootDomainID != "" {
+		root, err := s.GetAccountRootDomain(ctx, LockingStrengthNone, accountID)
+		if err != nil {
+			return nil, err
+		}
+		account.RootDomain = root
 	}
 
 	var wg sync.WaitGroup
@@ -1492,7 +1542,7 @@ func (s *SqlStore) getAccount(ctx context.Context, accountID string) (*types.Acc
 	account.Network = &types.Network{}
 	const accountQuery = `
 		SELECT
-			id, created_by, created_at, domain, domain_category, is_domain_primary_account,
+			id, created_by, created_at, domain, domain_category, is_domain_primary_account, COALESCE(root_domain_id, ''),
 			-- Embedded Network
 			network_identifier, network_net, network_net_v6, network_dns, network_serial,
 			-- Embedded DNSSettings
@@ -1549,7 +1599,7 @@ func (s *SqlStore) getAccount(ctx context.Context, accountID string) (*types.Acc
 		createdAt                        sql.NullTime
 	)
 	err := s.pool.QueryRow(ctx, accountQuery, accountID).Scan(
-		&account.Id, &account.CreatedBy, &createdAt, &account.Domain, &account.DomainCategory, &account.IsDomainPrimaryAccount,
+		&account.Id, &account.CreatedBy, &createdAt, &account.Domain, &account.DomainCategory, &account.IsDomainPrimaryAccount, &account.RootDomainID,
 		&networkIdentifier, &networkNet, &networkNetV6, &networkDns, &networkSerial,
 		&dnsSettingsDisabledGroups,
 		&sPeerLoginExpirationEnabled, &sPeerLoginExpiration,
@@ -3413,6 +3463,15 @@ func (s *SqlStore) GetUserPeers(ctx context.Context, lockStrength LockingStrengt
 }
 
 func (s *SqlStore) AddPeerToAccount(ctx context.Context, peer *nbpeer.Peer) error {
+	if peer.DomainID == "" {
+		root, err := s.GetAccountRootDomain(ctx, LockingStrengthNone, peer.AccountID)
+		if err != nil {
+			return err
+		}
+		if root != nil {
+			peer.DomainID = root.ID
+		}
+	}
 	return s.peerMembershipTransaction(ctx, peer.AccountID, func(tx *gorm.DB) error {
 		if err := tx.Create(peer).Error; err != nil {
 			return status.Errorf(status.Internal, "issue adding peer to account: %s", err)
@@ -4151,6 +4210,16 @@ func (s *SqlStore) GetSetupKeyByID(ctx context.Context, lockStrength LockingStre
 
 // SaveSetupKey saves a setup key to the database.
 func (s *SqlStore) SaveSetupKey(ctx context.Context, setupKey *types.SetupKey) error {
+	if setupKey.DomainID == "" {
+		root, err := s.GetAccountRootDomain(ctx, LockingStrengthNone, setupKey.AccountID)
+		if err != nil {
+			return err
+		}
+		if root != nil {
+			setupKey.DomainID = root.ID
+			setupKey.DomainPath = ""
+		}
+	}
 	result := s.db.Save(setupKey)
 	if result.Error != nil {
 		log.WithContext(ctx).Errorf("failed to save setup key to store: %s", result.Error)
@@ -4256,6 +4325,20 @@ func (s *SqlStore) SaveDNSSettings(ctx context.Context, accountID string, settin
 
 // SaveAccountSettings stores the account settings in DB.
 func (s *SqlStore) SaveAccountSettings(ctx context.Context, accountID string, settings *types.Settings) error {
+	root, err := s.GetAccountRootDomain(ctx, LockingStrengthNone, accountID)
+	if err != nil {
+		return err
+	}
+	if root != nil {
+		if settings.DNSDomain == "" {
+			settings.DNSDomain = root.DNSSuffix
+		}
+		canonical, err := meshdomain.CanonicalSuffix(settings.DNSDomain)
+		if err != nil || canonical != root.DNSSuffix {
+			return status.Errorf(status.PreconditionFailed, "DNS suffix changes require the root naming API")
+		}
+		settings.DNSDomain = canonical
+	}
 	result := s.db.Model(&types.Account{}).
 		Select("*").Where(idQueryCondition, accountID).Updates(&types.AccountSettings{Settings: settings})
 	if result.Error != nil {

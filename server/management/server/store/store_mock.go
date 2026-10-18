@@ -1443,6 +1443,21 @@ func (mr *MockStoreMockRecorder) GetAccountPostureChecks(ctx, lockStrength, acco
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountPostureChecks", reflect.TypeOf((*MockStore)(nil).GetAccountPostureChecks), ctx, lockStrength, accountID)
 }
 
+// GetAccountRootDomain mocks base method.
+func (m *MockStore) GetAccountRootDomain(ctx context.Context, lockStrength LockingStrength, accountID string) (*meshdomain.Domain, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAccountRootDomain", ctx, lockStrength, accountID)
+	ret0, _ := ret[0].(*meshdomain.Domain)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAccountRootDomain indicates an expected call of GetAccountRootDomain.
+func (mr *MockStoreMockRecorder) GetAccountRootDomain(ctx, lockStrength, accountID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccountRootDomain", reflect.TypeOf((*MockStore)(nil).GetAccountRootDomain), ctx, lockStrength, accountID)
+}
+
 // GetAccountRoutes mocks base method.
 func (m *MockStore) GetAccountRoutes(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*route.Route, error) {
 	m.ctrl.T.Helper()

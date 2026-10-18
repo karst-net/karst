@@ -257,6 +257,8 @@ type Store interface {
 
 	// Mesh domains (ADR-0032): an account-scoped naming/administration tree,
 	// deliberately separate from zones.Zone (custom split-DNS records).
+	// GetAccountRootDomain returns nil only for a legacy account not yet migrated.
+	GetAccountRootDomain(ctx context.Context, lockStrength LockingStrength, accountID string) (*meshdomain.Domain, error)
 	CreateDomain(ctx context.Context, domain *meshdomain.Domain) error
 	DeleteDomain(ctx context.Context, accountID, domainID string) error
 	GetDomainByID(ctx context.Context, lockStrength LockingStrength, accountID, domainID string) (*meshdomain.Domain, error)

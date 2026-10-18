@@ -4144,6 +4144,10 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	// requested domain) -- this handler does not need its own check beyond
 	// the account-wide/domain-scoped one already gating this whole route.
 	if request.DomainID != nil {
+		if *request.DomainID == "" {
+			util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "provide an explicit root domain ID to move a device to the account root"), w)
+			return
+		}
 		peerRecord.DomainID = *request.DomainID
 	}
 	if _, err := h.peerWriter.UpdatePeer(r.Context(), user.AccountId, user.UserId, peerRecord); err != nil {

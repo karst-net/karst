@@ -308,6 +308,13 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 		return nil, err
 	}
 
+	// Go callers without a placement field preserve it. The HTTP placement
+	// contract rejects an explicit empty string before reaching this method.
+	if update.DomainID == "" {
+		copy := *update
+		copy.DomainID = existing.DomainID
+		update = &copy
+	}
 	allowed, ctx, err := am.peerDomainScopeAllowed(ctx, accountID, userID, existing.DomainID, update.DomainID)
 	if err != nil {
 		return nil, status.NewPermissionValidationError(err)
@@ -391,6 +398,11 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 				newLabel = targetDomain.QualifyLabel(newLabel)
 			}
 			peer.Name = update.Name
+			if dnsDomain != "" {
+				if err := meshdomain.ValidatePeerName(newLabel, dnsDomain); err != nil {
+					return status.Errorf(status.InvalidArgument, "%s", err)
+				}
+			}
 			peer.DomainID = update.DomainID
 			peer.DNSLabel = newLabel
 		}
@@ -1075,6 +1087,15 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 	// label below. An explicit target is mandatory, even if it disappeared
 	// after invitation issuance. Recheck it in the write transaction below
 	// so deletion cannot leave a successful enrollment with a missing domain.
+	if peerAddConfig.SetupKeyDomainID == "" {
+		root, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		if root != nil {
+			peerAddConfig.SetupKeyDomainID = root.ID
+		}
+	}
 	var peerDomainID, domainPath string
 	if peerAddConfig.SetupKeyDomainID != "" {
 		d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peerAddConfig.SetupKeyDomainID)
@@ -1161,6 +1182,13 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 			// whatever they're given, so a dotted string passed in would
 			// silently lose everything after its first dot.
 			freeLabel += "." + domainPath
+		}
+		if suffix := am.networkMapController.GetDNSDomain(settings); suffix != "" {
+			for _, label := range append([]string{freeLabel}, newPeer.ExtraDNSLabels...) {
+				if err := meshdomain.ValidatePeerName(label, suffix); err != nil {
+					return nil, nil, nil, false, status.Errorf(status.InvalidArgument, "%s", err)
+				}
+			}
 		}
 		newPeer.DNSLabel = freeLabel
 		newPeer.IP = freeIP
