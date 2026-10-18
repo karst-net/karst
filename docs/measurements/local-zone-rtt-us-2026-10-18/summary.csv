@@ -1,0 +1,4 @@
+zone,parent_region,n,min_ms,median_ms,max_ms,parent_region_median_ms,delta_vs_parent_ms
+us-west-2-den-1a,us-west-2,20,3.887,6.299,96.829,25.7017175,-19.403
+us-east-1-bos-1a,us-east-1,20,72.667,106.102,123.72,46.316572,59.785
+us-east-1-iah-2a,us-east-1,20,31.606,79.169,108.994,46.316572,32.852
