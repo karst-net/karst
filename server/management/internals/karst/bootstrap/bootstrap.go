@@ -36,6 +36,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
@@ -44,7 +45,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
@@ -413,18 +413,18 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	router := &handler{
 		login: &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
 		netmap: &control.NetmapHandler{
-			Nodes:       nodes,
-			Peers:       peers,
-			PSK:         deriver,
-			DNS:         accounts,
-			Routes:      accounts,
-			Policy:      pol,
-			PolicyStore: policyStore,
-			Relays:      relays,
-			RelayStore:  relayStore,
-			TurnServers: turnServers,
-			TurnMinter:  turnMinter,
-			TurnStore:   turnStore,
+			Nodes:            nodes,
+			Peers:            peers,
+			PSK:              deriver,
+			DNS:              accounts,
+			Routes:           accounts,
+			Policy:           pol,
+			PolicyStore:      policyStore,
+			Relays:           relays,
+			RelayStore:       relayStore,
+			TurnServers:      turnServers,
+			TurnMinter:       turnMinter,
+			TurnStore:        turnStore,
 			Bedrock:          bedrockLog,
 			RegionAllow:      regionAllowStore,
 			EphemeralAnchors: ephemeralAnchorStore,

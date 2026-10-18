@@ -21,10 +21,10 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
-	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
