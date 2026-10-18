@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0032: Admin-assigned names as the real mesh identity; hierarchical domains with delegated sub-administration
 
-- **Status:** Accepted, with an implementation update below
+- **Status:** Accepted; current decision revised 2026-10-18, runtime implementation pending #362
 - **Date:** 2026-09-19
 - **Deciders:** TBD
 - **Related:** ADR-0010 (naming convention this ADR follows: "standard
@@ -11,6 +11,230 @@
   reuse), commit `0d0bfb4` ("macos: show the control-plane-assigned device
   name (#163)" — the display-only fix this ADR supersedes with a real fix),
   GitHub issue #163
+
+## Current decision (2026-10-18; #361)
+
+This section supersedes the original Decision and Consequences below wherever
+those describe an implicit root, multiple top-level domains, immutable root
+names, path-based authority, or per-domain uniqueness requiring a new index.
+The dated implementation notes remain evidence of historical behavior, not
+claims that this revision is implemented. Runtime delivery is tracked in
+[#362](https://github.com/karst-net/karst/issues/362); compliance integration is
+tracked independently in [#363](https://github.com/karst-net/karst/issues/363).
+The product explanation is [Mesh domains, identity, and access](../mesh-domains.md).
+
+### Identity, naming, and relationships
+
+An account is the tenant and top-level authority. It has exactly one explicit
+root mesh domain, referenced by an account-owned `RootDomainID`. New accounts
+create that root atomically with the account, with the suffix `karst`.
+Administrators are expected to rename it for their organization, but first
+use requires no naming setup. The default is private to the authenticated mesh;
+no public DNS ownership or global uniqueness is implied. Two accounts may use
+`karst` without sharing identities, records, or traffic authority.
+
+Every enrolled machine has one nonempty, same-account `DomainID`. Each domain
+other than the root has one same-account parent. The root cannot be deleted or
+reparented. Creating additional roots is prohibited. Labels are unique among
+siblings after DNS canonicalization. Machine cryptographic identity, domain
+identity, DNS address, and user identity are distinct: a DNS rename changes
+an address, not the machine's identity.
+
+Users belong to an account and may hold administrative bindings over several
+domain subtrees. A user's own machines may occupy different domains. Groups
+and machine tags express purposes that may span the tree. A user does not
+need domain membership to reach a machine; explicit network and SSH policy
+determines access. Email-domain account linking, ingress/custom-record zones,
+and Aquifer tenant isolation retain their separate meanings.
+
+### One suffix, relative domain paths
+
+The root stores the account's authoritative DNS suffix, initially `karst`.
+It is a DNS name, potentially containing multiple labels (`acme.example`),
+not an ordinary child-domain label. Root suffix updates use DNS-name validation;
+child labels use the existing mesh label grammar. Validation canonicalizes
+case/trailing root dots, rejects invalid or overlong names, and checks complete
+resulting device names as well as individual labels. No public registration
+check is required. Store/expose the root suffix separately from child `Label`
+values so a multi-label suffix is never passed through child-label validation.
+Root display uses that suffix; it is not an independently renameable alias.
+
+`Domain.Path` is relative to the root: empty for the root, `engineering` for
+its child, and `staging.engineering` for that child's child. The root suffix
+is never inserted into this relative path. A machine's `DNSLabel` remains
+its host label qualified by that relative path; full names append the root
+suffix exactly once. Keep the existing per-account unique qualified-DNSLabel
+constraint. Host labels can consequently repeat in different domains where
+the qualified labels differ, without replacing the index.
+
+| Situation | Root suffix | Relative path | DNSLabel | Full DNS name |
+|---|---|---|---|---|
+| Fresh account, default enrollment | `karst` | empty | `laptop` | `laptop.karst` |
+| Child-domain enrollment | `karst` | `engineering` | `build.engineering` | `build.engineering.karst` |
+| Nested domain | `karst` | `staging.engineering` | `api.staging.engineering` | `api.staging.engineering.karst` |
+| Existing account migrated | `mesh.example` | `engineering.acme` | `build.engineering.acme` | `build.engineering.acme.mesh.example` |
+| Same migrated account after root rename | `corp.example` | `engineering.acme` | `build.engineering.acme` | `build.engineering.acme.corp.example` |
+
+The root suffix is the single authority for login `dns_name`, API FQDNs,
+netmap `KarstDNSConfig.zone`, forward/reverse mesh records, and host resolver
+integration. `Settings.DNSDomain`, `Network.Dns`, and server DNS overrides
+must not continue as independently mutable sources after migration. Existing
+settings entry points must route through the authorized root-rename operation;
+compatibility fields may be maintained as derived projections. A deployment
+DNS override can seed the migration, but cannot silently override a renamed
+account root. Relative `DNSLabel` plus `zone` fits the existing wire format;
+this decision requires no new DNS wire fields.
+
+### Enrollment and API compatibility
+
+An invitation with an omitted domain resolves to `RootDomainID` when created
+and persists that ID. Older root-targeting keys are backfilled during
+migration. Other enrollment flows resolve omission to the current root ID.
+Authorization is evaluated for that actual target; a delegated child admin
+cannot omit a target to gain root enrollment authority. Rename never changes
+which domain an invitation targets.
+
+An explicit invalid, deleted, or cross-account target is an error at both
+invitation creation and enrollment. Transient lookup failure is also an error,
+not permission to fall back. Enrollment and deletion must serialize or use
+constraints so a successful enrollment cannot refer to a deleted domain.
+Deletion must refuse children, devices, or live invitation references; an
+administrator can explicitly revoke or retarget invitations before deletion.
+
+Existing create-domain requests with no parent map to creation under the
+root, preserving old top-level domain paths. Existing peer-update endpoints
+that cannot express domain placement preserve placement. Placement-aware
+updates distinguish omission (unchanged) from an explicit root ID; an empty
+string is not a move-to-root command. Reads return real root/domain IDs and
+identify the root and its suffix. Root-aware clients must display the root
+rather than an empty-domain state. Unsupported legacy writes must return an
+explicit error rather than construct another root or bypass rename safeguards.
+
+Extend domain reads with additive `is_root` and root `dns_suffix` fields and
+expose `root_domain_id` on account configuration. Preserve the existing child
+`label`/`path` meaning. Root rename uses a dedicated preview/commit API carrying
+the requested suffix and expected naming revision; a generic domain update or
+account-settings write cannot skip this contract. HTTP conflicts distinguish
+stale revisions from validation errors and permission failures. Exact route
+spelling and schema generation are implementation details of #362.
+
+### Administration and policy
+
+Account owners and administrators retain their existing module permissions
+across the tree. Domain-scoped administrators operate only within their
+explicitly delegated subtree and may delegate no broader scope. A move needs
+permission over both source and destination; cross-account moves are rejected.
+Root suffix rename requires account-wide domain-update authority; delegated
+root administration alone does not grant account naming configuration rights.
+
+Bindings reference stable domain IDs. Subtree authorization derives from the
+same-account parent graph (or a transactionally maintained equivalent), not
+mutable suffix strings or cached binding `DomainPath`. Migration and rename
+must not turn a cached path into a broader grant. Existing path fields may
+remain display/cache projections but cannot be an independent authority.
+
+Neither shared domain placement nor domain administration grants connectivity,
+SSH access, or a separate relay tenant. Network ACLs and the independent SSH
+gate remain explicit. Existing selectors are unchanged. Future domain selectors
+must specify exact-domain versus subtree semantics and reference stable IDs;
+DNS names are not authorization identities. Compliance may further constrain
+resource grants per device and requirement set; it never grants identity
+privileges or changes domain membership. #363 owns evidence trust, policy
+composition, stale/unknown handling, and bounded revocation design.
+
+### Root rename, propagation, and rollback
+
+Root rename changes the suffix only: relative descendant paths, peer
+`DNSLabel`s, parent edges, domain IDs, device identities, IP addresses,
+invitation targets, and role/policy references remain unchanged. Child rename
+and domain reparenting remain deferred; device moves remain supported and
+change qualified names under their own authorization checks.
+
+Before commit, an account administrator receives the canonical new suffix,
+affected device/domain counts, before/after name examples, validation results,
+and a warning that old names stop resolving after clients refresh. Confirmation
+is bound to an account naming revision. Commit revalidates authorization,
+naming constraints, and that revision; concurrent rename, enrollment, or
+placement changes invalidate a stale preview rather than committing unseen
+changes. Audit the actor, old/new suffix, and revision.
+
+Commit the suffix and compatibility projections in one database transaction,
+advance the account naming/netmap revision, and publish only consistent
+snapshots of peer names plus DNS configuration. Delivery is asynchronous:
+online clients switch on their next successful netmap refresh, update forward
+and PTR records and host suffix/search integration, and invalidate local mesh
+caches. Existing DNS answers can remain cached for their TTL (currently 60s).
+Offline clients keep their last configuration until reconnect; the console
+must distinguish committed configuration from observed client convergence.
+Do not promise an atomic change across distributed clients or a fixed
+convergence bound for offline devices.
+
+There are **no automatic old-suffix aliases** in this implementation. Rename
+preview must disclose the interruption and require confirmation. Adding
+compatibility aliases later needs a separate resolver/wire design: the current
+resolver serves one authoritative mesh suffix. Administrators schedule naming
+changes accordingly; existing connections by address are not intentionally
+revoked by DNS rename alone.
+
+A transaction failure leaves the previous configuration intact. After commit,
+rollback is a new authorized rename to the previous suffix, with fresh
+validation, preview, audit event, and monotonically increasing revision; it
+never rewinds identity state or resurrects deleted resources. Restart/retry
+must recover committed revision publication so a notification failure cannot
+leave clients permanently on an unadvertised configuration.
+
+### Migration and rollout
+
+Run an idempotent per-account migration before enabling the new write paths.
+Create the root and root reference under a lock/uniqueness constraint shared
+with account provisioning, backfill empty device and invitation DomainIDs,
+and attach each formerly parentless domain beneath the root without changing
+its existing relative Path, peer DNSLabel, or ID. Preserve invitation targets
+and delegation scopes. Verify sibling and qualified-name uniqueness, graph
+integrity, reference ownership, and complete DNS-name validity before commit;
+never resolve migration collisions by silently renaming devices or widening
+permissions. A child named `karst` is valid and distinct from the root suffix.
+
+Inventory the suffix used by login/API naming, account settings, Network.Dns,
+and control DNS overrides. When they agree (or an empty legacy field is unused),
+seed the root from that effective suffix, preserving existing names. If active
+surfaces disagree, the graph is corrupt, or an account with devices has no
+usable suffix, block that account's migration with a precise diagnostic and
+require explicit operator reconciliation. Do not choose an arbitrary winner
+and call it name-preserving. An empty account with no suffix may use `karst`.
+
+The migration changes no Aquifer or account IDs and grants no new roles.
+Switch authorization to stable graph identity before enabling root rename.
+Use a coordinated management-server upgrade/maintenance window; mixed old/new
+writers are unsupported because older code can create implicit-root records
+and apply conflicting suffix precedence. A migrated database must not run an
+older writer without a separately validated restore/downgrade procedure.
+
+Implementation acceptance must cover fresh/concurrent provisioning, repeat
+migration, conflicting suffixes and corrupt references, preserved names and
+permissions, nested DNS/PTR resolution, default enrollment after rename,
+invalid/deleted-target races, stale rename previews, authorization boundaries,
+transaction/publication recovery, and client reconnect/host resolver behavior.
+This is a documentation contract; completion of #361 does not complete #362
+or claim that root lifecycle or compliance enforcement has shipped.
+
+### Tradeoffs and boundaries
+
+Explicit roots remove nullable membership and make default placement visible.
+Stable graph authority avoids renames changing privileges. Keeping one suffix
+and relative paths preserves the existing resolver shape and device identities.
+The costs are a coordinated migration, a special root-suffix validation path,
+and visible DNS disruption during rename without aliases. Existing account
+names take precedence over imposing the new-account default. Account-level
+Aquifer/Bedrock isolation stays under ADR-0033; this decision needs no changes
+to Ponor tenant forwarding or cryptographic trust protocols.
+
+## Historical context and original decision (2026-09-19)
+
+The remaining original Context, Decision, Consequences, and dated implementation
+updates are retained for rationale and history. The current decision above
+wins on conflicts; implementation notes must not be read as current feature
+availability without checking #362.
 
 ---
 

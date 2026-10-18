@@ -12,6 +12,11 @@ and is the place to update when a deferral is later picked up.
 
 ## Access policy
 
+The agreed [mesh domain and access model](mesh-domains.md) defines an explicit,
+renameable root named `karst` for new accounts, delegated administration, and
+resource access conditioned on device compliance. Those follow-up capabilities
+must not be inferred from the existing console surfaces described below.
+
 - **Schema-aware autocomplete and inline JSON-syntax lint exist**
   (`GET /policy/schema`, `web/console/src/policy-editor.tsx`, a CodeMirror 6
   editor). Autocomplete offers the document's top-level keys, a rule's
