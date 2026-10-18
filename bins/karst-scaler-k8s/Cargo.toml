@@ -46,10 +46,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # does, confirmed against kube's own feature list (not assumed) before this
 # dependency was added.
 #
-# Pinned to exactly 4.0.0, not "4": 4.1/4.2 need rustc 1.89, one minor above
-# this workspace's own MSRV (1.88, Cargo.toml's rust-version) -- 4.0.0 is
-# the newest release that still builds on it (confirmed via `cargo info
-# kube@<version>` across 4.0/4.1/4.2, not guessed).
+# Pinned to exactly 4.0.0, not "4": 4.1/4.2 need rustc 1.89. This workspace's
+# own MSRV (Cargo.toml's rust-version) has since moved to 1.89 too (the
+# zbus 6 migration, issue #347), so 4.1/4.2 may now build here as well --
+# unconfirmed, since relaxing this pin is a separate exercise from that
+# migration. 4.0.0 is the newest release confirmed to build under the MSRV
+# this pin was originally chosen for (via `cargo info kube@<version>` across
+# 4.0/4.1/4.2, not guessed).
 kube = { version = "=4.0.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 k8s-openapi = { version = "0.28", features = ["latest"] }
 # The mint-enrollment-token call (POST to the control server, a different

@@ -14,7 +14,14 @@ workspace = true
 [dependencies]
 hickory-proto = { version = "0.26.1", default-features = false }
 thiserror = "2"
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+# zbus 6 dropped the `blocking` module (issue #347): `default-rt` gives every
+# `Connection` zruntime's own single-threaded reactor, and `zbus::block_on`
+# (feature-gated the same way) drives one `async fn` call to completion on
+# the calling thread without pulling in Tokio — matching this crate's own
+# lack of an async runtime of its own (`networkmanager.rs`/`resolved.rs` wrap
+# each public, synchronous method body in exactly one `block_on` call, per
+# that function's own doc comment on why only one per call is safe).
+zbus = { version = "6", default-features = false, features = ["default-rt", "proxy"] }
 # DNS-over-TLS (RFC 7858) upstream transport — ADR-0034. Deliberately no
 # `prefer-post-quantum`, unlike `bins/karstd/src/relay_tls.rs`'s Ponor
 # config: a public or self-hosted third-party DNS resolver will not offer
@@ -37,7 +44,7 @@ sha2 = { version = "0.10", default-features = false }
 # `sys_windows`-pattern wrapper — the same reasoning `bins/karstd`'s
 # `Cargo.toml` gives for `windows-service`.
 # Pinned below the newest release (0.100, which requires Rust 1.95): the
-# workspace MSRV is 1.88 (`rust-toolchain.toml`), and 0.6 is the newest
+# workspace MSRV is 1.89 (`rust-toolchain.toml`), and 0.6 is the newest
 # series whose own `rust-version` (1.82) fits under it. Its `Key` API is
 # identical to 0.100's for everything this module calls.
 windows-registry = "0.6"

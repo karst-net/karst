@@ -119,9 +119,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # No `targets:` input on purpose — see the `macos` job below for the
-      # full explanation. `rust-toolchain.toml` pins 1.88 for the workspace
+      # full explanation. `rust-toolchain.toml` pins 1.89 for the workspace
       # and cargo reads that file, so `targets:` here would add the target to
-      # `stable` while the actual build runs under 1.88 and fails with
+      # `stable` while the actual build runs under 1.89 and fails with
       # "can't find crate for `core`". `rustup target add` honours the
       # toolchain file, so it lands on the toolchain that actually compiles.
       - uses: dtolnay/rust-toolchain@stable
@@ -349,10 +349,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # **Not the action's `targets:` input**, which is the trap the `fuzz` job
       # below documents from the other direction: `rust-toolchain.toml` pins
-      # 1.88 for the workspace and that pin wins, because cargo reads the file
+      # 1.89 for the workspace and that pin wins, because cargo reads the file
       # rather than rustup's default. The action installs `stable` and adds
       # targets to *that*, so `targets:` here put x86-64 somewhere nothing
-      # builds with, while the job ran under 1.88 — which had only the host
+      # builds with, while the job ran under 1.89 — which had only the host
       # target and failed with "can't find crate for `core`".
       #
       # `rustup target add` honours the toolchain file, so it lands on the
@@ -1161,7 +1161,7 @@ jobs:
   fuzz:
     name: Fuzz smoke
     runs-on: ubuntu-latest
-    # rust-toolchain.toml pins 1.88 for the workspace, and that pin wins over
+    # rust-toolchain.toml pins 1.89 for the workspace, and that pin wins over
     # whatever `dtolnay/rust-toolchain@nightly` makes default — cargo reads the
     # file, not rustup's default. libFuzzer needs nightly, so the pin has to be
     # overridden explicitly; RUSTUP_TOOLCHAIN is the one thing that outranks it.
@@ -1191,10 +1191,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       # Verifpal is Rust as of v0.80 and declares rust-version 1.96, which the
-      # workspace's 1.88 pin cannot satisfy — and the pin applies here because
+      # workspace's 1.89 pin cannot satisfy — and the pin applies here because
       # cargo resolves rust-toolchain.toml from the working directory, not from
       # --manifest-path. RUSTUP_TOOLCHAIN overrides it for this step alone;
-      # the workspace itself stays on 1.88.
+      # the workspace itself stays on 1.89.
       #
       # Pinned to a tag rather than tracking master: an upstream change would
       # otherwise alter what our release gate means, without a commit here.
