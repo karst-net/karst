@@ -561,6 +561,86 @@ this project's own convention is to tell an operator what they must set
 rather than quietly assume the permissive answer (the same reasoning
 `detect_location` and §4b's own opt-in flag already apply one level up).
 
+### 4d. Ephemeral anchors: scheduled reachability for Local Zones without a standing pool
+
+§4b's anchor dispatcher works because every anchor it names is a fixed,
+provider-operated, always-up endpoint (`s3.{region}.amazonaws.com` and
+its Azure/GCP equivalents) — nothing needs provisioning, nothing needs
+scheduling, a connection attempt either lands or it doesn't. AWS Local
+Zones have no such endpoint: there is no `s3.{local-zone}.amazonaws.com`
+to measure a specific Local Zone's own RTT against, confirmed by
+investigating the question directly rather than assuming it (issue
+#348's measurement spike). Measuring one for real means reaching a real
+EC2 instance placed there — and issue #348's own measurement also found
+that no Local Zone offers a uniform "nano"-class instance type to put
+there; the real floor varies zone by zone (`t3.medium` in some,
+`c6gn.medium` with no `t3` family at all in others). This section is the
+mechanism that followed from both findings: an operator-provisioned,
+pre-enrolled probe instance per Local Zone of interest, never counted as
+relay capacity and never touched by §5's drivers, kept reachable only in
+short, published bursts rather than continuously — because continuous
+reachability is exactly the EC2 cost §348 priced out as unnecessary for
+a signal this infrequent.
+
+**The admin table is §4c's `allowed_regions` shape, reused, not
+reinvented.** A deployment-wide (not account-scoped) list of ephemeral
+anchors — label, address, port, plus the operator/scheduler-only region
+and EC2 instance id netmap clients never see — declaratively reconciled
+from an operator file at boot (`KARST_EPHEMERAL_ANCHORS_FILE`) with
+additive REST CRUD for live edits, projected into the netmap exactly the
+way `allowed_regions` is. **The same fail-closed default applies, not a
+weaker version of it**: an empty anchor list means no node ever probes
+anything and the scheduler below never makes a single AWS API call for
+any region — true by construction (the empty case returns before any
+AWS client is ever built), the identical "never a candidate to begin
+with" property §4c's own text documents, extended here to cost as well
+as to probing.
+
+**Two numbers describe the schedule, both genuine runtime values from
+that same table, never a compiled-in constant on either side:**
+`window_period_seconds` (how often a reachable burst opens) and
+`duty_cycle_seconds` (how long each burst lasts). Both flow through the
+netmap to every opted-in client and are fetched independently by the
+scheduler on every tick, so changing either reaches both sides without a
+restart.
+
+**The scheduler (`bins/karst-anchor-scheduler`) is a new standalone
+binary, not a §5 driver.** A driver's `create`/`drain`/`destroy` shape
+assumes a pool-scoped node count being reconciled; an ephemeral anchor is
+a fixed, pre-provisioned, never-destroyed instance that is never counted
+in any pool's capacity at all — forcing it into that trait would mean
+growing a case that exists for exactly one caller. Instead it is a small
+process that, on each tick, fetches the anchor list and schedule from the
+same admin REST surface, and — only when that list is non-empty —
+`DescribeInstances` (cheap idempotency check) then `StartInstances` or
+`StopInstances` depending on whether the current time falls inside the
+live window. `StopInstances` already had a precedent in the AWS driver's
+own `drain`; `StartInstances` is new but identical in shape. This is the
+first standalone AWS-talking binary in this workspace — a real departure
+from §5's drivers always living inside `karst-scaler`'s long-running
+loop, justified by the fact that toggling power on a schedule has no
+pool-reconciliation host to live inside.
+
+**Client-side staggering avoids a thundering herd without central
+coordination.** Every opted-in node computes its own offset within a
+duty-cycle window as `(its own process start time) mod
+duty_cycle_seconds` and fires its one probe at `window_start + offset` —
+deterministic and reproducible across a restart within the same process
+lifetime, so no new source of randomness is needed, and naturally spread
+across the live window instead of every node piling onto an instance at
+the exact instant it becomes reachable (which may still be finishing its
+own boot/health checks). A known, accepted gap: nodes that restart
+together (a rolling deploy, a mass reconnect after an outage) still
+cluster together under this formula, since their start times correlate —
+left unsolved deliberately, to revisit only if a real deployment shows
+it mattering, not built against a hypothetical.
+
+**The anchor instances run nothing but their own default `sshd`.**
+Reusing the instance's already-open SSH port 22 for the RTT measurement
+— the same choice issue #348's real measurement run made — avoids
+putting `karst-relay` or any other new listener on a box that must never
+be mistaken for a relay or counted as one.
+
 ### 5. Drivers: actuation behind a narrow interface
 
 The planner never calls a cloud API. It emits desired state to a **driver**

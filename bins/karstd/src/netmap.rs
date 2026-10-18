@@ -32,7 +32,8 @@ use std::fmt;
 
 use karst_control_client::netmap::{
     netmap_version, peer_digest, AllowedRegionsEntryView, BedrockHeadView, DNSConfigView,
-    DNSRouteView, DNSUpstreamView, FilterRuleView, NetmapContent, PeerEntry, RelayView,
+    DNSRouteView, DNSUpstreamView, EphemeralAnchorsEntryView, FilterRuleView, NetmapContent,
+    PeerEntry, RelayView,
 };
 use karst_control_client::transport::pb;
 use sha2::{Digest as _, Sha256};
@@ -242,6 +243,97 @@ impl AllowedRegions {
                 .iter()
                 .map(move |region| (provider.as_str(), region.as_str()))
         })
+    }
+}
+
+/// One operator-provisioned ephemeral anchor — ADR-0045 §4d.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EphemeralAnchor {
+    pub label: String,
+    pub address: String,
+    pub port: u16,
+}
+
+/// ADR-0045 §4d's ephemeral-anchor list and duty-cycle schedule, as pushed
+/// down by the server. Absent, or present with an empty `anchors` list
+/// (even if a schedule is set), means no ephemeral anchor is ever probed by
+/// any node — the identical fail-closed default [`AllowedRegions`]'s own
+/// doc comment describes.
+///
+/// Deterministic order (`Vec`, server-sorted by label): this feeds both the
+/// netmap content hash (`EphemeralAnchorsEntryView`) and
+/// `ephemeral_anchor_probe.rs`'s own probe loop.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EphemeralAnchors {
+    anchors: Vec<EphemeralAnchor>,
+    window_period_seconds: u32,
+    duty_cycle_seconds: u32,
+}
+
+impl EphemeralAnchors {
+    fn from_wire(msg: Option<pb::KarstEphemeralAnchors>) -> Self {
+        let Some(msg) = msg else {
+            return Self::default();
+        };
+        Self {
+            anchors: msg
+                .anchors
+                .into_iter()
+                .map(|entry| EphemeralAnchor {
+                    label: entry.label,
+                    address: entry.address,
+                    #[allow(clippy::cast_possible_truncation)]
+                    port: entry.port as u16,
+                })
+                .collect(),
+            window_period_seconds: msg.window_period_seconds,
+            duty_cycle_seconds: msg.duty_cycle_seconds,
+        }
+    }
+
+    /// `None` when `anchors` is empty — **even if a schedule is set** — so
+    /// re-encoding into the on-disk cache reproduces the bytes the server
+    /// sent, the same reasoning [`AllowedRegions::to_wire`] documents. An
+    /// admin who configured a duty cycle but added no anchor yet must not
+    /// cause this node to do anything.
+    fn to_wire(&self) -> Option<pb::KarstEphemeralAnchors> {
+        if self.anchors.is_empty() {
+            return None;
+        }
+        Some(pb::KarstEphemeralAnchors {
+            anchors: self
+                .anchors
+                .iter()
+                .map(|a| pb::karst_ephemeral_anchors::Entry {
+                    label: a.label.clone(),
+                    address: a.address.clone(),
+                    port: u32::from(a.port),
+                })
+                .collect(),
+            window_period_seconds: self.window_period_seconds,
+            duty_cycle_seconds: self.duty_cycle_seconds,
+        })
+    }
+
+    /// Every ephemeral anchor this node may probe — `ephemeral_anchor_probe.rs`'s
+    /// whole input, alongside the two schedule accessors below.
+    pub fn iter(&self) -> impl Iterator<Item = &EphemeralAnchor> {
+        self.anchors.iter()
+    }
+
+    /// How often a duty-cycle window opens, in seconds. `0` alongside an
+    /// empty `anchors` list — nothing to probe either way.
+    #[must_use]
+    pub fn window_period_seconds(&self) -> u32 {
+        self.window_period_seconds
+    }
+
+    /// How long each anchor stays reachable within one window, in seconds —
+    /// the "duty cycle." A genuine runtime value read from the server on
+    /// every poll, never a compiled-in constant.
+    #[must_use]
+    pub fn duty_cycle_seconds(&self) -> u32 {
+        self.duty_cycle_seconds
     }
 }
 
@@ -801,6 +893,10 @@ pub struct Netmap {
     /// anchor dispatcher. Part of the netmap content hash, so a narrowed or
     /// widened allowlist reaches this node on its next poll.
     pub allowed_regions: AllowedRegions,
+    /// ADR-0045 §4d's ephemeral-anchor list and duty-cycle schedule. Part of
+    /// the netmap content hash, so a changed anchor list or duty cycle
+    /// reaches this node on its next poll.
+    pub ephemeral_anchors: EphemeralAnchors,
     /// Peers, keyed by handle. Ordered, so digests and the re-encoded form are
     /// deterministic rather than dependent on hash iteration order.
     peers: BTreeMap<Vec<u8>, Peer>,
@@ -887,6 +983,7 @@ impl Netmap {
             dns_config: DNSConfig::default(),
             bedrock_head: BedrockHead::default(),
             allowed_regions: AllowedRegions::default(),
+            ephemeral_anchors: EphemeralAnchors::default(),
             packet_filter: Vec::new(),
             egress_filter: Vec::new(),
             ssh_filter: Vec::new(),
@@ -984,6 +1081,7 @@ impl Netmap {
         self.dns_config = DNSConfig::from_wire(resp.dns_config);
         self.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
         self.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions);
+        self.ephemeral_anchors = EphemeralAnchors::from_wire(resp.ephemeral_anchors);
         // The filter is shipped whole even in a delta — it is small, and a rule
         // set assembled from fragments would be a second thing to keep in step.
         // If that ever changes, replacing wholesale here would empty the filter
@@ -1152,6 +1250,16 @@ impl Netmap {
             .iter()
             .map(|(provider, regions)| AllowedRegionsEntryView { provider, regions })
             .collect();
+        let ephemeral_anchors: Vec<EphemeralAnchorsEntryView<'_>> = self
+            .ephemeral_anchors
+            .anchors
+            .iter()
+            .map(|a| EphemeralAnchorsEntryView {
+                label: &a.label,
+                address: &a.address,
+                port: a.port,
+            })
+            .collect();
 
         netmap_version(&NetmapContent {
             psk_epoch: self.psk_epoch,
@@ -1179,6 +1287,9 @@ impl Netmap {
                 mode: self.bedrock_head.mode as u32,
             },
             allowed_regions: &allowed_regions,
+            ephemeral_anchors: &ephemeral_anchors,
+            ephemeral_anchor_window_period_seconds: self.ephemeral_anchors.window_period_seconds,
+            ephemeral_anchor_duty_cycle_seconds: self.ephemeral_anchors.duty_cycle_seconds,
         })
     }
 
@@ -1222,6 +1333,7 @@ impl Netmap {
             dns_config: Some(self.dns_config.to_wire()),
             bedrock_head: self.bedrock_head.to_wire(),
             allowed_regions: self.allowed_regions.to_wire(),
+            ephemeral_anchors: self.ephemeral_anchors.to_wire(),
             peers: self.peers.values().map(Peer::to_wire).collect(),
             packet_filter: self.packet_filter.clone(),
             egress_filter: self.egress_filter.clone(),
@@ -1288,6 +1400,7 @@ mod tests {
         projected.dns_config = DNSConfig::from_wire(resp.dns_config.clone());
         projected.bedrock_head = BedrockHead::from_wire(resp.bedrock_head.as_ref());
         projected.allowed_regions = AllowedRegions::from_wire(resp.allowed_regions.clone());
+        projected.ephemeral_anchors = EphemeralAnchors::from_wire(resp.ephemeral_anchors.clone());
         projected.packet_filter = resp.packet_filter.clone();
         projected.egress_filter = resp.egress_filter.clone();
         projected.ssh_filter = resp.ssh_filter.clone();
@@ -1813,6 +1926,68 @@ mod tests {
             .apply(sealed(map.to_wire_full(), &round_tripped))
             .expect("apply");
         assert_eq!(round_tripped.allowed_regions, AllowedRegions::default());
+    }
+
+    #[test]
+    fn changing_only_ephemeral_anchors_changes_the_version_and_replaces_it() {
+        // ADR-0045 §4d.
+        let mut without = Netmap::new();
+        without
+            .apply(sealed(full(vec![wire_peer("aaa", "100.64.0.2")]), &without))
+            .expect("apply");
+
+        let mut with = Netmap::new();
+        let mut response = full(vec![wire_peer("aaa", "100.64.0.2")]);
+        response.ephemeral_anchors = Some(pb::KarstEphemeralAnchors {
+            anchors: vec![
+                pb::karst_ephemeral_anchors::Entry {
+                    label: "aws:us-west-2-den-1a".to_owned(),
+                    address: "10.0.0.1".to_owned(),
+                    port: 22,
+                },
+                pb::karst_ephemeral_anchors::Entry {
+                    label: "aws:us-east-1-bos-1a".to_owned(),
+                    address: "10.0.0.2".to_owned(),
+                    port: 22,
+                },
+            ],
+            window_period_seconds: 900,
+            duty_cycle_seconds: 300,
+        });
+        with.apply(sealed(response, &with)).expect("apply");
+        assert_ne!(without.version, with.version);
+        let anchors: Vec<_> = with.ephemeral_anchors.iter().collect();
+        assert_eq!(anchors.len(), 2);
+        assert_eq!(with.ephemeral_anchors.window_period_seconds(), 900);
+        assert_eq!(with.ephemeral_anchors.duty_cycle_seconds(), 300);
+    }
+
+    #[test]
+    fn an_absent_ephemeral_anchors_round_trips_through_the_cache_encoding() {
+        // Same reasoning as an_absent_allowed_regions_round_trips_through_the_cache_encoding
+        // above, for ADR-0045 §4d instead of §4c.
+        let map = loaded();
+        assert_eq!(map.ephemeral_anchors, EphemeralAnchors::default());
+        let mut round_tripped = Netmap::new();
+        round_tripped
+            .apply(sealed(map.to_wire_full(), &round_tripped))
+            .expect("apply");
+        assert_eq!(round_tripped.ephemeral_anchors, EphemeralAnchors::default());
+    }
+
+    #[test]
+    fn to_wire_is_none_for_a_schedule_with_no_anchors() {
+        // The Rust-side proof of the empty-table guarantee at the wire
+        // level: an admin who set a duty cycle but added no anchor yet
+        // must not cause `to_wire` to emit a present-but-empty message --
+        // `EphemeralAnchors::to_wire`'s own doc comment.
+        let mut map = Netmap::new();
+        map.ephemeral_anchors = EphemeralAnchors {
+            anchors: Vec::new(),
+            window_period_seconds: 900,
+            duty_cycle_seconds: 300,
+        };
+        assert_eq!(map.to_wire_full().ephemeral_anchors, None);
     }
 
     // ── digests ─────────────────────────────────────────────────────────────
