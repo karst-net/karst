@@ -1058,11 +1058,13 @@ type MySession struct {
 
 // NocComponent defines model for NocComponent.
 type NocComponent struct {
+	Bytes    *int64              `json:"bytes,omitempty"`
 	Health   *NocComponentHealth `json:"health,omitempty"`
 	Id       string              `json:"id"`
 	Kind     NocComponentKind    `json:"kind"`
 	Label    string              `json:"label"`
 	Location *RelayLocation      `json:"location,omitempty"`
+	Packets  *int64              `json:"packets,omitempty"`
 }
 
 // NocComponentHealth defines model for NocComponent.Health.

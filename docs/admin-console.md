@@ -87,6 +87,36 @@ and is the place to update when a deferral is later picked up.
   full-replace storage above has nowhere to keep "when did this path
   configuration start" across reports.
 
+## Per-route throughput
+
+- **Issue #281: aggregate egress bytes/packets per exit-node/subnet-router
+  route, for NOC visibility only** — never a planner or scaling input
+  (settled out of scope by #282). Self-reported by whichever node is
+  currently a route's authenticated gateway, read back from that route's
+  own nftables forward-accept counter (`bins/karstd/src/gateway.rs`'s
+  `karst_routes` table already tags it with the route's id), over the same
+  control-channel session `KarstSessionObservation` already uses — not a
+  second, relay-telemetry-style signed endpoint, since a node already has
+  a live session here and ADR-0021's relay channel has no concept of
+  "route" at all to report this through.
+- **Egress (client → destination) only.** The matching return leg is not
+  separately attributable per route today: `karst_routes`'s generic
+  return-path accept rule is shared across every route a gateway serves,
+  not route-scoped, and scoping it would risk misattributing traffic
+  between two routes with overlapping destination prefixes on the same
+  gateway (an exit route and a subnet route together, for example). A
+  named gap, not solved here.
+- **Surfaced on the NOC map's `"route"` component** (`GET
+  /noc/components`) as `bytes`/`packets`, summed across every route a
+  gateway group serves — absent, not zero, until some gateway for the
+  group has self-reported at least once. There is no per-route (as
+  opposed to per-group) drill-down endpoint yet; the group-level sum is
+  what this issue lands, and a finer drill-down is left for whenever the
+  NOC view (#241) actually wants one.
+- Latest snapshot only, the same posture relay telemetry (ADR-0021) and
+  per-node throughput above both already have — no history, no rate, just
+  the current total.
+
 ## Relay health and onboarding
 
 - **Both are done.** Relay onboarding (add/remove with client-side address

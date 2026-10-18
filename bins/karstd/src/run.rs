@@ -6027,6 +6027,39 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         ));
+        // Issue #281. Read back fresh every tick, same as `sessions` above —
+        // these are the kernel's own live counters, not a buffer anything
+        // queues into between ticks. A node that is not currently a gateway
+        // for anything (`gateway.active()` false) has no table to read and
+        // reports nothing, the same empty-request shape as before this
+        // field existed.
+        let route_observations = {
+            let mut gateway = gateway
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if gateway.active() {
+                match gateway.route_bytes() {
+                    Ok(routes) => routes
+                        .into_iter()
+                        .map(|route| pb::KarstRouteObservation {
+                            route_id: route.route_id,
+                            bytes: route.bytes,
+                            packets: route.packets,
+                        })
+                        .collect(),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "karstd: could not read back per-route forwarding counters"
+                        );
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            }
+        };
+        client.set_route_observations(route_observations);
         published = chosen;
 
         let synced = runtime.block_on(client.sync());

@@ -48,6 +48,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
+	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
@@ -344,6 +345,15 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err := regionAllowStore.Reconcile(context.Background(), allowedRegions); err != nil {
 		return nil, fmt.Errorf("karst: region allowlist: reconcile: %w", err)
 	}
+	// Issue #281: per-route egress telemetry, self-reported by each route's
+	// current gateway over the control channel's own existing session --
+	// handed to NetmapHandler the same way regionAllowStore is above, and
+	// to karstapi the same way groupLocationStore is, for the NOC view's
+	// read side.
+	routeTelemetryStore, err := routetelemetry.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: route telemetry store: %w", err)
+	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -368,7 +378,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, routeTelemetryStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
@@ -399,20 +409,21 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	router := &handler{
 		login: &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
 		netmap: &control.NetmapHandler{
-			Nodes:       nodes,
-			Peers:       peers,
-			PSK:         deriver,
-			DNS:         accounts,
-			Routes:      accounts,
-			Policy:      pol,
-			PolicyStore: policyStore,
-			Relays:      relays,
-			RelayStore:  relayStore,
-			TurnServers: turnServers,
-			TurnMinter:  turnMinter,
-			TurnStore:   turnStore,
-			Bedrock:     bedrockLog,
-			RegionAllow: regionAllowStore,
+			Nodes:          nodes,
+			Peers:          peers,
+			PSK:            deriver,
+			DNS:            accounts,
+			Routes:         accounts,
+			Policy:         pol,
+			PolicyStore:    policyStore,
+			Relays:         relays,
+			RelayStore:     relayStore,
+			TurnServers:    turnServers,
+			TurnMinter:     turnMinter,
+			TurnStore:      turnStore,
+			Bedrock:        bedrockLog,
+			RegionAllow:    regionAllowStore,
+			RouteTelemetry: routeTelemetryStore,
 		},
 		bedrock: &control.BedrockHandler{Log: bedrockLog, Peers: peers},
 	}

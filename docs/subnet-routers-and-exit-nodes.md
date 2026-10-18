@@ -143,7 +143,12 @@ anything. A non-administrator can see the current exit but cannot change it.
   route over a prefix the node's own gateway forwarding already depended on
   reaching by a real interface, silently destroying that interface's kernel
   route. Worth checking first if forwarding is reported ready but traffic is
-  not actually moving.
+  not actually moving. The same per-route egress counters are also
+  available without root or host access, via the console's NOC view or
+  `GET /noc/components` (issue #281, "Per-route throughput" in
+  `admin-console.md`) — this manual path stays useful for the return leg,
+  which that automatic reporting does not cover, and for an operator
+  without console access.
 - **`ip route show`** on a recipient — a subnet route appears as a normal
   route over the tunnel interface; a consented default route appears in a
   dedicated policy-routing table rather than the main table (`ip rule show`

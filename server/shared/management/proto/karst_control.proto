@@ -118,6 +118,40 @@ message KarstNetmapRequest {
   // the deployment's own allowlist before recording it (defense in depth
   // against a buggy or compromised node reporting an unlisted region).
   repeated KarstAnchorRtt anchor_rtt = 5;
+
+  // Issue #281: aggregate egress traffic this node forwarded for each
+  // route it is currently the authenticated gateway for, read back from
+  // the route's own nftables forward-accept counter
+  // (`bins/karstd/src/gateway.rs::Manager::route_bytes`) — never tracked
+  // separately, so this can never drift from what the kernel actually
+  // forwarded. Visibility only, for the NOC view (#241): the server never
+  // acts on this value, and it is never shown to anyone but an account's
+  // own NOC-role operators. Like `anchor_rtt` above, this is an
+  // observation the server records, never an assertion it trusts
+  // outright — the handler re-checks each `route_id` against this node's
+  // own authenticated gateway role before recording it.
+  //
+  // Egress (client -> destination) only. The matching return leg is not
+  // separately attributable per route today (`gateway.rs`'s own doc
+  // comment on why) — a named gap, not silently omitted.
+  repeated KarstRouteObservation route_observations = 6;
+}
+
+// KarstRouteObservation is one route's egress bytes/packets as its current
+// gateway measured them, issue #281.
+message KarstRouteObservation {
+  // The route_id this node was offered as a `KarstRouteOffer` with
+  // `role = GATEWAY`. The handler rejects anything else.
+  string route_id = 1;
+  // Aggregate bytes forwarded toward the route's destination prefix,
+  // a running total for as long as this gateway's forwarding grant for
+  // the route has stood (reset only when the grant itself is reinstalled,
+  // e.g. on a `karstd` restart) — same never-report-a-delta accounting
+  // `KarstSessionObservation.tx_bytes` already uses, and for the same
+  // reason: a missed report must never under-count.
+  uint64 bytes = 2;
+  // Same accounting, packet count instead of bytes.
+  uint64 packets = 3;
 }
 
 // KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.

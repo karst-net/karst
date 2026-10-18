@@ -28,6 +28,7 @@ import (
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
@@ -420,7 +421,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
 		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
 		"karst_locations", "karst_group_locations", "karst_control_plane_location",
-		"karst_allowed_regions",
+		"karst_allowed_regions", "karst_route_telemetry",
 	} {
 		_ = db.Exec("DROP TABLE IF EXISTS " + table).Error
 	}
@@ -473,6 +474,10 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("region allowlist store: %v", err)
 	}
+	routeTelemetryStore, err := routetelemetry.NewStore(db)
+	if err != nil {
+		t.Fatalf("route telemetry store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
@@ -480,7 +485,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, routeTelemetryStore, router)
 	return router
 }
 

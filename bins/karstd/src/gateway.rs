@@ -57,7 +57,25 @@ impl Ruleset {
                 masquerade: offer.masquerade,
             });
         }
-        grants.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+        // Most specific destination first, route_id as a deterministic
+        // tiebreak. nftables `accept` is a terminating verdict per chain, so
+        // whichever grant's rule is generated (and therefore matched) first
+        // "wins" a packet whose destination falls under more than one
+        // grant's prefix — e.g. an exit route (`0.0.0.0/0`) and a subnet
+        // route (`10.0.0.0/8`) on the same gateway. Sorting by route_id
+        // alone (as before) let that collision resolve alphabetically,
+        // silently misattributing one route's traffic to the other once
+        // these rules' counters are read back for per-route throughput
+        // (issue #281). Ordering by specificity instead means the most
+        // specific grant's rule always matches first, which is also the
+        // only sound attribution: the fact that a `/8` is "inside" a `/0`
+        // never flows the other way.
+        grants.sort_by(|a, b| {
+            b.destination
+                .len()
+                .cmp(&a.destination.len())
+                .then_with(|| a.route_id.cmp(&b.route_id))
+        });
         Self {
             ipv4: grants
                 .iter()
@@ -140,6 +158,10 @@ trait Backend {
     fn read(&mut self, path: &str) -> std::io::Result<String>;
     fn write(&mut self, path: &str, value: &str) -> std::io::Result<()>;
     fn nft(&mut self, args: &[&str], input: Option<&str>) -> std::io::Result<()>;
+    /// Like [`Backend::nft`], but for a read-only query whose stdout is the
+    /// point of the call — `nft`'s own discards it (`Stdio::null()`), since
+    /// every other caller is a write applied for its side effect.
+    fn nft_output(&mut self, args: &[&str]) -> std::io::Result<String>;
 }
 
 #[derive(Debug, Default)]
@@ -175,6 +197,23 @@ impl Backend for Host {
         let output = child.wait_with_output()?;
         if output.status.success() {
             Ok(())
+        } else {
+            Err(std::io::Error::other(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ))
+        }
+    }
+
+    fn nft_output(&mut self, args: &[&str]) -> std::io::Result<String> {
+        use std::process::{Command, Stdio};
+
+        let output = Command::new("nft")
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else {
             Err(std::io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_owned(),
@@ -324,6 +363,107 @@ impl Manager {
     pub fn active(&self) -> bool {
         self.0.table
     }
+
+    /// Egress bytes/packets this gateway has forwarded per route, for NOC
+    /// visibility (issue #281) — never for planner/scaling input, settled
+    /// out of scope by #282. Read back from `karst_routes`'s own live
+    /// counters rather than tracked separately, so this can never drift
+    /// from what the kernel actually forwarded.
+    ///
+    /// Covers only the outbound (client -> destination) leg: the matching
+    /// return-path accept rule (`Ruleset::nft_batch`'s doc comment) is
+    /// deliberately shared across every grant on this gateway, not
+    /// route-scoped, so return traffic cannot be attributed to one route
+    /// from nftables counters alone. Tracked as a separate gap, not solved
+    /// here.
+    ///
+    /// # Errors
+    /// If `nft` is unavailable or its JSON output cannot be parsed. Treat
+    /// this the same as a failed anchor-RTT probe: advisory telemetry, log
+    /// and skip rather than fail whatever triggered the read.
+    pub fn route_bytes(&mut self) -> std::io::Result<Vec<RouteBytes>> {
+        let output = self
+            .0
+            .backend
+            .nft_output(&["-j", "list", "table", "inet", TABLE])?;
+        parse_route_bytes(&output)
+            .map_err(|error| std::io::Error::other(format!("parse nft -j output: {error}")))
+    }
+}
+
+/// One route's egress byte/packet count, read back from its forward-accept
+/// rule's own nftables counter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteBytes {
+    pub route_id: String,
+    pub bytes: u64,
+    pub packets: u64,
+}
+
+/// Sums every `forward`-chain, comment-tagged rule's counter by comment
+/// (the `route_id` `Ruleset::nft_batch` writes there). The generic return-leg
+/// accept and catch-all drop rules carry no comment and are excluded by
+/// that alone; the `postrouting` chain's masquerade rule is excluded by
+/// chain name, since it counts the same packets the `forward` rule already
+/// did and would double the total if summed too.
+///
+/// Reads `nft -j`'s own JSON as a generic [`serde_json::Value`] rather than
+/// strongly-typed structs: nft's schema tags each `expr` entry by a single
+/// object key (`"match"`, `"counter"`, `"accept"`, ...), which a `Value`
+/// walk tolerates far better than a struct would if a future nft version
+/// adds a field this code does not know about.
+fn parse_route_bytes(output: &str) -> Result<Vec<RouteBytes>, serde_json::Error> {
+    use std::collections::HashMap;
+
+    let root: serde_json::Value = serde_json::from_str(output)?;
+    let mut totals: HashMap<String, (u64, u64)> = HashMap::new();
+    let items = root
+        .get("nftables")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten();
+    for item in items {
+        let Some(rule) = item.get("rule") else {
+            continue;
+        };
+        if rule.get("chain").and_then(serde_json::Value::as_str) != Some("forward") {
+            continue;
+        }
+        let Some(route_id) = rule.get("comment").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let exprs = rule
+            .get("expr")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten();
+        for expr in exprs {
+            let Some(counter) = expr.get("counter") else {
+                continue;
+            };
+            let bytes = counter
+                .get("bytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let packets = counter
+                .get("packets")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let entry = totals.entry(route_id.to_owned()).or_default();
+            entry.0 += bytes;
+            entry.1 += packets;
+        }
+    }
+    let mut totals: Vec<RouteBytes> = totals
+        .into_iter()
+        .map(|(route_id, (bytes, packets))| RouteBytes {
+            route_id,
+            bytes,
+            packets,
+        })
+        .collect();
+    totals.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+    Ok(totals)
 }
 
 impl Drop for Manager {
@@ -450,6 +590,102 @@ mod tests {
     }
 
     #[test]
+    fn grants_are_ordered_most_specific_destination_first() {
+        // "wide" (a /0 exit route) and "narrow" (a /8 subnet route) on the
+        // same gateway overlap: every address "narrow" covers is also
+        // inside "wide". nftables `accept` is a terminating verdict, so
+        // whichever grant's forward-accept rule is generated first claims
+        // any packet destined within the overlap. Alphabetical route_id
+        // order ("narrow" < "wide") would happen to get this right here,
+        // so the offers are named to fail that way round and only pass
+        // under genuine specificity ordering.
+        let mut config = config();
+        config.route_offers = vec![
+            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
+            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Gateway, true),
+        ];
+        let rules = Ruleset::from_config(&config);
+        assert_eq!(
+            rules
+                .grants
+                .iter()
+                .map(|g| g.route_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a-narrow", "z-wide"]
+        );
+        let batch = rules.nft_batch("karst0");
+        let narrow = batch.find("comment \"a-narrow\"").expect("narrow rule");
+        let wide = batch.find("comment \"z-wide\"").expect("wide rule");
+        assert!(
+            narrow < wide,
+            "the /8 grant's rule must be generated before the /0 grant's, \
+             or the wide route's rule would claim every packet the narrow \
+             route is actually authorized for"
+        );
+    }
+
+    #[test]
+    fn route_bytes_sums_commented_forward_rules_and_ignores_the_rest() {
+        // A trimmed, real `nft -j list table inet karst_routes` shape
+        // (captured live against this crate's own ruleset): a forward-chain
+        // rule with a comment and counter (the per-route accept this
+        // function exists to read), a forward-chain rule with a counter
+        // but no comment (the generic return-leg accept — must be
+        // excluded, or it would double-count against whichever route
+        // happens to come first), and a postrouting-chain rule that DOES
+        // carry the same comment (the masquerade rule — must be excluded
+        // by chain, or this route's bytes would be doubled).
+        let output = r#"{
+            "nftables": [
+                {"metainfo": {"version": "1.0.9"}},
+                {"table": {"family": "inet", "name": "karst_routes", "handle": 1}},
+                {"rule": {
+                    "family": "inet", "table": "karst_routes", "chain": "forward",
+                    "handle": 2, "comment": "route-a",
+                    "expr": [
+                        {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "karst0"}},
+                        {"counter": {"packets": 10, "bytes": 1000}},
+                        {"accept": null}
+                    ]
+                }},
+                {"rule": {
+                    "family": "inet", "table": "karst_routes", "chain": "postrouting",
+                    "handle": 3, "comment": "route-a",
+                    "expr": [
+                        {"counter": {"packets": 10, "bytes": 1000}},
+                        {"masquerade": null}
+                    ]
+                }},
+                {"rule": {
+                    "family": "inet", "table": "karst_routes", "chain": "forward",
+                    "handle": 4,
+                    "expr": [
+                        {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": "karst0"}},
+                        {"counter": {"packets": 999, "bytes": 99900}},
+                        {"accept": null}
+                    ]
+                }},
+                {"rule": {
+                    "family": "inet", "table": "karst_routes", "chain": "forward",
+                    "handle": 5,
+                    "expr": [
+                        {"counter": {"packets": 0, "bytes": 0}},
+                        {"drop": null}
+                    ]
+                }}
+            ]
+        }"#;
+        assert_eq!(
+            parse_route_bytes(output).expect("parse"),
+            vec![RouteBytes {
+                route_id: "route-a".to_owned(),
+                bytes: 1000,
+                packets: 10,
+            }]
+        );
+    }
+
+    #[test]
     fn nft_strings_cannot_inject_another_statement() {
         assert_eq!(
             nft_string("x\"; delete table inet filter"),
@@ -464,6 +700,7 @@ mod tests {
         writes: Vec<(String, String)>,
         nft: Vec<(Vec<String>, Option<String>)>,
         fail_batch: bool,
+        nft_output: String,
     }
 
     impl Backend for Mock {
@@ -496,6 +733,10 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn nft_output(&mut self, _args: &[&str]) -> std::io::Result<String> {
+            Ok(self.nft_output.clone())
         }
     }
 
