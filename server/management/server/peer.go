@@ -1104,22 +1104,17 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 	}
 
 	// A mesh domain (ADR-0032) inserts its Path ahead of the peer's own DNS
-	// label below. Resolved once here, not re-checked per retry attempt:
-	// domains are append-only (no re-parenting), so a Path fetched now
-	// cannot go stale before this peer is saved.
+	// label below. An explicit target is mandatory, even if it disappeared
+	// after invitation issuance. Recheck it in the write transaction below
+	// so deletion cannot leave a successful enrollment with a missing domain.
 	var peerDomainID, domainPath string
 	if peerAddConfig.SetupKeyDomainID != "" {
 		d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, peerAddConfig.SetupKeyDomainID)
 		if err != nil {
-			// Best-effort: a domain deleted between invitation and
-			// enrollment must not fail enrollment, only fall back to the
-			// account's implicit root -- the same posture as the geo lookup
-			// below.
-			log.WithContext(ctx).Warnf("mesh domain %s no longer exists, enrolling peer into account root instead: %v", peerAddConfig.SetupKeyDomainID, err)
-		} else {
-			peerDomainID = d.ID
-			domainPath = d.Path
+			return nil, nil, nil, false, fmt.Errorf("failed to resolve enrollment domain: %w", err)
 		}
+		peerDomainID = d.ID
+		domainPath = d.Path
 	}
 
 	registrationTime := time.Now().UTC()
@@ -1229,6 +1224,16 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		}
 
 		err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+			if peerDomainID != "" {
+				// Invitation issuance and domain deletion use the same row lock.
+				d, err := transaction.GetDomainByID(ctx, store.LockingStrengthUpdate, accountID, peerDomainID)
+				if err != nil {
+					return fmt.Errorf("failed to resolve enrollment domain: %w", err)
+				}
+				if d.Path != domainPath {
+					return status.Errorf(status.PreconditionFailed, "enrollment domain changed; retry")
+				}
+			}
 			if userID != "" {
 				user, err := transaction.GetUserByUserID(ctx, store.LockingStrengthUpdate, userID)
 				if err != nil {

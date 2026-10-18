@@ -28,8 +28,8 @@ type Manager interface {
 	CreateDomain(ctx context.Context, accountID, userID, parentID, label string) (*meshdomain.Domain, error)
 	ListDomains(ctx context.Context, accountID, userID string) ([]*meshdomain.Domain, error)
 	GetDomain(ctx context.Context, accountID, userID, domainID string) (*meshdomain.Domain, error)
-	// DeleteDomain refuses a domain that still has subdomains or member
-	// peers -- a domain tree unwinds leaf-first, like removing a directory.
+	// DeleteDomain refuses a domain that still has subdomains, member
+	// peers, or usable setup keys targeting it.
 	DeleteDomain(ctx context.Context, accountID, userID, domainID string) error
 
 	// DelegateDomainAdmin grants targetUserID admin rights over domainID and
@@ -172,6 +172,12 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 	}
 
 	err = m.store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		// Issuance and enrollment take this lock before writing references.
+		// Check dependencies only after acquiring it, so a racing invitation
+		// cannot be created between the check and deletion.
+		if _, err := transaction.GetDomainByID(ctx, store.LockingStrengthUpdate, accountID, domainID); err != nil {
+			return err
+		}
 		all, err := transaction.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
 		if err != nil {
 			return fmt.Errorf("failed to check child domains: %w", err)
@@ -187,6 +193,15 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 		}
 		if members > 0 {
 			return status.Errorf(status.PreconditionFailed, "domain still has %d device(s); move or remove them first", members)
+		}
+		keys, err := transaction.GetAccountSetupKeys(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return fmt.Errorf("failed to check domain invitations: %w", err)
+		}
+		for _, key := range keys {
+			if key.DomainID == domainID && key.IsValid() {
+				return status.Errorf(status.PreconditionFailed, "domain still has an active enrollment key; revoke it first")
+			}
 		}
 		return transaction.DeleteDomain(ctx, accountID, domainID)
 	})
