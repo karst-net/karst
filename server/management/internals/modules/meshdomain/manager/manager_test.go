@@ -6,6 +6,7 @@ package manager
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
+	"github.com/netbirdio/netbird/shared/management/status"
 )
 
 const testAccountID = "test-account-id"
@@ -185,6 +187,54 @@ func TestDeleteDomain_RefusesWithChildrenOrMembers(t *testing.T) {
 		ID: xid.New().String(), AccountID: testAccountID, Key: "peer-key", DNSLabel: "device.beta", DomainID: root2.ID,
 	}))
 	require.Error(t, mgr.DeleteDomain(ctx, testAccountID, "owner", root2.ID), "a domain with a member peer cannot be deleted")
+}
+
+func TestDeleteDomain_EnrollmentKeys(t *testing.T) {
+	for _, mode := range []string{"active-invitation", "active-reusable", "revoked", "expired", "consumed", "other-domain"} {
+		t.Run(mode, func(t *testing.T) {
+			mgr, testStore, cleanup := setupTest(t)
+			defer cleanup()
+			ctx := context.Background()
+			d, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "engineering")
+			require.NoError(t, err)
+			key, _ := types.GenerateSetupKey("build-box", types.SetupKeyOneOff, time.Hour, nil, 1, false, false)
+			key.AccountID = testAccountID
+			key.InvitationIssuerID = "owner"
+			key.DomainID = d.ID
+			switch mode {
+			case "active-reusable":
+				key.InvitationIssuerID = ""
+				key.Type = types.SetupKeyReusable
+				key.UsageLimit = 0
+				key.UsedTimes = 3
+			case "revoked":
+				key.Revoked = true
+			case "expired":
+				past := time.Now().Add(-time.Hour)
+				key.ExpiresAt = &past
+			case "consumed":
+				key.UsedTimes = 1
+			case "other-domain":
+				other, err := mgr.CreateDomain(ctx, testAccountID, "owner", "", "sales")
+				require.NoError(t, err)
+				key.DomainID = other.ID
+			}
+			require.NoError(t, testStore.SaveSetupKey(ctx, key))
+			err = mgr.DeleteDomain(ctx, testAccountID, "owner", d.ID)
+			if mode == "active-invitation" || mode == "active-reusable" {
+				var statusErr *status.Error
+				require.ErrorAs(t, err, &statusErr)
+				require.Equal(t, status.PreconditionFailed, statusErr.Type())
+				_, err = testStore.GetDomainByID(ctx, store.LockingStrengthNone, testAccountID, d.ID)
+				require.NoError(t, err, "the referenced domain must remain intact")
+				key.Revoked = true
+				require.NoError(t, testStore.SaveSetupKey(ctx, key))
+				require.NoError(t, mgr.DeleteDomain(ctx, testAccountID, "owner", d.ID), "explicit revocation unblocks deletion")
+			} else {
+				require.NoError(t, err, "historical or unrelated keys must not prevent deletion")
+			}
+		})
+	}
 }
 
 func TestDelegateDomainAdmin_GrantsScopedAccessOnly(t *testing.T) {

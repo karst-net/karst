@@ -424,6 +424,17 @@ func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, acc
 	var key *types.SetupKey
 	var plain string
 	err = am.Store.ExecuteInTransaction(ctx, func(tx store.Store) error {
+		if domainID != "" {
+			// Serialize issuance with domain deletion and recheck the target
+			// before persisting a credential scoped to it.
+			d, err := tx.GetDomainByID(ctx, store.LockingStrengthUpdate, accountID, domainID)
+			if err != nil {
+				return err
+			}
+			if d.Path != domainPath {
+				return status.Errorf(status.PreconditionFailed, "invitation domain changed; retry")
+			}
+		}
 		issuer, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, userID)
 		if err != nil {
 			return err

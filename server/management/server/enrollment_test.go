@@ -26,6 +26,7 @@ import (
 	karstcontrol "github.com/netbirdio/netbird/management/internals/karst/control"
 	karstidentity "github.com/netbirdio/netbird/management/internals/karst/identity"
 	karstnode "github.com/netbirdio/netbird/management/internals/karst/node"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -309,6 +310,123 @@ func TestDeviceInvitationIntoMeshDomainIsQualified(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, engineering.ID, device.DomainID)
 	require.Equal(t, "build-box.engineering.acme", device.DNSLabel, "the peer's DNS label is qualified by its mesh domain's Path")
+}
+
+// Wrap the real store so failures can be injected at the read/write boundary
+// while still verifying the persisted enrollment state and transaction rollback.
+type enrollmentDomainFailureStore struct {
+	store.Store
+	inTransaction bool
+	onLookup      func(bool, *meshdomain.Domain, error) (*meshdomain.Domain, error)
+}
+
+func (s *enrollmentDomainFailureStore) GetDomainByID(ctx context.Context, lock store.LockingStrength, accountID, domainID string) (*meshdomain.Domain, error) {
+	d, err := s.Store.GetDomainByID(ctx, lock, accountID, domainID)
+	return s.onLookup(s.inTransaction, d, err)
+}
+
+func (s *enrollmentDomainFailureStore) ExecuteInTransaction(ctx context.Context, operation func(store.Store) error) error {
+	return s.Store.ExecuteInTransaction(ctx, func(tx store.Store) error {
+		return operation(&enrollmentDomainFailureStore{Store: tx, inTransaction: true, onLookup: s.onLookup})
+	})
+}
+
+func TestDeviceInvitationRejectsUnavailableEnrollmentDomain(t *testing.T) {
+	for _, mode := range []string{"deleted", "deleted-during-enrollment", "foreign-account", "lookup-error", "transaction-lookup-error", "transaction-path-change"} {
+		t.Run(mode, func(t *testing.T) {
+			am, member := enrollmentFixture(t)
+			ctx := context.Background()
+			group := &types.Group{ID: "domain-devices", AccountID: member.AccountID, Name: "Domain devices", Issued: "api"}
+			require.NoError(t, am.Store.CreateGroup(ctx, group))
+			d := meshdomain.NewDomain(member.AccountID, "", "engineering", "")
+			require.NoError(t, am.Store.CreateDomain(ctx, d))
+			key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID)
+			require.NoError(t, err)
+			originalStore := am.Store
+			lookupErr := errors.New("domain lookup unavailable")
+			switch mode {
+			case "deleted":
+				// Simulate legacy dangling invitations (before deletion checked
+				// active keys), bypassing the manager's new deletion guard.
+				require.NoError(t, am.Store.DeleteDomain(ctx, member.AccountID, d.ID))
+			case "foreign-account":
+				foreign := meshdomain.NewDomain("another-account", "", "foreign", "")
+				require.NoError(t, am.Store.CreateDomain(ctx, foreign))
+				stored := storedEnrollment(t, am, key.Key)
+				stored.DomainID = foreign.ID
+				require.NoError(t, am.Store.SaveSetupKey(ctx, stored))
+			default:
+				am.Store = &enrollmentDomainFailureStore{
+					Store: originalStore,
+					onLookup: func(inTransaction bool, domain *meshdomain.Domain, err error) (*meshdomain.Domain, error) {
+						if mode == "deleted-during-enrollment" {
+							if !inTransaction {
+								require.NoError(t, originalStore.DeleteDomain(ctx, member.AccountID, d.ID))
+							}
+							return domain, err
+						}
+						if err != nil || inTransaction != (mode != "lookup-error") {
+							return domain, err
+						}
+						if mode == "transaction-path-change" {
+							changed := *domain
+							changed.Path = "different"
+							return &changed, nil
+						}
+						return nil, lookupErr
+					},
+				}
+			}
+			network, err := originalStore.GetAccountNetwork(ctx, store.LockingStrengthNone, member.AccountID)
+			require.NoError(t, err)
+			device, err := enrollPeer(am, key.Key, "rejected-domain-device")
+			require.Error(t, err)
+			require.Nil(t, device)
+			if mode == "lookup-error" || mode == "transaction-lookup-error" {
+				require.ErrorIs(t, err, lookupErr)
+			}
+			_, err = originalStore.GetPeerByPeerPubKey(ctx, store.LockingStrengthNone, "rejected-domain-device")
+			require.Error(t, err, "failure must not persist a peer in the root or target domain")
+			require.Zero(t, storedEnrollment(t, am, key.Key).UsedTimes, "failure must not consume the invitation")
+			after, err := originalStore.GetAccountNetwork(ctx, store.LockingStrengthNone, member.AccountID)
+			require.NoError(t, err)
+			require.Equal(t, network.Serial, after.Serial, "failure must not publish a network change")
+			if mode == "lookup-error" || mode == "transaction-lookup-error" || mode == "transaction-path-change" {
+				am.Store = originalStore
+				device, err = enrollPeer(am, key.Key, "rejected-domain-device")
+				require.NoError(t, err, "retry after lookup recovery must retain the original scope")
+				require.Equal(t, d.ID, device.DomainID)
+				require.Equal(t, "build-box.engineering", device.DNSLabel)
+			}
+		})
+	}
+}
+
+func TestDeviceInvitationRechecksDomainBeforeIssuance(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	group := &types.Group{ID: "domain-devices", AccountID: member.AccountID, Name: "Domain devices", Issued: "api"}
+	require.NoError(t, am.Store.CreateGroup(ctx, group))
+	d := meshdomain.NewDomain(member.AccountID, "", "engineering", "")
+	require.NoError(t, am.Store.CreateDomain(ctx, d))
+	before, err := am.Store.GetAccountSetupKeys(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	lookupErr := errors.New("domain disappeared before invitation commit")
+	am.Store = &enrollmentDomainFailureStore{
+		Store: am.Store,
+		onLookup: func(inTransaction bool, domain *meshdomain.Domain, err error) (*meshdomain.Domain, error) {
+			if inTransaction {
+				return nil, lookupErr
+			}
+			return domain, err
+		},
+	}
+	key, err := am.CreateDeviceInvitation(ctx, member.AccountID, "owner", "build-box", []string{group.ID}, d.ID)
+	require.ErrorIs(t, err, lookupErr)
+	require.Nil(t, key)
+	after, err := am.Store.GetAccountSetupKeys(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "no credential may be issued after the target becomes unavailable")
 }
 
 func TestDeviceInvitationDelegatedSubdomainAdmin(t *testing.T) {

@@ -805,6 +805,8 @@ jobs:
       # was added.
       - name: Enrollment security and upstream fixture smoke tests
         run: go test -count=1 -run "Test_RegisterPeerByUser|TestEnrollment|TestDeviceInvitation|EnrollKey" ./management/server/
+      - name: Mesh domain lifecycle and delegation
+        run: go test -race -count=1 ./management/internals/modules/meshdomain/...
       # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
       # the coordination server is a vulnerability in the component that holds
       # every per-pair PSK.
