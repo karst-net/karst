@@ -6,21 +6,44 @@ server: the control netmap supplies the mesh zone and all forwarding policy.
 
 ## Name grammar
 
-A mesh name is `<label>.<zone>.`, where `zone` is `KarstDNSConfig.zone` and
-`label` is one node's DNS label as assigned by the control server
+A mesh name is `<host-label>[.<relative-domain-path>].<zone>.`, where `zone`
+is `KarstDNSConfig.zone` and the host label and optional relative domain path
+form the node's qualified DNS label as assigned by the control server
 (`server/dns/dns.go`'s `GetParsedDomainLabel`, `server/management/server/types/account.go`'s
-`GetPeerHostLabel`). The node may assume the following about a label it
-receives on the netmap; it does not re-derive any of it:
+`GetPeerHostLabel`). Relative paths contain dot-separated domain labels;
+the root suffix is appended exactly once. The node may assume the following
+about a host label it receives on the netmap; it does not re-derive any of it:
 
 - IDNA/Punycode-converted to ASCII, then reduced to `[a-zA-Z0-9-]` — any other
   character becomes a hyphen — then lowercased and truncated to 58 characters.
-- **Unique within the account.** A hostname that collides with an existing
-  label is disambiguated by the server with a numeric suffix, `-1` through
-  `-999`, appended to the base label.
+- **The qualified DNS label is unique within the account.** A host label
+  that collides in its target domain is disambiguated by the server with a
+  numeric suffix, `-1` through `-999`, appended to the host label before the
+  relative domain path. Host labels may repeat under different paths.
 - Comparison against a query name is ASCII-case-insensitive, without regard
   to a trailing root dot. A label is already lowercase on arrival, so this
   matters only for the name a client asks with, not for the ones a peer
   publishes.
+
+### Explicit root lifecycle: agreed follow-up contract
+
+[ADR-0032's current decision](../docs/adr/0032-hierarchical-mesh-domains-and-admin-assigned-names.md#current-decision-2026-10-18-361)
+defines one explicit account root whose suffix is `zone`. New accounts start
+with `karst`; existing accounts preserve their effective suffix. Root devices
+carry an empty relative path: `laptop` plus zone `karst` resolves as
+`laptop.karst`, while `build.engineering` resolves as
+`build.engineering.karst`. The explicit-root lifecycle and unified suffix
+projection are pending [#362](https://github.com/karst-net/karst/issues/362);
+the qualified-name grammar already fits the existing resolver/wire format.
+
+After that implementation, root rename changes `zone`, leaving qualified
+relative peer names unchanged. Login names, API FQDNs, forward/PTR records,
+and host resolver/search integration must project the same root revision.
+Netmaps must carry consistent names and DNS configuration; clients replace
+the zone on refresh and invalidate mesh caches. Existing answers can survive
+their TTL, and offline clients converge only after reconnect. There are no
+automatic old-suffix aliases or simultaneous old/new authoritative zones in
+this contract. Mesh DNS visibility does not itself grant network access.
 
 ## Configuration
 
