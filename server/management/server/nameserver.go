@@ -63,6 +63,9 @@ func (am *DefaultAccountManager) CreateNameServerGroup(ctx context.Context, acco
 	change := affectedpeers.Change{DistributionGroupIDs: newNSGroup.Groups}
 
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		if _, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID); err != nil {
+			return err
+		}
 		if err = validateNameServerGroup(ctx, transaction, accountID, newNSGroup); err != nil {
 			return err
 		}
@@ -108,6 +111,9 @@ func (am *DefaultAccountManager) SaveNameServerGroup(ctx context.Context, accoun
 	var change affectedpeers.Change
 
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		if _, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID); err != nil {
+			return err
+		}
 		oldNSGroup, err := transaction.GetNameServerGroupByID(ctx, store.LockingStrengthNone, accountID, nsGroupToSave.ID)
 		if err != nil {
 			return err
@@ -157,6 +163,9 @@ func (am *DefaultAccountManager) DeleteNameServerGroup(ctx context.Context, acco
 	var change affectedpeers.Change
 
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		if _, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID); err != nil {
+			return err
+		}
 		nsGroup, err = transaction.GetNameServerGroupByID(ctx, store.LockingStrengthUpdate, accountID, nsGroupID)
 		if err != nil {
 			return err
@@ -199,6 +208,18 @@ func (am *DefaultAccountManager) ListNameServerGroups(ctx context.Context, accou
 }
 
 func validateNameServerGroup(ctx context.Context, transaction store.Store, accountID string, nameserverGroup *nbdns.NameServerGroup) error {
+	root, rootErr := transaction.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+	if rootErr != nil {
+		return rootErr
+	}
+	if root != nil && nameserverGroup.Enabled && !nameserverGroup.Primary {
+		for _, domain := range nameserverGroup.Domains {
+			match := strings.ToLower(strings.TrimSuffix(domain, "."))
+			if root.DNSSuffix == match || strings.HasSuffix(root.DNSSuffix, "."+match) {
+				return status.Errorf(status.InvalidArgument, "split DNS domain conflicts with the account root suffix")
+			}
+		}
+	}
 	err := validateDomainInput(nameserverGroup.Primary, nameserverGroup.Domains, nameserverGroup.SearchDomainsEnabled)
 	if err != nil {
 		return err

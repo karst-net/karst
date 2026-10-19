@@ -359,6 +359,16 @@ func consoleMutations() []consoleCase {
 			// It answered 500 before finding 66.
 			want: []int{http.StatusOK, http.StatusPreconditionFailed}, template: "/karst/v1/bedrock/audit-anchor/export",
 		},
+		{
+			name: "preview root rename", method: http.MethodPost,
+			path: "/karst/v1/domains/root/rename/preview", body: `{"dns_suffix":"corp.example"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/domains/root/rename/preview",
+		},
+		{
+			name: "refuse stale root rename", method: http.MethodPost,
+			path: "/karst/v1/domains/root/rename/commit", body: `{"dns_suffix":"corp.example","revision":"stale","confirm_no_aliases":true}`,
+			want: []int{http.StatusPreconditionFailed}, template: "/karst/v1/domains/root/rename/commit",
+		},
 		// Mesh domains (ADR-0032). Deliberately exercised against fixture
 		// rows that already exist (consoleFixtureDomainID,
 		// consoleFixtureDoomedDomainID, consoleFixtureBindingID, seeded by

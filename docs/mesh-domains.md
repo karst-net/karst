@@ -3,9 +3,8 @@
 # Mesh domains, identity, and access
 
 This page records the agreed product model. Explicit-root provisioning,
-migration, and default enrollment are implemented. Root renaming and device
-compliance integration remain follow-up work; their behavior below is the
-agreed contract, not an available console operation.
+migration, default enrollment, and root rename preview/confirmation are implemented.
+Client convergence is unobserved; device compliance integration remains follow-up work.
 
 Tracked work: [ADR reconciliation (#361)](https://github.com/karst-net/karst/issues/361),
 [domain implementation (#362)](https://github.com/karst-net/karst/issues/362),
@@ -41,6 +40,41 @@ cached answers may survive their TTL, and offline clients update on reconnect.
 Plan the address change accordingly. Rollback is another validated rename;
 identities and permissions remain stable.
 
+## Rename workflow
+
+Open **Domains**, choose **Rename root**, enter the desired suffix and select
+**Preview rename**. This requires account-wide domain-update authority; even a
+user delegated administration of the root cannot rename the account suffix.
+Preview canonicalizes the suffix, validates device and descendant names and
+split-DNS compatibility, reports affected device/domain counts and shows up to
+ten before/after names. Confirm that old names will stop resolving, then commit.
+
+The API uses `POST /api/karst/v1/domains/root/rename/preview` with `dns_suffix`,
+then `/commit` with the returned canonical suffix, opaque `revision`, and
+`confirm_no_aliases: true`. The preview token is bound to the target suffix and
+reviewed account naming state. A stale confirmation returns 412 and requires a
+fresh preview; invalid names, DNS conflicts or missing confirmation return 422.
+Domain creation/deletion, enrollment, placement and DNS-setting writes coordinate
+with rename through the account/root lock. The suffix, account settings and
+network DNS projections commit in one transaction, advancing naming and network
+revisions without rewriting relative peer names, IDs, invitations or authority.
+
+The console reports **committed configuration**, never an acknowledged fleet
+cutover. The current client protocol provides no application acknowledgement, so
+client convergence is explicitly **unobserved**. Online Karst clients poll the
+persisted DNS configuration; streaming management clients are also notified.
+Restart or a missed notification does not discard the committed suffix. Existing
+answers can remain cached for 60 seconds; offline clients keep their previous
+configuration until reconnect. There are no automatic aliases. Verify affected
+clients' DNS status and both forward/PTR answers during the maintenance window.
+
+**Preview rollback** starts another rename to the previous suffix with a fresh
+revision and confirmation; after a page reload, enter the previous suffix in
+**Rename root**. Each committed change advances `naming_revision` and records the
+actor and old/new suffix in the audit event. Transaction failures leave the old
+configuration intact. If a request fails after commit, reload the domain tree to
+check the active suffix before retrying; repeated commits are not replayed.
+
 ## Upgrade and migration
 
 Back up the database and stop all management replicas before upgrading. Mixed
@@ -66,7 +100,7 @@ New account creation persists the account and root atomically. Root metadata is
 returned by the domains API (`is_root`, `dns_suffix`), and the root has an empty
 relative `path`. Omitted invitation/enrollment targets use its stable ID;
 moving a device back to it requires that explicit ID. Legacy suffix-setting
-writes cannot bypass the future root-rename preview/confirmation flow.
+writes cannot bypass the root-rename preview/confirmation flow.
 
 ## Relationships
 

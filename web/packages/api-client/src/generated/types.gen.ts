@@ -6,6 +6,28 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type RootRenamePreview = {
+    root_id: string;
+    old_suffix: string;
+    new_suffix: string;
+    /**
+     * Opaque preview token; return unchanged at commit.
+     */
+    revision: string;
+    naming_revision: number;
+    device_count: number;
+    domain_count: number;
+    committed: boolean;
+    /**
+     * No client application acknowledgement exists in the current protocol.
+     */
+    convergence: 'unobserved';
+    examples: Array<{
+        before: string;
+        after: string;
+    }>;
+};
+
 export type DeviceUsageReport = {
     start: string;
     end: string;
@@ -761,6 +783,62 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type PreviewRootRenameData = {
+    body: {
+        dns_suffix: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/domains/root/rename/preview';
+};
+
+export type PreviewRootRenameErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type PreviewRootRenameError = PreviewRootRenameErrors[keyof PreviewRootRenameErrors];
+
+export type PreviewRootRenameResponses = {
+    /**
+     * Validated naming preview; Cache-Control is no-store
+     */
+    200: RootRenamePreview;
+};
+
+export type PreviewRootRenameResponse = PreviewRootRenameResponses[keyof PreviewRootRenameResponses];
+
+export type CommitRootRenameData = {
+    body: {
+        dns_suffix: string;
+        revision: string;
+        confirm_no_aliases: true;
+    };
+    path?: never;
+    query?: never;
+    url: '/domains/root/rename/commit';
+};
+
+export type CommitRootRenameErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CommitRootRenameError = CommitRootRenameErrors[keyof CommitRootRenameErrors];
+
+export type CommitRootRenameResponses = {
+    /**
+     * Committed naming configuration; Cache-Control is no-store
+     */
+    200: RootRenamePreview;
+};
+
+export type CommitRootRenameResponse = CommitRootRenameResponses[keyof CommitRootRenameResponses];
 
 export type GetDeviceUsageData = {
     body?: never;

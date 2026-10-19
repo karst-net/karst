@@ -290,6 +290,8 @@ const (
 	// holding the account-wide Peers grant PeerRenamed otherwise implies.
 	PeerDomainChanged Activity = 144
 
+	MeshRootRenamed Activity = 145
+
 	AccountDeleted Activity = 99999
 )
 
@@ -465,6 +467,7 @@ var activityMap = map[Activity]Code{
 	DomainDeleted:   {"Domain deleted", "domain.delete"},
 	DomainValidated: {"Domain validated", "domain.validate"},
 
+	MeshRootRenamed:   {"Mesh root renamed", "mesh_domain.root.rename"},
 	MeshDomainCreated: {"Mesh domain created", "mesh_domain.create"},
 	MeshDomainDeleted: {"Mesh domain deleted", "mesh_domain.delete"},
 	PeerDomainChanged: {"Peer domain changed", "peer.domain_change"},

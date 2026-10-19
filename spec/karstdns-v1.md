@@ -25,7 +25,7 @@ about a host label it receives on the netmap; it does not re-derive any of it:
   matters only for the name a client asks with, not for the ones a peer
   publishes.
 
-### Explicit root lifecycle: agreed follow-up contract
+### Explicit root lifecycle
 
 [ADR-0032's current decision](../docs/adr/0032-hierarchical-mesh-domains-and-admin-assigned-names.md#current-decision-2026-10-18-361)
 defines one explicit account root whose suffix is `zone`. New accounts start
@@ -34,7 +34,8 @@ carry an empty relative path: `laptop` plus zone `karst` resolves as
 `laptop.karst`, while `build.engineering` resolves as
 `build.engineering.karst`. Explicit-root provisioning, migration, and suffix
 projection are implemented under [#362](https://github.com/karst-net/karst/issues/362);
-root renaming remains follow-up work. The qualified-name grammar fits the
+root rename uses the authorized preview/commit API and console confirmation.
+Client application acknowledgements are not present: convergence is unobserved. The qualified-name grammar fits the
 existing resolver/wire format.
 
 The agreed root-rename contract changes `zone`, leaving qualified

@@ -13,6 +13,63 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /domains/root/rename/preview:
+    post:
+      operationId: previewRootRename
+      tags: [domains]
+      description: |
+        Requires account-wide domain-update authority. Validates and canonicalizes
+        the suffix, reports affected names, and returns an opaque revision bound
+        to the reviewed naming state. Delegated domain administration is insufficient.
+        No writes or old-suffix aliases are created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [dns_suffix]
+              properties:
+                dns_suffix: {type: string, maxLength: 254}
+      responses:
+        '200':
+          description: Validated naming preview; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RootRenamePreview'}
+        default: {$ref: '#/components/responses/Error'}
+  /domains/root/rename/commit:
+    post:
+      operationId: commitRootRename
+      tags: [domains]
+      description: |
+        Revalidates account-wide authority, suffix constraints and preview revision
+        under the account lock. Atomically changes the root suffix and account DNS
+        projections and advances naming/network revisions. Stale previews return
+        412; invalid suffixes or absent confirmation return 422. Identity, relative
+        names, memberships and policy references remain unchanged. There are no
+        old-suffix aliases. Delivery is asynchronous and client convergence is
+        unobserved. Rollback requires a new preview and confirmation of the old suffix.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [dns_suffix, revision, confirm_no_aliases]
+              properties:
+                dns_suffix: {type: string, maxLength: 254}
+                revision: {type: string}
+                confirm_no_aliases: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: Committed naming configuration; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RootRenamePreview'}
+        default: {$ref: '#/components/responses/Error'}
   /usage/devices:
     get:
       operationId: getDeviceUsage
@@ -744,6 +801,28 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
+    RootRenamePreview:
+      type: object
+      required: [root_id, old_suffix, new_suffix, revision, naming_revision, device_count, domain_count, examples, committed, convergence]
+      properties:
+        root_id: {type: string}
+        old_suffix: {type: string}
+        new_suffix: {type: string}
+        revision: {type: string, description: 'Opaque preview token; return unchanged at commit.'}
+        naming_revision: {type: integer, format: uint64, minimum: 0}
+        device_count: {type: integer, minimum: 0}
+        domain_count: {type: integer, minimum: 0}
+        committed: {type: boolean}
+        convergence: {type: string, enum: [unobserved], description: 'No client application acknowledgement exists in the current protocol.'}
+        examples:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [before, after]
+            properties:
+              before: {type: string}
+              after: {type: string}
     DeviceUsageReport:
       type: object
       additionalProperties: false

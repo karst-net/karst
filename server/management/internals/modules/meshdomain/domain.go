@@ -23,11 +23,10 @@ import (
 // Domain has that domain's Path inserted between its own DNS label and the
 // account's root DNS suffix -- see Domain.QualifyLabel.
 //
-// Domains are append-only for now: there is no rename or re-parent
-// operation, only create and delete. Path is computed once at creation from
-// the (immutable) parent chain, so every read is a single row lookup rather
-// than a walk -- this is what makes qualifying a peer's name on every netmap
-// build cheap.
+// Child domains have immutable relative paths; child rename and reparenting
+// are not supported. The dedicated root-rename operation changes only the
+// authoritative suffix. Qualifying peer labels therefore needs a single row
+// lookup rather than an ancestry walk.
 const DefaultRootSuffix = "karst"
 
 type Domain struct {
@@ -35,8 +34,10 @@ type Domain struct {
 	// any number of children but at most one root per account on every SQL engine.
 	RootAccountID *string `gorm:"uniqueIndex:idx_mesh_domain_account_root" json:"-"`
 	DNSSuffix     string
-	ID            string `gorm:"primaryKey"`
-	AccountID     string `gorm:"index"`
+	// NamingRevision advances only on committed root suffix changes.
+	NamingRevision uint64
+	ID             string `gorm:"primaryKey"`
+	AccountID      string `gorm:"index"`
 	// ParentID is empty for a top-level domain. A non-empty ParentID must
 	// name another Domain in the same account.
 	ParentID string `gorm:"index"`
