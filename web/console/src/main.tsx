@@ -70,7 +70,16 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       </main>
     </div>;
   }
-  if (firstRun.completed === undefined) return null;
+  // A real landmark/heading structure even while this is in flight --
+  // returning null here left a window (GET /firstrun resolving) where
+  // axe-core could inspect a document with no <main> and no <h1> at all,
+  // which is exactly what it caught in CI.
+  if (firstRun.completed === undefined) {
+    return <div className="shell">
+      <a className="skip" href="#main">Skip to content</a>
+      <main id="main"><h1>Karst</h1><p>Loading…</p></main>
+    </div>;
+  }
 
   return <div className={`shell${route === "noc" ? " shell-noc" : ""}`}>
     <a className="skip" href="#main">Skip to content</a>
