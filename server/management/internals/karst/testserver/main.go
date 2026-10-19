@@ -219,6 +219,9 @@ func controlAddr() string {
 //	DELETE /routes?id=<route_id>     -> 200 deleted / 404 no such route
 func serveControl(addr string, r *router) {
 	mux := http.NewServeMux()
+	if r.compliance != nil {
+		mux.HandleFunc("/compliance", func(w http.ResponseWriter, req *http.Request) { r.compliance.serve(r, w, req) })
+	}
 	if r.rootDomains != nil {
 		mux.Handle("/karst/v1/domains/", r.rootDomains.api)
 	}

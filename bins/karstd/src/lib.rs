@@ -21,6 +21,7 @@
 
 pub mod anchor_probe;
 pub mod bedrock;
+pub mod compliance;
 pub mod config;
 pub mod control;
 pub mod disco;

@@ -1691,3 +1691,21 @@ func TestNetmapFallsBackToStaticPolicyWhenStoreHasNoVersion(t *testing.T) {
 		t.Fatal("an account with no stored policy version got an empty filter instead of the configured static fallback")
 	}
 }
+
+func TestComplianceAdvertisementIsLiveOnUnchangedResponses(t *testing.T) {
+	f := newNetmapFixture(t, 1)
+	legacy := requestNetmap(t, f, 0)
+	if legacy.ComplianceIngestionSchema != 0 {
+		t.Fatal("unconfigured ingestion advertised")
+	}
+	f.handler.ComplianceIngestion = true
+	current := requestNetmap(t, f, legacy.Version)
+	if !current.Unchanged || current.ComplianceIngestionSchema != 1 || current.Version != legacy.Version {
+		t.Fatal("capability must travel on unchanged responses without changing the policy hash")
+	}
+	f.handler.ComplianceIngestion = false
+	withdrawn := requestNetmap(t, f, current.Version)
+	if !withdrawn.Unchanged || withdrawn.ComplianceIngestionSchema != 0 {
+		t.Fatal("withdrawn ingestion capability retained")
+	}
+}

@@ -61,9 +61,11 @@ type PeerLister interface {
 // netmap in plaintext would hand every PSK in the network to anything
 // terminating TLS in front of the server.
 type NetmapHandler struct {
-	Nodes *node.Store
-	Peers PeerLister
-	PSK   *psk.Deriver
+	// ComplianceIngestion advertises schema 1 only when its handler/store are wired.
+	ComplianceIngestion bool
+	Nodes               *node.Store
+	Peers               PeerLister
+	PSK                 *psk.Deriver
 	// Epoch is the current PSK rotation epoch (CurrentEpoch's pure function of
 	// the clock). Atomic because an EpochScheduler goroutine keeps it live for
 	// the life of the process (epoch.go) while every netmap build reads it
@@ -405,6 +407,9 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 		DnsName:     selfPeer.DNSLabel,
 		Relays:      relays,
 		TurnServers: turnServers,
+	}
+	if h.ComplianceIngestion {
+		resp.ComplianceIngestionSchema = 1
 	}
 	resp.DnsConfig, err = h.dnsConfig(ctx, accountID, selfPeer.ID)
 	if err != nil {
