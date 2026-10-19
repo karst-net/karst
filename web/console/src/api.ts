@@ -95,7 +95,9 @@ export type DeviceInvitation = {
 // into subdomains. Deliberately not called "zone" (the fork's own DNS zones
 // are a different, unrelated feature) or "aquifer" (the relay's own,
 // unrelated tenant-isolation concept) — see the ADR for why.
-export type MeshDomain = { id: string; parent_id?: string; label: string; path: string; is_root?: boolean; dns_suffix?: string };
+export type MeshDomain = { id: string; parent_id?: string; label: string; path: string; is_root?: boolean; dns_suffix?: string; naming_revision?: number };
+export type RootRenamePreview = { root_id: string; old_suffix: string; new_suffix: string; revision: string; naming_revision: number; device_count: number; domain_count: number; examples: { before: string; after: string }[]; committed: boolean; convergence: "unobserved" };
+
 // Grants user_id delegated admin rights over domain_id and everything under
 // it, without any account-wide role. domain_path is included so the console
 // can show what subtree a delegation covers without a second lookup.
@@ -168,6 +170,8 @@ export const api = {
 
   // ── mesh domains ───────────────────────────────────────────────────────────
   domains: () => request<MeshDomain[]>("/domains"),
+  previewRootRename: (suffix: string) => request<RootRenamePreview>("/domains/root/rename/preview", { method: "POST", body: body({ dns_suffix: suffix }) }),
+  commitRootRename: (preview: RootRenamePreview) => request<RootRenamePreview>("/domains/root/rename/commit", { method: "POST", body: body({ dns_suffix: preview.new_suffix, revision: preview.revision, confirm_no_aliases: true }) }),
   // parentId "" creates a top-level domain.
   createDomain: (parentId: string, label: string) => request<MeshDomain>("/domains", { method: "POST", body: body({ parent_id: parentId, label }) }),
   deleteDomain: (id: string) => request<void>(`/domains/${encodeURIComponent(id)}`, { method: "DELETE" }),

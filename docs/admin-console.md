@@ -15,8 +15,10 @@ and is the place to update when a deferral is later picked up.
 The agreed [mesh domain and access model](mesh-domains.md) defines an explicit,
 root named `karst` for new accounts, delegated administration, and resource
 access conditioned on device compliance. The root is visible in domain and
-machine controls. Root rename and compliance-conditioned access remain
-follow-up capabilities.
+machine controls. Domains also provides an account-authorized root rename
+preview, explicit no-alias confirmation, and rollback through another preview.
+The console distinguishes committed configuration from unobserved client
+convergence. Compliance-conditioned access remains a follow-up capability.
 
 - **Schema-aware autocomplete and inline JSON-syntax lint exist**
   (`GET /policy/schema`, `web/console/src/policy-editor.tsx`, a CodeMirror 6

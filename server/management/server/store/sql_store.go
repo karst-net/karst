@@ -4325,33 +4325,35 @@ func (s *SqlStore) SaveDNSSettings(ctx context.Context, accountID string, settin
 
 // SaveAccountSettings stores the account settings in DB.
 func (s *SqlStore) SaveAccountSettings(ctx context.Context, accountID string, settings *types.Settings) error {
-	root, err := s.GetAccountRootDomain(ctx, LockingStrengthNone, accountID)
-	if err != nil {
-		return err
-	}
-	if root != nil {
-		if settings.DNSDomain == "" {
-			settings.DNSDomain = root.DNSSuffix
+	return s.transaction(func(tx *gorm.DB) error {
+		root, err := s.withTx(tx).GetAccountRootDomain(ctx, LockingStrengthUpdate, accountID)
+		if err != nil {
+			return err
 		}
-		canonical, err := meshdomain.CanonicalSuffix(settings.DNSDomain)
-		if err != nil || canonical != root.DNSSuffix {
-			return status.Errorf(status.PreconditionFailed, "DNS suffix changes require the root naming API")
+		if root != nil {
+			if settings.DNSDomain == "" {
+				settings.DNSDomain = root.DNSSuffix
+			}
+			canonical, err := meshdomain.CanonicalSuffix(settings.DNSDomain)
+			if err != nil || canonical != root.DNSSuffix {
+				return status.Errorf(status.PreconditionFailed, "DNS suffix changes require the root naming API")
+			}
+			settings.DNSDomain = canonical
 		}
-		settings.DNSDomain = canonical
-	}
-	result := s.db.Model(&types.Account{}).
-		Select("*").Where(idQueryCondition, accountID).Updates(&types.AccountSettings{Settings: settings})
-	if result.Error != nil {
-		log.WithContext(ctx).Errorf("failed to save account settings to store: %v", result.Error)
-		return status.Errorf(status.Internal, "failed to save account settings to store")
-	}
+		result := tx.WithContext(ctx).Model(&types.Account{}).
+			Select("*").Where(idQueryCondition, accountID).Updates(&types.AccountSettings{Settings: settings})
+		if result.Error != nil {
+			log.WithContext(ctx).Errorf("failed to save account settings to store: %v", result.Error)
+			return status.Errorf(status.Internal, "failed to save account settings to store")
+		}
 
-	// MySQL reports RowsAffected=0 for no-op updates where values don't change,
-	// unlike SQLite/Postgres which report matched rows. Skip the check since the
-	// caller (UpdateAccountSettings) already verified the account exists via
-	// GetAccountSettings with LockingStrengthUpdate.
+		// MySQL reports RowsAffected=0 for no-op updates where values don't change,
+		// unlike SQLite/Postgres which report matched rows. Skip the check since the
+		// caller (UpdateAccountSettings) already verified the account exists via
+		// GetAccountSettings with LockingStrengthUpdate.
 
-	return nil
+		return nil
+	})
 }
 
 func (s *SqlStore) GetAccountNetworks(ctx context.Context, lockStrength LockingStrength, accountID string) ([]*networkTypes.Network, error) {

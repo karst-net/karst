@@ -20,8 +20,10 @@ import (
 // Manager administers an account's mesh-domain tree and its delegated
 // sub-administration (ADR-0032).
 type Manager interface {
-	// CreateDomain creates a top-level domain (parentID == "") or a
-	// subdomain (parentID naming an existing domain in the same account).
+	PreviewRootRename(ctx context.Context, accountID, userID, suffix string) (*meshdomain.RenamePreview, error)
+	CommitRootRename(ctx context.Context, accountID, userID, suffix, revision string) (*meshdomain.RenamePreview, error)
+	// CreateDomain creates a child of the account root (parentID == "") or
+	// of the supplied domain in the same account.
 	// Account-wide Domains permission always suffices; a domain-scoped
 	// delegated admin may create a subdomain under their own delegated
 	// subtree even without the account-wide grant.
@@ -90,6 +92,20 @@ func (m *managerImpl) CreateDomain(ctx context.Context, accountID, userID, paren
 	}
 
 	err = m.store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		root, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID)
+		if err != nil {
+			return err
+		}
+		if parentID != "" {
+			if _, err := transaction.GetDomainByID(ctx, store.LockingStrengthNone, accountID, parentID); err != nil {
+				return err
+			}
+		}
+		if root != nil {
+			if err := meshdomain.ValidatePeerName("x."+newDomain.Path, root.DNSSuffix); err != nil {
+				return status.Errorf(status.InvalidArgument, "%s", err)
+			}
+		}
 		siblings, err := transaction.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
 		if err != nil {
 			return fmt.Errorf("failed to check existing domains: %w", err)
@@ -183,6 +199,9 @@ func (m *managerImpl) DeleteDomain(ctx context.Context, accountID, userID, domai
 	}
 
 	err = m.store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		if _, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID); err != nil {
+			return err
+		}
 		// Issuance and enrollment take this lock before writing references.
 		// Check dependencies only after acquiring it, so a racing invitation
 		// cannot be created between the check and deletion.

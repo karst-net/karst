@@ -1450,6 +1450,35 @@ mod tests {
             resolver.resolve("beta.aquifer.karst", karst_dns::RecordType::A, true),
             Ok(karst_dns::Resolution::Authoritative(_))
         ));
+
+        // A refreshed root suffix rebuilds both forward and reverse records.
+        // The old snapshot remains usable by an offline client until refresh.
+        netmap.dns_config.zone = "corp.example".to_owned();
+        let renamed = from_netmap(&netmap).expect("renamed resolver");
+        assert!(matches!(
+            renamed.resolve("beta.corp.example", karst_dns::RecordType::A, true),
+            Ok(karst_dns::Resolution::Authoritative(_))
+        ));
+        assert!(matches!(
+            renamed.resolve("beta.aquifer.karst", karst_dns::RecordType::A, true),
+            Ok(karst_dns::Resolution::Forward { .. })
+        ));
+        assert_eq!(
+            renamed
+                .resolve("2.0.64.100.in-addr.arpa", karst_dns::RecordType::Ptr, true)
+                .expect("PTR"),
+            karst_dns::Resolution::Authoritative(karst_dns::Response::answer(vec![
+                karst_dns::Record::Ptr("beta.corp.example.".to_owned())
+            ]))
+        );
+        assert_eq!(
+            resolver
+                .resolve("2.0.64.100.in-addr.arpa", karst_dns::RecordType::Ptr, true)
+                .expect("offline PTR"),
+            karst_dns::Resolution::Authoritative(karst_dns::Response::answer(vec![
+                karst_dns::Record::Ptr("beta.aquifer.karst.".to_owned())
+            ]))
+        );
     }
 
     #[test]

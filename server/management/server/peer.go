@@ -334,6 +334,9 @@ func (am *DefaultAccountManager) UpdatePeer(ctx context.Context, accountID, user
 	var dnsDomain string
 
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+		if _, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID); err != nil {
+			return err
+		}
 		peer, err = transaction.GetPeerByID(ctx, store.LockingStrengthUpdate, accountID, update.ID)
 		if err != nil {
 			return err
@@ -1220,6 +1223,17 @@ func (am *DefaultAccountManager) addPeer(ctx context.Context, accountID, setupKe
 		}
 
 		err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
+			root, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthUpdate, accountID)
+			if err != nil {
+				return err
+			}
+			if root != nil {
+				for _, label := range append([]string{newPeer.DNSLabel}, newPeer.ExtraDNSLabels...) {
+					if err := meshdomain.ValidatePeerName(label, root.DNSSuffix); err != nil {
+						return status.Errorf(status.InvalidArgument, "%s", err)
+					}
+				}
+			}
 			if peerDomainID != "" {
 				// Invitation issuance and domain deletion use the same row lock.
 				d, err := transaction.GetDomainByID(ctx, store.LockingStrengthUpdate, accountID, peerDomainID)

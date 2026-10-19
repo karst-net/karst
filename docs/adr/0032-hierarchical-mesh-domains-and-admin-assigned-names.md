@@ -242,15 +242,28 @@ account reads load the root metadata.
 Default enrollment, root-aware domain creation, API root metadata, and console
 pickers use real IDs. Deleting an account removes its domain tree; deleting a
 child removes its delegation bindings. Settings updates that omit DNS preserve
-the root suffix, while explicit suffix changes require the future rename API.
+the root suffix, while explicit suffix changes require the dedicated rename API.
 Omitted Go peer-placement fields preserve placement; explicit HTTP empty-string
 moves are rejected. The resolver projects the explicit root suffix rather than
 allowing an independent deployment override to replace it.
 
 The [upgrade notes](../mesh-domains.md#upgrade-and-migration) describe the
-coordinated upgrade and conflict diagnostics. Root rename preview/commit,
-observed client convergence, and compliance integration remain follow-up work;
-#362 remains open.
+coordinated upgrade and conflict diagnostics. Root rename now provides
+`POST /domains/root/rename/preview` and `/commit` under the Karst API prefix.
+Confirmation uses an opaque naming-state token; the root also carries a
+monotonically increasing `naming_revision`. Suffix/projection writes are atomic,
+permissions and split-DNS compatibility are revalidated, and concurrent naming
+writers coordinate through the account/root lock. The console previews affected
+names, requires no-alias acknowledgement, and offers rollback as a fresh rename.
+Audit records include actor, suffixes and revision. Persisted DNS state is
+republished by ordinary client refresh after restart, independently of the
+best-effort streaming notification.
+
+The current protocol has no client application acknowledgement. Convergence is
+reported as unobserved, including after commit; this is not a claim that all
+clients have applied the new suffix. Fleet/host propagation validation and
+compliance integration remain follow-up work; #362 remains open for rollout
+validation.
 
 ## Historical context and original decision (2026-09-19)
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -30,16 +31,62 @@ type domainManager interface {
 }
 
 type domainResponse struct {
-	IsRoot    bool   `json:"is_root"`
-	DNSSuffix string `json:"dns_suffix,omitempty"`
-	ID        string `json:"id"`
-	ParentID  string `json:"parent_id,omitempty"`
-	Label     string `json:"label"`
-	Path      string `json:"path"`
+	NamingRevision uint64 `json:"naming_revision"`
+	IsRoot         bool   `json:"is_root"`
+	DNSSuffix      string `json:"dns_suffix,omitempty"`
+	ID             string `json:"id"`
+	ParentID       string `json:"parent_id,omitempty"`
+	Label          string `json:"label"`
+	Path           string `json:"path"`
 }
 
 func domainView(d *meshdomain.Domain) domainResponse {
-	return domainResponse{IsRoot: d.IsRoot(), DNSSuffix: d.DNSSuffix, ID: d.ID, ParentID: d.ParentID, Label: d.Label, Path: d.Path}
+	return domainResponse{NamingRevision: d.NamingRevision, IsRoot: d.IsRoot(), DNSSuffix: d.DNSSuffix, ID: d.ID, ParentID: d.ParentID, Label: d.Label, Path: d.Path}
+}
+
+type rootRenameManager interface {
+	PreviewRootRename(context.Context, string, string, string) (*meshdomain.RenamePreview, error)
+	CommitRootRename(context.Context, string, string, string, string) (*meshdomain.RenamePreview, error)
+}
+
+func (h *handler) rootRename(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	mgr, ok := h.domainMgr.(rootRenameManager)
+	if !ok {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "root rename is not configured"), w)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	var request struct {
+		Suffix   string `json:"dns_suffix"`
+		Revision string `json:"revision"`
+		Confirm  bool   `json:"confirm_no_aliases"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "invalid root rename request"), w)
+		return
+	}
+	var result *meshdomain.RenamePreview
+	if strings.HasSuffix(r.URL.Path, "/preview") {
+		result, err = mgr.PreviewRootRename(r.Context(), user.AccountId, user.UserId, request.Suffix)
+	} else {
+		if !request.Confirm || request.Revision == "" {
+			util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "confirm the preview and that old DNS names will stop resolving"), w)
+			return
+		}
+		result, err = mgr.CommitRootRename(r.Context(), user.AccountId, user.UserId, request.Suffix, request.Revision)
+	}
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, result)
 }
 
 type delegationResponse struct {

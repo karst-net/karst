@@ -510,6 +510,21 @@ func (e RelayUsageReportCoverage) Valid() bool {
 	}
 }
 
+// Defines values for RootRenamePreviewConvergence.
+const (
+	RootRenamePreviewConvergenceUnobserved RootRenamePreviewConvergence = "unobserved"
+)
+
+// Valid indicates whether the value is a known member of the RootRenamePreviewConvergence enum.
+func (e RootRenamePreviewConvergence) Valid() bool {
+	switch e {
+	case RootRenamePreviewConvergenceUnobserved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ScalerPoolRecommendationBindingConstraint.
 const (
 	ScalerPoolRecommendationBindingConstraintAvailability ScalerPoolRecommendationBindingConstraint = "availability"
@@ -642,6 +657,21 @@ func (e ExportAuditParamsFormat) Valid() bool {
 	case ExportAuditParamsFormatCsv:
 		return true
 	case ExportAuditParamsFormatJson:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CommitRootRenameJSONBodyConfirmNoAliases.
+const (
+	CommitRootRenameJSONBodyConfirmNoAliasesTrue CommitRootRenameJSONBodyConfirmNoAliases = true
+)
+
+// Valid indicates whether the value is a known member of the CommitRootRenameJSONBodyConfirmNoAliases enum.
+func (e CommitRootRenameJSONBodyConfirmNoAliases) Valid() bool {
+	switch e {
+	case CommitRootRenameJSONBodyConfirmNoAliasesTrue:
 		return true
 	default:
 		return false
@@ -1424,6 +1454,30 @@ type RelayUsageReport struct {
 // RelayUsageReportCoverage Completeness is measured over explicitly operator-authorized producers and account mappings only.
 type RelayUsageReportCoverage string
 
+// RootRenamePreview defines model for RootRenamePreview.
+type RootRenamePreview struct {
+	Committed bool `json:"committed"`
+
+	// Convergence No client application acknowledgement exists in the current protocol.
+	Convergence RootRenamePreviewConvergence `json:"convergence"`
+	DeviceCount int                          `json:"device_count"`
+	DomainCount int                          `json:"domain_count"`
+	Examples    []struct {
+		After  string `json:"after"`
+		Before string `json:"before"`
+	} `json:"examples"`
+	NamingRevision uint64 `json:"naming_revision"`
+	NewSuffix      string `json:"new_suffix"`
+	OldSuffix      string `json:"old_suffix"`
+
+	// Revision Opaque preview token; return unchanged at commit.
+	Revision string `json:"revision"`
+	RootId   string `json:"root_id"`
+}
+
+// RootRenamePreviewConvergence No client application acknowledgement exists in the current protocol.
+type RootRenamePreviewConvergence string
+
 // ScalerPoolRecommendation defines model for ScalerPoolRecommendation.
 type ScalerPoolRecommendation struct {
 	BindingConstraint ScalerPoolRecommendationBindingConstraint `json:"binding_constraint"`
@@ -1622,6 +1676,21 @@ type GetRelaySpendingCapParams struct {
 	Period string `form:"period" json:"period"`
 }
 
+// CommitRootRenameJSONBody defines parameters for CommitRootRename.
+type CommitRootRenameJSONBody struct {
+	ConfirmNoAliases CommitRootRenameJSONBodyConfirmNoAliases `json:"confirm_no_aliases"`
+	DnsSuffix        string                                   `json:"dns_suffix"`
+	Revision         string                                   `json:"revision"`
+}
+
+// CommitRootRenameJSONBodyConfirmNoAliases defines parameters for CommitRootRename.
+type CommitRootRenameJSONBodyConfirmNoAliases bool
+
+// PreviewRootRenameJSONBody defines parameters for PreviewRootRename.
+type PreviewRootRenameJSONBody struct {
+	DnsSuffix string `json:"dns_suffix"`
+}
+
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
 	Tag      *Tag                     `form:"tag,omitempty" json:"tag,omitempty"`
@@ -1714,6 +1783,12 @@ type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
 type SetControlPlaneLocationJSONRequestBody = RelayLocation
+
+// CommitRootRenameJSONRequestBody defines body for CommitRootRename for application/json ContentType.
+type CommitRootRenameJSONRequestBody CommitRootRenameJSONBody
+
+// PreviewRootRenameJSONRequestBody defines body for PreviewRootRename for application/json ContentType.
+type PreviewRootRenameJSONRequestBody PreviewRootRenameJSONBody
 
 // SetGroupLocationJSONRequestBody defines body for SetGroupLocation for application/json ContentType.
 type SetGroupLocationJSONRequestBody = LocationCreate

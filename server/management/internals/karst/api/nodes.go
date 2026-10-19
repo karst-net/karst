@@ -535,6 +535,8 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	// KarstControl gate below (see karstAuthorization) -- a domain-scoped
 	// delegated admin has no account-wide grant, and each handler's
 	// underlying manager call re-derives and enforces its own permission.
+	karstRouter.HandleFunc("/domains/root/rename/preview", h.rootRename).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/domains/root/rename/commit", h.rootRename).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/domains", h.domains).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/domains/{id}", h.getDomain).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/domains/{id}", h.deleteDomain).Methods(http.MethodDelete, http.MethodOptions)
