@@ -170,7 +170,10 @@ func TestPostgresComplianceExpiryCannotExpireARefreshedGeneration(t *testing.T) 
 	}
 	require.NoError(t, db.Table("karst_device_compliance").Take(&row).Error)
 	require.False(t, row.ExpiryNotified, "an expiry scan must not expire a newly accepted generation")
-	require.Equal(t, deadline.Add(compliance.EvidenceLifetime), row.EvidenceExpiresAt)
+	// PostgreSQL may decode timestamptz using time.Local; compare instants,
+	// rather than the location metadata carried by time.Time.
+	require.True(t, deadline.Add(compliance.EvidenceLifetime).Equal(row.EvidenceExpiresAt),
+		"unexpected evidence expiry: %s", row.EvidenceExpiresAt)
 	require.Equal(t, uint64(2), row.Generation)
 	require.True(t, row.NotificationPending)
 	var ids []string
