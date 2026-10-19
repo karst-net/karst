@@ -168,6 +168,84 @@ func (e BillingPaymentState) Valid() bool {
 	}
 }
 
+// Defines values for CloudAccountMode.
+const (
+	CloudAccountModeReadOnly  CloudAccountMode = "read_only"
+	CloudAccountModeReadWrite CloudAccountMode = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the CloudAccountMode enum.
+func (e CloudAccountMode) Valid() bool {
+	switch e {
+	case CloudAccountModeReadOnly:
+		return true
+	case CloudAccountModeReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CloudAccountProvider.
+const (
+	CloudAccountProviderAws   CloudAccountProvider = "aws"
+	CloudAccountProviderAzure CloudAccountProvider = "azure"
+	CloudAccountProviderGcp   CloudAccountProvider = "gcp"
+)
+
+// Valid indicates whether the value is a known member of the CloudAccountProvider enum.
+func (e CloudAccountProvider) Valid() bool {
+	switch e {
+	case CloudAccountProviderAws:
+		return true
+	case CloudAccountProviderAzure:
+		return true
+	case CloudAccountProviderGcp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CloudAccountCreateMode.
+const (
+	CloudAccountCreateModeReadOnly  CloudAccountCreateMode = "read_only"
+	CloudAccountCreateModeReadWrite CloudAccountCreateMode = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the CloudAccountCreateMode enum.
+func (e CloudAccountCreateMode) Valid() bool {
+	switch e {
+	case CloudAccountCreateModeReadOnly:
+		return true
+	case CloudAccountCreateModeReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CloudAccountCreateProvider.
+const (
+	CloudAccountCreateProviderAws   CloudAccountCreateProvider = "aws"
+	CloudAccountCreateProviderAzure CloudAccountCreateProvider = "azure"
+	CloudAccountCreateProviderGcp   CloudAccountCreateProvider = "gcp"
+)
+
+// Valid indicates whether the value is a known member of the CloudAccountCreateProvider enum.
+func (e CloudAccountCreateProvider) Valid() bool {
+	switch e {
+	case CloudAccountCreateProviderAws:
+		return true
+	case CloudAccountCreateProviderAzure:
+		return true
+	case CloudAccountCreateProviderGcp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeviceInvitationState.
 const (
 	DeviceInvitationStateExpired  DeviceInvitationState = "expired"
@@ -225,6 +303,27 @@ func (e DiagnosticSeverity) Valid() bool {
 	case DiagnosticSeverityError:
 		return true
 	case DiagnosticSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DiscoveredRegionKind.
+const (
+	DiscoveredRegionKindLocalZone DiscoveredRegionKind = "local_zone"
+	DiscoveredRegionKindRegion    DiscoveredRegionKind = "region"
+	DiscoveredRegionKindZone      DiscoveredRegionKind = "zone"
+)
+
+// Valid indicates whether the value is a known member of the DiscoveredRegionKind enum.
+func (e DiscoveredRegionKind) Valid() bool {
+	switch e {
+	case DiscoveredRegionKindLocalZone:
+		return true
+	case DiscoveredRegionKindRegion:
+		return true
+	case DiscoveredRegionKindZone:
 		return true
 	default:
 		return false
@@ -950,6 +1049,37 @@ type ChainVerification struct {
 	Verified         *bool     `json:"verified,omitempty"`
 }
 
+// CloudAccount defines model for CloudAccount.
+type CloudAccount struct {
+	CreatedAt *time.Time           `json:"created_at,omitempty"`
+	Id        *string              `json:"id,omitempty"`
+	Label     *string              `json:"label,omitempty"`
+	Mode      CloudAccountMode     `json:"mode"`
+	Provider  CloudAccountProvider `json:"provider"`
+}
+
+// CloudAccountMode defines model for CloudAccount.Mode.
+type CloudAccountMode string
+
+// CloudAccountProvider defines model for CloudAccount.Provider.
+type CloudAccountProvider string
+
+// CloudAccountCreate defines model for CloudAccountCreate.
+type CloudAccountCreate struct {
+	Label    *string                    `json:"label,omitempty"`
+	Mode     CloudAccountCreateMode     `json:"mode"`
+	Provider CloudAccountCreateProvider `json:"provider"`
+
+	// Secret Provider-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}.
+	Secret map[string]interface{} `json:"secret"`
+}
+
+// CloudAccountCreateMode defines model for CloudAccountCreate.Mode.
+type CloudAccountCreateMode string
+
+// CloudAccountCreateProvider defines model for CloudAccountCreate.Provider.
+type CloudAccountCreateProvider string
+
 // DeviceEnrollment defines model for DeviceEnrollment.
 type DeviceEnrollment struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -1029,6 +1159,18 @@ type Diagnostic struct {
 // DiagnosticSeverity defines model for Diagnostic.Severity.
 type DiagnosticSeverity string
 
+// DiscoveredRegion defines model for DiscoveredRegion.
+type DiscoveredRegion struct {
+	Code string               `json:"code"`
+	Kind DiscoveredRegionKind `json:"kind"`
+	Lat  *float32             `json:"lat,omitempty"`
+	Lon  *float32             `json:"lon,omitempty"`
+	Name *string              `json:"name,omitempty"`
+}
+
+// DiscoveredRegionKind defines model for DiscoveredRegion.Kind.
+type DiscoveredRegionKind string
+
 // EnrollmentSettings defines model for EnrollmentSettings.
 type EnrollmentSettings struct {
 	ControlMinimumVersion EnrollmentSettingsControlMinimumVersion `json:"control_minimum_version"`
@@ -1048,6 +1190,13 @@ type Error struct {
 	Code      string  `json:"code"`
 	Message   string  `json:"message"`
 	RequestId *string `json:"request_id,omitempty"`
+}
+
+// FirstRunState defines model for FirstRunState.
+type FirstRunState struct {
+	// Completed Whether the account has finished the console's first-run setup wizard (default domain + initial groups). A brand-new account defaults to false; an account that existed before this feature shipped defaults to true.
+	Completed   bool       `json:"completed"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // Flow defines model for Flow.
@@ -1632,6 +1781,12 @@ type TurnServerCreate struct {
 	Uri string `json:"uri"`
 }
 
+// TutorialMode defines model for TutorialMode.
+type TutorialMode struct {
+	// Enabled Whether per-page "what is this" guidance text is shown across the console. Defaults to true.
+	Enabled bool `json:"enabled"`
+}
+
 // Action defines model for action.
 type Action = string
 
@@ -1850,6 +2005,9 @@ type RequestRelayCreditsJSONRequestBody = RelayCreditRequest
 // SurrenderRelayCreditsJSONRequestBody defines body for SurrenderRelayCredits for application/json ContentType.
 type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
+// CreateCloudAccountJSONRequestBody defines body for CreateCloudAccount for application/json ContentType.
+type CreateCloudAccountJSONRequestBody = CloudAccountCreate
+
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
 type SetControlPlaneLocationJSONRequestBody = RelayLocation
 
@@ -1897,6 +2055,9 @@ type SetScalingModeJSONRequestBody = ScalingMode
 
 // CreateTurnServerJSONRequestBody defines body for CreateTurnServer for application/json ContentType.
 type CreateTurnServerJSONRequestBody = TurnServerCreate
+
+// SetTutorialModeJSONRequestBody defines body for SetTutorialMode for application/json ContentType.
+type SetTutorialModeJSONRequestBody = TutorialMode
 
 // AsExportAudit200JSONResponseBody0 returns the union data inside the ExportAudit200JSONResponseBody as a ExportAudit200JSONResponseBody0
 func (t ExportAudit200JSONResponseBody) AsExportAudit200JSONResponseBody0() (ExportAudit200JSONResponseBody0, error) {
