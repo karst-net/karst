@@ -5,6 +5,51 @@
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
 
+## Implementation status
+
+The internal Go package `server/management/internals/karst/compliance` implements
+stage 1's typed requirements, deterministic evaluation and version comparison.
+It is not connected to reporting, policy writes, netmaps or packet enforcement.
+There are no supported client collectors yet. The capability matrix below remains
+a delivery target; #363 remains open.
+
+`Evaluate` accepts an explicit server evaluation time and authenticated subject.
+Its evidence input must come from trusted ingestion: identity, receipt time and
+provenance are not client-controlled claims. Invalid requirements, duplicate IDs,
+empty sets, incomplete subjects and missing evaluation time return an error and
+an unsatisfied result. Callers must deny on error. Nonpassing evidence retains a
+state and fixed reason code for every requirement without returning raw values
+or collection error messages. A passing evaluation carries the evidence deadline;
+it is a snapshot, not an access grant, and must be reevaluated before reuse.
+
+Initial comparison rules:
+
+- Client versions require full SemVer (optional `v` prefix). Prereleases sort
+  below their final release; build metadata does not affect ordering. CI's
+  `0.0.0+git.SHA` is a version, while local `dev` is an evaluation error.
+- macOS uses numeric product `major.minor[.patch]`; Windows uses numeric
+  `major.minor.build[.revision]`, not marketing names.
+- Linux initially recognizes only distribution ID `ubuntu` with a two-component
+  numeric release, and `debian` with one or two numeric components. Kernel
+  versions and other distributions are not substituted for product releases.
+- OS components compare numerically with omitted trailing components treated as
+  zero. Ubuntu's zero-padded components are accepted. Invalid or overflowing
+  components fail evaluation. Each OS requirement names one platform and, for
+  Linux, distribution; other platforms/distributions are unsupported for that
+  requirement. Multiple requirements are AND, not alternative platform branches.
+
+Fresh evidence expires exactly at server receipt plus 180 seconds. A future or
+missing server receipt time is an evaluation error. Evaluation checks subject,
+server time, expiry, provenance, platform and observation validity in that order;
+only a fresh accepted observation can reach the version comparison. An unknown
+observation status or a value attached to a non-collected status is malformed.
+No error path falls back to an earlier passing observation.
+
+Validation: `cd server && go test -race -count=1 ./management/internals/karst/compliance/`.
+Tests cover all six states, precise expiry boundaries, trust/identity mismatch,
+malformed observations, platform/version ordering, conjunctive results,
+independent devices, new collection errors and recovery.
+
 ## Evidence and requirements
 
 A report contains a schema version, server-issued single-use challenge, enrolled
