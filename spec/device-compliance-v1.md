@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Device compliance v1 — proposed implementation contract
 
-**Status:** Partially implemented: evaluation, ingestion and version collection.
+**Status:** Partially implemented: evaluation, ingestion, version collection,
+invalidation scheduling and an internal guardrail preview model.
 Resource guardrails and traffic enforcement remain proposed.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
@@ -16,8 +17,9 @@ writes, netmaps or packet enforcement.
 `karstd` now collects self-reported client versions and supported native OS
 releases, with bounded challenge/report attempts on live supporting servers.
 Evidence change/expiry invalidations now use a durable retry queue and the peer
-notification path. Policy guardrails and all traffic enforcement remain pending;
-#363 remains open.
+notification path. The policy package also provides an internal draft guardrail
+validator and diagnostic evaluator. Policy activation, filter compilation and
+all traffic enforcement remain pending; #363 remains open.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -276,6 +278,55 @@ control stream without a new client report or poll. PostgreSQL CI additionally e
 and acknowledgment versus a newer failure across independent connection pools.
 
 ## Authorization and expiry
+
+### Implemented internal guardrail preview
+
+`policy.ComplianceDraft` contains a tenant ID, named conjunctive requirement
+sets, destination guardrails and explicitly designated remediation resources.
+It is a Go-only preview input: it is absent from the policy JSON document/schema,
+and the policy parser rejects attempts to activate it. There is no persistence,
+management API, netmap projection or permission issuance for this model yet.
+
+Each resource names a node selector (handle, user, group or tag), explicit IPv4
+or IPv6 CIDR, or `*`; it also names TCP, UDP or either transport and an inclusive
+port range. Resource ports are separate from selectors. CIDRs match the actual
+packet destination. Node selectors refer to the destination node, never a
+forwarding gateway; `*` includes both node and routed destinations. The preview
+resolves destination handles against the supplied inventory and checks address
+ownership. Routed destinations carry no destination-node handle.
+
+`Document.PreviewCompliance` takes trusted, tenant-scoped inventory/evidence,
+an authenticated subject, explicit evaluation time and decisions from the
+independent identity and SSH gates. These are internal caller inputs, not
+client-provided claims or an authenticated public API. It does not calculate
+identity grant provenance. Every matching guardrail contributes its requirement
+sets with AND; a shared set is evaluated once and all check results are retained.
+The preview reports matching guardrail IDs, set results and the independent
+gate decisions in deterministic order. Missing/nonpassing evidence denies
+protected traffic even when identity or SSH permits it. Passing evidence cannot
+override either independent denial. SSH admission applies to TCP/22 only.
+Unprotected traffic still requires the corresponding identity/SSH grants.
+
+Validation rejects empty/duplicate objects, invalid requirements, missing set
+references, undefined groups, malformed CIDRs, invalid transports/ranges and
+remediation intersections. Conflict detection includes port/transport overlaps,
+wildcards, intersecting CIDRs, and node selectors that match the same inventory
+node or intersect its owned addresses. Unresolved node selectors can describe
+future inventory, so callers must supply the complete current tenant roster and
+revalidate after address, ownership, tag or group changes. Gateway route prefixes
+are not node-owned addresses. Each preview validates the whole draft; an invalid
+draft or invalid flow returns an error with a denied result. This is conservative
+draft validation, not the final persisted-policy recovery behavior.
+
+A passing preview's `ValidUntil` is only the evidence deadline. It is zero on
+denial and for unprotected traffic; it is not a renewable authorization lease.
+Tests cover device-specific evidence, failure/expiry/recovery, independent gates,
+overlapping guardrails, remediation conflicts, IPv4/IPv6 routed destinations,
+port boundaries and invalid subjects/references. Live policy preview APIs,
+device-specific filter compilation and the following enforcement contract remain
+unimplemented.
+
+### Proposed authorization and enforcement contract
 
 Resource guardrails constrain destination selectors, transport/ports and routed
 CIDRs after identity grant resolution. All matching requirements apply to every
