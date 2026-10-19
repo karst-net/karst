@@ -146,9 +146,10 @@ anything. A non-administrator can see the current exit but cannot change it.
   not actually moving. The same per-route egress counters are also
   available without root or host access, via the console's NOC view or
   `GET /noc/components` (issue #281, "Per-route throughput" in
-  `admin-console.md`) — this manual path stays useful for the return leg,
-  which that automatic reporting does not cover, and for an operator
-  without console access.
+  `admin-console.md`) — this manual path stays useful without console
+  access, or to confirm return-leg attribution directly against the
+  kernel's own per-route counters (issue #371), which aren't yet surfaced
+  through the console (issue #372).
 - **`ip route show`** on a recipient — a subnet route appears as a normal
   route over the tunnel interface; a consented default route appears in a
   dedicated policy-routing table rather than the main table (`ip rule show`
