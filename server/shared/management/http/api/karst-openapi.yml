@@ -611,6 +611,20 @@ paths:
       responses:
         '200': {description: The Advisor's latest completed tick, content: {application/json: {schema: {$ref: '#/components/schemas/ScalerRecommendations'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /scaler/suggestions:
+    get:
+      operationId: scalerSuggestions
+      tags: [scaler]
+      description: >-
+        Issue #381's manual-mode-shaped "suggested by RTT" view, proxied
+        unchanged from karst-scaler advise's own loopback /suggestions
+        endpoint (KARST_SCALER_ADVISOR_URL) -- the browser never dials
+        karst-scaler directly. Requires the advisor role, the same as
+        scalerRecommendations. Precondition-failed (not 404) if
+        KARST_SCALER_ADVISOR_URL is not configured for this deployment.
+      responses:
+        '200': {description: The Advisor's latest latency-breach and region-candidate signals, content: {application/json: {schema: {$ref: '#/components/schemas/ScalerSuggestions'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /scaling/mode:
     get:
       operationId: getScalingMode
@@ -1230,6 +1244,22 @@ components:
       type: object
       required: [tick_unix, recommendation, configured_nodes]
       properties: {tick_unix: {type: integer}, recommendation: {$ref: '#/components/schemas/ScalerRecommendation'}, configured_nodes: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 'pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).'}}
+    # Issue #381: advise_loop::LatencyBreach/RegionCandidate
+    # (bins/karst-scaler/src/advise_loop.rs) and metrics_http::Suggestions
+    # -- the exact shape its loopback /suggestions endpoint serves,
+    # proxied unchanged by GET /scaler/suggestions above.
+    ScalerLatencyBreach:
+      type: object
+      required: [region, p95_rtt_ms, threshold_ms]
+      properties: {region: {type: string}, p95_rtt_ms: {type: number}, threshold_ms: {type: number}}
+    ScalerRegionCandidate:
+      type: object
+      required: [provider, region, estimated_p95_rtt_ms, observations]
+      properties: {provider: {type: string}, region: {type: string}, estimated_p95_rtt_ms: {type: number}, observations: {type: integer}}
+    ScalerSuggestions:
+      type: object
+      required: [tick_unix, latency_breaches, region_candidates]
+      properties: {tick_unix: {type: integer}, latency_breaches: {type: array, items: {$ref: '#/components/schemas/ScalerLatencyBreach'}}, region_candidates: {type: array, items: {$ref: '#/components/schemas/ScalerRegionCandidate'}}}
     # Issues #356/#379/#380: ADR-0045 §7's Phase 1 (manual)/Phase 2
     # (automated) actuation switch -- one deployment-wide value, not
     # per-pool.

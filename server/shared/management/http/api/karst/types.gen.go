@@ -1517,6 +1517,13 @@ type RootRenamePreview struct {
 // RootRenamePreviewConvergence No client application acknowledgement exists in the current protocol.
 type RootRenamePreviewConvergence string
 
+// ScalerLatencyBreach defines model for ScalerLatencyBreach.
+type ScalerLatencyBreach struct {
+	P95RttMs    float32 `json:"p95_rtt_ms"`
+	Region      string  `json:"region"`
+	ThresholdMs float32 `json:"threshold_ms"`
+}
+
 // ScalerPoolRecommendation defines model for ScalerPoolRecommendation.
 type ScalerPoolRecommendation struct {
 	BindingConstraint ScalerPoolRecommendationBindingConstraint `json:"binding_constraint"`
@@ -1541,6 +1548,21 @@ type ScalerRecommendations struct {
 	ConfiguredNodes map[string]int       `json:"configured_nodes"`
 	Recommendation  ScalerRecommendation `json:"recommendation"`
 	TickUnix        int                  `json:"tick_unix"`
+}
+
+// ScalerRegionCandidate defines model for ScalerRegionCandidate.
+type ScalerRegionCandidate struct {
+	EstimatedP95RttMs float32 `json:"estimated_p95_rtt_ms"`
+	Observations      int     `json:"observations"`
+	Provider          string  `json:"provider"`
+	Region            string  `json:"region"`
+}
+
+// ScalerSuggestions defines model for ScalerSuggestions.
+type ScalerSuggestions struct {
+	LatencyBreaches  []ScalerLatencyBreach   `json:"latency_breaches"`
+	RegionCandidates []ScalerRegionCandidate `json:"region_candidates"`
+	TickUnix         int                     `json:"tick_unix"`
 }
 
 // ScalingMode defines model for ScalingMode.

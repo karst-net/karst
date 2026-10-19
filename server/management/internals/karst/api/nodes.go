@@ -601,6 +601,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/scaler/suggestions", h.scalerSuggestions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaling/mode", h.scalingModeGet).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaling/mode", h.scalingModeSet).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
@@ -2648,6 +2649,80 @@ func (h *handler) scalerRecommendations(w http.ResponseWriter, r *http.Request) 
 	}
 	if h.audit != nil {
 		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.scaler.recommendations.view", "recommendations", ""); err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	util.WriteJSONObject(r.Context(), w, result)
+}
+
+// scalerLatencyBreachResponse mirrors karst-scaler's own
+// advise_loop::LatencyBreach (issue #381).
+type scalerLatencyBreachResponse struct {
+	Region      string  `json:"region"`
+	P95RTTMs    float64 `json:"p95_rtt_ms"`
+	ThresholdMs float64 `json:"threshold_ms"`
+}
+
+// scalerRegionCandidateResponse mirrors advise_loop::RegionCandidate.
+type scalerRegionCandidateResponse struct {
+	Provider          string  `json:"provider"`
+	Region            string  `json:"region"`
+	EstimatedP95RTTMs float64 `json:"estimated_p95_rtt_ms"`
+	Observations      int64   `json:"observations"`
+}
+
+// scalerSuggestionsResponse mirrors karst-scaler's metrics_http::Suggestions
+// -- the exact shape its own GET /suggestions serves.
+type scalerSuggestionsResponse struct {
+	TickUnix         int64                           `json:"tick_unix"`
+	LatencyBreaches  []scalerLatencyBreachResponse   `json:"latency_breaches"`
+	RegionCandidates []scalerRegionCandidateResponse `json:"region_candidates"`
+}
+
+// scalerSuggestions proxies issue #381's manual-mode-shaped "suggested by
+// RTT" view from karst-scaler advise's own loopback /suggestions endpoint
+// -- the sibling scalerRecommendations above already proxies
+// /recommendations from, same role gate, same decode-and-re-encode
+// discipline (not a raw-bytes proxy, for the identical reason), same
+// reasoning throughout.
+func (h *handler) scalerSuggestions(w http.ResponseWriter, r *http.Request) {
+	user, err := nbcontext.GetUserAuthFromContext(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := requireAdvisorRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.scalerAdvisorURL == "" {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "KARST_SCALER_ADVISOR_URL is not configured"), w)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.scalerAdvisorURL+"/suggestions", nil)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "building karst-scaler request: %v", err), w)
+		return
+	}
+	resp, err := scalerRecommendationsHTTPClient.Do(req)
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "reaching karst-scaler advise: %v", err), w)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBodyBytes))
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "karst-scaler advise returned %s: %s", resp.Status, body), w)
+		return
+	}
+	var result scalerSuggestionsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBodyBytes)).Decode(&result); err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.Internal, "decoding karst-scaler advise response: %v", err), w)
+		return
+	}
+	if h.audit != nil {
+		if _, err := h.audit.Append(r.Context(), user.UserId, "karst.scaler.suggestions.view", "suggestions", ""); err != nil {
 			util.WriteError(r.Context(), err, w)
 			return
 		}

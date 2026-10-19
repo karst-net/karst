@@ -213,6 +213,18 @@ Compliance-conditioned access remains a follow-up capability.
   `docs/observability.md`) still ship standalone and are directly
   scrapeable regardless, so this page being unconfigured loses a UI, not
   the underlying capability.
+- **API-only, no console rendering yet: `GET /karst/v1/scaler/suggestions`**
+  (issue #381) — manual mode's own "suggested by RTT" signal, proxied the
+  same way `/scaler/recommendations` is, from `karst-scaler advise`'s own
+  loopback `/suggestions` endpoint. Two RTT-derived lists: `latency_breaches`
+  (an existing pool's region currently exceeding its configured p95
+  threshold) and `region_candidates` (a region with anchor-RTT observations
+  but no pool at all today, ranked by estimated p95 — a crude stand-in
+  ranking, not a verified formula). Same `advisor` role gate as
+  `/scaler/recommendations`, computed every tick regardless of the §7
+  Phase 1/2 mode. No console page renders this yet — a separate, later
+  concern, same posture as this page's own missing per-pool drill-down
+  above.
 - **API-only, no console toggle yet: `GET`/`PUT /karst/v1/scaling/mode`**
   (issues #356, #379, #380, #382) — ADR-0045 §7's Phase 1 (manual, compute
   and report)/Phase 2 (automated, compute and reconcile) choice as a live,
