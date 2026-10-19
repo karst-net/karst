@@ -74,9 +74,11 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   </div>;
 }
 
-// Only the switcher needs to remember the true home account across a
-// switched-into reload -- see AccountSwitcher's own comment for why.
+// Only the switcher needs to remember the true home account (and the
+// signed-in user's friendly label) across a switched-into reload -- see
+// AccountSwitcher's own comment for why.
 const homeAccountKey = "karst.homeAccount";
+const homeUserLabelKey = "karst.homeUserLabel";
 
 /** ADR-0037: the header's account line, upgraded to a real switcher only
  *  when the caller has operator-granted access to another account.
@@ -85,6 +87,7 @@ const homeAccountKey = "karst.homeAccount";
  *  reload is the simplest thing that is actually correct. */
 function AccountSwitcher() {
   const [home, setHome] = useState<string>();
+  const [homeLabel, setHomeLabel] = useState<string>();
   const [accessible, setAccessible] = useState<string[]>([]);
   useEffect(() => {
     // api.account() answers for whichever account is currently in effect --
@@ -95,21 +98,32 @@ function AccountSwitcher() {
       api.account().then((account) => {
         setHome(account.id);
         try { sessionStorage.setItem(homeAccountKey, account.id); } catch { /* per-viewer convenience only */ }
+        // The account id itself is meaningless to a human; show the
+        // signed-in user's own name or email instead, falling back to the
+        // id if neither claim came through from the IdP.
+        api.currentUser().then((user) => {
+          const label = user.name || user.email || account.id;
+          setHomeLabel(label);
+          try { sessionStorage.setItem(homeUserLabelKey, label); } catch { /* per-viewer convenience only */ }
+        }).catch(() => setHomeLabel(account.id));
       }).catch(() => {});
     } else {
-      try { setHome(sessionStorage.getItem(homeAccountKey) ?? undefined); } catch { setHome(undefined); }
+      try {
+        setHome(sessionStorage.getItem(homeAccountKey) ?? undefined);
+        setHomeLabel(sessionStorage.getItem(homeUserLabelKey) ?? undefined);
+      } catch { setHome(undefined); setHomeLabel(undefined); }
     }
     api.accessibleAccounts().then((rows) => setAccessible(rows.map((row) => row.account_id))).catch(() => {});
   }, []);
 
-  if (accessible.length === 0) return <p>Account: <strong>{home ?? "…"}</strong></p>;
+  if (accessible.length === 0) return <p>Account: <strong>{homeLabel ?? home ?? "…"}</strong></p>;
   const current = getActiveAccountOverride() ?? home ?? "";
   return <label>Account <select value={current} onChange={(event) => {
     const next = event.target.value;
     setActiveAccountOverride(next === home ? null : next);
     location.reload();
   }}>
-    {home && <option value={home}>{home} (yours)</option>}
+    {home && <option value={home}>{homeLabel ?? home} (yours)</option>}
     {accessible.map((id) => <option key={id} value={id}>{id}</option>)}
   </select></label>;
 }
