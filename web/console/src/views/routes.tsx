@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import { api, type Group, type NetworkRoute, type NetworkRouteDraft } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 const blank: NetworkRouteDraft = {
   network_id: "", description: "", enabled: true, network: "", peer_groups: [], groups: [], access_control_groups: [],
@@ -63,7 +64,7 @@ export function Routes() {
 
   return <section>
     <h2>Network routes</h2>
-    <p className="lede">Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</p>
+    <TutorialHint>A route is a logical declaration, not a device of its own — it names a real subnet (or "the whole internet," for a default route) and which already-enrolled machines ("gateways") will carry traffic to it. Advertise a subnet or default route through enrolled gateway machines. Distribution controls who sees an offer; access control independently governs who may use it.</TutorialHint>
     <div className="actions">
       <button className="primary" onClick={() => setDraft({ value: fresh() })}>Add subnet route</button>
       <button onClick={() => setDraft({ value: fresh("0.0.0.0/0") })}>Add IPv4 exit route</button>

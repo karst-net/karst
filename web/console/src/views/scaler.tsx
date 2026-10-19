@@ -6,6 +6,7 @@ import { Dialog, EmptyState } from "@karst-net/ui";
 import type { AllowedRegion } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 type Draft = { provider: string; region: string };
 const blank: Draft = { provider: "", region: "" };
@@ -35,7 +36,7 @@ export function Scaler() {
 
   return <section>
     <h2>Scaler Advisor</h2>
-    <p className="lede">ADR-0045 §7 Phase 1: the Advisor's recommended node count per pool this tick, compared against each pool's own configured floor. Read-only — nothing here actuates a change.</p>
+    <TutorialHint>A logical planning view, not a control: karst-scaler advise computes how many nodes each capacity pool should have, from recorded demand, and this page just shows that recommendation next to what is actually configured. ADR-0045 §7 Phase 1: the Advisor's recommended node count per pool this tick, compared against each pool's own configured floor. Read-only — nothing here actuates a change.</TutorialHint>
     {pools.length === 0
       ? <EmptyState title="No recommendation yet">karst-scaler advise has not produced a recommendation for any pool.</EmptyState>
       : <Rows head={<><th>Pool</th><th>Recommended</th><th>Configured</th><th>Cost delta</th><th>Binding constraint</th></>}>
@@ -49,7 +50,7 @@ export function Scaler() {
       </Rows>}
 
     <h3>Allowed regions</h3>
-    <p className="lede">ADR-0045 §4c's deployment-wide region allowlist: what gets projected into every node's netmap, and which §4b anchor-RTT demand reports are recorded rather than dropped. <strong>This is not the same list karst-scaler's own driver reads to decide where it may actually provision capacity</strong> — that list lives in a separate, operator-maintained file on the scaler host, deliberately kept out of the control plane's trust domain (ADR-0045 §6: the control plane must never gain cloud-account credentials). Adding a region here does not by itself authorize any new spend there.</p>
+    <TutorialHint>ADR-0045 §4c's deployment-wide region allowlist: what gets projected into every node's netmap, and which §4b anchor-RTT demand reports are recorded rather than dropped. <strong>This is not the same list karst-scaler's own driver reads to decide where it may actually provision capacity</strong> — that list lives in a separate, operator-maintained file on the scaler host, deliberately kept out of the control plane's trust domain. Adding a region here does not by itself authorize any new spend there, and it is unrelated to the read-only cloud credentials configured in Settings for Authorized Locations (ADR-0045 §6 addendum) — those can list regions but never provision anything either.</TutorialHint>
     {regions.loading ? <p>Loading allowed regions…</p>
       : regions.error ? <Failure message={regions.error} retry={regions.reload} />
       : <>

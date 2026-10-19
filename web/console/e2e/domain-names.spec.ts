@@ -16,7 +16,7 @@ for (const delegated of [false, true]) {
     await expect(page.getByRole("dialog").locator("code")).toHaveText("builder.build.engineering.corp.example");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-    await page.goto("/#/setup");
+    await page.goto("/#/enroll");
     await page.getByLabel("Device name").fill("new-device");
     if (!delegated) await expect(page.getByText("It will resolve as")).toContainText("new-device.corp.example");
     await page.getByLabel("Domain", { exact: true }).selectOption(child.id);

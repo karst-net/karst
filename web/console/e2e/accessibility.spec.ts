@@ -4,7 +4,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const routes = ["setup", "domains", "machines", "access", "keys", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "billing", "settings"];
+const routes = ["enroll", "domains", "machines", "access", "keys", "users", "groups", "bedrock", "posture", "dns", "routes", "audit", "relays", "billing", "settings"];
 
 for (const route of routes) {
   test(`${route} has no accessibility violations`, async ({ page }) => {
@@ -94,7 +94,7 @@ test("policy syntax errors surface their line number", async ({ page }) => {
 });
 
 test("setup requires a label and groups and refuses issuance over HTTP", async ({ page }) => {
- await page.goto("/#/setup");
+ await page.goto("/#/enroll");
  await expect(page.getByRole("button", { name: "Create invitation" })).toBeDisabled();
  await page.getByLabel("Device name").fill("Laptop");
  await page.getByRole("checkbox", { name: "sre", exact: true }).check();
@@ -272,7 +272,7 @@ test("a subdomain can be created, delegated, revoked and deleted", async ({ page
 });
 
 test("the setup invitation form can target a device at a domain", async ({ page }) => {
-  await page.goto("/#/setup");
+  await page.goto("/#/enroll");
   await page.getByLabel("Device name").fill("domain-device");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
   await page.getByLabel("Domain").selectOption("domain-engineering");

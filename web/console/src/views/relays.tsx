@@ -6,6 +6,7 @@ import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
 import type { Relay } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 type Draft = { address: string; tls_server_name: string; identity_key: string; region: string; lat: string; lon: string; label: string };
 const blank: Draft = { address: "", tls_server_name: "", identity_key: "", region: "default", lat: "", lon: "", label: "" };
@@ -49,7 +50,7 @@ export function Relays() {
 
   return <section>
     <h2>Relays</h2>
-    <p className="lede">Every node is told about exactly the relays listed here. A relay that is not in this registry is one no node will ever dial.</p>
+    <TutorialHint>A relay is a physical or virtual machine running <code>karst-relay</code> that forwards encrypted traffic between two nodes that cannot reach each other directly (both behind restrictive NAT, for example). It sits on the network, not inside this console — this registry just tells every node which relays exist and how to reach them. Every node is told about exactly the relays listed here. A relay that is not in this registry is one no node will ever dial.</TutorialHint>
     <div className="actions"><button className="primary" onClick={() => setDraft(blank)}>Add relay</button></div>
     <Notice message={message} />
     {relays.length === 0

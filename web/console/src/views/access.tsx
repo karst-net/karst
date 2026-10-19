@@ -6,6 +6,7 @@ import { Observed, Status } from "@karst-net/ui";
 import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useResource } from "../common";
 import { PolicyEditor } from "../policy-editor";
+import { TutorialHint } from "../tutorial";
 
 type Flow = { source: string; destination: string; protocol: string; ports: string };
 // An "ssh" rule's effect, described by principal/target rather than as a
@@ -63,7 +64,7 @@ export function Access() {
 
   return <section>
     <h2>Access controls</h2>
-    <p className="lede">JSON policies are validated by the same server that applies them.</p>
+    <TutorialHint>A single logical policy document for the whole account — one set of rules naming groups, users and ports, not a per-machine firewall. Every node receives the same effective policy and enforces it locally; nothing here talks to a node directly. JSON policies are validated by the same server that applies them.</TutorialHint>
     <p id="policy-label">Policy document</p>
     <PolicyEditor value={document} onChange={setDocument} diagnostics={diagnostics} schema={schema.value} labelledBy="policy-label" describedBy="policy-help" />
     <p id="policy-help">Autocomplete suggests the four top-level keys, a rule's action/src/dst, and selectors already defined elsewhere in the document. Save uses the version currently loaded.</p>

@@ -9,6 +9,7 @@ import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
 import { bootstrap, loadConfig, login, logout, type AuthConfig, type AuthState } from "./auth";
 import { api, getActiveAccountOverride, setActiveAccountOverride } from "./api";
 import { Setup } from "./views/setup";
+import { FirstRunWizard } from "./views/firstrun";
 import { Domains } from "./views/domains";
 import { Machines } from "./views/machines";
 import { Access } from "./views/access";
@@ -28,20 +29,49 @@ import { Noc } from "./views/noc";
 import { Scaler } from "./views/scaler";
 import { Billing } from "./views/billing";
 
-type Route = "setup" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "locations" | "noc" | "scaler" | "billing" | "settings";
+type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "groups" | "bedrock" | "posture" | "dns" | "routes" | "audit" | "relays" | "turns" | "locations" | "noc" | "scaler" | "billing" | "settings";
 
 const nav: Array<[Route, string]> = [
-  ["setup", "First-run setup"], ["domains", "Domains"], ["machines", "Machines"], ["access", "Access controls"], ["keys", "Auth keys"],
+  ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
   ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
-const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "setup");
+const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+
+/** True once GET /firstrun reports completed=true; undefined while that
+ *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
+ *  an older server without the route) is treated as complete rather than
+ *  trapping the admin behind a wizard they cannot finish — see the catch
+ *  below. */
+function useFirstRunCompleted() {
+  const [completed, setCompleted] = useState<boolean>();
+  const reload = () => { api.firstRunState().then((state) => setCompleted(state.completed)).catch(() => setCompleted(true)); };
+  useEffect(reload, []);
+  return { completed, reload };
+}
 
 function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   const [route, setRoute] = useState<Route>(routeFromHash());
   useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
   const navigate = (next: string) => { location.hash = `/${next}`; };
+  const firstRun = useFirstRunCompleted();
+
+  // Everything else -- the sidebar included -- stays hidden until the
+  // wizard reports done. Forcing this in the render tree (rather than only
+  // redirecting routeFromHash) is what actually hides every other nav item,
+  // not just whichever one happened to be in the URL hash.
+  if (firstRun.completed === false) {
+    return <div className="shell">
+      <a className="skip" href="#main">Skip to content</a>
+      <main id="main">
+        <header><AccountSwitcher />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
+        <FirstRunWizard onComplete={firstRun.reload} />
+      </main>
+    </div>;
+  }
+  if (firstRun.completed === undefined) return null;
+
   return <div className={`shell${route === "noc" ? " shell-noc" : ""}`}>
     <a className="skip" href="#main">Skip to content</a>
     <aside>
@@ -51,7 +81,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     </aside>
     <main id="main">
       <header><AccountSwitcher />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
-      {route === "setup" && <Setup go={navigate} />}
+      {route === "enroll" && <Setup go={navigate} />}
       {route === "domains" && <Domains />}
       {route === "machines" && <Machines />}
       {route === "access" && <Access />}

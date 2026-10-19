@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { Dialog, Observed } from "@karst-net/ui";
 import { api, ApiError } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 export function Bedrock() {
   const resource = useResource(api.bedrock);
@@ -119,6 +120,7 @@ export function Bedrock() {
 
   return <section>
     <h2>Network lock</h2>
+    <TutorialHint>Bedrock is a purely logical mechanism, not a separate server: a signed, append-only log of which machines are authorized, held by this control plane and verified by a quorum of signing authorities offline. It talks to nodes only indirectly, through the mode below — no node connects to "Bedrock" itself.</TutorialHint>
     <p>Current mode: <strong>{status?.mode}</strong> · quorum {status?.quorum} · {status?.covered_count} machine(s) covered by the signed log.</p>
     <p className="lede">Off: signatures are ignored. Advisory: unsigned machines are reported and still connect. Enforcing: unsigned machines are refused. A node’s own configuration is a floor — a node set to <code>enforcing</code> stays there whatever this says.</p>
 
