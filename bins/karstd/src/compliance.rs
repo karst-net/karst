@@ -252,7 +252,9 @@ mod tests {
         assert!(!report_due(Some(now), now));
         assert!(!report_due(
             Some(now),
-            now + REPORT_INTERVAL - Duration::from_nanos(1)
+            now + REPORT_INTERVAL
+                .checked_sub(Duration::from_nanos(1))
+                .expect("positive reporting interval")
         ));
         assert!(report_due(Some(now), now + REPORT_INTERVAL));
     }
