@@ -16,11 +16,11 @@ import (
 // still lists it, just without a map pin (see cloudcatalog's own doc
 // comment).
 type DiscoveredRegion struct {
-	Code string          `json:"code"`
-	Name string          `json:"name,omitempty"`
+	Code string            `json:"code"`
+	Name string            `json:"name,omitempty"`
 	Kind cloudcatalog.Kind `json:"kind"`
-	Lat  *float64        `json:"lat,omitempty"`
-	Lon  *float64        `json:"lon,omitempty"`
+	Lat  *float64          `json:"lat,omitempty"`
+	Lon  *float64          `json:"lon,omitempty"`
 }
 
 func enrich(provider Provider, code, fallbackName string, kind cloudcatalog.Kind) DiscoveredRegion {
