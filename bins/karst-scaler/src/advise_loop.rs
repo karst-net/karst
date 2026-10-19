@@ -514,7 +514,10 @@ pub(crate) fn print_latency_breaches(doc: &Document, p95_by_region: &HashMap<Str
     }
 }
 
-fn fetch<T: serde::de::DeserializeOwned>(
+/// `pub(crate)`: `drive_loop` (ADR-0045 §7 Phase 2, issue #382) fetches its
+/// own scaling-mode setting over this same control-API/PAT pair and should
+/// not have to duplicate this.
+pub(crate) fn fetch<T: serde::de::DeserializeOwned>(
     agent: &ureq::Agent,
     config: &Config,
     path: &str,
