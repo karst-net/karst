@@ -590,6 +590,8 @@ export type NocComponent = {
     location?: RelayLocation;
     bytes?: number;
     packets?: number;
+    ingress_bytes?: number;
+    ingress_packets?: number;
 };
 
 export type BedrockStatus = {

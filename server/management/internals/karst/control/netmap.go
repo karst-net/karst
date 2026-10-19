@@ -27,6 +27,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/types"
@@ -133,14 +134,15 @@ type NetmapHandler struct {
 		RecordEphemeralAnchorRTT(ctx context.Context, label string, rttMs uint32) error
 	}
 
-	// RouteTelemetry is issue #281's account-scoped, latest-snapshot-only
-	// sink for per-route egress byte/packet counts self-reported by each
-	// route's current gateway. Nil means the deployment has not configured
-	// one — every KarstRouteObservation is then silently dropped, the same
-	// "nil store, no-op" posture every other optional store on this handler
+	// RouteTelemetry is issues #281 and #371's account-scoped,
+	// latest-snapshot-only sink for per-route egress and ingress
+	// byte/packet counts self-reported by each route's current gateway.
+	// Nil means the deployment has not configured one — every
+	// KarstRouteObservation is then silently dropped, the same "nil
+	// store, no-op" posture every other optional store on this handler
 	// already has.
 	RouteTelemetry interface {
-		RecordRouteBytes(ctx context.Context, accountID, routeID string, bytes, packets uint64) error
+		RecordRouteBytes(ctx context.Context, accountID, routeID string, report routetelemetry.RouteReport) error
 	}
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
@@ -860,8 +862,8 @@ func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, report
 	}
 }
 
-// recordRouteObservations validates and records issue #281's per-route
-// egress telemetry.
+// recordRouteObservations validates and records issues #281 and #371's
+// per-route egress and ingress telemetry.
 //
 // **Defense in depth, not trust.** `offers` is the same, just-computed
 // response this request is about to send self — so checking a reported
@@ -889,7 +891,12 @@ func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accou
 				Warn("ignore Karst route observation for a route this node is not the current gateway for")
 			continue
 		}
-		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, report.GetBytes(), report.GetPackets()); err != nil {
+		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, routetelemetry.RouteReport{
+			Bytes:          report.GetBytes(),
+			Packets:        report.GetPackets(),
+			IngressBytes:   report.GetIngressBytes(),
+			IngressPackets: report.GetIngressPackets(),
+		}); err != nil {
 			// Advisory, like session/anchor-RTT telemetry above: a database
 			// failure here must not cost the node its netmap.
 			log.WithError(err).WithFields(log.Fields{"node": self, "route": routeID}).

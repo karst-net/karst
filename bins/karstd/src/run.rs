@@ -6079,13 +6079,12 @@ fn refresh_netmap(
                 match gateway.route_bytes() {
                     Ok(routes) => routes
                         .into_iter()
-                        // `ingress_bytes`/`ingress_packets` (issue #371)
-                        // aren't sent yet — threading them through the wire
-                        // format is issue #372's job, not this one's.
                         .map(|route| pb::KarstRouteObservation {
                             route_id: route.route_id,
                             bytes: route.egress_bytes,
                             packets: route.egress_packets,
+                            ingress_bytes: route.ingress_bytes,
+                            ingress_packets: route.ingress_packets,
                         })
                         .collect(),
                     Err(error) => {
