@@ -281,6 +281,17 @@ pub struct NetmapContent<'a> {
     /// hash so a narrowed or widened allowlist reaches a node on its next
     /// poll rather than waiting for some unrelated field to change.
     pub allowed_regions: &'a [AllowedRegionsEntryView<'a>],
+    /// ADR-0045 §4d's ephemeral-anchor list. Part of the content hash so a
+    /// changed anchor list reaches a node on its next poll.
+    pub ephemeral_anchors: &'a [EphemeralAnchorsEntryView<'a>],
+    /// How often a duty-cycle window opens, in seconds. Hashed even when
+    /// `ephemeral_anchors` is empty: a schedule-only edit must still move
+    /// the version, or a node would never learn a new duty cycle.
+    pub ephemeral_anchor_window_period_seconds: u32,
+    /// How long each anchor stays reachable within one window, in
+    /// seconds — the "duty cycle." Hashed for the identical reason as
+    /// `ephemeral_anchor_window_period_seconds` above.
+    pub ephemeral_anchor_duty_cycle_seconds: u32,
 }
 
 /// The Bedrock log tip as the version hash sees it — `bedrock-v1.md` §5.
@@ -307,6 +318,14 @@ pub struct BedrockHeadView<'a> {
 pub struct AllowedRegionsEntryView<'a> {
     pub provider: &'a str,
     pub regions: &'a [String],
+}
+
+/// One ephemeral anchor — ADR-0045 §4d — as the version hash sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EphemeralAnchorsEntryView<'a> {
+    pub label: &'a str,
+    pub address: &'a str,
+    pub port: u16,
 }
 
 /// The netmap's content hash — `NetmapVersion` in `control/netmap.go`.
@@ -428,6 +447,21 @@ pub fn netmap_version(content: &NetmapContent<'_>) -> u64 {
             push(&mut h, region.as_bytes());
         }
     }
+
+    // ADR-0045 §4d's ephemeral-anchor list and duty-cycle schedule. The two
+    // schedule integers are hashed even though they are not per-entry: a
+    // schedule-only edit (duty_cycle_seconds changed, no anchor added or
+    // removed) must still move the version, or a node would never learn the
+    // new duty cycle. The caller already provides anchors sorted by label,
+    // matching the Go side's own deterministic ordering.
+    push(&mut h, b"karst-ephemeral-anchors");
+    for entry in content.ephemeral_anchors {
+        push(&mut h, entry.label.as_bytes());
+        push(&mut h, entry.address.as_bytes());
+        h.update(u32::from(entry.port).to_be_bytes());
+    }
+    h.update(content.ephemeral_anchor_window_period_seconds.to_be_bytes());
+    h.update(content.ephemeral_anchor_duty_cycle_seconds.to_be_bytes());
 
     let v = leading_u64(&h.finalize());
     // Zero means "I hold no netmap" on the request side, so it must never be a

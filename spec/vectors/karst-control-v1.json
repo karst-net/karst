@@ -197,7 +197,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 6532252590134703062
+        "ephemeral_anchor_schedule": {},
+        "version": 477123565397924119
       },
       {
         "psk_epoch": 9,
@@ -225,7 +226,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 8868360833394378206
+        "ephemeral_anchor_schedule": {},
+        "version": 17123702081389909887
       },
       {
         "psk_epoch": 9,
@@ -253,7 +255,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 8868360833394378206
+        "ephemeral_anchor_schedule": {},
+        "version": 17123702081389909887
       },
       {
         "psk_epoch": 9,
@@ -293,7 +296,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 9122987513173972089
+        "ephemeral_anchor_schedule": {},
+        "version": 14364961928994464629
       },
       {
         "psk_epoch": 9,
@@ -333,7 +337,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 15158689747254665938
+        "ephemeral_anchor_schedule": {},
+        "version": 13647232875334131384
       },
       {
         "psk_epoch": 9,
@@ -375,7 +380,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 7413923494025547329
+        "ephemeral_anchor_schedule": {},
+        "version": 5397411734216426379
       },
       {
         "psk_epoch": 9,
@@ -393,7 +399,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 18056629037825328934
+        "ephemeral_anchor_schedule": {},
+        "version": 4518954622798600610
       },
       {
         "psk_epoch": 9,
@@ -426,7 +433,8 @@
           "magic_dns": true
         },
         "bedrock": {},
-        "version": 3221459904343523599
+        "ephemeral_anchor_schedule": {},
+        "version": 7879266294339378548
       },
       {
         "psk_epoch": 9,
@@ -469,7 +477,8 @@
           ]
         },
         "bedrock": {},
-        "version": 14024406940266335883
+        "ephemeral_anchor_schedule": {},
+        "version": 14525505986873031679
       },
       {
         "psk_epoch": 9,
@@ -496,7 +505,8 @@
         ],
         "dns": {},
         "bedrock": {},
-        "version": 7782352405603828631
+        "ephemeral_anchor_schedule": {},
+        "version": 16921626207036101990
       },
       {
         "psk_epoch": 9,
@@ -532,7 +542,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 16554195985101391487
+        "ephemeral_anchor_schedule": {},
+        "version": 3352841011003948060
       },
       {
         "psk_epoch": 9,
@@ -568,7 +579,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 8478828728916958424
+        "ephemeral_anchor_schedule": {},
+        "version": 6215848266683300519
       },
       {
         "psk_epoch": 9,
@@ -588,7 +600,8 @@
           "hash": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "seq": 7
         },
-        "version": 6564976555042378065
+        "ephemeral_anchor_schedule": {},
+        "version": 13679269223184740072
       },
       {
         "psk_epoch": 9,
@@ -609,7 +622,8 @@
           "seq": 7,
           "mode": 2
         },
-        "version": 14980218788561892722
+        "ephemeral_anchor_schedule": {},
+        "version": 6989454594342540578
       },
       {
         "psk_epoch": 9,
@@ -629,7 +643,8 @@
           "hash": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "seq": 8
         },
-        "version": 4838786318133767257
+        "ephemeral_anchor_schedule": {},
+        "version": 4673959116665248981
       },
       {
         "psk_epoch": 9,
@@ -660,7 +675,8 @@
         "routes": null,
         "dns": {},
         "bedrock": {},
-        "version": 2149737568524175791
+        "ephemeral_anchor_schedule": {},
+        "version": 9045322902621877513
       },
       {
         "psk_epoch": 9,
@@ -691,7 +707,60 @@
             ]
           }
         ],
-        "version": 13362595757521035410
+        "ephemeral_anchor_schedule": {},
+        "version": 11652502744710750087
+      },
+      {
+        "psk_epoch": 9,
+        "node_id": "6e6f64652d6f6e65",
+        "dns_name": "alpha",
+        "addresses": [
+          "100.64.0.1"
+        ],
+        "peers": null,
+        "packet_filter": null,
+        "egress_filter": null,
+        "relays": null,
+        "routes": null,
+        "dns": {},
+        "bedrock": {},
+        "ephemeral_anchors": [
+          {
+            "label": "aws:us-west-2-den-1a",
+            "address": "10.0.0.1",
+            "port": 22
+          },
+          {
+            "label": "aws:us-east-1-bos-1a",
+            "address": "10.0.0.2",
+            "port": 22
+          }
+        ],
+        "ephemeral_anchor_schedule": {
+          "window_period_seconds": 900,
+          "duty_cycle_seconds": 300
+        },
+        "version": 7661253914829702934
+      },
+      {
+        "psk_epoch": 9,
+        "node_id": "6e6f64652d6f6e65",
+        "dns_name": "alpha",
+        "addresses": [
+          "100.64.0.1"
+        ],
+        "peers": null,
+        "packet_filter": null,
+        "egress_filter": null,
+        "relays": null,
+        "routes": null,
+        "dns": {},
+        "bedrock": {},
+        "ephemeral_anchor_schedule": {
+          "window_period_seconds": 900,
+          "duty_cycle_seconds": 300
+        },
+        "version": 14852762947429491736
       }
     ]
   }

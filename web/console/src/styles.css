@@ -25,9 +25,24 @@ dialog::backdrop { background: rgb(0 0 0 / 55%); }
 dialog h2 { margin-top: 0; }
 dialog .table-wrap { max-height: 50vh; overflow: auto; }
 
-/* NOC view (#241 Phase 1a). MapLibre needs an element with a real, non-zero
-   height to size its canvas into -- height here, sizing left to .two-col. */
-.noc-map { height: 28rem; border: 1px solid var(--border); border-radius: var(--radius); }
+/* Give the NOC the available viewport; keep navigation independently
+   scrollable so its length cannot force a taller map layout. */
+.shell-noc { height: 100dvh; min-height: 0; }
+.shell-noc aside { overflow-y: auto; }
+.shell-noc main { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: var(--space-2); }
+.shell-noc main > header { flex-shrink: 0; margin-bottom: var(--space-2); }
+.noc-view { display: flex; flex: 1; flex-direction: column; min-height: 24rem; gap: var(--space-1); }
+.noc-view > h2 { margin: 0; }
+.noc-description, .noc-location-list { flex-shrink: 0; }
+.noc-view summary { cursor: pointer; color: var(--muted); }
+.noc-description p { margin: var(--space-1) 0; }
+.noc-map { flex: 1; min-height: 12rem; border: 1px solid var(--border); border-radius: var(--radius); }
+.noc-location-list > .noc-unplaced { max-height: 12rem; overflow-y: auto; margin-top: var(--space-1); }
+@media (max-width: 48rem) {
+  .shell-noc { height: auto; }
+  .shell-noc main { min-height: 100dvh; }
+  .noc-map { min-height: 60dvh; }
+}
 .noc-unplaced { padding: var(--space-2); border: 1px dashed var(--border); border-radius: var(--radius); }
 .noc-unplaced ul { margin: 0; padding-left: 1.2rem; }
 /* The map's own glyph+color legend (ADR-0046 §1's full component list) --
@@ -36,3 +51,5 @@ dialog .table-wrap { max-height: 50vh; overflow: auto; }
 .noc-legend { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: var(--space-1) 0 0; padding: 0; color: var(--muted); }
 .noc-legend li { display: flex; align-items: center; gap: .3rem; }
 .noc-legend-glyph { font-weight: 700; }
+.noc-legend-border { display: inline-block; width: 1.5rem; border-top: 2px solid var(--muted); }
+.noc-legend-border-province { border-top: 1px dashed var(--muted); opacity: .65; }

@@ -823,6 +823,11 @@ fn run_engine(
     // `sessions` is built fresh from `engine.status()` on the same line.
     let allowed_regions = Mutex::new(crate::netmap::AllowedRegions::default());
     let anchor_rtt_pending: Mutex<Vec<pb::KarstAnchorRtt>> = Mutex::new(Vec::new());
+    // ADR-0045 §4d. Identical shape and reasoning to the pair just above,
+    // for ephemeral anchors instead of provider-region anchors.
+    let ephemeral_anchors = Mutex::new(crate::netmap::EphemeralAnchors::default());
+    let ephemeral_anchor_rtt_pending: Mutex<Vec<pb::KarstEphemeralAnchorRtt>> =
+        Mutex::new(Vec::new());
 
     // Initial handshakes, before any thread starts.
     dispatch(
@@ -1440,6 +1445,8 @@ fn run_engine(
             let control_synchronized_refresh = &control_synchronized;
             let allowed_regions_refresh = &allowed_regions;
             let anchor_rtt_refresh = &anchor_rtt_pending;
+            let ephemeral_anchors_refresh = &ephemeral_anchors;
+            let ephemeral_anchor_rtt_refresh = &ephemeral_anchor_rtt_pending;
             scope.spawn(move || {
                 refresh_netmap(
                     client,
@@ -1465,17 +1472,39 @@ fn run_engine(
                     control_synchronized_refresh,
                     allowed_regions_refresh,
                     anchor_rtt_refresh,
+                    ephemeral_anchors_refresh,
+                    ephemeral_anchor_rtt_refresh,
                 );
             });
 
-            // ADR-0045 §4b. Opt-in: a node that has not set
-            // `[probe] anchor_probe` spawns nothing here and so never
-            // resolves a single provider hostname.
+            // ADR-0045 §4b/§4d. Opt-in, one flag gating both: a node that has
+            // not set `[probe] anchor_probe` spawns neither thread here, so it
+            // never resolves a single provider hostname and never connects to
+            // a single ephemeral anchor either.
             if config.anchor_probe_enabled {
                 let allowed_regions_probe = &allowed_regions;
                 let anchor_rtt_probe = &anchor_rtt_pending;
                 scope.spawn(move || {
                     crate::anchor_probe::run(allowed_regions_probe, anchor_rtt_probe, shutdown);
+                });
+
+                let ephemeral_anchors_probe = &ephemeral_anchors;
+                let ephemeral_anchor_rtt_probe = &ephemeral_anchor_rtt_pending;
+                // Wall-clock, not `started` (an `Instant`): the stagger
+                // offset must align to the same wall-clock window
+                // boundaries the scheduler computes independently, and an
+                // `Instant` carries no relationship to wall-clock time.
+                let process_start_unix_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                scope.spawn(move || {
+                    crate::ephemeral_anchor_probe::run(
+                        ephemeral_anchors_probe,
+                        ephemeral_anchor_rtt_probe,
+                        process_start_unix_secs,
+                        shutdown,
+                    );
                 });
             }
         }
@@ -5878,6 +5907,8 @@ fn refresh_netmap(
     control_synchronized: &std::sync::atomic::AtomicBool,
     allowed_regions: &Mutex<crate::netmap::AllowedRegions>,
     anchor_rtt: &Mutex<Vec<pb::KarstAnchorRtt>>,
+    ephemeral_anchors: &Mutex<crate::netmap::EphemeralAnchors>,
+    ephemeral_anchor_rtt: &Mutex<Vec<pb::KarstEphemeralAnchorRtt>>,
 ) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -6027,6 +6058,13 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         ));
+        // ADR-0045 §4d. Identical drain-and-send discipline as anchor_rtt
+        // above, for ephemeral anchors instead of provider-region anchors.
+        client.set_ephemeral_anchor_rtt_observations(std::mem::take(
+            &mut *ephemeral_anchor_rtt
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ));
         // Issue #281. Read back fresh every tick, same as `sessions` above —
         // these are the kernel's own live counters, not a buffer anything
         // queues into between ticks. A node that is not currently a gateway
@@ -6081,6 +6119,13 @@ fn refresh_netmap(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 client.netmap().allowed_regions.clone();
+            // ADR-0045 §4d's other direction, identical reasoning to
+            // allowed_regions above: `ephemeral_anchor_probe::run` needs a
+            // current view without ever touching `client` itself.
+            *ephemeral_anchors
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                client.netmap().ephemeral_anchors.clone();
         }
 
         let outcome = match synced {

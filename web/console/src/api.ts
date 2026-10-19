@@ -4,7 +4,7 @@
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
 import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
-import { accessToken, loadConfig, login, renewOnce } from "./auth";
+import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
 
@@ -21,25 +21,12 @@ export class ApiError extends Error {
 // status discarded — indistinguishable from a network failure, and impossible
 // to recover from precisely. Everything throws ApiError now.
 //
-// Every request carries the in-memory access token from src/auth.ts (empty in
-// the `just api-mock` dev flow, where OIDC is unconfigured and the mock
-// ignores Authorization entirely). A 401 gets one silent-renew attempt — the
-// token expired mid-session, not that the user was never authenticated, since
-// bootstrap() already turned that case into the login screen — before it
-// surfaces as a real error; a second 401 forces a fresh login redirect rather
-// than leaving the view stuck retrying against a session that is really gone.
-async function authHeaders(init?: RequestInit): Promise<HeadersInit> {
-  const token = accessToken();
-  return { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers };
-}
-
-async function http<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
-  const response = await fetch(url, { ...init, headers: await authHeaders(init) });
-  if (response.status === 401) {
-    const config = await loadConfig();
-    if (!retried && config.oidcAuthority && (await renewOnce(config))) return http(url, init, true);
-    if (config.oidcAuthority) login(config);
-  }
+// The shared transport renews expired sessions before sending requests and
+// redirects to login when renewal fails or the renewed token is rejected.
+async function http<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  const response = await authenticatedFetch(url, { ...init, headers });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: response.statusText })) as Record<string, unknown>;
     throw new ApiError(typeof error.message === "string" ? error.message : "The server rejected this request.", response.status, error);
@@ -83,7 +70,7 @@ function auditExport(format: "csv"): Promise<string>;
 async function auditExport(format: "json" | "csv"): Promise<AuditPage["items"] | string> {
   const path = `/audit/export?format=${format}`;
   if (format === "json") return request<AuditPage["items"]>(path);
-  const response = await fetch(`${base}${path}`, { headers: { ...(await authHeaders()), accept: "text/csv" } });
+  const response = await authenticatedFetch(`${base}${withAccountOverride(path)}`, { headers: { accept: "text/csv" } });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: response.statusText })) as Record<string, unknown>;
     throw new ApiError(typeof error.message === "string" ? error.message : "The server rejected this request.", response.status, error);

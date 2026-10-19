@@ -33,10 +33,9 @@ setWorkerUrl(workerUrl);
 // typical scrape cadence, named there as the reference point.
 const pollIntervalMs = 30_000;
 
-// Natural Earth's 1:110m admin-0 country boundaries -- see git history for
-// the full provenance note this had before this file grew a second kind of
-// marker; nothing about the basemap itself changed here.
+// Bundled Natural Earth public-domain boundaries; see public/noc-boundaries.md.
 const worldOutlineURL = "/noc-world-outline.geojson";
+const provinceBordersURL = "/noc-state-province-borders.geojson";
 
 // Resolved once at map construction, matching policy-editor.tsx's own reason
 // for doing this: a WebGL paint property takes a literal color, not CSS
@@ -111,6 +110,7 @@ export function Noc() {
       container: container.current,
       style: {
         version: 8,
+        projection: { type: "globe" },
         sources: {},
         layers: [{ id: "background", type: "background", paint: { "background-color": token("--surface") } }],
       },
@@ -119,9 +119,27 @@ export function Noc() {
       attributionControl: false,
     });
     map.current = instance;
+    // Layout changes can resize the map independently of a window resize
+    // (for example, expanding the location list or the map description).
+    const resizeObserver = new ResizeObserver(() => instance.resize());
+    resizeObserver.observe(container.current);
     instance.on("load", () => {
       instance.addSource("world", { type: "geojson", data: worldOutlineURL });
-      instance.addLayer({ id: "world-fill", type: "fill", source: "world", paint: { "fill-color": token("--surface-raised"), "fill-outline-color": token("--border") } });
+      instance.addLayer({ id: "world-fill", type: "fill", source: "world", paint: { "fill-color": token("--surface-raised") } });
+      instance.addSource("state-province-borders", { type: "geojson", data: provinceBordersURL });
+      instance.addLayer({
+        id: "state-province-borders", type: "line", source: "state-province-borders",
+        paint: {
+          "line-color": token("--muted"), "line-opacity": 0.65,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 5, 1],
+          "line-dasharray": [3, 3],
+        },
+      });
+      // Draw country outlines last so solid national borders remain dominant.
+      instance.addLayer({
+        id: "national-borders", type: "line", source: "world",
+        paint: { "line-color": token("--muted"), "line-width": 1.2 },
+      });
 
       // Relays: clustered, exactly as Phase 1a shipped it -- untouched
       // except for the added glyph layer, which carries this marker's kind
@@ -214,7 +232,7 @@ export function Noc() {
       });
       mapReady.current = true;
     });
-    return () => { mapReady.current = false; instance.remove(); map.current = undefined; };
+    return () => { resizeObserver.disconnect(); mapReady.current = false; instance.remove(); map.current = undefined; };
   }, []);
 
   const components = resource.value ?? [];
@@ -269,28 +287,28 @@ export function Noc() {
 
   const selectedComponent = selected?.kind !== "relay" ? components.find((c) => c.kind === selected?.kind && c.id === selected?.id) : undefined;
 
-  return <section>
+  return <section className="noc-view">
     <h2>NOC view</h2>
-    <p className="lede">Every relay, TURN server, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</p>
+    <details className="noc-description"><summary>About this map</summary>
+      <p className="lede">Every relay, TURN server, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</p>
+    </details>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {locations.error && <Failure message={locations.error} retry={locations.reload} />}
-    <div className="two-col">
-      <div>
-        <div ref={container} className="noc-map" role="application" aria-label="Component map" />
-        <ul className="noc-legend">
-          {kinds.map((kind) => <li key={kind}><span className="noc-legend-glyph" style={{ color: `var(${kindChartToken[kind]})` }}>{kindGlyph[kind]}</span> {kindLabel[kind]}</li>)}
-          <li><span className="noc-legend-glyph" style={{ color: "var(--muted)" }}>○</span> Authorized location</li>
-        </ul>
-      </div>
-      <div>
-        <h3>Components with no location ({unplaced.length})</h3>
-        {unplaced.length === 0
-          ? <p className="lede">Every component has a declared or detected location.</p>
-          : <div className="noc-unplaced"><ul>{unplaced.map((component) => <li key={`${component.kind}/${component.id}`}>
-            <strong>{kindLabel[component.kind] ?? component.kind}</strong> — {component.label} {component.health && <Status state={healthState(component.health)} label={component.health} />}
-          </li>)}</ul></div>}
-      </div>
-    </div>
+    <div ref={container} className="noc-map" role="application" aria-label="Component map" />
+    <ul className="noc-legend">
+      {kinds.map((kind) => <li key={kind}><span className="noc-legend-glyph" style={{ color: `var(${kindChartToken[kind]})` }}>{kindGlyph[kind]}</span> {kindLabel[kind]}</li>)}
+      <li><span className="noc-legend-glyph" style={{ color: "var(--muted)" }}>○</span> Authorized location</li>
+      <li><span className="noc-legend-border" aria-hidden="true" /> National border</li>
+      <li><span className="noc-legend-border noc-legend-border-province" aria-hidden="true" /> State/province border</li>
+    </ul>
+    <details className="noc-location-list">
+      <summary>Components with no location ({unplaced.length})</summary>
+      {unplaced.length === 0
+        ? <p className="lede">Every component has a declared or detected location.</p>
+        : <div className="noc-unplaced"><ul>{unplaced.map((component) => <li key={`${component.kind}/${component.id}`}>
+          <strong>{kindLabel[component.kind] ?? component.kind}</strong> — {component.label} {component.health && <Status state={healthState(component.health)} label={component.health} />}
+        </li>)}</ul></div>}
+    </details>
 
     <Dialog open={Boolean(selected)} title={selected?.kind === "relay" ? `Relay — ${selected?.relay?.location?.label || selected?.relay?.region || selected?.id || ""}` : `${kindLabel[selected?.kind ?? ""] ?? selected?.kind} — ${selectedComponent?.label ?? selected?.id ?? ""}`} onClose={() => setSelected(undefined)}>
       {selected?.kind === "relay"

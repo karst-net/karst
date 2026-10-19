@@ -114,22 +114,37 @@ fn azure_anchor_fallback(region: &str) -> String {
 /// own dedicated thread: a slow lookup for one anchor delays only this
 /// probe pass, never the netmap refresh loop or anything else the daemon
 /// does.
+///
+/// A thin, fixed-port wrapper over [`probe_at_port`] — kept at this exact
+/// signature because `docs/measurements/anchor-rtt-us.py` extracts this
+/// function's source verbatim to recompile and call with one argument;
+/// changing it would break that harness. ADR-0045 §4d's ephemeral anchors
+/// (`ephemeral_anchor_probe.rs`) need a per-anchor port instead of the
+/// fixed 443 every provider-operated anchor uses, hence the split.
 fn probe(host: &str) -> Option<Duration> {
-    let addr = (host, PROBE_PORT).to_socket_addrs().ok()?.next()?;
+    probe_at_port(host, PROBE_PORT)
+}
+
+/// [`probe`] generalized to an arbitrary port — `pub(crate)` so
+/// `ephemeral_anchor_probe.rs`, in the same crate, can reuse the identical
+/// resolve-then-connect-timeout logic for a per-anchor port instead of
+/// duplicating it.
+pub(crate) fn probe_at_port(host: &str, port: u16) -> Option<Duration> {
+    let addr = (host, port).to_socket_addrs().ok()?.next()?;
     let started = Instant::now();
     TcpStream::connect_timeout(&addr, PROBE_BUDGET).ok()?;
     Some(started.elapsed())
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn rtt_ms(rtt: Duration) -> u32 {
+pub(crate) fn rtt_ms(rtt: Duration) -> u32 {
     u32::try_from(rtt.as_millis()).unwrap_or(u32::MAX)
 }
 
 /// Sleep up to `duration`, checking `shutdown` every [`SLEEP_CHUNK`] so a
 /// stop request is noticed promptly rather than at the end of one long
 /// sleep — `portmap.rs::run`'s own convention.
-fn sleep_cooperatively(duration: Duration, shutdown: &Shutdown) {
+pub(crate) fn sleep_cooperatively(duration: Duration, shutdown: &Shutdown) {
     let deadline = Instant::now() + duration;
     while !shutdown.requested() {
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {

@@ -27,6 +27,7 @@ pub mod disco;
 pub mod dns;
 pub mod engine;
 pub mod enrollment;
+pub mod ephemeral_anchor_probe;
 pub mod exit_node;
 pub mod exit_policy;
 pub mod filetransfer;

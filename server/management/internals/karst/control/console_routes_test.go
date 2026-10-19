@@ -21,6 +21,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
@@ -254,6 +255,23 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/regions/{provider}/{region}",
 		},
 		{
+			name: "add an ephemeral anchor", method: http.MethodPost,
+			path: "/karst/v1/ephemeral-anchors",
+			body: `{"label":"aws:us-west-2-den-1a","region":"us-west-2","instance_id":"i-0123456789abcdef0","address":"10.0.0.1","port":22}`,
+			want: []int{http.StatusCreated, http.StatusOK}, template: "/karst/v1/ephemeral-anchors",
+		},
+		{
+			name: "set the ephemeral anchor duty-cycle schedule", method: http.MethodPut,
+			path: "/karst/v1/ephemeral-anchors/schedule",
+			body: `{"window_period_seconds":900,"duty_cycle_seconds":300}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/ephemeral-anchors/schedule",
+		},
+		{
+			name: "revoke an ephemeral anchor", method: http.MethodDelete,
+			path: "/karst/v1/ephemeral-anchors/unknown-label", body: "",
+			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/ephemeral-anchors/{label}",
+		},
+		{
 			name: "declare the control plane's location", method: http.MethodPut,
 			path: "/karst/v1/control-plane/location",
 			body: `{"lat":37.7749,"lon":-122.4194,"label":"Control room"}`,
@@ -421,7 +439,8 @@ func consoleRouter(t *testing.T) *mux.Router {
 		"karst_node_identities", "karst_device_sessions", "karst_policy_versions",
 		"karst_relays", "karst_turn_servers", "karst_audit_entries", "karst_audit_sinks",
 		"karst_locations", "karst_group_locations", "karst_control_plane_location",
-		"karst_allowed_regions", "karst_route_telemetry",
+		"karst_allowed_regions", "karst_ephemeral_anchors", "karst_ephemeral_anchor_schedule",
+		"karst_ephemeral_anchor_rtt_histogram", "karst_route_telemetry",
 	} {
 		_ = db.Exec("DROP TABLE IF EXISTS " + table).Error
 	}
@@ -474,6 +493,10 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("region allowlist store: %v", err)
 	}
+	ephemeralAnchorStore, err := ephemeralanchor.NewStore(db)
+	if err != nil {
+		t.Fatalf("ephemeral anchor store: %v", err)
+	}
 	routeTelemetryStore, err := routetelemetry.NewStore(db)
 	if err != nil {
 		t.Fatalf("route telemetry store: %v", err)
@@ -485,7 +508,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, routeTelemetryStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, router)
 	return router
 }
 

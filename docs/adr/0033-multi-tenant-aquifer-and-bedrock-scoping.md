@@ -96,6 +96,19 @@ this ADR — see Consequences and Reconsider-if.
 
 ## Decision
 
+### Mesh-domain boundary clarification (2026-10-18; #361)
+
+[ADR-0032's current decision](0032-hierarchical-mesh-domains-and-admin-assigned-names.md#current-decision-2026-10-18-361)
+gives every account one explicit, renameable root, initially `karst` for new
+accounts. The root ID, suffix, and descendants are naming and administrative
+structure inside that account. Two accounts using `karst` remain separate
+tenants. Migration, root rename, device moves within the account, and device
+compliance transitions must not change account IDs, Aquifer derivation, or
+Bedrock scope. A domain administrator receives neither cross-tenant rights
+nor automatic connectivity. This clarification requires no change to this
+ADR's isolation decision or Ponor's forwarding contract; explicit root
+lifecycle remains pending #362 and compliance integration remains under #363.
+
 ### 1. Aquifer becomes account-derived, not operator-fixed
 
 Replace the single `KARST_AQUIFER` value used for every node with a

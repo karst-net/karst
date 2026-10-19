@@ -42,7 +42,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
   const [route, setRoute] = useState<Route>(routeFromHash());
   useEffect(() => { const change = () => setRoute(routeFromHash()); addEventListener("hashchange", change); return () => removeEventListener("hashchange", change); }, []);
   const navigate = (next: string) => { location.hash = `/${next}`; };
-  return <div className="shell">
+  return <div className={`shell${route === "noc" ? " shell-noc" : ""}`}>
     <a className="skip" href="#main">Skip to content</a>
     <aside>
       <h1>Karst</h1>
