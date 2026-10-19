@@ -3,6 +3,12 @@
 
 import { expect, test } from "@playwright/test";
 
+test.afterEach(async ({ page }) => {
+  // Reload can leave asset requests in flight. Finish intercepted requests
+  // before Playwright disposes the context and its fetched responses.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 test("administrator creates one complete invitation, dismisses its secret, and revokes it", async ({ page }) => {
   // Exercise browser HTTPS-origin behavior while serving local app fixtures.
   // Server-side permission and redemption tests use the real account manager.
@@ -27,10 +33,7 @@ test("administrator creates one complete invitation, dismisses its secret, and r
       invitations[0].state = "revoked";
       await route.fulfill({ json: invitations[0] }); return;
     }
-    // #323: route.fulfill({ response }) alone forwards the response as-is
-    // -- no separate response.body() read racing test/worker teardown for
-    // any static asset this fallback serves (every API path above already
-    // returns before reaching here).
+    // Forward local assets while retaining the browser's HTTPS origin.
     const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });
