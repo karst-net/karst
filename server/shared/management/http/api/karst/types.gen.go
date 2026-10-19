@@ -558,6 +558,24 @@ func (e ScalerPoolRecommendationBindingConstraint) Valid() bool {
 	}
 }
 
+// Defines values for ScalingModeMode.
+const (
+	ScalingModeModeAutomated ScalingModeMode = "automated"
+	ScalingModeModeManual    ScalingModeMode = "manual"
+)
+
+// Valid indicates whether the value is a known member of the ScalingModeMode enum.
+func (e ScalingModeMode) Valid() bool {
+	switch e {
+	case ScalingModeModeAutomated:
+		return true
+	case ScalingModeModeManual:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionPostureStatus.
 const (
 	SessionPostureStatusLatticeOnly SessionPostureStatus = "lattice_only"
@@ -1525,6 +1543,14 @@ type ScalerRecommendations struct {
 	TickUnix        int                  `json:"tick_unix"`
 }
 
+// ScalingMode defines model for ScalingMode.
+type ScalingMode struct {
+	Mode ScalingModeMode `json:"mode"`
+}
+
+// ScalingModeMode defines model for ScalingMode.Mode.
+type ScalingModeMode string
+
 // SessionPage defines model for SessionPage.
 type SessionPage struct {
 	Items      []SessionPosture `json:"items"`
@@ -1843,6 +1869,9 @@ type CreateAllowedRegionJSONRequestBody = AllowedRegion
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
+
+// SetScalingModeJSONRequestBody defines body for SetScalingMode for application/json ContentType.
+type SetScalingModeJSONRequestBody = ScalingMode
 
 // CreateTurnServerJSONRequestBody defines body for CreateTurnServer for application/json ContentType.
 type CreateTurnServerJSONRequestBody = TurnServerCreate

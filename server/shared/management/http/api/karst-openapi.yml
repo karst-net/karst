@@ -611,6 +611,28 @@ paths:
       responses:
         '200': {description: The Advisor's latest completed tick, content: {application/json: {schema: {$ref: '#/components/schemas/ScalerRecommendations'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /scaling/mode:
+    get:
+      operationId: getScalingMode
+      tags: [scaler]
+      description: >-
+        ADR-0045 §7's Phase 1 (manual, compute and report)/Phase 2
+        (automated, compute and reconcile) actuation switch (issues #356,
+        #379, #380) -- a deployment-wide setting, not per-pool. No
+        elevated role beyond karstAuthorization's own module-Read gate:
+        both the console's NOC view and karst-scaler's own tick need this
+        with no special-cased access.
+      responses:
+        '200': {description: Current scaling mode, content: {application/json: {schema: {$ref: '#/components/schemas/ScalingMode'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setScalingMode
+      tags: [scaler]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ScalingMode'}}}}
+      responses:
+        '200': {description: Current scaling mode, content: {application/json: {schema: {$ref: '#/components/schemas/ScalingMode'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
   /regions:
     get:
       operationId: listAllowedRegions
@@ -1208,6 +1230,14 @@ components:
       type: object
       required: [tick_unix, recommendation, configured_nodes]
       properties: {tick_unix: {type: integer}, recommendation: {$ref: '#/components/schemas/ScalerRecommendation'}, configured_nodes: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 'pool_id -> pool.min_nodes, the "configured baseline" -- not an introspected live count (ADR-0045 §7 Phase 1 has no driver interface yet).'}}
+    # Issues #356/#379/#380: ADR-0045 §7's Phase 1 (manual)/Phase 2
+    # (automated) actuation switch -- one deployment-wide value, not
+    # per-pool.
+    ScalingMode:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties: {mode: {type: string, enum: [automated, manual]}}
     # One (provider, region) pair on ADR-0045 §4c's deployment-wide region
     # allowlist (package regionallow). provider/region are both opaque,
     # unvalidated strings -- not checked against any known-provider or

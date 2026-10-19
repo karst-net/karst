@@ -531,6 +531,10 @@ export type ScalerRecommendations = {
     };
 };
 
+export type ScalingMode = {
+    mode: 'automated' | 'manual';
+};
+
 export type AllowedRegion = {
     /**
      * e.g. "aws", "aws-gov-cloud", "azure", "azure-gov-cloud", "gcp" -- not validated against this set.
@@ -2366,6 +2370,60 @@ export type ScalerRecommendationsResponses = {
 };
 
 export type ScalerRecommendationsResponse = ScalerRecommendationsResponses[keyof ScalerRecommendationsResponses];
+
+export type GetScalingModeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/scaling/mode';
+};
+
+export type GetScalingModeErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetScalingModeError = GetScalingModeErrors[keyof GetScalingModeErrors];
+
+export type GetScalingModeResponses = {
+    /**
+     * Current scaling mode
+     */
+    200: ScalingMode;
+};
+
+export type GetScalingModeResponse = GetScalingModeResponses[keyof GetScalingModeResponses];
+
+export type SetScalingModeData = {
+    body: ScalingMode;
+    path?: never;
+    query?: never;
+    url: '/scaling/mode';
+};
+
+export type SetScalingModeErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetScalingModeError = SetScalingModeErrors[keyof SetScalingModeErrors];
+
+export type SetScalingModeResponses = {
+    /**
+     * Current scaling mode
+     */
+    200: ScalingMode;
+};
+
+export type SetScalingModeResponse = SetScalingModeResponses[keyof SetScalingModeResponses];
 
 export type ListAllowedRegionsData = {
     body?: never;

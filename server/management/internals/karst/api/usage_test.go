@@ -61,7 +61,7 @@ func TestUsageReportAuthorizationAndTenantScope(t *testing.T) {
 			router := mux.NewRouter()
 			RegisterUsageEndpoints(router, scanPermissions{role: role}, reporter, log)
 			// Register the broad router too: the usage route must remain reachable.
-			RegisterEndpoints(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, router)
+			RegisterEndpoints(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
 			req := httptest.NewRequest(http.MethodGet, usageReportURL+"&account=other-account", nil)
 			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "authorized-account", UserId: "viewer"})
 			response := httptest.NewRecorder()

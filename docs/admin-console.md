@@ -213,3 +213,14 @@ Compliance-conditioned access remains a follow-up capability.
   `docs/observability.md`) still ship standalone and are directly
   scrapeable regardless, so this page being unconfigured loses a UI, not
   the underlying capability.
+- **API-only, no console toggle yet: `GET`/`PUT /karst/v1/scaling/mode`**
+  (issues #356, #379, #380) — ADR-0045 §7's Phase 1 (manual, compute and
+  report)/Phase 2 (automated, compute and reconcile) choice as a live,
+  deployment-wide setting, defaulting to `automated` so every existing
+  `karst-scaler drive` deployment keeps today's behavior on upgrade. `GET`
+  needs no elevated role beyond the blanket module-Read gate every
+  read-capable console role already has; `PUT` is admin-only through that
+  same gate's Update check. No console settings UI for this yet — a
+  separate, later concern, same posture as this page's own missing
+  per-pool drill-down above. `karst-scaler drive` does not read this
+  setting yet either (issue #382, not landed).
