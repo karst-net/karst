@@ -1168,3 +1168,76 @@ fn device_compliance_ingestion_wire_matches() {
         assert_eq!(vector["hex"], hex::encode(bytes), "{name}");
     }
 }
+
+/// Reserved permit messages agree across implementations without enabling a
+/// request kind or implying ingestion clients enforce compliance.
+#[test]
+fn device_compliance_permit_wire_matches() {
+    use karst_control_client::transport::pb::{
+        karst_compliance_permit_gate::Protocol, KarstCompliancePermitGate,
+        KarstCompliancePermitRequest, KarstCompliancePermitSnapshot, KarstComplianceSourcePermit,
+        KarstPortRange,
+    };
+    use prost::Message;
+
+    let nonce: Vec<u8> = (0..32).collect();
+    let handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned();
+    let gate = KarstCompliancePermitGate {
+        guardrail_id: "production".into(),
+        destination_cidrs: vec!["10.99.0.0/24".into(), "fd00:99::/64".into()],
+        protocol: Protocol::Tcp.into(),
+        ports: Some(KarstPortRange {
+            first: 443,
+            last: 443,
+        }),
+        sources: vec![KarstComplianceSourcePermit {
+            handle: handle.clone(),
+            device_id: "device-a".into(),
+            evidence_generation: 7,
+            valid_for_millis: 119_000,
+        }],
+    };
+    let snapshot = KarstCompliancePermitSnapshot {
+        schema_version: 1,
+        request_nonce: nonce.clone(),
+        tenant_id: "tenant-a".into(),
+        enforcer_device_id: "device-a".into(),
+        enforcer_handle: handle,
+        policy_revision: "revision-42".into(),
+        valid_for_millis: 120_000,
+        ingress: vec![gate.clone()],
+        egress: vec![gate],
+    };
+    let mut denied = snapshot.clone();
+    for gate in denied.ingress.iter_mut().chain(denied.egress.iter_mut()) {
+        gate.sources.clear();
+    }
+    let cases = [
+        (
+            "permit-request",
+            KarstCompliancePermitRequest {
+                schema_version: 1,
+                nonce,
+            }
+            .encode_to_vec(),
+        ),
+        ("permit-snapshot", snapshot.encode_to_vec()),
+        ("deny-snapshot", denied.encode_to_vec()),
+    ];
+    let file: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../spec/vectors/device-compliance-permits-v1.json"
+    ))
+    .expect("permit vectors");
+    let vectors = file["cases"].as_array().expect("cases");
+    assert_eq!(vectors.len(), cases.len());
+    for ((name, bytes), vector) in cases.iter().zip(vectors) {
+        assert_eq!(vector["name"], *name);
+        assert_eq!(vector["hex"], hex::encode(bytes), "{name}");
+        // Decode as well: a shared encoder drift cannot hide dropped fields.
+        if *name != "permit-request" {
+            let decoded =
+                KarstCompliancePermitSnapshot::decode(bytes.as_slice()).expect("snapshot");
+            assert_eq!(decoded.encode_to_vec(), *bytes);
+        }
+    }
+}

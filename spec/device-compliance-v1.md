@@ -2,7 +2,8 @@
 # Device compliance v1 — proposed implementation contract
 
 **Status:** Partially implemented: evaluation, ingestion, version collection,
-invalidation scheduling, internal guardrail preview and gate compilation.
+invalidation scheduling, internal guardrail preview/gate compilation and a
+reserved permit wire contract.
 Resource guardrails and traffic enforcement remain proposed.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
@@ -21,6 +22,8 @@ notification path. The policy package also provides an internal draft guardrail
 validator, diagnostic evaluator and device-specific mandatory gate compiler.
 Policy activation, netmap distribution and all traffic enforcement remain
 pending; #363 remains open.
+Reserved permit messages, Go structural validation and Go/Rust wire vectors are
+also implemented. They have no active request kind or enforcement capability.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -374,6 +377,59 @@ cached flows and compatibility handling below remain unimplemented. Tests compar
 compiled decisions with the draft preview and cover same-user devices under
 overlapping unconditional identity grants, remediation, nonpassing evidence,
 expiry/recovery, overlapping guardrails, routed intersections and determinism.
+
+### Reserved permit wire contract
+
+`KarstCompliancePermitRequest`, `KarstCompliancePermitSnapshot`,
+`KarstCompliancePermitGate` and `KarstComplianceSourcePermit` define a versioned
+protobuf contract with Go/Rust agreement vectors in
+`spec/vectors/device-compliance-permits-v1.json`. These standalone messages are
+not attached to a request kind, netmap field or capability advertisement. No
+server issues them and no client installs or enforces them. Ingestion schema 1
+continues to mean evidence ingestion only.
+
+A schema-1 request carries a fresh 32-byte nonce. The response echoes it and
+binds tenant, enforcing enrollment ID, canonical base64 identity handle and
+policy revision. Every passing source names its own concrete handle, enrollment
+ID and positive evidence generation. Handles/enrollments/generations must be
+consistent across the whole snapshot. Egress sources may name only the enforcing
+device. This binds the response structure; an authenticated control transaction
+and authoritative enrollment/policy/evidence reads must establish its provenance.
+The validator does not prove that the server used current evidence.
+
+Snapshots have a positive validity budget of at most 120,000 milliseconds. Each
+source budget must be positive and no greater than the snapshot budget. A future
+issuer must additionally cap it by that source's remaining evidence freshness,
+rounding down, and omit sources with no remaining budget. A future receiver must
+measure budgets from its locally recorded request start using suspend-aware
+elapsed time: transit, retries and sleep consume validity. Receipt, reconnect,
+cached replies and unchanged netmaps must never restart a budget. A timed-out,
+consumed or replaced request nonce cannot install another snapshot. The current
+Go structural validator checks equality and size, not nonce freshness/consumption,
+evidence freshness or elapsed-time enforcement.
+
+Gates specify a nonempty guardrail ID, canonical IPv4/IPv6 destination CIDRs,
+TCP/UDP/either transport, an inclusive 0..65535 port range and passing sources.
+Zero/unknown protocols, malformed/noncanonical/mapped CIDRs, duplicate guardrails
+within a direction, duplicate prefixes/sources and inconsistent source bindings
+are rejected. All matching gates compose with AND. An empty passing-source list
+is a valid mandatory denial; it must not cause a gate to be dropped. A present,
+valid snapshot with no gates is distinct from a missing/unsupported snapshot.
+It does not grant identity or SSH access.
+
+`compliance.ValidatePermitRequest` and `ValidatePermitSnapshot` implement Go
+structural and trusted-context binding checks. The latter validates the whole
+candidate before installation; an error must not partially apply it or renew
+old leases. Trusted context includes the current request nonce, enrollment and
+policy revision from the same authenticated transaction. Semantics that require
+new mandatory interpretation need a new schema version. Future capability
+negotiation must reject unknown versions for protected access.
+
+Tests cover binding substitution, validity bounds, unknown enums, invalid ports,
+CIDRs and references, wildcard/duplicate sources, inconsistent evidence
+generations and deny-all snapshots. These validators and wire vectors do not
+implement permit issuance, atomic snapshot reads, receiver validation/installation,
+nonce lifecycle, capability negotiation or the 120-second datapath bound.
 
 ### Proposed authorization and enforcement contract
 
