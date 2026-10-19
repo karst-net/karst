@@ -608,3 +608,9 @@ derives keys first).
    exhaust, but a long-lived channel keeps one key indefinitely.
 7. **Padding is not specified.** Message lengths leak which request is being
    made, inside TLS, to an observer who is already past TLS.
+
+8. **Device compliance is not implemented by this protocol.**
+   [Device compliance v1](device-compliance-v1.md) proposes authenticated evidence,
+   resource guardrails, capability negotiation and expiring permissions. Those
+   additions require a versioned wire design and end-to-end enforcement tests;
+   existing peer metadata and session observations do not satisfy that contract.
