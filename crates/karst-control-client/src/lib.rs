@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod channel;
+pub mod compliance;
 pub mod handle;
 pub mod netmap;
 pub mod psk;
