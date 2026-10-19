@@ -67,7 +67,7 @@ test("posture opens on exceptions, worst first", async ({ page }) => {
 test("policy validation and save are keyboard accessible", async ({ page }) => {
   await page.goto("/#/access");
   await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("Control+A");
+  await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type('{ "acls": [] }');
   await page.getByRole("button", { name: "Validate policy" }).focus();
   await page.keyboard.press("Enter");
@@ -87,7 +87,7 @@ test("policy syntax errors surface their line number", async ({ page }) => {
   // "keyboard accessible" test above already uses is what actually reaches
   // the editor reliably.
   await page.getByLabel("Policy document").focus();
-  await page.keyboard.press("Control+A");
+  await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type('{\n  "acls": [],\n}');
   await page.getByRole("button", { name: "Validate policy" }).click();
   await expect(page.getByLabel("Policy diagnostics")).toContainText("line 3");
@@ -174,13 +174,13 @@ test("a machine's mesh domain can be shown and changed", async ({ page }) => {
   await expect(row).toContainText("sre-laptop.acme");
   await expect(row).not.toContainText("engineering.acme");
 
-  // Move it back out to the account root entirely.
+  // Move it to the explicit root using its stable ID.
   await row.getByRole("button", { name: "Move" }).click();
-  await page.getByLabel("Domain", { exact: true }).selectOption({ label: "Account root (no domain)" });
+  await page.getByLabel("Domain", { exact: true }).selectOption("domain-root");
   await dialog.getByRole("button", { name: "Move", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("is now in the account root");
-  await expect(row).toContainText("Account root");
-  await expect(row.locator("code").first()).toHaveText("sre-laptop");
+  await expect(page.getByRole("status")).toContainText("is now in karst");
+  await expect(row).toContainText("karst");
+  await expect(row.locator("code").first()).toHaveText("sre-laptop.karst");
 });
 
 test("adding a machine opens the invitation flow", async ({ page }) => {
@@ -238,7 +238,10 @@ test("the signed-in user cannot deprovision themselves", async ({ page }) => {
 test("a subdomain can be created, delegated, revoked and deleted", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
   await page.goto("/#/domains");
-  // Seeded by the mock: acme (top-level) and engineering (under acme).
+  const rootRow = page.locator("tbody tr").filter({ hasText: "karst (root)" });
+  await expect(rootRow).toBeVisible();
+  await expect(rootRow.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  // Seeded by the mock: acme under the root and engineering under acme.
   await expect(page.locator("tbody tr").filter({ hasText: "acme" }).first()).toBeVisible();
   const engineeringRow = page.locator("tbody tr").filter({ hasText: "engineering" });
   await expect(engineeringRow).toContainText("engineering.acme");
