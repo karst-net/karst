@@ -122,14 +122,34 @@ impl Ruleset {
                 }
             }
         }
-        // Replies are admitted only for tracked flows that one of the rules
-        // above admitted. Anything else arriving from the TUN is stopped here;
-        // the base-chain accept policy deliberately leaves unrelated host
-        // forwarding to the operator's own rules.
-        let _ = writeln!(
-            out,
-            "add rule inet {TABLE} forward oifname {interface} ct state established,related counter accept"
-        );
+        // Return-leg rules, one per (grant, source), mirroring the forward
+        // loop above with saddr/daddr swapped: a reply's source is the
+        // original destination prefix, its destination is back to the
+        // original source range. Emitted in the same order as `self.grants`
+        // (most-specific-destination-first, from `Ruleset::from_config`) —
+        // that field is matched via `daddr` on the forward leg above but via
+        // `saddr` here, so reusing the existing order (rather than
+        // re-deriving one) is what keeps both legs' attribution consistent
+        // for a gateway serving overlapping routes (e.g. a `/0` exit route
+        // and a `/8` subnet route). Replacing the old shared, uncommented
+        // `established,related` rule entirely: every packet it admitted is
+        // the reply to a flow one of the per-grant forward rules above
+        // already admitted, so these rules cover the same traffic with
+        // attribution and nothing is left for a fallback to catch.
+        for grant in &self.grants {
+            let family = family(grant.destination.base());
+            for source in &grant.sources {
+                let _ = writeln!(
+                    out,
+                    "add rule inet {TABLE} forward oifname {interface} ct state established,related {family} saddr {} {family} daddr {source} counter accept comment {}",
+                    grant.destination,
+                    nft_string(&grant.route_id),
+                );
+            }
+        }
+        // Anything else arriving from the TUN that didn't match a grant
+        // above is stopped here; the base-chain accept policy deliberately
+        // leaves unrelated host forwarding to the operator's own rules.
         let _ = writeln!(
             out,
             "add rule inet {TABLE} forward iifname {interface} counter drop"
@@ -364,18 +384,11 @@ impl Manager {
         self.0.table
     }
 
-    /// Egress bytes/packets this gateway has forwarded per route, for NOC
-    /// visibility (issue #281) — never for planner/scaling input, settled
-    /// out of scope by #282. Read back from `karst_routes`'s own live
-    /// counters rather than tracked separately, so this can never drift
-    /// from what the kernel actually forwarded.
-    ///
-    /// Covers only the outbound (client -> destination) leg: the matching
-    /// return-path accept rule (`Ruleset::nft_batch`'s doc comment) is
-    /// deliberately shared across every grant on this gateway, not
-    /// route-scoped, so return traffic cannot be attributed to one route
-    /// from nftables counters alone. Tracked as a separate gap, not solved
-    /// here.
+    /// Egress and ingress bytes/packets this gateway has forwarded per
+    /// route, for NOC visibility (issues #281, #371) — never for
+    /// planner/scaling input, settled out of scope by #282. Read back from
+    /// `karst_routes`'s own live counters rather than tracked separately,
+    /// so this can never drift from what the kernel actually forwarded.
     ///
     /// # Errors
     /// If `nft` is unavailable or its JSON output cannot be parsed. Treat
@@ -391,21 +404,42 @@ impl Manager {
     }
 }
 
-/// One route's egress byte/packet count, read back from its forward-accept
-/// rule's own nftables counter.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One route's egress and ingress byte/packet counts, read back from its
+/// forward-accept rules' own nftables counters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RouteBytes {
     pub route_id: String,
-    pub bytes: u64,
-    pub packets: u64,
+    pub egress_bytes: u64,
+    pub egress_packets: u64,
+    pub ingress_bytes: u64,
+    pub ingress_packets: u64,
+}
+
+/// True if a comment-tagged `forward`-chain rule is the egress (forward)
+/// leg — matched on `iifname` — rather than the ingress (return) leg,
+/// matched on `oifname`. `Ruleset::nft_batch` emits exactly one or the
+/// other for every comment-tagged rule, never both.
+fn is_egress_rule(rule: &serde_json::Value) -> bool {
+    rule.get("expr")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|expr| expr.get("match"))
+        .any(|m| {
+            m.get("left")
+                .and_then(|left| left.get("meta"))
+                .and_then(|meta| meta.get("key"))
+                .and_then(serde_json::Value::as_str)
+                == Some("iifname")
+        })
 }
 
 /// Sums every `forward`-chain, comment-tagged rule's counter by comment
-/// (the `route_id` `Ruleset::nft_batch` writes there). The generic return-leg
-/// accept and catch-all drop rules carry no comment and are excluded by
-/// that alone; the `postrouting` chain's masquerade rule is excluded by
-/// chain name, since it counts the same packets the `forward` rule already
-/// did and would double the total if summed too.
+/// (the `route_id` `Ruleset::nft_batch` writes there), split into egress vs.
+/// ingress by [`is_egress_rule`]. The catch-all drop rule carries no comment
+/// and is excluded by that alone; the `postrouting` chain's masquerade rule
+/// is excluded by chain name, since it counts the same packets the
+/// `forward` rule already did and would double the total if summed too.
 ///
 /// Reads `nft -j`'s own JSON as a generic [`serde_json::Value`] rather than
 /// strongly-typed structs: nft's schema tags each `expr` entry by a single
@@ -416,7 +450,7 @@ fn parse_route_bytes(output: &str) -> Result<Vec<RouteBytes>, serde_json::Error>
     use std::collections::HashMap;
 
     let root: serde_json::Value = serde_json::from_str(output)?;
-    let mut totals: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut totals: HashMap<String, RouteBytes> = HashMap::new();
     let items = root
         .get("nftables")
         .and_then(serde_json::Value::as_array)
@@ -432,6 +466,7 @@ fn parse_route_bytes(output: &str) -> Result<Vec<RouteBytes>, serde_json::Error>
         let Some(route_id) = rule.get("comment").and_then(serde_json::Value::as_str) else {
             continue;
         };
+        let egress = is_egress_rule(rule);
         let exprs = rule
             .get("expr")
             .and_then(serde_json::Value::as_array)
@@ -449,19 +484,22 @@ fn parse_route_bytes(output: &str) -> Result<Vec<RouteBytes>, serde_json::Error>
                 .get("packets")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
-            let entry = totals.entry(route_id.to_owned()).or_default();
-            entry.0 += bytes;
-            entry.1 += packets;
+            let entry = totals
+                .entry(route_id.to_owned())
+                .or_insert_with(|| RouteBytes {
+                    route_id: route_id.to_owned(),
+                    ..RouteBytes::default()
+                });
+            if egress {
+                entry.egress_bytes += bytes;
+                entry.egress_packets += packets;
+            } else {
+                entry.ingress_bytes += bytes;
+                entry.ingress_packets += packets;
+            }
         }
     }
-    let mut totals: Vec<RouteBytes> = totals
-        .into_iter()
-        .map(|(route_id, (bytes, packets))| RouteBytes {
-            route_id,
-            bytes,
-            packets,
-        })
-        .collect();
+    let mut totals: Vec<RouteBytes> = totals.into_values().collect();
     totals.sort_by(|a, b| a.route_id.cmp(&b.route_id));
     Ok(totals)
 }
@@ -585,6 +623,20 @@ mod tests {
         );
         assert!(batch.contains("ip daddr 192.168.50.0/24 counter masquerade"));
         assert!(!batch.contains("ip6 daddr 2001:db8:50::/64 counter masquerade"));
+        assert!(batch.contains(
+            "oifname \"karst0\" ct state established,related ip saddr 192.168.50.0/24 \
+             ip daddr 100.64.0.0/16 counter accept comment \"lan\""
+        ));
+        assert!(batch.contains(
+            "oifname \"karst0\" ct state established,related ip6 saddr 2001:db8:50::/64 \
+             ip6 daddr fd7a:115c:a1e0::/64 counter accept comment \"v6\""
+        ));
+        assert!(
+            !batch.contains("oifname \"karst0\" ct state established,related counter accept"),
+            "the old shared, uncommented return-leg rule must not be reintroduced \
+             alongside the per-grant ones, or it would again count return \
+             traffic without attribution"
+        );
         assert!(batch.ends_with("iifname \"karst0\" counter drop\n"));
         assert!(!batch.contains("flush ruleset"));
     }
@@ -625,16 +677,47 @@ mod tests {
     }
 
     #[test]
-    fn route_bytes_sums_commented_forward_rules_and_ignores_the_rest() {
+    fn return_leg_rules_are_ordered_most_specific_destination_first() {
+        // Same overlap as `grants_are_ordered_most_specific_destination_first`,
+        // but for the return leg: a reply from an address inside both
+        // "narrow"'s and "wide"'s destination prefix matches the return
+        // rule's `saddr` (the original forward rule's `daddr`), so the same
+        // most-specific-first ordering must hold there too, or the wide
+        // route's return rule would claim a reply that actually belongs to
+        // the narrow route.
+        let mut config = config();
+        config.route_offers = vec![
+            offer("z-wide", "0.0.0.0/0", pb::KarstRouteRole::Gateway, true),
+            offer("a-narrow", "10.0.0.0/8", pb::KarstRouteRole::Gateway, true),
+        ];
+        let batch = Ruleset::from_config(&config).nft_batch("karst0");
+        let narrow = batch
+            .find("oifname \"karst0\" ct state established,related ip saddr 10.0.0.0/8")
+            .expect("narrow return rule");
+        let wide = batch
+            .find("oifname \"karst0\" ct state established,related ip saddr 0.0.0.0/0")
+            .expect("wide return rule");
+        assert!(
+            narrow < wide,
+            "the /8 grant's return rule must be generated before the /0 \
+             grant's, or the wide route's rule would claim every reply the \
+             narrow route is actually authorized for"
+        );
+    }
+
+    #[test]
+    fn route_bytes_sums_egress_and_ingress_separately() {
         // A trimmed, real `nft -j list table inet karst_routes` shape
-        // (captured live against this crate's own ruleset): a forward-chain
-        // rule with a comment and counter (the per-route accept this
-        // function exists to read), a forward-chain rule with a counter
-        // but no comment (the generic return-leg accept — must be
-        // excluded, or it would double-count against whichever route
-        // happens to come first), and a postrouting-chain rule that DOES
-        // carry the same comment (the masquerade rule — must be excluded
-        // by chain, or this route's bytes would be doubled).
+        // (captured live against this crate's own ruleset): a forward-chain,
+        // `iifname`-matched rule with a comment and counter (the per-route
+        // egress accept), a forward-chain, `oifname`-matched rule with the
+        // *same* comment and its own counter (the per-route ingress/return
+        // accept — must be summed separately, not merged into egress), a
+        // postrouting-chain rule that DOES carry the same comment (the
+        // masquerade rule — must be excluded by chain, or egress would be
+        // doubled), an uncommented `oifname`-matched forward rule (must be
+        // excluded by the comment check alone, regardless of direction),
+        // and the catch-all drop (no comment, no counter contribution).
         let output = r#"{
             "nftables": [
                 {"metainfo": {"version": "1.0.9"}},
@@ -645,6 +728,16 @@ mod tests {
                     "expr": [
                         {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "karst0"}},
                         {"counter": {"packets": 10, "bytes": 1000}},
+                        {"accept": null}
+                    ]
+                }},
+                {"rule": {
+                    "family": "inet", "table": "karst_routes", "chain": "forward",
+                    "handle": 6, "comment": "route-a",
+                    "expr": [
+                        {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": "karst0"}},
+                        {"match": {"op": "==", "left": {"ct": {"key": "state"}}, "right": "established,related"}},
+                        {"counter": {"packets": 5, "bytes": 500}},
                         {"accept": null}
                     ]
                 }},
@@ -679,10 +772,26 @@ mod tests {
             parse_route_bytes(output).expect("parse"),
             vec![RouteBytes {
                 route_id: "route-a".to_owned(),
-                bytes: 1000,
-                packets: 10,
+                egress_bytes: 1000,
+                egress_packets: 10,
+                ingress_bytes: 500,
+                ingress_packets: 5,
             }]
         );
+    }
+
+    #[test]
+    fn is_egress_rule_distinguishes_iifname_from_oifname_match() {
+        let iifname_rule: serde_json::Value = serde_json::from_str(
+            r#"{"expr": [{"match": {"left": {"meta": {"key": "iifname"}}, "right": "karst0"}}]}"#,
+        )
+        .expect("parse");
+        let oifname_rule: serde_json::Value = serde_json::from_str(
+            r#"{"expr": [{"match": {"left": {"meta": {"key": "oifname"}}, "right": "karst0"}}]}"#,
+        )
+        .expect("parse");
+        assert!(is_egress_rule(&iifname_rule));
+        assert!(!is_egress_rule(&oifname_rule));
     }
 
     #[test]
