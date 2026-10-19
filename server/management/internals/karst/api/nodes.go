@@ -4195,12 +4195,12 @@ type nodeResponse struct {
 	Platform string   `json:"platform"`
 	UserID   string   `json:"user_id"`
 	Tags     []string `json:"tags"`
-	// DomainID is the mesh domain (ADR-0032) this peer is placed in, or ""
-	// for the account's implicit root.
+	// DomainID is the peer's stable mesh domain ID, including the explicit root.
+	// Older, unmigrated fixtures may omit it.
 	DomainID string `json:"domain_id,omitempty"`
-	// DNSLabel is the peer's actual resolvable mesh name -- already
-	// domain-qualified when DomainID is set (e.g. "device1.engineering"),
-	// so a caller never needs a second lookup to show or use it.
+	// DNSLabel is root-relative, including the domain path and any deduplication
+	// suffix. The account root suffix is appended once for a complete name;
+	// domain API projections expose the corresponding complete namespace.
 	DNSLabel   string      `json:"dns_label"`
 	Enabled    bool        `json:"enabled"`
 	ExpiresAt  *time.Time  `json:"expires_at"`

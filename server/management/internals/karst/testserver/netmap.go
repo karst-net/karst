@@ -251,8 +251,9 @@ const (
 )
 
 type router struct {
-	netmap  *control.NetmapHandler
-	bedrock *control.BedrockHandler
+	rootDomains *rootDomainFixture
+	netmap      *control.NetmapHandler
+	bedrock     *control.BedrockHandler
 	// bedrockFixture countersigns nodes as they register, when Bedrock is on.
 	bedrockFixture *bedrockFixture
 	// coverPreloaded is how many of the preloaded peers get countersigned. The

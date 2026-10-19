@@ -420,7 +420,10 @@ const server = http.createServer((request, response) => {
   if (method === "POST" && revokeInvitation) return replace(invitations, revokeInvitation[1], { state: "revoked" }, response);
 
   // ── mesh domains (ADR-0032) ───────────────────────────────────────────────
-  if (method === "GET" && karst === "/domains") return json(response, 200, domains);
+  if (method === "GET" && karst === "/domains") {
+    const suffix = domains.find(domain => domain.is_root)?.dns_suffix;
+    return json(response, 200, domains.map(domain => ({ ...domain, ...(suffix ? { dns_name: [domain.path, suffix].filter(Boolean).join(".") } : {}) })));
+  }
   if (method === "POST" && karst === "/domains") return readBody(request).then(draft => {
     const label = draft.label?.trim();
     if (!label) return error(response, 400, "invalid_argument", "label is required");
@@ -486,7 +489,7 @@ const server = http.createServer((request, response) => {
         node.domain_id = body.domain_id;
       }
       const domain = node.domain_id && domains.find(d => d.id === node.domain_id);
-      node.dns_label = domain ? `${node.name}.${domain.dns_suffix || domain.path}` : node.name;
+      node.dns_label = domain?.path ? `${node.name}.${domain.path}` : node.name;
       return json(response, 200, node);
     });
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }

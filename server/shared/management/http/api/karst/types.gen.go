@@ -1069,6 +1069,25 @@ type LocationCreate struct {
 	Lon   float32 `json:"lon"`
 }
 
+// MeshDomainView defines model for MeshDomainView.
+type MeshDomainView struct {
+	// DnsName Complete domain namespace, including the root suffix; available to authorized delegated views without listing the root.
+	DnsName *string `json:"dns_name,omitempty"`
+
+	// DnsSuffix Authoritative account suffix, present only on the root.
+	DnsSuffix *string `json:"dns_suffix,omitempty"`
+
+	// Id Stable domain identity.
+	Id             string  `json:"id"`
+	IsRoot         bool    `json:"is_root"`
+	Label          string  `json:"label"`
+	NamingRevision uint64  `json:"naming_revision"`
+	ParentId       *string `json:"parent_id,omitempty"`
+
+	// Path Immutable root-relative path; empty for the root.
+	Path string `json:"path"`
+}
+
 // MyDevice defines model for MyDevice.
 type MyDevice struct {
 	Handle     string     `json:"handle"`
@@ -1107,7 +1126,7 @@ type NocComponentKind string
 type Node struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// DnsLabel The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+	// DnsLabel Root-relative peer DNS label, including the relative domain path. Append the account root suffix exactly once to form the complete DNS name.
 	DnsLabel string `json:"dns_label"`
 
 	// DomainId The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.

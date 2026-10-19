@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # ADR-0032: Admin-assigned names as the real mesh identity; hierarchical domains with delegated sub-administration
 
-- **Status:** Accepted; current decision revised 2026-10-18, runtime implementation in progress (#362)
+- **Status:** Accepted; current decision revised 2026-10-18, implemented; acceptance validated 2026-10-19 (#362)
 - **Date:** 2026-09-19
 - **Deciders:** TBD
 - **Related:** ADR-0010 (naming convention this ADR follows: "standard
@@ -261,9 +261,12 @@ best-effort streaming notification.
 
 The current protocol has no client application acknowledgement. Convergence is
 reported as unobserved, including after commit; this is not a claim that all
-clients have applied the new suffix. Fleet/host propagation validation and
-compliance integration remain follow-up work; #362 remains open for rollout
-validation.
+clients have applied the new suffix. The [acceptance validation](../mesh-domain-validation.md)
+records the Go/Rust REST-to-live-DNS rename/rollback test, encrypted-cache
+reconnect, host mechanism lifecycle coverage, and the complete-name correction
+for account-wide and delegated console views. Fleet-specific observations remain
+operational rollout checks; they are not reported as acknowledged convergence.
+Compliance integration remains separately tracked in #363.
 
 ## Historical context and original decision (2026-09-19)
 

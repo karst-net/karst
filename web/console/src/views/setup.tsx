@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 import { useEffect, useState } from "react";
+import { domainDNSName } from "../domains";
 import { api, type DeviceInvitation, type Group, type MeshDomain } from "../api";
 
 export function Setup({ go }: { go: (route: string) => void }) {
@@ -51,15 +52,18 @@ export function Setup({ go }: { go: (route: string) => void }) {
     catch { setError("Could not revoke the invitation. Try again."); }
     finally { setBusy(false); }
   }
+  const chosenDomain = domains.find((domain) => domainId ? domain.id === domainId : domain.is_root);
+  const chosenName = domainDNSName(chosenDomain);
+  const rootName = domainDNSName(domains.find((domain) => domain.is_root));
   return <section><h2>Add device</h2>
     <p>Create an invitation for one device. The recipient installs Karst and pastes it into setup. No account or identity-provider login is needed.</p>
     {error && <p role="alert">{error}</p>}
     <form onSubmit={event => { event.preventDefault(); void create(); }}>
       <label>Device name<input value={name} maxLength={100} required onChange={event => setName(event.target.value)} /></label>
-      <p className="lede">This becomes the device's real name on the mesh — how other devices address it — not just a label in this list.{domainId && (() => { const chosen = domains.find(d => d.id === domainId); return chosen ? <> It will resolve as <code>{name.trim() || "…"}.{chosen.dns_suffix || chosen.path}</code>.</> : null; })()}</p>
+      <p className="lede">This becomes the device's real name on the mesh — how other devices address it — not just a label in this list.{chosenName && <> It will resolve as <code>{name.trim() || "…"}.{chosenName}</code>.</>}</p>
       {domains.length > 0 && <label>Domain<select aria-label="Domain" value={domainId} onChange={event => setDomainId(event.target.value)}>
-        <option value="">Account root (default)</option>
-        {domains.map(domain => <option key={domain.id} value={domain.id}>{domain.dns_suffix || domain.path}</option>)}
+        <option value="">Account root (default{rootName ? `: ${rootName}` : ""})</option>
+        {domains.map(domain => <option key={domain.id} value={domain.id}>{domainDNSName(domain) || domain.path}</option>)}
       </select></label>}
       <fieldset><legend>Access groups</legend>
         {groups.map(group => <label key={group.id}><input type="checkbox" checked={selected.includes(group.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, group.id] : previous.filter(id => id !== group.id))} />{group.name}</label>)}
@@ -76,7 +80,7 @@ export function Setup({ go }: { go: (route: string) => void }) {
     </section>}
     <h3>Invitations</h3>
     <button disabled={busy} onClick={() => { void refresh().catch(() => setError("Could not refresh invitations.")); }}>Refresh status</button>
-    <ul>{invitations.map(item => <li key={item.id}>{item.name}{item.domain_id && (() => { const d = domains.find(x => x.id === item.domain_id); return d ? <>.{d.dns_suffix || d.path}</> : null; })()} — {item.state} — expires {new Date(item.expires_at).toLocaleString()}
+    <ul>{invitations.map(item => <li key={item.id}>{item.name}{item.domain_id && (() => { const d = domains.find(x => x.id === item.domain_id); return domainDNSName(d) ? <>.{domainDNSName(d)}</> : null; })()} — {item.state} — expires {new Date(item.expires_at).toLocaleString()}
       {item.state === "pending" && <button disabled={busy} onClick={() => { void revoke(item.id); }}>Revoke {item.name}</button>}
     </li>)}</ul>
     <p>Network policy and any required Bedrock approval determine when a registered device can connect.</p>

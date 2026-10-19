@@ -6,6 +6,29 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}/api/karst/v1` | (string & {});
 };
 
+export type MeshDomainView = {
+    /**
+     * Stable domain identity.
+     */
+    id: string;
+    parent_id?: string;
+    label: string;
+    /**
+     * Immutable root-relative path; empty for the root.
+     */
+    path: string;
+    is_root: boolean;
+    /**
+     * Authoritative account suffix, present only on the root.
+     */
+    dns_suffix?: string;
+    /**
+     * Complete domain namespace, including the root suffix; available to authorized delegated views without listing the root.
+     */
+    dns_name?: string;
+    naming_revision: number;
+};
+
 export type RootRenamePreview = {
     root_id: string;
     old_suffix: string;
@@ -269,7 +292,7 @@ export type Node = {
      */
     domain_id?: string;
     /**
-     * The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+     * Root-relative peer DNS label, including the relative domain path. Append the account root suffix exactly once to form the complete DNS name.
      */
     dns_label: string;
     enabled: boolean;
@@ -715,7 +738,7 @@ export type NodeWritable = {
      */
     domain_id?: string;
     /**
-     * The peer's actual resolvable mesh name -- already domain-qualified when domain_id is set.
+     * Root-relative peer DNS label, including the relative domain path. Append the account root suffix exactly once to form the complete DNS name.
      */
     dns_label: string;
     enabled: boolean;
@@ -783,6 +806,58 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type ListMeshDomainsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/domains';
+};
+
+export type ListMeshDomainsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListMeshDomainsError = ListMeshDomainsErrors[keyof ListMeshDomainsErrors];
+
+export type ListMeshDomainsResponses = {
+    /**
+     * Visible domain tree
+     */
+    200: Array<MeshDomainView>;
+};
+
+export type ListMeshDomainsResponse = ListMeshDomainsResponses[keyof ListMeshDomainsResponses];
+
+export type GetMeshDomainData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/domains/{id}';
+};
+
+export type GetMeshDomainErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetMeshDomainError = GetMeshDomainErrors[keyof GetMeshDomainErrors];
+
+export type GetMeshDomainResponses = {
+    /**
+     * Authorized domain and complete DNS namespace
+     */
+    200: MeshDomainView;
+};
+
+export type GetMeshDomainResponse = GetMeshDomainResponses[keyof GetMeshDomainResponses];
 
 export type PreviewRootRenameData = {
     body: {

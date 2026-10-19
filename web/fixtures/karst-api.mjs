@@ -14,7 +14,7 @@ export function buildFixture({ empty = false } = {}) {
     // Node 1 exercises the mesh-domain (ADR-0032) display/move path; every
     // other node stays at the account root, the overwhelming common case.
     const domainId = n === 1 ? "domain-engineering" : "domain-root";
-    const dnsLabel = n === 1 ? `${name}.engineering.acme` : `${name}.karst`;
+    const dnsLabel = n === 1 ? `${name}.engineering.acme` : name;
     return {
       handle: `node-${String(n).padStart(4, "0")}-karst-fixture-handle`,
       name,

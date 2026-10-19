@@ -1143,6 +1143,48 @@ mod tests {
         assert!(!fixture.root.join("resolver").exists());
     }
 
+    #[test]
+    fn root_rename_and_rollback_replace_host_routing_search_and_flush_caches() {
+        let mut fixture = Fixture::new("root-rename");
+        fixture
+            .host
+            .apply(stub(), "karst", &["engineering.karst".to_owned()])
+            .expect("initial root");
+        fixture
+            .host
+            .apply(
+                stub(),
+                "corp.example",
+                &["engineering.corp.example".to_owned()],
+            )
+            .expect("renamed root");
+        assert!(!fixture.resolver("karst").exists());
+        assert!(!fixture.resolver("engineering.karst").exists());
+        assert!(fixture.resolver("corp.example").exists());
+        assert!(fixture.resolver("engineering.corp.example").exists());
+        let scripts = fixture.scutil_scripts();
+        let renamed = scripts.last().expect("renamed search-list command");
+        assert!(renamed.contains("engineering.corp.example"));
+        assert!(!renamed.contains("engineering.karst"));
+        assert_eq!(fixture.flushes(), 2);
+        fixture
+            .host
+            .apply(stub(), "karst", &["engineering.karst".to_owned()])
+            .expect("rollback root");
+        assert!(!fixture.resolver("corp.example").exists());
+        assert!(!fixture.resolver("engineering.corp.example").exists());
+        assert!(fixture.resolver("karst").exists());
+        assert!(fixture
+            .scutil_scripts()
+            .last()
+            .expect("rollback command")
+            .contains("engineering.karst"));
+        assert_eq!(fixture.flushes(), 3);
+        fixture.host.revert().expect("restore pre-Karst host state");
+        assert!(!fixture.root.join("resolver").exists());
+        assert_eq!(fixture.flushes(), 4);
+    }
+
     /// The zone is normally also reachable as a search domain. One file, not a
     /// duplicate pair, and no ordering dependence on how the netmap listed it.
     #[test]

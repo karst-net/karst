@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
 import { api, type AccountUser, type DomainDelegation, type MeshDomain, type RootRenamePreview } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
-import { byTree } from "../domains";
+import { byTree, domainDNSName } from "../domains";
 
 function userLabel(users: AccountUser[], id: string): string {
   const user = users.find((candidate) => candidate.id === id);
@@ -45,10 +45,10 @@ export function Domains() {
     {lastRename && <p role="status">Committed naming revision {lastRename.naming_revision}: <code>{lastRename.new_suffix}</code>. Client convergence is unobserved. Online clients switch on refresh; offline clients switch after reconnect. Cached answers may remain for 60 seconds. <button onClick={() => setRenaming({ suffix: lastRename.old_suffix })}>Preview rollback</button></p>}
     {domains.length === 0
       ? <EmptyState title="No visible domains">No domains are available to manage with your current permissions.</EmptyState>
-      : <Rows head={<><th>Domain</th><th>Path</th><th>Actions</th></>}>
+      : <Rows head={<><th>Domain</th><th>DNS name</th><th>Actions</th></>}>
         {byTree(domains).map(({ domain, depth }) => <tr key={domain.id}>
           <td style={{ paddingLeft: `${depth * 1.5}em` }}>{depth > 0 ? "↳ " : ""}{domain.is_root ? `${domain.dns_suffix} (root)` : domain.label}</td>
-          <td><code>{domain.dns_suffix || domain.path}</code></td>
+          <td><code>{domainDNSName(domain) || domain.path}</code></td>
           <td><div className="actions">
             <button onClick={() => setManaging(domain)}>Delegations</button>
             <button onClick={() => setCreating({ parentId: domain.id, label: "" })}>Add subdomain</button>

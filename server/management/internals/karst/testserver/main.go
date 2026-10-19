@@ -100,6 +100,13 @@ func main() {
 		if err != nil {
 			fail("netmap fixture: %v", err)
 		}
+		for i, arg := range os.Args {
+			if arg == "--root-domain-dir" && i+1 < len(os.Args) {
+				if err := installRootDomainFixture(r, os.Args[i+1]); err != nil {
+					fail("root domain fixture: %v", err)
+				}
+			}
+		}
 		handler = r
 		netmapRouter = r
 		// The packaged desktop test enrolls unpredictable, locally generated
@@ -212,6 +219,9 @@ func controlAddr() string {
 //	DELETE /routes?id=<route_id>     -> 200 deleted / 404 no such route
 func serveControl(addr string, r *router) {
 	mux := http.NewServeMux()
+	if r.rootDomains != nil {
+		mux.Handle("/karst/v1/domains/", r.rootDomains.api)
+	}
 	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(r.account.list())

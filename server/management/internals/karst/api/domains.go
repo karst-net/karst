@@ -34,6 +34,7 @@ type domainResponse struct {
 	NamingRevision uint64 `json:"naming_revision"`
 	IsRoot         bool   `json:"is_root"`
 	DNSSuffix      string `json:"dns_suffix,omitempty"`
+	DNSName        string `json:"dns_name,omitempty"`
 	ID             string `json:"id"`
 	ParentID       string `json:"parent_id,omitempty"`
 	Label          string `json:"label"`
@@ -42,6 +43,57 @@ type domainResponse struct {
 
 func domainView(d *meshdomain.Domain) domainResponse {
 	return domainResponse{NamingRevision: d.NamingRevision, IsRoot: d.IsRoot(), DNSSuffix: d.DNSSuffix, ID: d.ID, ParentID: d.ParentID, Label: d.Label, Path: d.Path}
+}
+
+// domainViews projects complete names only after the domain manager has
+// authorized and filtered the tree. A delegated subtree can be named without
+// returning the root or any sibling outside that caller's administrative scope.
+func (h *handler) domainViews(ctx context.Context, accountID string, domains []*meshdomain.Domain) ([]domainResponse, error) {
+	suffix := ""
+	var root *meshdomain.Domain
+	if source, ok := h.peers.(interface {
+		GetAccountRootDomain(context.Context, string) (*meshdomain.Domain, error)
+	}); ok {
+		var err error
+		root, err = source.GetAccountRootDomain(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if root != nil {
+		suffix = root.DNSSuffix
+	} else if source, ok := h.peers.(interface {
+		GetDNSDomain(context.Context, string) (string, error)
+	}); ok {
+		var err error
+		suffix, err = source.GetDNSDomain(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for _, d := range domains {
+			if d.IsRoot() {
+				suffix = d.DNSSuffix
+				break
+			}
+		}
+	}
+	result := make([]domainResponse, 0, len(domains))
+	for _, d := range domains {
+		view := domainView(d)
+		if root != nil && d.ID == root.ID {
+			view.DNSSuffix = root.DNSSuffix
+			view.NamingRevision = root.NamingRevision
+		}
+		if suffix != "" {
+			view.DNSName = suffix
+			if d.Path != "" {
+				view.DNSName = d.Path + "." + suffix
+			}
+		}
+		result = append(result, view)
+	}
+	return result, nil
 }
 
 type rootRenameManager interface {
@@ -118,9 +170,10 @@ func (h *handler) domains(w http.ResponseWriter, r *http.Request) {
 			util.WriteError(r.Context(), err, w)
 			return
 		}
-		result := make([]domainResponse, 0, len(list))
-		for _, d := range list {
-			result = append(result, domainView(d))
+		result, err := h.domainViews(r.Context(), user.AccountId, list)
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
 		}
 		util.WriteJSONObject(r.Context(), w, result)
 		return
@@ -140,7 +193,12 @@ func (h *handler) domains(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	util.WriteJSONObject(r.Context(), w, domainView(d))
+	views, err := h.domainViews(r.Context(), user.AccountId, []*meshdomain.Domain{d})
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, views[0])
 }
 
 func (h *handler) getDomain(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +217,12 @@ func (h *handler) getDomain(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	util.WriteJSONObject(r.Context(), w, domainView(d))
+	views, err := h.domainViews(r.Context(), user.AccountId, []*meshdomain.Domain{d})
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, views[0])
 }
 
 func (h *handler) deleteDomain(w http.ResponseWriter, r *http.Request) {

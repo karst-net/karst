@@ -940,3 +940,72 @@ func TestEnrollmentDefaultAndExistingInvitationAfterRootRename(t *testing.T) {
 	require.Equal(t, root.ID, personal.DomainID)
 	require.True(t, strings.HasSuffix(personal.FQDN(suffix), ".corp.example"))
 }
+
+func TestEnrollmentDomainDNSNamesInDelegatedViewsAfterRename(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	mgr := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	engineering, err := mgr.CreateDomain(ctx, member.AccountID, "owner", "", "engineering")
+	require.NoError(t, err)
+	build, err := mgr.CreateDomain(ctx, member.AccountID, "owner", engineering.ID, "build")
+	require.NoError(t, err)
+	_, err = mgr.CreateDomain(ctx, member.AccountID, "owner", "", "private")
+	require.NoError(t, err)
+	_, err = mgr.DelegateDomainAdmin(ctx, member.AccountID, "owner", engineering.ID, member.Id)
+	require.NoError(t, err)
+	preview, err := mgr.PreviewRootRename(ctx, member.AccountID, "owner", "corp.example")
+	require.NoError(t, err)
+	_, err = mgr.CommitRootRename(ctx, member.AccountID, "owner", "corp.example", preview.Revision)
+	require.NoError(t, err)
+	router := mux.NewRouter()
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, router)
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/domains", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: member.Id})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var domains []struct {
+		ID      string `json:"id"`
+		DNSName string `json:"dns_name"`
+		Path    string `json:"path"`
+		Root    bool   `json:"is_root"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &domains))
+	require.Len(t, domains, 2, "a complete DNS name must not widen the visible domain tree")
+	byID := make(map[string]string)
+	for _, d := range domains {
+		require.False(t, d.Root)
+		byID[d.ID] = d.DNSName
+	}
+	require.Equal(t, "engineering.corp.example", byID[engineering.ID])
+	require.Equal(t, "build.engineering.corp.example", byID[build.ID])
+}
+
+func TestEnrollmentRootHTTPProtectedLifecycle(t *testing.T) {
+	am, member := enrollmentFixture(t)
+	ctx := context.Background()
+	root, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	mgr := meshdomainmanager.NewManager(am.Store, am, am.permissionsManager)
+	router := mux.NewRouter()
+	karstapi.RegisterEndpoints(nil, am, am, nil, nil, nil, nil, nil, nil, am, am.permissionsManager, mgr, nil, nil, "", nil, nil, nil, nil, am, nil, nil, nil, router)
+	for _, method := range []string{http.MethodDelete, http.MethodPut, http.MethodPatch} {
+		req := httptest.NewRequest(method, "/karst/v1/domains/"+root.ID, strings.NewReader(`{"parent_id":"another-domain"}`))
+		req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: member.AccountID, UserId: "owner"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if method == http.MethodDelete {
+			require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
+		} else {
+			require.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, response.Code)
+		}
+	}
+	after, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	require.Equal(t, root.ID, after.ID)
+	require.Empty(t, after.ParentID)
+	require.Empty(t, after.Path)
+	domains, err := am.Store.GetAccountDomains(ctx, store.LockingStrengthNone, member.AccountID)
+	require.NoError(t, err)
+	require.Len(t, domains, 1)
+}

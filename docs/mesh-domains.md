@@ -5,6 +5,8 @@
 This page records the agreed product model. Explicit-root provisioning,
 migration, default enrollment, and root rename preview/confirmation are implemented.
 Client convergence is unobserved; device compliance integration remains follow-up work.
+[Acceptance validation](mesh-domain-validation.md) records migration, authority,
+console and real Go/Rust client DNS coverage, including validation limits.
 
 Tracked work: [ADR reconciliation (#361)](https://github.com/karst-net/karst/issues/361),
 [domain implementation (#362)](https://github.com/karst-net/karst/issues/362),
@@ -97,8 +99,11 @@ reference a valid domain. After correction, restart: completed accounts retain
 their root IDs and failed account transactions leave no partial root/backfill.
 
 New account creation persists the account and root atomically. Root metadata is
-returned by the domains API (`is_root`, `dns_suffix`), and the root has an empty
-relative `path`. Omitted invitation/enrollment targets use its stable ID;
+returned by the domains API (`is_root`, `dns_suffix`, `dns_name`), and the root has an empty
+relative `path`. `dns_name` is the complete namespace for each visible domain,
+including for delegated views that do not list the root. Peer `dns_label` and
+domain `path` remain root-relative; the console qualifies them exactly once.
+Omitted invitation/enrollment targets use the root's stable ID;
 moving a device back to it requires that explicit ID. Legacy suffix-setting
 writes cannot bypass the root-rename preview/confirmation flow.
 

@@ -2063,6 +2063,12 @@ func (am *DefaultAccountManager) GetAccountIDForPeerKey(ctx context.Context, pee
 // No permission check: this is server-to-node system data for a node
 // authenticating with its own identity key, not a user-facing settings read
 // (contrast the permission-gated GetAccountSettings above).
+// GetAccountRootDomain supplies naming metadata to already-authorized resource
+// projections. Reading a device's namespace does not grant root administration.
+func (am *DefaultAccountManager) GetAccountRootDomain(ctx context.Context, accountID string) (*meshdomain.Domain, error) {
+	return am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+}
+
 func (am *DefaultAccountManager) GetDNSDomain(ctx context.Context, accountID string) (string, error) {
 	settings, err := am.Store.GetAccountSettings(ctx, store.LockingStrengthNone, accountID)
 	if err != nil {
