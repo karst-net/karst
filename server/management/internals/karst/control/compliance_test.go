@@ -19,6 +19,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
+	"github.com/netbirdio/netbird/management/internals/karst/channel"
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
@@ -207,4 +209,46 @@ func TestComplianceHandlerInputValidation(t *testing.T) {
 	h.Store = nil
 	_, err = h.Handle(context.Background(), nil, key.Public(), marshalCompliance(t, challengeRequest()))
 	require.Equal(t, codes.Unimplemented, status.Code(err))
+}
+
+func TestComplianceExpiryPushesTheAuthenticatedControlStream(t *testing.T) {
+	db, store := complianceDB(t)
+	f := newFixture(t, nil, nil)
+	defer f.cleanup()
+	handle := node.Handle(f.nodeKey.Public())
+	subject := compliance.Subject{TenantID: "account-expiry", DeviceID: "device-expiry"}
+	peer := &nbpeer.Peer{ID: subject.DeviceID, AccountID: subject.TenantID, Key: handle}
+	require.NoError(t, db.Create(&complianceEnrollment{ID: peer.ID, AccountID: peer.AccountID, Key: peer.Key}).Error)
+	peers := &fakePeers{byKey: map[string]*nbpeer.Peer{handle: peer}}
+	updates := update_channel.NewPeersUpdateManager(nil)
+	f.svc.SubscribeToUpdatesWith(peers, updates)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream, err := f.client.Session(ctx)
+	require.NoError(t, err)
+	hello, err := stream.Recv()
+	require.NoError(t, err)
+	init, ch, err := channel.Initiate(hello.GetHello(), f.svc.Pins(), identity.ControlVerifier{}, []byte(handle), identity.ControlSigner{Key: f.nodeKey}, true)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&proto.KarstClientMessage{Msg: &proto.KarstClientMessage_Init{Init: init}}))
+	require.Eventually(t, func() bool { return updates.HasNotificationChannel(subject.DeviceID) }, 2*time.Second, 10*time.Millisecond)
+	received := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	challenge, err := store.Issue(ctx, subject, handle, received)
+	require.NoError(t, err)
+	require.NoError(t, store.Submit(ctx, subject, handle, challenge.Token, compliance.Report{CollectorVersion: "0.1.0", Platform: compliance.MacOS, ClientVersion: compliance.Observation{Status: compliance.Collected, Version: "0.1.0"}}, received))
+	publish := func(ctx context.Context, id string) error { updates.SendNotification(ctx, id); return nil }
+	assertPush := func() {
+		t.Helper()
+		message, err := stream.Recv()
+		require.NoError(t, err)
+		require.NotNil(t, message.GetEnvelope())
+		body, err := ch.Open(message.GetEnvelope())
+		require.NoError(t, err)
+		require.Equal(t, []byte{control.KindPush}, body)
+	}
+	require.NoError(t, store.ProcessInvalidations(ctx, received, publish))
+	assertPush()
+	// No report or client request is needed to wake the held stream at expiry.
+	require.NoError(t, store.ProcessInvalidations(ctx, received.Add(compliance.EvidenceLifetime), publish))
+	assertPush()
 }

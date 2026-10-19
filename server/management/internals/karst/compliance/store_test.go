@@ -175,6 +175,7 @@ func TestStorageFailureDoesNotConsumeChallenge(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec("CREATE TRIGGER reject_evidence BEFORE UPDATE OF evidence_json ON karst_device_compliance BEGIN SELECT RAISE(ABORT, 'test failure'); END").Error)
 	require.Error(t, a.Submit(ctx, subject, "identity-a", challenge.Token, report(), now.Add(time.Second)))
+	require.Zero(t, pending(t, db, subject.TenantID), "failed evidence persistence must also roll back its invalidation")
 	_, err = b.Latest(ctx, subject, "identity-a", now.Add(time.Second))
 	require.ErrorIs(t, err, compliance.ErrNoEvidence)
 	require.NoError(t, db.Exec("DROP TRIGGER reject_evidence").Error)

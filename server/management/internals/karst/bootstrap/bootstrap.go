@@ -484,6 +484,12 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	go (&control.EpochScheduler{Handler: router.netmap, Updates: s.PeersUpdateManager(), Metrics: karstMetrics}).
 		Run(context.Background(), time.Minute)
 
+	// The compliance outbox needs an error-returning publisher so a failed HA
+	// publish remains pending. Local delivery uses the same lightweight channel.
+	notifyCompliancePeer := func(ctx context.Context, peerID string) error {
+		s.PeersUpdateManager().SendNotification(ctx, peerID)
+		return nil
+	}
 	// HA is active only for Postgres. A SQLite deployment remains deliberately
 	// single-replica rather than pretending its local file can coordinate one.
 	if sql.GetStoreEngine() == "postgres" {
@@ -499,6 +505,10 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			return nil, fmt.Errorf("karst: reconcile HA sessions: %w", err)
 		}
 		if updates, ok := s.PeersUpdateManager().(*update_channel.PeersUpdateManager); ok {
+			notifyCompliancePeer = func(ctx context.Context, peerID string) error {
+				updates.DeliverNotification(ctx, peerID)
+				return hub.PublishPeer(ctx, peerID)
+			}
 			updates.PublishNotificationsWith(func(ctx context.Context, peerID string) {
 				if err := hub.PublishPeer(ctx, peerID); err != nil {
 					log.WithError(err).Warn("karst: publish HA peer notification")
@@ -513,6 +523,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			hub.OnListenEstablished(func() { updates.ResyncAllNotifiedPeers(context.Background()) })
 		}
 	}
+
+	complianceStore.StartInvalidationWorker(context.Background(), notifyCompliancePeer, func(err error) { log.WithError(err).Warn("karst: compliance invalidation retry pending") })
 
 	s.RegisterGRPCExtension(nbserver.GRPCExtension{
 		Register: func(reg grpc.ServiceRegistrar) {
