@@ -565,6 +565,49 @@ export type AllowedRegion = {
     region: string;
 };
 
+export type FirstRunState = {
+    /**
+     * Whether the account has finished the console's first-run setup wizard (default domain + initial groups). A brand-new account defaults to false; an account that existed before this feature shipped defaults to true.
+     */
+    completed: boolean;
+    completed_at?: string;
+};
+
+export type TutorialMode = {
+    /**
+     * Whether per-page "what is this" guidance text is shown across the console. Defaults to true.
+     */
+    enabled: boolean;
+};
+
+export type CloudAccountCreate = {
+    provider: 'aws' | 'azure' | 'gcp';
+    mode: 'read_only' | 'read_write';
+    label?: string;
+    /**
+     * Provider-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}.
+     */
+    secret: {
+        [key: string]: unknown;
+    };
+};
+
+export type CloudAccount = {
+    readonly id: string;
+    provider: 'aws' | 'azure' | 'gcp';
+    mode: 'read_only' | 'read_write';
+    label?: string;
+    readonly created_at: string;
+};
+
+export type DiscoveredRegion = {
+    code: string;
+    name?: string;
+    kind: 'region' | 'local_zone' | 'zone';
+    lat?: number;
+    lon?: number;
+};
+
 export type TurnServerCreate = {
     /**
      * A turn: or turns: URI (RFC 8656 §3.1 / RFC 7065), e.g. turn:turn.example.com:3478.
@@ -783,6 +826,12 @@ export type NodePageWritable = Page & {
 
 export type RelayWritable = RelayCreate & {
     health: RelayHealth;
+};
+
+export type CloudAccountWritable = {
+    provider: 'aws' | 'azure' | 'gcp';
+    mode: 'read_only' | 'read_write';
+    label?: string;
 };
 
 export type TurnServerWritable = TurnServerCreate;
@@ -2550,6 +2599,214 @@ export type DeleteAllowedRegionResponses = {
 };
 
 export type DeleteAllowedRegionResponse = DeleteAllowedRegionResponses[keyof DeleteAllowedRegionResponses];
+
+export type GetFirstRunStateData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/firstrun';
+};
+
+export type GetFirstRunStateErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetFirstRunStateError = GetFirstRunStateErrors[keyof GetFirstRunStateErrors];
+
+export type GetFirstRunStateResponses = {
+    /**
+     * First-run completion state
+     */
+    200: FirstRunState;
+};
+
+export type GetFirstRunStateResponse = GetFirstRunStateResponses[keyof GetFirstRunStateResponses];
+
+export type CompleteFirstRunData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/firstrun/complete';
+};
+
+export type CompleteFirstRunErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CompleteFirstRunError = CompleteFirstRunErrors[keyof CompleteFirstRunErrors];
+
+export type CompleteFirstRunResponses = {
+    /**
+     * First-run completion state
+     */
+    200: FirstRunState;
+};
+
+export type CompleteFirstRunResponse = CompleteFirstRunResponses[keyof CompleteFirstRunResponses];
+
+export type GetTutorialModeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/tutorial-mode';
+};
+
+export type GetTutorialModeErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetTutorialModeError = GetTutorialModeErrors[keyof GetTutorialModeErrors];
+
+export type GetTutorialModeResponses = {
+    /**
+     * Tutorial mode setting
+     */
+    200: TutorialMode;
+};
+
+export type GetTutorialModeResponse = GetTutorialModeResponses[keyof GetTutorialModeResponses];
+
+export type SetTutorialModeData = {
+    body: TutorialMode;
+    path?: never;
+    query?: never;
+    url: '/tutorial-mode';
+};
+
+export type SetTutorialModeErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetTutorialModeError = SetTutorialModeErrors[keyof SetTutorialModeErrors];
+
+export type SetTutorialModeResponses = {
+    /**
+     * Tutorial mode setting
+     */
+    200: TutorialMode;
+};
+
+export type SetTutorialModeResponse = SetTutorialModeResponses[keyof SetTutorialModeResponses];
+
+export type ListCloudAccountsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/cloud-accounts';
+};
+
+export type ListCloudAccountsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListCloudAccountsError = ListCloudAccountsErrors[keyof ListCloudAccountsErrors];
+
+export type ListCloudAccountsResponses = {
+    /**
+     * Configured cloud credentials
+     */
+    200: Array<CloudAccount>;
+};
+
+export type ListCloudAccountsResponse = ListCloudAccountsResponses[keyof ListCloudAccountsResponses];
+
+export type CreateCloudAccountData = {
+    body: CloudAccountCreate;
+    path?: never;
+    query?: never;
+    url: '/cloud-accounts';
+};
+
+export type CreateCloudAccountErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateCloudAccountError = CreateCloudAccountErrors[keyof CreateCloudAccountErrors];
+
+export type CreateCloudAccountResponses = {
+    /**
+     * Stored credential (secret omitted)
+     */
+    201: CloudAccount;
+};
+
+export type CreateCloudAccountResponse = CreateCloudAccountResponses[keyof CreateCloudAccountResponses];
+
+export type DeleteCloudAccountData = {
+    body?: never;
+    path: {
+        cloudAccountId: string;
+    };
+    query?: never;
+    url: '/cloud-accounts/{cloudAccountId}';
+};
+
+export type DeleteCloudAccountErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteCloudAccountError = DeleteCloudAccountErrors[keyof DeleteCloudAccountErrors];
+
+export type DeleteCloudAccountResponses = {
+    /**
+     * Credential removed
+     */
+    204: void;
+};
+
+export type DeleteCloudAccountResponse = DeleteCloudAccountResponses[keyof DeleteCloudAccountResponses];
+
+export type ListCloudAccountRegionsData = {
+    body?: never;
+    path: {
+        cloudAccountId: string;
+    };
+    query?: never;
+    url: '/cloud-accounts/{cloudAccountId}/regions';
+};
+
+export type ListCloudAccountRegionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListCloudAccountRegionsError = ListCloudAccountRegionsErrors[keyof ListCloudAccountRegionsErrors];
+
+export type ListCloudAccountRegionsResponses = {
+    /**
+     * Discovered regions/zones
+     */
+    200: Array<DiscoveredRegion>;
+};
+
+export type ListCloudAccountRegionsResponse = ListCloudAccountRegionsResponses[keyof ListCloudAccountRegionsResponses];
 
 export type ListTurnServersData = {
     body?: never;

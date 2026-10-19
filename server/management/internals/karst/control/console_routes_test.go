@@ -20,8 +20,10 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
@@ -32,12 +34,14 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
+	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/auth"
+	"github.com/netbirdio/netbird/util/crypt"
 )
 
 // Every mutating console route, driven against the real account manager, the
@@ -406,6 +410,31 @@ func consoleMutations() []consoleCase {
 			path: "/karst/v1/domains/delegations/" + consoleFixtureBindingID, body: "",
 			want: []int{http.StatusNoContent}, template: "/karst/v1/domains/delegations/{bindingId}",
 		},
+		{
+			name: "complete first-run setup", method: http.MethodPost,
+			path: "/karst/v1/firstrun/complete", body: "",
+			want: []int{http.StatusOK}, template: "/karst/v1/firstrun/complete",
+		},
+		{
+			name: "set tutorial mode", method: http.MethodPut,
+			path: "/karst/v1/tutorial-mode", body: `{"enabled":false}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/tutorial-mode",
+		},
+		{
+			name: "create a cloud account credential", method: http.MethodPost,
+			path: "/karst/v1/cloud-accounts",
+			body: `{"provider":"aws","mode":"read_only","label":"test","secret":{"access_key_id":"AKIAEXAMPLE","secret_access_key":"shh"}}`,
+			want: []int{http.StatusCreated}, template: "/karst/v1/cloud-accounts",
+		},
+		{
+			// Same "unknown-*" 404 shape as "delete a node" above: this
+			// route's own CRUD round-trip is covered at the unit level in
+			// cloudaccounts_test.go, so real-server coverage here only
+			// needs to prove the route is wired and account-scoped.
+			name: "delete a cloud account credential", method: http.MethodDelete,
+			path: "/karst/v1/cloud-accounts/unknown-cloud-account-id", body: "",
+			want: []int{http.StatusNotFound}, template: "/karst/v1/cloud-accounts/{cloudAccountId}",
+		},
 	}
 }
 
@@ -521,6 +550,26 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("scaling mode store: %v", err)
 	}
+	firstRunStore, err := firstrun.NewStore(db)
+	if err != nil {
+		t.Fatalf("first-run store: %v", err)
+	}
+	tutorialModeStore, err := tutorialmode.NewStore(db)
+	if err != nil {
+		t.Fatalf("tutorial mode store: %v", err)
+	}
+	cloudAccountKey, err := crypt.GenerateKey()
+	if err != nil {
+		t.Fatalf("cloud account key: %v", err)
+	}
+	cloudAccountEncrypt, err := crypt.NewFieldEncrypt(cloudAccountKey)
+	if err != nil {
+		t.Fatalf("cloud account field encrypt: %v", err)
+	}
+	cloudAccountStore, err := cloudaccounts.NewStore(db, cloudAccountEncrypt)
+	if err != nil {
+		t.Fatalf("cloud account store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
@@ -528,7 +577,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, cloudAccountStore, router)
 	return router
 }
 
