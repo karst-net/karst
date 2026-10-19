@@ -43,6 +43,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
@@ -161,6 +162,14 @@ type handler struct {
 	// that has not configured a route telemetry store, see
 	// routeGroupComponents.
 	routeTelemetry routeTelemetryReader
+	// scalingMode is issue #356/#379's deployment-wide ADR-0045 §7
+	// Phase 1 (manual)/Phase 2 (automated) actuation switch -- nil in a
+	// deployment that has not configured a scaling-mode store, see
+	// scalingModeGet/scalingModeSet. Not consumed by anything in this
+	// package itself; drive_loop.rs reads it over this same API
+	// (issue #382), the same way karst-scaler already reads
+	// scalerRecommendations' sibling data.
+	scalingMode scalingModeReadWriter
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -201,6 +210,13 @@ type routeLister interface {
 // admin never writes it directly.
 type routeTelemetryReader interface {
 	LatestByRoute(ctx context.Context, accountID string) (map[string]routetelemetry.StoredRouteBytes, error)
+}
+
+// scalingModeReadWriter is issue #356/#379's deployment-wide scaling-mode
+// setting -- see package scalingmode.
+type scalingModeReadWriter interface {
+	Mode(ctx context.Context) (scalingmode.Mode, error)
+	SetMode(ctx context.Context, mode scalingmode.Mode) error
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -516,8 +532,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -585,6 +601,8 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/demand/regions/history", h.demandRegionsHistory).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/anchors", h.demandAnchors).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaler/recommendations", h.scalerRecommendations).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/scaling/mode", h.scalingModeGet).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/scaling/mode", h.scalingModeSet).Methods(http.MethodPut, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -2989,6 +3007,67 @@ func (h *handler) ephemeralAnchorsScheduleSet(w http.ResponseWriter, r *http.Req
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, schedule)
+}
+
+// scalingModeWire is the wire shape for issue #356/#379's one
+// deployment-wide ADR-0045 §7 Phase 1 (manual)/Phase 2 (automated)
+// actuation switch.
+type scalingModeWire struct {
+	Mode string `json:"mode"`
+}
+
+// scalingModeGet/scalingModeSet mirror ephemeralAnchorsSchedule/
+// ephemeralAnchorsScheduleSet's own GET/PUT singleton shape exactly --
+// one value, not a collection, so this is not /regions' list/create/
+// delete shape. GET carries no additional role check beyond
+// karstAuthorization's blanket module-Read gate: both the console's NOC
+// view and karst-scaler's own tick (authenticated as whatever role its
+// PAT belongs to) need to read this with no elevated role, the same way
+// nocComponents itself needs none. PUT is admin-only purely through that
+// same middleware's Update-operation check -- regionsCreate/
+// regionsDelete/ephemeralAnchorsScheduleSet rely on it identically, with
+// no second handler-level check.
+func (h *handler) scalingModeGet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.scalingMode == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "scaling mode store is not configured"), w)
+		return
+	}
+	mode, err := h.scalingMode.Mode(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, scalingModeWire{Mode: string(mode)})
+}
+
+func (h *handler) scalingModeSet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.scalingMode == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "scaling mode store is not configured"), w)
+		return
+	}
+	var wire scalingModeWire
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	mode := scalingmode.Mode(wire.Mode)
+	if mode != scalingmode.ModeAutomated && mode != scalingmode.ModeManual {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "mode must be %q or %q", scalingmode.ModeAutomated, scalingmode.ModeManual), w)
+		return
+	}
+	if err := h.scalingMode.SetMode(r.Context(), mode); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, wire)
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

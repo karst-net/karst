@@ -51,6 +51,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relaytelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/relayusage"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
@@ -374,6 +375,15 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: route telemetry store: %w", err)
 	}
+	// Issue #356/#379: the deployment-wide ADR-0045 §7 Phase 1 (manual)/
+	// Phase 2 (automated) actuation switch. No boot-time reconcile against
+	// a config file, unlike regionAllowStore/ephemeralAnchorStore above --
+	// this is an admin-editable live setting (#380), not something a
+	// deploy-time document should overwrite on every restart.
+	scalingModeStore, err := scalingmode.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: scaling mode store: %w", err)
+	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -398,7 +408,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)

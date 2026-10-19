@@ -30,6 +30,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
+	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
@@ -272,6 +273,11 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNoContent, http.StatusNotFound}, template: "/karst/v1/ephemeral-anchors/{label}",
 		},
 		{
+			name: "set the geo-scaling mode", method: http.MethodPut,
+			path: "/karst/v1/scaling/mode", body: `{"mode":"manual"}`,
+			want: []int{http.StatusOK}, template: "/karst/v1/scaling/mode",
+		},
+		{
 			name: "declare the control plane's location", method: http.MethodPut,
 			path: "/karst/v1/control-plane/location",
 			body: `{"lat":37.7749,"lon":-122.4194,"label":"Control room"}`,
@@ -511,6 +517,10 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("route telemetry store: %v", err)
 	}
+	scalingModeStore, err := scalingmode.NewStore(db)
+	if err != nil {
+		t.Fatalf("scaling mode store: %v", err)
+	}
 
 	permissionsManager := permissions.NewManager(s)
 	domainManager := meshdomainmanager.NewManager(s, am, permissionsManager)
@@ -518,7 +528,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, router)
 	return router
 }
 
