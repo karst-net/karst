@@ -1032,3 +1032,386 @@ fn guided_enrollment_wrong_pin_never_publishes_configuration() {
     karstd::enrollment::enroll(&bundle, &config, &state).expect("retry with corrected pins");
     assert_eq!(original_key, std::fs::read(state.join("node.key")).unwrap());
 }
+
+/// Real root store/REST commit -> authenticated Go netmap -> Rust client ->
+/// live UDP/TCP DNS. Host changes are exercised separately with isolated host
+/// mechanism fixtures; this test never edits the machine's resolver settings.
+#[tokio::test]
+#[ignore = "requires the Go control fixture"]
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
+async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+    use hickory_proto::rr::rdata::A;
+    use hickory_proto::rr::{Name, RData, Record, RecordType};
+    use std::io::{Read as _, Write as _};
+    use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    struct Listener(Option<karstd::dns::Runtime>);
+    impl Drop for Listener {
+        fn drop(&mut self) {
+            if let Some(runtime) = self.0.take() {
+                runtime.stop();
+            }
+        }
+    }
+    struct Upstream {
+        address: SocketAddr,
+        stop: Arc<AtomicBool>,
+        worker: Option<std::thread::JoinHandle<()>>,
+    }
+    impl Drop for Upstream {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(worker) = self.worker.take() {
+                worker.join().expect("upstream worker");
+            }
+        }
+    }
+    fn upstream() -> Upstream {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("upstream socket");
+        socket
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("timeout");
+        let address = socket.local_addr().expect("upstream address");
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut buffer = [0; 4096];
+            while !stopping.load(Ordering::Relaxed) {
+                let Ok((length, from)) = socket.recv_from(&mut buffer) else {
+                    continue;
+                };
+                let request =
+                    karst_dns::message::decode(&buffer[..length]).expect("upstream query");
+                let mut response =
+                    Message::new(request.metadata.id, MessageType::Response, OpCode::Query);
+                for question in &request.queries {
+                    response.add_query(question.clone());
+                }
+                if request.queries[0].name().to_ascii() == "cached.test." {
+                    response.add_answer(Record::from_rdata(
+                        Name::from_ascii("cached.test.").expect("name"),
+                        60,
+                        RData::A(A("198.51.100.7".parse().expect("IP"))),
+                    ));
+                } else {
+                    response.metadata.response_code = ResponseCode::NXDomain;
+                }
+                socket
+                    .send_to(&response.to_vec().expect("response"), from)
+                    .expect("upstream response");
+            }
+        });
+        Upstream {
+            address,
+            stop,
+            worker: Some(worker),
+        }
+    }
+    fn port() -> SocketAddr {
+        TcpListener::bind("127.0.0.1:0")
+            .expect("reserve port")
+            .local_addr()
+            .expect("port")
+    }
+    fn post(address: SocketAddr, action: &str, body: &serde_json::Value) -> serde_json::Value {
+        let mut stream = TcpStream::connect(address).expect("fixture HTTP connection");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("HTTP timeout");
+        let body = body.to_string();
+        write!(stream, "POST /karst/v1/domains/root/rename/{action} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).expect("HTTP request");
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).expect("HTTP reply");
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        serde_json::from_str(reply.split_once("\r\n\r\n").expect("HTTP body").1)
+            .expect("rename JSON")
+    }
+    fn rename(address: SocketAddr, suffix: &str) -> serde_json::Value {
+        let preview = post(
+            address,
+            "preview",
+            &serde_json::json!({"dns_suffix": suffix}),
+        );
+        post(
+            address,
+            "commit",
+            &serde_json::json!({"dns_suffix": suffix, "revision":preview["revision"], "confirm_no_aliases":true}),
+        )
+    }
+    fn query(address: SocketAddr, name: &str, kind: RecordType, tcp: bool) -> Message {
+        let mut request = Message::new(81, MessageType::Query, OpCode::Query);
+        request.metadata.recursion_desired = true;
+        request.add_query(Query::query(
+            Name::from_ascii(name).expect("query name"),
+            kind,
+        ));
+        let wire = request.to_vec().expect("query wire");
+        let response = if tcp {
+            let mut stream = TcpStream::connect(address).expect("DNS TCP");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("TCP timeout");
+            stream
+                .write_all(
+                    &u16::try_from(wire.len())
+                        .expect("query length")
+                        .to_be_bytes(),
+                )
+                .expect("TCP length");
+            stream.write_all(&wire).expect("TCP query");
+            let mut prefix = [0; 2];
+            stream.read_exact(&mut prefix).expect("TCP response length");
+            let mut response = vec![0; usize::from(u16::from_be_bytes(prefix))];
+            stream.read_exact(&mut response).expect("TCP response");
+            response
+        } else {
+            let socket = UdpSocket::bind("127.0.0.1:0").expect("DNS UDP");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("UDP timeout");
+            socket.send_to(&wire, address).expect("UDP query");
+            let mut response = [0; 4096];
+            let (length, _) = socket.recv_from(&mut response).expect("UDP response");
+            response[..length].to_vec()
+        };
+        karst_dns::message::decode(&response).expect("DNS response")
+    }
+
+    fn unchanged_access(config: &karstd::config::Config, label: &str) {
+        let peer = config
+            .peers
+            .iter()
+            .position(|peer| peer.name == label)
+            .expect("peer index");
+        assert!(config.filter.is_enforcing());
+        assert!(config.filter.ingress_service(peer, 22).permitted());
+        assert!(!config.filter.ingress_service(peer, 8080).permitted());
+        assert!(
+            !config.ssh_filter.admit(peer).permitted(),
+            "network access to port 22 does not satisfy the independent SSH gate"
+        );
+    }
+
+    let control = port();
+    let database = Scratch::new("root-domain-database");
+    let server = start_server_args(&[
+        "--netmap".to_owned(),
+        "2".to_owned(),
+        "--ssh-policy".to_owned(),
+        "deny".to_owned(),
+        "--root-domain-dir".to_owned(),
+        database.path().to_string_lossy().into_owned(),
+        "--control".to_owned(),
+        control.to_string(),
+    ]);
+    let online_dir = Scratch::new("root-online");
+    let offline_dir = Scratch::new("root-offline");
+    let mut online = Client::new(
+        &section(&server, online_dir.path(), None),
+        online_dir.path(),
+        &keys(0x61),
+    )
+    .expect("online client");
+    let offline_section = section(&server, offline_dir.path(), Some("netmap.cache"));
+    let mut offline =
+        Client::new(&offline_section, offline_dir.path(), &keys(0x62)).expect("offline client");
+    online.sync().await.expect("online sync");
+    offline.sync().await.expect("offline initial sync");
+    offline.save_cache().expect("persist offline snapshot");
+    let offline_handle = offline.netmap().node_id.clone();
+    let upstream = upstream();
+    let online_address = port();
+    let offline_address = port();
+    let settings = |seed, address| {
+        let mut settings = local(seed);
+        settings.dns.enabled = true;
+        settings.dns.host_integration = karstd::config::HostIntegration::None;
+        settings.dns.stub_address = address;
+        settings.dns.upstream = vec![upstream.address];
+        settings
+    };
+    let mut online_dns = Listener(None);
+    let mut offline_dns = Listener(None);
+    let before = online
+        .to_config(settings(0x61, online_address))
+        .expect("online config");
+    let old = offline
+        .to_config(settings(0x62, offline_address))
+        .expect("offline config");
+    drop(offline); // No control client remains to refresh while the suffix changes.
+    let peer = before
+        .peers
+        .iter()
+        .find(|peer| peer.name.ends_with(".engineering"))
+        .expect("nested peer");
+    let label = peer.name.clone();
+    let identity = peer.public.kem_pk.to_bytes();
+    let stable_handle = peer.node_id.clone();
+    let stable_addresses = peer.identity_addresses.clone();
+    let stable_psk = peer.public.psk;
+    let ipv4 = peer
+        .allowed_ips
+        .iter()
+        .find_map(|prefix| match prefix.base() {
+            std::net::IpAddr::V4(ip) => Some(ip),
+            std::net::IpAddr::V6(_) => None,
+        })
+        .expect("peer IP");
+    unchanged_access(&before, &label);
+    let octets = ipv4.octets();
+    let ptr = format!(
+        "{}.{}.{}.{}.in-addr.arpa.",
+        octets[3], octets[2], octets[1], octets[0]
+    );
+    karstd::dns::reconcile(&mut online_dns.0, &before, None).expect("online listeners");
+    karstd::dns::reconcile(&mut offline_dns.0, &old, None).expect("offline listeners");
+    assert!(
+        query(
+            online_address,
+            &format!("{label}.karst."),
+            RecordType::A,
+            false
+        )
+        .metadata
+        .authoritative
+    );
+    assert_eq!(
+        query(online_address, "cached.test.", RecordType::A, false)
+            .answers
+            .len(),
+        1
+    );
+    assert_eq!(
+        online_dns
+            .0
+            .as_ref()
+            .expect("online DNS")
+            .cache_stats()
+            .entries,
+        1
+    );
+
+    let committed = rename(control, "corp.example");
+    assert_eq!(committed["naming_revision"], 1);
+    assert_eq!(committed["convergence"], "unobserved");
+    let version = online.netmap().version;
+    online.sync().await.expect("renamed netmap");
+    assert_ne!(online.netmap().version, version);
+    let updated = online
+        .to_config(settings(0x61, online_address))
+        .expect("renamed config");
+    assert_eq!(updated.netmap_dns.zone, "corp.example");
+    unchanged_access(&updated, &label);
+    assert!(updated.peers.iter().any(|peer| peer.name == label
+        && peer.public.kem_pk.to_bytes() == identity
+        && peer.node_id == stable_handle
+        && peer.identity_addresses == stable_addresses
+        && peer.public.psk == stable_psk));
+    karstd::dns::reconcile(&mut online_dns.0, &updated, None).expect("replace online DNS");
+    assert_eq!(
+        online_dns
+            .0
+            .as_ref()
+            .expect("online DNS")
+            .cache_stats()
+            .entries,
+        0,
+        "replacement discards cached DNS answers"
+    );
+    for tcp in [false, true] {
+        let answer = query(
+            online_address,
+            &format!("{label}.corp.example."),
+            RecordType::A,
+            tcp,
+        );
+        assert!(answer.metadata.authoritative);
+        assert_eq!(answer.answers[0].data, RData::A(A(ipv4)));
+        assert_eq!(answer.answers[0].ttl, 60);
+        let answer = query(online_address, &ptr, RecordType::PTR, tcp);
+        let RData::PTR(name) = &answer.answers[0].data else {
+            panic!("PTR answer")
+        };
+        assert_eq!(name.0.to_ascii(), format!("{label}.corp.example."));
+        assert_eq!(
+            query(
+                online_address,
+                &format!("{label}.karst."),
+                RecordType::A,
+                tcp
+            )
+            .metadata
+            .response_code,
+            ResponseCode::NXDomain
+        );
+    }
+    assert!(
+        query(
+            offline_address,
+            &format!("{label}.karst."),
+            RecordType::A,
+            false
+        )
+        .metadata
+        .authoritative,
+        "a disconnected client retains its old snapshot"
+    );
+    let mut offline = Client::new(&offline_section, offline_dir.path(), &keys(0x62))
+        .expect("restarted offline client");
+    offline
+        .load_cache()
+        .expect("read cached netmap")
+        .expect("cached netmap exists");
+    assert_eq!(offline.netmap().dns_config.zone, "karst");
+    assert_eq!(offline.netmap().node_id, offline_handle);
+    offline.sync().await.expect("offline client reconnect");
+    assert_eq!(offline.netmap().node_id, offline_handle);
+    let reconnected = offline
+        .to_config(settings(0x62, offline_address))
+        .expect("reconnected config");
+    karstd::dns::reconcile(&mut offline_dns.0, &reconnected, None).expect("replace offline DNS");
+    assert!(
+        query(
+            offline_address,
+            &format!("{label}.corp.example."),
+            RecordType::A,
+            false
+        )
+        .metadata
+        .authoritative
+    );
+
+    let rollback = rename(control, "karst");
+    assert_eq!(rollback["root_id"], committed["root_id"]);
+    assert_eq!(rollback["naming_revision"], 2);
+    online.sync().await.expect("rollback netmap");
+    let rolled_back = online
+        .to_config(settings(0x61, online_address))
+        .expect("rollback config");
+    unchanged_access(&rolled_back, &label);
+    karstd::dns::reconcile(&mut online_dns.0, &rolled_back, None).expect("rollback DNS");
+    assert!(
+        query(
+            online_address,
+            &format!("{label}.karst."),
+            RecordType::A,
+            true
+        )
+        .metadata
+        .authoritative
+    );
+    assert_eq!(
+        query(
+            online_address,
+            &format!("{label}.corp.example."),
+            RecordType::A,
+            false
+        )
+        .metadata
+        .response_code,
+        ResponseCode::NXDomain
+    );
+}

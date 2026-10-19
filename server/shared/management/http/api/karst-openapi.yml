@@ -13,6 +13,34 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /domains:
+    get:
+      operationId: listMeshDomains
+      tags: [domains]
+      description: |
+        Returns only domains visible through account-wide or delegated domain
+        read authority. dns_name includes the account root suffix even when the
+        root itself lies outside the visible subtree; it grants no wider authority.
+      responses:
+        '200':
+          description: Visible domain tree
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/MeshDomainView'}}
+        default: {$ref: '#/components/responses/Error'}
+  /domains/{id}:
+    get:
+      operationId: getMeshDomain
+      tags: [domains]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Authorized domain and complete DNS namespace
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MeshDomainView'}
+        default: {$ref: '#/components/responses/Error'}
   /domains/root/rename/preview:
     post:
       operationId: previewRootRename
@@ -801,6 +829,18 @@ components:
     VersionConflict: {description: The supplied policy version is no longer current, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     AcknowledgmentMismatch: {description: Enforcing acknowledgment does not equal the server-computed cut-off set, content: {application/json: {schema: {$ref: '#/components/schemas/AcknowledgmentMismatch'}}}}
   schemas:
+    MeshDomainView:
+      type: object
+      required: [id, label, path, is_root, naming_revision]
+      properties:
+        id: {type: string, description: 'Stable domain identity.'}
+        parent_id: {type: string}
+        label: {type: string}
+        path: {type: string, description: 'Immutable root-relative path; empty for the root.'}
+        is_root: {type: boolean}
+        dns_suffix: {type: string, description: 'Authoritative account suffix, present only on the root.'}
+        dns_name: {type: string, description: 'Complete domain namespace, including the root suffix; available to authorized delegated views without listing the root.'}
+        naming_revision: {type: integer, format: uint64, minimum: 0}
     RootRenamePreview:
       type: object
       required: [root_id, old_suffix, new_suffix, revision, naming_revision, device_count, domain_count, examples, committed, convergence]
@@ -1031,7 +1071,7 @@ components:
         user_id: {type: string}
         tags: {type: array, items: {type: string}}
         domain_id: {type: string, description: 'The mesh domain (ADR-0032) this peer is placed in, or absent for the account root.'}
-        dns_label: {type: string, description: 'The peer''s actual resolvable mesh name -- already domain-qualified when domain_id is set.'}
+        dns_label: {type: string, description: 'Root-relative peer DNS label, including the relative domain path. Append the account root suffix exactly once to form the complete DNS name.'}
         enabled: {type: boolean}
         expires_at: {type: string, nullable: true, format: date-time}
         created_at: {type: string, format: date-time}

@@ -18,7 +18,9 @@ access conditioned on device compliance. The root is visible in domain and
 machine controls. Domains also provides an account-authorized root rename
 preview, explicit no-alias confirmation, and rollback through another preview.
 The console distinguishes committed configuration from unobserved client
-convergence. Compliance-conditioned access remains a follow-up capability.
+convergence. Machine names and invitation/move previews include the root suffix,
+including in delegated subtree views. See the [acceptance record](mesh-domain-validation.md).
+Compliance-conditioned access remains a follow-up capability.
 
 - **Schema-aware autocomplete and inline JSON-syntax lint exist**
   (`GET /policy/schema`, `web/console/src/policy-editor.tsx`, a CodeMirror 6

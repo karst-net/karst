@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Node } from "@karst-net/api-client";
 import { Dialog, EmptyState, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api, type MeshDomain } from "../api";
+import { domainDNSName, peerDNSName } from "../domains";
 import { Failure, formatBytes, Notice, Rows, statusFor, useMutation, useResource } from "../common";
 
 type Paths = Awaited<ReturnType<typeof api.nodePaths>>;
@@ -81,7 +82,7 @@ export function Machines() {
         ? <EmptyState title="No machines match that filter">Clear the filter to see all {nodes.length} machines.</EmptyState>
         : <Rows head={<><th>Name</th><th>Domain</th><th>Owner</th><th>Tags</th><th>Crypto posture</th><th>Observed</th><th>Actions</th></>}>
           {shown.map((node) => <tr key={node.handle}>
-            <td><strong>{node.name}</strong><br /><code>{node.dns_label}</code></td>
+            <td><strong>{node.name}</strong><br /><code>{peerDNSName(node.dns_label, domains.find((domain) => domain.id === node.domain_id))}</code></td>
             <td>{domainPath(node.domain_id) ?? (node.domain_id ? <span className="lede">Unknown domain</span> : <span className="lede">Account root</span>)}</td>
             <td>{node.user_id}</td>
             <td>{node.tags.join(", ") || "—"}</td>
@@ -109,10 +110,10 @@ export function Machines() {
       <form onSubmit={(event) => { event.preventDefault(); void move(); }}>
         <label>Domain<select aria-label="Domain" value={moving?.domainId ?? ""} onChange={(event) => setMoving((current) => current && { ...current, domainId: event.target.value })}>
           <option value="" disabled>Choose a domain</option>
-          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.dns_suffix || domain.path}</option>)}
+          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domainDNSName(domain) || domain.path}</option>)}
         </select></label>
         <p className="lede">{moving && (() => {
-          const target = domainPath(moving.domainId);
+          const target = domainDNSName(domains.find((domain) => domain.id === moving.domainId));
           const qualified = target ? `${moving.node.name}.${target}` : moving.node.name;
           return <>Moving changes how this machine resolves on the mesh: it will become reachable as <code>{qualified}</code>. This is not a network change on the device itself, only where it is named.</>;
         })()}</p>

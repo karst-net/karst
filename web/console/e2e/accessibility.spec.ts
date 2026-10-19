@@ -166,9 +166,9 @@ test("a machine's mesh domain can be shown and changed", async ({ page }) => {
   await row.getByRole("button", { name: "Move" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("reachable as");
-  await expect(dialog.locator("code")).toHaveText("sre-laptop.engineering.acme");
-  await page.getByLabel("Domain", { exact: true }).selectOption({ label: "acme" });
-  await expect(dialog.locator("code")).toHaveText("sre-laptop.acme");
+  await expect(dialog.locator("code")).toHaveText("sre-laptop.engineering.acme.karst");
+  await page.getByLabel("Domain", { exact: true }).selectOption("domain-acme");
+  await expect(dialog.locator("code")).toHaveText("sre-laptop.acme.karst");
   await dialog.getByRole("button", { name: "Move", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("is now in acme");
   await expect(row).toContainText("sre-laptop.acme");
@@ -275,8 +275,8 @@ test("the setup invitation form can target a device at a domain", async ({ page 
   await page.goto("/#/setup");
   await page.getByLabel("Device name").fill("domain-device");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
-  await page.getByLabel("Domain").selectOption({ label: "engineering.acme" });
-  await expect(page.getByText("It will resolve as")).toContainText("domain-device.engineering.acme");
+  await page.getByLabel("Domain").selectOption("domain-engineering");
+  await expect(page.getByText("It will resolve as")).toContainText("domain-device.engineering.acme.karst");
 });
 
 test("groups can be created and renamed, and provider groups cannot", async ({ page }) => {

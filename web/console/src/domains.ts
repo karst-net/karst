@@ -19,3 +19,16 @@ export function byTree(domains: MeshDomain[]): Array<{ domain: MeshDomain; depth
   visit("", 0);
   return ordered;
 }
+
+/** Complete domain namespace, including when the root isn't in a delegated view. */
+export function domainDNSName(domain?: MeshDomain): string | undefined {
+  return domain?.dns_name || domain?.dns_suffix;
+}
+
+/** dns_label is root-relative and may include a deduplication suffix. */
+export function peerDNSName(label: string, domain?: MeshDomain): string {
+  const qualified = domainDNSName(domain);
+  if (!qualified || !domain) return label;
+  const suffix = domain.path && qualified.startsWith(`${domain.path}.`) ? qualified.slice(domain.path.length + 1) : qualified;
+  return `${label}.${suffix}`;
+}
