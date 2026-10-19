@@ -393,6 +393,15 @@ func (am *DefaultAccountManager) RotateBootstrapKey(ctx context.Context, account
 // account-wide SetupKeys grant -- that delegation is the whole point of
 // having subdomains at all.
 func (am *DefaultAccountManager) CreateDeviceInvitation(ctx context.Context, accountID, userID, name string, groups []string, domainID string) (*types.SetupKey, error) {
+	if domainID == "" {
+		root, err := am.Store.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if root != nil {
+			domainID = root.ID
+		}
+	}
 	domainPath := ""
 	if domainID != "" {
 		d, err := am.Store.GetDomainByID(ctx, store.LockingStrengthNone, accountID, domainID)

@@ -34,10 +34,14 @@ let invitations = [];
 // ADR-0032. Seeded with one small tree so the Domains view and the setup
 // invitation form's picker both have something to show without the "empty"
 // fixture path.
-let domains = [
-  { id: "domain-acme", label: "acme", path: "acme" },
-  { id: "domain-engineering", parent_id: "domain-acme", label: "engineering", path: "engineering.acme" },
+const seedDomains = (empty = false) => [
+  { id: "domain-root", label: "", path: "", is_root: true, dns_suffix: "karst" },
+  ...(empty ? [] : [
+    { id: "domain-acme", parent_id: "domain-root", label: "acme", path: "acme" },
+    { id: "domain-engineering", parent_id: "domain-acme", label: "engineering", path: "engineering.acme" },
+  ]),
 ];
+let domains = seedDomains();
 let domainBindings = [];
 let users = seedUsers();
 let groups = seedGroups();
@@ -227,10 +231,7 @@ const server = http.createServer((request, response) => {
       fixture = buildFixture({ empty });
       setupKeys = [];
       invitations = [];
-      domains = empty ? [] : [
-        { id: "domain-acme", label: "acme", path: "acme" },
-        { id: "domain-engineering", parent_id: "domain-acme", label: "engineering", path: "engineering.acme" },
-      ];
+      domains = seedDomains(empty);
       domainBindings = [];
       users = empty ? [] : seedUsers();
       groups = empty ? [] : seedGroups();
@@ -423,11 +424,11 @@ const server = http.createServer((request, response) => {
   if (method === "POST" && karst === "/domains") return readBody(request).then(draft => {
     const label = draft.label?.trim();
     if (!label) return error(response, 400, "invalid_argument", "label is required");
-    const parentId = draft.parent_id || "";
+    const parentId = draft.parent_id || "domain-root";
     const parent = parentId ? domains.find(d => d.id === parentId) : undefined;
     if (parentId && !parent) return error(response, 400, "invalid_argument", "unknown parent_id");
     if (domains.some(d => (d.parent_id || "") === parentId && d.label === label)) return error(response, 409, "already_exists", `a domain named "${label}" already exists at this level`);
-    const path = parent ? `${label}.${parent.path}` : label;
+    const path = parent?.path ? `${label}.${parent.path}` : label;
     const item = { id: id("domain"), ...(parentId ? { parent_id: parentId } : {}), label, path };
     domains.push(item);
     return json(response, 200, item);
@@ -435,6 +436,7 @@ const server = http.createServer((request, response) => {
   const domainMatch = karst.match(/^\/domains\/([^/]+)$/);
   if (domainMatch && method === "DELETE") {
     const domainId = domainMatch[1];
+    if (domains.find(d => d.id === domainId)?.is_root) return error(response, 412, "precondition_failed", "the account root cannot be deleted");
     if (domains.some(d => d.parent_id === domainId)) return error(response, 412, "precondition_failed", "domain has subdomains; delete them first");
     return remove(domains, domainId, response);
   }
@@ -480,12 +482,11 @@ const server = http.createServer((request, response) => {
         node.name = body.name.trim();
       }
       if (body.domain_id !== undefined) {
-        if (body.domain_id && !domains.some(d => d.id === body.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
-        if (body.domain_id) node.domain_id = body.domain_id;
-        else delete node.domain_id;
+        if (!body.domain_id || !domains.some(d => d.id === body.domain_id)) return error(response, 400, "invalid_argument", "unknown domain_id");
+        node.domain_id = body.domain_id;
       }
       const domain = node.domain_id && domains.find(d => d.id === node.domain_id);
-      node.dns_label = domain ? `${node.name}.${domain.path}` : node.name;
+      node.dns_label = domain ? `${node.name}.${domain.dns_suffix || domain.path}` : node.name;
       return json(response, 200, node);
     });
     if (method === "DELETE") { fixture.nodes.splice(index, 1); return noContent(response); }

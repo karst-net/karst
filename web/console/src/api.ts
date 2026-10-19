@@ -95,7 +95,7 @@ export type DeviceInvitation = {
 // into subdomains. Deliberately not called "zone" (the fork's own DNS zones
 // are a different, unrelated feature) or "aquifer" (the relay's own,
 // unrelated tenant-isolation concept) — see the ADR for why.
-export type MeshDomain = { id: string; parent_id?: string; label: string; path: string };
+export type MeshDomain = { id: string; parent_id?: string; label: string; path: string; is_root?: boolean; dns_suffix?: string };
 // Grants user_id delegated admin rights over domain_id and everything under
 // it, without any account-wide role. domain_path is included so the console
 // can show what subtree a delegation covers without a second lookup.
@@ -185,7 +185,7 @@ export const api = {
   // currently mutable for a Karst node", so the console offers exactly
   // what the server accepts rather than a form that fails on save.
   renameNode: (handle: string, name: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`, { method: "PATCH", body: body({ name }) }),
-  // domainId "" moves the machine back to the account root.
+  // Use the root domain ID to move a machine back to the account root.
   setNodeDomain: (handle: string, domainId: string) => request<NodePage["items"][number]>(`/nodes/${encodeURIComponent(handle)}`, { method: "PATCH", body: body({ domain_id: domainId }) }),
   deprovision: (handle: string) => request<void>(`/nodes/${encodeURIComponent(handle)}`, { method: "DELETE" }),
 

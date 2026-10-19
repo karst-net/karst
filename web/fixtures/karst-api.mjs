@@ -13,8 +13,8 @@ export function buildFixture({ empty = false } = {}) {
     const name = n === 1 ? "sre-laptop" : n === 2 ? "prod-db-01" : `fixture-node-${n}`;
     // Node 1 exercises the mesh-domain (ADR-0032) display/move path; every
     // other node stays at the account root, the overwhelming common case.
-    const domainId = n === 1 ? "domain-engineering" : undefined;
-    const dnsLabel = domainId ? `${name}.engineering.acme` : name;
+    const domainId = n === 1 ? "domain-engineering" : "domain-root";
+    const dnsLabel = n === 1 ? `${name}.engineering.acme` : `${name}.karst`;
     return {
       handle: `node-${String(n).padStart(4, "0")}-karst-fixture-handle`,
       name,

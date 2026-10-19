@@ -35,7 +35,7 @@ export function Machines() {
     api.domains().then((list) => { if (active) setDomains(list); }).catch(() => { /* column stays root-only */ });
     return () => { active = false; };
   }, []);
-  const domainPath = (domainId?: string) => domains.find((d) => d.id === domainId)?.path;
+  const domainPath = (domainId?: string) => { const domain = domains.find((d) => d.id === domainId); return domain?.dns_suffix || domain?.path; };
 
   const nodes = resource.value?.items ?? [];
   const shown = useMemo(() => {
@@ -108,8 +108,8 @@ export function Machines() {
     <Dialog open={Boolean(moving)} title="Move machine" onClose={() => setMoving(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void move(); }}>
         <label>Domain<select aria-label="Domain" value={moving?.domainId ?? ""} onChange={(event) => setMoving((current) => current && { ...current, domainId: event.target.value })}>
-          <option value="">Account root (no domain)</option>
-          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.path}</option>)}
+          <option value="" disabled>Choose a domain</option>
+          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.dns_suffix || domain.path}</option>)}
         </select></label>
         <p className="lede">{moving && (() => {
           const target = domainPath(moving.domainId);

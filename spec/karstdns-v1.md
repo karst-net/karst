@@ -32,11 +32,12 @@ defines one explicit account root whose suffix is `zone`. New accounts start
 with `karst`; existing accounts preserve their effective suffix. Root devices
 carry an empty relative path: `laptop` plus zone `karst` resolves as
 `laptop.karst`, while `build.engineering` resolves as
-`build.engineering.karst`. The explicit-root lifecycle and unified suffix
-projection are pending [#362](https://github.com/karst-net/karst/issues/362);
-the qualified-name grammar already fits the existing resolver/wire format.
+`build.engineering.karst`. Explicit-root provisioning, migration, and suffix
+projection are implemented under [#362](https://github.com/karst-net/karst/issues/362);
+root renaming remains follow-up work. The qualified-name grammar fits the
+existing resolver/wire format.
 
-After that implementation, root rename changes `zone`, leaving qualified
+The agreed root-rename contract changes `zone`, leaving qualified
 relative peer names unchanged. Login names, API FQDNs, forward/PTR records,
 and host resolver/search integration must project the same root revision.
 Netmaps must carry consistent names and DNS configuration; clients replace

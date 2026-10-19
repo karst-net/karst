@@ -16,6 +16,7 @@ import (
 
 	"github.com/netbirdio/netbird/client/ssh/auth"
 	nbdns "github.com/netbirdio/netbird/dns"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	proxydomain "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/domain"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/service"
 	"github.com/netbirdio/netbird/management/internals/modules/zones"
@@ -58,6 +59,10 @@ type AccountMeta struct {
 type Account struct {
 	// we have to name column to aid as it collides with Network.Id when work with associations
 	Id string `gorm:"primaryKey"`
+	// RootDomainID is stable across DNS suffix changes. RootDomain is a loaded
+	// projection, deliberately not a GORM association deleted by SaveAccount.
+	RootDomainID string
+	RootDomain   *meshdomain.Domain `gorm:"-" json:"-"`
 
 	// User.Id it was created by
 	CreatedBy              string
@@ -854,6 +859,8 @@ func (a *Account) Copy() *Account {
 
 	return &Account{
 		Id:                     a.Id,
+		RootDomainID:           a.RootDomainID,
+		RootDomain:             copyRootDomain(a.RootDomain),
 		CreatedBy:              a.CreatedBy,
 		CreatedAt:              a.CreatedAt,
 		Domain:                 a.Domain,
@@ -1932,4 +1939,16 @@ func filterPeerAppliedZones(ctx context.Context, accountZones []*zones.Zone, pee
 	}
 
 	return customZones
+}
+
+func copyRootDomain(root *meshdomain.Domain) *meshdomain.Domain {
+	if root == nil {
+		return nil
+	}
+	cloned := *root
+	if root.RootAccountID != nil {
+		accountID := *root.RootAccountID
+		cloned.RootAccountID = &accountID
+	}
+	return &cloned
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/netbirdio/netbird/formatter/hook"
 	"github.com/netbirdio/netbird/idp/dex"
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map"
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	nbconfig "github.com/netbirdio/netbird/management/internals/server/config"
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/activity"
@@ -231,6 +232,15 @@ func BuildManager(
 		disableDefaultPolicy:     disableDefaultPolicy,
 	}
 
+	// SQL migration needs the configured legacy login suffix. It must finish
+	// before cache warmup or any request can observe partially migrated accounts.
+	if initializer, ok := store.(interface {
+		InitializeMeshDomains(context.Context, string) error
+	}); ok {
+		if err := initializer.InitializeMeshDomains(ctx, networkMapController.GetDNSDomain(nil)); err != nil {
+			return nil, err
+		}
+	}
 	am.networkMapController.StartWarmup(ctx)
 
 	accountsCounter, err := store.GetAccountsCounter(ctx)
@@ -311,6 +321,22 @@ func (am *DefaultAccountManager) UpdateAccountSettings(ctx context.Context, acco
 			return err
 		}
 
+		if newSettings.DNSDomain != oldSettings.DNSDomain {
+			root, err := transaction.GetAccountRootDomain(ctx, store.LockingStrengthNone, accountID)
+			if err != nil {
+				return err
+			}
+			if root != nil {
+				if newSettings.DNSDomain == "" {
+					newSettings.DNSDomain = root.DNSSuffix
+				}
+				canonical, err := meshdomain.CanonicalSuffix(newSettings.DNSDomain)
+				if err != nil || canonical != root.DNSSuffix {
+					return status.Errorf(status.PreconditionFailed, "DNS suffix changes require the root naming API")
+				}
+				newSettings.DNSDomain = canonical
+			}
+		}
 		if err = am.validateSettingsUpdate(ctx, transaction, newSettings, oldSettings, userID, accountID); err != nil {
 			return err
 		}
@@ -2082,7 +2108,12 @@ func (am *DefaultAccountManager) GetAccountSettings(ctx context.Context, account
 func newAccountWithId(ctx context.Context, accountID, userID, domain, email, name string, disableDefaultPolicy bool) *types.Account {
 	log.WithContext(ctx).Debugf("creating new account")
 
+	root, err := meshdomain.NewRoot(accountID, meshdomain.DefaultRootSuffix)
+	if err != nil {
+		panic(err)
+	} // validated constant and generated account ID
 	network := types.NewNetwork()
+	network.Dns = root.DNSSuffix
 	peers := make(map[string]*nbpeer.Peer)
 	users := make(map[string]*types.User)
 	routes := make(map[route.ID]*route.Route)
@@ -2100,6 +2131,8 @@ func newAccountWithId(ctx context.Context, accountID, userID, domain, email, nam
 
 	acc := &types.Account{
 		Id:               accountID,
+		RootDomainID:     root.ID,
+		RootDomain:       root,
 		CreatedAt:        time.Now().UTC(),
 		SetupKeys:        setupKeys,
 		Network:          network,
@@ -2111,6 +2144,7 @@ func newAccountWithId(ctx context.Context, accountID, userID, domain, email, nam
 		NameServerGroups: nameServersGroups,
 		DNSSettings:      dnsSettings,
 		Settings: &types.Settings{
+			DNSDomain:                  root.DNSSuffix,
 			PeerLoginExpirationEnabled: true,
 			PeerLoginExpiration:        types.DefaultPeerLoginExpiration,
 			GroupsPropagationEnabled:   true,

@@ -5,22 +5,7 @@ import { useEffect, useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
 import { api, type AccountUser, type DomainDelegation, type MeshDomain } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
-
-/** Depth-first, root-first order, so a subdomain always renders under its
- *  parent — the only order that makes an indented table read as a tree
- *  rather than a shuffled list. */
-function byTree(domains: MeshDomain[]): Array<{ domain: MeshDomain; depth: number }> {
-  const children = new Map<string, MeshDomain[]>();
-  for (const domain of domains) {
-    const key = domain.parent_id ?? "";
-    children.set(key, [...(children.get(key) ?? []), domain]);
-  }
-  for (const list of children.values()) list.sort((a, b) => a.label.localeCompare(b.label));
-  const ordered: Array<{ domain: MeshDomain; depth: number }> = [];
-  const visit = (parentId: string, depth: number) => { for (const domain of children.get(parentId) ?? []) { ordered.push({ domain, depth }); visit(domain.id, depth + 1); } };
-  visit("", 0);
-  return ordered;
-}
+import { byTree } from "../domains";
 
 function userLabel(users: AccountUser[], id: string): string {
   const user = users.find((candidate) => candidate.id === id);
@@ -51,19 +36,19 @@ export function Domains() {
 
   return <section>
     <h2>Domains</h2>
-    <p className="lede">Domains organize devices into a naming hierarchy (ADR-0032): a device placed in one is addressed as <code>device.subdomain.domain</code> instead of a bare name. A domain's admin can create subdomains under it and delegate their administration to another user, without granting that user access to the rest of the account.</p>
+    <p className="lede">Domains organize devices into a naming hierarchy: a device placed in one is addressed as <code>device.subdomain.domain</code>. Every device belongs to a domain; new organizations start with the karst root. A domain's admin can create subdomains under it and delegate their administration to another user, without granting that user access to the rest of the account.</p>
     <div className="actions"><button className="primary" onClick={() => setCreating({ parentId: "", label: "" })}>Create domain</button></div>
     <Notice message={message} />
     {domains.length === 0
-      ? <EmptyState title="No domains">Devices enrolled without a domain use the account's root naming — nothing to configure here until you create one.</EmptyState>
+      ? <EmptyState title="No visible domains">No domains are available to manage with your current permissions.</EmptyState>
       : <Rows head={<><th>Domain</th><th>Path</th><th>Actions</th></>}>
         {byTree(domains).map(({ domain, depth }) => <tr key={domain.id}>
-          <td style={{ paddingLeft: `${depth * 1.5}em` }}>{depth > 0 ? "↳ " : ""}{domain.label}</td>
-          <td><code>{domain.path}</code></td>
+          <td style={{ paddingLeft: `${depth * 1.5}em` }}>{depth > 0 ? "↳ " : ""}{domain.is_root ? `${domain.dns_suffix} (root)` : domain.label}</td>
+          <td><code>{domain.dns_suffix || domain.path}</code></td>
           <td><div className="actions">
             <button onClick={() => setManaging(domain)}>Delegations</button>
             <button onClick={() => setCreating({ parentId: domain.id, label: "" })}>Add subdomain</button>
-            <button className="danger" onClick={() => remove(domain)}>Delete</button>
+            {!domain.is_root && <button className="danger" onClick={() => remove(domain)}>Delete</button>}
           </div></td>
         </tr>)}
       </Rows>}
@@ -71,8 +56,8 @@ export function Domains() {
     <Dialog open={Boolean(creating)} title={creating?.parentId ? "Create subdomain" : "Create domain"} onClose={() => setCreating(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
         <label>Parent<select aria-label="Parent domain" value={creating?.parentId ?? ""} onChange={(event) => setCreating((current) => current && { ...current, parentId: event.target.value })}>
-          <option value="">Top-level (no parent)</option>
-          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.path}</option>)}
+          <option value="">Account root (default)</option>
+          {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.dns_suffix || domain.path}</option>)}
         </select></label>
         <label>Label<input aria-label="Domain label" placeholder="engineering" value={creating?.label ?? ""} onChange={(event) => setCreating((current) => current && { ...current, label: event.target.value })} /></label>
         <p className="lede">Letters, digits and hyphens only, like any DNS label. Must be unique among sibling domains under the same parent.</p>
@@ -116,7 +101,7 @@ function DelegationDialog({ domain, users, onClose, onChanged }: { domain?: Mesh
     finally { setBusy(false); }
   };
 
-  return <Dialog open title={`Delegations for ${domain.path}`} onClose={onClose}>
+  return <Dialog open title={`Delegations for ${domain.dns_suffix || domain.path}`} onClose={onClose}>
     <p className="lede">A delegated user can manage this domain and any subdomain under it — create further subdomains, issue device invitations into them, and delegate again — without any account-wide role.</p>
     {error && <p role="alert">{error}</p>}
     {delegations === undefined

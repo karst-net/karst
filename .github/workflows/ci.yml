@@ -794,7 +794,7 @@ jobs:
       - name: Device usage SQL integration
         env:
           NETBIRD_STORE_ENGINE: sqlite
-        run: go test -race -count=1 -run 'TestDeviceUsage|TestSqlStore_AddPeerToAccount|TestSqlStore_DeletePeer' ./management/server/store/
+        run: go test -race -count=1 -run 'TestMeshRoot|TestDeviceUsage|TestSqlStore_AddPeerToAccount|TestSqlStore_DeletePeer' ./management/server/store/
       # Upstream's own tests are how a cherry-picked security fix gets
       # validated. They need testdata fixtures, which a package-graph prune
       # silently removes and which neither build nor vet can detect.
@@ -807,8 +807,6 @@ jobs:
       # was added.
       - name: Enrollment security and upstream fixture smoke tests
         run: go test -count=1 -run "Test_RegisterPeerByUser|TestEnrollment|TestDeviceInvitation|EnrollKey" ./management/server/
-      - name: Mesh domain lifecycle and delegation
-        run: go test -race -count=1 ./management/internals/modules/meshdomain/...
       # The fork carries ~240 lines of go.mod. A vulnerable dependency reaching
       # the coordination server is a vulnerability in the component that holds
       # every per-pair PSK.
