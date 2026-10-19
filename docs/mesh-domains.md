@@ -163,3 +163,7 @@ offline enforcement contracts belong in the compliance design work.
 
 See [ADR-0032](adr/0032-hierarchical-mesh-domains-and-admin-assigned-names.md)
 for the current architecture contract and historical implementation notes.
+
+The proposed compliance contract is recorded in [ADR-0055](adr/0055-device-compliance-and-resource-access.md)
+and [Device compliance v1](../spec/device-compliance-v1.md). It is not yet
+implemented and does not change the domain behavior above.
