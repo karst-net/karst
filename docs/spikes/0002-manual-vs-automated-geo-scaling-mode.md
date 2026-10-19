@@ -248,22 +248,25 @@ working correctly with no special case.
 ## 5. Landing this as follow-on issues
 
 Four pieces, each independently buildable and testable, in dependency
-order:
+order. Filed as #379-#382:
 
-1. **`scalingmode` package + migration + `Store` tests** — no API, no
-   consumer. Mirrors `regionallow`'s own test shape
-   (`regionallow_test.go`): round-trip `SetMode`/`Mode`, default-when-no-row,
-   idempotent re-set.
-2. **Admin API** (`GET`/`PUT /karst/v1/scaling/mode`) wired into
-   `RegisterEndpoints`, console-side settings toggle. Depends on (1).
-3. **`LatencyBreach`/`RegionCandidate` types + `Snapshot` fields +
+1. **#379 — `scalingmode` package + migration + `Store` tests** — no API,
+   no consumer. Mirrors `ephemeralanchor.go`'s singleton `scheduleRow`/
+   `SetSchedule`/`Schedule` shape (not `regionallow`'s multi-row
+   `AddRegion`/`RemoveRegion` shape, which has no singleton Set/Get):
+   round-trip `SetMode`/`Mode`, default-when-no-row, idempotent re-set.
+2. **#380 — Admin API** (`GET`/`PUT /karst/v1/scaling/mode`) wired into
+   `RegisterEndpoints`. Depends on #379. Console-side settings toggle is
+   explicitly out of scope for #380 — API only, per §"Explicitly still
+   open" below.
+3. **#381 — `LatencyBreach`/`RegionCandidate` types + `Snapshot` fields +
    `/suggestions` metrics-HTTP route + `scalerSuggestions` control-server
-   proxy handler.** Independent of (1)/(2) — this is pure signal promotion,
-   buildable and demoable before the mode switch exists at all.
-4. **`drive_loop` gating** (§4) — depends on (1) for the setting to read;
-   depends on nothing from (3) (the unconditional `println!`s already
-   exist; only the suggestion *objects* depend on (3), and `drive_loop`
-   does not need them to gate correctly).
+   proxy handler.** Independent of #379/#380 — this is pure signal
+   promotion, buildable and demoable before the mode switch exists at all.
+4. **#382 — `drive_loop` gating** (§4) — depends on #379 and #380; depends
+   on nothing from #381 (the unconditional `println!`s already exist;
+   only the suggestion *objects* depend on #381, and `drive_loop` does not
+   need them to gate correctly).
 
 None of these touch `advise.rs`'s cost solver, any `Driver` implementation,
 or add a new ADR — this is wiring ADR-0045 §7's already-decided phase
