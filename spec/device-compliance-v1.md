@@ -15,8 +15,9 @@ kind 5) into a tenant/device/identity-bound SQL row. It is not connected to poli
 writes, netmaps or packet enforcement.
 `karstd` now collects self-reported client versions and supported native OS
 releases, with bounded challenge/report attempts on live supporting servers.
-Policy guardrails, active expiry notifications and all traffic enforcement
-remain pending; #363 remains open.
+Evidence change/expiry invalidations now use a durable retry queue and the peer
+notification path. Policy guardrails and all traffic enforcement remain pending;
+#363 remains open.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -89,12 +90,12 @@ A different enrollment ID cannot use a previous enrollment's challenge, even
 with the same identity key. Cross-tenant/device/identity submissions fail. All
 ingested observations are explicitly self-reported.
 
-Challenge consumption, latest-evidence replacement and the evidence generation
-increment share one conditional database update. Two replicas cannot consume
+Challenge consumption, latest-evidence replacement, evidence generation and
+invalidation state share one database transaction with conditional updates. Two replicas cannot consume
 the same challenge. A database failure rolls back consumption. The store keeps
 only the latest report, never report history; callers must evaluate it against
-the current policy and time. Expiry is computed by the evaluator on read; an
-active expiry scheduler and invalidation of permissions remain unimplemented.
+the current policy and time. Expiry is computed by the evaluator on read and actively scheduled for
+invalidation. Invalidation of actual permissions remains unimplemented.
 
 Evidence becomes unavailable to the store's readers 24 hours after its
 180-second freshness deadline. New challenge issuance clears evidence past
@@ -109,7 +110,7 @@ Validation includes race-enabled SQLite tests over independent database pools,
 a real authenticated Go gRPC session, Go/Rust protobuf vectors, and PostgreSQL
 replica-consumption/enrollment-lock tests. PostgreSQL tests run when
 `KARST_TEST_POSTGRES_DSN` is set, including the existing Go CI job. Platform
-coverage beyond the matrix, policy evaluation persistence, active expiry notifications and all
+coverage beyond the matrix, policy evaluation persistence and all
 permission/datapath work are still pending.
 
 ## Evidence and requirements
@@ -219,6 +220,60 @@ offline caches, legacy compatibility, refused reports and timed-out streams.
 Run the wire tests with `cargo test -p karstd --test control compliance_ -- --ignored --test-threads=1`
 with the repository's Go toolchain on `PATH`. These tests use isolated fixture
 listeners and do not configure host networking.
+
+## Implemented change and expiry invalidations
+
+Accepting evidence atomically persists its freshness deadline and queues an
+invalidation when typed observations or collector version change, or evidence
+recovers after expiry. Identical fresh refreshes extend the deadline without
+creating a new push. A failed evidence write rolls back the pending invalidation
+as well as challenge consumption; invalid/replayed reports create no new event.
+No observations, challenge tokens or compliance verdicts travel in notifications.
+
+A server worker starts during control bootstrap and checks every five seconds.
+It marks each expired generation once and delivers lightweight re-fetch hints
+through the existing peer-update manager. All selected source changes in one
+tenant share one fanout to that tenant's current peers, including the reporting
+device. Tenant-wide fanout is deliberately conservative until resource guardrails
+provide an affected-resource dependency graph. Other tenants are not notified.
+
+The pending marker and notification revision survive process restarts. Publication
+failures retain pending work; PostgreSQL HA publication errors propagate to the
+worker so they can be retried. An acknowledgment clears only the selected
+revision and row incarnation, preventing an older delivery from erasing a
+concurrent failure/recovery or acknowledging a pruned-and-recreated row. Successful publication is not proof that every client received or
+applied the hint. Duplicate delivery and coalescing across replicas are allowed;
+clients must fetch authoritative current state, never infer a verdict from a hint.
+The existing HA listener reconnect resync and client polling remain fallbacks.
+
+Each pass selects up to 100 pending source records, ordered by last attempt so
+failed/hot tenants do not permanently occupy the first batch. New observations
+on an already-pending record preserve its attempt position. A pass has a
+20-second work deadline. Backfill also handles up to 100 legacy records per pass,
+deriving deadlines from their original server receipt, not startup time. A
+concurrent new generation cannot be overwritten by the migration or expired by
+an older scan. Malformed legacy evidence schedules a re-fetch and still fails
+closed when read/evaluated. Complete a rolling server upgrade before relying on
+the new scheduling behavior; old writers do not maintain the new queue fields.
+
+Retention cleanup clears fingerprints/deadline metadata together with expired
+raw evidence, so challenge refresh cannot preserve an observation fingerprint
+past evidence retention. Identity deletion/key replacement still denies reads
+and ingestion immediately; ordinary peer-removal invalidations remain independent.
+
+These are advisory state-change signals, not traffic revocation. They do not
+change the current compiled packet filter or add policy conditions. Queue depth,
+tenant size and publisher availability affect delivery latency; the five-second
+scan is not a revocation bound. Future resource permissions must evaluate
+current evidence in their issuance transaction and enforce local expiry even
+when every notification is delayed or lost.
+
+Tests cover exact expiry, repeated scans, unchanged refreshes, recovery and
+collection failure, tenant isolation/coalescing, retry/restart, failed-write
+rollback, a newer change during acknowledgment, hot-tenant fairness, row recreation and legacy
+backfill. A real authenticated gRPC test confirms expiry pushes an already-held
+control stream without a new client report or poll. PostgreSQL CI additionally exercises expiry versus concurrent refresh
+and acknowledgment versus a newer failure across independent connection pools.
 
 ## Authorization and expiry
 

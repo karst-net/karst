@@ -49,17 +49,24 @@ func (r Report) Validate() error {
 // hash of an outstanding challenge is persisted. A new challenge replaces the
 // old one without extending freshness of the last accepted evidence.
 type evidenceRow struct {
-	TenantID            string `gorm:"primaryKey;size:64"`
-	DeviceID            string `gorm:"primaryKey;size:64"`
-	Handle              string `gorm:"primaryKey;size:64"`
-	ChallengeHash       string `gorm:"size:64;not null"`
-	IssuedAt            time.Time
-	ChallengeExpiresAt  time.Time
-	EvidenceJSON        string     `gorm:"not null"`
-	EvidenceRetainUntil *time.Time `gorm:"index"`
-	CollectorVersion    string     `gorm:"size:128;not null"`
-	Generation          uint64     `gorm:"not null"`
-	RetainUntil         time.Time  `gorm:"index"`
+	TenantID             string `gorm:"primaryKey;size:64"`
+	DeviceID             string `gorm:"primaryKey;size:64"`
+	Handle               string `gorm:"primaryKey;size:64"`
+	ChallengeHash        string `gorm:"size:64;not null"`
+	IssuedAt             time.Time
+	ChallengeExpiresAt   time.Time
+	EvidenceJSON         string     `gorm:"not null"`
+	EvidenceRetainUntil  *time.Time `gorm:"index"`
+	CollectorVersion     string     `gorm:"size:128;not null"`
+	Generation           uint64     `gorm:"not null"`
+	EvidenceFingerprint  string     `gorm:"size:64;not null;default:''"`
+	EvidenceExpiresAt    *time.Time `gorm:"index;index:idx_karst_compliance_due,priority:2"`
+	ExpiryNotified       bool       `gorm:"not null;default:false;index:idx_karst_compliance_due,priority:1"`
+	NotificationPending  bool       `gorm:"not null;default:false;index:idx_karst_compliance_pending,priority:1"`
+	NotificationEpoch    string     `gorm:"size:64;not null;default:''"`
+	NotificationRevision uint64     `gorm:"not null;default:0"`
+	NotificationAttempt  int64      `gorm:"not null;default:0;index:idx_karst_compliance_pending,priority:2"`
+	RetainUntil          time.Time  `gorm:"index"`
 }
 
 func (evidenceRow) TableName() string { return "karst_device_compliance" }
@@ -115,7 +122,7 @@ func (s *Store) Issue(ctx context.Context, subject Subject, handle string, now t
 		return Challenge{}, err
 	}
 	deadline := now.UTC().Add(ChallengeLifetime)
-	row := evidenceRow{TenantID: subject.TenantID, DeviceID: subject.DeviceID, Handle: handle, ChallengeHash: challengeHash(token), IssuedAt: now.UTC(), ChallengeExpiresAt: deadline, RetainUntil: deadline}
+	row := evidenceRow{TenantID: subject.TenantID, DeviceID: subject.DeviceID, Handle: handle, NotificationEpoch: rand.Text(), ChallengeHash: challengeHash(token), IssuedAt: now.UTC(), ChallengeExpiresAt: deadline, RetainUntil: deadline}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := enrolled(tx, subject, handle); err != nil {
 			return err
@@ -139,7 +146,7 @@ func (s *Store) Issue(ctx context.Context, subject Subject, handle string, now t
 }
 
 // Submit consumes the challenge and replaces the latest evidence in one
-// conditional UPDATE. Concurrent replicas cannot both consume it. Failure
+// transaction. Concurrent replicas cannot both consume it. Failure
 // observations replace old passing values; they are not discarded on ingest.
 func (s *Store) Submit(ctx context.Context, subject Subject, handle string, token []byte, report Report, now time.Time) error {
 	if !validSubject(subject, handle) || now.IsZero() {
@@ -160,7 +167,20 @@ func (s *Store) Submit(ctx context.Context, subject Subject, handle string, toke
 		if err := enrolled(tx, subject, handle); err != nil {
 			return err
 		}
+		hash := fingerprint(report)
+		valid := tx.Model(&evidenceRow{}).Where(scope(subject, handle)).Where("challenge_hash = ? AND issued_at <= ? AND challenge_expires_at > ?", challengeHash(token), now.UTC(), now.UTC())
+		// Queue against the old observations before replacing them. Keeping
+		// both statements in this transaction also works on SQL dialects that
+		// evaluate UPDATE assignments left-to-right.
+		queued := valid.Where("(evidence_fingerprint <> ? OR evidence_expires_at IS NULL OR evidence_expires_at <= ? OR expiry_notified = TRUE)", hash, now.UTC()).Updates(map[string]any{
+			"notification_attempt": gorm.Expr("CASE WHEN notification_pending THEN notification_attempt ELSE 0 END"),
+			"notification_pending": true, "notification_revision": gorm.Expr("notification_revision + 1"),
+		})
+		if queued.Error != nil {
+			return queued.Error
+		}
 		result := tx.Model(&evidenceRow{}).Where(scope(subject, handle)).Where("challenge_hash = ? AND issued_at <= ? AND challenge_expires_at > ?", challengeHash(token), now.UTC(), now.UTC()).Updates(map[string]any{
+			"evidence_fingerprint": hash, "evidence_expires_at": now.UTC().Add(EvidenceLifetime), "expiry_notified": false,
 			"challenge_hash": "", "evidence_json": string(data), "collector_version": report.CollectorVersion,
 			"generation": gorm.Expr("generation + 1"), "retain_until": now.UTC().Add(EvidenceLifetime + EvidenceRetention),
 			"evidence_retain_until": now.UTC().Add(EvidenceLifetime + EvidenceRetention),
@@ -226,7 +246,7 @@ func (s *Store) Prune(ctx context.Context, now time.Time) error {
 }
 
 func clearExpiredEvidence(tx *gorm.DB, now time.Time) error {
-	return tx.Model(&evidenceRow{}).Where("evidence_retain_until <= ?", now.UTC()).Updates(map[string]any{"evidence_json": "", "collector_version": "", "evidence_retain_until": nil}).Error
+	return tx.Model(&evidenceRow{}).Where("evidence_retain_until <= ?", now.UTC()).Updates(map[string]any{"evidence_json": "", "collector_version": "", "evidence_retain_until": nil, "evidence_fingerprint": "", "evidence_expires_at": nil, "expiry_notified": false}).Error
 }
 
 // StartRetentionWorker prunes at startup and hourly. It is safe on each replica.

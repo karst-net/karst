@@ -145,3 +145,60 @@ func TestPostgresComplianceDeletionSerializesWithSubmission(t *testing.T) {
 	require.NoError(t, deletion.Commit().Error)
 	require.ErrorIs(t, <-result, compliance.ErrNotEnrolled)
 }
+
+func TestPostgresComplianceExpiryCannotExpireARefreshedGeneration(t *testing.T) {
+	db, a, b := postgresIngestionDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	acceptReport(t, a, subject, "identity-a", report(), now)
+	require.NoError(t, a.ProcessInvalidations(ctx, now, func(context.Context, string) error { return nil }))
+	deadline := now.Add(compliance.EvidenceLifetime)
+	challenge, err := b.Issue(ctx, subject, "identity-a", deadline)
+	require.NoError(t, err)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	go func() { <-start; results <- a.Expire(ctx, deadline) }()
+	go func() { <-start; results <- b.Submit(ctx, subject, "identity-a", challenge.Token, report(), deadline) }()
+	close(start)
+	require.NoError(t, <-results)
+	require.NoError(t, <-results)
+	var row struct {
+		ExpiryNotified      bool
+		EvidenceExpiresAt   time.Time
+		Generation          uint64
+		NotificationPending bool
+	}
+	require.NoError(t, db.Table("karst_device_compliance").Take(&row).Error)
+	require.False(t, row.ExpiryNotified, "an expiry scan must not expire a newly accepted generation")
+	// PostgreSQL may decode timestamptz using time.Local; compare instants,
+	// rather than the location metadata carried by time.Time.
+	require.True(t, deadline.Add(compliance.EvidenceLifetime).Equal(row.EvidenceExpiresAt),
+		"unexpected evidence expiry: %s", row.EvidenceExpiresAt)
+	require.Equal(t, uint64(2), row.Generation)
+	require.True(t, row.NotificationPending)
+	var ids []string
+	require.NoError(t, b.ProcessInvalidations(ctx, deadline, recorder(&ids)))
+	require.Equal(t, []string{subject.DeviceID}, ids)
+	require.Zero(t, pending(t, db, subject.TenantID))
+}
+
+func TestPostgresComplianceAckCannotLoseANewerFailure(t *testing.T) {
+	db, a, b := postgresIngestionDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	acceptReport(t, a, subject, "identity-a", report(), now)
+	failed := report()
+	failed.ClientVersion = compliance.Observation{Status: compliance.CollectionError}
+	require.NoError(t, a.ProcessInvalidations(ctx, now, func(context.Context, string) error {
+		challenge, err := b.Issue(ctx, subject, "identity-a", now.Add(time.Second))
+		if err != nil {
+			return err
+		}
+		return b.Submit(ctx, subject, "identity-a", challenge.Token, failed, now.Add(time.Second))
+	}))
+	require.EqualValues(t, 1, pending(t, db, subject.TenantID))
+	var ids []string
+	require.NoError(t, b.ProcessInvalidations(ctx, now.Add(time.Second), recorder(&ids)))
+	require.Equal(t, []string{subject.DeviceID}, ids)
+	require.Zero(t, pending(t, db, subject.TenantID))
+}
