@@ -46,6 +46,7 @@ pub const IDENTITY_SEED_LEN: usize = 32;
 const KIND_LOGIN: u8 = 1;
 const KIND_NETMAP: u8 = 2;
 const KIND_BEDROCK: u8 = 3;
+const KIND_COMPLIANCE: u8 = 5;
 
 /// How often the netmap is refetched.
 ///
@@ -365,6 +366,10 @@ pub struct Client {
     /// one is in flight (see `sync`'s use of `Option::take`), or after a
     /// request has failed and the connection has been given up as dead.
     conn: Option<Connection>,
+    // Transient advertisements and report timing; never restored from caches.
+    compliance_ingestion_schema: u32,
+    last_compliance_attempt: Option<std::time::Instant>,
+    compliance_reconnect: bool,
     /// Notified whenever the held connection's reader task decodes a push
     /// envelope. Outlives any one `Connection` — created once here and handed
     /// to every `Connection::open` call — so a caller `select!`ing on it does
@@ -562,6 +567,9 @@ impl Client {
             cache_file,
             seal,
             conn: None,
+            compliance_ingestion_schema: 0,
+            last_compliance_attempt: None,
+            compliance_reconnect: false,
             pushed: Arc::new(tokio::sync::Notify::new()),
             push_telemetry: Arc::new(karst_control_client::transport::PushTelemetry::default()),
             kem_public: keys.kem_pk.to_bytes().clone(),
@@ -685,6 +693,10 @@ impl Client {
         if self.conn.is_some() {
             return Ok(());
         }
+        self.compliance_ingestion_schema = 0;
+        if !self.compliance_reconnect {
+            self.last_compliance_attempt = None;
+        }
         let registering = self.node_id.is_empty();
         let mut conn = Connection::open(
             self.endpoint.clone(),
@@ -710,6 +722,7 @@ impl Client {
             // elsewhere in this file.
             self.login(&mut conn).await?;
         }
+        self.compliance_reconnect = false;
         self.conn = Some(conn);
         Ok(())
     }
@@ -776,8 +789,90 @@ impl Client {
         if let Err(e) = self.fetch_bedrock(&mut conn).await {
             tracing::warn!(error = %e, "bedrock fetch failed, enforcing on the last verified log");
         }
+        if self.compliance_ingestion_schema == 1
+            && crate::compliance::report_due(
+                self.last_compliance_attempt,
+                std::time::Instant::now(),
+            )
+        {
+            self.last_compliance_attempt = Some(std::time::Instant::now());
+            let result = tokio::time::timeout(
+                crate::compliance::REPORT_TIMEOUT,
+                self.report_compliance(&mut conn),
+            )
+            .await;
+            if !matches!(result, Ok(Ok(()))) {
+                // A timeout can leave a late reply queued, and a refusal closes
+                // the server stream. Never reuse either connection. Keep the
+                // valid netmap, but do not record evidence acceptance locally.
+                self.compliance_reconnect = true;
+                tracing::warn!("device compliance report failed; evidence was not confirmed, reconnecting on the next sync");
+                return Ok(outcome);
+            }
+        }
         self.conn = Some(conn);
         Ok(outcome)
+    }
+
+    /// Use a shorter poll only when a live server advertises ingestion support.
+    #[must_use]
+    pub fn refresh_interval(&self) -> Duration {
+        // Restore the push stream promptly after a failed report; the next
+        // connection keeps the report retry interval to avoid a reconnect loop.
+        if self.compliance_reconnect {
+            return Duration::from_secs(1);
+        }
+        if self.compliance_ingestion_schema == 1 {
+            crate::compliance::REPORT_INTERVAL
+        } else {
+            REFRESH
+        }
+    }
+
+    async fn report_compliance(&self, conn: &mut Connection) -> Result<(), Error> {
+        use pb::karst_compliance_request::Operation;
+        use prost::Message as _;
+        let started = std::time::Instant::now();
+        let request = pb::KarstComplianceRequest {
+            schema_version: 1,
+            operation: Some(Operation::Challenge(true)),
+        };
+        let raw = self
+            .request(conn, KIND_COMPLIANCE, &request.encode_to_vec())
+            .await?;
+        let challenge = pb::KarstComplianceResponse::decode(raw.as_slice())
+            .map_err(|_| Error::Protocol("invalid compliance challenge response".into()))?;
+        if challenge.schema_version != 1
+            || challenge.challenge.len() != 32
+            || challenge.accepted
+            || !(1..=60).contains(&challenge.valid_for_seconds)
+        {
+            return Err(Error::Protocol("invalid compliance challenge".into()));
+        }
+        // Fresh local reads start only after the authenticated challenge.
+        let report = crate::compliance::collect(challenge.challenge).await;
+        if started.elapsed() >= Duration::from_secs(u64::from(challenge.valid_for_seconds)) {
+            return Err(Error::Protocol(
+                "compliance challenge expired during collection".into(),
+            ));
+        }
+        let request = pb::KarstComplianceRequest {
+            schema_version: 1,
+            operation: Some(Operation::Report(report)),
+        };
+        let raw = self
+            .request(conn, KIND_COMPLIANCE, &request.encode_to_vec())
+            .await?;
+        let response = pb::KarstComplianceResponse::decode(raw.as_slice())
+            .map_err(|_| Error::Protocol("invalid compliance report response".into()))?;
+        if response.schema_version != 1
+            || !response.accepted
+            || !response.challenge.is_empty()
+            || response.valid_for_seconds != 0
+        {
+            return Err(Error::Protocol("compliance report was not accepted".into()));
+        }
+        Ok(())
     }
 
     /// Fetch and verify Bedrock entries this node has not yet seen.
@@ -1101,8 +1196,12 @@ impl Client {
         let resp = pb::KarstNetmapResponse::decode(raw.as_slice())
             .map_err(|e| Error::Protocol(format!("netmap response: {e}")))?;
 
+        let compliance_schema = resp.compliance_ingestion_schema;
         match self.netmap.apply(resp) {
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => {
+                self.compliance_ingestion_schema = compliance_schema;
+                Ok(outcome)
+            }
             Err(e @ crate::netmap::Error::VersionMismatch { .. }) => {
                 // The node's view is not what the server believes it sent, so
                 // every later request would carry a version describing a netmap
@@ -2094,5 +2193,6 @@ mod tests {
     fn request_kinds_are_pinned() {
         assert_eq!(KIND_LOGIN, 1);
         assert_eq!(KIND_NETMAP, 2);
+        assert_eq!(KIND_COMPLIANCE, 5);
     }
 }

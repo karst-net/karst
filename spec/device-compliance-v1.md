@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Device compliance v1 — proposed implementation contract
 
-**Status:** Proposed; not an implemented API or operational guarantee.
+**Status:** Partially implemented: evaluation, ingestion and version collection.
+Resource guardrails and traffic enforcement remain proposed.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
 
@@ -12,8 +13,10 @@ stage 1's typed requirements, deterministic evaluation and version comparison.
 The authenticated control channel now accepts challenge/report ingestion (request
 kind 5) into a tenant/device/identity-bound SQL row. It is not connected to policy
 writes, netmaps or packet enforcement.
-There are no supported client collectors yet. The capability matrix below remains
-a delivery target; #363 remains open.
+`karstd` now collects self-reported client versions and supported native OS
+releases, with bounded challenge/report attempts on live supporting servers.
+Policy guardrails, active expiry notifications and all traffic enforcement
+remain pending; #363 remains open.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -105,8 +108,8 @@ credentials, process lists or arbitrary collector error text are stored.
 Validation includes race-enabled SQLite tests over independent database pools,
 a real authenticated Go gRPC session, Go/Rust protobuf vectors, and PostgreSQL
 replica-consumption/enrollment-lock tests. PostgreSQL tests run when
-`KARST_TEST_POSTGRES_DSN` is set, including the existing Go CI job. Collectors,
-reporting cadence, policy evaluation persistence, expiry notifications and all
+`KARST_TEST_POSTGRES_DSN` is set, including the existing Go CI job. Platform
+coverage beyond the matrix, policy evaluation persistence, active expiry notifications and all
 permission/datapath work are still pending.
 
 ## Evidence and requirements
@@ -148,12 +151,16 @@ unresolved persisted references deny affected resources.
 
 ## Initial capability matrix
 
-This is the delivery target, not a statement of current collector support.
+Version collectors are implemented below. They are self-reports, not proof of
+host integrity; no resource enforcement is enabled. Native smoke tests run on
+the repository's Linux, macOS and Windows CI jobs. macOS daemon collection uses
+a bounded system-command invocation; sandboxed Network Extension/App Store
+execution has not been validated. A denied invocation reports collection error.
 
 | Check | Linux | macOS | Windows | Trust |
 | --- | --- | --- | --- | --- |
-| Minimum Karst client version | Planned | Planned | Planned | Authenticated self-report |
-| Minimum OS release | Planned, distribution ID + release; unknown distributions unsupported | Planned, product release | Planned, OS build | Authenticated self-report |
+| Minimum Karst client version | Implemented | Implemented | Implemented | Authenticated self-report |
+| Minimum OS release | Ubuntu/Debian distribution ID + release; others unsupported | Product release | Major/minor/build; no UBR revision | Authenticated self-report |
 | Disk encryption / screen lock | Unsupported | Unsupported | Unsupported | No collector committed |
 | Managed device / endpoint security | Unsupported | Unsupported | Unsupported | Requires separate collector/provider design |
 
@@ -162,6 +169,56 @@ each supported distribution/product; do not compare arbitrary version strings
 lexically or equate a Linux kernel version with a distribution release. Product
 UI must show the self-reported trust level. Provider-verified checks are a later
 capability, not an alias for these initial checks.
+
+## Implemented client collection and cadence
+
+`KarstNetmapResponse.compliance_ingestion_schema` advertises ingestion support
+on the authenticated live channel, including unchanged responses. Only schema 1
+triggers kind-5 requests. Zero or unknown versions trigger no probe. The field
+is excluded from the policy content hash, never restored as an advertisement
+from the offline cache, and reset on reconnect. It is not an enforcement
+capability or a compliance verdict.
+
+On first live sync and ordinary reconnect the client requests a fresh challenge,
+then collects and submits observations. Supporting servers use a 30-second
+netmap/report poll, with reporting throttled across extra push-driven syncs.
+The cadence samples version changes within a poll; native OS change-event
+subscriptions are not implemented. Legacy servers retain their 60-second poll.
+A report attempt is bounded to five seconds; asynchronous file/command collection
+has a two-second timeout. Timeouts/refusals discard the stream so late replies
+cannot be interpreted as the next netmap. A failed report preserves the valid
+netmap and requests reconnection after one second to restore push reception;
+that reconnect retains the report retry interval so repeated report failures
+cannot continually close the push stream. No passing status or old observation
+is substituted for a failed collection or unconfirmed submission.
+
+Sources and limitations:
+
+- Client and collector versions use the embedded `KARST_VERSION`. A local `dev`
+  build reports that literal value; it does not fabricate a SemVer version and
+  cannot satisfy a minimum-client-version comparison.
+- Linux reads bounded `ID` and `VERSION_ID` from `/etc/os-release`, falling back
+  to `/usr/lib/os-release` only when the former is missing. It never executes
+  shell expansions or substitutes `ID_LIKE`/kernel releases. Only Ubuntu and
+  Debian use the initial numeric comparators. Missing versions report missing;
+  malformed/unreadable data reports collection error; other distributions report
+  unsupported. See the [os-release specification](https://www.freedesktop.org/software/systemd/man/latest/os-release.html).
+- macOS runs `/usr/bin/sw_vers -productVersion` without a shell and with
+  `SYSTEM_VERSION_COMPAT=0`, bounded output and kill-on-timeout. It reports product
+  major/minor/patch rather than a Darwin kernel version. Apple documents the
+  system version source and `sw_vers` in its [version reference](https://developer.apple.com/documentation/installer_js/system/1812284-version).
+- Windows uses Microsoft's safe `windows-version` wrapper for the native
+  major/minor/build, with zero/invalid results treated as collection error.
+  It does not collect UBR patch revisions; a four-component requirement compares
+  the omitted revision as zero. See Microsoft's [wrapper implementation](https://github.com/microsoft/windows-rs/blob/master/crates/libs/version/src/lib.rs).
+
+Validation includes collector/parser/freshness-cadence unit tests, native smoke
+tests, live capability advertisement/withdrawal tests, and real Rust-client to
+Go-store tests for ingestion, unchanged-sync throttling, fresh reconnect reports,
+offline caches, legacy compatibility, refused reports and timed-out streams.
+Run the wire tests with `cargo test -p karstd --test control compliance_ -- --ignored --test-threads=1`
+with the repository's Go toolchain on `PATH`. These tests use isolated fixture
+listeners and do not configure host networking.
 
 ## Authorization and expiry
 

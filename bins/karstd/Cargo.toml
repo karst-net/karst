@@ -63,7 +63,7 @@ zeroize = { version = "1", default-features = false }
 # current-thread runtime on its own thread, so no future touches the datapath.
 ml-dsa = "0.1"
 sha2 = { version = "0.10", default-features = false }
-tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "io-util", "sync"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net", "io-util", "sync", "process"] }
 # This node's own TURN (RFC 8656) allocation — `spec/aven-v1.md` §7.8. The
 # webrtc-rs project's crates; `util` is `webrtc-util` under the name its own
 # `turn` dependency uses, so `turn::client`'s `Conn` trait and this module's
@@ -118,6 +118,8 @@ karst-winlog.workspace = true
 # `karst-ipc`/`karst-secure-storage`/`karst-winlog` do for APIs with no
 # existing safe crate.
 windows-service = "0.8"
+# Safe Microsoft wrapper around RtlGetVersion, independent of app manifests.
+windows-version = "0.1"
 
 [dev-dependencies]
 # The relay, as a library, so `tests/relay_live.rs` can run a real one in

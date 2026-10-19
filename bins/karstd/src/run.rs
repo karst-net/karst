@@ -5935,7 +5935,7 @@ fn refresh_netmap(
     // still waiting — `push_telemetry.last()` alone can't, since it never
     // resets and would otherwise re-warn on every quiet tick forever.
     let mut last_actioned_pushes = last_reported_pushes;
-    let mut next = Instant::now() + crate::control::REFRESH;
+    let mut next = Instant::now() + client.refresh_interval();
     // What the server was last told, so a change can be published without
     // waiting for the refresh timer.
     let mut published: Option<[u8; 32]> = None;
@@ -6022,7 +6022,7 @@ fn refresh_netmap(
             }
             continue;
         }
-        next = Instant::now() + crate::control::REFRESH;
+        next = Instant::now() + client.refresh_interval();
         client.set_home_relay(chosen);
         let epoch = client.netmap().psk_epoch;
         let sessions = engine
@@ -6103,6 +6103,9 @@ fn refresh_netmap(
         published = chosen;
 
         let synced = runtime.block_on(client.sync());
+        if synced.is_ok() {
+            next = Instant::now() + client.refresh_interval();
+        }
         control_synchronized.store(synced.is_ok(), Ordering::Relaxed);
         // Publish the verified log before the `Unchanged` early return below.
         // The Bedrock fetch runs on every sync regardless of whether the netmap

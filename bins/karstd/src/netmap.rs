@@ -1325,6 +1325,8 @@ impl Netmap {
 
     fn to_wire_full(&self) -> pb::KarstNetmapResponse {
         pb::KarstNetmapResponse {
+            // Live advertisement only; offline caches cannot enable reports.
+            compliance_ingestion_schema: 0,
             version: self.version,
             psk_epoch: self.psk_epoch,
             node_id: self.node_id.clone(),

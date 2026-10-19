@@ -251,6 +251,7 @@ const (
 )
 
 type router struct {
+	compliance  *complianceFixture
 	rootDomains *rootDomainFixture
 	netmap      *control.NetmapHandler
 	bedrock     *control.BedrockHandler
@@ -310,6 +311,11 @@ func (r *router) Handle(ctx context.Context, nodeID, identityPub, payload []byte
 		return r.handleLogin(ctx, identityPub, body)
 	case kindNetmap:
 		return r.netmap.Handle(ctx, nodeID, identityPub, body)
+	case control.KindCompliance:
+		if r.compliance == nil {
+			return nil, errors.New("compliance is not configured on this fixture")
+		}
+		return r.compliance.handle(ctx, nodeID, identityPub, body)
 	case kindBedrock:
 		if r.bedrock == nil {
 			return nil, errors.New("bedrock is not configured on this fixture")
@@ -595,6 +601,9 @@ func buildNetmapServer(preload int, dnsZone string, sshPolicy string) (*router, 
 			}
 		}
 	}
+	if err := installComplianceFixture(r, db); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -671,6 +680,11 @@ func (r *router) handleLogin(_ context.Context, identityPub, body []byte) ([]byt
 		hostname = "karst-node"
 	}
 	peer := r.account.register(handle, hostname)
+	if r.compliance != nil {
+		if err := r.compliance.enroll(peer); err != nil {
+			return nil, err
+		}
+	}
 
 	return pb.Marshal(&proto.KarstLoginResponse{
 		NodeId:  []byte(handle),

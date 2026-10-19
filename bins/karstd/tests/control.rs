@@ -1415,3 +1415,177 @@ async fn root_rename_propagates_to_live_dns_and_offline_reconnect() {
         ResponseCode::NXDomain
     );
 }
+
+/// Actual native collection, encrypted Rust control client and production Go
+/// ingestion/store. No host routes, resolver settings or TUN devices change.
+#[tokio::test]
+#[ignore = "needs a Go toolchain; run with --ignored"]
+async fn compliance_collection_is_fresh_device_bound_and_throttled() {
+    use std::io::{Read as _, Write as _};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+    fn snapshot(address: std::net::SocketAddr, handle: &str) -> serde_json::Value {
+        let handle = handle
+            .replace('+', "%2B")
+            .replace('/', "%2F")
+            .replace('=', "%3D");
+        let mut stream = TcpStream::connect(address).expect("fixture HTTP");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        write!(stream, "GET /compliance?handle={handle} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").expect("request");
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).expect("response");
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        serde_json::from_str(reply.split_once("\r\n\r\n").expect("body").1).expect("evidence JSON")
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").expect("port");
+    let address = listener.local_addr().expect("address");
+    drop(listener);
+    let server = start_server_args(&[
+        "--netmap".into(),
+        "0".into(),
+        "--compliance".into(),
+        "--control".into(),
+        address.to_string(),
+    ]);
+    let dir = Scratch::new("compliance-reporting");
+    let section = section(&server, dir.path(), Some("netmap.bin"));
+    let identity = Identity::load_or_create(&section.identity_key_file).expect("identity");
+    let handle = identity.handle();
+    let mut client = Client::new(&section, dir.path(), &keys(0x91)).expect("client");
+    assert_eq!(client.refresh_interval(), karstd::control::REFRESH);
+    client.sync().await.expect("netmap and native report");
+    assert_eq!(
+        client.refresh_interval(),
+        karstd::compliance::REPORT_INTERVAL
+    );
+    let first = snapshot(address, &handle);
+    assert_eq!(first["Generation"], 1);
+    assert_eq!(first["Evidence"]["Provenance"], "self-reported");
+    assert_eq!(first["Evidence"]["Subject"]["TenantID"], "fixture-account");
+    assert_eq!(
+        first["Evidence"]["ClientVersion"]["Version"],
+        karstd::VERSION
+    );
+    assert_eq!(first["Evidence"]["ClientVersion"]["Status"], "collected");
+    assert!(
+        first["Evidence"]["OSVersion"]["Status"] == "collected"
+            || first["Evidence"]["OSVersion"]["Status"] == "unsupported"
+    );
+    for _ in 0..3 {
+        assert!(matches!(
+            client.sync().await.expect("unchanged sync"),
+            Outcome::Unchanged
+        ));
+    }
+    assert_eq!(
+        snapshot(address, &handle)["Generation"],
+        1,
+        "pushes/repeated syncs must not spam reports"
+    );
+    client.save_cache().expect("cache");
+    drop(client);
+    let mut reconnected = Client::new(&section, dir.path(), &keys(0x91)).expect("reconnect client");
+    reconnected
+        .load_cache()
+        .expect("offline cache configured")
+        .expect("offline cache");
+    assert_eq!(
+        reconnected.refresh_interval(),
+        karstd::control::REFRESH,
+        "cache cannot advertise support"
+    );
+    reconnected
+        .sync()
+        .await
+        .expect("reconnect with a fresh challenge/report");
+    let second = snapshot(address, &handle);
+    assert_eq!(second["Generation"], 2);
+    assert_ne!(
+        first["Evidence"]["ReceivedAt"],
+        second["Evidence"]["ReceivedAt"]
+    );
+    assert_eq!(first["Evidence"]["Subject"], second["Evidence"]["Subject"]);
+}
+
+#[tokio::test]
+#[ignore = "needs a Go toolchain; run with --ignored"]
+async fn compliance_refusal_preserves_netmap_and_legacy_servers_need_no_probe() {
+    let legacy = start_server(1);
+    let dir = Scratch::new("compliance-legacy");
+    let mut client = Client::new(&section(&legacy, dir.path(), None), dir.path(), &keys(0x92))
+        .expect("legacy client");
+    client.sync().await.expect("legacy netmap");
+    assert_eq!(client.refresh_interval(), karstd::control::REFRESH);
+    assert!(matches!(
+        client.sync().await.expect("legacy connection still works"),
+        Outcome::Unchanged
+    ));
+    let server = start_server_args(&[
+        "--netmap".into(),
+        "1".into(),
+        "--compliance".into(),
+        "--compliance-refuse".into(),
+    ]);
+    let dir = Scratch::new("compliance-refused");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x93)).expect("client");
+    client
+        .sync()
+        .await
+        .expect("refused evidence must not discard netmap");
+    assert_eq!(
+        client
+            .to_config(local(0x93))
+            .expect("datapath config")
+            .peers
+            .len(),
+        1
+    );
+    assert_eq!(client.refresh_interval(), std::time::Duration::from_secs(1));
+    assert!(matches!(
+        client
+            .sync()
+            .await
+            .expect("fresh connection after refused report"),
+        Outcome::Unchanged
+    ));
+    assert_eq!(
+        client.refresh_interval(),
+        karstd::compliance::REPORT_INTERVAL,
+        "the push stream must remain alive while reporting waits to retry"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs a Go toolchain; run with --ignored"]
+async fn compliance_timeout_discards_the_stream_before_reconnecting() {
+    let server = start_server_args(&[
+        "--netmap".into(),
+        "1".into(),
+        "--compliance".into(),
+        "--compliance-delay-first".into(),
+    ]);
+    let dir = Scratch::new("compliance-timeout");
+    let mut client =
+        Client::new(&section(&server, dir.path(), None), dir.path(), &keys(0x94)).expect("client");
+    client
+        .sync()
+        .await
+        .expect("report timeout must preserve the valid netmap");
+    assert_eq!(
+        client
+            .to_config(local(0x94))
+            .expect("datapath config")
+            .peers
+            .len(),
+        1
+    );
+    // Reusing the timed-out stream could interpret its late challenge as the
+    // next netmap. A fresh connection must fetch successfully while reporting waits to retry.
+    assert!(matches!(
+        client.sync().await.expect("reconnect after timeout"),
+        Outcome::Unchanged
+    ));
+}

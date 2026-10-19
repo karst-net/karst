@@ -620,4 +620,8 @@ derives keys first).
    [ingestion contract](device-compliance-v1.md#implemented-ingestion-protocol)
    records limits, expiry, replay handling and retention. An accepted report
    acknowledges persistence and never grants access. No client enforcement
-   capability is implied by support for kind 5.
+   capability is implied by support for kind 5. The live netmap field
+   `compliance_ingestion_schema` advertises schema 1 even when `unchanged` is
+   true. Zero or unknown schemas trigger no reporting probe; offline caches
+   cannot advertise support. This transient field is excluded from the policy
+   content hash.
