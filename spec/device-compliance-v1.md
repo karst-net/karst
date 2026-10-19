@@ -9,7 +9,9 @@
 
 The internal Go package `server/management/internals/karst/compliance` implements
 stage 1's typed requirements, deterministic evaluation and version comparison.
-It is not connected to reporting, policy writes, netmaps or packet enforcement.
+The authenticated control channel now accepts challenge/report ingestion (request
+kind 5) into a tenant/device/identity-bound SQL row. It is not connected to policy
+writes, netmaps or packet enforcement.
 There are no supported client collectors yet. The capability matrix below remains
 a delivery target; #363 remains open.
 
@@ -49,6 +51,63 @@ Validation: `cd server && go test -race -count=1 ./management/internals/karst/co
 Tests cover all six states, precise expiry boundaries, trust/identity mismatch,
 malformed observations, platform/version ordering, conjunctive results,
 independent devices, new collection errors and recovery.
+
+## Implemented ingestion protocol
+
+Schema 1 uses `KarstComplianceRequest` / `KarstComplianceResponse` inside the
+existing authenticated encrypted control channel, request kind **5**. A request
+must select one operation: `challenge: true`, or a report. The complete protobuf
+payload is limited to 4096 bytes. Existing login, netmap, Bedrock and push kinds
+are unchanged. An old server can reject kind 5; this must never be interpreted
+as evidence acceptance or an enforcement capability.
+
+The challenge response contains 32 random bytes and `valid_for_seconds: 60`.
+Only its SHA-256 hash is stored. A new challenge invalidates the previous one;
+it does not refresh existing evidence. Receipt exactly at expiry is rejected.
+The duration starts when the server issues the challenge; client transit time
+and retries do not extend it. Reconnect can submit an outstanding unexpired
+challenge to any replica, or request a replacement.
+
+A report includes that challenge, a nonempty collector version (up to 128
+bytes), platform/distribution (up to 64 bytes each), and client/OS version
+observations (up to 128 bytes per value). Observation statuses are missing,
+collected, unsupported and collection error. Missing or malformed observations
+are persisted as nonpassing evidence, rather than retaining an old pass. Invalid
+schema, oversized fields or an invalid challenge reject the request; these do
+not refresh evidence. An accepted response acknowledges persistence only, not a
+compliance decision or resource grant. No timestamp, tenant, device, provenance
+or aggregate compliant flag is accepted from the report.
+
+The handler derives the identity handle from the verified control handshake,
+looks up its enrollment, and obtains tenant/device IDs from that record. The
+SQL transaction checks and locks the matching authoritative peer row, so stale
+manager/cache entries cannot submit evidence after deletion or key replacement.
+A different enrollment ID cannot use a previous enrollment's challenge, even
+with the same identity key. Cross-tenant/device/identity submissions fail. All
+ingested observations are explicitly self-reported.
+
+Challenge consumption, latest-evidence replacement and the evidence generation
+increment share one conditional database update. Two replicas cannot consume
+the same challenge. A database failure rolls back consumption. The store keeps
+only the latest report, never report history; callers must evaluate it against
+the current policy and time. Expiry is computed by the evaluator on read; an
+active expiry scheduler and invalidation of permissions remain unimplemented.
+
+Evidence becomes unavailable to the store's readers 24 hours after its
+180-second freshness deadline. New challenge issuance clears evidence past
+that retention deadline; challenge refresh cannot retain old observations.
+Startup and hourly pruning physically remove expired records and records whose
+enrollment was deleted or replaced, and clear expired evidence even when a
+challenge is still active. Physical cleanup can lag the deadline by one worker
+interval; authentication/read checks take effect immediately. No provider
+credentials, process lists or arbitrary collector error text are stored.
+
+Validation includes race-enabled SQLite tests over independent database pools,
+a real authenticated Go gRPC session, Go/Rust protobuf vectors, and PostgreSQL
+replica-consumption/enrollment-lock tests. PostgreSQL tests run when
+`KARST_TEST_POSTGRES_DSN` is set, including the existing Go CI job. Collectors,
+reporting cadence, policy evaluation persistence, expiry notifications and all
+permission/datapath work are still pending.
 
 ## Evidence and requirements
 

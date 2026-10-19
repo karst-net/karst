@@ -609,8 +609,15 @@ derives keys first).
 7. **Padding is not specified.** Message lengths leak which request is being
    made, inside TLS, to an observer who is already past TLS.
 
-8. **Device compliance is not implemented by this protocol.**
+8. **Device compliance enforcement is not implemented by this protocol.**
    [Device compliance v1](device-compliance-v1.md) proposes authenticated evidence,
    resource guardrails, capability negotiation and expiring permissions. Those
    additions require a versioned wire design and end-to-end enforcement tests;
    existing peer metadata and session observations do not satisfy that contract.
+   Request kind **5** now implements schema-1 challenge/report ingestion only,
+   using `KarstComplianceRequest` and `KarstComplianceResponse`. Identity and
+   enrollment determine tenant/device scope; reports cannot select them. The
+   [ingestion contract](device-compliance-v1.md#implemented-ingestion-protocol)
+   records limits, expiry, replay handling and retention. An accepted report
+   acknowledges persistence and never grants access. No client enforcement
+   capability is implied by support for kind 5.

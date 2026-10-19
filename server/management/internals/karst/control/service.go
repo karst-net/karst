@@ -76,7 +76,8 @@ func endSpan(span oteltrace.Span, err error) {
 // duplicate this value locally, the same way they already duplicate
 // KindLogin/KindNetmap/KindBedrock — this package never parses a request
 // payload, so it has nowhere else to keep the numbering authoritative. All
-// four values are on the wire and may not be reordered.
+// four values are on the wire and may not be reordered. Compliance ingestion
+// adds KindCompliance (5), defined in compliance.go, without changing them.
 const KindPush byte = 4
 
 // Handler processes one decrypted request and returns the decrypted response.

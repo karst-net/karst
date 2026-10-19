@@ -1,0 +1,25 @@
+{
+  "spec": "Device compliance ingestion v1",
+  "cases": [
+    {
+      "name": "challenge-request",
+      "hex": "08011001"
+    },
+    {
+      "name": "report-request",
+      "hex": "08011a500a20000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f120676302e312e301a056c696e757822067562756e74752a0a0801120676302e312e3032090801120532342e3034"
+    },
+    {
+      "name": "failed-report-request",
+      "hex": "08011a410a20000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f120676302e312e301a056c696e757822067562756e74752a02080232020803"
+    },
+    {
+      "name": "challenge-response",
+      "hex": "08011220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f183c"
+    },
+    {
+      "name": "accepted-response",
+      "hex": "08012001"
+    }
+  ]
+}

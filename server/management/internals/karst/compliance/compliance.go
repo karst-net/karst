@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// Package compliance evaluates typed device evidence against requirements.
-// It does not authenticate reports, issue permissions, or enforce traffic.
+// Package compliance evaluates typed device evidence against requirements
+// and persists enrollment-bound, self-reported evidence. It does not authenticate
+// the control channel, issue permissions, or enforce traffic.
 // Callers must obtain evidence identity, provenance and receipt time from a
 // trusted ingestion path, never from fields asserted by the reporting client.
 package compliance

@@ -34,6 +34,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	karstbilling "github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
+	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
@@ -249,6 +250,11 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	// queued before a restart, while receiver failures never block a control
 	// mutation or alter the append-only chain.
 	auditLog.StartDeliveryWorker(context.Background(), audit.NewTransport(), 5*time.Second, 100)
+	complianceStore, err := compliance.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: compliance store: %w", err)
+	}
+	complianceStore.StartRetentionWorker(context.Background(), func(err error) { log.WithError(err).Error("karst: prune compliance evidence") })
 	policyStore, err := policy.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("karst: policy store: %w", err)
@@ -421,7 +427,8 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 
 	epoch := control.CurrentEpoch(time.Now())
 	router := &handler{
-		login: &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
+		login:      &control.LoginHandler{Nodes: nodes, Accounts: peerLoginer, OIDC: oidc},
+		compliance: &control.ComplianceHandler{Store: complianceStore, Peers: peers},
 		netmap: &control.NetmapHandler{
 			Nodes:            nodes,
 			Peers:            peers,
@@ -707,9 +714,10 @@ func (s *storePeers) AccountPrefixes(ctx context.Context, accountID string) (uin
 // A oneof in the proto would be tidier and is the obvious later change; this
 // keeps the envelope free of message-type knowledge for now.
 type handler struct {
-	login   *control.LoginHandler
-	netmap  *control.NetmapHandler
-	bedrock *control.BedrockHandler
+	compliance *control.ComplianceHandler
+	login      *control.LoginHandler
+	netmap     *control.NetmapHandler
+	bedrock    *control.BedrockHandler
 }
 
 // Request kinds. Values are on the wire, so they may not be reordered.
@@ -729,6 +737,11 @@ func (h *handler) Handle(ctx context.Context, nodeID, identityPub, payload []byt
 		return h.login.Handle(ctx, nodeID, identityPub, body)
 	case KindNetmap:
 		return h.netmap.Handle(ctx, nodeID, identityPub, body)
+	case control.KindCompliance:
+		if h.compliance == nil {
+			return nil, errors.New("karst: compliance is not configured on this server")
+		}
+		return h.compliance.Handle(ctx, nodeID, identityPub, body)
 	case KindBedrock:
 		if h.bedrock == nil {
 			return nil, errors.New("karst: bedrock is not configured on this server")
