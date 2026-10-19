@@ -142,14 +142,13 @@ message KarstNetmapRequest {
   // outright — the handler re-checks each `route_id` against this node's
   // own authenticated gateway role before recording it.
   //
-  // Egress (client -> destination) only. The matching return leg is not
-  // separately attributable per route today (`gateway.rs`'s own doc
-  // comment on why) — a named gap, not silently omitted.
+  // Both egress and ingress (issues #371, #372) — the matching return
+  // leg is attributed per route too, not lumped into one shared bucket.
   repeated KarstRouteObservation route_observations = 7;
 }
 
-// KarstRouteObservation is one route's egress bytes/packets as its current
-// gateway measured them, issue #281.
+// KarstRouteObservation is one route's egress and ingress bytes/packets
+// as its current gateway measured them, issues #281 and #371.
 message KarstRouteObservation {
   // The route_id this node was offered as a `KarstRouteOffer` with
   // `role = GATEWAY`. The handler rejects anything else.
@@ -163,6 +162,11 @@ message KarstRouteObservation {
   uint64 bytes = 2;
   // Same accounting, packet count instead of bytes.
   uint64 packets = 3;
+  // Ingress (destination -> client, the return leg), issue #371. Same
+  // never-report-a-delta accounting as `bytes` above.
+  uint64 ingress_bytes = 4;
+  // Same accounting, packet count instead of bytes.
+  uint64 ingress_packets = 5;
 }
 
 // KarstAnchorRtt is one region's measured anchor RTT, ADR-0045 §4b.

@@ -1254,14 +1254,15 @@ components:
         label: {type: string}
         health: {type: string, enum: [confirmed, stale, unknown]}
         location: {$ref: '#/components/schemas/RelayLocation'}
-        # bytes/packets: issue #281. Aggregate egress throughput, populated
-        # only for kind: route (summed across every route the group
-        # serves). Absent, not zero, until some gateway for the group has
-        # self-reported at least once. Egress (client -> destination)
-        # only -- see routetelemetry's own doc comment on why the return
-        # leg is not included.
+        # bytes/packets/ingress_bytes/ingress_packets: issues #281, #371,
+        # #372. Aggregate egress and ingress throughput, populated only
+        # for kind: route (summed across every route the group serves).
+        # Absent, not zero, until some gateway for the group has
+        # self-reported at least once.
         bytes: {type: integer, format: int64}
         packets: {type: integer, format: int64}
+        ingress_bytes: {type: integer, format: int64}
+        ingress_packets: {type: integer, format: int64}
     BedrockStatus:
       type: object
       required: [mode, quorum, roots, authorities, uncovered_handles]

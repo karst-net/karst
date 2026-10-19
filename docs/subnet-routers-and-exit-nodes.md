@@ -143,13 +143,11 @@ anything. A non-administrator can see the current exit but cannot change it.
   route over a prefix the node's own gateway forwarding already depended on
   reaching by a real interface, silently destroying that interface's kernel
   route. Worth checking first if forwarding is reported ready but traffic is
-  not actually moving. The same per-route egress counters are also
-  available without root or host access, via the console's NOC view or
-  `GET /noc/components` (issue #281, "Per-route throughput" in
-  `admin-console.md`) — this manual path stays useful without console
-  access, or to confirm return-leg attribution directly against the
-  kernel's own per-route counters (issue #371), which aren't yet surfaced
-  through the console (issue #372).
+  not actually moving. The same per-route egress and ingress counters are
+  also available without root or host access, via the console's NOC view or
+  `GET /noc/components` (issues #281, #371, #372, "Per-route throughput" in
+  `admin-console.md`) — this manual path stays useful mainly for an
+  operator without console access.
 - **`ip route show`** on a recipient — a subnet route appears as a normal
   route over the tunnel interface; a consented default route appears in a
   dedicated policy-routing table rather than the main table (`ip rule show`
@@ -159,9 +157,9 @@ anything. A non-administrator can see the current exit but cannot change it.
 - **The outbound leg works (`tcpdump` on the gateway's physical interface
   shows a complete round trip) but the client never gets a reply, and
   `ip -s link show karst0`'s `TX` counter never moves** even though
-  `nft list table inet karst_routes`'s own `oifname "karst0" ct state
-  established,related accept` rule's counter does — this is §1's Docker/
-  `DOCKER-USER` gap (issue #345), not a `karstd` bug: check
+  `nft list table inet karst_routes`'s own per-route `oifname "karst0" ct
+  state established,related accept` rules' counters do — this is §1's
+  Docker/`DOCKER-USER` gap (issue #345), not a `karstd` bug: check
   `nft list ruleset` for an `ip`/`ip6` table with a `FORWARD` chain whose
   `policy` is `drop` (Docker's, if installed, is the usual culprit;
   firewalld and ufw install their own equivalents), and confirm

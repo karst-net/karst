@@ -28,7 +28,8 @@ func newTestStore(t *testing.T) *Store {
 func TestRecordThenRead(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", 1000, 10); err != nil {
+	report := RouteReport{Bytes: 1000, Packets: 10, IngressBytes: 400, IngressPackets: 4}
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", report); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	byRoute, err := s.LatestByRoute(ctx, "acct-a")
@@ -39,40 +40,43 @@ func TestRecordThenRead(t *testing.T) {
 	if !ok {
 		t.Fatalf("route-1 not found in %+v", byRoute)
 	}
-	if got.Bytes != 1000 || got.Packets != 10 {
-		t.Fatalf("got %+v, want bytes=1000 packets=10", got)
+	if got.Bytes != 1000 || got.Packets != 10 || got.IngressBytes != 400 || got.IngressPackets != 4 {
+		t.Fatalf("got %+v, want bytes=1000 packets=10 ingress_bytes=400 ingress_packets=4", got)
 	}
 }
 
 func TestRecordTwiceReplacesRatherThanAccumulates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", 1000, 10); err != nil {
+	first := RouteReport{Bytes: 1000, Packets: 10, IngressBytes: 400, IngressPackets: 4}
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", first); err != nil {
 		t.Fatalf("first record: %v", err)
 	}
 	// A real gateway reports a running total every tick, never a delta —
 	// a later report's own count already includes everything the first one
 	// did. The store must replace, not add, or every tick would double the
 	// true figure.
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", 1500, 15); err != nil {
+	second := RouteReport{Bytes: 1500, Packets: 15, IngressBytes: 600, IngressPackets: 6}
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", second); err != nil {
 		t.Fatalf("second record: %v", err)
 	}
 	byRoute, err := s.LatestByRoute(ctx, "acct-a")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if got := byRoute["route-1"]; got.Bytes != 1500 || got.Packets != 15 {
-		t.Fatalf("got %+v, want the replaced bytes=1500 packets=15, not an accumulation", got)
+	got := byRoute["route-1"]
+	if got.Bytes != 1500 || got.Packets != 15 || got.IngressBytes != 600 || got.IngressPackets != 6 {
+		t.Fatalf("got %+v, want the replaced second report, not an accumulation", got)
 	}
 }
 
 func TestLatestByRouteIsScopedToOneAccount(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", 1000, 10); err != nil {
+	if err := s.RecordRouteBytes(ctx, "acct-a", "route-1", RouteReport{Bytes: 1000, Packets: 10}); err != nil {
 		t.Fatalf("record acct-a: %v", err)
 	}
-	if err := s.RecordRouteBytes(ctx, "acct-b", "route-1", 2000, 20); err != nil {
+	if err := s.RecordRouteBytes(ctx, "acct-b", "route-1", RouteReport{Bytes: 2000, Packets: 20}); err != nil {
 		t.Fatalf("record acct-b: %v", err)
 	}
 	byRoute, err := s.LatestByRoute(ctx, "acct-a")
@@ -87,10 +91,11 @@ func TestLatestByRouteIsScopedToOneAccount(t *testing.T) {
 func TestRecordRejectsEmptyFields(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.RecordRouteBytes(ctx, "", "route-1", 1000, 10); err == nil {
+	report := RouteReport{Bytes: 1000, Packets: 10}
+	if err := s.RecordRouteBytes(ctx, "", "route-1", report); err == nil {
 		t.Fatal("empty account id: want an error, got nil")
 	}
-	if err := s.RecordRouteBytes(ctx, "acct-a", "", 1000, 10); err == nil {
+	if err := s.RecordRouteBytes(ctx, "acct-a", "", report); err == nil {
 		t.Fatal("empty route id: want an error, got nil")
 	}
 }

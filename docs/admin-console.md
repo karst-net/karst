@@ -109,17 +109,18 @@ Compliance-conditioned access remains a follow-up capability.
   second, relay-telemetry-style signed endpoint, since a node already has
   a live session here and ADR-0021's relay channel has no concept of
   "route" at all to report this through.
-- **Egress (client → destination) only.** The matching return leg is not
-  separately attributable per route today: `karst_routes`'s generic
-  return-path accept rule is shared across every route a gateway serves,
-  not route-scoped, and scoping it would risk misattributing traffic
-  between two routes with overlapping destination prefixes on the same
-  gateway (an exit route and a subnet route together, for example). A
-  named gap, not solved here.
+- **Both egress and ingress, each attributed per route.** Issue #371 split
+  `karst_routes`'s previously shared, uncommented return-leg accept rule
+  into one comment-tagged rule per route (ordered most-specific-destination
+  first, the same way the forward-leg rules already were, so an exit route
+  and a subnet route together on one gateway still attribute correctly
+  rather than one claiming the other's reply traffic). Never a
+  *destination* breakdown, though — only per-route.
 - **Surfaced on the NOC map's `"route"` component** (`GET
-  /noc/components`) as `bytes`/`packets`, summed across every route a
-  gateway group serves — absent, not zero, until some gateway for the
-  group has self-reported at least once. There is no per-route (as
+  /noc/components`) as `bytes`/`packets` (egress) and
+  `ingress_bytes`/`ingress_packets` (ingress), each summed across every
+  route a gateway group serves — absent, not zero, until some gateway for
+  the group has self-reported at least once. There is no per-route (as
   opposed to per-group) drill-down endpoint yet; the group-level sum is
   what this issue lands, and a finer drill-down is left for whenever the
   NOC view (#241) actually wants one.

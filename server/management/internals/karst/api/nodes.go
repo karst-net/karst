@@ -268,15 +268,17 @@ type nocComponent struct {
 	// telemetry-derived health to report.
 	Health   string        `json:"health,omitempty"`
 	Location *geo.Location `json:"location,omitempty"`
-	// Bytes/Packets are issue #281's aggregate egress throughput, populated
-	// only for Kind: "route" (summed across every route the group serves)
-	// -- nil wherever no gateway for this group has yet self-reported any,
-	// the same "nil, not zero, until something real has arrived" posture
-	// relayHealth.Bytes already has for relays. Egress (client ->
-	// destination) only, never a destination breakdown -- see
+	// Bytes/Packets/IngressBytes/IngressPackets are issues #281 and #371's
+	// aggregate egress and ingress throughput, populated only for Kind:
+	// "route" (summed across every route the group serves) -- nil wherever
+	// no gateway for this group has yet self-reported any, the same "nil,
+	// not zero, until something real has arrived" posture relayHealth.Bytes
+	// already has for relays. Never a destination breakdown -- see
 	// routetelemetry's own doc comment on why.
-	Bytes   *int64 `json:"bytes,omitempty"`
-	Packets *int64 `json:"packets,omitempty"`
+	Bytes          *int64 `json:"bytes,omitempty"`
+	Packets        *int64 `json:"packets,omitempty"`
+	IngressBytes   *int64 `json:"ingress_bytes,omitempty"`
+	IngressPackets *int64 `json:"ingress_packets,omitempty"`
 }
 
 func unknownRelayHealth() relayHealth {
@@ -2226,10 +2228,10 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 	if err != nil {
 		return nil, err
 	}
-	// Issue #281: looked up once, by route_id, then summed per group below
-	// -- a group can serve more than one route, and a route's throughput
-	// is reported keyed by route_id (the unit a gateway is actually
-	// authorized for), never by group directly.
+	// Issues #281, #371: looked up once, by route_id, then summed per group
+	// below -- a group can serve more than one route, and a route's
+	// throughput is reported keyed by route_id (the unit a gateway is
+	// actually authorized for), never by group directly.
 	var telemetry map[string]routetelemetry.StoredRouteBytes
 	if h.routeTelemetry != nil {
 		telemetry, err = h.routeTelemetry.LatestByRoute(ctx, accountID)
@@ -2240,6 +2242,8 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 	netIDsByGroup := make(map[string][]string)
 	bytesByGroup := make(map[string]int64)
 	packetsByGroup := make(map[string]int64)
+	ingressBytesByGroup := make(map[string]int64)
+	ingressPacketsByGroup := make(map[string]int64)
 	reportedByGroup := make(map[string]bool)
 	for _, r := range routes {
 		if !r.Enabled {
@@ -2253,6 +2257,8 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 			if report, ok := telemetry[string(r.GetResourceID())]; ok {
 				bytesByGroup[groupID] += int64(report.Bytes)
 				packetsByGroup[groupID] += int64(report.Packets)
+				ingressBytesByGroup[groupID] += int64(report.IngressBytes)
+				ingressPacketsByGroup[groupID] += int64(report.IngressPackets)
 				reportedByGroup[groupID] = true
 			}
 		}
@@ -2274,7 +2280,9 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 		}
 		if reportedByGroup[groupID] {
 			bytes, packets := bytesByGroup[groupID], packetsByGroup[groupID]
+			ingressBytes, ingressPackets := ingressBytesByGroup[groupID], ingressPacketsByGroup[groupID]
 			component.Bytes, component.Packets = &bytes, &packets
+			component.IngressBytes, component.IngressPackets = &ingressBytes, &ingressPackets
 		}
 		result = append(result, component)
 	}

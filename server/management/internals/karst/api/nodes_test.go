@@ -25,11 +25,13 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	"github.com/netbirdio/netbird/management/server/account"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -39,6 +41,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
 	"github.com/netbirdio/netbird/management/server/permissions/roles"
 	"github.com/netbirdio/netbird/management/server/types"
+	"github.com/netbirdio/netbird/route"
 	"github.com/netbirdio/netbird/shared/auth"
 	"github.com/netbirdio/netbird/shared/management/status"
 	"gopkg.in/yaml.v3"
@@ -2301,4 +2304,76 @@ func TestTurnServerRoutesRequireAConfiguredStore(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
+}
+
+// fixedGroupLocations is a groupLocationReader with a fixed List result —
+// Set is never exercised by routeGroupComponents, which only reads.
+type fixedGroupLocations []grouplocation.StoredGroupLocation
+
+func (f fixedGroupLocations) Set(context.Context, grouplocation.Entry) (*grouplocation.StoredGroupLocation, error) {
+	return nil, fmt.Errorf("fixedGroupLocations: Set not implemented")
+}
+
+func (f fixedGroupLocations) List(context.Context) ([]grouplocation.StoredGroupLocation, error) {
+	return f, nil
+}
+
+func (f fixedGroupLocations) Delete(context.Context, string) error {
+	return fmt.Errorf("fixedGroupLocations: Delete not implemented")
+}
+
+// fixedRoutes is a routeLister with a fixed ListRoutes result.
+type fixedRoutes []*route.Route
+
+func (f fixedRoutes) ListRoutes(context.Context, string, string) ([]*route.Route, error) {
+	return f, nil
+}
+
+// TestNOCRouteComponentCarriesEgressAndIngress covers issue #372: the
+// "route" kind's response now carries ingress_bytes/ingress_packets
+// alongside the existing egress bytes/packets, both summed from the same
+// routetelemetry.StoredRouteBytes row routeGroupComponents already reads.
+// assertDeclaredResponseFields also confirms the new fields are declared in
+// karst-openapi.yml's NocComponent schema, not just returned by the handler.
+func TestNOCRouteComponentCarriesEgressAndIngress(t *testing.T) {
+	spec := loadKarstOpenAPISchemas(t)
+	db, err := gorm.Open(sqlite.Open("file:noc-route-ingress?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	routeTelemetryStore, err := routetelemetry.NewStore(db)
+	require.NoError(t, err)
+	require.NoError(t, routeTelemetryStore.RecordRouteBytes(context.Background(), "account-a", "route-a", routetelemetry.RouteReport{
+		Bytes: 1000, Packets: 10, IngressBytes: 400, IngressPackets: 4,
+	}))
+
+	groupLocations := fixedGroupLocations{{AccountID: "account-a", GroupID: "group-a", Lat: 1, Lon: 2, Label: "group-a label"}}
+	routes := fixedRoutes{{ID: "route-a:selected-peer-id", NetID: "net-a", PeerGroups: []string{"group-a"}, Enabled: true}}
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleNOC}, nil, nil, nil, "", nil, nil, groupLocations, nil, routes, nil, nil, routeTelemetryStore, router)
+
+	req := httptest.NewRequest(http.MethodGet, "/karst/v1/noc/components", nil)
+	req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{AccountId: "account-a", UserId: "noc-viewer"})
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var components []map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &components))
+	var route map[string]any
+	for _, c := range components {
+		if c["kind"] == "route" {
+			route = c
+		}
+	}
+	require.NotNilf(t, route, "no \"route\" kind component in %v", components)
+	require.InDelta(t, 1000, route["bytes"], 0)
+	require.InDelta(t, 10, route["packets"], 0)
+	require.InDelta(t, 400, route["ingress_bytes"], 0)
+	require.InDelta(t, 4, route["ingress_packets"], 0)
+
+	schema := responseSchema(spec, "/noc/components", http.MethodGet, "200")
+	require.NotNil(t, schema, "no declared 200 response for GET /noc/components")
+	var decoded any
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &decoded))
+	assertDeclaredResponseFields(t, spec, schema, decoded, "GET /noc/components")
 }
