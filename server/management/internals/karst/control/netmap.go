@@ -21,6 +21,7 @@ import (
 	pb "google.golang.org/protobuf/proto"
 
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
 	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
@@ -116,6 +117,30 @@ type NetmapHandler struct {
 	RegionAllow interface {
 		AllowedRegions(ctx context.Context) (regionallow.Document, error)
 		RecordAnchorRTT(ctx context.Context, provider, region string, rttMs uint32) error
+	}
+
+	// EphemeralAnchors is ADR-0045 §4d's admin-maintained ephemeral-anchor
+	// list and duty-cycle schedule store, and its RTT-histogram sink. Nil
+	// means the deployment has not configured one — the projected
+	// KarstEphemeralAnchors is then absent, matching the fail-closed
+	// default RegionAllow's own doc comment describes for KarstAllowedRegions;
+	// an absent (or empty) anchor list also means every reported
+	// KarstEphemeralAnchorRtt entry is rejected by recordEphemeralAnchorRTT
+	// below. Deployment-wide, not account-scoped, same as RegionAllow.
+	EphemeralAnchors interface {
+		Anchors(ctx context.Context) ([]ephemeralanchor.AnchorEntry, error)
+		Schedule(ctx context.Context) (windowPeriodSeconds, dutyCycleSeconds uint32, err error)
+		RecordEphemeralAnchorRTT(ctx context.Context, label string, rttMs uint32) error
+	}
+
+	// RouteTelemetry is issue #281's account-scoped, latest-snapshot-only
+	// sink for per-route egress byte/packet counts self-reported by each
+	// route's current gateway. Nil means the deployment has not configured
+	// one — every KarstRouteObservation is then silently dropped, the same
+	// "nil store, no-op" posture every other optional store on this handler
+	// already has.
+	RouteTelemetry interface {
+		RecordRouteBytes(ctx context.Context, accountID, routeID string, bytes, packets uint64) error
 	}
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
@@ -309,6 +334,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// failure to record never denies the node its netmap.
 	h.recordAnchorRTT(ctx, self, req.GetAnchorRtt())
 
+	// ADR-0045 §4d, the identical advisory-telemetry posture as anchor_rtt
+	// above.
+	h.recordEphemeralAnchorRTT(ctx, self, req.GetEphemeralAnchorRtt())
+
 	handles := make([]string, 0, len(peers))
 	for _, p := range peers {
 		if p.Key == self {
@@ -383,6 +412,10 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	if err != nil {
 		return nil, fmt.Errorf("project allowed regions: %w", err)
 	}
+	resp.EphemeralAnchors, err = h.ephemeralAnchors(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project ephemeral anchors: %w", err)
+	}
 	if h.Routes != nil {
 		networkMap, routeErr := h.Routes.GetNetworkMap(ctx, selfPeer.ID)
 		if routeErr != nil {
@@ -399,6 +432,13 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, routeErr
 		}
 	}
+
+	// Issue #281. Advisory, like anchor-RTT above: a failure here never
+	// costs the node its netmap. Validated against resp.Routes (the offers
+	// this same response just computed), not a second fetch — self's
+	// gateway role for a route_id cannot have changed since four lines
+	// above computed it.
+	h.recordRouteObservations(ctx, self, accountID, req.GetRouteObservations(), resp.Routes)
 
 	for _, p := range peers {
 		if p.Key == self {
@@ -820,9 +860,124 @@ func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, report
 	}
 }
 
+// recordRouteObservations validates and records issue #281's per-route
+// egress telemetry.
+//
+// **Defense in depth, not trust.** `offers` is the same, just-computed
+// response this request is about to send self — so checking a reported
+// route_id against it is checking self's *current* authenticated gateway
+// role, not whatever self merely claims. A route_id self is not the
+// GATEWAY for (not offered at all, or offered to self in a RECIPIENT role)
+// is rejected outright: self could only have forwarded traffic for a route
+// it actually gateways, so a report for anything else is either a stale
+// client racing a revoked grant or a node misreporting, and either way
+// recording it would let one node pollute another's NOC-visible throughput.
+func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accountID string, reports []*proto.KarstRouteObservation, offers []*proto.KarstRouteOffer) {
+	if h.RouteTelemetry == nil || len(reports) == 0 {
+		return
+	}
+	gateways := make(map[string]struct{}, len(offers))
+	for _, offer := range offers {
+		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY && string(offer.GetGatewayId()) == self {
+			gateways[offer.GetRouteId()] = struct{}{}
+		}
+	}
+	for _, report := range reports {
+		routeID := report.GetRouteId()
+		if _, ok := gateways[routeID]; !ok {
+			log.WithFields(log.Fields{"node": self, "route": routeID}).
+				Warn("ignore Karst route observation for a route this node is not the current gateway for")
+			continue
+		}
+		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, report.GetBytes(), report.GetPackets()); err != nil {
+			// Advisory, like session/anchor-RTT telemetry above: a database
+			// failure here must not cost the node its netmap.
+			log.WithError(err).WithFields(log.Fields{"node": self, "route": routeID}).
+				Warn("record Karst route observation")
+		}
+	}
+}
+
 func regionAllowed(doc regionallow.Document, provider, region string) bool {
 	for _, allowed := range doc[provider] {
 		if allowed == region {
+			return true
+		}
+	}
+	return false
+}
+
+// ephemeralAnchors projects ADR-0045 §4d's ephemeral-anchor list and
+// duty-cycle schedule. Nil EphemeralAnchors (no store configured), or a
+// configured store with no anchors, produces a nil response field — the
+// same "feature not configured" shape allowedRegions uses above, and not
+// an error. An empty anchor list produces nil even when a schedule is set:
+// an admin who configured a duty cycle but added no anchor yet must not
+// cause any client or bins/karst-anchor-scheduler to do anything.
+//
+// Deployment-wide, not account-scoped, same as allowedRegions.
+func (h *NetmapHandler) ephemeralAnchors(ctx context.Context) (*proto.KarstEphemeralAnchors, error) {
+	if h.EphemeralAnchors == nil {
+		return nil, nil
+	}
+	anchors, err := h.EphemeralAnchors.Anchors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(anchors) == 0 {
+		return nil, nil
+	}
+	windowPeriodSeconds, dutyCycleSeconds, err := h.EphemeralAnchors.Schedule(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]*proto.KarstEphemeralAnchors_Entry, 0, len(anchors))
+	for _, a := range anchors {
+		entries = append(entries, &proto.KarstEphemeralAnchors_Entry{
+			Label:   a.Label,
+			Address: a.Address,
+			Port:    a.Port,
+		})
+	}
+	return &proto.KarstEphemeralAnchors{
+		Anchors:             entries,
+		WindowPeriodSeconds: windowPeriodSeconds,
+		DutyCycleSeconds:    dutyCycleSeconds,
+	}, nil
+}
+
+// recordEphemeralAnchorRTT validates and records §4d's ephemeral-anchor RTT
+// reports — the identical defense-in-depth posture recordAnchorRTT
+// documents above, re-checking every entry's label against the deployment's
+// *current* anchor list rather than trusting what a node claims.
+func (h *NetmapHandler) recordEphemeralAnchorRTT(ctx context.Context, self string, reports []*proto.KarstEphemeralAnchorRtt) {
+	if h.EphemeralAnchors == nil || len(reports) == 0 {
+		return
+	}
+	anchors, err := h.EphemeralAnchors.Anchors(ctx)
+	if err != nil {
+		log.WithError(err).WithField("node", self).Warn("load ephemeral anchors for RTT validation")
+		return
+	}
+	for _, report := range reports {
+		label := report.GetLabel()
+		if !ephemeralAnchorKnown(anchors, label) {
+			log.WithFields(log.Fields{"node": self, "label": label}).
+				Warn("ignore Karst ephemeral anchor RTT report for a label outside the deployment's anchor list")
+			continue
+		}
+		if err := h.EphemeralAnchors.RecordEphemeralAnchorRTT(ctx, label, report.GetRttMs()); err != nil {
+			// Advisory, like anchor_rtt above: a database failure here must
+			// not cost the node its netmap.
+			log.WithError(err).WithFields(log.Fields{"node": self, "label": label}).
+				Warn("record Karst ephemeral anchor RTT observation")
+		}
+	}
+}
+
+func ephemeralAnchorKnown(anchors []ephemeralanchor.AnchorEntry, label string) bool {
+	for _, a := range anchors {
+		if a.Label == label {
 			return true
 		}
 	}
@@ -1021,6 +1176,25 @@ func NetmapVersion(resp *proto.KarstNetmapResponse) uint64 {
 			writeField(h, []byte(region))
 		}
 	}
+
+	// ADR-0045 §4d's ephemeral-anchor list and duty-cycle schedule. The two
+	// schedule integers are hashed even though they are not per-entry: a
+	// schedule-only edit (duty_cycle_seconds changed, no anchor added or
+	// removed) must still move the version, or a node would never learn the
+	// new duty cycle. ephemeralAnchors already returns anchors sorted by
+	// label, so this hashes in the same deterministic order both ends agree
+	// on.
+	writeField(h, []byte("karst-ephemeral-anchors"))
+	for _, entry := range resp.GetEphemeralAnchors().GetAnchors() {
+		writeField(h, []byte(entry.GetLabel()))
+		writeField(h, []byte(entry.GetAddress()))
+		binary.BigEndian.PutUint32(buf[:4], entry.GetPort())
+		h.Write(buf[:4])
+	}
+	binary.BigEndian.PutUint32(buf[:4], resp.GetEphemeralAnchors().GetWindowPeriodSeconds())
+	h.Write(buf[:4])
+	binary.BigEndian.PutUint32(buf[:4], resp.GetEphemeralAnchors().GetDutyCycleSeconds())
+	h.Write(buf[:4])
 
 	sum := h.Sum(nil)
 	v := binary.BigEndian.Uint64(sum[:8])

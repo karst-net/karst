@@ -543,6 +543,8 @@ export type NocComponent = {
     label: string;
     health?: 'confirmed' | 'stale' | 'unknown';
     location?: RelayLocation;
+    bytes?: number;
+    packets?: number;
 };
 
 export type BedrockStatus = {

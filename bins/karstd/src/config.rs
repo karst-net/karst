@@ -247,7 +247,10 @@ pub struct TracingSection {
 pub struct ProbeSection {
     /// Measure TCP-handshake RTT to each allowlisted region's provider
     /// anchor and report it on the netmap request — see
-    /// [`crate::anchor_probe`]. Off by default.
+    /// [`crate::anchor_probe`]. Also gates ADR-0045 §4d's ephemeral-anchor
+    /// probe pass (see [`crate::ephemeral_anchor_probe`]) — one flag for
+    /// both, since both are the same outbound-probing risk this opt-in
+    /// exists to gate. Off by default.
     pub anchor_probe: bool,
 }
 
