@@ -2,7 +2,7 @@
 # Device compliance v1 — proposed implementation contract
 
 **Status:** Partially implemented: evaluation, ingestion, version collection,
-invalidation scheduling and an internal guardrail preview model.
+invalidation scheduling, internal guardrail preview and gate compilation.
 Resource guardrails and traffic enforcement remain proposed.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
@@ -18,8 +18,9 @@ writes, netmaps or packet enforcement.
 releases, with bounded challenge/report attempts on live supporting servers.
 Evidence change/expiry invalidations now use a durable retry queue and the peer
 notification path. The policy package also provides an internal draft guardrail
-validator and diagnostic evaluator. Policy activation, filter compilation and
-all traffic enforcement remain pending; #363 remains open.
+validator, diagnostic evaluator and device-specific mandatory gate compiler.
+Policy activation, netmap distribution and all traffic enforcement remain
+pending; #363 remains open.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -322,9 +323,57 @@ A passing preview's `ValidUntil` is only the evidence deadline. It is zero on
 denial and for unprotected traffic; it is not a renewable authorization lease.
 Tests cover device-specific evidence, failure/expiry/recovery, independent gates,
 overlapping guardrails, remediation conflicts, IPv4/IPv6 routed destinations,
-port boundaries and invalid subjects/references. Live policy preview APIs,
-device-specific filter compilation and the following enforcement contract remain
-unimplemented.
+port boundaries and invalid subjects/references. Live policy preview APIs and
+the following enforcement contract remain unimplemented.
+
+### Implemented internal gate compilation
+
+`Document.CompileCompliance` takes the draft, a complete tenant-scoped roster of
+enrolled device identities with latest trusted evidence, a target handle, current
+gateway-owned route prefixes for that target, and explicit evaluation time.
+It validates the draft and enrollment bindings before returning a separate
+mandatory gate snapshot. Missing reports and malformed, wrong-subject or
+nonpassing evidence omit that device from a gate's passing sources; they never
+remove the destination guardrail. Empty/duplicate/wildcard handles, invalid or
+duplicate tenant enrollments, missing/invalid owned addresses, invalid routes,
+unknown targets and missing evaluation time fail compilation with no snapshot.
+The compiler is an internal function, not an enrollment or route-authority API;
+its caller remains responsible for authoritative reads and tenant isolation.
+
+Ingress gates contain only protected intersections with the target's own
+addresses and the routed prefixes it currently gateways. CIDR intersections
+work for IPv4, IPv6 and default routes. A node selector protects that node's
+own addresses, not its forwarded LAN. Wildcards protect both. A standby that
+does not currently gateway a protected prefix receives no gate for that prefix.
+Egress gates resolve node selectors to owned destination addresses and retain
+explicit CIDRs as resource constraints, independent of currently available
+routes. They contain only the target device's own source decision.
+
+Every matching gate is mandatory, so passing one overlapping guardrail cannot
+bypass another. Passing source lists always name concrete enrolled handles;
+they cannot contain a source wildcard. Receiver/gateway decisions carry handles
+and evidence deadlines, without raw observations, versions or failure reasons.
+Guardrails, destination prefixes and source handles have deterministic ordering,
+and repeated prefixes are deduplicated. The identity and SSH filters remain
+separate; a passing compliance gate grants no identity or SSH permission.
+
+`IngressSatisfied` and `EgressSatisfied` are reference evaluators of this gate
+alone. They deny protected traffic for unknown/nonpassing sources and at the
+exact evidence deadline. Zero snapshots, invalid flow inputs and evaluation
+times before compilation fail closed. Unprotected traffic is unconstrained by
+compliance, while still requiring the independent grants. Recompilation derives
+deadlines from the original server receipt rather than restarting freshness.
+Snapshots must be rebuilt on evidence, policy, enrollment, selector or gateway
+ownership changes. Already compiled snapshots are not mutated by later reports.
+
+These are diagnostic Go snapshots with explicit wall-clock time, not wire permits,
+an atomic policy/evidence read protocol, or a packet-path implementation. They
+have no enforcement capability advertisement or policy activation path. The
+120-second lease bound, replay binding, suspend-aware elapsed time, revocation of
+cached flows and compatibility handling below remain unimplemented. Tests compare
+compiled decisions with the draft preview and cover same-user devices under
+overlapping unconditional identity grants, remediation, nonpassing evidence,
+expiry/recovery, overlapping guardrails, routed intersections and determinism.
 
 ### Proposed authorization and enforcement contract
 
