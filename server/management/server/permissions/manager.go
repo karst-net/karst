@@ -7,6 +7,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/netbirdio/netbird/management/internals/modules/meshdomain"
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/activity"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
@@ -22,11 +23,11 @@ type Manager interface {
 	ValidateUserPermissions(ctx context.Context, accountID, userID string, module modules.Module, operation operations.Operation) (bool, context.Context, error)
 	// ValidateDomainScopedPermission is ValidateUserPermissions, plus a
 	// fallback to the user's delegated mesh-domain admin bindings
-	// (ADR-0032) when the account-wide check fails. domainPath is the
-	// resource's mesh-domain Path, or "" for a resource with no domain
+	// (ADR-0032) when the account-wide check fails. domainID is the
+	// resource's stable domain ID, or "" for a resource with no domain
 	// (only an account-wide grant can ever satisfy that, since there is no
 	// domain to hold a delegation against).
-	ValidateDomainScopedPermission(ctx context.Context, accountID, userID, domainPath string, module modules.Module, operation operations.Operation) (bool, context.Context, error)
+	ValidateDomainScopedPermission(ctx context.Context, accountID, userID, domainID string, module modules.Module, operation operations.Operation) (bool, context.Context, error)
 	ValidateRoleModuleAccess(ctx context.Context, accountID string, role roles.RolePermissions, module modules.Module, operation operations.Operation) bool
 	ValidateAccountAccess(ctx context.Context, accountID string, user *types.User, allowOwnerAndAdmin bool) (context.Context, error)
 
@@ -104,7 +105,7 @@ func (m *managerImpl) ValidateDomainScopedPermission(
 	ctx context.Context,
 	accountID string,
 	userID string,
-	domainPath string,
+	domainID string,
 	module modules.Module,
 	operation operations.Operation,
 ) (bool, context.Context, error) {
@@ -112,7 +113,7 @@ func (m *managerImpl) ValidateDomainScopedPermission(
 	if err != nil || allowed {
 		return allowed, ctxOut, err
 	}
-	if domainPath == "" {
+	if domainID == "" {
 		return false, ctxOut, nil
 	}
 	if _, ok := domainDelegableModules[module]; !ok {
@@ -123,12 +124,14 @@ func (m *managerImpl) ValidateDomainScopedPermission(
 	if err != nil {
 		return false, ctxOut, err
 	}
-	for _, binding := range bindings {
-		if binding.Covers(domainPath) {
-			return true, ctxOut, nil
-		}
+	if len(bindings) == 0 {
+		return false, ctxOut, nil
 	}
-	return false, ctxOut, nil
+	domains, err := m.store.GetAccountDomains(ctx, store.LockingStrengthNone, accountID)
+	if err != nil {
+		return false, ctxOut, err
+	}
+	return meshdomain.NewAdminScope(accountID, userID, domains, bindings).Covers(domainID), ctxOut, nil
 }
 
 // ValidateRoleModuleAccess resolves an operation against the role's explicit

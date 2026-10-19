@@ -11,10 +11,8 @@ import "github.com/rs/xid"
 // requirement. It is purely additive: an account-wide role (owner, admin)
 // already covers every domain and never needs a binding.
 //
-// DomainPath is copied from the target Domain at bind time and used for
-// subtree containment checks (permissions.Manager.ValidateDomainScopedPermission)
-// without a second store round trip. Domains are append-only in this phase
-// (no re-parenting), so this denormalized copy cannot go stale.
+// DomainPath is retained as historical/display metadata. Authorization uses
+// DomainID and the current parent graph through AdminScope, never this cache.
 type DomainRoleBinding struct {
 	ID         string `gorm:"primaryKey"`
 	AccountID  string `gorm:"index"`
@@ -39,17 +37,4 @@ func NewDomainRoleBinding(accountID, domainID, domainPath, userID string) *Domai
 		DomainPath: domainPath,
 		UserID:     userID,
 	}
-}
-
-// Covers reports whether this binding's subtree contains the domain at
-// candidatePath -- either the delegated domain itself or a descendant of it.
-// Labels are already sanitized to [a-zA-Z0-9-] (Domain.Validate), so a
-// same-or-suffix-after-a-dot match cannot cross a label boundary by
-// accident.
-func (b *DomainRoleBinding) Covers(candidatePath string) bool {
-	if b.DomainPath == "" || candidatePath == "" {
-		return false
-	}
-	return candidatePath == b.DomainPath || len(candidatePath) > len(b.DomainPath) &&
-		candidatePath[len(candidatePath)-len(b.DomainPath)-1:] == "."+b.DomainPath
 }

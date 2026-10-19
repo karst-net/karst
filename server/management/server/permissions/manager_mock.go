@@ -82,9 +82,9 @@ func (mr *MockManagerMockRecorder) ValidateAccountAccess(ctx, accountID, user, a
 }
 
 // ValidateDomainScopedPermission mocks base method.
-func (m *MockManager) ValidateDomainScopedPermission(ctx context.Context, accountID, userID, domainPath string, module modules.Module, operation operations.Operation) (bool, context.Context, error) {
+func (m *MockManager) ValidateDomainScopedPermission(ctx context.Context, accountID, userID, domainID string, module modules.Module, operation operations.Operation) (bool, context.Context, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ValidateDomainScopedPermission", ctx, accountID, userID, domainPath, module, operation)
+	ret := m.ctrl.Call(m, "ValidateDomainScopedPermission", ctx, accountID, userID, domainID, module, operation)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(context.Context)
 	ret2, _ := ret[2].(error)
@@ -92,9 +92,9 @@ func (m *MockManager) ValidateDomainScopedPermission(ctx context.Context, accoun
 }
 
 // ValidateDomainScopedPermission indicates an expected call of ValidateDomainScopedPermission.
-func (mr *MockManagerMockRecorder) ValidateDomainScopedPermission(ctx, accountID, userID, domainPath, module, operation interface{}) *gomock.Call {
+func (mr *MockManagerMockRecorder) ValidateDomainScopedPermission(ctx, accountID, userID, domainID, module, operation interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateDomainScopedPermission", reflect.TypeOf((*MockManager)(nil).ValidateDomainScopedPermission), ctx, accountID, userID, domainPath, module, operation)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateDomainScopedPermission", reflect.TypeOf((*MockManager)(nil).ValidateDomainScopedPermission), ctx, accountID, userID, domainID, module, operation)
 }
 
 // ValidateRoleModuleAccess mocks base method.

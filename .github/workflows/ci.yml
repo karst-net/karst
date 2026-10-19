@@ -787,6 +787,8 @@ jobs:
       - run: go vet ./...
       - name: Karst packages
         run: go test -race ./management/internals/karst/...
+      - name: Mesh domain identity and delegated authorization
+        run: go test -race -count=1 ./management/internals/modules/meshdomain/... ./management/server/permissions/
       - name: Device usage operator controls
         run: go test -race ./management/cmd/karstusage ./management/cmd/admin
       - name: Device usage SQL integration
