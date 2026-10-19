@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use karst_scaler::advise::Recommendation;
 
-use crate::advise_loop::UnplaceableDemand;
+use crate::advise_loop::{self, UnplaceableDemand};
 
 /// How long a poll-for-shutdown iteration waits before checking again —
 /// mirrors `karstd::metrics_http`'s own constant.
@@ -70,6 +70,26 @@ pub(crate) struct Snapshot {
     /// static config `/metrics` needs alongside the live signal, with no
     /// second channel to fetch it from.
     pub latency_thresholds_ms: HashMap<String, f64>,
+    /// Issue #381: manual mode's own "suggested by RTT" output, computed
+    /// every tick regardless of ADR-0045 §7's Phase 1/2 mode — see
+    /// `advise_loop::LatencyBreach`.
+    pub latency_breaches: Vec<advise_loop::LatencyBreach>,
+    /// Issue #381: the other half of the same pair — see
+    /// `advise_loop::RegionCandidate`.
+    pub region_candidates: Vec<advise_loop::RegionCandidate>,
+}
+
+/// `GET /suggestions`'s own response — [`Snapshot`]'s two RTT-derived
+/// fields alone, not the whole [`Snapshot`] again: manual mode's
+/// suggested-by-RTT output is a deliberately separate signal from
+/// `/recommendations`'s cost-driven one (issue #381, Spike 0002 §3),
+/// proxied by `karst-control`'s own `scalerSuggestions` handler the same
+/// way `scalerRecommendations` already proxies `/recommendations`.
+#[derive(Debug, Clone, serde::Serialize)]
+struct Suggestions {
+    tick_unix: i64,
+    latency_breaches: Vec<advise_loop::LatencyBreach>,
+    region_candidates: Vec<advise_loop::RegionCandidate>,
 }
 
 /// Shared between `advise_loop`'s tick loop (writer) and this module's
@@ -172,7 +192,17 @@ fn handle(mut stream: TcpStream, snapshot: &SharedSnapshot) -> std::io::Result<(
                 .unwrap_or_else(|_| "{\"error\":\"could not encode recommendation\"}".to_owned());
             respond(&mut stream, "200 OK", "application/json", &body)
         }
-        ("/metrics" | "/recommendations", None) => respond(
+        ("/suggestions", Some(snap)) => {
+            let suggestions = Suggestions {
+                tick_unix: snap.tick_unix,
+                latency_breaches: snap.latency_breaches,
+                region_candidates: snap.region_candidates,
+            };
+            let body = serde_json::to_string(&suggestions)
+                .unwrap_or_else(|_| "{\"error\":\"could not encode suggestions\"}".to_owned());
+            respond(&mut stream, "200 OK", "application/json", &body)
+        }
+        ("/metrics" | "/recommendations" | "/suggestions", None) => respond(
             &mut stream,
             "503 Service Unavailable",
             "text/plain",
@@ -360,6 +390,17 @@ mod tests {
             }],
             region_p95_rtt_ms: HashMap::from([("eu-west-1".to_owned(), 120.0)]),
             latency_thresholds_ms: HashMap::from([("eu-west-1".to_owned(), 50.0)]),
+            latency_breaches: vec![advise_loop::LatencyBreach {
+                region: "eu-west-1".to_owned(),
+                p95_rtt_ms: 120.0,
+                threshold_ms: 50.0,
+            }],
+            region_candidates: vec![advise_loop::RegionCandidate {
+                provider: "aws".to_owned(),
+                region: "us-west-2".to_owned(),
+                estimated_p95_rtt_ms: 35.0,
+                observations: 42,
+            }],
         }
     }
 
@@ -422,9 +463,14 @@ mod tests {
         std::thread::scope(|scope| {
             let http_thread = scope.spawn(|| serve(bound, &snapshot, &shutdown));
             let got = get(bound, "/metrics");
+            let suggestions = get(bound, "/suggestions");
             shutdown.request();
             http_thread.join().expect("http thread").expect("serve");
             assert!(got.starts_with("HTTP/1.1 503"), "got {got:?}");
+            assert!(
+                suggestions.starts_with("HTTP/1.1 503"),
+                "got {suggestions:?}"
+            );
         });
     }
 
@@ -449,6 +495,20 @@ mod tests {
             assert!(recs.contains("200 OK"), "{recs}");
             assert!(recs.contains("\"pool_id\":\"aws-use1\""), "{recs}");
             assert!(recs.contains("\"configured_nodes\""), "{recs}");
+
+            let suggestions = get(bound, "/suggestions");
+            assert!(suggestions.contains("200 OK"), "{suggestions}");
+            assert!(
+                suggestions.contains("\"region\":\"eu-west-1\""),
+                "{suggestions}"
+            );
+            assert!(
+                suggestions.contains("\"region_candidates\""),
+                "{suggestions}"
+            );
+            // The suggestion sibling deliberately does not repeat
+            // /recommendations' own cost-driven data.
+            assert!(!suggestions.contains("\"pool_id\""), "{suggestions}");
 
             let missing = get(bound, "/nonsense");
             assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");

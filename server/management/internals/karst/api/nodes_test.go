@@ -2140,6 +2140,128 @@ func TestScalerRecommendationsIsAuditLoggedOnGET(t *testing.T) {
 	require.Equal(t, "karst.scaler.recommendations.view", entries[0].Action)
 }
 
+// scalerSuggestionsFixtureBody is a fixed karst-scaler advise
+// `/suggestions` body -- the exact shape metrics_http::Suggestions
+// serializes (issue #381), used across the scalerSuggestions tests below.
+const scalerSuggestionsFixtureBody = `{"tick_unix":1700000000,"latency_breaches":[{"region":"eu-west-1","p95_rtt_ms":120,"threshold_ms":50}],"region_candidates":[{"provider":"aws","region":"us-west-2","estimated_p95_rtt_ms":35,"observations":42}]}`
+
+// TestOnlyAdvisorRoleReachesScalerSuggestions mirrors
+// TestOnlyAdvisorRoleReachesScalerRecommendations: the sibling endpoint
+// needs the identical role gate for the identical reason.
+func TestOnlyAdvisorRoleReachesScalerSuggestions(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(scalerSuggestionsFixtureBody))
+	}))
+	defer upstream.Close()
+
+	for _, role := range []types.UserRole{
+		types.UserRoleOwner, types.UserRoleAdmin, types.UserRoleNetworkAdmin,
+		types.UserRoleAuditor, types.UserRoleNOC, types.UserRoleUser,
+	} {
+		router := mux.NewRouter()
+		RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: role}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+
+		request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+		request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "non-advisor-viewer"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equalf(t, http.StatusForbidden, response.Code, "role %s: %s", role, response.Body.String())
+	}
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
+// TestScalerSuggestionsIsPreconditionFailedWhenUnconfigured mirrors
+// TestScalerRecommendationsIsPreconditionFailedWhenUnconfigured.
+func TestScalerSuggestionsIsPreconditionFailedWhenUnconfigured(t *testing.T) {
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusPreconditionFailed, response.Code, response.Body.String())
+}
+
+// TestScalerSuggestionsProxiesUpstreamJSON mirrors
+// TestScalerRecommendationsProxiesUpstreamJSON.
+func TestScalerSuggestionsProxiesUpstreamJSON(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(scalerSuggestionsFixtureBody))
+	}))
+	defer upstream.Close()
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, "/suggestions", gotPath)
+	require.JSONEq(t, scalerSuggestionsFixtureBody, response.Body.String())
+}
+
+// TestScalerSuggestionsPropagatesUpstreamFailure mirrors
+// TestScalerRecommendationsPropagatesUpstreamFailure.
+func TestScalerSuggestionsPropagatesUpstreamFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("karst-scaler advise: no tick has completed yet\n"))
+	}))
+	defer upstream.Close()
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, scanAudit{}, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.NotEqual(t, http.StatusOK, response.Code, response.Body.String())
+}
+
+// TestScalerSuggestionsIsAuditLoggedOnGET mirrors
+// TestScalerRecommendationsIsAuditLoggedOnGET.
+func TestScalerSuggestionsIsAuditLoggedOnGET(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(scalerSuggestionsFixtureBody))
+	}))
+	defer upstream.Close()
+
+	db, err := gorm.Open(sqlite.Open("file:scaler-suggestions-audit?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	auditLog, err := audit.New(db)
+	require.NoError(t, err)
+
+	router := mux.NewRouter()
+	RegisterEndpoints(fakeNodes{}, fakePeers{}, nil, auditLog, nil, nil, nil, nil, nil, nil, scanPermissions{role: types.UserRoleAdvisor}, nil, nil, nil, upstream.URL, nil, nil, nil, nil, nil, nil, nil, nil, nil, router)
+
+	request := httptest.NewRequest(http.MethodGet, "/karst/v1/scaler/suggestions", nil)
+	request = nbcontext.SetUserAuthInRequest(request, auth.UserAuth{AccountId: "account-a", UserId: "advisor-viewer"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	entries, err := auditLog.List(context.Background(), 0, 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "advisor-viewer", entries[0].Actor)
+	require.Equal(t, "karst.scaler.suggestions.view", entries[0].Action)
+}
+
 // Relay responses are a public contract, not a direct dump of database fields.
 // Test the served route so tags, the response adapter, and its health field
 // cannot drift independently.

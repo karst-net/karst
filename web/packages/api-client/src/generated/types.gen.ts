@@ -531,6 +531,25 @@ export type ScalerRecommendations = {
     };
 };
 
+export type ScalerLatencyBreach = {
+    region: string;
+    p95_rtt_ms: number;
+    threshold_ms: number;
+};
+
+export type ScalerRegionCandidate = {
+    provider: string;
+    region: string;
+    estimated_p95_rtt_ms: number;
+    observations: number;
+};
+
+export type ScalerSuggestions = {
+    tick_unix: number;
+    latency_breaches: Array<ScalerLatencyBreach>;
+    region_candidates: Array<ScalerRegionCandidate>;
+};
+
 export type ScalingMode = {
     mode: 'automated' | 'manual';
 };
@@ -2370,6 +2389,31 @@ export type ScalerRecommendationsResponses = {
 };
 
 export type ScalerRecommendationsResponse = ScalerRecommendationsResponses[keyof ScalerRecommendationsResponses];
+
+export type ScalerSuggestionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/scaler/suggestions';
+};
+
+export type ScalerSuggestionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ScalerSuggestionsError = ScalerSuggestionsErrors[keyof ScalerSuggestionsErrors];
+
+export type ScalerSuggestionsResponses = {
+    /**
+     * The Advisor's latest latency-breach and region-candidate signals
+     */
+    200: ScalerSuggestions;
+};
+
+export type ScalerSuggestionsResponse = ScalerSuggestionsResponses[keyof ScalerSuggestionsResponses];
 
 export type GetScalingModeData = {
     body?: never;

@@ -265,6 +265,12 @@ fn tick(
             unplaceable_demand: outcome.unplaceable_demand.clone(),
             region_p95_rtt_ms: outcome.region_p95_rtt_ms.clone(),
             latency_thresholds_ms: doc.latency_thresholds.clone(),
+            // Issue #381: manual mode's own suggested-by-RTT output,
+            // computed every tick regardless of ADR-0045 §7's Phase 1/2
+            // mode -- so switching into manual mode later has immediate
+            // content, not an empty first tick.
+            latency_breaches: latency_breaches(doc, &outcome.region_p95_rtt_ms),
+            region_candidates: region_candidates(doc, &anchors),
         };
         *shared
             .lock()
@@ -300,7 +306,7 @@ fn tick(
     print_latency_breaches(doc, &outcome.region_p95_rtt_ms);
     let anchor_total: i64 = anchors.iter().map(|a| a.count).sum();
     println!(
-        "  anchors: {} rows, {anchor_total} total observations (candidate-region promotion not implemented)",
+        "  anchors: {} rows, {anchor_total} total observations",
         anchors.len()
     );
     for anchor in &anchors {
@@ -308,6 +314,22 @@ fn tick(
             "    {}/{} {}={}",
             anchor.provider, anchor.region, anchor.bucket, anchor.count
         );
+    }
+    let candidates = region_candidates(doc, &anchors);
+    if !candidates.is_empty() {
+        println!(
+            "  region candidates: {} region(s) with anchor observations but no pool today",
+            candidates.len()
+        );
+        for candidate in &candidates {
+            println!(
+                "    {}/{} estimated_p95_ms={} observations={}",
+                candidate.provider,
+                candidate.region,
+                candidate.estimated_p95_rtt_ms,
+                candidate.observations
+            );
+        }
     }
 
     Ok(())
@@ -421,6 +443,12 @@ fn sessions_to_nodes(total_sessions: i64) -> u32 {
 /// see [`region_p95_rtt_ms`] for how that case is represented.
 const RTT_BUCKET_BOUNDS_MS: [f64; 3] = [20.0, 50.0, 100.0];
 
+/// `AnchorHistogramRow::bucket`'s four names, in the same ascending order
+/// as [`RTT_BUCKET_BOUNDS_MS`] — `regionallow`'s own bucket constants
+/// (`server/management/internals/karst/regionallow/histogram.go`),
+/// ADR-0045 §4b.
+const ANCHOR_BUCKET_ORDER: [&str; 4] = ["under_20ms", "20_to_50ms", "50_to_100ms", "over_100ms"];
+
 /// ADR-0045 §3's Latency constraint: this tick's estimated p95 RTT, by
 /// region, summed across every account (latency is a property of
 /// "clients in region R" collectively, unlike [`attribute_demand`]'s own
@@ -447,51 +475,72 @@ fn region_p95_rtt_ms(rows: &[RegionDemandRow]) -> HashMap<String, f64> {
 
     buckets
         .into_iter()
-        .filter_map(|(region, counts)| {
-            let total: i64 = counts.iter().sum();
-            if total <= 0 {
-                return None;
-            }
-            #[allow(clippy::cast_precision_loss)]
-            let target = (total as f64 * 0.95).ceil();
-            let mut cumulative: i64 = 0;
-            for (i, count) in counts.iter().enumerate() {
-                cumulative += count;
-                #[allow(clippy::cast_precision_loss)]
-                if cumulative as f64 >= target {
-                    let p95 = RTT_BUCKET_BOUNDS_MS
-                        .get(i)
-                        .copied()
-                        .unwrap_or(f64::INFINITY);
-                    return Some((region, p95));
-                }
-            }
-            // Unreachable while `total > 0`: the loop above always
-            // reaches `cumulative == total >= target` by its last
-            // iteration. `f64::INFINITY` is still the honest answer if
-            // it somehow did not.
-            Some((region, f64::INFINITY))
-        })
+        .filter_map(|(region, counts)| p95_from_buckets(counts).map(|p95| (region, p95)))
         .collect()
 }
 
+/// Estimates p95 RTT from a four-bucket histogram in [`RTT_BUCKET_BOUNDS_MS`]'s
+/// own order — shared by [`region_p95_rtt_ms`] (relay session telemetry,
+/// keyed by region alone) and [`region_candidates`] (anchor observations,
+/// issue #381, keyed by `(provider, region)`): both ADR-0045 §4a and §4b
+/// report the identical four ranges, just grouped differently. Walks the
+/// buckets in ascending order, reports the first one whose cumulative count
+/// reaches `ceil(total * 0.95)`. `None` for a histogram with no
+/// observations at all — no signal, not a zero.
+fn p95_from_buckets(counts: [i64; 4]) -> Option<f64> {
+    let total: i64 = counts.iter().sum();
+    if total <= 0 {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let target = (total as f64 * 0.95).ceil();
+    let mut cumulative: i64 = 0;
+    for (i, count) in counts.iter().enumerate() {
+        cumulative += count;
+        #[allow(clippy::cast_precision_loss)]
+        if cumulative as f64 >= target {
+            return Some(
+                RTT_BUCKET_BOUNDS_MS
+                    .get(i)
+                    .copied()
+                    .unwrap_or(f64::INFINITY),
+            );
+        }
+    }
+    // Unreachable while `total > 0`: the loop above always reaches
+    // `cumulative == total >= target` by its last iteration.
+    // `f64::INFINITY` is still the honest answer if it somehow did not.
+    Some(f64::INFINITY)
+}
+
+/// Issue #381: promotes `advise_loop::tick`'s own latency-breach check to
+/// a named, serializable type — `metrics_http::Snapshot`'s
+/// `latency_breaches` field, and manual mode's own "suggested by RTT"
+/// output (Spike 0002 §3), not just a `println!` nobody else can read.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(crate) struct LatencyBreach {
+    pub region: String,
+    pub p95_rtt_ms: f64,
+    pub threshold_ms: f64,
+}
+
 /// Every region in `p95_by_region` whose estimate exceeds
-/// `doc.latency_thresholds`'s own entry for it, if any — `(region,
-/// estimated_p95_ms, threshold_ms)`, sorted by region for deterministic
-/// output. A region with no configured threshold, or whose estimate is
-/// within it, is absent.
-fn latency_breaches<'a>(
-    doc: &Document,
-    p95_by_region: &'a HashMap<String, f64>,
-) -> Vec<(&'a str, f64, f64)> {
-    let mut breaches: Vec<(&str, f64, f64)> = p95_by_region
+/// `doc.latency_thresholds`'s own entry for it, if any — sorted by region
+/// for deterministic output. A region with no configured threshold, or
+/// whose estimate is within it, is absent.
+fn latency_breaches(doc: &Document, p95_by_region: &HashMap<String, f64>) -> Vec<LatencyBreach> {
+    let mut breaches: Vec<LatencyBreach> = p95_by_region
         .iter()
         .filter_map(|(region, p95)| {
             let threshold = *doc.latency_thresholds.get(region)?;
-            (*p95 > threshold).then_some((region.as_str(), *p95, threshold))
+            (*p95 > threshold).then(|| LatencyBreach {
+                region: region.clone(),
+                p95_rtt_ms: *p95,
+                threshold_ms: threshold,
+            })
         })
         .collect();
-    breaches.sort_by(|a, b| a.0.cmp(b.0));
+    breaches.sort_by(|a, b| a.region.cmp(&b.region));
     breaches
 }
 
@@ -509,9 +558,93 @@ pub(crate) fn print_latency_breaches(doc: &Document, p95_by_region: &HashMap<Str
          (ADR-0045 §3)",
         breaches.len()
     );
-    for (region, p95, threshold) in breaches {
-        println!("    region={region} p95_ms={p95} threshold_ms={threshold}");
+    for breach in breaches {
+        println!(
+            "    region={} p95_ms={} threshold_ms={}",
+            breach.region, breach.p95_rtt_ms, breach.threshold_ms
+        );
     }
+}
+
+/// Issue #381: a region with anchor-RTT observations but **no pool at
+/// all** today — the gap `advise_loop::tick` used to log as
+/// "candidate-region promotion not implemented." Manual mode's other
+/// "suggested by RTT" signal, alongside [`LatencyBreach`] (Spike 0002
+/// §3) — both are RTT-derived, which is what pairs them as one
+/// suggestion output, not a shared type.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(crate) struct RegionCandidate {
+    pub provider: String,
+    pub region: String,
+    pub estimated_p95_rtt_ms: f64,
+    pub observations: i64,
+}
+
+/// Ranks `anchors` for every `(provider, region)` pair not already
+/// covered by one of `doc.pools` — using the identical
+/// [`p95_from_buckets`] estimation `region_p95_rtt_ms` already applies to
+/// relay session telemetry, generalized from four fixed struct fields to
+/// `AnchorHistogramRow`'s own open-ended `bucket` string key
+/// (`regionallow`'s four bucket names, ADR-0045 §4b) grouped by
+/// `(provider, region)` rather than region alone, since an anchor's own
+/// provider is part of its identity the way a relay session's region
+/// demand is not.
+///
+/// Sorted by estimated p95 ascending (lowest latency first) — a crude
+/// stand-in for "which candidate region looks most worth standing up a
+/// pool in," not a claim it is the right ranking formula (same posture
+/// `PLACEHOLDER_SESSIONS_PER_NODE` already has elsewhere in this module).
+fn region_candidates(doc: &Document, anchors: &[AnchorHistogramRow]) -> Vec<RegionCandidate> {
+    let covered: std::collections::HashSet<(&str, &str)> = doc
+        .pools
+        .values()
+        .map(|pool| (pool.provider.as_str(), pool.region.as_str()))
+        .collect();
+
+    let mut buckets: HashMap<(String, String), [i64; 4]> = HashMap::new();
+    for anchor in anchors {
+        if covered.contains(&(anchor.provider.as_str(), anchor.region.as_str())) {
+            continue;
+        }
+        let Some(index) = ANCHOR_BUCKET_ORDER
+            .iter()
+            .position(|bucket| *bucket == anchor.bucket)
+        else {
+            continue; // an unrecognized bucket name -- ignored, not guessed at
+        };
+        let entry = buckets
+            .entry((anchor.provider.clone(), anchor.region.clone()))
+            .or_insert([0; 4]);
+        // `index` is always < 4 -- it came from `ANCHOR_BUCKET_ORDER`'s own
+        // `.position()` just above -- but `get_mut` over a bare `[index]`
+        // keeps this crate's workspace-wide `clippy::indexing_slicing` deny
+        // satisfied without an `#[allow]`.
+        if let Some(count) = entry.get_mut(index) {
+            *count += anchor.count;
+        }
+    }
+
+    let mut candidates: Vec<RegionCandidate> = buckets
+        .into_iter()
+        .filter_map(|((provider, region), counts)| {
+            let observations: i64 = counts.iter().sum();
+            let estimated_p95_rtt_ms = p95_from_buckets(counts)?;
+            Some(RegionCandidate {
+                provider,
+                region,
+                estimated_p95_rtt_ms,
+                observations,
+            })
+        })
+        .collect();
+    candidates.sort_by(|a, b| {
+        a.estimated_p95_rtt_ms
+            .partial_cmp(&b.estimated_p95_rtt_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.provider.cmp(&b.provider))
+            .then_with(|| a.region.cmp(&b.region))
+    });
+    candidates
 }
 
 /// `pub(crate)`: `drive_loop` (ADR-0045 §7 Phase 2, issue #382) fetches its
@@ -795,6 +928,87 @@ mod tests {
 
         let breaches = latency_breaches(&doc, &p95_by_region);
 
-        assert_eq!(breaches, vec![("eu-west-1", 120.0, 50.0)]);
+        assert_eq!(
+            breaches,
+            vec![LatencyBreach {
+                region: "eu-west-1".to_owned(),
+                p95_rtt_ms: 120.0,
+                threshold_ms: 50.0,
+            }]
+        );
+    }
+
+    fn anchor(provider: &str, region: &str, bucket: &str, count: i64) -> AnchorHistogramRow {
+        AnchorHistogramRow {
+            provider: provider.to_owned(),
+            region: region.to_owned(),
+            bucket: bucket.to_owned(),
+            count,
+        }
+    }
+
+    #[test]
+    fn region_candidates_excludes_regions_a_pool_already_covers() {
+        let mut doc = Document::default();
+        doc.pools.insert(
+            "aws-covered".to_owned(),
+            Pool {
+                provider: Provider::Aws,
+                ..pool_with_kind("us-east-1", &[], PoolKind::Relay)
+            },
+        );
+        let anchors = vec![
+            anchor("aws", "us-east-1", "under_20ms", 10), // already has a pool
+            anchor("aws", "us-west-2", "under_20ms", 10), // no pool anywhere
+        ];
+
+        let candidates = region_candidates(&doc, &anchors);
+
+        assert_eq!(
+            candidates,
+            vec![RegionCandidate {
+                provider: "aws".to_owned(),
+                region: "us-west-2".to_owned(),
+                estimated_p95_rtt_ms: 20.0,
+                observations: 10,
+            }]
+        );
+    }
+
+    #[test]
+    fn region_candidates_ranks_lowest_estimated_latency_first() {
+        let doc = Document::default();
+        let anchors = vec![
+            anchor("aws", "us-west-2", "50_to_100ms", 10),
+            anchor("aws", "eu-central-1", "under_20ms", 10),
+        ];
+
+        let candidates = region_candidates(&doc, &anchors);
+
+        assert_eq!(
+            candidates,
+            vec![
+                RegionCandidate {
+                    provider: "aws".to_owned(),
+                    region: "eu-central-1".to_owned(),
+                    estimated_p95_rtt_ms: 20.0,
+                    observations: 10,
+                },
+                RegionCandidate {
+                    provider: "aws".to_owned(),
+                    region: "us-west-2".to_owned(),
+                    estimated_p95_rtt_ms: 100.0,
+                    observations: 10,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn region_candidates_ignores_an_unrecognized_bucket_name() {
+        let doc = Document::default();
+        let anchors = vec![anchor("aws", "us-west-2", "not_a_real_bucket", 10)];
+
+        assert!(region_candidates(&doc, &anchors).is_empty());
     }
 }
