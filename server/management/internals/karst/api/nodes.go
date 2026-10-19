@@ -42,6 +42,7 @@ import (
 	karstpolicy "github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
@@ -155,6 +156,11 @@ type handler struct {
 	// h.anchors is demandReader, a different table in a different
 	// package) rather than reusing either.
 	ephemeralAnchors ephemeralAnchorReadWriter
+	// routeTelemetry is issue #281's per-route egress byte/packet counts,
+	// self-reported by each route's current gateway -- nil in a deployment
+	// that has not configured a route telemetry store, see
+	// routeGroupComponents.
+	routeTelemetry routeTelemetryReader
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -186,6 +192,15 @@ type cpLocationReader interface {
 // package depends on.
 type routeLister interface {
 	ListRoutes(ctx context.Context, accountID, userID string) ([]*route.Route, error)
+}
+
+// routeTelemetryReader is issue #281's per-route egress telemetry read
+// side -- see package routetelemetry. Write-side (RecordRouteBytes) is
+// control.NetmapHandler's own concern, not exposed through this console
+// API at all: a route's gateway reports it over the control channel, an
+// admin never writes it directly.
+type routeTelemetryReader interface {
+	LatestByRoute(ctx context.Context, accountID string) (map[string]routetelemetry.StoredRouteBytes, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -253,6 +268,15 @@ type nocComponent struct {
 	// telemetry-derived health to report.
 	Health   string        `json:"health,omitempty"`
 	Location *geo.Location `json:"location,omitempty"`
+	// Bytes/Packets are issue #281's aggregate egress throughput, populated
+	// only for Kind: "route" (summed across every route the group serves)
+	// -- nil wherever no gateway for this group has yet self-reported any,
+	// the same "nil, not zero, until something real has arrived" posture
+	// relayHealth.Bytes already has for relays. Egress (client ->
+	// destination) only, never a destination breakdown -- see
+	// routetelemetry's own doc comment on why.
+	Bytes   *int64 `json:"bytes,omitempty"`
+	Packets *int64 `json:"packets,omitempty"`
 }
 
 func unknownRelayHealth() relayHealth {
@@ -490,8 +514,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -2200,7 +2224,21 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 	if err != nil {
 		return nil, err
 	}
+	// Issue #281: looked up once, by route_id, then summed per group below
+	// -- a group can serve more than one route, and a route's throughput
+	// is reported keyed by route_id (the unit a gateway is actually
+	// authorized for), never by group directly.
+	var telemetry map[string]routetelemetry.StoredRouteBytes
+	if h.routeTelemetry != nil {
+		telemetry, err = h.routeTelemetry.LatestByRoute(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	netIDsByGroup := make(map[string][]string)
+	bytesByGroup := make(map[string]int64)
+	packetsByGroup := make(map[string]int64)
+	reportedByGroup := make(map[string]bool)
 	for _, r := range routes {
 		if !r.Enabled {
 			continue
@@ -2210,6 +2248,11 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 				continue
 			}
 			netIDsByGroup[groupID] = append(netIDsByGroup[groupID], string(r.NetID))
+			if report, ok := telemetry[string(r.GetResourceID())]; ok {
+				bytesByGroup[groupID] += int64(report.Bytes)
+				packetsByGroup[groupID] += int64(report.Packets)
+				reportedByGroup[groupID] = true
+			}
 		}
 	}
 
@@ -2221,12 +2264,17 @@ func (h *handler) routeGroupComponents(ctx context.Context, accountID, userID st
 		if gl.Label != "" {
 			label = gl.Label
 		}
-		result = append(result, nocComponent{
+		component := nocComponent{
 			Kind:     "route",
 			ID:       groupID,
 			Label:    label,
 			Location: &geo.Location{Lat: gl.Lat, Lon: gl.Lon, Label: gl.Label},
-		})
+		}
+		if reportedByGroup[groupID] {
+			bytes, packets := bytesByGroup[groupID], packetsByGroup[groupID]
+			component.Bytes, component.Packets = &bytes, &packets
+		}
+		result = append(result, component)
 	}
 	// Deterministic order: every other list in this response is already
 	// ordered by its own store (List's own "Order(id)"/"Order(group_id)");

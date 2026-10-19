@@ -133,6 +133,16 @@ type NetmapHandler struct {
 		RecordEphemeralAnchorRTT(ctx context.Context, label string, rttMs uint32) error
 	}
 
+	// RouteTelemetry is issue #281's account-scoped, latest-snapshot-only
+	// sink for per-route egress byte/packet counts self-reported by each
+	// route's current gateway. Nil means the deployment has not configured
+	// one — every KarstRouteObservation is then silently dropped, the same
+	// "nil store, no-op" posture every other optional store on this handler
+	// already has.
+	RouteTelemetry interface {
+		RecordRouteBytes(ctx context.Context, accountID, routeID string, bytes, packets uint64) error
+	}
+
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
 	Relays     []*proto.KarstRelay
@@ -422,6 +432,13 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 			return nil, routeErr
 		}
 	}
+
+	// Issue #281. Advisory, like anchor-RTT above: a failure here never
+	// costs the node its netmap. Validated against resp.Routes (the offers
+	// this same response just computed), not a second fetch — self's
+	// gateway role for a route_id cannot have changed since four lines
+	// above computed it.
+	h.recordRouteObservations(ctx, self, accountID, req.GetRouteObservations(), resp.Routes)
 
 	for _, p := range peers {
 		if p.Key == self {
@@ -839,6 +856,44 @@ func (h *NetmapHandler) recordAnchorRTT(ctx context.Context, self string, report
 			// must not cost the node its netmap.
 			log.WithError(err).WithFields(log.Fields{"node": self, "provider": provider, "region": region}).
 				Warn("record Karst anchor RTT observation")
+		}
+	}
+}
+
+// recordRouteObservations validates and records issue #281's per-route
+// egress telemetry.
+//
+// **Defense in depth, not trust.** `offers` is the same, just-computed
+// response this request is about to send self — so checking a reported
+// route_id against it is checking self's *current* authenticated gateway
+// role, not whatever self merely claims. A route_id self is not the
+// GATEWAY for (not offered at all, or offered to self in a RECIPIENT role)
+// is rejected outright: self could only have forwarded traffic for a route
+// it actually gateways, so a report for anything else is either a stale
+// client racing a revoked grant or a node misreporting, and either way
+// recording it would let one node pollute another's NOC-visible throughput.
+func (h *NetmapHandler) recordRouteObservations(ctx context.Context, self, accountID string, reports []*proto.KarstRouteObservation, offers []*proto.KarstRouteOffer) {
+	if h.RouteTelemetry == nil || len(reports) == 0 {
+		return
+	}
+	gateways := make(map[string]struct{}, len(offers))
+	for _, offer := range offers {
+		if offer.GetRole() == proto.KarstRouteRole_KARST_ROUTE_ROLE_GATEWAY && string(offer.GetGatewayId()) == self {
+			gateways[offer.GetRouteId()] = struct{}{}
+		}
+	}
+	for _, report := range reports {
+		routeID := report.GetRouteId()
+		if _, ok := gateways[routeID]; !ok {
+			log.WithFields(log.Fields{"node": self, "route": routeID}).
+				Warn("ignore Karst route observation for a route this node is not the current gateway for")
+			continue
+		}
+		if err := h.RouteTelemetry.RecordRouteBytes(ctx, accountID, routeID, report.GetBytes(), report.GetPackets()); err != nil {
+			// Advisory, like session/anchor-RTT telemetry above: a database
+			// failure here must not cost the node its netmap.
+			log.WithError(err).WithFields(log.Fields{"node": self, "route": routeID}).
+				Warn("record Karst route observation")
 		}
 	}
 }
