@@ -839,3 +839,41 @@ message ChannelInit {
 
   uint32 version = 6;
 }
+
+// Compliance ingestion v1, request kind 5 inside the authenticated control
+// channel. This only collects self-reported evidence; it grants no access.
+// No tenant/device/provenance/receipt timestamp is accepted from the client.
+message KarstComplianceRequest {
+  uint32 schema_version = 1; // must be 1
+  oneof operation {
+    bool challenge = 2; // must be true; replaces any outstanding challenge
+    KarstComplianceReport report = 3;
+  }
+}
+
+message KarstComplianceReport {
+  bytes challenge = 1; // exactly the 32 bytes returned by the server
+  string collector_version = 2; // nonempty, at most 128 bytes
+  string platform = 3; // linux, darwin, windows; others evaluate unsupported
+  string distribution = 4; // Linux distribution ID, at most 64 bytes
+  KarstComplianceObservation client_version = 5;
+  KarstComplianceObservation os_version = 6;
+}
+
+message KarstComplianceObservation {
+  enum Status {
+    MISSING = 0;
+    COLLECTED = 1;
+    UNSUPPORTED = 2;
+    COLLECTION_ERROR = 3;
+  }
+  Status status = 1;
+  string version = 2; // at most 128 bytes; only valid when COLLECTED
+}
+
+message KarstComplianceResponse {
+  uint32 schema_version = 1; // 1
+  bytes challenge = 2; // challenge replies only; 32 random bytes
+  uint32 valid_for_seconds = 3; // 60; server receipt must be before expiry
+  bool accepted = 4; // report replies only; never a compliance verdict
+}
