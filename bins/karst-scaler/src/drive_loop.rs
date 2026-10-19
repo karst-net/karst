@@ -23,8 +23,43 @@ use std::path::Path;
 use karst_scaler::cost_model::Document;
 use karst_scaler::driver::Driver;
 use karst_scaler::position::Position;
+use serde::Deserialize;
 
 use crate::advise_loop::{self, Config};
+
+/// The wire shape `GET /karst/v1/scaling/mode` answers with — see
+/// `server/management/internals/karst/api/nodes.go`'s `scalingModeWire`.
+#[derive(Debug, Deserialize)]
+struct ScalingModeWire {
+    mode: String,
+}
+
+/// ADR-0045 §7's Phase 1 (manual)/Phase 2 (automated) actuation switch,
+/// issues #356/#379/#380/#382.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalingMode {
+    Automated,
+    Manual,
+}
+
+/// Fetches the deployment's current scaling mode, the same `agent`/`Config`
+/// (control-API base, Advisor-scoped PAT) `advise_loop::fetch` already uses
+/// for `/demand/regions` and `/demand/anchors` — no new transport, no new
+/// credential. An unrecognized `mode` value is treated the same as a
+/// transport error: this binary fails closed on anything it cannot
+/// positively parse as "automated" rather than guessing.
+fn fetch_scaling_mode(agent: &ureq::Agent, config: &Config) -> Result<ScalingMode, String> {
+    let wire: ScalingModeWire = advise_loop::fetch(agent, config, "/karst/v1/scaling/mode")?;
+    parse_scaling_mode(&wire.mode)
+}
+
+fn parse_scaling_mode(mode: &str) -> Result<ScalingMode, String> {
+    match mode {
+        "automated" => Ok(ScalingMode::Automated),
+        "manual" => Ok(ScalingMode::Manual),
+        other => Err(format!("unrecognized scaling mode {other:?}")),
+    }
+}
 
 /// Runs the reconciliation loop forever, logging each tick and continuing
 /// past a single tick's failure — matching `advise_loop::run`'s own
@@ -58,6 +93,13 @@ fn tick(
     driver: &mut dyn Driver,
 ) -> Result<(), String> {
     let outcome = advise_loop::tick_recommendation(doc, positions, config, agent)?;
+    // Issue #382. Fetched fresh every tick, never cached: a missed fetch
+    // fails this tick closed (`?` below, caught by `run`'s own "log and
+    // sleep" loop) rather than actuating on a guessed or stale mode. A
+    // missed tick of automated scaling self-heals next tick; actuating in
+    // automated mode on stale confirmation of a kill-switch is exactly the
+    // failure ADR-0045 §6's circuit breaker exists to avoid elsewhere.
+    let mode = fetch_scaling_mode(agent, config)?;
 
     println!(
         "tick_unix={} pools={} total_cost_delta={:.2}",
@@ -73,6 +115,11 @@ fn tick(
         );
     }
     advise_loop::print_latency_breaches(doc, &outcome.region_p95_rtt_ms);
+
+    if mode == ScalingMode::Manual {
+        println!("  mode=manual: not actuating (recommendation computed above)");
+        return Ok(());
+    }
     for pool in &outcome.recommendation.pools {
         reconcile(driver, &pool.pool_id, pool.desired_nodes)?;
     }
@@ -199,5 +246,20 @@ mod tests {
         reconcile(&mut driver, "a", 0).expect("reconciles");
         assert!(driver.list("a").expect("lists").is_empty());
         assert_eq!(driver.list("b").expect("lists").len(), 1);
+    }
+
+    #[test]
+    fn parse_scaling_mode_accepts_automated_and_manual() {
+        assert_eq!(parse_scaling_mode("automated"), Ok(ScalingMode::Automated));
+        assert_eq!(parse_scaling_mode("manual"), Ok(ScalingMode::Manual));
+    }
+
+    #[test]
+    fn parse_scaling_mode_rejects_anything_else() {
+        // Fail closed on anything not positively recognized -- same
+        // posture as a transport error, not a silent default to
+        // automated.
+        assert!(parse_scaling_mode("sometimes").is_err());
+        assert!(parse_scaling_mode("").is_err());
     }
 }
