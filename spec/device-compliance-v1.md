@@ -24,6 +24,8 @@ Policy activation, netmap distribution and all traffic enforcement remain
 pending; #363 remains open.
 Reserved permit messages, Go structural validation and Go/Rust wire vectors are
 also implemented. They have no active request kind or enforcement capability.
+The Rust control client has a standalone receiver/reference evaluator using
+caller-supplied elapsed time; it is not integrated with the client or datapath.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -385,7 +387,7 @@ expiry/recovery, overlapping guardrails, routed intersections and determinism.
 protobuf contract with Go/Rust agreement vectors in
 `spec/vectors/device-compliance-permits-v1.json`. These standalone messages are
 not attached to a request kind, netmap field or capability advertisement. No
-server issues them and no client installs or enforces them. Ingestion schema 1
+server issues them and no running client installs or enforces them. Ingestion schema 1
 continues to mean evidence ingestion only.
 
 A schema-1 request carries a fresh 32-byte nonce. The response echoes it and
@@ -428,8 +430,48 @@ negotiation must reject unknown versions for protected access.
 Tests cover binding substitution, validity bounds, unknown enums, invalid ports,
 CIDRs and references, wildcard/duplicate sources, inconsistent evidence
 generations and deny-all snapshots. These validators and wire vectors do not
-implement permit issuance, atomic snapshot reads, receiver validation/installation,
-nonce lifecycle, capability negotiation or the 120-second datapath bound.
+implement permit issuance, atomic snapshot reads, capability negotiation or the
+120-second datapath bound. The standalone receiver API below handles structural
+validation and request consumption without activating the protocol.
+
+### Standalone Rust permit receiver
+
+`karst-control-client::compliance` accepts the reserved Go-produced snapshots.
+`PendingPermitRequest` holds trusted tenant/enrollment/policy context, a caller's
+fresh 32-byte nonce and the local request-start timestamp. Its `accept` method
+consumes the pending value even on error. It validates every gate/source before
+returning a `PermitSnapshot`; malformed or substituted candidates cannot be
+partially installed. Request and installed types are neither cloneable nor
+serializable. The caller must supply a fresh CSPRNG nonce for each request,
+drop replaced/timed-out requests, and drop requests/snapshots on reconnect,
+restart or a change in trusted policy/enrollment context. The helper does not
+generate randomness or maintain a history of caller-supplied nonces.
+
+Structural checks mirror the Go validator: schema, bindings, validity budgets,
+canonical handles/CIDRs, protocols, port ranges, duplicate resources/sources,
+consistent enrollment/generation bindings and egress ownership. Parsed private
+gates contain concrete passing handles and request-relative deadlines. Transit
+time consumes validity. Arriving exactly at global snapshot expiry is rejected;
+a source already expired within an otherwise valid snapshot cannot satisfy its
+gate. A missing snapshot has no construction path to a passing result.
+
+`PermitSnapshot::ingress_satisfied` and `egress_satisfied` are reference
+compliance-only verdicts. All matching gates apply with AND, exact source expiry
+denies protected traffic, and unmatched traffic remains unconstrained only while
+the global snapshot is valid. Global expiry denies all reference verdicts,
+including for unmatched resources. Identity/SSH checks still apply independently;
+remediation during control loss needs an explicit integration policy, not an
+expired snapshot. A backwards clock sample permanently invalidates that snapshot,
+and moving time forward again cannot restore it.
+
+All timestamps are caller-supplied `Duration` values from one suspend-aware
+elapsed clock with a stable origin. This module reads no wall clock or platform
+clock; `std::time::Instant` does not provide portable suspend accounting. Tests
+inject transit, sleep-sized elapsed jumps, rollback, exact expiry and arithmetic
+overflow, and consume the Go wire vectors. Platform clock integration, live
+requests, capability negotiation, authoritative issuance, cached-flow revocation
+and datapath enforcement remain pending. These tests establish reference behavior,
+not a measured suspend/offline revocation bound on real devices.
 
 ### Proposed authorization and enforcement contract
 
