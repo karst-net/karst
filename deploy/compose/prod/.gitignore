@@ -14,3 +14,9 @@ docker-compose.override.yml
 # oidcClientId — a generic build artifact, not this host's Keycloak realm)
 # with this deployment's real OIDC values.
 config.json
+
+# The public CA root copied out of Caddy's persistent signing identity for
+# client trust (see README.md's "Console TLS trust" section). Not a secret,
+# but specific to this deployment and reproducible at any time from Caddy's
+# own `state/caddy` data volume, so it is kept locally rather than tracked.
+karst-console-root.crt
