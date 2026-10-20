@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { createAuth } from "@karst-net/auth";
+import { createAuth, SessionExpiredError } from "@karst-net/auth";
 
 const oidc = vi.hoisted(() => ({
   signinSilent: vi.fn(),
@@ -52,7 +52,7 @@ test("failed renewal redirects once without sending anonymous API requests", asy
 test("an already expired renewal result cannot authorize a request", async () => {
   const auth = createAuth();
   oidc.signinSilent.mockResolvedValue(user(true));
-  await expect(auth.authenticatedFetch("/api/accounts")).rejects.toThrow("session has expired");
+  await expect(auth.authenticatedFetch("/api/accounts")).rejects.toThrow(SessionExpiredError);
   expect(apiFetch).not.toHaveBeenCalled();
   expect(oidc.signinRedirect).toHaveBeenCalledTimes(1);
 });
@@ -73,7 +73,7 @@ test("a rejected renewed token forces login after one retry", async () => {
   oidc.signinSilent.mockResolvedValue(user());
   await auth.bootstrap(config);
   apiFetch.mockImplementation(() => Promise.resolve(new Response(null, { status: 401 })));
-  await expect(auth.authenticatedFetch("/api/accounts")).rejects.toThrow("session has expired");
+  await expect(auth.authenticatedFetch("/api/accounts")).rejects.toThrow(SessionExpiredError);
   expect(apiFetch).toHaveBeenCalledTimes(2);
   expect(oidc.signinSilent).toHaveBeenCalledTimes(2);
   expect(oidc.signinRedirect).toHaveBeenCalledTimes(1);
