@@ -723,6 +723,40 @@ whatever the operator already trusts.
 > to enforce (same posture as the second bullet below's tag-scoped IAM
 > policy, just not yet mechanically checked at creation time the way the
 > allowlist is checked in the driver).
+>
+> **Addendum, 2026-10-20.** The previous addendum's claim that `read_write`
+> credentials are "not connected to any provisioning call" is narrowed by
+> exactly one named exception: `cloudaccounts.Store.EnableLocalZone` (AWS's
+> `ModifyAvailabilityZoneGroup`), which opts a Local Zone's zone *group*
+> into use. This exists because `read_only`'s own local-zone discovery
+> (above) only ever lists zones already opted in — a Local Zone nobody has
+> opted into yet is otherwise invisible to this feature forever, with no
+> operator-facing path to change that short of the AWS CLI/Console, defeating
+> the Authorized Locations picker's purpose for exactly the zones most worth
+> picking.
+>
+> This is accepted as a narrow exception, not a reopening of Phase 2, for
+> three reasons specific to this one call:
+>
+> - **It does not create, modify, or destroy a billable resource.** Opting
+>   in only makes the zone's resource types launchable; a separate,
+>   still-unbuilt create call (Phase 2) is required before anything is
+>   actually provisioned there. It is a capability unlock, not actuation —
+>   the same distinction the first addendum draws for `read_write` storage
+>   itself, just one step further.
+> - **It is a one-way door, and the UI must treat it as one.** AWS provides
+>   no opt-out API for a Local Zone group — undoing this requires
+>   contacting AWS Support. The console must get an explicit operator
+>   confirmation naming this specific zone immediately before the request
+>   is sent, not merely disclose it once when the credential was created.
+> - **It is gated identically to credential create/delete**
+>   (`requireCloudAccountAdminRole`: owner or admin only), scoped to
+>   `ModeReadWrite` and provider `aws` in `EnableLocalZone` itself — not
+>   only in the handler — and it is the *only* mutating call this package
+>   makes. Extending this precedent to any other provisioning call still
+>   requires Phase 2's safeguards (drivers, signed enrollment, the budget
+>   circuit breaker); this addendum authorizes this one call, not the
+>   pattern of adding calls piecemeal.
 
 ### 7. Phasing
 
