@@ -5,7 +5,9 @@ package firstrun
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -110,5 +112,45 @@ func TestGetWithoutAccountScopeFails(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.Get(context.Background()); err != ErrNoAccount {
 		t.Fatalf("got %v, want ErrNoAccount", err)
+	}
+}
+
+// api/nodes.go's firstRunGet/firstRunComplete serialize *StoredState
+// directly as the API's FirstRunState -- karst-openapi.yml's schema for it
+// has exactly `completed`/`completed_at`, and nothing caught it drifting
+// from Go's default (capitalized, untagged) field names until a live
+// deployment's console got stuck on "Loading" forever: state.completed
+// read against {"Completed":true} is just undefined, so
+// useFirstRunCompleted's `completed` state never leaves that same
+// undefined it starts at.
+func TestStoredStateWireShape(t *testing.T) {
+	at := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	raw, err := json.Marshal(&StoredState{AccountID: "acct-a", Completed: true, CompletedAt: &at})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decoded["completed"].(bool); !ok {
+		t.Fatalf("got %s, want a boolean \"completed\" field", raw)
+	}
+	if _, ok := decoded["completed_at"]; !ok {
+		t.Fatalf("got %s, want a \"completed_at\" field", raw)
+	}
+	if _, ok := decoded["AccountID"]; ok {
+		t.Fatalf("got %s, want AccountID (internal bookkeeping, not in karst-openapi.yml's FirstRunState) left off the wire", raw)
+	}
+	incomplete, err := json.Marshal(&StoredState{AccountID: "acct-b", Completed: false})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decodedIncomplete map[string]any
+	if err := json.Unmarshal(incomplete, &decodedIncomplete); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decodedIncomplete["completed_at"]; ok {
+		t.Fatalf("got %s, want completed_at omitted when nil, matching the schema's optional field", incomplete)
 	}
 }

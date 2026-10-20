@@ -42,10 +42,16 @@ func accountFromContext(ctx context.Context) (string, error) {
 
 // StoredState is one account's first-run completion record. Absence means
 // "not completed" -- see the package doc comment for why that is safe.
+//
+// Serialized directly as the API's FirstRunState (api/nodes.go's
+// firstRunGet/firstRunComplete) -- the json tags below are that wire
+// contract (karst-openapi.yml's FirstRunState schema: `completed`,
+// `completed_at`), not incidental. AccountID is internal bookkeeping, not
+// part of that schema, so it stays off the wire.
 type StoredState struct {
-	AccountID   string `gorm:"primaryKey;size:64"`
-	Completed   bool
-	CompletedAt *time.Time
+	AccountID   string     `gorm:"primaryKey;size:64" json:"-"`
+	Completed   bool       `json:"completed"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 func (StoredState) TableName() string { return "karst_first_run" }
