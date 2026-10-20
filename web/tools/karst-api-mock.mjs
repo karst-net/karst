@@ -88,6 +88,37 @@ let allowedRegions = [
 let turns = [
   { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
 ];
+// Console first-run onboarding gate (GET/POST /firstrun). Defaults to true
+// so the existing e2e suite's direct navigation to any route keeps working
+// unchanged -- flip this to false (and restart the mock) to exercise the
+// actual wizard.
+let firstRunCompleted = true;
+// Per-page "what is this" guidance text (GET/PUT /tutorial-mode). Defaults
+// to true, matching the real server's own default.
+let tutorialModeEnabled = true;
+// Admin-entered cloud credentials (ADR-0045 §6 addendum). Secrets are
+// accepted but never stored here beyond this request -- the mock has no
+// encryption-at-rest story to fake, so it simply never echoes one back,
+// matching the real server's own CloudAccount response shape.
+let cloudAccounts = [];
+// Canned discovery results per provider, standing in for a live describe-
+// regions call -- just enough for the Authorized Locations cloud-account
+// picker to have something to choose from.
+const cloudAccountRegions = {
+  aws: [
+    { code: "us-east-1", name: "US East (N. Virginia)", kind: "region", lat: 38.9519, lon: -77.4480 },
+    { code: "eu-west-1", name: "Europe (Ireland)", kind: "region", lat: 53.3498, lon: -6.2603 },
+    { code: "us-east-1-bos-1", name: "Boston Local Zone", kind: "local_zone", lat: 42.3601, lon: -71.0589 },
+  ],
+  azure: [
+    { code: "eastus", name: "East US (Virginia)", kind: "region", lat: 37.3719, lon: -79.8164 },
+    { code: "westeurope", name: "West Europe (Netherlands)", kind: "region", lat: 52.3667, lon: 4.9000 },
+  ],
+  gcp: [
+    { code: "us-central1", name: "Iowa", kind: "region", lat: 41.2619, lon: -95.8608 },
+    { code: "europe-west1", name: "Belgium", kind: "region", lat: 50.8503, lon: 4.3517 },
+  ],
+};
 let tokens = seedTokens();
 let memberDevices = [{ handle: "member-laptop", name: "SRE laptop", platform: "Linux", last_seen_at: "2026-08-22T20:32:00Z" }];
 const memberAccess = [{ destination: "db-prod:5432", rule: 4, group: "group:sre", changed_at: "2026-08-12T10:00:00Z", changed_by: "alice@example.test" }];
@@ -651,6 +682,56 @@ const server = http.createServer((request, response) => {
     allowedRegions = allowedRegions.filter((r) => !(r.provider === regionMatch[1] && r.region === regionMatch[2]));
     if (allowedRegions.length === before) return error(response, 404, "not_found", "region not allowed");
     return noContent(response);
+  }
+
+  // Console first-run onboarding gate.
+  // A test can override this per-request with an x-mock-firstrun-completed
+  // header (set via page.setExtraHTTPHeaders) rather than mutating the
+  // shared firstRunCompleted flag -- this one setting gates the entire
+  // app's render tree, so a global mutation would race every other test
+  // running against this same long-lived mock process in another worker.
+  if (method === "GET" && karst === "/firstrun") {
+    const override = request.headers["x-mock-firstrun-completed"];
+    const completed = override !== undefined ? override === "true" : firstRunCompleted;
+    return json(response, 200, { completed });
+  }
+  if (method === "POST" && karst === "/firstrun/complete") {
+    firstRunCompleted = true;
+    return json(response, 200, { completed: true, completed_at: new Date().toISOString() });
+  }
+
+  // Per-page guidance-text setting.
+  if (method === "GET" && karst === "/tutorial-mode") return json(response, 200, { enabled: tutorialModeEnabled });
+  if (method === "PUT" && karst === "/tutorial-mode") {
+    return readBody(request).then((entry) => {
+      tutorialModeEnabled = Boolean(entry.enabled);
+      return json(response, 200, { enabled: tutorialModeEnabled });
+    });
+  }
+
+  // Cloud provider credentials (ADR-0045 §6 addendum) and the Authorized
+  // Locations cloud-account region picker they feed.
+  if (method === "GET" && karst === "/cloud-accounts") {
+    return json(response, 200, cloudAccounts.map(({ secret, ...rest }) => rest));
+  }
+  if (method === "POST" && karst === "/cloud-accounts") {
+    return readBody(request).then((entry) => {
+      if (!["aws", "azure", "gcp"].includes(entry.provider)) return error(response, 422, "invalid_argument", "provider must be aws, azure, or gcp");
+      if (!["read_only", "read_write"].includes(entry.mode)) return error(response, 422, "invalid_argument", "mode must be read_only or read_write");
+      if (!entry.secret) return error(response, 422, "invalid_argument", "secret is required");
+      const account = { id: id("cloud-account"), provider: entry.provider, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(), secret: entry.secret };
+      cloudAccounts.push(account);
+      const { secret, ...rest } = account;
+      return json(response, 201, rest);
+    });
+  }
+  const cloudAccountMatch = karst.match(/^\/cloud-accounts\/([^/]+)$/);
+  if (cloudAccountMatch && method === "DELETE") return remove(cloudAccounts, cloudAccountMatch[1], response);
+  const cloudAccountRegionsMatch = karst.match(/^\/cloud-accounts\/([^/]+)\/regions$/);
+  if (cloudAccountRegionsMatch && method === "GET") {
+    const account = cloudAccounts.find((item) => item.id === cloudAccountRegionsMatch[1]);
+    if (!account) return error(response, 404, "not_found", "cloud account not found");
+    return json(response, 200, cloudAccountRegions[account.provider] ?? []);
   }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);

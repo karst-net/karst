@@ -32,8 +32,10 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
+	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/geo"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
@@ -45,6 +47,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
+	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/permissions"
@@ -170,6 +173,23 @@ type handler struct {
 	// (issue #382), the same way karst-scaler already reads
 	// scalerRecommendations' sibling data.
 	scalingMode scalingModeReadWriter
+	// firstRun gates the console's nav on completing the first-run wizard
+	// (default domain + initial groups) -- nil in a deployment that has
+	// not configured one, see firstRunGet/firstRunComplete. See package
+	// firstrun's own doc comment for why a missing row, not a flag flip,
+	// is what new accounts default to.
+	firstRun firstRunReadWriter
+	// tutorialMode is the account-scoped on/off switch for per-page
+	// guidance text -- nil in a deployment that has not configured one,
+	// see tutorialModeGet/tutorialModeSet.
+	tutorialMode tutorialModeReadWriter
+	// cloudAccounts is the console's admin-entered AWS/Azure/GCP credential
+	// store (ADR-0045 §6 addendum) -- nil in a deployment that has not
+	// configured a data-store encryption key, see cloudAccountsList/
+	// cloudAccountsCreate/cloudAccountsDelete/cloudAccountRegions. See
+	// package cloudaccounts's own doc comment for the trust-boundary
+	// reasoning and why Mode is stored but never actuated here.
+	cloudAccounts cloudAccountReadWriter
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -217,6 +237,29 @@ type routeTelemetryReader interface {
 type scalingModeReadWriter interface {
 	Mode(ctx context.Context) (scalingmode.Mode, error)
 	SetMode(ctx context.Context, mode scalingmode.Mode) error
+}
+
+// firstRunReadWriter is the first-run wizard's completion flag -- see
+// package firstrun.
+type firstRunReadWriter interface {
+	Get(ctx context.Context) (*firstrun.StoredState, error)
+	Complete(ctx context.Context) (*firstrun.StoredState, error)
+}
+
+// tutorialModeReadWriter is the per-page guidance-text on/off switch -- see
+// package tutorialmode.
+type tutorialModeReadWriter interface {
+	Get(ctx context.Context) (bool, error)
+	Set(ctx context.Context, enabled bool) error
+}
+
+// cloudAccountReadWriter is the console's admin-entered cloud-credential
+// store -- see package cloudaccounts.
+type cloudAccountReadWriter interface {
+	Create(ctx context.Context, req cloudaccounts.CreateRequest) (*cloudaccounts.Account, error)
+	List(ctx context.Context) ([]cloudaccounts.Account, error)
+	Delete(ctx context.Context, id string) error
+	Discover(ctx context.Context, id string) ([]cloudaccounts.DiscoveredRegion, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -532,8 +575,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, cloudAccounts cloudAccountReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, cloudAccounts: cloudAccounts}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -604,6 +647,14 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/scaler/suggestions", h.scalerSuggestions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaling/mode", h.scalingModeGet).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/scaling/mode", h.scalingModeSet).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/firstrun", h.firstRunGet).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/firstrun/complete", h.firstRunComplete).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/tutorial-mode", h.tutorialModeGet).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/tutorial-mode", h.tutorialModeSet).Methods(http.MethodPut, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts", h.cloudAccountsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts", h.cloudAccountsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}", h.cloudAccountsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions", h.cloudAccountRegions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -828,6 +879,9 @@ func scopeToAccount(ctx context.Context, accountID string) context.Context {
 	ctx = grouplocation.WithAccount(ctx, accountID)
 	ctx = cplocation.WithAccount(ctx, accountID)
 	ctx = audit.WithAccount(ctx, accountID)
+	ctx = firstrun.WithAccount(ctx, accountID)
+	ctx = tutorialmode.WithAccount(ctx, accountID)
+	ctx = cloudaccounts.WithAccount(ctx, accountID)
 	return ctx
 }
 
@@ -3143,6 +3197,214 @@ func (h *handler) scalingModeSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, wire)
+}
+
+// firstRunGet/firstRunComplete back the console's onboarding gate (default
+// domain + initial groups) -- see package firstrun's own doc comment for
+// why a missing row, not an explicit flag, is what a brand-new account
+// defaults to. No extra role check beyond karstAuthorization's blanket
+// module gate: every role that can reach the console at all needs to know
+// whether the wizard still needs completing.
+func (h *handler) firstRunGet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.firstRun == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "first-run setup is not configured"), w)
+		return
+	}
+	state, err := h.firstRun.Get(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, state)
+}
+
+func (h *handler) firstRunComplete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.firstRun == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "first-run setup is not configured"), w)
+		return
+	}
+	state, err := h.firstRun.Complete(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, state)
+}
+
+// tutorialModeWire is the console's on/off switch for per-page guidance
+// text, the same {enabled: bool} shape scalingModeWire uses for its own
+// single value.
+type tutorialModeWire struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (h *handler) tutorialModeGet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.tutorialMode == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "tutorial mode is not configured"), w)
+		return
+	}
+	enabled, err := h.tutorialMode.Get(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, tutorialModeWire{Enabled: enabled})
+}
+
+func (h *handler) tutorialModeSet(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.tutorialMode == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "tutorial mode is not configured"), w)
+		return
+	}
+	var wire tutorialModeWire
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	if err := h.tutorialMode.Set(r.Context(), wire.Enabled); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, wire)
+}
+
+// requireCloudAccountAdminRole restricts cloud-credential create/delete to
+// the account owner/admin roles -- a cloud secret is more sensitive than
+// most things behind karstAuthorization's blanket module gate, the same
+// reasoning requireAdvisorRole documents for the cross-tenant demand
+// endpoints above. List/Discover carry no extra check: they never expose
+// the secret itself (see cloudaccounts.Response), so any role that can
+// already reach this API can read them.
+func requireCloudAccountAdminRole(ctx context.Context) error {
+	role, ok := nbcontext.RoleFromContext(ctx)
+	if !ok {
+		return status.Errorf(status.Internal, "failed to get user role from context")
+	}
+	r := types.UserRole(role)
+	if r != types.UserRoleOwner && r != types.UserRoleAdmin {
+		return status.Errorf(status.PermissionDenied, "managing cloud provider credentials requires the admin or owner role")
+	}
+	return nil
+}
+
+// cloudAccountsList/cloudAccountsCreate/cloudAccountsDelete/
+// cloudAccountRegions back the console's cloud-credentials Settings
+// section and the Authorized Locations cloud-account picker -- see package
+// cloudaccounts's own doc comment for the ADR-0045 §6 addendum this
+// implements and why ModeReadWrite does not actuate anything here.
+func (h *handler) cloudAccountsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.cloudAccounts == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	rows, err := h.cloudAccounts.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	resp := make([]cloudaccounts.Response, 0, len(rows))
+	for i := range rows {
+		resp = append(resp, rows[i].ToResponse())
+	}
+	util.WriteJSONObject(r.Context(), w, resp)
+}
+
+func (h *handler) cloudAccountsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.cloudAccounts == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	if err := requireCloudAccountAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req cloudaccounts.CreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	account, err := h.cloudAccounts.Create(r.Context(), req)
+	if errors.Is(err, cloudaccounts.ErrEncryptionRequired) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "%s", err), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(account.ToResponse()); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+func (h *handler) cloudAccountsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.cloudAccounts == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	if err := requireCloudAccountAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := h.cloudAccounts.Delete(r.Context(), mux.Vars(r)["cloudAccountId"]); errors.Is(err, cloudaccounts.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) cloudAccountRegions(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.cloudAccounts == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	regions, err := h.cloudAccounts.Discover(r.Context(), mux.Vars(r)["cloudAccountId"])
+	if errors.Is(err, cloudaccounts.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, regions)
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

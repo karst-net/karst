@@ -34,10 +34,12 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	karstbilling "github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
+	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
@@ -54,6 +56,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/scalingmode"
 	"github.com/netbirdio/netbird/management/internals/karst/tenancy"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
+	"github.com/netbirdio/netbird/management/internals/karst/tutorialmode"
 	"github.com/netbirdio/netbird/management/internals/karst/usage"
 	meshdomainmanager "github.com/netbirdio/netbird/management/internals/modules/meshdomain/manager"
 	nbserver "github.com/netbirdio/netbird/management/internals/server"
@@ -62,6 +65,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/proto"
+	"github.com/netbirdio/netbird/util/crypt"
 )
 
 // EpochSeconds and CurrentEpoch used to live here; both moved to
@@ -384,6 +388,38 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: scaling mode store: %w", err)
 	}
+	// The console's first-run onboarding gate (default domain + initial
+	// groups) -- see package firstrun's own doc comment for why NewStore's
+	// backfill, not a hook into account creation, is what makes a missing
+	// row safe to default to "incomplete".
+	firstRunStore, err := firstrun.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: first-run store: %w", err)
+	}
+	// The console's per-page guidance-text on/off switch, default-on.
+	tutorialModeStore, err := tutorialmode.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("karst: tutorial mode store: %w", err)
+	}
+	// ADR-0045 §6 addendum: admin-entered AWS/Azure/GCP credentials for the
+	// Authorized Locations cloud-region picker. Requires the same
+	// data-store encryption key boot.go already threads into the main SQL
+	// store (s.Store()) -- cloudaccounts.NewStore refuses to store a
+	// credential unencrypted, so a deployment with no key configured simply
+	// cannot create one (Create returns ErrEncryptionRequired); List/
+	// Discover/Delete still work against anything created while a key was
+	// configured.
+	var cloudAccountEncrypt *crypt.FieldEncrypt
+	if s.Config.DataStoreEncryptionKey != "" {
+		cloudAccountEncrypt, err = crypt.NewFieldEncrypt(s.Config.DataStoreEncryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("karst: cloud account field encryption: %w", err)
+		}
+	}
+	cloudAccountStore, err := cloudaccounts.NewStore(db, cloudAccountEncrypt)
+	if err != nil {
+		return nil, fmt.Errorf("karst: cloud account store: %w", err)
+	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
 	// The configured document remains a read-only fallback for accounts that
@@ -408,7 +444,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, cloudAccountStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)

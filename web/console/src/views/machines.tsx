@@ -72,7 +72,7 @@ export function Machines() {
     <h2>Machines</h2>
     <p className="lede">Connection state always includes its last observation time. Add a device by creating an enrollment invitation.</p>
     <div className="actions">
-      <button className="primary" onClick={() => { location.hash = "/setup"; }}>Add machine</button>
+      <button className="primary" onClick={() => { location.hash = "/enroll"; }}>Add machine</button>
       <label>Filter<input aria-label="Filter machines" placeholder="name, handle, owner or tag" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
     </div>
     <Notice message={message} />

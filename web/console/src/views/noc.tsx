@@ -18,6 +18,7 @@ import type { Location as NocLocation, NocComponent, Relay } from "@karst-net/ap
 import { Dialog, Observed, Status, type StatusState } from "@karst-net/ui";
 import { api } from "../api";
 import { Failure, formatBytes, useResource, usePolledResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 // maplibre-gl resolves its worker's own URL at runtime relative to wherever
 // its *own* module ends up being served from -- but that resolution is a
@@ -289,9 +290,7 @@ export function Noc() {
 
   return <section className="noc-view">
     <h2>NOC view</h2>
-    <details className="noc-description"><summary>About this map</summary>
-      <p className="lede">Every relay, TURN server, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</p>
-    </details>
+    <TutorialHint>A read-only map of this account's physical components (relays, TURN servers) and logical ones (exit-node/subnet-router gateways, the control plane itself, Bedrock) plotted wherever each has a location — detected, declared, or just authorized but not yet occupied (the hollow markers). Every relay, TURN server, exit-node/subnet-router gateway, and declared control-plane/Bedrock location this account has, colored by health where it has one, plus every admin-authorized location -- hollow markers, shown whether or not anything is deployed there yet. A component with no location is listed separately, never guessed onto the map. History, current rate and utilization against capacity are not shown yet -- see docs/admin-console.md.</TutorialHint>
     {resource.error && <Failure message={resource.error} retry={resource.reload} />}
     {locations.error && <Failure message={locations.error} retry={locations.reload} />}
     <div ref={container} className="noc-map" role="application" aria-label="Component map" />

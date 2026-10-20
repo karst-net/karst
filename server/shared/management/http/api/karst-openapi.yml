@@ -680,6 +680,86 @@ paths:
       responses:
         '204': {description: Region revoked}
         default: {$ref: '#/components/responses/Error'}
+  /firstrun:
+    get:
+      operationId: getFirstRunState
+      tags: [firstrun]
+      description: >-
+        Whether this account has completed the console's first-run setup
+        wizard (default domain + initial groups). A missing record (a
+        brand-new account) reports completed=false; every account that
+        existed before this feature shipped was backfilled completed=true,
+        so it is never interrupted by a wizard it never asked for.
+      responses:
+        '200': {description: First-run completion state, content: {application/json: {schema: {$ref: '#/components/schemas/FirstRunState'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /firstrun/complete:
+    post:
+      operationId: completeFirstRun
+      tags: [firstrun]
+      description: Marks first-run setup done. Idempotent.
+      responses:
+        '200': {description: First-run completion state, content: {application/json: {schema: {$ref: '#/components/schemas/FirstRunState'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /tutorial-mode:
+    get:
+      operationId: getTutorialMode
+      tags: [settings]
+      description: Whether per-page "what is this" guidance text is shown. Defaults to true.
+      responses:
+        '200': {description: Tutorial mode setting, content: {application/json: {schema: {$ref: '#/components/schemas/TutorialMode'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setTutorialMode
+      tags: [settings]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TutorialMode'}}}}
+      responses:
+        '200': {description: Tutorial mode setting, content: {application/json: {schema: {$ref: '#/components/schemas/TutorialMode'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /cloud-accounts:
+    get:
+      operationId: listCloudAccounts
+      tags: [settings]
+      description: >-
+        Admin-entered AWS/Azure/GCP credentials (ADR-0045 §6 addendum).
+        Secrets are never included in the response -- see CloudAccount.
+      responses:
+        '200': {description: Configured cloud credentials, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/CloudAccount'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createCloudAccount
+      tags: [settings]
+      description: >-
+        Requires the admin or owner role. Refused with a precondition
+        failure if this deployment has no data-store encryption key
+        configured -- a credential is never stored unencrypted.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CloudAccountCreate'}}}}
+      responses:
+        '201': {description: Stored credential (secret omitted), content: {application/json: {schema: {$ref: '#/components/schemas/CloudAccount'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /cloud-accounts/{cloudAccountId}:
+    parameters: [{name: cloudAccountId, in: path, required: true, schema: {type: string}}]
+    delete:
+      operationId: deleteCloudAccount
+      tags: [settings]
+      description: Requires the admin or owner role.
+      responses:
+        '204': {description: Credential removed}
+        default: {$ref: '#/components/responses/Error'}
+  /cloud-accounts/{cloudAccountId}/regions:
+    parameters: [{name: cloudAccountId, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: listCloudAccountRegions
+      tags: [settings]
+      description: >-
+        Calls out to the credential's own provider and lists the regions
+        (and, for AWS, opted-in local zones) enabled on that account,
+        enriched with approximate coordinates from a static catalog where
+        available -- see the Authorized Locations picker.
+      responses:
+        '200': {description: Discovered regions/zones, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredRegion'}}}}}
+        default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
       operationId: listTurnServers
@@ -1277,6 +1357,51 @@ components:
       required: [provider, region]
       additionalProperties: false
       properties: {provider: {type: string, description: 'e.g. "aws", "aws-gov-cloud", "azure", "azure-gov-cloud", "gcp" -- not validated against this set.'}, region: {type: string, description: 'A provider region code, or an AWS local zone code -- both are opaque strings here.'}}
+    FirstRunState:
+      type: object
+      required: [completed]
+      properties: {completed: {type: boolean, description: 'Whether the account has finished the console''s first-run setup wizard (default domain + initial groups). A brand-new account defaults to false; an account that existed before this feature shipped defaults to true.'}, completed_at: {type: string, format: date-time}}
+    TutorialMode:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties: {enabled: {type: boolean, description: 'Whether per-page "what is this" guidance text is shown across the console. Defaults to true.'}}
+    # ADR-0045 §6 addendum: admin-entered AWS/Azure/GCP credentials, stored
+    # encrypted at rest by package cloudaccounts. "read_only" can only ever
+    # list an account's regions/zones. "read_write" is stored for a future
+    # provisioning path and does not currently actuate anything either --
+    # see the Settings page's own copy and the package's doc comment.
+    CloudAccountCreate:
+      type: object
+      required: [provider, mode, secret]
+      additionalProperties: false
+      properties:
+        provider: {type: string, enum: [aws, azure, gcp]}
+        mode: {type: string, enum: [read_only, read_write]}
+        label: {type: string}
+        secret: {type: object, description: 'Provider-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}.'}
+    CloudAccount:
+      type: object
+      required: [id, provider, mode, created_at]
+      properties:
+        id: {type: string, readOnly: true}
+        provider: {type: string, enum: [aws, azure, gcp]}
+        mode: {type: string, enum: [read_only, read_write]}
+        label: {type: string}
+        created_at: {type: string, format: date-time, readOnly: true}
+    # One region/zone as discovered live from a cloud account, enriched with
+    # cloudcatalog's static coordinates where available -- lat/lon are
+    # absent, not zero, when the catalog has no entry yet for this code.
+    DiscoveredRegion:
+      type: object
+      required: [code, kind]
+      additionalProperties: false
+      properties:
+        code: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [region, local_zone, zone]}
+        lat: {type: number, minimum: -90, maximum: 90}
+        lon: {type: number, minimum: -180, maximum: 180}
     TurnServerCreate:
       type: object
       required: [uri]

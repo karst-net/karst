@@ -8,6 +8,7 @@ import { api } from "../api";
 import { sessionsCsv } from "../csv";
 import { filterSessions } from "../posture";
 import { Failure, Rows, statusFor, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 export function Posture() {
   const aggregate = useResource(api.posture);
@@ -26,6 +27,7 @@ export function Posture() {
   const value = aggregate.value;
   return <section>
     <h2>Crypto posture</h2>
+    <TutorialHint>A purely logical report, computed from what each node has already self-reported over its existing control-channel session — nothing on this page is a separate running component. "PQ-covered" means a session actually negotiated the post-quantum suite; a node that never reported in this window shows up as stale rather than being assumed either way.</TutorialHint>
     <p className="headline"><strong>{value?.pq_covered_sessions} of {value?.eligible_sessions} eligible sessions PQ-covered</strong><br /><Observed at={value?.as_of} /> · {value?.stale_nodes} nodes have not reported in this window.</p>
     <label htmlFor="session-filter">Show</label> <select id="session-filter" value={filter} onChange={(event) => setFilter(event.target.value)}>
       <option value="exceptions">Exceptions only</option>

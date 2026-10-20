@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Dialog, EmptyState, Status } from "@karst-net/ui";
 import { api, type NameserverGroup, type NameserverGroupDraft } from "../api";
 import { Failure, Notice, Rows, idList, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 const blank: NameserverGroupDraft = { name: "", description: "", nameservers: [{ ip: "", ns_type: "udp", port: 53 }], enabled: true, groups: [], primary: false, domains: [], search_domains_enabled: false };
 
@@ -44,7 +45,7 @@ export function Dns() {
 
   return <section>
     <h2>DNS</h2>
-    <p className="lede">Which resolvers your machines use, and which groups Karst leaves alone.</p>
+    <TutorialHint>A purely logical/configuration layer: these settings tell each enrolled machine's own Karst client which DNS resolver to use for which domains, pushed down the same control channel as everything else. No separate DNS server runs here — "managed" means a resolver this account has declared, not a service Karst operates. Which resolvers your machines use, and which groups Karst leaves alone.</TutorialHint>
     <Notice message={message} />
 
     <h3>Managed resolvers</h3>

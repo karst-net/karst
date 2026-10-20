@@ -37,7 +37,7 @@ test("administrator creates one complete invitation, dismisses its secret, and r
     const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });
-  await page.goto("https://console.example.test/#/setup");
+  await page.goto("https://console.example.test/#/enroll");
   await page.getByLabel("Device name").fill("invitation-browser-laptop");
   await page.getByRole("checkbox", { name: "sre", exact: true }).check();
   await page.getByRole("button", { name: "Create invitation", exact: true }).click();

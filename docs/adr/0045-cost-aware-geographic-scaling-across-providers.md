@@ -689,6 +689,41 @@ whatever the operator already trusts.
   resource in a region the operator excluded. The driver checks
   independently and refuses regardless of what it is asked to do.
 
+> **Addendum, 2026-10-19.** The first bullet above is narrowed, not reversed:
+> the control plane (`server/management`) may now hold admin-entered
+> AWS/Azure/GCP credentials, in two distinct modes (package `cloudaccounts`):
+>
+> - **`read_only`** credentials are usable for exactly one thing — listing
+>   an account's enabled regions and (for AWS) opted-in local zones, to
+>   populate the Authorized Locations picker with real places instead of
+>   hand-typed coordinates (`cloudcatalog` supplies the lat/long none of the
+>   three providers' own list-regions APIs return). Nothing in this code
+>   path can create, modify, or destroy a cloud resource, so it cannot
+>   itself "yield the ability to spend the operator's money" — the harm
+>   this bullet exists to prevent.
+> - **`read_write`** credentials are accepted and stored (encrypted at
+>   rest, via the same `crypt.FieldEncrypt` mechanism `agentnetwork`'s
+>   provider API keys already use in this control plane — not a new
+>   mechanism) to record operator intent for a future actuation path. They
+>   are **not connected to any provisioning call**. Phase 2 (§7's table,
+>   below) — drivers, signed enrollment, the budget circuit breaker, and
+>   independent driver-side allowlist enforcement — is the gate a
+>   `read_write` credential must pass through before it does anything a
+>   `read_only` one couldn't; it remains unbuilt, on purpose, exactly as
+>   this ADR already phased it. Storing the credential now and wiring it to
+>   actuation later are deliberately separated so the latter isn't rushed
+>   through as a side effect of a Settings-page checkbox.
+>
+> This is an accepted increase in the control plane's own attack surface,
+> independent of credential compromise: `cloudaccounts` links the AWS,
+> Azure, and GCP Go SDKs into the management binary to make the `read_only`
+> discovery calls, where previously it linked none. Least-privilege still
+> applies to what the operator hands over — a `read_only` credential should
+> carry only describe/list permissions — but that scoping is the operator's
+> to enforce (same posture as the second bullet below's tag-scoped IAM
+> policy, just not yet mechanically checked at creation time the way the
+> allowlist is checked in the driver).
+
 ### 7. Phasing
 
 | Phase | Deliverable | Actuates anything? |

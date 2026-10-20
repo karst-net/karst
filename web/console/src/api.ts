@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, CloudAccount, CloudAccountCreate, DeviceUsageReport, DiscoveredRegion, FirstRunState, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -332,4 +332,19 @@ export const api = {
   tokens: (userId: string) => management<Token[]>(`/users/${encodeURIComponent(userId)}/tokens`),
   createToken: (userId: string, name: string, expires_in: number) => management<{ plain_token: string; personal_access_token: Token }>(`/users/${encodeURIComponent(userId)}/tokens`, { method: "POST", body: body({ name, expires_in }) }),
   deleteToken: (userId: string, id: string) => management<void>(`/users/${encodeURIComponent(userId)}/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ── first-run setup wizard ───────────────────────────────────────────────────
+  firstRunState: () => request<FirstRunState>("/firstrun"),
+  completeFirstRun: () => request<FirstRunState>("/firstrun/complete", { method: "POST" }),
+
+  // ── guidance-text ("tutorial mode") setting ─────────────────────────────────
+  tutorialMode: () => request<TutorialMode>("/tutorial-mode"),
+  setTutorialMode: (enabled: boolean) => request<TutorialMode>("/tutorial-mode", { method: "PUT", body: body({ enabled }) }),
+
+  // ── cloud provider credentials (ADR-0045 §6 addendum) ───────────────────────
+  // Secrets are never returned by the server -- see cloudaccounts.Response.
+  cloudAccounts: () => request<CloudAccount[]>("/cloud-accounts"),
+  createCloudAccount: (entry: CloudAccountCreate) => request<CloudAccount>("/cloud-accounts", { method: "POST", body: body(entry) }),
+  deleteCloudAccount: (id: string) => request<void>(`/cloud-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  cloudAccountRegions: (id: string) => request<DiscoveredRegion[]>(`/cloud-accounts/${encodeURIComponent(id)}/regions`),
 };

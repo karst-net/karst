@@ -4,7 +4,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CommitRootRenameData, CommitRootRenameErrors, CommitRootRenameResponses, CreateAllowedRegionData, CreateAllowedRegionErrors, CreateAllowedRegionResponses, CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateLocationData, CreateLocationErrors, CreateLocationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAllowedRegionData, DeleteAllowedRegionErrors, DeleteAllowedRegionResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteGroupLocationData, DeleteGroupLocationErrors, DeleteGroupLocationResponses, DeleteLocationData, DeleteLocationErrors, DeleteLocationResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetControlPlaneLocationData, GetControlPlaneLocationErrors, GetControlPlaneLocationResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetMeshDomainData, GetMeshDomainErrors, GetMeshDomainResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, GetScalingModeData, GetScalingModeErrors, GetScalingModeResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAllowedRegionsData, ListAllowedRegionsErrors, ListAllowedRegionsResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListGroupLocationsData, ListGroupLocationsErrors, ListGroupLocationsResponses, ListLocationsData, ListLocationsErrors, ListLocationsResponses, ListMeshDomainsData, ListMeshDomainsErrors, ListMeshDomainsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, PreviewRootRenameData, PreviewRootRenameErrors, PreviewRootRenameResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, ScalerSuggestionsData, ScalerSuggestionsErrors, ScalerSuggestionsResponses, SetBedrockLocationData, SetBedrockLocationErrors, SetBedrockLocationResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetControlPlaneLocationData, SetControlPlaneLocationErrors, SetControlPlaneLocationResponses, SetGroupLocationData, SetGroupLocationErrors, SetGroupLocationResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SetScalingModeData, SetScalingModeErrors, SetScalingModeResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
+import type { CommitRootRenameData, CommitRootRenameErrors, CommitRootRenameResponses, CompleteFirstRunData, CompleteFirstRunErrors, CompleteFirstRunResponses, CreateAllowedRegionData, CreateAllowedRegionErrors, CreateAllowedRegionResponses, CreateAuditSinkData, CreateAuditSinkErrors, CreateAuditSinkResponses, CreateCloudAccountData, CreateCloudAccountErrors, CreateCloudAccountResponses, CreateDeviceInvitationData, CreateDeviceInvitationErrors, CreateDeviceInvitationResponses, CreateLocationData, CreateLocationErrors, CreateLocationResponses, CreateRelayData, CreateRelayErrors, CreateRelayResponses, CreateTurnServerData, CreateTurnServerErrors, CreateTurnServerResponses, DeleteAllowedRegionData, DeleteAllowedRegionErrors, DeleteAllowedRegionResponses, DeleteAuditSinkData, DeleteAuditSinkErrors, DeleteAuditSinkResponses, DeleteCloudAccountData, DeleteCloudAccountErrors, DeleteCloudAccountResponses, DeleteGroupLocationData, DeleteGroupLocationErrors, DeleteGroupLocationResponses, DeleteLocationData, DeleteLocationErrors, DeleteLocationResponses, DeleteRelayData, DeleteRelayErrors, DeleteRelayResponses, DeleteTurnServerData, DeleteTurnServerErrors, DeleteTurnServerResponses, DemandAnchorsData, DemandAnchorsErrors, DemandAnchorsResponses, DemandRegionsData, DemandRegionsErrors, DemandRegionsResponses, DeprovisionNodeData, DeprovisionNodeErrors, DeprovisionNodeResponses, EnrollMyDeviceData, EnrollMyDeviceErrors, EnrollMyDeviceResponses, ExportAuditData, ExportAuditErrors, ExportAuditResponses, ExportBedrockAuditAnchorData, ExportBedrockAuditAnchorErrors, ExportBedrockAuditAnchorResponses, ExportBedrockRequestsData, ExportBedrockRequestsErrors, ExportBedrockRequestsResponses, GetAuditHeadData, GetAuditHeadErrors, GetAuditHeadResponses, GetBedrockData, GetBedrockErrors, GetBedrockResponses, GetBillingPaymentData, GetBillingPaymentErrors, GetBillingPaymentNoticesData, GetBillingPaymentNoticesErrors, GetBillingPaymentNoticesResponses, GetBillingPaymentResponses, GetControlPlaneLocationData, GetControlPlaneLocationErrors, GetControlPlaneLocationResponses, GetDeviceUsageData, GetDeviceUsageErrors, GetDeviceUsageResponses, GetFirstRunStateData, GetFirstRunStateErrors, GetFirstRunStateResponses, GetMeshDomainData, GetMeshDomainErrors, GetMeshDomainResponses, GetMyAccessData, GetMyAccessErrors, GetMyAccessResponses, GetMyEnrollmentSettingsData, GetMyEnrollmentSettingsErrors, GetMyEnrollmentSettingsResponses, GetNodeData, GetNodeErrors, GetNodePathsData, GetNodePathsErrors, GetNodePathsResponses, GetNodePostureData, GetNodePostureErrors, GetNodePostureResponses, GetNodeResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetPolicySchemaData, GetPolicySchemaErrors, GetPolicySchemaResponses, GetPolicyVersionData, GetPolicyVersionErrors, GetPolicyVersionResponses, GetPostureData, GetPostureErrors, GetPostureResponses, GetRelayBillingAlertsData, GetRelayBillingAlertsErrors, GetRelayBillingAlertsResponses, GetRelayHealthData, GetRelayHealthErrors, GetRelayHealthResponses, GetRelaySpendingCapData, GetRelaySpendingCapErrors, GetRelaySpendingCapResponses, GetRelayUsageData, GetRelayUsageErrors, GetRelayUsageResponses, GetScalingModeData, GetScalingModeErrors, GetScalingModeResponses, GetTutorialModeData, GetTutorialModeErrors, GetTutorialModeResponses, ImportBedrockBootstrapData, ImportBedrockBootstrapErrors, ImportBedrockBootstrapResponses, ImportBedrockResponsesData, ImportBedrockResponsesErrors, ImportBedrockResponsesResponses, ListAllowedRegionsData, ListAllowedRegionsErrors, ListAllowedRegionsResponses, ListAuditEntriesData, ListAuditEntriesErrors, ListAuditEntriesResponses, ListAuditSinksData, ListAuditSinksErrors, ListAuditSinksResponses, ListBedrockLogData, ListBedrockLogErrors, ListBedrockLogResponses, ListBedrockRequestsData, ListBedrockRequestsErrors, ListBedrockRequestsResponses, ListCloudAccountRegionsData, ListCloudAccountRegionsErrors, ListCloudAccountRegionsResponses, ListCloudAccountsData, ListCloudAccountsErrors, ListCloudAccountsResponses, ListDeviceInvitationsData, ListDeviceInvitationsErrors, ListDeviceInvitationsResponses, ListGroupLocationsData, ListGroupLocationsErrors, ListGroupLocationsResponses, ListLocationsData, ListLocationsErrors, ListLocationsResponses, ListMeshDomainsData, ListMeshDomainsErrors, ListMeshDomainsResponses, ListMyDevicesData, ListMyDevicesErrors, ListMyDevicesResponses, ListMySessionsData, ListMySessionsErrors, ListMySessionsResponses, ListNodesData, ListNodesErrors, ListNodesResponses, ListPolicyVersionsData, ListPolicyVersionsErrors, ListPolicyVersionsResponses, ListPostureSessionsData, ListPostureSessionsErrors, ListPostureSessionsResponses, ListRelaysData, ListRelaysErrors, ListRelaysResponses, ListTurnServersData, ListTurnServersErrors, ListTurnServersResponses, NocComponentsData, NocComponentsErrors, NocComponentsResponses, NocRelayData, NocRelayErrors, NocRelayResponses, PreviewPolicyData, PreviewPolicyErrors, PreviewPolicyResponses, PreviewRootRenameData, PreviewRootRenameErrors, PreviewRootRenameResponses, QueueBillingPaymentData, QueueBillingPaymentErrors, QueueBillingPaymentResponses, RenameMyDeviceData, RenameMyDeviceErrors, RenameMyDeviceResponses, RequestRelayCreditsData, RequestRelayCreditsErrors, RequestRelayCreditsResponses, RevokeDeviceInvitationData, RevokeDeviceInvitationErrors, RevokeDeviceInvitationResponses, RevokeMyDeviceData, RevokeMyDeviceErrors, RevokeMyDeviceResponses, RollbackPolicyData, RollbackPolicyErrors, RollbackPolicyResponses, ScalerRecommendationsData, ScalerRecommendationsErrors, ScalerRecommendationsResponses, ScalerSuggestionsData, ScalerSuggestionsErrors, ScalerSuggestionsResponses, SetBedrockLocationData, SetBedrockLocationErrors, SetBedrockLocationResponses, SetBedrockModeData, SetBedrockModeErrors, SetBedrockModeResponses, SetControlPlaneLocationData, SetControlPlaneLocationErrors, SetControlPlaneLocationResponses, SetGroupLocationData, SetGroupLocationErrors, SetGroupLocationResponses, SetRelaySpendingCapData, SetRelaySpendingCapErrors, SetRelaySpendingCapResponses, SetScalingModeData, SetScalingModeErrors, SetScalingModeResponses, SetTutorialModeData, SetTutorialModeErrors, SetTutorialModeResponses, SurrenderRelayCreditsData, SurrenderRelayCreditsErrors, SurrenderRelayCreditsResponses, TestPolicyData, TestPolicyErrors, TestPolicyResponses, UpdateNodeData, UpdateNodeErrors, UpdateNodeResponses, ValidatePolicyData, ValidatePolicyErrors, ValidatePolicyResponses, VerifyAuditData, VerifyAuditErrors, VerifyAuditResponses, VerifyBedrockLogData, VerifyBedrockLogErrors, VerifyBedrockLogResponses, WritePolicyData, WritePolicyErrors, WritePolicyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -568,6 +568,83 @@ export const createAllowedRegion = <ThrowOnError extends boolean = false>(option
 export const deleteAllowedRegion = <ThrowOnError extends boolean = false>(options: Options<DeleteAllowedRegionData, ThrowOnError>): RequestResult<DeleteAllowedRegionResponses, DeleteAllowedRegionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteAllowedRegionResponses, DeleteAllowedRegionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/regions/{provider}/{region}',
+    ...options
+});
+
+/**
+ * Whether this account has completed the console's first-run setup wizard (default domain + initial groups). A missing record (a brand-new account) reports completed=false; every account that existed before this feature shipped was backfilled completed=true, so it is never interrupted by a wizard it never asked for.
+ */
+export const getFirstRunState = <ThrowOnError extends boolean = false>(options?: Options<GetFirstRunStateData, ThrowOnError>): RequestResult<GetFirstRunStateResponses, GetFirstRunStateErrors, ThrowOnError> => (options?.client ?? client).get<GetFirstRunStateResponses, GetFirstRunStateErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/firstrun',
+    ...options
+});
+
+/**
+ * Marks first-run setup done. Idempotent.
+ */
+export const completeFirstRun = <ThrowOnError extends boolean = false>(options?: Options<CompleteFirstRunData, ThrowOnError>): RequestResult<CompleteFirstRunResponses, CompleteFirstRunErrors, ThrowOnError> => (options?.client ?? client).post<CompleteFirstRunResponses, CompleteFirstRunErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/firstrun/complete',
+    ...options
+});
+
+/**
+ * Whether per-page "what is this" guidance text is shown. Defaults to true.
+ */
+export const getTutorialMode = <ThrowOnError extends boolean = false>(options?: Options<GetTutorialModeData, ThrowOnError>): RequestResult<GetTutorialModeResponses, GetTutorialModeErrors, ThrowOnError> => (options?.client ?? client).get<GetTutorialModeResponses, GetTutorialModeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/tutorial-mode',
+    ...options
+});
+
+export const setTutorialMode = <ThrowOnError extends boolean = false>(options: Options<SetTutorialModeData, ThrowOnError>): RequestResult<SetTutorialModeResponses, SetTutorialModeErrors, ThrowOnError> => (options.client ?? client).put<SetTutorialModeResponses, SetTutorialModeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/tutorial-mode',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Admin-entered AWS/Azure/GCP credentials (ADR-0045 §6 addendum). Secrets are never included in the response -- see CloudAccount.
+ */
+export const listCloudAccounts = <ThrowOnError extends boolean = false>(options?: Options<ListCloudAccountsData, ThrowOnError>): RequestResult<ListCloudAccountsResponses, ListCloudAccountsErrors, ThrowOnError> => (options?.client ?? client).get<ListCloudAccountsResponses, ListCloudAccountsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/cloud-accounts',
+    ...options
+});
+
+/**
+ * Requires the admin or owner role. Refused with a precondition failure if this deployment has no data-store encryption key configured -- a credential is never stored unencrypted.
+ */
+export const createCloudAccount = <ThrowOnError extends boolean = false>(options: Options<CreateCloudAccountData, ThrowOnError>): RequestResult<CreateCloudAccountResponses, CreateCloudAccountErrors, ThrowOnError> => (options.client ?? client).post<CreateCloudAccountResponses, CreateCloudAccountErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/cloud-accounts',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Requires the admin or owner role.
+ */
+export const deleteCloudAccount = <ThrowOnError extends boolean = false>(options: Options<DeleteCloudAccountData, ThrowOnError>): RequestResult<DeleteCloudAccountResponses, DeleteCloudAccountErrors, ThrowOnError> => (options.client ?? client).delete<DeleteCloudAccountResponses, DeleteCloudAccountErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/cloud-accounts/{cloudAccountId}',
+    ...options
+});
+
+/**
+ * Calls out to the credential's own provider and lists the regions (and, for AWS, opted-in local zones) enabled on that account, enriched with approximate coordinates from a static catalog where available -- see the Authorized Locations picker.
+ */
+export const listCloudAccountRegions = <ThrowOnError extends boolean = false>(options: Options<ListCloudAccountRegionsData, ThrowOnError>): RequestResult<ListCloudAccountRegionsResponses, ListCloudAccountRegionsErrors, ThrowOnError> => (options.client ?? client).get<ListCloudAccountRegionsResponses, ListCloudAccountRegionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/cloud-accounts/{cloudAccountId}/regions',
     ...options
 });
 

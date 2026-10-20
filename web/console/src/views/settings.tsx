@@ -3,10 +3,48 @@
 
 import { useState } from "react";
 import { Dialog, EmptyState, Observed } from "@karst-net/ui";
+import type { CloudAccount } from "@karst-net/api-client";
 import { api, type Token } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 const expiries = [["30 days", 30], ["90 days", 90], ["365 days", 365]] as const;
+
+type CloudProvider = CloudAccount["provider"];
+type CloudMode = CloudAccount["mode"];
+
+type CloudDraft = {
+  provider: CloudProvider;
+  mode: CloudMode;
+  label: string;
+  awsAccessKeyId: string; awsSecretAccessKey: string; awsSessionToken: string;
+  azureTenantId: string; azureClientId: string; azureClientSecret: string; azureSubscriptionId: string;
+  gcpProjectId: string; gcpServiceAccountKey: string;
+};
+const blankCloudDraft: CloudDraft = {
+  provider: "aws", mode: "read_only", label: "",
+  awsAccessKeyId: "", awsSecretAccessKey: "", awsSessionToken: "",
+  azureTenantId: "", azureClientId: "", azureClientSecret: "", azureSubscriptionId: "",
+  gcpProjectId: "", gcpServiceAccountKey: "",
+};
+
+/** Builds the provider-shaped secret object cloudaccounts.CreateRequest
+ *  expects -- see server/management/internals/karst/cloudaccounts/{aws,azure,gcp}.go
+ *  for the exact field names each provider's validator requires. Throws a
+ *  plain Error with user-facing text on a malformed GCP key, since that is
+ *  the one field a paste error is likely in. */
+function cloudSecretFor(draft: CloudDraft): Record<string, unknown> {
+  switch (draft.provider) {
+    case "aws":
+      return { access_key_id: draft.awsAccessKeyId.trim(), secret_access_key: draft.awsSecretAccessKey.trim(), session_token: draft.awsSessionToken.trim() || undefined };
+    case "azure":
+      return { tenant_id: draft.azureTenantId.trim(), client_id: draft.azureClientId.trim(), client_secret: draft.azureClientSecret.trim(), subscription_id: draft.azureSubscriptionId.trim() };
+    case "gcp":
+      try { return { project_id: draft.gcpProjectId.trim(), service_account_key: JSON.parse(draft.gcpServiceAccountKey) }; }
+      catch { throw new Error("The service account key must be the exact JSON contents of the downloaded key file."); }
+    default:
+      throw new Error(`Unknown provider ${draft.provider}`);
+  }
+}
 
 export function Settings() {
   const me = useResource(api.currentUser);
@@ -18,6 +56,17 @@ export function Settings() {
   const controlPlaneLocation = useResource(api.controlPlaneLocation);
   const { message: locationMessage, setMessage: setLocationMessage, run: runLocation } = useMutation(controlPlaneLocation.reload);
   const [locationDraft, setLocationDraft] = useState<{ lat: string; lon: string; label: string }>();
+  const tutorialMode = useResource(api.tutorialMode);
+  // An optimistic override: the checkbox must flip the instant it's clicked
+  // rather than waiting on a round trip, or a fast double-click (or a test)
+  // sees the click appear to do nothing. Cleared back to the server's value
+  // whenever a fresh fetch completes; reset to the pre-toggle value on error.
+  const [tutorialOverride, setTutorialOverride] = useState<boolean>();
+  const tutorialEnabled = tutorialOverride ?? tutorialMode.value?.enabled ?? true;
+  const [tutorialSaving, setTutorialSaving] = useState(false);
+  const cloudAccounts = useResource(api.cloudAccounts);
+  const { message: cloudMessage, setMessage: setCloudMessage, run: runCloud } = useMutation(cloudAccounts.reload);
+  const [cloudDraft, setCloudDraft] = useState<CloudDraft>();
 
   if (me.loading) return <p>Loading settings…</p>;
   if (me.error) return <Failure message={me.error} retry={me.reload} />;
@@ -47,6 +96,25 @@ export function Settings() {
     if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setLocationMessage("Longitude must be a number between -180 and 180."); return; }
     const label = locationDraft.label.trim() || undefined;
     if (await runLocation(() => api.setControlPlaneLocation({ lat, lon, label }), "The control plane's location was declared.")) setLocationDraft(undefined);
+  };
+  const toggleTutorialMode = async (enabled: boolean) => {
+    setTutorialOverride(enabled);
+    setTutorialSaving(true);
+    try { await api.setTutorialMode(enabled); tutorialMode.reload(); }
+    catch { setTutorialOverride(!enabled); }
+    finally { setTutorialSaving(false); }
+  };
+  const addCloudAccount = async () => {
+    if (!cloudDraft) return;
+    let secret: Record<string, unknown>;
+    try { secret = cloudSecretFor(cloudDraft); }
+    catch (e) { setCloudMessage(e instanceof Error ? e.message : "Invalid credential."); return; }
+    const entry = { provider: cloudDraft.provider, mode: cloudDraft.mode, label: cloudDraft.label.trim() || undefined, secret };
+    if (await runCloud(() => api.createCloudAccount(entry), `${cloudDraft.label || cloudDraft.provider} was added.`)) setCloudDraft(undefined);
+  };
+  const removeCloudAccount = (cloud: CloudAccount) => {
+    if (!confirm(`Remove ${cloud.label || cloud.provider}? Any Authorized Locations entries already added from it stay as plain declared points.`)) return;
+    void runCloud(() => api.deleteCloudAccount(cloud.id), `${cloud.label || cloud.provider} was removed.`);
   };
 
   return <section>
@@ -91,6 +159,63 @@ export function Settings() {
         <div className="actions"><button onClick={() => setLocationDraft({ lat: controlPlaneLocation.value ? String(controlPlaneLocation.value.lat) : "", lon: controlPlaneLocation.value ? String(controlPlaneLocation.value.lon) : "", label: controlPlaneLocation.value?.label ?? "" })}>{controlPlaneLocation.value ? "Edit location" : "Set location"}</button></div>
       </>}
     <Notice message={locationMessage} />
+
+    <h3>Guidance text</h3>
+    <p className="lede">Shows a short "what is this, what does it talk to" explanation on each page, for admins who are new to Karst's components. On by default.</p>
+    {tutorialMode.loading ? <p>Loading…</p> : tutorialMode.error
+      ? <Failure message={tutorialMode.error} retry={tutorialMode.reload} />
+      : <label><input type="checkbox" checked={tutorialEnabled} disabled={tutorialSaving} onChange={(event) => void toggleTutorialMode(event.target.checked)} /> Show guidance text on each page</label>}
+
+    <h3>Cloud provider credentials</h3>
+    <p className="lede">Lets Authorized Locations offer real regions and local zones from AWS, Azure, and GCP instead of typing coordinates by hand. "Read-only" credentials can only ever list an account's regions — they cannot place an order or spend money. "Read-write" credentials are accepted and stored for a future provisioning feature; nothing in Karst uses them to create or change cloud resources yet. Secrets are encrypted at rest and never shown again once saved.</p>
+    <div className="actions"><button className="primary" onClick={() => setCloudDraft(blankCloudDraft)}>Add cloud credential</button></div>
+    <Notice message={cloudMessage} />
+    {cloudAccounts.loading ? <p>Loading cloud credentials…</p> : cloudAccounts.error
+      ? <Failure message={cloudAccounts.error} retry={cloudAccounts.reload} />
+      : (cloudAccounts.value ?? []).length === 0
+        ? <EmptyState title="No cloud credentials configured">Add one to pick real regions in Authorized Locations.</EmptyState>
+        : <Rows head={<><th>Provider</th><th>Mode</th><th>Label</th><th>Added</th><th>Actions</th></>}>
+          {(cloudAccounts.value ?? []).map((cloud) => <tr key={cloud.id}>
+            <td>{cloud.provider.toUpperCase()}</td>
+            <td>{cloud.mode === "read_write" ? "Read-write (stored, not yet used)" : "Read-only"}</td>
+            <td>{cloud.label || <span className="lede">—</span>}</td>
+            <td><Observed at={cloud.created_at} /></td>
+            <td><button className="danger" onClick={() => removeCloudAccount(cloud)}>Remove</button></td>
+          </tr>)}
+        </Rows>}
+
+    <Dialog open={Boolean(cloudDraft)} title="Add cloud credential" onClose={() => setCloudDraft(undefined)}>
+      <form onSubmit={(event) => { event.preventDefault(); void addCloudAccount(); }}>
+        <label>Provider<select aria-label="Cloud provider" value={cloudDraft?.provider ?? "aws"} onChange={(event) => setCloudDraft((current) => current && { ...current, provider: event.target.value as CloudProvider })}>
+          <option value="aws">AWS</option>
+          <option value="azure">Azure</option>
+          <option value="gcp">GCP</option>
+        </select></label>
+        <label>Mode<select aria-label="Credential mode" value={cloudDraft?.mode ?? "read_only"} onChange={(event) => setCloudDraft((current) => current && { ...current, mode: event.target.value as CloudMode })}>
+          <option value="read_only">Read-only (status/discovery only)</option>
+          <option value="read_write">Read-write (stored for future use)</option>
+        </select></label>
+        <label>Label<input aria-label="Cloud credential label" placeholder="prod-aws" value={cloudDraft?.label ?? ""} onChange={(event) => setCloudDraft((current) => current && { ...current, label: event.target.value })} /></label>
+
+        {cloudDraft?.provider === "aws" && <>
+          <label>Access key ID<input aria-label="AWS access key ID" value={cloudDraft.awsAccessKeyId} onChange={(event) => setCloudDraft((current) => current && { ...current, awsAccessKeyId: event.target.value })} /></label>
+          <label>Secret access key<input aria-label="AWS secret access key" type="password" value={cloudDraft.awsSecretAccessKey} onChange={(event) => setCloudDraft((current) => current && { ...current, awsSecretAccessKey: event.target.value })} /></label>
+          <label>Session token (optional)<input aria-label="AWS session token" type="password" value={cloudDraft.awsSessionToken} onChange={(event) => setCloudDraft((current) => current && { ...current, awsSessionToken: event.target.value })} /></label>
+        </>}
+        {cloudDraft?.provider === "azure" && <>
+          <label>Tenant ID<input aria-label="Azure tenant ID" value={cloudDraft.azureTenantId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureTenantId: event.target.value })} /></label>
+          <label>Client ID<input aria-label="Azure client ID" value={cloudDraft.azureClientId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureClientId: event.target.value })} /></label>
+          <label>Client secret<input aria-label="Azure client secret" type="password" value={cloudDraft.azureClientSecret} onChange={(event) => setCloudDraft((current) => current && { ...current, azureClientSecret: event.target.value })} /></label>
+          <label>Subscription ID<input aria-label="Azure subscription ID" value={cloudDraft.azureSubscriptionId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureSubscriptionId: event.target.value })} /></label>
+        </>}
+        {cloudDraft?.provider === "gcp" && <>
+          <label>Project ID<input aria-label="GCP project ID" value={cloudDraft.gcpProjectId} onChange={(event) => setCloudDraft((current) => current && { ...current, gcpProjectId: event.target.value })} /></label>
+          <label>Service account key (JSON)<textarea aria-label="GCP service account key JSON" rows={6} value={cloudDraft.gcpServiceAccountKey} onChange={(event) => setCloudDraft((current) => current && { ...current, gcpServiceAccountKey: event.target.value })} placeholder='{"type": "service_account", ...}' /></label>
+        </>}
+
+        <div className="actions"><button type="button" onClick={() => setCloudDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add credential</button></div>
+      </form>
+    </Dialog>
 
     <Dialog open={Boolean(locationDraft)} title="Declare the control plane's location" onClose={() => setLocationDraft(undefined)}>
       <form onSubmit={(event) => { event.preventDefault(); void saveControlPlaneLocation(); }}>

@@ -130,7 +130,10 @@ function DelegationDialog({ domain, users, onClose, onChanged }: { domain?: Mesh
   </Dialog>;
 }
 
-function RootRenameDialog({ initialSuffix, onClose, onCommitted }: { initialSuffix: string; onClose: () => void; onCommitted: (result: RootRenamePreview) => void }) {
+/** Exported so the first-run wizard (views/firstrun.tsx) can reuse this
+ *  exact preview/commit flow for "set the default domain" instead of
+ *  duplicating it. */
+export function RootRenameDialog({ initialSuffix, onClose, onCommitted }: { initialSuffix: string; onClose: () => void; onCommitted: (result: RootRenamePreview) => void }) {
   const [suffix, setSuffix] = useState(initialSuffix);
   const [preview, setPreview] = useState<RootRenamePreview>();
   const [confirmed, setConfirmed] = useState(false);

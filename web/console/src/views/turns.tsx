@@ -6,6 +6,7 @@ import { Dialog, EmptyState } from "@karst-net/ui";
 import type { TurnServer } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { TutorialHint } from "../tutorial";
 
 type Draft = { uri: string; region: string; lat: string; lon: string; label: string };
 const blank: Draft = { uri: "", region: "default", lat: "", lon: "", label: "" };
@@ -45,7 +46,7 @@ export function Turns() {
 
   return <section>
     <h2>TURN servers</h2>
-    <p className="lede">ADR-0008 §4's last-resort fallback: every node is told about exactly the TURN servers listed here, for use only when a direct path and every relay have failed.</p>
+    <TutorialHint>A TURN server is a real machine running a standard STUN/TURN implementation (RFC 8656) that relays traffic byte-for-byte when nothing smarter is possible — it has no idea what Karst is, it just forwards packets for whichever client/credential pair asks. ADR-0008 §4's last-resort fallback: every node is told about exactly the TURN servers listed here, for use only when a direct path and every relay have failed.</TutorialHint>
     <div className="actions"><button className="primary" onClick={() => setDraft(blank)}>Add TURN server</button></div>
     <Notice message={message} />
     {turns.length === 0
