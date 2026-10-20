@@ -486,12 +486,24 @@ jobs:
           - name: client
             file: deploy/images/karstd.Dockerfile
             image: karstd
+            build-args: ""
           - name: relay
             file: deploy/images/karst-relay.Dockerfile
             image: karst-relay
+            build-args: ""
           - name: control
             file: deploy/images/karst-control.Dockerfile
             image: karst-control
+            # karst-control.Dockerfile's KARST_VERSION/KARST_REVISION build
+            # args feed -ldflags -X into buildinfo.Version/.Revision
+            # (server/management/internals/karst/buildinfo), which the admin
+            # console's version page reads back over the API. Left
+            # unset, both ARGs keep the Dockerfile's "development"/"unknown"
+            # defaults, so every published control image reports the same
+            # placeholder regardless of which release it actually is.
+            build-args: |
+              KARST_VERSION=${{ github.ref_name }}
+              KARST_REVISION=${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       # Buildx needs QEMU to produce the arm64 variant from GitHub's amd64
@@ -523,6 +535,7 @@ jobs:
             ghcr.io/karst-net/${{ matrix.image }}:${{ github.ref_name }}
             ghcr.io/karst-net/${{ matrix.image }}:sha-${{ github.sha }}
           platforms: linux/amd64,linux/arm64
+          build-args: ${{ matrix.build-args }}
       - name: Sign the immutable image digest
         env:
           IMAGE: ghcr.io/karst-net/${{ matrix.image }}
