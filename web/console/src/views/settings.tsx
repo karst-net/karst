@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
+import { SoftwareVersions } from "./software-versions";
 import { useState } from "react";
 import { Dialog, EmptyState, Observed } from "@karst-net/ui";
 import type { CloudAccount } from "@karst-net/api-client";
@@ -119,6 +120,7 @@ export function Settings() {
 
   return <section>
     <h2>Settings</h2>
+    {(user?.role === "admin" || user?.role === "owner") && <SoftwareVersions />}
     <h3>Signed in as</h3>
     <Rows head={<><th>Name</th><th>Email</th><th>Role</th><th>User ID</th></>}>
       <tr><td>{user?.name}</td><td>{user?.email}</td><td>{user?.role}</td><td><code>{user?.id}</code></td></tr>

@@ -864,6 +864,27 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	}
 }
 
+// Defines values for SoftwareVersions200JSONResponseBodyDeploymentStatus.
+const (
+	SoftwareVersions200JSONResponseBodyDeploymentStatusAvailable     SoftwareVersions200JSONResponseBodyDeploymentStatus = "available"
+	SoftwareVersions200JSONResponseBodyDeploymentStatusNotConfigured SoftwareVersions200JSONResponseBodyDeploymentStatus = "not_configured"
+	SoftwareVersions200JSONResponseBodyDeploymentStatusUnavailable   SoftwareVersions200JSONResponseBodyDeploymentStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the SoftwareVersions200JSONResponseBodyDeploymentStatus enum.
+func (e SoftwareVersions200JSONResponseBodyDeploymentStatus) Valid() bool {
+	switch e {
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusAvailable:
+		return true
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusNotConfigured:
+		return true
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessExplanation defines model for AccessExplanation.
 type AccessExplanation struct {
 	ChangedAt   time.Time `json:"changed_at"`
@@ -1980,6 +2001,9 @@ type GetRelayUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
 	End   time.Time `form:"end" json:"end"`
 }
+
+// SoftwareVersions200JSONResponseBodyDeploymentStatus defines parameters for SoftwareVersions.
+type SoftwareVersions200JSONResponseBodyDeploymentStatus string
 
 // CreateAuditSinkJSONRequestBody defines body for CreateAuditSink for application/json ContentType.
 type CreateAuditSinkJSONRequestBody = AuditSinkWrite

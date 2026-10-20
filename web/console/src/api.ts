@@ -151,7 +151,14 @@ export type BedrockRequest = { id: string; created_at: string; payload_hash: str
 export type BedrockBundle = { format: "bedrock-signed-bundle-v1"; payload: string };
 export type BedrockBootstrapBundle = { format: "bedrock-log-v1"; payload: string };
 
+export type SoftwareVersions = {
+  control: { version: string; revision: string };
+  deployment_status: "available" | "not_configured" | "unavailable";
+  deployment?: { observed_at: string; components: { name: string; image: string; image_id: string; tags: string[]; state: string }[] };
+};
+
 export const api = {
+  softwareVersions: () => request<SoftwareVersions>("/versions"),
   // ── managed billing ───────────────────────────────────────────────────────
   deviceUsage: (start: string, end: string) => request<DeviceUsageReport>(`/usage/devices?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
   relayUsage: (start: string, end: string) => request<RelayUsageReport>(`/usage/relays?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),

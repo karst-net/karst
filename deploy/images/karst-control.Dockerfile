@@ -27,13 +27,15 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     go mod download
 
 COPY server/ ./
+ARG KARST_VERSION=development
+ARG KARST_REVISION=unknown
 # CGO on, deliberately. The SQLite store is go-sqlite3, which is a cgo binding:
 # built with CGO_ENABLED=0 it compiles and links into a working-looking binary
 # that dies at first use with "Binary was compiled with 'CGO_ENABLED=0' ... This
 # is a stub". The runtime image below is glibc-based for the same reason.
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -trimpath -o /out/karst-control ./cmd/karst-control
+    CGO_ENABLED=1 go build -trimpath -ldflags "-X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Version=${KARST_VERSION} -X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Revision=${KARST_REVISION}" -o /out/karst-control ./cmd/karst-control
 
 FROM debian:bookworm-slim
 RUN apt-get update \

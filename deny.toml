@@ -53,6 +53,17 @@ allow-wildcard-paths = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # RUSTSEC-2026-0374: `basic-toml` is unmaintained (archived upstream,
+    # last release the day after archival). It reaches the tree as a
+    # build-time template-parsing dependency of `askama_derive` <- `askama`
+    # <- `uniffi_bindgen` <- `uniffi` (crates/karst-ffi, ADR-0029) — it is
+    # never linked into a shipped binary, only invoked by the FFI
+    # bindings-generator at build time. The advisory itself states no safe
+    # upgrade exists, so there is nothing to bump to; re-evaluate if/when
+    # `uniffi` moves off `askama` or `basic-toml` gains a maintainer.
+    "RUSTSEC-2026-0374",
+]
 
 [sources]
 unknown-registry = "deny"

@@ -881,6 +881,47 @@ export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
 
+export type SoftwareVersionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/versions';
+};
+
+export type SoftwareVersionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SoftwareVersionsError = SoftwareVersionsErrors[keyof SoftwareVersionsErrors];
+
+export type SoftwareVersionsResponses = {
+    /**
+     * Running control binary and optional deployment snapshot
+     */
+    200: {
+        control: {
+            version: string;
+            revision: string;
+        };
+        deployment_status: 'available' | 'not_configured' | 'unavailable';
+        deployment?: {
+            observed_at: string;
+            components: Array<{
+                name: string;
+                image: string;
+                image_id: string;
+                tags: Array<string>;
+                state: string;
+            }>;
+        };
+    };
+};
+
+export type SoftwareVersionsResponse = SoftwareVersionsResponses[keyof SoftwareVersionsResponses];
+
 export type ListMeshDomainsData = {
     body?: never;
     path?: never;
