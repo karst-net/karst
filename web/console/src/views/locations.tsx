@@ -22,13 +22,25 @@ export function Locations() {
   const [cloudAccountId, setCloudAccountId] = useState("");
   const regions = useResource(() => cloudAccountId ? api.cloudAccountRegions(cloudAccountId) : Promise.resolve([] as DiscoveredRegion[]), [cloudAccountId]);
   const [regionCode, setRegionCode] = useState("");
+  // Local zones enabled this session, ahead of regions.reload() catching up --
+  // enabling one should not force the live region/zone list to be re-fetched
+  // just to notice. Keyed by code; cleared with the rest of the picker state
+  // whenever the dialog is reopened from scratch.
+  const [enabledOverrides, setEnabledOverrides] = useState<Record<string, true>>({});
+  const [enabling, setEnabling] = useState(false);
 
   if (resource.loading) return <p>Loading authorized locations…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const locations = resource.value ?? [];
   const cloudAccountsAvailable = (cloudAccounts.value ?? []).length > 0;
+  const selectedAccount = (cloudAccounts.value ?? []).find((a) => a.id === cloudAccountId);
+  const selectedRegion = (regions.value ?? []).find((r) => r.code === regionCode);
+  // A read_write account's not-yet-opted-in local zone -- enableCloudAccountRegion
+  // exists for exactly this (ADR-0045 §6's second addendum). A read_only
+  // account never lists one of these in the first place.
+  const needsEnable = Boolean(selectedRegion && !selectedRegion.enabled && !enabledOverrides[selectedRegion.code]);
 
-  const openDialog = () => { setDraft(blank); setSource("manual"); setCloudAccountId(""); setRegionCode(""); };
+  const openDialog = () => { setDraft(blank); setSource("manual"); setCloudAccountId(""); setRegionCode(""); setEnabledOverrides({}); };
 
   const add = async () => {
     if (!draft) return;
@@ -39,13 +51,34 @@ export function Locations() {
     if (await run(() => api.addLocation(entry), `${entry.label || `${lat}, ${lon}`} was added to the authorized locations registry.`)) setDraft(undefined);
   };
   const addFromCloud = async () => {
-    const account = (cloudAccounts.value ?? []).find((a) => a.id === cloudAccountId);
-    const region = (regions.value ?? []).find((r) => r.code === regionCode);
+    const account = selectedAccount;
+    const region = selectedRegion;
     if (!account || !region) { setMessage("Choose a cloud account and a region."); return; }
+    if (needsEnable) { setMessage(`${region.name || region.code} is not enabled yet — enable it first.`); return; }
     if (region.lat === undefined || region.lon === undefined) { setMessage(`${region.name || region.code} has no known coordinates yet — add it to the cloud catalog, or declare it manually.`); return; }
     const label = region.name ? `${region.name} (${region.code})` : region.code;
     const entry = { lat: region.lat, lon: region.lon, label, kind: `${account.provider}-${region.kind}` };
-    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setDraft(undefined);
+    // Stay open and keep the already-fetched region list -- adding several
+    // zones from the same account used to mean re-fetching that list live
+    // from AWS/Azure/GCP for every single one.
+    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setRegionCode("");
+  };
+  const enableZone = async () => {
+    const account = selectedAccount;
+    const region = selectedRegion;
+    if (!account || !region) return;
+    if (!confirm(`Enable ${region.name || region.code} for use on this AWS account?\n\nThis opts the zone into use (AWS's ModifyAvailabilityZoneGroup) and cannot be undone through the API -- AWS Support must be contacted to opt back out. It does not itself create any resource or incur any charge; it only makes launching one there possible going forward.`)) return;
+    if (!region.parent_region) { setMessage(`${region.name || region.code} has no known parent region to enable it against.`); return; }
+    setEnabling(true);
+    try {
+      await api.enableCloudAccountRegion(account.id, region.code, region.parent_region);
+      setEnabledOverrides((current) => ({ ...current, [region.code]: true }));
+      setMessage(`${region.name || region.code} is now enabled.`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setEnabling(false);
+    }
   };
   const remove = (location: Location) => {
     if (!confirm(`Remove ${location.label || `${location.lat}, ${location.lon}`} from the authorized locations registry?`)) return;
@@ -97,9 +130,21 @@ export function Locations() {
               ? <Failure message={regions.error} retry={regions.reload} />
               : <label>Region / zone<select aria-label="Cloud region or zone" value={regionCode} onChange={(event) => setRegionCode(event.target.value)}>
                 <option value="">Choose one…</option>
-                {(regions.value ?? []).map((r) => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.lat === undefined ? " — no coordinates yet" : ""}</option>)}
+                {(regions.value ?? []).map((r) => <option key={r.code} value={r.code}>
+                  {r.name ? `${r.name} (${r.code})` : r.code}
+                  {r.lat === undefined ? " — no coordinates yet" : ""}
+                  {!r.enabled && !enabledOverrides[r.code] ? " — not enabled yet" : ""}
+                </option>)}
               </select></label>)}
-          <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!cloudAccountId || !regionCode}>Add location</button></div>
+          {needsEnable && selectedRegion && <p className="lede">
+            {selectedRegion.name || selectedRegion.code} exists on this account but is not opted into use yet. Enabling it is a one-way AWS change (no opt-out API) that makes the zone launchable — it does not by itself create anything or incur a charge.
+          </p>}
+          <div className="actions">
+            <button type="button" onClick={() => setDraft(undefined)}>Cancel</button>
+            {needsEnable
+              ? <button className="primary" type="button" disabled={!cloudAccountId || !regionCode || enabling} onClick={() => void enableZone()}>{enabling ? "Enabling…" : "Enable this zone"}</button>
+              : <button className="primary" type="submit" disabled={!cloudAccountId || !regionCode}>Add location</button>}
+          </div>
         </form>}
     </Dialog>
   </section>;

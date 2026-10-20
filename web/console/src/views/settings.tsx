@@ -179,7 +179,7 @@ export function Settings() {
         : <Rows head={<><th>Provider</th><th>Mode</th><th>Label</th><th>Added</th><th>Actions</th></>}>
           {(cloudAccounts.value ?? []).map((cloud) => <tr key={cloud.id}>
             <td>{cloud.provider.toUpperCase()}</td>
-            <td>{cloud.mode === "read_write" ? "Read-write (stored, not yet used)" : "Read-only"}</td>
+            <td>{cloud.mode === "read_write" ? "Read-write (may make live changes and incur costs)" : "Read-only"}</td>
             <td>{cloud.label || <span className="lede">—</span>}</td>
             <td><Observed at={cloud.created_at} /></td>
             <td><button className="danger" onClick={() => removeCloudAccount(cloud)}>Remove</button></td>
@@ -195,7 +195,7 @@ export function Settings() {
         </select></label>
         <label>Mode<select aria-label="Credential mode" value={cloudDraft?.mode ?? "read_only"} onChange={(event) => setCloudDraft((current) => current && { ...current, mode: event.target.value as CloudMode })}>
           <option value="read_only">Read-only (status/discovery only)</option>
-          <option value="read_write">Read-write (stored for future use)</option>
+          <option value="read_write">Read-write (may make live changes — e.g. enabling an AWS local zone — and can incur costs)</option>
         </select></label>
         <label>Label<input aria-label="Cloud credential label" placeholder="prod-aws" value={cloudDraft?.label ?? ""} onChange={(event) => setCloudDraft((current) => current && { ...current, label: event.target.value })} /></label>
 

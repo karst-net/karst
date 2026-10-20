@@ -348,10 +348,16 @@ export const api = {
   tutorialMode: () => request<TutorialMode>("/tutorial-mode"),
   setTutorialMode: (enabled: boolean) => request<TutorialMode>("/tutorial-mode", { method: "PUT", body: body({ enabled }) }),
 
-  // ── cloud provider credentials (ADR-0045 §6 addendum) ───────────────────────
+  // ── cloud provider credentials (ADR-0045 §6 addenda) ────────────────────────
   // Secrets are never returned by the server -- see cloudaccounts.Response.
   cloudAccounts: () => request<CloudAccount[]>("/cloud-accounts"),
   createCloudAccount: (entry: CloudAccountCreate) => request<CloudAccount>("/cloud-accounts", { method: "POST", body: body(entry) }),
   deleteCloudAccount: (id: string) => request<void>(`/cloud-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }),
   cloudAccountRegions: (id: string) => request<DiscoveredRegion[]>(`/cloud-accounts/${encodeURIComponent(id)}/regions`),
+  // ADR-0045 §6's second addendum: the one mutating call this API makes --
+  // opts an AWS Local Zone's group into use. A one-way door on AWS's side
+  // (no opt-out API), so the caller must have already confirmed this with
+  // the operator naming this specific zone; this call does not ask again.
+  enableCloudAccountRegion: (id: string, code: string, parentRegion: string) =>
+    request<DiscoveredRegion>(`/cloud-accounts/${encodeURIComponent(id)}/regions/${encodeURIComponent(code)}/enable`, { method: "POST", body: body({ parent_region: parentRegion }) }),
 };

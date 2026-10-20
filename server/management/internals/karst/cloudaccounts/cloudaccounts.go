@@ -11,17 +11,22 @@
 // control plane must not yield the ability to spend the operator's money."
 // This package is a deliberate, scoped amendment to that boundary -- see
 // docs/adr/0045-cost-aware-geographic-scaling-across-providers.md's
-// addendum. Two consequences follow directly from the ADR text:
+// addenda. Consequences follow directly from the ADR text:
 //
 //   - Mode exists so an operator can hand over read-only (status/discovery
 //     only, can never place an order) credentials and keep read-write
 //     ones elsewhere, or out entirely.
-//   - Storing ModeReadWrite here records intent for a future actuation
-//     path; this package never calls a create/destroy API itself. Real
-//     actuation is ADR-0045 §5/§7 Phase 2 (drivers, signed enrollment, a
-//     budget circuit breaker) -- unbuilt, on purpose. Nothing in this
-//     package should grow a provisioning call without that phase's
-//     safeguards landing first.
+//   - Storing ModeReadWrite records intent for a future actuation path,
+//     with exactly one narrow, named exception carved out ahead of it:
+//     EnableLocalZone, which opts an AWS Local Zone's group into use
+//     (ModifyAvailabilityZoneGroup) and nothing else -- no create/destroy
+//     of a compute resource. Real create/destroy actuation is still
+//     ADR-0045 §5/§7 Phase 2 (drivers, signed enrollment, a budget circuit
+//     breaker) -- unbuilt, on purpose. Nothing in this package should grow
+//     a further provisioning call without that phase's safeguards landing
+//     first; EnableLocalZone is the one call this ADR's second addendum
+//     deliberately lets through ahead of it, not a precedent for adding
+//     more the same way.
 package cloudaccounts
 
 import (

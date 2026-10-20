@@ -1182,11 +1182,17 @@ type DiagnosticSeverity string
 
 // DiscoveredRegion defines model for DiscoveredRegion.
 type DiscoveredRegion struct {
-	Code string               `json:"code"`
-	Kind DiscoveredRegionKind `json:"kind"`
-	Lat  *float32             `json:"lat,omitempty"`
-	Lon  *float32             `json:"lon,omitempty"`
-	Name *string              `json:"name,omitempty"`
+	Code string `json:"code"`
+
+	// Enabled True for a region and an already opted-in local zone. False only for a read_write credential's not-yet-opted-in local zone, offered for enableCloudAccountRegion.
+	Enabled bool                 `json:"enabled"`
+	Kind    DiscoveredRegionKind `json:"kind"`
+	Lat     *float32             `json:"lat,omitempty"`
+	Lon     *float32             `json:"lon,omitempty"`
+	Name    *string              `json:"name,omitempty"`
+
+	// ParentRegion Set for a kind other than region -- the region to call the enable endpoint against.
+	ParentRegion *string `json:"parent_region,omitempty"`
 }
 
 // DiscoveredRegionKind defines model for DiscoveredRegion.Kind.
@@ -1921,6 +1927,12 @@ type GetRelaySpendingCapParams struct {
 	Period string `form:"period" json:"period"`
 }
 
+// EnableCloudAccountRegionJSONBody defines parameters for EnableCloudAccountRegion.
+type EnableCloudAccountRegionJSONBody struct {
+	// ParentRegion The DiscoveredRegion's own parent_region -- which regional EC2 endpoint to call against.
+	ParentRegion string `json:"parent_region"`
+}
+
 // CommitRootRenameJSONBody defines parameters for CommitRootRename.
 type CommitRootRenameJSONBody struct {
 	ConfirmNoAliases CommitRootRenameJSONBodyConfirmNoAliases `json:"confirm_no_aliases"`
@@ -2031,6 +2043,9 @@ type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
 // CreateCloudAccountJSONRequestBody defines body for CreateCloudAccount for application/json ContentType.
 type CreateCloudAccountJSONRequestBody = CloudAccountCreate
+
+// EnableCloudAccountRegionJSONRequestBody defines body for EnableCloudAccountRegion for application/json ContentType.
+type EnableCloudAccountRegionJSONRequestBody EnableCloudAccountRegionJSONBody
 
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
 type SetControlPlaneLocationJSONRequestBody = RelayLocation
