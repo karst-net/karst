@@ -30,7 +30,7 @@ state="$here/state"
 # template's redirect URIs and web origin are built from — it must be
 # exactly what a browser or script types into its address bar, scheme and
 # port included, with no trailing slash. It is not necessarily the same
-# string as KARST_CONSOLE_HOST (Caddy's own on-demand-TLS matcher), which is
+# string as KARST_CONSOLE_HOST (Caddy's certificate identity), which is
 # host-only.
 if [ -z "${KARST_CONSOLE_ORIGIN:-}" ]; then
     cat >&2 <<EOF
@@ -116,7 +116,7 @@ setup: done. Before "docker compose up -d", export:
 
     export KC_MASTER_ADMIN_PASSWORD="\$(cat $kc_admin_pw_file)"
     export KARST_CONSOLE_ORIGIN="$KARST_CONSOLE_ORIGIN"
-    export KARST_CONSOLE_HOST=<host-only part of the above, for Caddy's matcher>
+    export KARST_CONSOLE_HOST=<host-only part of the above, for Caddy's certificate>
     export KARST_LAN_ADDR=<this host's LAN address, for the karstd control port>
 
 First login (browser or pentest/'s scripts): $KARST_ADMIN_EMAIL /

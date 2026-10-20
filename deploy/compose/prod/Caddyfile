@@ -4,22 +4,19 @@
 # relay dial. karst-control itself is not published to the host at all —
 # only Caddy is, so this file is the actual edge.
 {
-	auto_https off
+	# Keep certificate management enabled; only disable HTTP redirects because
+	# this deployment publishes a single HTTPS port.
+	auto_https disable_redirects
+	# Browsers omit SNI for literal IPs. Select the public identity rather
+	# than falling back to the container's private address.
+	default_sni {$KARST_CONSOLE_HOST}
 }
 
-# A bare port, no hostname: shannon has an IP, not a domain name here. TLS
-# clients never send SNI for a literal IP (SNI is a DNS-name-only extension
-# per RFC 6066), so a real browser's ClientHello carries no server name, and
-# Caddy's cert lookup falls back to matching the *local* (container-internal)
-# address instead. `on_demand` is what makes it issue a cert for that
-# fallback identifier at request time rather than only for hosts named ahead
-# of time — without it every handshake fails closed with a bare "internal
-# error" alert and no request-level log line, which is what plain
-# `tls internal` (no `on_demand`) on a hostless site address did here.
-:33073 {
-	tls internal {
-		on_demand
-	}
+# Issue for the address users actually visit. The local CA and its keys live
+# under /data (./state/caddy on the host), so renewing a leaf keeps the same
+# trust anchor. Import that CA's root.crt once, not the short-lived leaf.
+https://{$KARST_CONSOLE_HOST}:33073 {
+	tls internal
 
 	# Nothing here was compressed before the NOC basemap (public/
 	# noc-world-outline.geojson) grew from ~1.3 KB to ~190 KB; gzip gets

@@ -86,7 +86,7 @@ services:
     image: caddy:2.10
     restart: unless-stopped
     environment:
-      KARST_CONSOLE_HOST: ${KARST_CONSOLE_HOST}
+      KARST_CONSOLE_HOST: ${KARST_CONSOLE_HOST:?Set KARST_CONSOLE_HOST to the public hostname or IP without scheme or port}
     ports:
       - "${KARST_CONTROL_PORT:-33073}:33073"
     volumes:
