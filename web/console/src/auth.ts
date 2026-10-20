@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createAuth } from "@karst-net/auth";
 export type { AuthConfig, AuthState } from "@karst-net/auth";
+export { SessionExpiredError } from "@karst-net/auth";
 export const { loadConfig, accessToken, authenticatedFetch, bootstrap, login, logout, renewOnce, silentCallback } = createAuth("/");

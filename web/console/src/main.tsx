@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import "@karst-net/tokens/theme.css";
 import "./styles.css";
 import { applyTheme, storedTheme, writePref, type Theme } from "./prefs";
-import { bootstrap, loadConfig, login, logout, type AuthConfig, type AuthState } from "./auth";
+import { bootstrap, loadConfig, login, logout, SessionExpiredError, type AuthConfig, type AuthState } from "./auth";
 import { api, getActiveAccountOverride, setActiveAccountOverride } from "./api";
 import { Setup } from "./views/setup";
 import { FirstRunWizard } from "./views/firstrun";
@@ -65,7 +65,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
     return <div className="shell">
       <a className="skip" href="#main">Skip to content</a>
       <main id="main">
-        <header><AccountSwitcher />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
+        <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
         <FirstRunWizard onComplete={firstRun.reload} />
       </main>
     </div>;
@@ -89,7 +89,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       <nav aria-label="Primary">{nav.map(([key, label]) => <a key={key} aria-current={route === key ? "page" : undefined} href={`#/${key}`}>{label}</a>)}</nav>
     </aside>
     <main id="main">
-      <header><AccountSwitcher />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
+      <header><AccountSwitcher config={config} />{auth === "authenticated" && <button onClick={() => logout(config)}>Log out</button>}<ThemeChooser /></header>
       {route === "enroll" && <Setup go={navigate} />}
       {route === "domains" && <Domains />}
       {route === "machines" && <Machines />}
@@ -124,11 +124,25 @@ const homeUserLabelKey = "karst.homeUserLabel";
  *  Switching reloads the page rather than trying to invalidate every view's
  *  own useResource cache -- every view already fetches on mount, so a
  *  reload is the simplest thing that is actually correct. */
-function AccountSwitcher() {
+function AccountSwitcher({ config }: { config: AuthConfig }) {
   const [home, setHome] = useState<string>();
   const [homeLabel, setHomeLabel] = useState<string>();
   const [accessible, setAccessible] = useState<string[]>([]);
+  // Distinct from homeLabel being merely unset (still loading): account() or
+  // accessibleAccounts() rejected and it wasn't a session expiry (that case
+  // redirects instead -- see below), so there is nothing to wait for.
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    // A SessionExpiredError means authenticatedFetch already called login()
+    // as a side effect -- the page is mid-redirect. Calling it again here is
+    // a harmless no-op (login() itself is idempotent while that redirect is
+    // in flight) and makes the "an invalid session always reaches the login
+    // screen" guarantee hold at this call site too, not just incidentally
+    // through the shared transport.
+    const onFailure = (error: unknown) => {
+      if (error instanceof SessionExpiredError) login(config);
+      else setFailed(true);
+    };
     // api.account() answers for whichever account is currently in effect --
     // while no override is active that IS the true home, and this is the
     // only moment it can be told apart from a switched-into one. Cached so
@@ -145,16 +159,17 @@ function AccountSwitcher() {
           setHomeLabel(label);
           try { sessionStorage.setItem(homeUserLabelKey, label); } catch { /* per-viewer convenience only */ }
         }).catch(() => setHomeLabel(account.id));
-      }).catch(() => {});
+      }).catch(onFailure);
     } else {
       try {
         setHome(sessionStorage.getItem(homeAccountKey) ?? undefined);
         setHomeLabel(sessionStorage.getItem(homeUserLabelKey) ?? undefined);
       } catch { setHome(undefined); setHomeLabel(undefined); }
     }
-    api.accessibleAccounts().then((rows) => setAccessible(rows.map((row) => row.account_id))).catch(() => {});
-  }, []);
+    api.accessibleAccounts().then((rows) => setAccessible(rows.map((row) => row.account_id))).catch(onFailure);
+  }, [config]);
 
+  if (failed && homeLabel === undefined) return <p>Account: <strong>Unavailable</strong></p>;
   if (accessible.length === 0) return <p>Account: <strong>{homeLabel ?? home ?? "…"}</strong></p>;
   const current = getActiveAccountOverride() ?? home ?? "";
   return <label>Account <select value={current} onChange={(event) => {
