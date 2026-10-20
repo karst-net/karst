@@ -24,8 +24,8 @@ export function Locations() {
   const [regionCode, setRegionCode] = useState("");
   // Local zones enabled this session, ahead of regions.reload() catching up --
   // enabling one should not force the live region/zone list to be re-fetched
-  // just to notice. Keyed by code; cleared with the rest of the picker state
-  // whenever the dialog is reopened from scratch.
+  // just to notice. Keyed by code; outlives a single dialog session like
+  // cloudAccountId/source below, for the same reason.
   const [enabledOverrides, setEnabledOverrides] = useState<Record<string, true>>({});
   const [enabling, setEnabling] = useState(false);
 
@@ -40,7 +40,12 @@ export function Locations() {
   // account never lists one of these in the first place.
   const needsEnable = Boolean(selectedRegion && !selectedRegion.enabled && !enabledOverrides[selectedRegion.code]);
 
-  const openDialog = () => { setDraft(blank); setSource("manual"); setCloudAccountId(""); setRegionCode(""); setEnabledOverrides({}); };
+  // Resets only the manual-entry draft -- source/cloudAccountId/regionCode
+  // deliberately survive a reopen (cleared only by picking a different
+  // cloud account, or never, for the life of this view) so that adding
+  // several zones from the same account doesn't mean re-fetching that
+  // account's live region list from the provider on every single reopen.
+  const openDialog = () => { setDraft(blank); setRegionCode(""); };
 
   const add = async () => {
     if (!draft) return;
@@ -58,10 +63,7 @@ export function Locations() {
     if (region.lat === undefined || region.lon === undefined) { setMessage(`${region.name || region.code} has no known coordinates yet — add it to the cloud catalog, or declare it manually.`); return; }
     const label = region.name ? `${region.name} (${region.code})` : region.code;
     const entry = { lat: region.lat, lon: region.lon, label, kind: `${account.provider}-${region.kind}` };
-    // Stay open and keep the already-fetched region list -- adding several
-    // zones from the same account used to mean re-fetching that list live
-    // from AWS/Azure/GCP for every single one.
-    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setRegionCode("");
+    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setDraft(undefined);
   };
   const enableZone = async () => {
     const account = selectedAccount;
