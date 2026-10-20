@@ -13,6 +13,43 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /versions:
+    get:
+      operationId: softwareVersions
+      description: Admin/owner-only software identity. Deployment components are a timestamped operator snapshot, not a live health query.
+      responses:
+        '200':
+          description: Running control binary and optional deployment snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [control, deployment_status]
+                properties:
+                  control:
+                    type: object
+                    required: [version, revision]
+                    properties:
+                      version: {type: string}
+                      revision: {type: string}
+                  deployment_status: {type: string, enum: [available, not_configured, unavailable]}
+                  deployment:
+                    type: object
+                    required: [observed_at, components]
+                    properties:
+                      observed_at: {type: string, format: date-time}
+                      components:
+                        type: array
+                        items:
+                          type: object
+                          required: [name, image, image_id, tags, state]
+                          properties:
+                            name: {type: string}
+                            image: {type: string}
+                            image_id: {type: string}
+                            tags: {type: array, items: {type: string}}
+                            state: {type: string}
+        default: {$ref: '#/components/responses/Error'}
   /domains:
     get:
       operationId: listMeshDomains

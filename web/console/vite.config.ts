@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+function git(args: string[]) {
+  try { return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+  catch { return "unknown"; }
+}
+const revision = process.env.GITHUB_SHA || git(["rev-parse", "HEAD"]);
+const version = process.env.KARST_VERSION || (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined) || git(["describe", "--tags", "--always", "--dirty"]);
+
 export default defineConfig({
+  define: { __KARST_UI_BUILD__: JSON.stringify({ version, revision }) },
   plugins: [react()],
   server: { proxy: { "/api": `http://127.0.0.1:${process.env.KARST_API_MOCK_PORT ?? 4010}` } },
   // maplibre-gl constructs its worker from a relative `new URL(..., import.meta.url)`

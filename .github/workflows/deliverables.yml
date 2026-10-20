@@ -95,7 +95,7 @@ jobs:
           install -m 0755 target/release/karstd dist/karstd
           install -m 0755 target/release/karst dist/karst
           install -m 0755 target/release/karst-relay dist/karst-relay
-          (cd server && CGO_ENABLED=1 go build -trimpath -o ../dist/karst-control ./cmd/karst-control)
+          (cd server && CGO_ENABLED=1 go build -trimpath -ldflags "-X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Version=$KARST_VERSION -X github.com/netbirdio/netbird/management/internals/karst/buildinfo.Revision=$GITHUB_SHA" -o ../dist/karst-control ./cmd/karst-control)
       - name: The glibc floor is the oldest supported distribution
         run: ./scripts/glibc-floor.sh 2.34 dist/karstd dist/karst dist/karst-relay dist/karst-control
       - name: Install nFPM
@@ -516,6 +516,9 @@ jobs:
           context: .
           file: ${{ matrix.file }}
           push: true
+          build-args: |
+            KARST_VERSION=${{ github.ref_name }}
+            KARST_REVISION=${{ github.sha }}
           tags: |
             ghcr.io/karst-net/${{ matrix.image }}:${{ github.ref_name }}
             ghcr.io/karst-net/${{ matrix.image }}:sha-${{ github.sha }}

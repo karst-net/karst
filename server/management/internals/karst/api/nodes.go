@@ -638,6 +638,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	// explicitly since this route does not inherit karstRouter's own
 	// middleware stack.
 	router.Handle("/karst/v1/relays/enroll", limitRequestBody(http.HandlerFunc(h.relaysEnroll))).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/versions", h.versions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
