@@ -260,6 +260,7 @@ type cloudAccountReadWriter interface {
 	List(ctx context.Context) ([]cloudaccounts.Account, error)
 	Delete(ctx context.Context, id string) error
 	Discover(ctx context.Context, id string) ([]cloudaccounts.DiscoveredRegion, error)
+	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (cloudaccounts.DiscoveredRegion, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -656,6 +657,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/cloud-accounts", h.cloudAccountsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}", h.cloudAccountsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions", h.cloudAccountRegions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions/{code}/enable", h.cloudAccountEnableRegion).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -3305,10 +3307,11 @@ func requireCloudAccountAdminRole(ctx context.Context) error {
 }
 
 // cloudAccountsList/cloudAccountsCreate/cloudAccountsDelete/
-// cloudAccountRegions back the console's cloud-credentials Settings
-// section and the Authorized Locations cloud-account picker -- see package
-// cloudaccounts's own doc comment for the ADR-0045 §6 addendum this
-// implements and why ModeReadWrite does not actuate anything here.
+// cloudAccountRegions/cloudAccountEnableRegion back the console's
+// cloud-credentials Settings section and the Authorized Locations
+// cloud-account picker -- see package cloudaccounts's own doc comment for
+// the ADR-0045 §6 addenda this implements, and exactly how far
+// ModeReadWrite actuation goes (cloudAccountEnableRegion, nothing else).
 func (h *handler) cloudAccountsList(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
@@ -3406,6 +3409,51 @@ func (h *handler) cloudAccountRegions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, regions)
+}
+
+// enableRegionRequest carries the region whose EC2 endpoint EnableLocalZone
+// must open its client against -- see DiscoveredRegion.ParentRegion's own
+// doc comment for why AWS needs it. The console reads it off the same
+// DiscoveredRegion this request is enabling.
+type enableRegionRequest struct {
+	ParentRegion string `json:"parent_region"`
+}
+
+// cloudAccountEnableRegion opts an AWS Local Zone into use (ADR-0045 §6's
+// second addendum) -- the one real, mutating cloud-provider call this
+// codebase makes, gated the same as credential create/delete
+// (requireCloudAccountAdminRole) since it is at least as consequential: it
+// is a one-way door on the provider side (AWS has no opt-out API) and the
+// console must have already warned the operator before sending this
+// request, not merely before rendering the button.
+func (h *handler) cloudAccountEnableRegion(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.cloudAccounts == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	if err := requireCloudAccountAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req enableRegionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	region, err := h.cloudAccounts.EnableLocalZone(r.Context(), mux.Vars(r)["cloudAccountId"], mux.Vars(r)["code"], req.ParentRegion)
+	if errors.Is(err, cloudaccounts.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, region)
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

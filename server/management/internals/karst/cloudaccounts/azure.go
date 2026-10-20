@@ -78,9 +78,9 @@ func azureRegion(loc armsubscriptions.Location) DiscoveredRegion {
 	if loc.Metadata != nil && loc.Metadata.Latitude != nil && loc.Metadata.Longitude != nil {
 		if lat, err := strconv.ParseFloat(*loc.Metadata.Latitude, 64); err == nil {
 			if lon, err := strconv.ParseFloat(*loc.Metadata.Longitude, 64); err == nil {
-				return DiscoveredRegion{Code: code, Name: name, Kind: cloudcatalog.KindRegion, Lat: &lat, Lon: &lon}
+				return DiscoveredRegion{Code: code, Name: name, Kind: cloudcatalog.KindRegion, Lat: &lat, Lon: &lon, Enabled: true}
 			}
 		}
 	}
-	return enrich(ProviderAzure, code, name, cloudcatalog.KindRegion)
+	return enrich(ProviderAzure, code, name, cloudcatalog.KindRegion, true)
 }
