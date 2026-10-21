@@ -710,7 +710,7 @@ export const deleteInfrastructureConnection = <ThrowOnError extends boolean = fa
 });
 
 /**
- * Calls out to the connection's own type and lists the resources it reports -- regions/local zones/zones for AWS/Azure/GCP, namespaces for Kubernetes -- enriched with coordinates where a static catalog or the provider's own API supplies them. Kubernetes namespace entries never carry coordinates; use the connection's own declared lat/lon instead (see InfrastructureConnection) -- see the Authorized Locations picker.
+ * Calls out to the connection's own type and lists the resources it reports -- regions/local zones/zones for AWS/Azure/GCP, namespaces for Kubernetes, datacenters for Nomad -- enriched with coordinates where a static catalog or the provider's own API supplies them. Kubernetes namespace and Nomad datacenter entries never carry coordinates; use the connection's own declared lat/lon instead (see InfrastructureConnection) -- see the Authorized Locations picker.
  */
 export const listInfrastructureConnectionResources = <ThrowOnError extends boolean = false>(options: Options<ListInfrastructureConnectionResourcesData, ThrowOnError>): RequestResult<ListInfrastructureConnectionResourcesResponses, ListInfrastructureConnectionResourcesErrors, ThrowOnError> => (options.client ?? client).get<ListInfrastructureConnectionResourcesResponses, ListInfrastructureConnectionResourcesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
