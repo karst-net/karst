@@ -567,6 +567,42 @@ func (e RelayHealthSource) Valid() bool {
 	}
 }
 
+// Defines values for RelayServiceBackendKind.
+const (
+	RelayServiceBackendKindCoturnCompanion RelayServiceBackendKind = "coturn-companion"
+	RelayServiceBackendKindExternal        RelayServiceBackendKind = "external"
+)
+
+// Valid indicates whether the value is a known member of the RelayServiceBackendKind enum.
+func (e RelayServiceBackendKind) Valid() bool {
+	switch e {
+	case RelayServiceBackendKindCoturnCompanion:
+		return true
+	case RelayServiceBackendKindExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayServiceViewBackendKind.
+const (
+	RelayServiceViewBackendKindCoturnCompanion RelayServiceViewBackendKind = "coturn-companion"
+	RelayServiceViewBackendKindExternal        RelayServiceViewBackendKind = "external"
+)
+
+// Valid indicates whether the value is a known member of the RelayServiceViewBackendKind enum.
+func (e RelayServiceViewBackendKind) Valid() bool {
+	switch e {
+	case RelayServiceViewBackendKindCoturnCompanion:
+		return true
+	case RelayServiceViewBackendKindExternal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayUsageDayGapReasons.
 const (
 	RelayUsageDayGapReasonsCapacity          RelayUsageDayGapReasons = "capacity"
@@ -1612,6 +1648,50 @@ type RelayLocation struct {
 	Lon   float32 `json:"lon"`
 }
 
+// RelayService defines model for RelayService.
+type RelayService struct {
+	// BackendKind Required with turn_id; omitted without it. Deployment ownership only.
+	BackendKind *RelayServiceBackendKind `json:"backend_kind,omitempty"`
+
+	// BackendOperator Required with turn_id; identifies who operates the backend.
+	BackendOperator *string `json:"backend_operator,omitempty"`
+	Id              string  `json:"id"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+
+	// TurnId Optional existing account-local TURN registry ID.
+	TurnId *string `json:"turn_id,omitempty"`
+}
+
+// RelayServiceBackendKind Required with turn_id; omitted without it. Deployment ownership only.
+type RelayServiceBackendKind string
+
+// RelayServiceView defines model for RelayServiceView.
+type RelayServiceView struct {
+	// BackendKind Required with turn_id; omitted without it. Deployment ownership only.
+	BackendKind *RelayServiceViewBackendKind `json:"backend_kind,omitempty"`
+
+	// BackendOperator Required with turn_id; identifies who operates the backend.
+	BackendOperator *string `json:"backend_operator,omitempty"`
+	Id              string  `json:"id"`
+
+	// PonorId Existing account-local Ponor registry ID.
+	PonorId string `json:"ponor_id"`
+
+	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
+	PonorPresent bool `json:"ponor_present"`
+
+	// TurnId Optional existing account-local TURN registry ID.
+	TurnId *string `json:"turn_id,omitempty"`
+
+	// TurnPresent Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.
+	TurnPresent bool `json:"turn_present"`
+}
+
+// RelayServiceViewBackendKind Required with turn_id; omitted without it. Deployment ownership only.
+type RelayServiceViewBackendKind string
+
 // RelayUsageDay defines model for RelayUsageDay.
 type RelayUsageDay struct {
 	Date              openapi_types.Date        `json:"date"`
@@ -2085,6 +2165,9 @@ type ValidatePolicyJSONRequestBody = PolicyWrite
 
 // CreateAllowedRegionJSONRequestBody defines body for CreateAllowedRegion for application/json ContentType.
 type CreateAllowedRegionJSONRequestBody = AllowedRegion
+
+// CreateRelayServiceJSONRequestBody defines body for CreateRelayService for application/json ContentType.
+type CreateRelayServiceJSONRequestBody = RelayService
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate

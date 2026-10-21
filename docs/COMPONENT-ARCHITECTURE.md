@@ -111,6 +111,12 @@ Operational requirements for the combined component:
 These requirements are acceptance targets for #404, not claims that a unified
 health endpoint or provider lifecycle adapter already exists.
 
+The additive [Relay service association API](relay-services.md) stores explicit
+account-local Ponor/TURN links and backend operator declarations. Its per-mode
+presence fields describe registry availability, not runtime health. Legacy
+registries, credential minting and wire projections remain in use while the
+managed adapter, service lifecycle and UI integration are implemented.
+
 ### Current transport limits
 
 The AVEN specification's [path-selection rules](../spec/aven-v1.md#8-path-selection)

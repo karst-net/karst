@@ -483,6 +483,33 @@ paths:
       responses:
         '200': {description: Policy test results, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTestResult'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /relay-services:
+    get:
+      operationId: listRelayServices
+      tags: [relays]
+      description: Explicit account-scoped Ponor/TURN associations. Presence means registry availability, not runtime health.
+      responses:
+        '200': {description: Relay services, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayServiceView'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createRelayService
+      tags: [relays]
+      description: Associate existing account-local registry records without changing endpoints, credentials, or backend processes.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+      responses:
+        '201': {description: Association created, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/{serviceId}:
+    parameters:
+      - {name: serviceId, in: path, required: true, schema: {type: string}}
+    delete:
+      operationId: deleteRelayService
+      tags: [relays]
+      description: Remove only the association. Existing registries and external processes remain independently managed.
+      responses:
+        '204': {description: Association removed}
+        default: {$ref: '#/components/responses/Error'}
   /relays:
     get:
       operationId: listRelays
@@ -1336,6 +1363,24 @@ components:
       type: object
       required: [passed, results]
       properties: {passed: {type: boolean}, results: {type: array, items: {type: object, required: [name, passed], properties: {name: {type: string}, passed: {type: boolean}, message: {type: string}}}}}
+    RelayService:
+      type: object
+      required: [id, ponor_id]
+      additionalProperties: false
+      properties:
+        id: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
+        ponor_id: {type: string, minLength: 1, description: Existing account-local Ponor registry ID.}
+        turn_id: {type: string, description: Optional existing account-local TURN registry ID.}
+        backend_kind: {type: string, enum: [external, coturn-companion], description: Required with turn_id; omitted without it. Deployment ownership only.}
+        backend_operator: {type: string, minLength: 1, maxLength: 256, description: Required with turn_id; identifies who operates the backend.}
+    RelayServiceView:
+      allOf:
+        - {$ref: '#/components/schemas/RelayService'}
+        - type: object
+          required: [ponor_present, turn_present]
+          properties:
+            ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
+            turn_present: {type: boolean, description: Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.}
     RelayCreate:
       type: object
       required: [address, identity_key, region]
