@@ -837,7 +837,45 @@ whatever the operator already trusts.
 >   a compose file or reaching a local Docker socket, a categorically
 >   different shape than the discovery calls above. No connection type, no
 >   code, and the existing Compose deployment workflow is unchanged. Nomad
->   is likewise deferred, to its own follow-up issue, with no code here.
+>   was deferred by this addendum to its own follow-up round — see the next
+>   addendum for that round landing.
+
+> **Addendum, 2026-10-21 — a Nomad connection type (issue #406 follow-up).**
+> The Nomad deferral in the addendum above is now built, following the
+> Kubernetes connection type's own precedent as closely as the two
+> backends' shapes allow:
+>
+> - **Credential shape.** Unlike Kubernetes (no single "config file"),
+>   Nomad's client config is a handful of discrete fields Nomad's own Go
+>   SDK already models: `nomadSecret{address, region?, namespace?, token?,
+>   ca_cert?, client_cert?, client_key?}` (PEM contents, pasted the same way
+>   Kubernetes's kubeconfig is, not file paths). `region` scopes which
+>   Nomad region this connection talks to — a scheduler/control concept,
+>   not a geographic one; keeping it distinct from a geographic coordinate
+>   or a cloud region is exactly what issue #406 asked for.
+> - **Discovery.** `discoverNomad` proves reachability with
+>   `Status().Leader()` and then lists **datacenters**, derived by deduping
+>   `Nodes().List()`'s own `Datacenter` field — Nomad has no "list
+>   datacenters" endpoint. Datacenters are this backend's closest analog to
+>   a Kubernetes namespace or a cloud region for Authorized Locations
+>   purposes; Nomad namespaces (a multi-tenancy concept, not a placement
+>   one) are not surfaced here, matching the issue's emphasis on datacenter
+>   over namespace for this backend. No job, allocation, variable, or
+>   watch/blocking-query access — discovery-only, the same posture as every
+>   other connection type above.
+> - **Declared location, status fields, package/route wiring.** All
+>   unchanged from the Kubernetes work: a Nomad connection may carry an
+>   operator-declared `lat`/`lon`/`location_label` (no provider-supplied
+>   geography), `status`/`last_validated_at`/`last_error` record the last
+>   discovery outcome, and no wiring changes were needed in `nodes.go`/
+>   `bootstrap.go` at all — the generalized `/infrastructure-connections`
+>   surface built for Kubernetes was already type-agnostic. This is the
+>   intended payoff of that earlier design choice, not a surprise.
+> - **Dependency.** `github.com/hashicorp/nomad/api` is a new dependency,
+>   consumed via its own pseudo-version (the submodule carries no
+>   independent semver tags) rather than a heavier framework; a connection
+>   discovery call does not need the full `nomad` server/client binary's
+>   dependency surface, only this thin API client.
 
 ### 7. Phasing
 

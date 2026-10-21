@@ -863,10 +863,11 @@ paths:
       description: >-
         Calls out to the connection's own type and lists the resources it
         reports -- regions/local zones/zones for AWS/Azure/GCP, namespaces
-        for Kubernetes -- enriched with coordinates where a static catalog
-        or the provider's own API supplies them. Kubernetes namespace
-        entries never carry coordinates; use the connection's own declared
-        lat/lon instead (see InfrastructureConnection) -- see the
+        for Kubernetes, datacenters for Nomad -- enriched with coordinates
+        where a static catalog or the provider's own API supplies them.
+        Kubernetes namespace and Nomad datacenter entries never carry
+        coordinates; use the connection's own declared lat/lon instead (see
+        InfrastructureConnection) -- see the
         Authorized Locations picker.
       responses:
         '200': {description: Discovered resources, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredResource'}}}}}
@@ -1528,22 +1529,23 @@ components:
     # ADR-0045 §6 addenda: admin-entered AWS/Azure/GCP/Kubernetes
     # infrastructure connections, stored encrypted at rest by package
     # infraconnections. "read_only" can only ever discover (list regions/
-    # zones/namespaces); "read_write" is stored for a future provisioning
-    # path and does not currently actuate anything either -- see the
-    # Settings page's own copy and the package's doc comment. Lat/lon/
-    # location_label are an optional operator-declared point, for a type
-    # with no provider-supplied geography (Kubernetes today) -- ignored for
-    # aws/azure/gcp. Status/last_validated_at/last_error reflect the most
-    # recent resources (Discover) call, success or failure.
+    # zones/namespaces/datacenters); "read_write" is stored for a future
+    # provisioning path and does not currently actuate anything either --
+    # see the Settings page's own copy and the package's doc comment.
+    # Lat/lon/location_label are an optional operator-declared point, for a
+    # type with no provider-supplied geography (Kubernetes/Nomad) --
+    # ignored for aws/azure/gcp. Status/last_validated_at/last_error
+    # reflect the most recent resources (Discover) call, success or
+    # failure.
     InfrastructureConnectionCreate:
       type: object
       required: [type, mode, secret]
       additionalProperties: false
       properties:
-        type: {type: string, enum: [aws, azure, gcp, kubernetes]}
+        type: {type: string, enum: [aws, azure, gcp, kubernetes, nomad]}
         mode: {type: string, enum: [read_only, read_write]}
         label: {type: string}
-        secret: {type: object, description: 'Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}.'}
+        secret: {type: object, description: 'Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths.'}
         lat: {type: number, minimum: -90, maximum: 90}
         lon: {type: number, minimum: -180, maximum: 180}
         location_label: {type: string}
@@ -1552,7 +1554,7 @@ components:
       required: [id, type, mode, created_at]
       properties:
         id: {type: string, readOnly: true}
-        type: {type: string, enum: [aws, azure, gcp, kubernetes]}
+        type: {type: string, enum: [aws, azure, gcp, kubernetes, nomad]}
         mode: {type: string, enum: [read_only, read_write]}
         label: {type: string}
         created_at: {type: string, format: date-time, readOnly: true}
@@ -1562,11 +1564,12 @@ components:
         status: {type: string, enum: [ok, error], description: 'Empty until the first resources (Discover) call completes.'}
         last_validated_at: {type: string, format: date-time, readOnly: true}
         last_error: {type: string, readOnly: true}
-    # One resource (region/local zone/zone/namespace) as discovered live
-    # from a connection, enriched with cloudcatalog's static coordinates
-    # where available -- lat/lon are absent, not zero, when there are none
-    # (always true for a namespace; see InfrastructureConnection's own
-    # lat/lon for where a Kubernetes connection's location lives instead).
+    # One resource (region/local zone/zone/namespace/datacenter) as
+    # discovered live from a connection, enriched with cloudcatalog's
+    # static coordinates where available -- lat/lon are absent, not zero,
+    # when there are none (always true for a namespace or datacenter; see
+    # InfrastructureConnection's own lat/lon for where a Kubernetes/Nomad
+    # connection's location lives instead).
     DiscoveredResource:
       type: object
       required: [code, kind]
@@ -1574,11 +1577,11 @@ components:
       properties:
         code: {type: string}
         name: {type: string}
-        kind: {type: string, enum: [region, local_zone, zone, namespace]}
+        kind: {type: string, enum: [region, local_zone, zone, namespace, datacenter]}
         lat: {type: number, minimum: -90, maximum: 90}
         lon: {type: number, minimum: -180, maximum: 180}
-        parent_region: {type: string, description: 'Set for a kind other than region/namespace -- the region to call the enable endpoint against.'}
-        enabled: {type: boolean, description: 'True for a region and an already opted-in local zone. False only for a read_write AWS connection''s not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.'}
+        parent_region: {type: string, description: 'Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.'}
+        enabled: {type: boolean, description: 'True for a region and an already opted-in local zone. False only for a read_write AWS connection''s not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.'}
     TurnServerCreate:
       type: object
       required: [uri]

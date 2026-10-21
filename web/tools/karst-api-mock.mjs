@@ -129,11 +129,16 @@ const discoveryFixtures = {
     { code: "us-central1", name: "Iowa", kind: "region", lat: 41.2619, lon: -95.8608, enabled: true },
     { code: "europe-west1", name: "Belgium", kind: "region", lat: 50.8503, lon: 4.3517, enabled: true },
   ],
-  // Namespaces never carry coordinates -- the console falls back to the
-  // connection's own declared lat/lon (see settings.tsx/locations.tsx).
+  // Namespaces/datacenters never carry coordinates -- the console falls
+  // back to the connection's own declared lat/lon (see
+  // settings.tsx/locations.tsx).
   kubernetes: [
     { code: "default", kind: "namespace" },
     { code: "kube-system", kind: "namespace" },
+  ],
+  nomad: [
+    { code: "dc1", kind: "datacenter" },
+    { code: "dc2", kind: "datacenter" },
   ],
 };
 let tokens = seedTokens();
@@ -773,10 +778,11 @@ const server = http.createServer((request, response) => {
   }
   if (method === "POST" && karst === "/infrastructure-connections") {
     return readBody(request).then((entry) => {
-      if (!["aws", "azure", "gcp", "kubernetes"].includes(entry.type)) return error(response, 422, "invalid_argument", "type must be aws, azure, gcp, or kubernetes");
+      if (!["aws", "azure", "gcp", "kubernetes", "nomad"].includes(entry.type)) return error(response, 422, "invalid_argument", "type must be aws, azure, gcp, kubernetes, or nomad");
       if (!["read_only", "read_write"].includes(entry.mode)) return error(response, 422, "invalid_argument", "mode must be read_only or read_write");
       if (!entry.secret) return error(response, 422, "invalid_argument", "secret is required");
       if (entry.type === "kubernetes" && !entry.secret.kubeconfig) return error(response, 422, "invalid_argument", "secret.kubeconfig is required");
+      if (entry.type === "nomad" && !entry.secret.address) return error(response, 422, "invalid_argument", "secret.address is required");
       const connection = {
         id: id("infra-connection"), type: entry.type, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(),
         secret: entry.secret, lat: entry.lat, lon: entry.lon, location_label: entry.location_label,

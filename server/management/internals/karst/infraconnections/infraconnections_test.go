@@ -173,6 +173,7 @@ func TestCreateValidatesSecretShapePerType(t *testing.T) {
 		{"azure missing fields", TypeAzure, `{"tenant_id":"x"}`},
 		{"gcp missing project", TypeGCP, `{"service_account_key":{}}`},
 		{"kubernetes missing kubeconfig", TypeKubernetes, `{}`},
+		{"nomad missing address", TypeNomad, `{}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

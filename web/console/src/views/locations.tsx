@@ -61,15 +61,17 @@ export function Locations() {
   const addFromConnection = async () => {
     const connection = selectedConnection;
     const item = selectedResource;
-    if (!connection || !item) { setMessage("Choose an infrastructure connection and a region or namespace."); return; }
+    if (!connection || !item) { setMessage("Choose an infrastructure connection and a region, namespace, or datacenter."); return; }
     if (needsEnable) { setMessage(`${item.name || item.code} is not enabled yet — enable it first.`); return; }
-    // A namespace has no coordinates of its own -- fall back to the
-    // connection's own operator-declared location, if any (see Settings).
+    // A namespace or datacenter has no coordinates of its own -- fall back
+    // to the connection's own operator-declared location, if any (see
+    // Settings).
+    const noCatalogGeography = item.kind === "namespace" || item.kind === "datacenter";
     const lat = item.lat ?? connection.lat;
     const lon = item.lon ?? connection.lon;
     if (lat === undefined || lon === undefined) {
-      const subject = item.kind === "namespace" ? "This connection" : (item.name || item.code);
-      setMessage(`${subject} has no known coordinates yet — ${item.kind === "namespace" ? "declare the connection's location in Settings" : "add it to the cloud catalog"}, or declare it manually.`);
+      const subject = noCatalogGeography ? "This connection" : (item.name || item.code);
+      setMessage(`${subject} has no known coordinates yet — ${noCatalogGeography ? "declare the connection's location in Settings" : "add it to the cloud catalog"}, or declare it manually.`);
       return;
     }
     const label = item.name ? `${item.name} (${item.code})` : item.code;
@@ -144,7 +146,7 @@ export function Locations() {
             ? <p>Loading regions/namespaces…</p>
             : resources.error
               ? <Failure message={resources.error} retry={resources.reload} />
-              : <label>Region, zone, or namespace<select aria-label="Region, zone, or namespace" value={resourceCode} onChange={(event) => setResourceCode(event.target.value)}>
+              : <label>Region, zone, namespace, or datacenter<select aria-label="Region, zone, namespace, or datacenter" value={resourceCode} onChange={(event) => setResourceCode(event.target.value)}>
                 <option value="">Choose one…</option>
                 {(resources.value ?? []).map((r) => <option key={r.code} value={r.code}>
                   {r.name ? `${r.name} (${r.code})` : r.code}

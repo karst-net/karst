@@ -626,11 +626,11 @@ export type DiscoveredRegion = {
 };
 
 export type InfrastructureConnectionCreate = {
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
     mode: 'read_only' | 'read_write';
     label?: string;
     /**
-     * Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}.
+     * Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}. Nomad: {address, region?, namespace?, token?, ca_cert?, client_cert?, client_key?} -- ca_cert/client_cert/client_key are PEM contents, not file paths.
      */
     secret: {
         [key: string]: unknown;
@@ -642,7 +642,7 @@ export type InfrastructureConnectionCreate = {
 
 export type InfrastructureConnection = {
     readonly id: string;
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
     mode: 'read_only' | 'read_write';
     label?: string;
     readonly created_at: string;
@@ -660,15 +660,15 @@ export type InfrastructureConnection = {
 export type DiscoveredResource = {
     code: string;
     name?: string;
-    kind: 'region' | 'local_zone' | 'zone' | 'namespace';
+    kind: 'region' | 'local_zone' | 'zone' | 'namespace' | 'datacenter';
     lat?: number;
     lon?: number;
     /**
-     * Set for a kind other than region/namespace -- the region to call the enable endpoint against.
+     * Set for a kind other than region/namespace/datacenter -- the region to call the enable endpoint against.
      */
     parent_region?: string;
     /**
-     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.
+     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace or a Nomad datacenter, neither of which has an opt-in concept.
      */
     enabled?: boolean;
 };
@@ -903,7 +903,7 @@ export type CloudAccountWritable = {
 };
 
 export type InfrastructureConnectionWritable = {
-    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes' | 'nomad';
     mode: 'read_only' | 'read_write';
     label?: string;
     lat?: number;
