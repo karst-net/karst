@@ -57,7 +57,7 @@ B: endpoint = "10.99.0.1:51820"   state = "established"  transport = "direct"
 | **KarstDNS** — mesh name resolution ([spec](spec/karstdns-v1.md)) | Resolver, split DNS and host integration: Linux (`systemd-resolved`/NetworkManager/`resolv.conf`), macOS (`/etc/resolver`) and Windows (NRPT) |
 | Windows client | TUN adapter and session I/O, IP Helper addressing, SCM service integration, protected key storage, and MSI installer are built; Wintun signer verification and adapter creation run in Windows CI. Unsigned Karst executables/MSI and release validation remain beta work |
 | **Bedrock** network lock | Root bootstrap, offline `karst-bedrock` signer, hash-chained audit log, client enforcement, and automated audit anchoring through [ADR-0016](docs/adr/0016-capability-scoped-anchor-authorities.md)'s capability-scoped authority tier — implemented in both languages against shared vectors |
-| Subnet routers, exit nodes and ACL-gated SSH | Managed route distribution, exit-node consent and forwarding, plus a separately authorized SSH admission gate |
+| Gateway (subnet and exit behavior) and ACL-gated SSH | Managed route distribution, exit-node consent and forwarding, plus a separately authorized SSH admission gate |
 | Operations | Prometheus metrics, diagnostics/bug reports, HA engineering drills and deployment artifacts |
 
 ### Supported beta clients
@@ -184,20 +184,29 @@ Notable decisions, each with an ADR:
 | Greenfield Rust datapath — a 3210-byte handshake breaks WireGuard's framing | [0003](docs/adr/0003-greenfield-rust-datapath.md) |
 | Fragmentation with a stateless-under-load responder; per-pair PSK hedge | [0004](docs/adr/0004-handshake-mtu-and-kem-selection.md) |
 | MIT/Apache clients, AGPL server, DCO not CLA, no commercial license | [0007](docs/adr/0007-licensing.md) |
-| Relay co-located with the coordination server; TURN fallback | [0008](docs/adr/0008-relay-infrastructure-and-funding.md) |
+| Relay co-located with control; Ponor and TURN modes unified by ADR-0056 | [0008](docs/adr/0008-relay-infrastructure-and-funding.md), [0056](docs/adr/0056-four-component-families.md) |
 | Control plane forked from NetBird rather than greenfield | [0009](docs/adr/0009-control-plane-fork-vs-greenfield.md) |
 | NAT64 synthesis at the socket boundary; RFC 7050 over RFC 8781 | [0013](docs/adr/0013-nat64-address-synthesis.md) |
 
 ## Components
 
-| Component | Language | Role |
+[ADR-0056](docs/adr/0056-four-component-families.md) defines four conceptual
+families. A family can span programs or hosts; protocols and node capabilities
+are not additional families.
+
+| Family | Programs and capabilities | Main responsibility |
 |---|---|---|
-| `karstd` | Rust | Node agent — TUN/userspace networking, peer state, routing, discovery and DNS |
-| `karst` | Rust | CLI |
-| `karst-relay` | Rust | **Ponor** encrypted relay, AVEN reflector and TURN fallback support |
-| `karst-control` | Go | Coordination server — registration, policy, SSO, audit, relay/TURN registry |
-| console / portal | TypeScript | Administration, invitations, lifecycle and user self-service |
-| `karst-bedrock` | Rust | Offline signer and network-lock ceremony |
+| Node agent | `karstd`, `karst`, platform UI; optional **Gateway** | Encrypted sessions, local policy, AVEN path selection, KarstDNS and routing; Gateway serves specific-prefix subnet access and default-route exit egress |
+| Transport infrastructure | One **Relay** with Ponor and TURN modes | Presence/bootstrap, discovery assistance and ciphertext forwarding; currently `karst-relay` plus optional coturn/external TURN |
+| Control services | `karst-control`, console and portal | Enrollment, users/groups, policy, peer maps, routes/DNS, Relay registry/credentials, administration and audit |
+| Trust tooling | `karst-bedrock`, Bedrock verifiers and scoped anchor signer | Independent membership approval, revocation, chain verification and audit anchoring |
+
+The family model is accepted. Unified Gateway and Relay configuration, APIs,
+UI and lifecycle are pending [#404](https://github.com/karst-net/karst/issues/404).
+Existing commands and separate Ponor/TURN registries still apply. TURN will be
+integrated through a managed adapter to coturn or an external provider.
+See [component architecture](docs/COMPONENT-ARCHITECTURE.md) for ownership,
+current interfaces, migration requirements and platform limits.
 
 The handshake is **PHREATIC**; the relay protocol is **Ponor**; NAT traversal is
 **AVEN**; the network lock is **Bedrock**; the name service is **KarstDNS**. All

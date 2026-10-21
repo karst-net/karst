@@ -4,6 +4,13 @@
 > [GitHub issues via the migration index](plans/README.md). This notice supersedes
 > all backlog/status instructions below; retain the text as historical context.
 
+> **Current component architecture:** [ADR-0056](docs/adr/0056-four-component-families.md)
+> and [component architecture](docs/COMPONENT-ARCHITECTURE.md) define four
+> families: node agent, transport infrastructure, control services, and trust
+> tooling. Gateway combines subnet and exit behavior; Relay combines Ponor and
+> TURN modes through a managed backend adapter. The tables and phase records
+> below remain historical; runtime/API consolidation is tracked in #404.
+
 > **Current cryptographic scope:** [ADR-0018](docs/adr/0018-cnsa-2-0-as-the-sole-suite.md)
 > makes CNSA 2.0 the sole PHREATIC suite and removes application DH keys.
 > The plan below is a historical implementation record; its earlier suite,

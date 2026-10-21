@@ -26,6 +26,11 @@
 
 ---
 
+> **Component ownership:** [ADR-0056](0056-four-component-families.md) places
+> Bedrock in trust tooling, with verification in node agents and control
+> services. It does not change this ADR's authority separation or cryptography;
+> online anchor keys still cannot authorize membership.
+
 ## Context
 
 ADR-0001 specifies **SLH-DSA-SHA2-192s** for "the offline root (Bedrock)" and

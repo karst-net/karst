@@ -6,13 +6,20 @@ This manual begins after a first node connects. For installation and initial
 enrollment, use [Getting started](GETTING-STARTED.md). For the security model
 behind an operational choice, use the [security whitepaper](SECURITY-WHITEPAPER.md).
 
+[Component architecture](COMPONENT-ARCHITECTURE.md) groups operations into
+node agent, transport infrastructure, control services and trust tooling.
+Gateway is the node's subnet/exit forwarding capability. Relay combines Ponor
+and TURN modes through a managed coturn/external-provider adapter; unified
+configuration/lifecycle is pending #404. The commands below remain current.
+
 ## 1. Deployment topologies
 
 ### Container deployment
 
 Use [`deploy/compose/README.md`](../deploy/compose/README.md) as the canonical
-procedure for the co-located control, relay, and optional TURN services. Keep
-`state/` private and backed up off-host; it contains the server keys pinned by
+procedure for co-located control services and the Relay's Ponor process plus
+optional coturn backend. Current deployment still uses separate processes and
+configuration. Keep `state/` private and backed up off-host; it contains the server keys pinned by
 every node. Verify release images with `cosign`, record their immutable
 digests, and deploy those digests rather than mutable tags. Re-running
 `bootstrap.sh` completes missing state without rotating existing identities.
@@ -56,6 +63,25 @@ to change to deploy it.
    `curl -H "Authorization: Bearer $TOKEN" -d '{"keyword":"wiki","target_url":"https://wiki.internal"}' http://go.<zone>/api/links`.
    There is no admin-console UI for this yet — see the ADR's "Reconsider
    if" section.
+
+### Gateway and Relay operational ownership
+
+Use [Gateway operations](subnet-routers-and-exit-nodes.md) for route readiness,
+forwarding/NAT, return routing, explicit default-route consent, DNS review,
+and recovery. Track subnet and exit routes under one Gateway node while
+retaining per-route kind and counters. Only supported forwarding hosts may
+serve this capability; endpoint support alone is insufficient.
+
+For Relay, inspect Ponor roster freshness/admission, reflector reachability,
+and TURN backend allocation/permission failures, credential expiry, port and
+bandwidth capacity independently. Keep per-mode evidence when one mode is
+healthy and another is not. Configure quotas/rate limits at each backend;
+never expose a shared secret in status output. #404 will unify the service
+view and managed adapter, preserving coturn/external-provider support.
+
+Back up control state, node consent and identity state, and Bedrock signing
+material under their separate custody rules. A healthy Relay neither proves
+Gateway forwarding readiness nor grants access to Bedrock signing keys.
 
 ## 2. Day-to-day operations
 

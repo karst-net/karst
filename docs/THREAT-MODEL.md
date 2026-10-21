@@ -66,16 +66,25 @@ but v1 does not claim resistance to an active adversary who already has a CRQC.
 
 ---
 
+## Component ownership
+
+[ADR-0056](adr/0056-four-component-families.md) groups components into node
+agent, transport infrastructure, control services and trust tooling. Gateway
+is a node capability combining subnet and exit routes. Relay is one component
+with Ponor and TURN modes; a managed coturn/external-provider adapter and
+unified operations are pending #404. This grouping changes no crypto claim.
+
 ## 4. Trust boundaries
 
 ```mermaid
 flowchart TD
-    IdP[IdP] -->|B5| Control["karst-control<br/>+ Bedrock chain"]
+    IdP[IdP] -->|B5| Control["Control services: signed Bedrock chain distribution"]
     Admin[admin / console] -->|B4| Control
     Control -->|B2: netmap, PSKs, filters, credentials| Node[karstd]
-    Host["host OS<br/>TUN / DNS / keys"] -->|B6| Node
+    Host["host OS: TUN, DNS, keys"] -->|B6| Node
     Node -->|B1: PHREATIC datapath| Peer[peer]
-    Node -->|B3: relay / TURN, untrusted| Relay["Ponor / coturn"]
+    Node -->|B3: ciphertext transit| Relay["Relay: Ponor and TURN backend"]
+    Node -->|B8: Gateway inner-packet forwarding| External["LAN, VPC or Internet"]
     Supply["B7: supply chain"] -. crosses every component .-> Control
     Supply -.-> Node
     Supply -.-> Relay
@@ -90,6 +99,7 @@ flowchart TD
 | B5 | control server ↔ IdP | IdP is authoritative for user identity only |
 | B6 | node ↔ host OS | Trusted (T8 is out of scope) |
 | B7 | build/supply chain | Verified, not trusted |
+| B8 | Gateway ↔ non-overlay destination | Overlay encryption ends at Gateway; destination metadata and unencrypted payload are exposed; application encryption can remain |
 
 ---
 
@@ -100,7 +110,8 @@ everything else holds.
 
 | Compromise | Yields | Does **not** yield |
 |---|---|---|
-| Ponor relay or TURN provider | Metadata: peer key IDs, timing, volume | Any plaintext |
+| Relay Ponor process or TURN backend | Transport endpoint/peer metadata, timing, volume | Overlay plaintext |
+| Gateway for an approved route | Inner packet destinations and unencrypted payload for forwarded traffic | Decryption of application encryption merely from forwarding; unrelated peer-session plaintext |
 | Coordination server | Policy control, netmap contents incl. PSKs, ability to misroute or deny | **Cannot decrypt traffic** (no KEM secrets); **cannot inject a node** if Bedrock is enabled (ADR-0005, §4.5) |
 | Coordination server **+** full lattice break | **Everything** | — |
 | PSK master alone | Removes the diversity hedge | Nothing decryptable while ML-KEM holds |
@@ -184,6 +195,16 @@ ADR-0007 chose AGPL — so a modified server must be published.
 | Malicious or vulnerable dependency | `cargo deny`, `govulncheck`, license allowlist, Dependabot, quarterly review | LICENSING.md, §11 | CI gates |
 | **NetBird fork inherits upstream vulnerabilities** | Fork enters the dependency review cycle as a **first-class component, not a library** | ADR-0009 | Quarterly review; rebase discipline |
 | Build tampering | Reproducible builds, signed artifacts, SBOM per release, transparency-logged releases | §11 | Release pipeline |
+
+### B8 — Gateway forwarding beyond the overlay
+
+Control distributes approved specific/default-prefix offers; agents enforce
+packet policy and local default-route consent. Gateway forwarding requires
+supported host privileges, bounded forwarding grants, NAT or explicit return
+routes, and tunnel-underlay escape routes. Reuse of a consented route ID must
+not expand reachability silently. DNS paths need separate review. Co-locating
+Relay and Gateway does not give Relay tunnel keys or forwarding permissions.
+Bedrock membership approval does not authorize arbitrary packet destinations.
 
 ---
 

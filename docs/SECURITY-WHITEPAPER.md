@@ -27,6 +27,24 @@ secrets but has no node KEM secret with which to decrypt ordinary traffic.
 The combined event of a coordination-server compromise and a full lattice
 break is explicitly a total break. ([Threat model §§4–5](THREAT-MODEL.md#4-trust-boundaries))
 
+### Component ownership and forwarding exposure
+
+Karst uses four families: node agent, transport infrastructure, control services
+and trust tooling. Gateway is a node capability covering subnet and default-route
+forwarding; Relay combines Ponor and TURN transport modes. Runtime/API/service
+consolidation is pending #404; the managed TURN adapter retains coturn and
+external-provider support. ([ADR-0056](adr/0056-four-component-families.md))
+
+Relay modes carry end-to-end ciphertext. Gateway terminates the overlay session
+for its approved routes and sees inner destinations and unencrypted payload;
+application encryption may remain. Control distributes policy, nodes enforce
+it, and default-route activation requires local recipient consent. Bedrock
+independently approves identities, with verification in enforcing clients;
+an online anchor key cannot sign membership changes. Combining service roles
+must not combine signing custody, credentials or forwarding privileges.
+([Threat model](THREAT-MODEL.md#4-trust-boundaries),
+[component architecture](COMPONENT-ARCHITECTURE.md))
+
 ## 2. Cryptographic design
 
 PHREATIC is Karst's UDP dataplane protocol. Its sole suite is `0x0002`
