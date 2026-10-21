@@ -95,6 +95,14 @@ services:
       - ../../../web/portal/dist:/srv/portal:ro
       - ./release:/srv/releases:ro
       - ./state/caddy:/data
+      # The Caddyfile's own placeholder for /config.json -- mounted from
+      # console's *source* public/config.json, not dist/config.json, so it
+      # is never touched by a console rebuild. A host-specific override
+      # replaces this file (not this directory) at the identical
+      # /etc/karst/config.json path with this deployment's real OIDC
+      # values; see docker-compose.override.yml's own comment on why that
+      # mount target is /etc/karst and not nested under /srv/console.
+      - ../../../web/console/public/config.json:/etc/karst/config.json:ro
     depends_on:
       - control
       - keycloak
