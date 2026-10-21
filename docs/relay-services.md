@@ -3,8 +3,8 @@
 
 ADR-0056 combines Ponor and TURN under one Relay service model. The first
 control implementation adds explicit, account-scoped service associations;
-runtime backend management, consolidated health probes, and service-driven
-netmap publication remain tracked in #404.
+service-driven netmap publication is opt-in. Runtime backend management and
+consolidated health probes remain tracked in #404.
 
 ## Console
 
@@ -21,7 +21,9 @@ Use **Ponor endpoints** and **TURN backends** within Relays for existing backend
 administration. The legacy `#/turns` link remains supported. If an older control
 server lacks the service API, the Services view reports that error while the
 backend views remain accessible. Upgrade control before using associations.
-Removing an association does not remove either backend.
+Removing an association does not remove either backend process or registry record.
+In service publication mode, endpoints used only by that association are withdrawn
+from clients. The console makes the active publication mode explicit.
 
 ## Administrative API
 
@@ -32,7 +34,10 @@ The authenticated management API exposes these additive endpoints under
 |---|---|
 | `GET /relay-services` | List this account's associations and per-mode registry presence |
 | `POST /relay-services` | Create an explicit association to existing account-local registry records |
-| `DELETE /relay-services/{serviceId}` | Delete only the association |
+| `DELETE /relay-services/{serviceId}` | Delete the association; withdraw its otherwise unused endpoints when service publication is active |
+| `GET /relay-services/publication` | Read the persistent authority choice: `legacy` or `services` |
+| `POST /relay-services/publication/preview` | Validate and list the service associations without changing publication |
+| `PUT /relay-services/publication` | Change authority with `mode` and `acknowledge_connectivity_change: true` |
 
 Members and the narrowly scoped scaler role cannot manage these records. The
 request cannot supply an account ID, identity key, credential, or shared secret.
@@ -64,7 +69,8 @@ whether the referenced registry records still exist in the same account;
 they are **not runtime health results**. An absent optional TURN mode also has
 `turn_present: false`; inspect `turn_id` to distinguish it from a missing
 configured backend. A legacy registry deletion preserves the association and
-reports that mode missing. It never matches a replacement by address, region,
+reports that mode missing. In service publication mode, subsequent netmaps
+withdraw that backend while continuing to publish the other available mode. It never matches a replacement by address, region,
 or provider, and one mode's presence does not hide the other's absence.
 
 ## Additive migration and rollback
@@ -78,17 +84,31 @@ or provider, and one mode's presence does not hide the other's absence.
 3. Upgrade control before using `/relay-services`. Older control versions do
    not expose this API. Existing client wire projections and credential minting
    remain unchanged, so this step requires no client upgrade.
-4. Create each association, then list it and inspect both presence fields.
+4. Create each association while publication is in legacy mode, then list it and inspect both presence fields.
    An invalid reference returns 422; a duplicate service ID returns 409.
    Existing file-only registry entries must first be represented in the
    account-local registry before they can be associated; do not guess IDs.
-5. For rollback, remove unwanted associations or run the previous control
-   version while retaining the additive `karst_relay_services` table. Deleting
-   an association does not delete registry records, stop coturn, contact an
-   external provider, rotate keys, or withdraw published endpoints.
+5. Use **Preview service publication** (or the preview API). It validates
+   account-local references, the configured credential minter, and the supported
+   topology. Service publication currently requires at most one distinct shared
+   TURN backend per account; multiple associations may reference it. Other
+   backend combinations fail explicitly until client dispatch supports them.
+6. Review the service list and acknowledge the connectivity change before
+   applying service publication. Control revalidates the configuration, persists
+   the authority choice, and notifies connected clients. Only referenced
+   endpoints are projected into the existing `relays` and `turn_servers` fields;
+   pins and credential minting remain protocol-specific. An empty service set
+   publishes no Relay endpoints and never falls back to global/legacy entries.
+7. To roll back, explicitly restore `legacy` publication before downgrading
+   control. This can republish previously omitted legacy endpoints; review the
+   old registries first. Older control binaries ignore the publication table,
+   so downgrading without this step bypasses the chosen service authority.
+   Keep the additive service/publication tables for a later upgrade. Removing
+   an association does not stop coturn, contact an external provider or rotate
+   keys. In service mode it does change the endpoint set sent to clients.
 
 This stage deliberately retains the legacy `/relays` and `/turns` APIs and
 separate client netmap fields. It does not remove legacy configuration,
 introduce a new credential authority, or claim completion of the managed TURN
-adapter. Review-before-apply migration tooling, lifecycle operations, per-mode
+adapter. Bulk configuration migration tooling, lifecycle operations, per-mode
 health/accounting, and full transport verification remain required by #404.

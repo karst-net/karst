@@ -4,10 +4,44 @@
 import { expect, test } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
 
+test("publication preview is read only and activation requires acknowledgment", async ({ page }) => {
+  let mode = "legacy";
+  let updates = 0;
+  await page.route("**/api/karst/v1/relay-services**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/preview")) { await route.fulfill({ json: [] }); return; }
+    if (path.endsWith("/publication")) {
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON();
+        expect(body.acknowledge_connectivity_change).toBe(true);
+        mode = body.mode;
+        updates++;
+      }
+      await route.fulfill({ json: { mode } });
+      return;
+    }
+    await route.fulfill({ json: [] });
+  });
+  await page.goto("/#/relays");
+  await page.getByRole("button", { name: "Preview service publication", exact: true }).click();
+  await expect(page.getByText("No services: all Relay endpoints will be withdrawn from clients.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish services" })).toBeDisabled();
+  expect(updates).toBe(0);
+  await page.getByRole("checkbox", { name: "I understand this changes client connectivity." }).check();
+  await page.getByRole("button", { name: "Publish services" }).click();
+  await expect(page.getByText("Relay service publication enabled.")).toBeVisible();
+  expect(updates).toBe(1);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Restore legacy publication" }).click();
+  await expect(page.getByText("Legacy registry publication restored.")).toBeVisible();
+  expect(updates).toBe(2);
+});
+
 test("explicit Relay association preserves backend identity and supports removal", async ({ page }) => {
   let services: Record<string, unknown>[] = [];
   let submitted: Record<string, unknown> | undefined;
   await page.route("**/api/karst/v1/relay-services**", async (route) => {
+    if (route.request().url().endsWith("/publication")) { await route.fulfill({ json: { mode: "legacy" } }); return; }
     if (route.request().method() === "POST") {
       submitted = route.request().postDataJSON();
       services = [{ ...submitted, ponor_present: true, turn_present: true }];

@@ -457,6 +457,10 @@ export type PolicyTestResult = {
     }>;
 };
 
+export type RelayPublication = {
+    mode: 'legacy' | 'services';
+};
+
 export type RelayService = {
     id: string;
     /**
@@ -2159,6 +2163,84 @@ export type CreateRelayServiceResponses = {
 };
 
 export type CreateRelayServiceResponse = CreateRelayServiceResponses[keyof CreateRelayServiceResponses];
+
+export type GetRelayPublicationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication';
+};
+
+export type GetRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type GetRelayPublicationError = GetRelayPublicationErrors[keyof GetRelayPublicationErrors];
+
+export type GetRelayPublicationResponses = {
+    /**
+     * Active publication authority
+     */
+    200: RelayPublication;
+};
+
+export type GetRelayPublicationResponse = GetRelayPublicationResponses[keyof GetRelayPublicationResponses];
+
+export type SetRelayPublicationData = {
+    body: {
+        mode: 'legacy' | 'services';
+        acknowledge_connectivity_change: true;
+    };
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication';
+};
+
+export type SetRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SetRelayPublicationError = SetRelayPublicationErrors[keyof SetRelayPublicationErrors];
+
+export type SetRelayPublicationResponses = {
+    /**
+     * Publication authority changed
+     */
+    200: RelayPublication;
+};
+
+export type SetRelayPublicationResponse = SetRelayPublicationResponses[keyof SetRelayPublicationResponses];
+
+export type PreviewRelayPublicationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services/publication/preview';
+};
+
+export type PreviewRelayPublicationErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type PreviewRelayPublicationError = PreviewRelayPublicationErrors[keyof PreviewRelayPublicationErrors];
+
+export type PreviewRelayPublicationResponses = {
+    /**
+     * Validated service projection
+     */
+    200: Array<RelayService>;
+};
+
+export type PreviewRelayPublicationResponse = PreviewRelayPublicationResponses[keyof PreviewRelayPublicationResponses];
 
 export type DeleteRelayServiceData = {
     body?: never;

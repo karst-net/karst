@@ -86,6 +86,7 @@ let allowedRegions = [
 // the Turns view and the "turn" NOC-map marker kind both have something to
 // show without the "empty" fixture path, matching every other resource here.
 let relayServices = [];
+let relayPublication = { mode: "legacy" };
 let turns = [
   { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
 ];
@@ -561,6 +562,13 @@ const server = http.createServer((request, response) => {
   if ((method === "PUT" && karst === "/policy") || (method === "POST" && /^\/policy\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.policy);
   if (method === "POST" && karst === "/policy/test") return json(response, 200, { passed: false, results: [{ name: "SRE SSH access", passed: true, message: "allowed" }, { name: "contractor production SSH", passed: false, message: "expected deny, got allow" }] });
 
+  if (method === "GET" && karst === "/relay-services/publication") return json(response, 200, relayPublication);
+  if (method === "POST" && karst === "/relay-services/publication/preview") return json(response, 200, relayServices);
+  if (method === "PUT" && karst === "/relay-services/publication") return readBody(request).then((value) => {
+    if (!["legacy", "services"].includes(value.mode) || value.acknowledge_connectivity_change !== true) return error(response, 422, "invalid_argument", "valid publication mode and acknowledgment required");
+    relayPublication = { mode: value.mode };
+    return json(response, 200, relayPublication);
+  });
   if (method === "GET" && karst === "/relay-services") return json(response, 200, relayServices.map((service) => ({ ...service, ponor_present: fixture.relays.some((entry) => entry.id === service.ponor_id), turn_present: turns.some((entry) => entry.id === service.turn_id) })));
   if (method === "POST" && karst === "/relay-services") return readBody(request).then((service) => {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(service.id ?? "") || !fixture.relays.some((entry) => entry.id === service.ponor_id)) return error(response, 422, "invalid_argument", "valid service name and registered Ponor endpoint required");

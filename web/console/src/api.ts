@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayPublication, RelayService, RelayServiceView, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -240,6 +240,9 @@ export const api = {
   removeAuditSink: (id: string) => request<void>(`/audit/sinks/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // ── relays ─────────────────────────────────────────────────────────────────
+  relayPublication: () => request<RelayPublication>("/relay-services/publication"),
+  previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
+  setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
   relayServices: () => request<RelayServiceView[]>("/relay-services"),
   addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
   removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),

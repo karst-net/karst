@@ -494,11 +494,44 @@ paths:
     post:
       operationId: createRelayService
       tags: [relays]
-      description: Associate existing account-local registry records without changing endpoints, credentials, or backend processes.
+      description: Associate existing account-local registry records. Service publication mode updates client endpoints; credentials and backend processes remain separate.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
       responses:
         '201': {description: Association created, content: {application/json: {schema: {$ref: '#/components/schemas/RelayService'}}}}
         '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/publication:
+    get:
+      operationId: getRelayPublication
+      tags: [relays]
+      responses:
+        '200': {description: Active publication authority, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setRelayPublication
+      tags: [relays]
+      description: Explicitly select legacy registries or validated service publication and notify connected clients. Empty service publication withdraws all Relay endpoints without falling back to legacy registries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode, acknowledge_connectivity_change]
+              properties:
+                mode: {type: string, enum: [legacy, services]}
+                acknowledge_connectivity_change: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: Publication authority changed, content: {application/json: {schema: {$ref: '#/components/schemas/RelayPublication'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /relay-services/publication/preview:
+    post:
+      operationId: previewRelayPublication
+      tags: [relays]
+      description: Validate the service projection and return its explicit backend associations without changing publication or minting credentials. Unsupported multi-TURN topology and missing credential configuration are rejected.
+      responses:
+        '200': {description: Validated service projection, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/RelayService'}}}}}
         default: {$ref: '#/components/responses/Error'}
   /relay-services/{serviceId}:
     parameters:
@@ -506,7 +539,7 @@ paths:
     delete:
       operationId: deleteRelayService
       tags: [relays]
-      description: Remove only the association. Existing registries and external processes remain independently managed.
+      description: Remove the association. Service publication mode withdraws endpoints no other service uses; registry records and external processes remain independently managed.
       responses:
         '204': {description: Association removed}
         default: {$ref: '#/components/responses/Error'}
@@ -1421,6 +1454,12 @@ components:
       type: object
       required: [passed, results]
       properties: {passed: {type: boolean}, results: {type: array, items: {type: object, required: [name, passed], properties: {name: {type: string}, passed: {type: boolean}, message: {type: string}}}}}
+    RelayPublication:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode: {type: string, enum: [legacy, services]}
     RelayService:
       type: object
       required: [id, ponor_id]

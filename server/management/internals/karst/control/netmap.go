@@ -27,6 +27,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/psk"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
+	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	"github.com/netbirdio/netbird/management/internals/karst/routetelemetry"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -149,6 +150,9 @@ type NetmapHandler struct {
 
 	// Relays is the authenticated Ponor registry. Entries are static at this
 	// boundary until relay administration is moved into the control database.
+	RelayServices interface {
+		Netmap(context.Context) (bool, []*proto.KarstRelay, []turncred.Entry, error)
+	}
 	Relays     []*proto.KarstRelay
 	RelayStore interface {
 		NetmapRelays(context.Context) ([]*proto.KarstRelay, error)
@@ -371,25 +375,39 @@ func (h *NetmapHandler) Handle(ctx context.Context, _, identity, payload []byte)
 	// are always non-nil in a real deployment, so treating their presence
 	// alone as the switch would make the static, file/env-configured lists
 	// permanently unreachable — exactly the accounts they exist to serve.
-	relays := h.Relays
-	if h.RelayStore != nil {
-		stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+	var relays []*proto.KarstRelay
+	var turnEntries []turncred.Entry
+	servicePublication := false
+	if h.RelayServices != nil {
+		servicePublication, relays, turnEntries, err = h.RelayServices.Netmap(relayservice.WithAccount(ctx, accountID))
 		if err != nil {
-			return nil, fmt.Errorf("load relays: %w", err)
-		}
-		if len(stored) > 0 {
-			relays = stored
+			return nil, fmt.Errorf("load Relay services: %w", err)
 		}
 	}
-	turnEntries := h.TurnServers
-	if h.TurnStore != nil {
-		stored, err := h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
-		if err != nil {
-			return nil, fmt.Errorf("load turn servers: %w", err)
+	if !servicePublication {
+		relays = h.Relays
+		if h.RelayStore != nil {
+			stored, err := h.RelayStore.NetmapRelays(relayreg.WithAccount(ctx, accountID))
+			if err != nil {
+				return nil, fmt.Errorf("load relays: %w", err)
+			}
+			if len(stored) > 0 {
+				relays = stored
+			}
 		}
-		if len(stored) > 0 {
-			turnEntries = stored
+		turnEntries = h.TurnServers
+		if h.TurnStore != nil {
+			stored, err := h.TurnStore.Entries(turncred.WithAccount(ctx, accountID))
+			if err != nil {
+				return nil, fmt.Errorf("load turn servers: %w", err)
+			}
+			if len(stored) > 0 {
+				turnEntries = stored
+			}
 		}
+	}
+	if servicePublication && len(turnEntries) > 0 && h.TurnMinter == nil {
+		return nil, fmt.Errorf("Relay service publication requires TURN credential minting")
 	}
 	turnServers, err := turncred.NetmapEntries(turnEntries, h.TurnMinter)
 	if err != nil {

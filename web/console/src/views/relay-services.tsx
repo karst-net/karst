@@ -25,8 +25,8 @@ export function RelayServices() {
 }
 
 async function loadServices() {
-  const [services, ponor, turn] = await Promise.all([api.relayServices(), api.relays(), api.turns()]);
-  return { services, ponor, turn };
+  const [services, ponor, turn, publication] = await Promise.all([api.relayServices(), api.relays(), api.turns(), api.relayPublication()]);
+  return { services, ponor, turn, publication };
 }
 
 function Services() {
@@ -34,9 +34,11 @@ function Services() {
   const { message, setMessage, run } = useMutation(resource.reload);
   const [draft, setDraft] = useState<RelayService>();
   const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState<RelayService[]>();
+  const [acknowledged, setAcknowledged] = useState(false);
   if (resource.loading) return <p>Loading Relay services…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
-  const { services, ponor, turn } = resource.value ?? { services: [], ponor: [], turn: [] };
+  const { services, ponor, turn, publication } = resource.value ?? { services: [], ponor: [], turn: [], publication: { mode: "legacy" } };
 
   const add = async () => {
     if (!draft || saving) return;
@@ -57,16 +59,21 @@ function Services() {
     setSaving(false);
   };
   const remove = (service: RelayService) => {
-    if (!confirm(`Remove the ${service.id} service association? Its endpoints remain registered and running.`)) return;
+    if (!confirm(`Remove the ${service.id} service association? ${publication.mode === "services" ? "Endpoints used only by this service will be withdrawn from clients. " : ""}Backend processes and registry records remain intact.`)) return;
     void run(() => api.removeRelayService(service.id), `Relay service ${service.id} association was removed.`);
   };
 
   return <section>
     <h3>Services</h3>
     <p>Group a Ponor endpoint and optional TURN backend under one service name. Choose each backend explicitly, including who operates TURN.</p>
-    <p className="lede">Associations organize existing endpoints. Endpoint publishing and credentials still use the backend controls. Removing an association leaves those endpoints running.</p>
+    <p>Endpoint publication: <strong>{publication.mode === "services" ? "Relay services" : "Legacy registries"}</strong>.</p>
+    <p className="lede">{publication.mode === "services" ? "Service changes update the endpoints sent to clients. An empty service list publishes no Relay endpoints. Backend processes remain independently managed." : "Associations are staged while legacy registries publish endpoints. Preview the service list before switching publication."}</p>
+    <div className="actions">
+      <button disabled={saving} onClick={async () => { setMessage(undefined); setSaving(true); try { setPreview(await api.previewRelayPublication()); setAcknowledged(false); } catch (error) { setMessage((error as Error).message); } finally { setSaving(false); } }}>Preview service publication</button>
+      {publication.mode === "services" && <button disabled={saving} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setRelayPublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
+    </div>
     <div className="actions"><button className="primary" onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add service</button><button onClick={resource.reload}>Refresh services</button></div>
-    {!draft && <Notice message={message} />}
+    {!draft && preview === undefined && <Notice message={message} />}
     {services.length === 0 ? <EmptyState title="No Relay services configured">Existing endpoints continue operating. Register backends in the Ponor and TURN views, then choose their association here.</EmptyState> :
       <Rows head={<><th>Service</th><th>Ponor</th><th>TURN</th><th>TURN operator</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -86,6 +93,13 @@ function Services() {
           </tr>;
         })}
       </Rows>}
+    <Dialog open={preview !== undefined} title="Preview service publication" onClose={() => { if (!saving) setPreview(undefined); }}>
+      {preview !== undefined && <Notice message={message} />}
+      <p>These service associations will replace the legacy endpoint selection. Configuration is validated again when applied. This can interrupt connectivity for clients that need an omitted backend.</p>
+      {preview?.length ? <ul>{preview.map((service) => <li key={service.id}><strong>{service.id}</strong>: Ponor <code>{ponor.find((entry) => entry.id === service.ponor_id)?.address ?? service.ponor_id}</code>; TURN {service.turn_id ? <><code>{turn.find((entry) => entry.id === service.turn_id)?.uri ?? service.turn_id}</code> ({service.backend_operator})</> : "not configured"}</li>)}</ul> : <p>No services: all Relay endpoints will be withdrawn from clients.</p>}
+      <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />I understand this changes client connectivity.</label>
+      <div className="actions"><button disabled={saving} onClick={() => setPreview(undefined)}>Cancel</button><button disabled={!acknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setRelayPublication("services"), "Relay service publication enabled.")) setPreview(undefined); setSaving(false); }}>Publish services</button></div>
+    </Dialog>
     <Dialog open={Boolean(draft)} title="Add Relay service" onClose={() => { if (!saving) setDraft(undefined); }}>
       <form onSubmit={(event) => { event.preventDefault(); void add(); }}>
         {draft && <Notice message={message} />}

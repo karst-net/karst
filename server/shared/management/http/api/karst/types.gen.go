@@ -702,6 +702,24 @@ func (e RelayHealthSource) Valid() bool {
 	}
 }
 
+// Defines values for RelayPublicationMode.
+const (
+	RelayPublicationModeLegacy   RelayPublicationMode = "legacy"
+	RelayPublicationModeServices RelayPublicationMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the RelayPublicationMode enum.
+func (e RelayPublicationMode) Valid() bool {
+	switch e {
+	case RelayPublicationModeLegacy:
+		return true
+	case RelayPublicationModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayServiceBackendKind.
 const (
 	RelayServiceBackendKindCoturnCompanion RelayServiceBackendKind = "coturn-companion"
@@ -1029,6 +1047,39 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	case ListPostureSessionsParamsPostureStale:
 		return true
 	case ListPostureSessionsParamsPostureUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayPublicationJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue SetRelayPublicationJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetRelayPublicationJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetRelayPublicationJSONBodyAcknowledgeConnectivityChangeTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayPublicationJSONBodyMode.
+const (
+	SetRelayPublicationJSONBodyModeLegacy   SetRelayPublicationJSONBodyMode = "legacy"
+	SetRelayPublicationJSONBodyModeServices SetRelayPublicationJSONBodyMode = "services"
+)
+
+// Valid indicates whether the value is a known member of the SetRelayPublicationJSONBodyMode enum.
+func (e SetRelayPublicationJSONBodyMode) Valid() bool {
+	switch e {
+	case SetRelayPublicationJSONBodyModeLegacy:
+		return true
+	case SetRelayPublicationJSONBodyModeServices:
 		return true
 	default:
 		return false
@@ -1846,6 +1897,14 @@ type RelayLocation struct {
 	Lon   float32 `json:"lon"`
 }
 
+// RelayPublication defines model for RelayPublication.
+type RelayPublication struct {
+	Mode RelayPublicationMode `json:"mode"`
+}
+
+// RelayPublicationMode defines model for RelayPublication.Mode.
+type RelayPublicationMode string
+
 // RelayService defines model for RelayService.
 type RelayService struct {
 	// BackendKind Required with turn_id; omitted without it. Deployment ownership only.
@@ -2275,6 +2334,18 @@ type ListPostureSessionsParams struct {
 // ListPostureSessionsParamsPosture defines parameters for ListPostureSessions.
 type ListPostureSessionsParamsPosture string
 
+// SetRelayPublicationJSONBody defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBody struct {
+	AcknowledgeConnectivityChange SetRelayPublicationJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	Mode                          SetRelayPublicationJSONBodyMode                          `json:"mode"`
+}
+
+// SetRelayPublicationJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBodyAcknowledgeConnectivityChange bool
+
+// SetRelayPublicationJSONBodyMode defines parameters for SetRelayPublication.
+type SetRelayPublicationJSONBodyMode string
+
 // GetDeviceUsageParams defines parameters for GetDeviceUsage.
 type GetDeviceUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
@@ -2369,6 +2440,9 @@ type CreateAllowedRegionJSONRequestBody = AllowedRegion
 
 // CreateRelayServiceJSONRequestBody defines body for CreateRelayService for application/json ContentType.
 type CreateRelayServiceJSONRequestBody = RelayService
+
+// SetRelayPublicationJSONRequestBody defines body for SetRelayPublication for application/json ContentType.
+type SetRelayPublicationJSONRequestBody SetRelayPublicationJSONBody
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate
