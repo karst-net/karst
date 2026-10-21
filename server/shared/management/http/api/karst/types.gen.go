@@ -330,6 +330,30 @@ func (e DiscoveredRegionKind) Valid() bool {
 	}
 }
 
+// Defines values for DiscoveredResourceKind.
+const (
+	DiscoveredResourceKindLocalZone DiscoveredResourceKind = "local_zone"
+	DiscoveredResourceKindNamespace DiscoveredResourceKind = "namespace"
+	DiscoveredResourceKindRegion    DiscoveredResourceKind = "region"
+	DiscoveredResourceKindZone      DiscoveredResourceKind = "zone"
+)
+
+// Valid indicates whether the value is a known member of the DiscoveredResourceKind enum.
+func (e DiscoveredResourceKind) Valid() bool {
+	switch e {
+	case DiscoveredResourceKindLocalZone:
+		return true
+	case DiscoveredResourceKindNamespace:
+		return true
+	case DiscoveredResourceKindRegion:
+		return true
+	case DiscoveredResourceKindZone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EnrollmentSettingsControlMinimumVersion.
 const (
 	EnrollmentSettingsControlMinimumVersionN1 EnrollmentSettingsControlMinimumVersion = 1
@@ -339,6 +363,108 @@ const (
 func (e EnrollmentSettingsControlMinimumVersion) Valid() bool {
 	switch e {
 	case EnrollmentSettingsControlMinimumVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionMode.
+const (
+	InfrastructureConnectionModeReadOnly  InfrastructureConnectionMode = "read_only"
+	InfrastructureConnectionModeReadWrite InfrastructureConnectionMode = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionMode enum.
+func (e InfrastructureConnectionMode) Valid() bool {
+	switch e {
+	case InfrastructureConnectionModeReadOnly:
+		return true
+	case InfrastructureConnectionModeReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionStatus.
+const (
+	InfrastructureConnectionStatusError InfrastructureConnectionStatus = "error"
+	InfrastructureConnectionStatusOk    InfrastructureConnectionStatus = "ok"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionStatus enum.
+func (e InfrastructureConnectionStatus) Valid() bool {
+	switch e {
+	case InfrastructureConnectionStatusError:
+		return true
+	case InfrastructureConnectionStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionType.
+const (
+	InfrastructureConnectionTypeAws        InfrastructureConnectionType = "aws"
+	InfrastructureConnectionTypeAzure      InfrastructureConnectionType = "azure"
+	InfrastructureConnectionTypeGcp        InfrastructureConnectionType = "gcp"
+	InfrastructureConnectionTypeKubernetes InfrastructureConnectionType = "kubernetes"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionType enum.
+func (e InfrastructureConnectionType) Valid() bool {
+	switch e {
+	case InfrastructureConnectionTypeAws:
+		return true
+	case InfrastructureConnectionTypeAzure:
+		return true
+	case InfrastructureConnectionTypeGcp:
+		return true
+	case InfrastructureConnectionTypeKubernetes:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionCreateMode.
+const (
+	InfrastructureConnectionCreateModeReadOnly  InfrastructureConnectionCreateMode = "read_only"
+	InfrastructureConnectionCreateModeReadWrite InfrastructureConnectionCreateMode = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionCreateMode enum.
+func (e InfrastructureConnectionCreateMode) Valid() bool {
+	switch e {
+	case InfrastructureConnectionCreateModeReadOnly:
+		return true
+	case InfrastructureConnectionCreateModeReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InfrastructureConnectionCreateType.
+const (
+	InfrastructureConnectionCreateTypeAws        InfrastructureConnectionCreateType = "aws"
+	InfrastructureConnectionCreateTypeAzure      InfrastructureConnectionCreateType = "azure"
+	InfrastructureConnectionCreateTypeGcp        InfrastructureConnectionCreateType = "gcp"
+	InfrastructureConnectionCreateTypeKubernetes InfrastructureConnectionCreateType = "kubernetes"
+)
+
+// Valid indicates whether the value is a known member of the InfrastructureConnectionCreateType enum.
+func (e InfrastructureConnectionCreateType) Valid() bool {
+	switch e {
+	case InfrastructureConnectionCreateTypeAws:
+		return true
+	case InfrastructureConnectionCreateTypeAzure:
+		return true
+	case InfrastructureConnectionCreateTypeGcp:
+		return true
+	case InfrastructureConnectionCreateTypeKubernetes:
 		return true
 	default:
 		return false
@@ -1171,6 +1297,18 @@ type DiscoveredRegion struct {
 // DiscoveredRegionKind defines model for DiscoveredRegion.Kind.
 type DiscoveredRegionKind string
 
+// DiscoveredResource defines model for DiscoveredResource.
+type DiscoveredResource struct {
+	Code string                 `json:"code"`
+	Kind DiscoveredResourceKind `json:"kind"`
+	Lat  *float32               `json:"lat,omitempty"`
+	Lon  *float32               `json:"lon,omitempty"`
+	Name *string                `json:"name,omitempty"`
+}
+
+// DiscoveredResourceKind defines model for DiscoveredResource.Kind.
+type DiscoveredResourceKind string
+
 // EnrollmentSettings defines model for EnrollmentSettings.
 type EnrollmentSettings struct {
 	ControlMinimumVersion EnrollmentSettingsControlMinimumVersion `json:"control_minimum_version"`
@@ -1214,6 +1352,51 @@ type GroupLocation struct {
 	Lat     float32 `json:"lat"`
 	Lon     float32 `json:"lon"`
 }
+
+// InfrastructureConnection defines model for InfrastructureConnection.
+type InfrastructureConnection struct {
+	CreatedAt       *time.Time                   `json:"created_at,omitempty"`
+	Id              *string                      `json:"id,omitempty"`
+	Label           *string                      `json:"label,omitempty"`
+	LastError       *string                      `json:"last_error,omitempty"`
+	LastValidatedAt *time.Time                   `json:"last_validated_at,omitempty"`
+	Lat             *float32                     `json:"lat,omitempty"`
+	LocationLabel   *string                      `json:"location_label,omitempty"`
+	Lon             *float32                     `json:"lon,omitempty"`
+	Mode            InfrastructureConnectionMode `json:"mode"`
+
+	// Status Empty until the first resources (Discover) call completes.
+	Status *InfrastructureConnectionStatus `json:"status,omitempty"`
+	Type   InfrastructureConnectionType    `json:"type"`
+}
+
+// InfrastructureConnectionMode defines model for InfrastructureConnection.Mode.
+type InfrastructureConnectionMode string
+
+// InfrastructureConnectionStatus Empty until the first resources (Discover) call completes.
+type InfrastructureConnectionStatus string
+
+// InfrastructureConnectionType defines model for InfrastructureConnection.Type.
+type InfrastructureConnectionType string
+
+// InfrastructureConnectionCreate defines model for InfrastructureConnectionCreate.
+type InfrastructureConnectionCreate struct {
+	Label         *string                            `json:"label,omitempty"`
+	Lat           *float32                           `json:"lat,omitempty"`
+	LocationLabel *string                            `json:"location_label,omitempty"`
+	Lon           *float32                           `json:"lon,omitempty"`
+	Mode          InfrastructureConnectionCreateMode `json:"mode"`
+
+	// Secret Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}.
+	Secret map[string]interface{}             `json:"secret"`
+	Type   InfrastructureConnectionCreateType `json:"type"`
+}
+
+// InfrastructureConnectionCreateMode defines model for InfrastructureConnectionCreate.Mode.
+type InfrastructureConnectionCreateMode string
+
+// InfrastructureConnectionCreateType defines model for InfrastructureConnectionCreate.Type.
+type InfrastructureConnectionCreateType string
 
 // Location defines model for Location.
 type Location struct {
@@ -2019,6 +2202,9 @@ type PreviewRootRenameJSONRequestBody PreviewRootRenameJSONBody
 
 // SetGroupLocationJSONRequestBody defines body for SetGroupLocation for application/json ContentType.
 type SetGroupLocationJSONRequestBody = LocationCreate
+
+// CreateInfrastructureConnectionJSONRequestBody defines body for CreateInfrastructureConnection for application/json ContentType.
+type CreateInfrastructureConnectionJSONRequestBody = InfrastructureConnectionCreate
 
 // CreateDeviceInvitationJSONRequestBody defines body for CreateDeviceInvitation for application/json ContentType.
 type CreateDeviceInvitationJSONRequestBody = DeviceInvitationDraft

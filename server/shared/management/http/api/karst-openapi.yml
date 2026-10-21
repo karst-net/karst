@@ -720,7 +720,10 @@ paths:
     get:
       operationId: listCloudAccounts
       tags: [settings]
+      deprecated: true
       description: >-
+        Deprecated -- see /infrastructure-connections. Kept for existing
+        API consumers; still only ever lists aws/azure/gcp credentials.
         Admin-entered AWS/Azure/GCP credentials (ADR-0045 §6 addendum).
         Secrets are never included in the response -- see CloudAccount.
       responses:
@@ -729,10 +732,13 @@ paths:
     post:
       operationId: createCloudAccount
       tags: [settings]
+      deprecated: true
       description: >-
-        Requires the admin or owner role. Refused with a precondition
-        failure if this deployment has no data-store encryption key
-        configured -- a credential is never stored unencrypted.
+        Deprecated -- see /infrastructure-connections. Still only ever
+        accepts aws/azure/gcp; requires the admin or owner role. Refused
+        with a precondition failure if this deployment has no data-store
+        encryption key configured -- a credential is never stored
+        unencrypted.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CloudAccountCreate'}}}}
       responses:
         '201': {description: Stored credential (secret omitted), content: {application/json: {schema: {$ref: '#/components/schemas/CloudAccount'}}}}
@@ -743,7 +749,8 @@ paths:
     delete:
       operationId: deleteCloudAccount
       tags: [settings]
-      description: Requires the admin or owner role.
+      deprecated: true
+      description: Deprecated -- see /infrastructure-connections. Requires the admin or owner role.
       responses:
         '204': {description: Credential removed}
         default: {$ref: '#/components/responses/Error'}
@@ -752,13 +759,63 @@ paths:
     get:
       operationId: listCloudAccountRegions
       tags: [settings]
+      deprecated: true
       description: >-
+        Deprecated -- see /infrastructure-connections/{connectionId}/resources.
         Calls out to the credential's own provider and lists the regions
         (and, for AWS, opted-in local zones) enabled on that account,
         enriched with approximate coordinates from a static catalog where
         available -- see the Authorized Locations picker.
       responses:
         '200': {description: Discovered regions/zones, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredRegion'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /infrastructure-connections:
+    get:
+      operationId: listInfrastructureConnections
+      tags: [settings]
+      description: >-
+        Admin-entered AWS/Azure/GCP/Kubernetes connections (ADR-0045 §6
+        addenda). Secrets are never included in the response -- see
+        InfrastructureConnection.
+      responses:
+        '200': {description: Configured infrastructure connections, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/InfrastructureConnection'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createInfrastructureConnection
+      tags: [settings]
+      description: >-
+        Requires the admin or owner role. Refused with a precondition
+        failure if this deployment has no data-store encryption key
+        configured -- a credential is never stored unencrypted.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnectionCreate'}}}}
+      responses:
+        '201': {description: Stored connection (secret omitted), content: {application/json: {schema: {$ref: '#/components/schemas/InfrastructureConnection'}}}}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        default: {$ref: '#/components/responses/Error'}
+  /infrastructure-connections/{connectionId}:
+    parameters: [{name: connectionId, in: path, required: true, schema: {type: string}}]
+    delete:
+      operationId: deleteInfrastructureConnection
+      tags: [settings]
+      description: Requires the admin or owner role.
+      responses:
+        '204': {description: Connection removed}
+        default: {$ref: '#/components/responses/Error'}
+  /infrastructure-connections/{connectionId}/resources:
+    parameters: [{name: connectionId, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: listInfrastructureConnectionResources
+      tags: [settings]
+      description: >-
+        Calls out to the connection's own type and lists the resources it
+        reports -- regions/local zones/zones for AWS/Azure/GCP, namespaces
+        for Kubernetes -- enriched with coordinates where a static catalog
+        or the provider's own API supplies them. Kubernetes namespace
+        entries never carry coordinates; use the connection's own declared
+        lat/lon instead (see InfrastructureConnection) -- see the
+        Authorized Locations picker.
+      responses:
+        '200': {description: Discovered resources, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredResource'}}}}}
         default: {$ref: '#/components/responses/Error'}
   /turns:
     get:
@@ -1366,13 +1423,18 @@ components:
       required: [enabled]
       additionalProperties: false
       properties: {enabled: {type: boolean, description: 'Whether per-page "what is this" guidance text is shown across the console. Defaults to true.'}}
+    # Deprecated -- see the InfrastructureConnection* schemas below. Frozen
+    # on purpose: the legacy /cloud-accounts routes keep emitting exactly
+    # this shape, so any typed client generated against it keeps working.
     # ADR-0045 §6 addendum: admin-entered AWS/Azure/GCP credentials, stored
-    # encrypted at rest by package cloudaccounts. "read_only" can only ever
-    # list an account's regions/zones. "read_write" is stored for a future
-    # provisioning path and does not currently actuate anything either --
-    # see the Settings page's own copy and the package's doc comment.
+    # encrypted at rest by package infraconnections. "read_only" can only
+    # ever list an account's regions/zones. "read_write" is stored for a
+    # future provisioning path and does not currently actuate anything
+    # either -- see the Settings page's own copy and the package's doc
+    # comment.
     CloudAccountCreate:
       type: object
+      deprecated: true
       required: [provider, mode, secret]
       additionalProperties: false
       properties:
@@ -1382,6 +1444,7 @@ components:
         secret: {type: object, description: 'Provider-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}.'}
     CloudAccount:
       type: object
+      deprecated: true
       required: [id, provider, mode, created_at]
       properties:
         id: {type: string, readOnly: true}
@@ -1392,14 +1455,70 @@ components:
     # One region/zone as discovered live from a cloud account, enriched with
     # cloudcatalog's static coordinates where available -- lat/lon are
     # absent, not zero, when the catalog has no entry yet for this code.
+    # Deprecated/frozen alongside CloudAccount* above -- see
+    # DiscoveredResource for the generalized, evolving shape (it may later
+    # grow kinds, like "namespace", this schema never will).
     DiscoveredRegion:
       type: object
+      deprecated: true
       required: [code, kind]
       additionalProperties: false
       properties:
         code: {type: string}
         name: {type: string}
         kind: {type: string, enum: [region, local_zone, zone]}
+        lat: {type: number, minimum: -90, maximum: 90}
+        lon: {type: number, minimum: -180, maximum: 180}
+    # ADR-0045 §6 addenda: admin-entered AWS/Azure/GCP/Kubernetes
+    # infrastructure connections, stored encrypted at rest by package
+    # infraconnections. "read_only" can only ever discover (list regions/
+    # zones/namespaces); "read_write" is stored for a future provisioning
+    # path and does not currently actuate anything either -- see the
+    # Settings page's own copy and the package's doc comment. Lat/lon/
+    # location_label are an optional operator-declared point, for a type
+    # with no provider-supplied geography (Kubernetes today) -- ignored for
+    # aws/azure/gcp. Status/last_validated_at/last_error reflect the most
+    # recent resources (Discover) call, success or failure.
+    InfrastructureConnectionCreate:
+      type: object
+      required: [type, mode, secret]
+      additionalProperties: false
+      properties:
+        type: {type: string, enum: [aws, azure, gcp, kubernetes]}
+        mode: {type: string, enum: [read_only, read_write]}
+        label: {type: string}
+        secret: {type: object, description: 'Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}.'}
+        lat: {type: number, minimum: -90, maximum: 90}
+        lon: {type: number, minimum: -180, maximum: 180}
+        location_label: {type: string}
+    InfrastructureConnection:
+      type: object
+      required: [id, type, mode, created_at]
+      properties:
+        id: {type: string, readOnly: true}
+        type: {type: string, enum: [aws, azure, gcp, kubernetes]}
+        mode: {type: string, enum: [read_only, read_write]}
+        label: {type: string}
+        created_at: {type: string, format: date-time, readOnly: true}
+        lat: {type: number, minimum: -90, maximum: 90}
+        lon: {type: number, minimum: -180, maximum: 180}
+        location_label: {type: string}
+        status: {type: string, enum: [ok, error], description: 'Empty until the first resources (Discover) call completes.'}
+        last_validated_at: {type: string, format: date-time, readOnly: true}
+        last_error: {type: string, readOnly: true}
+    # One resource (region/local zone/zone/namespace) as discovered live
+    # from a connection, enriched with cloudcatalog's static coordinates
+    # where available -- lat/lon are absent, not zero, when there are none
+    # (always true for a namespace; see InfrastructureConnection's own
+    # lat/lon for where a Kubernetes connection's location lives instead).
+    DiscoveredResource:
+      type: object
+      required: [code, kind]
+      additionalProperties: false
+      properties:
+        code: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [region, local_zone, zone, namespace]}
         lat: {type: number, minimum: -90, maximum: 90}
         lon: {type: number, minimum: -180, maximum: 180}
     TurnServerCreate:
