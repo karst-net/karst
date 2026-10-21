@@ -20,22 +20,28 @@ type ConnectionDraft = {
   awsAccessKeyId: string; awsSecretAccessKey: string; awsSessionToken: string;
   azureTenantId: string; azureClientId: string; azureClientSecret: string; azureSubscriptionId: string;
   gcpProjectId: string; gcpServiceAccountKey: string;
-  kubeconfig: string; lat: string; lon: string; locationLabel: string;
+  kubeconfig: string;
+  nomadAddress: string; nomadRegion: string; nomadNamespace: string; nomadToken: string;
+  nomadCaCert: string; nomadClientCert: string; nomadClientKey: string;
+  lat: string; lon: string; locationLabel: string;
 };
 const blankConnectionDraft: ConnectionDraft = {
   type: "aws", mode: "read_only", label: "",
   awsAccessKeyId: "", awsSecretAccessKey: "", awsSessionToken: "",
   azureTenantId: "", azureClientId: "", azureClientSecret: "", azureSubscriptionId: "",
   gcpProjectId: "", gcpServiceAccountKey: "",
-  kubeconfig: "", lat: "", lon: "", locationLabel: "",
+  kubeconfig: "",
+  nomadAddress: "", nomadRegion: "", nomadNamespace: "", nomadToken: "",
+  nomadCaCert: "", nomadClientCert: "", nomadClientKey: "",
+  lat: "", lon: "", locationLabel: "",
 };
 
 /** Builds the type-shaped secret object infraconnections.CreateRequest
  *  expects -- see server/management/internals/karst/infraconnections/
- *  {aws,azure,gcp,kubernetes}.go for the exact field names each type's
- *  validator requires. Throws a plain Error with user-facing text on a
- *  malformed GCP key, since that is the one field a paste error is likely
- *  in. */
+ *  {aws,azure,gcp,kubernetes,nomad}.go for the exact field names each
+ *  type's validator requires. Throws a plain Error with user-facing text
+ *  on a malformed GCP key, since that is the one field a paste error is
+ *  likely in. */
 function connectionSecretFor(draft: ConnectionDraft): Record<string, unknown> {
   switch (draft.type) {
     case "aws":
@@ -47,6 +53,12 @@ function connectionSecretFor(draft: ConnectionDraft): Record<string, unknown> {
       catch { throw new Error("The service account key must be the exact JSON contents of the downloaded key file."); }
     case "kubernetes":
       return { kubeconfig: draft.kubeconfig };
+    case "nomad":
+      return {
+        address: draft.nomadAddress.trim(), region: draft.nomadRegion.trim() || undefined, namespace: draft.nomadNamespace.trim() || undefined,
+        token: draft.nomadToken.trim() || undefined, ca_cert: draft.nomadCaCert.trim() || undefined,
+        client_cert: draft.nomadClientCert.trim() || undefined, client_key: draft.nomadClientKey.trim() || undefined,
+      };
     default:
       throw new Error(`Unknown connection type ${draft.type}`);
   }
@@ -116,7 +128,7 @@ export function Settings() {
     try { secret = connectionSecretFor(connectionDraft); }
     catch (e) { setConnectionMessage(e instanceof Error ? e.message : "Invalid credential."); return; }
     let lat: number | undefined, lon: number | undefined;
-    if (connectionDraft.type === "kubernetes" && (connectionDraft.lat.trim() || connectionDraft.lon.trim())) {
+    if ((connectionDraft.type === "kubernetes" || connectionDraft.type === "nomad") && (connectionDraft.lat.trim() || connectionDraft.lon.trim())) {
       lat = Number(connectionDraft.lat); lon = Number(connectionDraft.lon);
       if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setConnectionMessage("Latitude must be a number between -90 and 90."); return; }
       if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setConnectionMessage("Longitude must be a number between -180 and 180."); return; }
@@ -183,13 +195,13 @@ export function Settings() {
       : <label><input type="checkbox" checked={tutorialEnabled} disabled={tutorialSaving} onChange={(event) => void toggleTutorialMode(event.target.checked)} /> Show guidance text on each page</label>}
 
     <h3>Infrastructure Connections</h3>
-    <p className="lede">Lets Authorized Locations offer real regions, local zones, and Kubernetes namespaces instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</p>
+    <p className="lede">Lets Authorized Locations offer real regions, local zones, Kubernetes namespaces, and Nomad datacenters instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces/datacenters) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</p>
     <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
     <Notice message={connectionMessage} />
     {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
       ? <Failure message={infraConnections.error} retry={infraConnections.reload} />
       : (infraConnections.value ?? []).length === 0
-        ? <EmptyState title="No infrastructure connections configured">Add one to pick real regions or namespaces in Authorized Locations.</EmptyState>
+        ? <EmptyState title="No infrastructure connections configured">Add one to pick real regions, namespaces, or datacenters in Authorized Locations.</EmptyState>
         : <Rows head={<><th>Type</th><th>Mode</th><th>Label</th><th>Status</th><th>Added</th><th>Actions</th></>}>
           {(infraConnections.value ?? []).map((connection) => <tr key={connection.id}>
             <td>{connection.type.toUpperCase()}</td>
@@ -208,6 +220,7 @@ export function Settings() {
           <option value="azure">Azure</option>
           <option value="gcp">GCP</option>
           <option value="kubernetes">Kubernetes</option>
+          <option value="nomad">Nomad</option>
         </select></label>
         <label>Mode<select aria-label="Connection mode" value={connectionDraft?.mode ?? "read_only"} onChange={(event) => setConnectionDraft((current) => current && { ...current, mode: event.target.value as ConnectionMode })}>
           <option value="read_only">Read-only (status/discovery only)</option>
@@ -232,7 +245,19 @@ export function Settings() {
         </>}
         {connectionDraft?.type === "kubernetes" && <>
           <label>Kubeconfig<textarea aria-label="Kubeconfig" rows={6} value={connectionDraft.kubeconfig} onChange={(event) => setConnectionDraft((current) => current && { ...current, kubeconfig: event.target.value })} placeholder={"apiVersion: v1\nkind: Config\n..."} /></label>
-          <p className="lede">Only the kubeconfig's current-context cluster is used. A private cluster has no provider-supplied location — declare one below if you'd like it to appear on the NOC map and feed Authorized Locations.</p>
+          <p className="lede">Only the kubeconfig's current-context cluster is used.</p>
+        </>}
+        {connectionDraft?.type === "nomad" && <>
+          <label>Address<input aria-label="Nomad address" placeholder="https://nomad.internal:4646" value={connectionDraft.nomadAddress} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadAddress: event.target.value })} /></label>
+          <label>Region (optional)<input aria-label="Nomad region" placeholder="us-east" value={connectionDraft.nomadRegion} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadRegion: event.target.value })} /></label>
+          <label>Namespace (optional)<input aria-label="Nomad namespace" placeholder="prod" value={connectionDraft.nomadNamespace} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadNamespace: event.target.value })} /></label>
+          <label>ACL token (optional)<input aria-label="Nomad ACL token" type="password" value={connectionDraft.nomadToken} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadToken: event.target.value })} /></label>
+          <label>CA certificate (optional, PEM)<textarea aria-label="Nomad CA certificate" rows={4} value={connectionDraft.nomadCaCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadCaCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
+          <label>Client certificate (optional, PEM)<textarea aria-label="Nomad client certificate" rows={4} value={connectionDraft.nomadClientCert} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadClientCert: event.target.value })} placeholder={"-----BEGIN CERTIFICATE-----\n..."} /></label>
+          <label>Client key (optional, PEM)<textarea aria-label="Nomad client key" rows={4} value={connectionDraft.nomadClientKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, nomadClientKey: event.target.value })} placeholder={"-----BEGIN PRIVATE KEY-----\n..."} /></label>
+        </>}
+        {(connectionDraft?.type === "kubernetes" || connectionDraft?.type === "nomad") && <>
+          <p className="lede">A private cluster or scheduler environment has no provider-supplied location — declare one below if you'd like it to appear on the NOC map and feed Authorized Locations.</p>
           <label>Latitude (optional)<input aria-label="Connection latitude" placeholder="37.7749" value={connectionDraft.lat} onChange={(event) => setConnectionDraft((current) => current && { ...current, lat: event.target.value })} /></label>
           <label>Longitude (optional)<input aria-label="Connection longitude" placeholder="-122.4194" value={connectionDraft.lon} onChange={(event) => setConnectionDraft((current) => current && { ...current, lon: event.target.value })} /></label>
           <label>Location label (optional)<input aria-label="Connection location label" placeholder="homelab" value={connectionDraft.locationLabel} onChange={(event) => setConnectionDraft((current) => current && { ...current, locationLabel: event.target.value })} /></label>
