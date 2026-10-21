@@ -1182,7 +1182,10 @@ fn run_engine(
                                     started,
                                 );
                             }
-                            if command == ipc::Command::StatusJson {
+                            if matches!(
+                                command,
+                                ipc::Command::GatewayStatus | ipc::Command::StatusJson
+                            ) {
                                 let current = engine_ctl.config();
                                 let selected = exit_node_ctl.and_then(|state| {
                                     state
@@ -1203,6 +1206,15 @@ fn run_engine(
                                     .lock()
                                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                                     .clone();
+                                if command == ipc::Command::GatewayStatus {
+                                    return routing_report(
+                                        &current,
+                                        selected.as_deref(),
+                                        exit_route_active,
+                                        gateway_active,
+                                        gateway_error.as_deref(),
+                                    );
+                                }
                                 return status_json(
                                     config,
                                     engine_ctl,
@@ -4901,6 +4913,7 @@ fn report(
         ),
         ipc::Command::DnsStatus
         | ipc::Command::DnsQuery(_)
+        | ipc::Command::GatewayStatus
         | ipc::Command::ExitList
         | ipc::Command::ExitUse(_)
         | ipc::Command::ExitDisable
@@ -6865,6 +6878,29 @@ mod route_tests {
         assert!(active.contains("kind = \"exit\""));
         assert!(active.contains("role = \"recipient\""));
         assert!(active.contains("active = true"));
+    }
+
+    #[test]
+    fn gateway_status_combines_subnet_and_exit_offers_without_granting_consent() {
+        let mut cfg = config(&["100.64.0.1/16"], &[&["0.0.0.0/0"]]);
+        cfg.route_offers
+            .push(gateway_offer("office-lan", "10.20.0.0/16"));
+        cfg.route_offers.push(exit_offer("internet"));
+
+        let report = routing_report(&cfg, None, false, true, None);
+        assert!(report.contains("offers = 2"));
+        assert!(report.contains("gateway_active = true"));
+        assert!(report.contains("selected_exit = None"));
+        assert!(report.contains("exit_route_active = false"));
+        let rows: Vec<_> = report.split("[[route]]").skip(1).collect();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].contains("kind = \"subnet\""));
+        assert!(rows[0].contains("role = \"gateway\""));
+        assert!(rows[0].contains("active = true"));
+        assert!(rows[1].contains("kind = \"exit\""));
+        assert!(rows[1].contains("role = \"recipient\""));
+        assert!(rows[1].contains("active = false"));
+        assert!(Routes::wanted(&cfg, None).is_empty());
     }
 
     /// `Command::StatusJson`'s payload, structurally — the JSON counterpart

@@ -54,7 +54,12 @@ Current route offers already share `route_id`, prefix, gateway ID, metric,
 kind, masquerade, and role (`bins/karstd/src/route_offer.rs`). Linux forwarding
 uses `gateway.rs` and nftables; default-route consent/escape handling uses
 `exit_policy.rs`. `karst exit-node use|disable|list`, `exit_node_state_file`,
-and reported `subnet`/`exit` kinds remain current interfaces.
+and reported `subnet`/`exit` kinds remain current interfaces. The additive
+`karst gateway status` command reports both route behaviors using the existing
+routing report; `karst gateway exit list|use|disable` reuses the legacy consent
+requests. The status verb requires an updated daemon; consent aliases work
+with older daemons. These CLI additions begin #404 without implying completion
+of unified configuration, persistence, APIs/UI or Relay management.
 
 [Gateway operations](subnet-routers-and-exit-nodes.md) describes readiness,
 NAT, return routes, restart recovery, and control-session-driven HA. Do not

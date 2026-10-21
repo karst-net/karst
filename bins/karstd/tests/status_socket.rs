@@ -164,6 +164,20 @@ fn the_status_socket_serves_status_and_refuses_everything_else() {
     assert!(status.contains("interface ="), "got {status:?}");
     assert!(status.contains("[stats]"), "got {status:?}");
 
+    // Gateway inspection stays on the protected socket and uses the same
+    // routing report as status, without manufacturing default-route consent.
+    let gateway = ask(&node.socket, "gateway-status").expect("gateway status");
+    let admin_status = ask(&node.socket, "status").expect("admin status");
+    let routing = admin_status
+        .split_once("\n[routing]")
+        .map(|(_, report)| format!("\n[routing]{report}"))
+        .expect("routing section");
+    assert_eq!(gateway, routing);
+    assert!(gateway.contains("selected_exit = None"));
+    assert!(gateway.contains("exit_route_active = false"));
+    let refused = ask(&status_socket, "gateway-status").expect("gateway on public socket");
+    assert!(refused.contains("this socket serves status only"));
+
     // Anything but `status` must be refused, `down` above all — this socket
     // is reachable by any local user, and a refusal that only applied to some
     // other commands would leave the one that matters unprotected.

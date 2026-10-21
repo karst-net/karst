@@ -154,6 +154,31 @@ anything. A non-administrator can see the current exit but cannot change it.
 
 ## 5. Inspecting effective state
 
+The Gateway command group combines inspection of subnet and exit routing with
+explicit exit-consent actions:
+
+| Command | Behavior |
+|---|---|
+| `karst gateway status` | Reports the current authenticated subnet/exit offers, local exit selection, forwarding readiness and errors; changes no routing or consent |
+| `karst gateway exit list` | Lists eligible exit offers and the current local selection |
+| `karst gateway exit use <route-id>` | Gives durable local consent to an eligible default-route offer |
+| `karst gateway exit disable` | Withdraws and forgets local exit consent; does not disable Gateway forwarding or subnet routing |
+
+These commands use the protected administrative socket; use `sudo` where the
+installed service requires it, and `--socket PATH` for a custom installation.
+`gateway exit` actions retain the existing `exit-node` IPC requests, so older
+daemons support them. `gateway status` requires an updated daemon; an older
+daemon rejects it explicitly and the CLI exits unsuccessfully. Use the existing
+`karst status` routing section until the daemon is upgraded. Existing
+`karst exit-node list|use|disable` commands remain supported aliases.
+
+`gateway status` uses the same routing report as `karst status`; it lists both
+recipient and forwarding roles, not just exit offers. Its `active` field retains
+current status semantics: forwarding readiness for Gateway rows and installed,
+consented exit use for recipient exit rows. Subnet recipient rows are offers,
+not a separate proof of installed kernel routes; inspect `ip route` as below.
+Unified configuration, APIs/UI and Relay lifecycle remain pending in #404.
+
 - **`karst status`** — the `[routing]` block reports `gateway_active`,
   `exit_route_active`, `selected_exit`, and the last gateway readiness error,
   if any; each `[[route]]` entry shows the route's role for this node

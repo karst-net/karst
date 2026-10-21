@@ -4322,7 +4322,7 @@ fn fixture_delete_route(route_id: &str) -> bool {
 /// ("exit") offer requires instead of installing itself. Plan §3.2's
 /// "default-route consent belongs to the client": the server offering
 /// `0.0.0.0/0` changes nothing on the wire until the recipient calls `karst
-/// exit-node use`, which this row drives the same way an operator's terminal
+/// gateway exit use`, which this row drives the same way an operator's terminal
 /// would — the daemon's own control socket, live, with no restart needed
 /// (`ipc::Command::ExitUse`'s handler in `run.rs` reconciles immediately,
 /// unlike the route *projection* itself, which this fixture can only refresh
@@ -4413,17 +4413,18 @@ fn a_recipient_reaches_the_internet_only_after_locally_consenting_to_an_exit_off
             "exec",
             NS_B,
             &bin("karst"),
-            "exit-node",
+            "gateway",
+            "exit",
             "use",
             "internet",
             "--socket",
             &sock.to_string_lossy(),
         ])
         .output()
-        .expect("run `karst exit-node use`");
+        .expect("run `karst gateway exit use`");
     assert!(
         String::from_utf8_lossy(&use_out.stdout).contains("selected"),
-        "`karst exit-node use` did not report success: {} {}",
+        "`karst gateway exit use` did not report success: {} {}",
         String::from_utf8_lossy(&use_out.stdout),
         String::from_utf8_lossy(&use_out.stderr),
     );
