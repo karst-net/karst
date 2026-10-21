@@ -73,7 +73,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay service: nil database")
 	}
-	if err := db.AutoMigrate(&Service{}); err != nil {
+	if err := db.AutoMigrate(&Service{}, &Publication{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -100,8 +100,9 @@ func validate(service Service) error {
 	return nil
 }
 
-// Create validates references in the caller's account. No endpoint is
-// published, credential minted, or backend process changed by association.
+// Create validates references in the caller's account. In service publication
+// mode the association contributes endpoints to future netmaps. Credentials
+// are minted separately and no backend process is changed.
 func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 	account, err := accountFromContext(ctx)
 	if err != nil {
@@ -135,7 +136,14 @@ func (s *Store) Create(ctx context.Context, service Service) (*Service, error) {
 		if result.RowsAffected == 0 {
 			return ErrExists
 		}
-		return nil
+		mode, err := publication(tx, account)
+		if err != nil {
+			return err
+		}
+		if mode.Mode == "services" {
+			_, _, _, err = project(tx, account, true)
+		}
+		return err
 	})
 	if err != nil {
 		return nil, err

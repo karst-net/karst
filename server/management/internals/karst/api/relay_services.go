@@ -14,6 +14,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/relayservice"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions"
+	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/shared/management/http/util"
 	"github.com/netbirdio/netbird/shared/management/status"
 )
@@ -24,9 +25,29 @@ type relayServiceStore interface {
 	Delete(context.Context, string) error
 }
 
+type relayServicePublisher interface {
+	Publication(context.Context) (relayservice.Publication, error)
+	Preview(context.Context, bool) ([]relayservice.Service, error)
+	SetPublication(context.Context, string, bool) (relayservice.Publication, error)
+}
+
+type RelayServiceOptions struct {
+	Accounts       accountUpdater
+	TurnConfigured bool
+}
+
 // RegisterRelayServiceEndpoints adds the explicit association model without
 // changing the legacy registries or granting control over external processes.
-func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manager, store relayServiceStore) {
+func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manager, store relayServiceStore, options ...RelayServiceOptions) {
+	var config RelayServiceOptions
+	if len(options) > 0 {
+		config = options[0]
+	}
+	push := func(ctx context.Context, account string) {
+		if config.Accounts != nil {
+			config.Accounts.UpdateAccountPeers(ctx, account, types.UpdateReason{Resource: types.UpdateResourceService, Operation: types.UpdateOperationUpdate})
+		}
+	}
 	routes := router.PathPrefix("/karst/v1/relay-services").Subrouter()
 	routes.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +70,60 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			return
 		}
 		ctx := relayservice.WithAccount(r.Context(), user.AccountId)
+		if mux.CurrentRoute(r).GetName() == "relay-publication" || mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
+			publisher, ok := store.(relayServicePublisher)
+			if !ok {
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay publication storage unavailable"), w)
+				return
+			}
+			if r.Method == http.MethodOptions {
+				return
+			}
+			if r.Method == http.MethodGet {
+				value, err := publisher.Publication(ctx)
+				if err != nil {
+					relayServiceError(w, r, err)
+					return
+				}
+				util.WriteJSONObject(ctx, w, value)
+				return
+			}
+			if mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
+				services, err := publisher.Preview(ctx, config.TurnConfigured)
+				if err != nil {
+					relayServiceError(w, r, err)
+					return
+				}
+				util.WriteJSONObject(ctx, w, services)
+				return
+			}
+			var request struct {
+				Mode        string `json:"mode"`
+				Acknowledge bool   `json:"acknowledge_connectivity_change"`
+			}
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&request); err != nil {
+				util.WriteErrorResponse("invalid publication request", http.StatusBadRequest, w)
+				return
+			}
+			if err := decoder.Decode(new(any)); err != io.EOF {
+				util.WriteErrorResponse("expected one publication request", http.StatusBadRequest, w)
+				return
+			}
+			if !request.Acknowledge {
+				util.WriteErrorResponse("acknowledge_connectivity_change must be true", http.StatusBadRequest, w)
+				return
+			}
+			value, err := publisher.SetPublication(ctx, request.Mode, config.TurnConfigured)
+			if err != nil {
+				relayServiceError(w, r, err)
+				return
+			}
+			push(ctx, user.AccountId)
+			util.WriteJSONObject(ctx, w, value)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			views, err := store.List(ctx)
@@ -74,6 +149,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 				relayServiceError(w, r, err)
 				return
 			}
+			push(ctx, user.AccountId)
 			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(created)
@@ -82,10 +158,13 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 				relayServiceError(w, r, err)
 				return
 			}
+			push(ctx, user.AccountId)
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}
 	routes.HandleFunc("", handle).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+	routes.HandleFunc("/publication", handle).Methods(http.MethodGet, http.MethodPut, http.MethodOptions).Name("relay-publication")
+	routes.HandleFunc("/publication/preview", handle).Methods(http.MethodPost, http.MethodOptions).Name("relay-publication-preview")
 	routes.HandleFunc("/{serviceId}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
 

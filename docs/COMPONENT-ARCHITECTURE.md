@@ -114,8 +114,9 @@ health endpoint or provider lifecycle adapter already exists.
 The additive [Relay service association API](relay-services.md) stores explicit
 account-local Ponor/TURN links and backend operator declarations. Its per-mode
 presence fields describe registry availability, not runtime health. Legacy
-registries, credential minting and wire projections remain in use while the
-managed adapter and service lifecycle are implemented. The Relay console groups
+credential minting and wire projections remain in use. Operators can preview
+and explicitly enable service-based publication, or retain legacy registry
+publication. Runtime backend management and health remain pending. The Relay console groups
 service associations and existing Ponor/TURN backend controls in one view.
 
 ### Current transport limits

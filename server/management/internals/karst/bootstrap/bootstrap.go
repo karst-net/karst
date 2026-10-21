@@ -450,7 +450,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
 		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, cloudAccountStore, router)
-		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore)
+		karstapi.RegisterRelayServiceEndpoints(router, s.PermissionsManager(), relayServiceStore, karstapi.RelayServiceOptions{Accounts: s.AccountManager(), TurnConfigured: turnMinter != nil})
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
@@ -492,6 +492,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 			PolicyStore:         policyStore,
 			Relays:              relays,
 			RelayStore:          relayStore,
+			RelayServices:       relayServiceStore,
 			TurnServers:         turnServers,
 			TurnMinter:          turnMinter,
 			TurnStore:           turnStore,
