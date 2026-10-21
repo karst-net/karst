@@ -10,43 +10,60 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 )
 
-// DiscoveredRegion is the frozen, legacy-only shape /cloud-accounts/{id}/
-// regions has always returned -- never add a value to its Kind that an old
-// typed client wouldn't expect (e.g. "namespace"). DiscoveredResource below
-// is the generalized, evolving shape; the two are kept as distinct Go/
-// OpenAPI types on purpose, not aliases, so freezing one never constrains
-// the other.
+// DiscoveredRegion is the deprecated, legacy-only shape
+// /cloud-accounts/{id}/regions has always returned -- never add a value to
+// its Kind that an old typed client wouldn't expect (e.g. "namespace").
+// DiscoveredResource below is the generalized, evolving shape; the two are
+// kept as distinct Go/OpenAPI types on purpose, not aliases, so adding a
+// Kubernetes-only kind to one never constrains the other.
+//
+// Enabled is true for a standard region and for an already opted-in Local
+// Zone -- the only two cases a read_only credential ever reports (ADR-0045
+// §6's first addendum). A read_write AWS credential's Discover additionally
+// reports a Local Zone group that exists but is not yet opted in, with
+// Enabled false, so the console can offer EnableLocalZone for it (ADR-0045
+// §6's second addendum) rather than silently omitting it the way read_only
+// always has.
 type DiscoveredRegion struct {
 	Code string            `json:"code"`
 	Name string            `json:"name,omitempty"`
 	Kind cloudcatalog.Kind `json:"kind"`
 	Lat  *float64          `json:"lat,omitempty"`
 	Lon  *float64          `json:"lon,omitempty"`
+	// ParentRegion is set for a Kind other than KindRegion -- the region
+	// EnableLocalZone must open its AWS client against, since AWS has no
+	// single global endpoint for opting a zone group in.
+	ParentRegion string `json:"parent_region,omitempty"`
+	Enabled      bool   `json:"enabled"`
 }
 
 // DiscoveredResource is the generalized /infrastructure-connections/{id}/
 // resources shape -- a region/local zone/zone for a cloud connection, or a
 // namespace for a Kubernetes one. Namespace entries never carry
-// coordinates (no cloudcatalog entry exists for them); the console falls
-// back to the connection's own declared Lat/Lon/LocationLabel instead.
+// coordinates (no cloudcatalog entry exists for them) or a meaningful
+// Enabled/ParentRegion (Kubernetes has no opt-in-zone concept); the console
+// falls back to the connection's own declared Lat/Lon/LocationLabel
+// instead.
 type DiscoveredResource struct {
-	Code string            `json:"code"`
-	Name string            `json:"name,omitempty"`
-	Kind cloudcatalog.Kind `json:"kind"`
-	Lat  *float64          `json:"lat,omitempty"`
-	Lon  *float64          `json:"lon,omitempty"`
+	Code         string            `json:"code"`
+	Name         string            `json:"name,omitempty"`
+	Kind         cloudcatalog.Kind `json:"kind"`
+	Lat          *float64          `json:"lat,omitempty"`
+	Lon          *float64          `json:"lon,omitempty"`
+	ParentRegion string            `json:"parent_region,omitempty"`
+	Enabled      bool              `json:"enabled,omitempty"`
 }
 
-func enrich(typ Type, code, fallbackName string, kind cloudcatalog.Kind) DiscoveredRegion {
+func enrich(typ Type, code, fallbackName string, kind cloudcatalog.Kind, enabled bool) DiscoveredRegion {
 	if entry, ok := cloudcatalog.Lookup(string(typ), code); ok {
 		lat, lon := entry.Lat, entry.Lon
 		name := entry.Name
 		if name == "" {
 			name = fallbackName
 		}
-		return DiscoveredRegion{Code: code, Name: name, Kind: entry.Kind, Lat: &lat, Lon: &lon}
+		return DiscoveredRegion{Code: code, Name: name, Kind: entry.Kind, Lat: &lat, Lon: &lon, ParentRegion: entry.ParentRegion, Enabled: enabled}
 	}
-	return DiscoveredRegion{Code: code, Name: fallbackName, Kind: kind}
+	return DiscoveredRegion{Code: code, Name: fallbackName, Kind: kind, Enabled: enabled}
 }
 
 func toResources(regions []DiscoveredRegion) []DiscoveredResource {
@@ -74,10 +91,13 @@ func validateSecretShape(typ Type, raw []byte) error {
 	}
 }
 
-func discoverCloudRegions(ctx context.Context, typ Type, rawSecret string) ([]DiscoveredRegion, error) {
+// discoverCloudRegions dispatches to the three cloud providers' region
+// discovery. mode is only consulted by AWS (see discoverAWSLocalZones);
+// Azure/GCP's "list regions" APIs have no opt-in-zone concept to gate on.
+func discoverCloudRegions(ctx context.Context, typ Type, rawSecret string, mode Mode) ([]DiscoveredRegion, error) {
 	switch typ {
 	case TypeAWS:
-		return discoverAWS(ctx, rawSecret)
+		return discoverAWS(ctx, rawSecret, mode)
 	case TypeAzure:
 		return discoverAzure(ctx, rawSecret)
 	case TypeGCP:
@@ -90,8 +110,9 @@ func discoverCloudRegions(ctx context.Context, typ Type, rawSecret string) ([]Di
 // DiscoverLegacy only ever reaches aws/azure/gcp -- it returns ErrNotFound
 // for a kubernetes-typed row (which can only exist if it was created
 // through /infrastructure-connections) so the legacy wire shape never has
-// to represent a namespace. Both Mode values may discover -- see the
-// package doc comment on why ModeReadWrite is not treated specially here.
+// to represent a namespace. Both Mode values may discover; only a
+// ModeReadWrite AWS credential also sees a Local Zone group that exists but
+// is not yet opted in (Enabled false) -- see discoverAWSLocalZones.
 func (s *Store) DiscoverLegacy(ctx context.Context, id string) ([]DiscoveredRegion, error) {
 	account, err := s.get(ctx, id)
 	if err != nil {
@@ -100,7 +121,7 @@ func (s *Store) DiscoverLegacy(ctx context.Context, id string) ([]DiscoveredRegi
 	if !account.Type.isLegacy() {
 		return nil, ErrNotFound
 	}
-	out, discoverErr := discoverCloudRegions(ctx, account.Type, account.Secret)
+	out, discoverErr := discoverCloudRegions(ctx, account.Type, account.Secret, account.Mode)
 	s.recordDiscoveryResult(ctx, id, discoverErr)
 	return out, discoverErr
 }
@@ -120,7 +141,7 @@ func (s *Store) Discover(ctx context.Context, id string) ([]DiscoveredResource, 
 	switch account.Type {
 	case TypeAWS, TypeAzure, TypeGCP:
 		var regions []DiscoveredRegion
-		regions, discoverErr = discoverCloudRegions(ctx, account.Type, account.Secret)
+		regions, discoverErr = discoverCloudRegions(ctx, account.Type, account.Secret, account.Mode)
 		out = toResources(regions)
 	case TypeKubernetes:
 		out, discoverErr = discoverKubernetes(ctx, account.Secret)
@@ -129,4 +150,33 @@ func (s *Store) Discover(ctx context.Context, id string) ([]DiscoveredResource, 
 	}
 	s.recordDiscoveryResult(ctx, id, discoverErr)
 	return out, discoverErr
+}
+
+// EnableLocalZone opts an AWS Local Zone's group into use (ADR-0045 §6's
+// second addendum) -- the one real, mutating cloud-provider call this
+// package makes, deliberately scoped to exactly this and gated to
+// ModeReadWrite. AWS opt-in is a one-way door: there is no API to opt back
+// out (AWS's own ModifyAvailabilityZoneGroupInput doc says to contact
+// Support), so callers must have already confirmed this with the operator
+// before reaching here -- this method does not ask again.
+//
+// This is wired only to the legacy /cloud-accounts route today (the one
+// AWS-specific action in an otherwise type-generic model); a generalized
+// /infrastructure-connections equivalent is a reasonable follow-up, not
+// built here to keep this rename's scope bounded.
+func (s *Store) EnableLocalZone(ctx context.Context, id, groupCode, parentRegion string) (DiscoveredRegion, error) {
+	account, err := s.get(ctx, id)
+	if err != nil {
+		return DiscoveredRegion{}, err
+	}
+	if account.Mode != ModeReadWrite {
+		return DiscoveredRegion{}, fmt.Errorf("cloud accounts: enabling a local zone requires a read-write credential")
+	}
+	if account.Type != TypeAWS {
+		return DiscoveredRegion{}, fmt.Errorf("cloud accounts: enabling a local zone is only supported for provider %q", TypeAWS)
+	}
+	if err := enableAWSLocalZone(ctx, account.Secret, parentRegion, groupCode); err != nil {
+		return DiscoveredRegion{}, err
+	}
+	return enrich(TypeAWS, groupCode, groupCode, cloudcatalog.KindLocalZone, true), nil
 }

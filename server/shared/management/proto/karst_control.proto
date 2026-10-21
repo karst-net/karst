@@ -883,3 +883,47 @@ message KarstComplianceResponse {
   uint32 valid_for_seconds = 3; // 60; server receipt must be before expiry
   bool accepted = 4; // report replies only; never a compliance verdict
 }
+
+// Compliance permit contract v1. These messages are not yet attached to a
+// request kind, netmap or capability advertisement. Ingestion schema 1 does not
+// imply permit support. Policy activation must wait for packet-path enforcement.
+message KarstCompliancePermitRequest {
+  uint32 schema_version = 1;
+  bytes nonce = 2; // fresh 32-byte request nonce; never reused across reconnects
+}
+
+message KarstCompliancePermitSnapshot {
+  uint32 schema_version = 1;
+  bytes request_nonce = 2;
+  string tenant_id = 3;
+  string enforcer_device_id = 4;
+  string enforcer_handle = 5; // canonical base64 node handle
+  string policy_revision = 6;
+  // 1..120000 ms, budgeted from the receiver's local request start, not receipt.
+  // Every source deadline is additionally capped by remaining evidence freshness.
+  uint32 valid_for_millis = 7;
+  repeated KarstCompliancePermitGate ingress = 8;
+  repeated KarstCompliancePermitGate egress = 9;
+}
+
+message KarstCompliancePermitGate {
+  string guardrail_id = 1;
+  repeated string destination_cidrs = 2;
+  enum Protocol {
+    PROTOCOL_UNSPECIFIED = 0;
+    TCP = 1;
+    UDP = 2;
+    ANY = 3;
+  }
+  Protocol protocol = 3;
+  KarstPortRange ports = 4;
+  // All matching gates are mandatory. Empty sources means deny, not no gate.
+  repeated KarstComplianceSourcePermit sources = 5;
+}
+
+message KarstComplianceSourcePermit {
+  string handle = 1;
+  string device_id = 2;
+  uint64 evidence_generation = 3;
+  uint32 valid_for_millis = 4;
+}

@@ -724,6 +724,40 @@ whatever the operator already trusts.
 > to enforce (same posture as the second bullet below's tag-scoped IAM
 > policy, just not yet mechanically checked at creation time the way the
 > allowlist is checked in the driver).
+>
+> **Addendum, 2026-10-20.** The previous addendum's claim that `read_write`
+> credentials are "not connected to any provisioning call" is narrowed by
+> exactly one named exception: `cloudaccounts.Store.EnableLocalZone` (AWS's
+> `ModifyAvailabilityZoneGroup`), which opts a Local Zone's zone *group*
+> into use. This exists because `read_only`'s own local-zone discovery
+> (above) only ever lists zones already opted in — a Local Zone nobody has
+> opted into yet is otherwise invisible to this feature forever, with no
+> operator-facing path to change that short of the AWS CLI/Console, defeating
+> the Authorized Locations picker's purpose for exactly the zones most worth
+> picking.
+>
+> This is accepted as a narrow exception, not a reopening of Phase 2, for
+> three reasons specific to this one call:
+>
+> - **It does not create, modify, or destroy a billable resource.** Opting
+>   in only makes the zone's resource types launchable; a separate,
+>   still-unbuilt create call (Phase 2) is required before anything is
+>   actually provisioned there. It is a capability unlock, not actuation —
+>   the same distinction the first addendum draws for `read_write` storage
+>   itself, just one step further.
+> - **It is a one-way door, and the UI must treat it as one.** AWS provides
+>   no opt-out API for a Local Zone group — undoing this requires
+>   contacting AWS Support. The console must get an explicit operator
+>   confirmation naming this specific zone immediately before the request
+>   is sent, not merely disclose it once when the credential was created.
+> - **It is gated identically to credential create/delete**
+>   (`requireCloudAccountAdminRole`: owner or admin only), scoped to
+>   `ModeReadWrite` and provider `aws` in `EnableLocalZone` itself — not
+>   only in the handler — and it is the *only* mutating call this package
+>   makes. Extending this precedent to any other provisioning call still
+>   requires Phase 2's safeguards (drivers, signed enrollment, the budget
+>   circuit breaker); this addendum authorizes this one call, not the
+>   pattern of adding calls piecemeal.
 
 > **Addendum, 2026-10-21 — Infrastructure Connections rename and a
 > Kubernetes connection type (issue #406).** "Cloud provider credentials" is
@@ -739,11 +773,17 @@ whatever the operator already trusts.
 >   `gorm:"column:provider"` tag, so this is a zero-data-migration rename,
 >   not a breaking one. The pre-existing `/cloud-accounts*` API routes and
 >   their `CloudAccount`/`CloudAccountCreate`/`DiscoveredRegion` OpenAPI
->   schemas are kept working byte-for-byte (marked `deprecated: true`, not
->   removed, and permanently refuse a `kubernetes`-typed row) alongside new,
->   generalized `/infrastructure-connections*` routes and
+>   schemas — including `DiscoveredRegion.enabled`/`parent_region` from the
+>   previous addendum's `EnableLocalZone` work, and the `enable` endpoint
+>   itself, both unaffected by this rename — are kept working byte-for-byte
+>   (marked `deprecated: true`, not removed, and permanently refuse a
+>   `kubernetes`-typed row) alongside new, generalized
+>   `/infrastructure-connections*` routes and
 >   `InfrastructureConnection`/`InfrastructureConnectionCreate`/
->   `DiscoveredResource` schemas that the console now uses. An external API
+>   `DiscoveredResource` schemas (also carrying `enabled`/`parent_region`,
+>   for AWS/Azure/GCP connections) that the console now uses. `EnableLocalZone`
+>   itself stays wired only to the legacy route for now — a generalized
+>   equivalent is a reasonable follow-up, not built here. An external API
 >   consumer generated against the old schemas keeps working unchanged.
 > - **Kubernetes's own scoped risk reasoning, parallel to the bullet above.**
 >   `infraconnections` now links `k8s.io/client-go` into the management
@@ -779,12 +819,16 @@ whatever the operator already trusts.
 >   rejected that shape for a credential ("enforces scoping by rule... a
 >   verifier remembered to check a mask"); `Mode` (read_only/read_write,
 >   unchanged) plus this status triplet is the chosen shape instead.
-> - **ADR-0056 is not yet written.** Issue #406 asks this work to stay
->   within "ADR-0056's four component families," but ADR-0056 does not
->   exist in this tree yet — issue #404, which would produce it, is still
->   open. This addendum and the `infraconnections` package are therefore
->   written against this ADR's existing §6 boundary, not against ADR-0056.
->   Revisit both once ADR-0056 lands.
+> - **Consistent with ADR-0056's four component families.** ADR-0056 landed
+>   concurrently with this work (it did not exist when this addendum was
+>   first drafted). Connection management belongs to **control services**
+>   in its terms ("transport discovery/credentials" is explicitly named
+>   there); Kubernetes/Nomad/Compose adapters are integrations, not new
+>   component families, matching issue #406's own framing. ADR-0056's
+>   status notes its *implementation consolidation* is still pending #404 —
+>   that pending work is the Gateway/Relay unification, unrelated to
+>   `infraconnections`, which needed no changes to land within ADR-0056's
+>   boundary as written.
 > - **Docker Compose: deferred, not built.** Evaluated and explicitly
 >   deferred for this round, per the issue's own framing — a Compose
 >   "connection" would be a host/project integration, not a cluster

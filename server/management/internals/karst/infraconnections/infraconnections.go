@@ -31,11 +31,16 @@
 //     only, can never place an order or create a workload) credentials and
 //     keep read-write ones elsewhere, or out entirely.
 //   - Storing ModeReadWrite here records intent for a future actuation
-//     path; this package never calls a create/destroy/apply API itself.
-//     Real actuation is ADR-0045 §5/§7 Phase 2 (drivers, signed enrollment,
-//     a budget circuit breaker) -- unbuilt, on purpose. Nothing in this
-//     package should grow a provisioning call without that phase's
-//     safeguards landing first.
+//     path, with exactly one narrow, named exception carved out ahead of
+//     it: EnableLocalZone, which opts an AWS Local Zone's group into use
+//     (ModifyAvailabilityZoneGroup) and nothing else -- no create/destroy
+//     of a compute resource. Real create/destroy actuation is still
+//     ADR-0045 §5/§7 Phase 2 (drivers, signed enrollment, a budget circuit
+//     breaker) -- unbuilt, on purpose. Nothing in this package should grow
+//     a further provisioning call without that phase's safeguards landing
+//     first; EnableLocalZone is the one call the ADR's second addendum
+//     deliberately lets through ahead of it, not a precedent for adding
+//     more the same way.
 //   - Status/LastValidatedAt/LastError record whether the last Discover
 //     call succeeded, as a narrow, concrete fact -- not a generic
 //     capability bitmask on the credential. ADR-0016 explicitly rejected a
@@ -45,10 +50,10 @@
 //     adjacent fields, both narrow and both already reasoned about above.
 //
 // The issue that drove this generalization (#406) also asks to stay within
-// ADR-0056's four component families. ADR-0056 does not exist yet as of
-// this rename (#404, which would produce it, is still open) -- this package
-// and its ADR-0045 addendum are written against the existing boundary and
-// should be revisited once ADR-0056 lands.
+// ADR-0056's four component families: this package belongs to "control
+// services" in that ADR's terms (it explicitly names "transport
+// discovery/credentials" there), and Kubernetes/Nomad/Compose adapters are
+// integrations, not new component families -- see the ADR-0045 addendum.
 package infraconnections
 
 import (

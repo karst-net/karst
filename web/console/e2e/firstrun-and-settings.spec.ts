@@ -64,6 +64,10 @@ test("an infrastructure connection feeds the Authorized Locations region picker"
   await page.getByRole("combobox", { name: "Region, zone, or namespace" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
   await page.getByRole("button", { name: "Add location" }).click();
   await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  // The dialog deliberately stays open after a successful add (so several
+  // zones can be added from the same connection without re-fetching the
+  // live list each time) -- close it explicitly before the cleanup below.
+  await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("cell", { name: "US East (N. Virginia) (us-east-1)" })).toBeVisible();
 
   // Clean up so this fixture-mutating test can be re-run against the shared

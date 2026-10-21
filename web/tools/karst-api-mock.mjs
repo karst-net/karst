@@ -106,20 +106,28 @@ let tutorialModeEnabled = true;
 let infraConnections = [];
 // Canned discovery results per connection type, standing in for a live
 // describe-regions/list-namespaces call -- just enough for the Authorized
-// Locations picker to have something to choose from.
+// Locations picker to have something to choose from. enabled mirrors the
+// real server's DiscoveredRegion/DiscoveredResource field: true for a
+// region and an already opted-in local zone. us-west-2-lax-1 starts false
+// so a read_write AWS connection has something to exercise the enable
+// endpoint below against; a read_only connection never sees it at all
+// (filtered where the regions/resources routes are handled, matching
+// infraconnections' ModeReadOnly discovery behavior). Kubernetes
+// namespaces have no enabled/opt-in concept at all.
 const discoveryFixtures = {
   aws: [
-    { code: "us-east-1", name: "US East (N. Virginia)", kind: "region", lat: 38.9519, lon: -77.4480 },
-    { code: "eu-west-1", name: "Europe (Ireland)", kind: "region", lat: 53.3498, lon: -6.2603 },
-    { code: "us-east-1-bos-1", name: "Boston Local Zone", kind: "local_zone", lat: 42.3601, lon: -71.0589 },
+    { code: "us-east-1", name: "US East (N. Virginia)", kind: "region", lat: 38.9519, lon: -77.4480, enabled: true },
+    { code: "eu-west-1", name: "Europe (Ireland)", kind: "region", lat: 53.3498, lon: -6.2603, enabled: true },
+    { code: "us-east-1-bos-1", name: "Boston Local Zone", kind: "local_zone", lat: 42.3601, lon: -71.0589, enabled: true, parent_region: "us-east-1" },
+    { code: "us-west-2-lax-1", name: "Los Angeles Local Zone", kind: "local_zone", lat: 34.0522, lon: -118.2437, enabled: false, parent_region: "us-west-2" },
   ],
   azure: [
-    { code: "eastus", name: "East US (Virginia)", kind: "region", lat: 37.3719, lon: -79.8164 },
-    { code: "westeurope", name: "West Europe (Netherlands)", kind: "region", lat: 52.3667, lon: 4.9000 },
+    { code: "eastus", name: "East US (Virginia)", kind: "region", lat: 37.3719, lon: -79.8164, enabled: true },
+    { code: "westeurope", name: "West Europe (Netherlands)", kind: "region", lat: 52.3667, lon: 4.9000, enabled: true },
   ],
   gcp: [
-    { code: "us-central1", name: "Iowa", kind: "region", lat: 41.2619, lon: -95.8608 },
-    { code: "europe-west1", name: "Belgium", kind: "region", lat: 50.8503, lon: 4.3517 },
+    { code: "us-central1", name: "Iowa", kind: "region", lat: 41.2619, lon: -95.8608, enabled: true },
+    { code: "europe-west1", name: "Belgium", kind: "region", lat: 50.8503, lon: 4.3517, enabled: true },
   ],
   // Namespaces never carry coordinates -- the console falls back to the
   // connection's own declared lat/lon (see settings.tsx/locations.tsx).
@@ -741,7 +749,20 @@ const server = http.createServer((request, response) => {
   if (cloudAccountRegionsMatch && method === "GET") {
     const connection = infraConnections.find((item) => item.id === cloudAccountRegionsMatch[1] && item.type !== "kubernetes");
     if (!connection) return error(response, 404, "not_found", "cloud account not found");
-    return json(response, 200, discoveryFixtures[connection.type] ?? []);
+    const regions = (discoveryFixtures[connection.type] ?? []).filter((r) => r.enabled || connection.mode === "read_write");
+    return json(response, 200, regions);
+  }
+  // ADR-0045 §6's second addendum: opts an AWS local zone into use.
+  const cloudAccountEnableMatch = karst.match(/^\/cloud-accounts\/([^/]+)\/regions\/([^/]+)\/enable$/);
+  if (cloudAccountEnableMatch && method === "POST") {
+    const connection = infraConnections.find((item) => item.id === cloudAccountEnableMatch[1]);
+    if (!connection) return error(response, 404, "not_found", "cloud account not found");
+    if (connection.mode !== "read_write") return error(response, 422, "invalid_argument", "enabling a local zone requires a read-write credential");
+    if (connection.type !== "aws") return error(response, 422, "invalid_argument", "enabling a local zone is only supported for aws");
+    const region = (discoveryFixtures.aws ?? []).find((item) => item.code === cloudAccountEnableMatch[2]);
+    if (!region) return error(response, 404, "not_found", "region not found");
+    region.enabled = true;
+    return json(response, 200, region);
   }
 
   // Generalized /infrastructure-connections surface (AWS/Azure/GCP/
@@ -771,7 +792,8 @@ const server = http.createServer((request, response) => {
   if (infraConnectionResourcesMatch && method === "GET") {
     const connection = infraConnections.find((item) => item.id === infraConnectionResourcesMatch[1]);
     if (!connection) return error(response, 404, "not_found", "infrastructure connection not found");
-    return json(response, 200, discoveryFixtures[connection.type] ?? []);
+    const resources = (discoveryFixtures[connection.type] ?? []).filter((r) => r.enabled || r.kind !== "local_zone" || connection.mode === "read_write");
+    return json(response, 200, resources);
   }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);

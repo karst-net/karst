@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
+import { SoftwareVersions } from "./software-versions";
 import { useState } from "react";
 import { Dialog, EmptyState, Observed } from "@karst-net/ui";
 import type { InfrastructureConnection } from "@karst-net/api-client";
@@ -133,6 +134,7 @@ export function Settings() {
 
   return <section>
     <h2>Settings</h2>
+    {(user?.role === "admin" || user?.role === "owner") && <SoftwareVersions />}
     <h3>Signed in as</h3>
     <Rows head={<><th>Name</th><th>Email</th><th>Role</th><th>User ID</th></>}>
       <tr><td>{user?.name}</td><td>{user?.email}</td><td>{user?.role}</td><td><code>{user?.id}</code></td></tr>
@@ -181,7 +183,7 @@ export function Settings() {
       : <label><input type="checkbox" checked={tutorialEnabled} disabled={tutorialSaving} onChange={(event) => void toggleTutorialMode(event.target.checked)} /> Show guidance text on each page</label>}
 
     <h3>Infrastructure Connections</h3>
-    <p className="lede">Lets Authorized Locations offer real regions, local zones, and Kubernetes namespaces instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces) — they cannot place an order or create a workload. "Read-write" connections are accepted and stored for a future provisioning feature; nothing in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</p>
+    <p className="lede">Lets Authorized Locations offer real regions, local zones, and Kubernetes namespaces instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</p>
     <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
     <Notice message={connectionMessage} />
     {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
@@ -191,7 +193,7 @@ export function Settings() {
         : <Rows head={<><th>Type</th><th>Mode</th><th>Label</th><th>Status</th><th>Added</th><th>Actions</th></>}>
           {(infraConnections.value ?? []).map((connection) => <tr key={connection.id}>
             <td>{connection.type.toUpperCase()}</td>
-            <td>{connection.mode === "read_write" ? "Read-write (stored, not yet used)" : "Read-only"}</td>
+            <td>{connection.mode === "read_write" ? "Read-write (may make live changes and incur costs)" : "Read-only"}</td>
             <td>{connection.label || <span className="lede">—</span>}</td>
             <td>{connection.status === "error" ? connection.last_error : connection.status === "ok" ? "OK" : <span className="lede">Not yet validated</span>}</td>
             <td><Observed at={connection.created_at} /></td>
@@ -209,7 +211,7 @@ export function Settings() {
         </select></label>
         <label>Mode<select aria-label="Connection mode" value={connectionDraft?.mode ?? "read_only"} onChange={(event) => setConnectionDraft((current) => current && { ...current, mode: event.target.value as ConnectionMode })}>
           <option value="read_only">Read-only (status/discovery only)</option>
-          <option value="read_write">Read-write (stored for future use)</option>
+          <option value="read_write">Read-write (may make live changes — e.g. enabling an AWS local zone — and can incur costs)</option>
         </select></label>
         <label>Label<input aria-label="Connection label" placeholder="prod-aws" value={connectionDraft?.label ?? ""} onChange={(event) => setConnectionDraft((current) => current && { ...current, label: event.target.value })} /></label>
 

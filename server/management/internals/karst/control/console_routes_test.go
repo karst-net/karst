@@ -436,6 +436,19 @@ func consoleMutations() []consoleCase {
 			want: []int{http.StatusNotFound}, template: "/karst/v1/cloud-accounts/{cloudAccountId}",
 		},
 		{
+			// Same "unknown-*" 404 shape as "delete a cloud account
+			// credential" above: EnableLocalZone's own mode/provider gating
+			// and the real AWS call it makes are covered at the unit level
+			// (infraconnections' aws_test.go), so real-server coverage here
+			// only needs to prove the route is wired and account-scoped --
+			// Store.get (ErrNotFound) runs, and this never reaches AWS,
+			// before EnableLocalZone's own gating would.
+			name: "enable an AWS local zone", method: http.MethodPost,
+			path: "/karst/v1/cloud-accounts/unknown-cloud-account-id/regions/us-east-1-bos-1/enable",
+			body: `{"parent_region":"us-east-1"}`,
+			want: []int{http.StatusNotFound}, template: "/karst/v1/cloud-accounts/{cloudAccountId}/regions/{code}/enable",
+		},
+		{
 			// The generalized sibling of "create a cloud account
 			// credential" above -- proves /infrastructure-connections is
 			// wired and accepts a kubernetes-typed connection, which the

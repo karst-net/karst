@@ -10,6 +10,12 @@ networks side by side for validation, but traffic does not cross between them.
 Start with [Getting started](GETTING-STARTED.md), and use the
 [operations manual](OPERATIONS.md) for production rollout and rollback.
 
+Karst's [four component families](COMPONENT-ARCHITECTURE.md) are node agent,
+transport infrastructure, control services and trust tooling. Gateway combines
+subnet and exit behavior within a node; Relay combines Ponor and TURN modes.
+Unified configuration/API/UI consolidation is pending #404. Continue using
+the current commands and registries until its versioned migration is available.
+
 ## 1. Conceptual mapping
 
 | Existing concept | Karst equivalent | Important difference |
@@ -19,9 +25,9 @@ Start with [Getting started](GETTING-STARTED.md), and use the
 | WireGuard preshared key | Server-derived per-pair, per-epoch PSK | Operators do not copy pairwise PSKs between nodes. |
 | Tailscale coordination server | Self-hosted `karst-control` | The server distributes policy and secrets but does not hold node decryption keys; Bedrock constrains node admission. |
 | Tailscale ACL/tag owner | Karst `groups`, `tagOwners`, and `acls` | The policy shape is intentionally familiar, but only `accept` exists and unknown fields fail validation. |
-| DERP | Ponor relay | Ponor carries PHREATIC ciphertext and uses a signed roster; it is not DERP-compatible. TURN is an additional fallback. |
+| DERP | Relay with Ponor and optional TURN modes | Ponor carries PHREATIC ciphertext and uses a signed roster; it is not DERP-compatible. TURN uses coturn or an external backend. |
 | Tailnet lock | Bedrock | Bedrock uses a hash-chained, quorum-signed authorization log and offline roots. |
-| Subnet router / exit node | Advertised Karst route / consented exit route | Route use remains ACL-gated and default-route use requires client consent. |
+| Subnet router / exit node | Node-agent Gateway with specific-prefix / default-route behavior | Route use remains ACL-gated and default-route use requires client consent. |
 
 ## 2. Inventory before changing traffic
 

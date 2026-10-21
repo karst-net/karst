@@ -288,6 +288,58 @@ func (KarstComplianceObservation_Status) EnumDescriptor() ([]byte, []int) {
 	return file_karst_control_proto_rawDescGZIP(), []int{32, 0}
 }
 
+type KarstCompliancePermitGate_Protocol int32
+
+const (
+	KarstCompliancePermitGate_PROTOCOL_UNSPECIFIED KarstCompliancePermitGate_Protocol = 0
+	KarstCompliancePermitGate_TCP                  KarstCompliancePermitGate_Protocol = 1
+	KarstCompliancePermitGate_UDP                  KarstCompliancePermitGate_Protocol = 2
+	KarstCompliancePermitGate_ANY                  KarstCompliancePermitGate_Protocol = 3
+)
+
+// Enum value maps for KarstCompliancePermitGate_Protocol.
+var (
+	KarstCompliancePermitGate_Protocol_name = map[int32]string{
+		0: "PROTOCOL_UNSPECIFIED",
+		1: "TCP",
+		2: "UDP",
+		3: "ANY",
+	}
+	KarstCompliancePermitGate_Protocol_value = map[string]int32{
+		"PROTOCOL_UNSPECIFIED": 0,
+		"TCP":                  1,
+		"UDP":                  2,
+		"ANY":                  3,
+	}
+)
+
+func (x KarstCompliancePermitGate_Protocol) Enum() *KarstCompliancePermitGate_Protocol {
+	p := new(KarstCompliancePermitGate_Protocol)
+	*p = x
+	return p
+}
+
+func (x KarstCompliancePermitGate_Protocol) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KarstCompliancePermitGate_Protocol) Descriptor() protoreflect.EnumDescriptor {
+	return file_karst_control_proto_enumTypes[5].Descriptor()
+}
+
+func (KarstCompliancePermitGate_Protocol) Type() protoreflect.EnumType {
+	return &file_karst_control_proto_enumTypes[5]
+}
+
+func (x KarstCompliancePermitGate_Protocol) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KarstCompliancePermitGate_Protocol.Descriptor instead.
+func (KarstCompliancePermitGate_Protocol) EnumDescriptor() ([]byte, []int) {
+	return file_karst_control_proto_rawDescGZIP(), []int{36, 0}
+}
+
 // KarstLoginRequest registers a node or logs an existing one back in. It is
 // sent inside a KarstEnvelope, so it is already authenticated by the time the
 // server decodes it — the ML-DSA signature over the handshake transcript
@@ -3369,6 +3421,328 @@ func (x *KarstComplianceResponse) GetAccepted() bool {
 	return false
 }
 
+// Compliance permit contract v1. These messages are not yet attached to a
+// request kind, netmap or capability advertisement. Ingestion schema 1 does not
+// imply permit support. Policy activation must wait for packet-path enforcement.
+type KarstCompliancePermitRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	SchemaVersion uint32 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	Nonce         []byte `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"` // fresh 32-byte request nonce; never reused across reconnects
+}
+
+func (x *KarstCompliancePermitRequest) Reset() {
+	*x = KarstCompliancePermitRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_karst_control_proto_msgTypes[34]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *KarstCompliancePermitRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KarstCompliancePermitRequest) ProtoMessage() {}
+
+func (x *KarstCompliancePermitRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_karst_control_proto_msgTypes[34]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KarstCompliancePermitRequest.ProtoReflect.Descriptor instead.
+func (*KarstCompliancePermitRequest) Descriptor() ([]byte, []int) {
+	return file_karst_control_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *KarstCompliancePermitRequest) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *KarstCompliancePermitRequest) GetNonce() []byte {
+	if x != nil {
+		return x.Nonce
+	}
+	return nil
+}
+
+type KarstCompliancePermitSnapshot struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	SchemaVersion    uint32 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	RequestNonce     []byte `protobuf:"bytes,2,opt,name=request_nonce,json=requestNonce,proto3" json:"request_nonce,omitempty"`
+	TenantId         string `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	EnforcerDeviceId string `protobuf:"bytes,4,opt,name=enforcer_device_id,json=enforcerDeviceId,proto3" json:"enforcer_device_id,omitempty"`
+	EnforcerHandle   string `protobuf:"bytes,5,opt,name=enforcer_handle,json=enforcerHandle,proto3" json:"enforcer_handle,omitempty"` // canonical base64 node handle
+	PolicyRevision   string `protobuf:"bytes,6,opt,name=policy_revision,json=policyRevision,proto3" json:"policy_revision,omitempty"`
+	// 1..120000 ms, budgeted from the receiver's local request start, not receipt.
+	// Every source deadline is additionally capped by remaining evidence freshness.
+	ValidForMillis uint32                       `protobuf:"varint,7,opt,name=valid_for_millis,json=validForMillis,proto3" json:"valid_for_millis,omitempty"`
+	Ingress        []*KarstCompliancePermitGate `protobuf:"bytes,8,rep,name=ingress,proto3" json:"ingress,omitempty"`
+	Egress         []*KarstCompliancePermitGate `protobuf:"bytes,9,rep,name=egress,proto3" json:"egress,omitempty"`
+}
+
+func (x *KarstCompliancePermitSnapshot) Reset() {
+	*x = KarstCompliancePermitSnapshot{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_karst_control_proto_msgTypes[35]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *KarstCompliancePermitSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KarstCompliancePermitSnapshot) ProtoMessage() {}
+
+func (x *KarstCompliancePermitSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_karst_control_proto_msgTypes[35]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KarstCompliancePermitSnapshot.ProtoReflect.Descriptor instead.
+func (*KarstCompliancePermitSnapshot) Descriptor() ([]byte, []int) {
+	return file_karst_control_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *KarstCompliancePermitSnapshot) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *KarstCompliancePermitSnapshot) GetRequestNonce() []byte {
+	if x != nil {
+		return x.RequestNonce
+	}
+	return nil
+}
+
+func (x *KarstCompliancePermitSnapshot) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *KarstCompliancePermitSnapshot) GetEnforcerDeviceId() string {
+	if x != nil {
+		return x.EnforcerDeviceId
+	}
+	return ""
+}
+
+func (x *KarstCompliancePermitSnapshot) GetEnforcerHandle() string {
+	if x != nil {
+		return x.EnforcerHandle
+	}
+	return ""
+}
+
+func (x *KarstCompliancePermitSnapshot) GetPolicyRevision() string {
+	if x != nil {
+		return x.PolicyRevision
+	}
+	return ""
+}
+
+func (x *KarstCompliancePermitSnapshot) GetValidForMillis() uint32 {
+	if x != nil {
+		return x.ValidForMillis
+	}
+	return 0
+}
+
+func (x *KarstCompliancePermitSnapshot) GetIngress() []*KarstCompliancePermitGate {
+	if x != nil {
+		return x.Ingress
+	}
+	return nil
+}
+
+func (x *KarstCompliancePermitSnapshot) GetEgress() []*KarstCompliancePermitGate {
+	if x != nil {
+		return x.Egress
+	}
+	return nil
+}
+
+type KarstCompliancePermitGate struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	GuardrailId      string                             `protobuf:"bytes,1,opt,name=guardrail_id,json=guardrailId,proto3" json:"guardrail_id,omitempty"`
+	DestinationCidrs []string                           `protobuf:"bytes,2,rep,name=destination_cidrs,json=destinationCidrs,proto3" json:"destination_cidrs,omitempty"`
+	Protocol         KarstCompliancePermitGate_Protocol `protobuf:"varint,3,opt,name=protocol,proto3,enum=management.KarstCompliancePermitGate_Protocol" json:"protocol,omitempty"`
+	Ports            *KarstPortRange                    `protobuf:"bytes,4,opt,name=ports,proto3" json:"ports,omitempty"`
+	// All matching gates are mandatory. Empty sources means deny, not no gate.
+	Sources []*KarstComplianceSourcePermit `protobuf:"bytes,5,rep,name=sources,proto3" json:"sources,omitempty"`
+}
+
+func (x *KarstCompliancePermitGate) Reset() {
+	*x = KarstCompliancePermitGate{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_karst_control_proto_msgTypes[36]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *KarstCompliancePermitGate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KarstCompliancePermitGate) ProtoMessage() {}
+
+func (x *KarstCompliancePermitGate) ProtoReflect() protoreflect.Message {
+	mi := &file_karst_control_proto_msgTypes[36]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KarstCompliancePermitGate.ProtoReflect.Descriptor instead.
+func (*KarstCompliancePermitGate) Descriptor() ([]byte, []int) {
+	return file_karst_control_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *KarstCompliancePermitGate) GetGuardrailId() string {
+	if x != nil {
+		return x.GuardrailId
+	}
+	return ""
+}
+
+func (x *KarstCompliancePermitGate) GetDestinationCidrs() []string {
+	if x != nil {
+		return x.DestinationCidrs
+	}
+	return nil
+}
+
+func (x *KarstCompliancePermitGate) GetProtocol() KarstCompliancePermitGate_Protocol {
+	if x != nil {
+		return x.Protocol
+	}
+	return KarstCompliancePermitGate_PROTOCOL_UNSPECIFIED
+}
+
+func (x *KarstCompliancePermitGate) GetPorts() *KarstPortRange {
+	if x != nil {
+		return x.Ports
+	}
+	return nil
+}
+
+func (x *KarstCompliancePermitGate) GetSources() []*KarstComplianceSourcePermit {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+type KarstComplianceSourcePermit struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Handle             string `protobuf:"bytes,1,opt,name=handle,proto3" json:"handle,omitempty"`
+	DeviceId           string `protobuf:"bytes,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	EvidenceGeneration uint64 `protobuf:"varint,3,opt,name=evidence_generation,json=evidenceGeneration,proto3" json:"evidence_generation,omitempty"`
+	ValidForMillis     uint32 `protobuf:"varint,4,opt,name=valid_for_millis,json=validForMillis,proto3" json:"valid_for_millis,omitempty"`
+}
+
+func (x *KarstComplianceSourcePermit) Reset() {
+	*x = KarstComplianceSourcePermit{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_karst_control_proto_msgTypes[37]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *KarstComplianceSourcePermit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KarstComplianceSourcePermit) ProtoMessage() {}
+
+func (x *KarstComplianceSourcePermit) ProtoReflect() protoreflect.Message {
+	mi := &file_karst_control_proto_msgTypes[37]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KarstComplianceSourcePermit.ProtoReflect.Descriptor instead.
+func (*KarstComplianceSourcePermit) Descriptor() ([]byte, []int) {
+	return file_karst_control_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *KarstComplianceSourcePermit) GetHandle() string {
+	if x != nil {
+		return x.Handle
+	}
+	return ""
+}
+
+func (x *KarstComplianceSourcePermit) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *KarstComplianceSourcePermit) GetEvidenceGeneration() uint64 {
+	if x != nil {
+		return x.EvidenceGeneration
+	}
+	return 0
+}
+
+func (x *KarstComplianceSourcePermit) GetValidForMillis() uint32 {
+	if x != nil {
+		return x.ValidForMillis
+	}
+	return 0
+}
+
 type KarstAllowedRegions_Entry struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -3386,7 +3760,7 @@ type KarstAllowedRegions_Entry struct {
 func (x *KarstAllowedRegions_Entry) Reset() {
 	*x = KarstAllowedRegions_Entry{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_karst_control_proto_msgTypes[34]
+		mi := &file_karst_control_proto_msgTypes[38]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3399,7 +3773,7 @@ func (x *KarstAllowedRegions_Entry) String() string {
 func (*KarstAllowedRegions_Entry) ProtoMessage() {}
 
 func (x *KarstAllowedRegions_Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_karst_control_proto_msgTypes[34]
+	mi := &file_karst_control_proto_msgTypes[38]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3450,7 +3824,7 @@ type KarstEphemeralAnchors_Entry struct {
 func (x *KarstEphemeralAnchors_Entry) Reset() {
 	*x = KarstEphemeralAnchors_Entry{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_karst_control_proto_msgTypes[35]
+		mi := &file_karst_control_proto_msgTypes[39]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -3463,7 +3837,7 @@ func (x *KarstEphemeralAnchors_Entry) String() string {
 func (*KarstEphemeralAnchors_Entry) ProtoMessage() {}
 
 func (x *KarstEphemeralAnchors_Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_karst_control_proto_msgTypes[35]
+	mi := &file_karst_control_proto_msgTypes[39]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3917,40 +4291,107 @@ var file_karst_control_proto_rawDesc = []byte{
 	0x01, 0x28, 0x0d, 0x52, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x46, 0x6f, 0x72, 0x53, 0x65, 0x63,
 	0x6f, 0x6e, 0x64, 0x73, 0x12, 0x1a, 0x0a, 0x08, 0x61, 0x63, 0x63, 0x65, 0x70, 0x74, 0x65, 0x64,
 	0x18, 0x04, 0x20, 0x01, 0x28, 0x08, 0x52, 0x08, 0x61, 0x63, 0x63, 0x65, 0x70, 0x74, 0x65, 0x64,
-	0x2a, 0x4f, 0x0a, 0x11, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x44, 0x4e, 0x53, 0x54, 0x72, 0x61, 0x6e,
-	0x73, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x1d, 0x0a, 0x19, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x44,
-	0x4e, 0x53, 0x5f, 0x54, 0x52, 0x41, 0x4e, 0x53, 0x50, 0x4f, 0x52, 0x54, 0x5f, 0x50, 0x4c, 0x41,
-	0x49, 0x4e, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x44, 0x4e,
-	0x53, 0x5f, 0x54, 0x52, 0x41, 0x4e, 0x53, 0x50, 0x4f, 0x52, 0x54, 0x5f, 0x44, 0x4f, 0x54, 0x10,
-	0x01, 0x2a, 0x71, 0x0a, 0x10, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x42, 0x65, 0x64, 0x72, 0x6f, 0x63,
-	0x6b, 0x4d, 0x6f, 0x64, 0x65, 0x12, 0x1a, 0x0a, 0x16, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x42,
-	0x45, 0x44, 0x52, 0x4f, 0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x4f, 0x46, 0x46, 0x10,
-	0x00, 0x12, 0x1f, 0x0a, 0x1b, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x42, 0x45, 0x44, 0x52, 0x4f,
-	0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x41, 0x44, 0x56, 0x49, 0x53, 0x4f, 0x52, 0x59,
-	0x10, 0x01, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x42, 0x45, 0x44, 0x52,
-	0x4f, 0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x45, 0x4e, 0x46, 0x4f, 0x52, 0x43, 0x49,
-	0x4e, 0x47, 0x10, 0x02, 0x2a, 0x6a, 0x0a, 0x0e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x52, 0x6f, 0x75,
-	0x74, 0x65, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f,
-	0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45,
-	0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x4b, 0x41, 0x52, 0x53,
-	0x54, 0x5f, 0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x53, 0x55, 0x42,
-	0x4e, 0x45, 0x54, 0x10, 0x01, 0x12, 0x19, 0x0a, 0x15, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x52,
-	0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x45, 0x58, 0x49, 0x54, 0x10, 0x02,
-	0x2a, 0x70, 0x0a, 0x0e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x52, 0x6f,
-	0x6c, 0x65, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x52, 0x4f, 0x55, 0x54,
-	0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49,
-	0x45, 0x44, 0x10, 0x00, 0x12, 0x1e, 0x0a, 0x1a, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x52, 0x4f,
-	0x55, 0x54, 0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x52, 0x45, 0x43, 0x49, 0x50, 0x49, 0x45,
-	0x4e, 0x54, 0x10, 0x01, 0x12, 0x1c, 0x0a, 0x18, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x52, 0x4f,
-	0x55, 0x54, 0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x47, 0x41, 0x54, 0x45, 0x57, 0x41, 0x59,
-	0x10, 0x02, 0x32, 0x66, 0x0a, 0x13, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6e, 0x74, 0x72,
-	0x6f, 0x6c, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x4f, 0x0a, 0x07, 0x53, 0x65, 0x73,
-	0x73, 0x69, 0x6f, 0x6e, 0x12, 0x1e, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e,
-	0x74, 0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x4d, 0x65, 0x73,
-	0x73, 0x61, 0x67, 0x65, 0x1a, 0x1e, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e,
-	0x74, 0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4d, 0x65, 0x73,
-	0x73, 0x61, 0x67, 0x65, 0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x42, 0x08, 0x5a, 0x06, 0x2f, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x22, 0x5b, 0x0a, 0x1c, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61,
+	0x6e, 0x63, 0x65, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x12, 0x25, 0x0a, 0x0e, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69,
+	0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0d, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61,
+	0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x22, 0xb2, 0x03,
+	0x0a, 0x1d, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63,
+	0x65, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x12,
+	0x25, 0x0a, 0x0e, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
+	0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0d, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x56,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0c, 0x72,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x1b, 0x0a, 0x09, 0x74,
+	0x65, 0x6e, 0x61, 0x6e, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08,
+	0x74, 0x65, 0x6e, 0x61, 0x6e, 0x74, 0x49, 0x64, 0x12, 0x2c, 0x0a, 0x12, 0x65, 0x6e, 0x66, 0x6f,
+	0x72, 0x63, 0x65, 0x72, 0x5f, 0x64, 0x65, 0x76, 0x69, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x04,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x10, 0x65, 0x6e, 0x66, 0x6f, 0x72, 0x63, 0x65, 0x72, 0x44, 0x65,
+	0x76, 0x69, 0x63, 0x65, 0x49, 0x64, 0x12, 0x27, 0x0a, 0x0f, 0x65, 0x6e, 0x66, 0x6f, 0x72, 0x63,
+	0x65, 0x72, 0x5f, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0e, 0x65, 0x6e, 0x66, 0x6f, 0x72, 0x63, 0x65, 0x72, 0x48, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x12,
+	0x27, 0x0a, 0x0f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x72, 0x65, 0x76, 0x69, 0x73, 0x69,
+	0x6f, 0x6e, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79,
+	0x52, 0x65, 0x76, 0x69, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x28, 0x0a, 0x10, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x5f, 0x66, 0x6f, 0x72, 0x5f, 0x6d, 0x69, 0x6c, 0x6c, 0x69, 0x73, 0x18, 0x07, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x0e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x46, 0x6f, 0x72, 0x4d, 0x69, 0x6c, 0x6c,
+	0x69, 0x73, 0x12, 0x3f, 0x0a, 0x07, 0x69, 0x6e, 0x67, 0x72, 0x65, 0x73, 0x73, 0x18, 0x08, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e, 0x74,
+	0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65,
+	0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x47, 0x61, 0x74, 0x65, 0x52, 0x07, 0x69, 0x6e, 0x67, 0x72,
+	0x65, 0x73, 0x73, 0x12, 0x3d, 0x0a, 0x06, 0x65, 0x67, 0x72, 0x65, 0x73, 0x73, 0x18, 0x09, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e, 0x74,
+	0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65,
+	0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x47, 0x61, 0x74, 0x65, 0x52, 0x06, 0x65, 0x67, 0x72, 0x65,
+	0x73, 0x73, 0x22, 0xed, 0x02, 0x0a, 0x19, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70,
+	0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x47, 0x61, 0x74, 0x65,
+	0x12, 0x21, 0x0a, 0x0c, 0x67, 0x75, 0x61, 0x72, 0x64, 0x72, 0x61, 0x69, 0x6c, 0x5f, 0x69, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x67, 0x75, 0x61, 0x72, 0x64, 0x72, 0x61, 0x69,
+	0x6c, 0x49, 0x64, 0x12, 0x2b, 0x0a, 0x11, 0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x5f, 0x63, 0x69, 0x64, 0x72, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x09, 0x52, 0x10,
+	0x64, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x43, 0x69, 0x64, 0x72, 0x73,
+	0x12, 0x4a, 0x0a, 0x08, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x63, 0x6f, 0x6c, 0x18, 0x03, 0x20, 0x01,
+	0x28, 0x0e, 0x32, 0x2e, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2e,
+	0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x50,
+	0x65, 0x72, 0x6d, 0x69, 0x74, 0x47, 0x61, 0x74, 0x65, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x63,
+	0x6f, 0x6c, 0x52, 0x08, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x63, 0x6f, 0x6c, 0x12, 0x30, 0x0a, 0x05,
+	0x70, 0x6f, 0x72, 0x74, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x6d, 0x61,
+	0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x50, 0x6f,
+	0x72, 0x74, 0x52, 0x61, 0x6e, 0x67, 0x65, 0x52, 0x05, 0x70, 0x6f, 0x72, 0x74, 0x73, 0x12, 0x41,
+	0x0a, 0x07, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x73, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32,
+	0x27, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2e, 0x4b, 0x61, 0x72,
+	0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x6f, 0x75, 0x72,
+	0x63, 0x65, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x74, 0x52, 0x07, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65,
+	0x73, 0x22, 0x3f, 0x0a, 0x08, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x63, 0x6f, 0x6c, 0x12, 0x18, 0x0a,
+	0x14, 0x50, 0x52, 0x4f, 0x54, 0x4f, 0x43, 0x4f, 0x4c, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43,
+	0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x07, 0x0a, 0x03, 0x54, 0x43, 0x50, 0x10, 0x01,
+	0x12, 0x07, 0x0a, 0x03, 0x55, 0x44, 0x50, 0x10, 0x02, 0x12, 0x07, 0x0a, 0x03, 0x41, 0x4e, 0x59,
+	0x10, 0x03, 0x22, 0xad, 0x01, 0x0a, 0x1b, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6d, 0x70,
+	0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x50, 0x65, 0x72, 0x6d,
+	0x69, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x06, 0x68, 0x61, 0x6e, 0x64, 0x6c, 0x65, 0x12, 0x1b, 0x0a, 0x09, 0x64, 0x65,
+	0x76, 0x69, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x64,
+	0x65, 0x76, 0x69, 0x63, 0x65, 0x49, 0x64, 0x12, 0x2f, 0x0a, 0x13, 0x65, 0x76, 0x69, 0x64, 0x65,
+	0x6e, 0x63, 0x65, 0x5f, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x65, 0x76, 0x69, 0x64, 0x65, 0x6e, 0x63, 0x65, 0x47, 0x65,
+	0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x28, 0x0a, 0x10, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x5f, 0x66, 0x6f, 0x72, 0x5f, 0x6d, 0x69, 0x6c, 0x6c, 0x69, 0x73, 0x18, 0x04, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x0e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x46, 0x6f, 0x72, 0x4d, 0x69, 0x6c, 0x6c,
+	0x69, 0x73, 0x2a, 0x4f, 0x0a, 0x11, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x44, 0x4e, 0x53, 0x54, 0x72,
+	0x61, 0x6e, 0x73, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x1d, 0x0a, 0x19, 0x4b, 0x41, 0x52, 0x53, 0x54,
+	0x5f, 0x44, 0x4e, 0x53, 0x5f, 0x54, 0x52, 0x41, 0x4e, 0x53, 0x50, 0x4f, 0x52, 0x54, 0x5f, 0x50,
+	0x4c, 0x41, 0x49, 0x4e, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f,
+	0x44, 0x4e, 0x53, 0x5f, 0x54, 0x52, 0x41, 0x4e, 0x53, 0x50, 0x4f, 0x52, 0x54, 0x5f, 0x44, 0x4f,
+	0x54, 0x10, 0x01, 0x2a, 0x71, 0x0a, 0x10, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x42, 0x65, 0x64, 0x72,
+	0x6f, 0x63, 0x6b, 0x4d, 0x6f, 0x64, 0x65, 0x12, 0x1a, 0x0a, 0x16, 0x4b, 0x41, 0x52, 0x53, 0x54,
+	0x5f, 0x42, 0x45, 0x44, 0x52, 0x4f, 0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x4f, 0x46,
+	0x46, 0x10, 0x00, 0x12, 0x1f, 0x0a, 0x1b, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x42, 0x45, 0x44,
+	0x52, 0x4f, 0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x41, 0x44, 0x56, 0x49, 0x53, 0x4f,
+	0x52, 0x59, 0x10, 0x01, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x42, 0x45,
+	0x44, 0x52, 0x4f, 0x43, 0x4b, 0x5f, 0x4d, 0x4f, 0x44, 0x45, 0x5f, 0x45, 0x4e, 0x46, 0x4f, 0x52,
+	0x43, 0x49, 0x4e, 0x47, 0x10, 0x02, 0x2a, 0x6a, 0x0a, 0x0e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x52,
+	0x6f, 0x75, 0x74, 0x65, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53,
+	0x54, 0x5f, 0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53,
+	0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x1b, 0x0a, 0x17, 0x4b, 0x41,
+	0x52, 0x53, 0x54, 0x5f, 0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x53,
+	0x55, 0x42, 0x4e, 0x45, 0x54, 0x10, 0x01, 0x12, 0x19, 0x0a, 0x15, 0x4b, 0x41, 0x52, 0x53, 0x54,
+	0x5f, 0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x45, 0x58, 0x49, 0x54,
+	0x10, 0x02, 0x2a, 0x70, 0x0a, 0x0e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x52, 0x6f, 0x75, 0x74, 0x65,
+	0x52, 0x6f, 0x6c, 0x65, 0x12, 0x20, 0x0a, 0x1c, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f, 0x52, 0x4f,
+	0x55, 0x54, 0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49,
+	0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x1e, 0x0a, 0x1a, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f,
+	0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x52, 0x45, 0x43, 0x49, 0x50,
+	0x49, 0x45, 0x4e, 0x54, 0x10, 0x01, 0x12, 0x1c, 0x0a, 0x18, 0x4b, 0x41, 0x52, 0x53, 0x54, 0x5f,
+	0x52, 0x4f, 0x55, 0x54, 0x45, 0x5f, 0x52, 0x4f, 0x4c, 0x45, 0x5f, 0x47, 0x41, 0x54, 0x45, 0x57,
+	0x41, 0x59, 0x10, 0x02, 0x32, 0x66, 0x0a, 0x13, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6f, 0x6e,
+	0x74, 0x72, 0x6f, 0x6c, 0x53, 0x65, 0x72, 0x76, 0x69, 0x63, 0x65, 0x12, 0x4f, 0x0a, 0x07, 0x53,
+	0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x1e, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d,
+	0x65, 0x6e, 0x74, 0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x43, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x4d,
+	0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x1a, 0x1e, 0x2e, 0x6d, 0x61, 0x6e, 0x61, 0x67, 0x65, 0x6d,
+	0x65, 0x6e, 0x74, 0x2e, 0x4b, 0x61, 0x72, 0x73, 0x74, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4d,
+	0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x42, 0x08, 0x5a, 0x06,
+	0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -3965,98 +4406,108 @@ func file_karst_control_proto_rawDescGZIP() []byte {
 	return file_karst_control_proto_rawDescData
 }
 
-var file_karst_control_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_karst_control_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_karst_control_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_karst_control_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_karst_control_proto_goTypes = []interface{}{
-	(KarstDNSTransport)(0),                 // 0: management.KarstDNSTransport
-	(KarstBedrockMode)(0),                  // 1: management.KarstBedrockMode
-	(KarstRouteKind)(0),                    // 2: management.KarstRouteKind
-	(KarstRouteRole)(0),                    // 3: management.KarstRouteRole
-	(KarstComplianceObservation_Status)(0), // 4: management.KarstComplianceObservation.Status
-	(*KarstLoginRequest)(nil),              // 5: management.KarstLoginRequest
-	(*KarstNetmapRequest)(nil),             // 6: management.KarstNetmapRequest
-	(*KarstRouteObservation)(nil),          // 7: management.KarstRouteObservation
-	(*KarstAnchorRtt)(nil),                 // 8: management.KarstAnchorRtt
-	(*KarstEphemeralAnchorRtt)(nil),        // 9: management.KarstEphemeralAnchorRtt
-	(*KarstSessionObservation)(nil),        // 10: management.KarstSessionObservation
-	(*KarstPeerDigest)(nil),                // 11: management.KarstPeerDigest
-	(*KarstNetmapPeer)(nil),                // 12: management.KarstNetmapPeer
-	(*KarstRelay)(nil),                     // 13: management.KarstRelay
-	(*RelayLocation)(nil),                  // 14: management.RelayLocation
-	(*KarstTurnServer)(nil),                // 15: management.KarstTurnServer
-	(*KarstDNSConfig)(nil),                 // 16: management.KarstDNSConfig
-	(*KarstDNSRoute)(nil),                  // 17: management.KarstDNSRoute
-	(*KarstDNSUpstream)(nil),               // 18: management.KarstDNSUpstream
-	(*KarstBedrockHead)(nil),               // 19: management.KarstBedrockHead
-	(*KarstAllowedRegions)(nil),            // 20: management.KarstAllowedRegions
-	(*KarstEphemeralAnchors)(nil),          // 21: management.KarstEphemeralAnchors
-	(*KarstBedrockRequest)(nil),            // 22: management.KarstBedrockRequest
-	(*KarstBedrockResponse)(nil),           // 23: management.KarstBedrockResponse
-	(*KarstRouteOffer)(nil),                // 24: management.KarstRouteOffer
-	(*KarstNetmapResponse)(nil),            // 25: management.KarstNetmapResponse
-	(*KarstPortRange)(nil),                 // 26: management.KarstPortRange
-	(*KarstFilterRule)(nil),                // 27: management.KarstFilterRule
-	(*KarstEgressRule)(nil),                // 28: management.KarstEgressRule
-	(*KarstLoginResponse)(nil),             // 29: management.KarstLoginResponse
-	(*KarstServerMessage)(nil),             // 30: management.KarstServerMessage
-	(*KarstClientMessage)(nil),             // 31: management.KarstClientMessage
-	(*KarstEnvelope)(nil),                  // 32: management.KarstEnvelope
-	(*ChannelHello)(nil),                   // 33: management.ChannelHello
-	(*ChannelInit)(nil),                    // 34: management.ChannelInit
-	(*KarstComplianceRequest)(nil),         // 35: management.KarstComplianceRequest
-	(*KarstComplianceReport)(nil),          // 36: management.KarstComplianceReport
-	(*KarstComplianceObservation)(nil),     // 37: management.KarstComplianceObservation
-	(*KarstComplianceResponse)(nil),        // 38: management.KarstComplianceResponse
-	(*KarstAllowedRegions_Entry)(nil),      // 39: management.KarstAllowedRegions.Entry
-	(*KarstEphemeralAnchors_Entry)(nil),    // 40: management.KarstEphemeralAnchors.Entry
-	(*PeerSystemMeta)(nil),                 // 41: management.PeerSystemMeta
+	(KarstDNSTransport)(0),                  // 0: management.KarstDNSTransport
+	(KarstBedrockMode)(0),                   // 1: management.KarstBedrockMode
+	(KarstRouteKind)(0),                     // 2: management.KarstRouteKind
+	(KarstRouteRole)(0),                     // 3: management.KarstRouteRole
+	(KarstComplianceObservation_Status)(0),  // 4: management.KarstComplianceObservation.Status
+	(KarstCompliancePermitGate_Protocol)(0), // 5: management.KarstCompliancePermitGate.Protocol
+	(*KarstLoginRequest)(nil),               // 6: management.KarstLoginRequest
+	(*KarstNetmapRequest)(nil),              // 7: management.KarstNetmapRequest
+	(*KarstRouteObservation)(nil),           // 8: management.KarstRouteObservation
+	(*KarstAnchorRtt)(nil),                  // 9: management.KarstAnchorRtt
+	(*KarstEphemeralAnchorRtt)(nil),         // 10: management.KarstEphemeralAnchorRtt
+	(*KarstSessionObservation)(nil),         // 11: management.KarstSessionObservation
+	(*KarstPeerDigest)(nil),                 // 12: management.KarstPeerDigest
+	(*KarstNetmapPeer)(nil),                 // 13: management.KarstNetmapPeer
+	(*KarstRelay)(nil),                      // 14: management.KarstRelay
+	(*RelayLocation)(nil),                   // 15: management.RelayLocation
+	(*KarstTurnServer)(nil),                 // 16: management.KarstTurnServer
+	(*KarstDNSConfig)(nil),                  // 17: management.KarstDNSConfig
+	(*KarstDNSRoute)(nil),                   // 18: management.KarstDNSRoute
+	(*KarstDNSUpstream)(nil),                // 19: management.KarstDNSUpstream
+	(*KarstBedrockHead)(nil),                // 20: management.KarstBedrockHead
+	(*KarstAllowedRegions)(nil),             // 21: management.KarstAllowedRegions
+	(*KarstEphemeralAnchors)(nil),           // 22: management.KarstEphemeralAnchors
+	(*KarstBedrockRequest)(nil),             // 23: management.KarstBedrockRequest
+	(*KarstBedrockResponse)(nil),            // 24: management.KarstBedrockResponse
+	(*KarstRouteOffer)(nil),                 // 25: management.KarstRouteOffer
+	(*KarstNetmapResponse)(nil),             // 26: management.KarstNetmapResponse
+	(*KarstPortRange)(nil),                  // 27: management.KarstPortRange
+	(*KarstFilterRule)(nil),                 // 28: management.KarstFilterRule
+	(*KarstEgressRule)(nil),                 // 29: management.KarstEgressRule
+	(*KarstLoginResponse)(nil),              // 30: management.KarstLoginResponse
+	(*KarstServerMessage)(nil),              // 31: management.KarstServerMessage
+	(*KarstClientMessage)(nil),              // 32: management.KarstClientMessage
+	(*KarstEnvelope)(nil),                   // 33: management.KarstEnvelope
+	(*ChannelHello)(nil),                    // 34: management.ChannelHello
+	(*ChannelInit)(nil),                     // 35: management.ChannelInit
+	(*KarstComplianceRequest)(nil),          // 36: management.KarstComplianceRequest
+	(*KarstComplianceReport)(nil),           // 37: management.KarstComplianceReport
+	(*KarstComplianceObservation)(nil),      // 38: management.KarstComplianceObservation
+	(*KarstComplianceResponse)(nil),         // 39: management.KarstComplianceResponse
+	(*KarstCompliancePermitRequest)(nil),    // 40: management.KarstCompliancePermitRequest
+	(*KarstCompliancePermitSnapshot)(nil),   // 41: management.KarstCompliancePermitSnapshot
+	(*KarstCompliancePermitGate)(nil),       // 42: management.KarstCompliancePermitGate
+	(*KarstComplianceSourcePermit)(nil),     // 43: management.KarstComplianceSourcePermit
+	(*KarstAllowedRegions_Entry)(nil),       // 44: management.KarstAllowedRegions.Entry
+	(*KarstEphemeralAnchors_Entry)(nil),     // 45: management.KarstEphemeralAnchors.Entry
+	(*PeerSystemMeta)(nil),                  // 46: management.PeerSystemMeta
 }
 var file_karst_control_proto_depIdxs = []int32{
-	41, // 0: management.KarstLoginRequest.meta:type_name -> management.PeerSystemMeta
-	11, // 1: management.KarstNetmapRequest.holds:type_name -> management.KarstPeerDigest
-	10, // 2: management.KarstNetmapRequest.sessions:type_name -> management.KarstSessionObservation
-	8,  // 3: management.KarstNetmapRequest.anchor_rtt:type_name -> management.KarstAnchorRtt
-	9,  // 4: management.KarstNetmapRequest.ephemeral_anchor_rtt:type_name -> management.KarstEphemeralAnchorRtt
-	7,  // 5: management.KarstNetmapRequest.route_observations:type_name -> management.KarstRouteObservation
-	14, // 6: management.KarstRelay.location:type_name -> management.RelayLocation
-	17, // 7: management.KarstDNSConfig.routes:type_name -> management.KarstDNSRoute
-	18, // 8: management.KarstDNSConfig.upstreams:type_name -> management.KarstDNSUpstream
-	18, // 9: management.KarstDNSRoute.upstreams:type_name -> management.KarstDNSUpstream
+	46, // 0: management.KarstLoginRequest.meta:type_name -> management.PeerSystemMeta
+	12, // 1: management.KarstNetmapRequest.holds:type_name -> management.KarstPeerDigest
+	11, // 2: management.KarstNetmapRequest.sessions:type_name -> management.KarstSessionObservation
+	9,  // 3: management.KarstNetmapRequest.anchor_rtt:type_name -> management.KarstAnchorRtt
+	10, // 4: management.KarstNetmapRequest.ephemeral_anchor_rtt:type_name -> management.KarstEphemeralAnchorRtt
+	8,  // 5: management.KarstNetmapRequest.route_observations:type_name -> management.KarstRouteObservation
+	15, // 6: management.KarstRelay.location:type_name -> management.RelayLocation
+	18, // 7: management.KarstDNSConfig.routes:type_name -> management.KarstDNSRoute
+	19, // 8: management.KarstDNSConfig.upstreams:type_name -> management.KarstDNSUpstream
+	19, // 9: management.KarstDNSRoute.upstreams:type_name -> management.KarstDNSUpstream
 	0,  // 10: management.KarstDNSUpstream.transport:type_name -> management.KarstDNSTransport
 	1,  // 11: management.KarstBedrockHead.mode:type_name -> management.KarstBedrockMode
-	39, // 12: management.KarstAllowedRegions.providers:type_name -> management.KarstAllowedRegions.Entry
-	40, // 13: management.KarstEphemeralAnchors.anchors:type_name -> management.KarstEphemeralAnchors.Entry
-	19, // 14: management.KarstBedrockResponse.head:type_name -> management.KarstBedrockHead
+	44, // 12: management.KarstAllowedRegions.providers:type_name -> management.KarstAllowedRegions.Entry
+	45, // 13: management.KarstEphemeralAnchors.anchors:type_name -> management.KarstEphemeralAnchors.Entry
+	20, // 14: management.KarstBedrockResponse.head:type_name -> management.KarstBedrockHead
 	2,  // 15: management.KarstRouteOffer.kind:type_name -> management.KarstRouteKind
 	3,  // 16: management.KarstRouteOffer.role:type_name -> management.KarstRouteRole
-	12, // 17: management.KarstNetmapResponse.peers:type_name -> management.KarstNetmapPeer
-	27, // 18: management.KarstNetmapResponse.packet_filter:type_name -> management.KarstFilterRule
-	13, // 19: management.KarstNetmapResponse.relays:type_name -> management.KarstRelay
-	15, // 20: management.KarstNetmapResponse.turn_servers:type_name -> management.KarstTurnServer
-	24, // 21: management.KarstNetmapResponse.routes:type_name -> management.KarstRouteOffer
-	16, // 22: management.KarstNetmapResponse.dns_config:type_name -> management.KarstDNSConfig
-	19, // 23: management.KarstNetmapResponse.bedrock_head:type_name -> management.KarstBedrockHead
-	28, // 24: management.KarstNetmapResponse.egress_filter:type_name -> management.KarstEgressRule
-	27, // 25: management.KarstNetmapResponse.ssh_filter:type_name -> management.KarstFilterRule
-	20, // 26: management.KarstNetmapResponse.allowed_regions:type_name -> management.KarstAllowedRegions
-	21, // 27: management.KarstNetmapResponse.ephemeral_anchors:type_name -> management.KarstEphemeralAnchors
-	26, // 28: management.KarstFilterRule.ports:type_name -> management.KarstPortRange
-	26, // 29: management.KarstEgressRule.ports:type_name -> management.KarstPortRange
-	33, // 30: management.KarstServerMessage.hello:type_name -> management.ChannelHello
-	32, // 31: management.KarstServerMessage.envelope:type_name -> management.KarstEnvelope
-	34, // 32: management.KarstClientMessage.init:type_name -> management.ChannelInit
-	32, // 33: management.KarstClientMessage.envelope:type_name -> management.KarstEnvelope
-	36, // 34: management.KarstComplianceRequest.report:type_name -> management.KarstComplianceReport
-	37, // 35: management.KarstComplianceReport.client_version:type_name -> management.KarstComplianceObservation
-	37, // 36: management.KarstComplianceReport.os_version:type_name -> management.KarstComplianceObservation
+	13, // 17: management.KarstNetmapResponse.peers:type_name -> management.KarstNetmapPeer
+	28, // 18: management.KarstNetmapResponse.packet_filter:type_name -> management.KarstFilterRule
+	14, // 19: management.KarstNetmapResponse.relays:type_name -> management.KarstRelay
+	16, // 20: management.KarstNetmapResponse.turn_servers:type_name -> management.KarstTurnServer
+	25, // 21: management.KarstNetmapResponse.routes:type_name -> management.KarstRouteOffer
+	17, // 22: management.KarstNetmapResponse.dns_config:type_name -> management.KarstDNSConfig
+	20, // 23: management.KarstNetmapResponse.bedrock_head:type_name -> management.KarstBedrockHead
+	29, // 24: management.KarstNetmapResponse.egress_filter:type_name -> management.KarstEgressRule
+	28, // 25: management.KarstNetmapResponse.ssh_filter:type_name -> management.KarstFilterRule
+	21, // 26: management.KarstNetmapResponse.allowed_regions:type_name -> management.KarstAllowedRegions
+	22, // 27: management.KarstNetmapResponse.ephemeral_anchors:type_name -> management.KarstEphemeralAnchors
+	27, // 28: management.KarstFilterRule.ports:type_name -> management.KarstPortRange
+	27, // 29: management.KarstEgressRule.ports:type_name -> management.KarstPortRange
+	34, // 30: management.KarstServerMessage.hello:type_name -> management.ChannelHello
+	33, // 31: management.KarstServerMessage.envelope:type_name -> management.KarstEnvelope
+	35, // 32: management.KarstClientMessage.init:type_name -> management.ChannelInit
+	33, // 33: management.KarstClientMessage.envelope:type_name -> management.KarstEnvelope
+	37, // 34: management.KarstComplianceRequest.report:type_name -> management.KarstComplianceReport
+	38, // 35: management.KarstComplianceReport.client_version:type_name -> management.KarstComplianceObservation
+	38, // 36: management.KarstComplianceReport.os_version:type_name -> management.KarstComplianceObservation
 	4,  // 37: management.KarstComplianceObservation.status:type_name -> management.KarstComplianceObservation.Status
-	31, // 38: management.KarstControlService.Session:input_type -> management.KarstClientMessage
-	30, // 39: management.KarstControlService.Session:output_type -> management.KarstServerMessage
-	39, // [39:40] is the sub-list for method output_type
-	38, // [38:39] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	42, // 38: management.KarstCompliancePermitSnapshot.ingress:type_name -> management.KarstCompliancePermitGate
+	42, // 39: management.KarstCompliancePermitSnapshot.egress:type_name -> management.KarstCompliancePermitGate
+	5,  // 40: management.KarstCompliancePermitGate.protocol:type_name -> management.KarstCompliancePermitGate.Protocol
+	27, // 41: management.KarstCompliancePermitGate.ports:type_name -> management.KarstPortRange
+	43, // 42: management.KarstCompliancePermitGate.sources:type_name -> management.KarstComplianceSourcePermit
+	32, // 43: management.KarstControlService.Session:input_type -> management.KarstClientMessage
+	31, // 44: management.KarstControlService.Session:output_type -> management.KarstServerMessage
+	44, // [44:45] is the sub-list for method output_type
+	43, // [43:44] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_karst_control_proto_init() }
@@ -4475,7 +4926,7 @@ func file_karst_control_proto_init() {
 			}
 		}
 		file_karst_control_proto_msgTypes[34].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*KarstAllowedRegions_Entry); i {
+			switch v := v.(*KarstCompliancePermitRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -4487,6 +4938,54 @@ func file_karst_control_proto_init() {
 			}
 		}
 		file_karst_control_proto_msgTypes[35].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*KarstCompliancePermitSnapshot); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_karst_control_proto_msgTypes[36].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*KarstCompliancePermitGate); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_karst_control_proto_msgTypes[37].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*KarstComplianceSourcePermit); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_karst_control_proto_msgTypes[38].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*KarstAllowedRegions_Entry); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_karst_control_proto_msgTypes[39].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*KarstEphemeralAnchors_Entry); i {
 			case 0:
 				return &v.state
@@ -4516,8 +5015,8 @@ func file_karst_control_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_karst_control_proto_rawDesc,
-			NumEnums:      5,
-			NumMessages:   36,
+			NumEnums:      6,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -227,19 +227,32 @@ func TestDiscoverLegacyRefusesKubernetesRow(t *testing.T) {
 }
 
 func TestEnrichFallsBackWhenCatalogHasNoEntry(t *testing.T) {
-	got := enrich(TypeAWS, "aws-region-nobody-has-heard-of", "Mystery Region", "region")
+	got := enrich(TypeAWS, "aws-region-nobody-has-heard-of", "Mystery Region", "region", true)
 	if got.Lat != nil || got.Lon != nil {
 		t.Fatalf("got %+v, want no coordinates for an uncataloged region", got)
 	}
 	if got.Name != "Mystery Region" {
 		t.Fatalf("got name %q, want the fallback name preserved", got.Name)
 	}
+	if !got.Enabled {
+		t.Fatal("want Enabled to pass through even when the catalog has no entry")
+	}
 }
 
 func TestEnrichUsesCatalogWhenPresent(t *testing.T) {
-	got := enrich(TypeAWS, "us-east-1", "fallback", "region")
+	got := enrich(TypeAWS, "us-east-1", "fallback", "region", true)
 	if got.Lat == nil || got.Lon == nil {
 		t.Fatal("want coordinates for a cataloged region")
+	}
+}
+
+func TestEnrichPassesThroughEnabledFalse(t *testing.T) {
+	got := enrich(TypeAWS, "us-east-1-bos-1", "Boston Local Zone", "local_zone", false)
+	if got.Enabled {
+		t.Fatal("want Enabled false to survive enrich, not be forced true by a catalog hit")
+	}
+	if got.Lat == nil {
+		t.Fatal("want this cataloged local zone to still get coordinates even though it is not enabled")
 	}
 }
 

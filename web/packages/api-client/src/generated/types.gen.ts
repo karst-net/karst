@@ -615,6 +615,14 @@ export type DiscoveredRegion = {
     kind: 'region' | 'local_zone' | 'zone';
     lat?: number;
     lon?: number;
+    /**
+     * Set for a kind other than region -- the region to call the enable endpoint against.
+     */
+    parent_region?: string;
+    /**
+     * True for a region and an already opted-in local zone. False only for a read_write credential's not-yet-opted-in local zone, offered for enableCloudAccountRegion.
+     */
+    enabled: boolean;
 };
 
 export type InfrastructureConnectionCreate = {
@@ -655,6 +663,14 @@ export type DiscoveredResource = {
     kind: 'region' | 'local_zone' | 'zone' | 'namespace';
     lat?: number;
     lon?: number;
+    /**
+     * Set for a kind other than region/namespace -- the region to call the enable endpoint against.
+     */
+    parent_region?: string;
+    /**
+     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.
+     */
+    enabled?: boolean;
 };
 
 export type TurnServerCreate = {
@@ -945,6 +961,47 @@ export type ObservedSince = string;
 export type IfMatch = string;
 
 export type ExportFormat = 'json' | 'csv';
+
+export type SoftwareVersionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/versions';
+};
+
+export type SoftwareVersionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type SoftwareVersionsError = SoftwareVersionsErrors[keyof SoftwareVersionsErrors];
+
+export type SoftwareVersionsResponses = {
+    /**
+     * Running control binary and optional deployment snapshot
+     */
+    200: {
+        control: {
+            version: string;
+            revision: string;
+        };
+        deployment_status: 'available' | 'not_configured' | 'unavailable';
+        deployment?: {
+            observed_at: string;
+            components: Array<{
+                name: string;
+                image: string;
+                image_id: string;
+                tags: Array<string>;
+                state: string;
+            }>;
+        };
+    };
+};
+
+export type SoftwareVersionsResponse = SoftwareVersionsResponses[keyof SoftwareVersionsResponses];
 
 export type ListMeshDomainsData = {
     body?: never;
@@ -2872,6 +2929,42 @@ export type ListCloudAccountRegionsResponses = {
 };
 
 export type ListCloudAccountRegionsResponse = ListCloudAccountRegionsResponses[keyof ListCloudAccountRegionsResponses];
+
+export type EnableCloudAccountRegionData = {
+    body: {
+        /**
+         * The DiscoveredRegion's own parent_region -- which regional EC2 endpoint to call against.
+         */
+        parent_region: string;
+    };
+    path: {
+        cloudAccountId: string;
+        /**
+         * A DiscoveredRegion's code
+         */
+        code: string;
+    };
+    query?: never;
+    url: '/cloud-accounts/{cloudAccountId}/regions/{code}/enable';
+};
+
+export type EnableCloudAccountRegionErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type EnableCloudAccountRegionError = EnableCloudAccountRegionErrors[keyof EnableCloudAccountRegionErrors];
+
+export type EnableCloudAccountRegionResponses = {
+    /**
+     * The now-enabled region
+     */
+    200: DiscoveredRegion;
+};
+
+export type EnableCloudAccountRegionResponse = EnableCloudAccountRegionResponses[keyof EnableCloudAccountRegionResponses];
 
 export type ListInfrastructureConnectionsData = {
     body?: never;

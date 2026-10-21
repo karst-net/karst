@@ -267,6 +267,7 @@ type infraConnectionReadWriter interface {
 	Delete(ctx context.Context, id string) error
 	Discover(ctx context.Context, id string) ([]infraconnections.DiscoveredResource, error)
 	DiscoverLegacy(ctx context.Context, id string) ([]infraconnections.DiscoveredRegion, error)
+	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (infraconnections.DiscoveredRegion, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -645,6 +646,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	// explicitly since this route does not inherit karstRouter's own
 	// middleware stack.
 	router.Handle("/karst/v1/relays/enroll", limitRequestBody(http.HandlerFunc(h.relaysEnroll))).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/versions", h.versions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/components", h.nocComponents).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/noc/relays/{relayId}", h.nocRelay).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/demand/regions", h.demandRegions).Methods(http.MethodGet, http.MethodOptions)
@@ -662,6 +664,7 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/cloud-accounts", h.cloudAccountsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}", h.cloudAccountsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions", h.cloudAccountRegions).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions/{code}/enable", h.cloudAccountEnableRegion).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections", h.infraConnectionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections", h.infraConnectionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}", h.infraConnectionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -3330,13 +3333,15 @@ func requireInfraConnectionAdminRole(ctx context.Context) error {
 }
 
 // cloudAccountsList/cloudAccountsCreate/cloudAccountsDelete/
-// cloudAccountRegions back the deprecated, preserved /cloud-accounts
-// surface -- see package infraconnections's own doc comment for the
-// ADR-0045 §6 addenda this implements and why ModeReadWrite does not
-// actuate anything here. infraConnectionsList/infraConnectionsCreate/
-// infraConnectionsDelete/infraConnectionResources below are the
-// generalized /infrastructure-connections surface both the Settings page
-// and the Authorized Locations picker now use.
+// cloudAccountRegions/cloudAccountEnableRegion back the deprecated,
+// preserved /cloud-accounts surface -- see package infraconnections's own
+// doc comment for the ADR-0045 §6 addenda this implements, and exactly how
+// far ModeReadWrite actuation goes (cloudAccountEnableRegion, nothing
+// else). infraConnectionsList/infraConnectionsCreate/infraConnectionsDelete/
+// infraConnectionResources below are the generalized
+// /infrastructure-connections surface both the Settings page and the
+// Authorized Locations picker now use; EnableLocalZone itself is not yet
+// generalized (see infraconnections.Store.EnableLocalZone's doc comment).
 func (h *handler) cloudAccountsList(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
@@ -3442,6 +3447,51 @@ func (h *handler) cloudAccountRegions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, regions)
+}
+
+// enableRegionRequest carries the region whose EC2 endpoint EnableLocalZone
+// must open its client against -- see DiscoveredRegion.ParentRegion's own
+// doc comment for why AWS needs it. The console reads it off the same
+// DiscoveredRegion this request is enabling.
+type enableRegionRequest struct {
+	ParentRegion string `json:"parent_region"`
+}
+
+// cloudAccountEnableRegion opts an AWS Local Zone into use (ADR-0045 §6's
+// second addendum) -- the one real, mutating cloud-provider call this
+// codebase makes, gated the same as credential create/delete
+// (requireCloudAccountAdminRole) since it is at least as consequential: it
+// is a one-way door on the provider side (AWS has no opt-out API) and the
+// console must have already warned the operator before sending this
+// request, not merely before rendering the button.
+func (h *handler) cloudAccountEnableRegion(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
+		return
+	}
+	if err := requireCloudAccountAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req enableRegionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	region, err := h.infraConnections.EnableLocalZone(r.Context(), mux.Vars(r)["cloudAccountId"], mux.Vars(r)["code"], req.ParentRegion)
+	if errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, region)
 }
 
 // infraConnectionsList/infraConnectionsCreate/infraConnectionsDelete/

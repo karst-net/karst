@@ -13,6 +13,43 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /versions:
+    get:
+      operationId: softwareVersions
+      description: Admin/owner-only software identity. Deployment components are a timestamped operator snapshot, not a live health query.
+      responses:
+        '200':
+          description: Running control binary and optional deployment snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [control, deployment_status]
+                properties:
+                  control:
+                    type: object
+                    required: [version, revision]
+                    properties:
+                      version: {type: string}
+                      revision: {type: string}
+                  deployment_status: {type: string, enum: [available, not_configured, unavailable]}
+                  deployment:
+                    type: object
+                    required: [observed_at, components]
+                    properties:
+                      observed_at: {type: string, format: date-time}
+                      components:
+                        type: array
+                        items:
+                          type: object
+                          required: [name, image, image_id, tags, state]
+                          properties:
+                            name: {type: string}
+                            image: {type: string}
+                            image_id: {type: string}
+                            tags: {type: array, items: {type: string}}
+                            state: {type: string}
+        default: {$ref: '#/components/responses/Error'}
   /domains:
     get:
       operationId: listMeshDomains
@@ -763,11 +800,28 @@ paths:
       description: >-
         Deprecated -- see /infrastructure-connections/{connectionId}/resources.
         Calls out to the credential's own provider and lists the regions
-        (and, for AWS, opted-in local zones) enabled on that account,
-        enriched with approximate coordinates from a static catalog where
-        available -- see the Authorized Locations picker.
+        and (for AWS) local zones available to that account, enriched with
+        approximate coordinates from a static catalog where available -- see
+        the Authorized Locations picker. A read_write credential also sees
+        a Local Zone group that exists but is not yet opted in (enabled:
+        false); a read_only credential only ever sees opted-in ones.
       responses:
         '200': {description: Discovered regions/zones, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/DiscoveredRegion'}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /cloud-accounts/{cloudAccountId}/regions/{code}/enable:
+    parameters: [{name: cloudAccountId, in: path, required: true, schema: {type: string}}, {name: code, in: path, required: true, schema: {type: string}, description: A DiscoveredRegion's code, e.g. a Local Zone group name such as us-east-1-bos-1.}]
+    post:
+      operationId: enableCloudAccountRegion
+      tags: [settings]
+      description: >-
+        Opts an AWS Local Zone's group into use (ModifyAvailabilityZoneGroup)
+        -- ADR-0045 §6's second addendum. Requires the admin or owner role
+        and a read_write credential. This is a one-way door on AWS's side:
+        there is no API to opt back out. Does not create, modify, or
+        destroy a billable resource by itself.
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [parent_region], properties: {parent_region: {type: string, description: "The DiscoveredRegion's own parent_region -- which regional EC2 endpoint to call against."}}}}}}
+      responses:
+        '200': {description: The now-enabled region, content: {application/json: {schema: {$ref: '#/components/schemas/DiscoveredRegion'}}}}
         default: {$ref: '#/components/responses/Error'}
   /infrastructure-connections:
     get:
@@ -1461,7 +1515,7 @@ components:
     DiscoveredRegion:
       type: object
       deprecated: true
-      required: [code, kind]
+      required: [code, kind, enabled]
       additionalProperties: false
       properties:
         code: {type: string}
@@ -1469,6 +1523,8 @@ components:
         kind: {type: string, enum: [region, local_zone, zone]}
         lat: {type: number, minimum: -90, maximum: 90}
         lon: {type: number, minimum: -180, maximum: 180}
+        parent_region: {type: string, description: 'Set for a kind other than region -- the region to call the enable endpoint against.'}
+        enabled: {type: boolean, description: 'True for a region and an already opted-in local zone. False only for a read_write credential''s not-yet-opted-in local zone, offered for enableCloudAccountRegion.'}
     # ADR-0045 §6 addenda: admin-entered AWS/Azure/GCP/Kubernetes
     # infrastructure connections, stored encrypted at rest by package
     # infraconnections. "read_only" can only ever discover (list regions/
@@ -1521,6 +1577,8 @@ components:
         kind: {type: string, enum: [region, local_zone, zone, namespace]}
         lat: {type: number, minimum: -90, maximum: 90}
         lon: {type: number, minimum: -180, maximum: 180}
+        parent_region: {type: string, description: 'Set for a kind other than region/namespace -- the region to call the enable endpoint against.'}
+        enabled: {type: boolean, description: 'True for a region and an already opted-in local zone. False only for a read_write AWS connection''s not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.'}
     TurnServerCreate:
       type: object
       required: [uri]

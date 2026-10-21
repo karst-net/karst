@@ -2,7 +2,8 @@
 # Device compliance v1 — proposed implementation contract
 
 **Status:** Partially implemented: evaluation, ingestion, version collection,
-invalidation scheduling and an internal guardrail preview model.
+invalidation scheduling, internal guardrail preview/gate compilation and a
+reserved permit wire contract.
 Resource guardrails and traffic enforcement remain proposed.
 **Related:** [ADR-0055](../docs/adr/0055-device-compliance-and-resource-access.md),
 [#363](https://github.com/karst-net/karst/issues/363).
@@ -18,8 +19,13 @@ writes, netmaps or packet enforcement.
 releases, with bounded challenge/report attempts on live supporting servers.
 Evidence change/expiry invalidations now use a durable retry queue and the peer
 notification path. The policy package also provides an internal draft guardrail
-validator and diagnostic evaluator. Policy activation, filter compilation and
-all traffic enforcement remain pending; #363 remains open.
+validator, diagnostic evaluator and device-specific mandatory gate compiler.
+Policy activation, netmap distribution and all traffic enforcement remain
+pending; #363 remains open.
+Reserved permit messages, Go structural validation and Go/Rust wire vectors are
+also implemented. They have no active request kind or enforcement capability.
+The Rust control client has a standalone receiver/reference evaluator using
+caller-supplied elapsed time; it is not integrated with the client or datapath.
 
 `Evaluate` accepts an explicit server evaluation time and authenticated subject.
 Its evidence input must come from trusted ingestion: identity, receipt time and
@@ -322,9 +328,150 @@ A passing preview's `ValidUntil` is only the evidence deadline. It is zero on
 denial and for unprotected traffic; it is not a renewable authorization lease.
 Tests cover device-specific evidence, failure/expiry/recovery, independent gates,
 overlapping guardrails, remediation conflicts, IPv4/IPv6 routed destinations,
-port boundaries and invalid subjects/references. Live policy preview APIs,
-device-specific filter compilation and the following enforcement contract remain
-unimplemented.
+port boundaries and invalid subjects/references. Live policy preview APIs and
+the following enforcement contract remain unimplemented.
+
+### Implemented internal gate compilation
+
+`Document.CompileCompliance` takes the draft, a complete tenant-scoped roster of
+enrolled device identities with latest trusted evidence, a target handle, current
+gateway-owned route prefixes for that target, and explicit evaluation time.
+It validates the draft and enrollment bindings before returning a separate
+mandatory gate snapshot. Missing reports and malformed, wrong-subject or
+nonpassing evidence omit that device from a gate's passing sources; they never
+remove the destination guardrail. Empty/duplicate/wildcard handles, invalid or
+duplicate tenant enrollments, missing/invalid owned addresses, invalid routes,
+unknown targets and missing evaluation time fail compilation with no snapshot.
+The compiler is an internal function, not an enrollment or route-authority API;
+its caller remains responsible for authoritative reads and tenant isolation.
+
+Ingress gates contain only protected intersections with the target's own
+addresses and the routed prefixes it currently gateways. CIDR intersections
+work for IPv4, IPv6 and default routes. A node selector protects that node's
+own addresses, not its forwarded LAN. Wildcards protect both. A standby that
+does not currently gateway a protected prefix receives no gate for that prefix.
+Egress gates resolve node selectors to owned destination addresses and retain
+explicit CIDRs as resource constraints, independent of currently available
+routes. They contain only the target device's own source decision.
+
+Every matching gate is mandatory, so passing one overlapping guardrail cannot
+bypass another. Passing source lists always name concrete enrolled handles;
+they cannot contain a source wildcard. Receiver/gateway decisions carry handles
+and evidence deadlines, without raw observations, versions or failure reasons.
+Guardrails, destination prefixes and source handles have deterministic ordering,
+and repeated prefixes are deduplicated. The identity and SSH filters remain
+separate; a passing compliance gate grants no identity or SSH permission.
+
+`IngressSatisfied` and `EgressSatisfied` are reference evaluators of this gate
+alone. They deny protected traffic for unknown/nonpassing sources and at the
+exact evidence deadline. Zero snapshots, invalid flow inputs and evaluation
+times before compilation fail closed. Unprotected traffic is unconstrained by
+compliance, while still requiring the independent grants. Recompilation derives
+deadlines from the original server receipt rather than restarting freshness.
+Snapshots must be rebuilt on evidence, policy, enrollment, selector or gateway
+ownership changes. Already compiled snapshots are not mutated by later reports.
+
+These are diagnostic Go snapshots with explicit wall-clock time, not wire permits,
+an atomic policy/evidence read protocol, or a packet-path implementation. They
+have no enforcement capability advertisement or policy activation path. The
+120-second lease bound, replay binding, suspend-aware elapsed time, revocation of
+cached flows and compatibility handling below remain unimplemented. Tests compare
+compiled decisions with the draft preview and cover same-user devices under
+overlapping unconditional identity grants, remediation, nonpassing evidence,
+expiry/recovery, overlapping guardrails, routed intersections and determinism.
+
+### Reserved permit wire contract
+
+`KarstCompliancePermitRequest`, `KarstCompliancePermitSnapshot`,
+`KarstCompliancePermitGate` and `KarstComplianceSourcePermit` define a versioned
+protobuf contract with Go/Rust agreement vectors in
+`spec/vectors/device-compliance-permits-v1.json`. These standalone messages are
+not attached to a request kind, netmap field or capability advertisement. No
+server issues them and no running client installs or enforces them. Ingestion schema 1
+continues to mean evidence ingestion only.
+
+A schema-1 request carries a fresh 32-byte nonce. The response echoes it and
+binds tenant, enforcing enrollment ID, canonical base64 identity handle and
+policy revision. Every passing source names its own concrete handle, enrollment
+ID and positive evidence generation. Handles/enrollments/generations must be
+consistent across the whole snapshot. Egress sources may name only the enforcing
+device. This binds the response structure; an authenticated control transaction
+and authoritative enrollment/policy/evidence reads must establish its provenance.
+The validator does not prove that the server used current evidence.
+
+Snapshots have a positive validity budget of at most 120,000 milliseconds. Each
+source budget must be positive and no greater than the snapshot budget. A future
+issuer must additionally cap it by that source's remaining evidence freshness,
+rounding down, and omit sources with no remaining budget. A future receiver must
+measure budgets from its locally recorded request start using suspend-aware
+elapsed time: transit, retries and sleep consume validity. Receipt, reconnect,
+cached replies and unchanged netmaps must never restart a budget. A timed-out,
+consumed or replaced request nonce cannot install another snapshot. The current
+Go structural validator checks equality and size, not nonce freshness/consumption,
+evidence freshness or elapsed-time enforcement.
+
+Gates specify a nonempty guardrail ID, canonical IPv4/IPv6 destination CIDRs,
+TCP/UDP/either transport, an inclusive 0..65535 port range and passing sources.
+Zero/unknown protocols, malformed/noncanonical/mapped CIDRs, duplicate guardrails
+within a direction, duplicate prefixes/sources and inconsistent source bindings
+are rejected. All matching gates compose with AND. An empty passing-source list
+is a valid mandatory denial; it must not cause a gate to be dropped. A present,
+valid snapshot with no gates is distinct from a missing/unsupported snapshot.
+It does not grant identity or SSH access.
+
+`compliance.ValidatePermitRequest` and `ValidatePermitSnapshot` implement Go
+structural and trusted-context binding checks. The latter validates the whole
+candidate before installation; an error must not partially apply it or renew
+old leases. Trusted context includes the current request nonce, enrollment and
+policy revision from the same authenticated transaction. Semantics that require
+new mandatory interpretation need a new schema version. Future capability
+negotiation must reject unknown versions for protected access.
+
+Tests cover binding substitution, validity bounds, unknown enums, invalid ports,
+CIDRs and references, wildcard/duplicate sources, inconsistent evidence
+generations and deny-all snapshots. These validators and wire vectors do not
+implement permit issuance, atomic snapshot reads, capability negotiation or the
+120-second datapath bound. The standalone receiver API below handles structural
+validation and request consumption without activating the protocol.
+
+### Standalone Rust permit receiver
+
+`karst-control-client::compliance` accepts the reserved Go-produced snapshots.
+`PendingPermitRequest` holds trusted tenant/enrollment/policy context, a caller's
+fresh 32-byte nonce and the local request-start timestamp. Its `accept` method
+consumes the pending value even on error. It validates every gate/source before
+returning a `PermitSnapshot`; malformed or substituted candidates cannot be
+partially installed. Request and installed types are neither cloneable nor
+serializable. The caller must supply a fresh CSPRNG nonce for each request,
+drop replaced/timed-out requests, and drop requests/snapshots on reconnect,
+restart or a change in trusted policy/enrollment context. The helper does not
+generate randomness or maintain a history of caller-supplied nonces.
+
+Structural checks mirror the Go validator: schema, bindings, validity budgets,
+canonical handles/CIDRs, protocols, port ranges, duplicate resources/sources,
+consistent enrollment/generation bindings and egress ownership. Parsed private
+gates contain concrete passing handles and request-relative deadlines. Transit
+time consumes validity. Arriving exactly at global snapshot expiry is rejected;
+a source already expired within an otherwise valid snapshot cannot satisfy its
+gate. A missing snapshot has no construction path to a passing result.
+
+`PermitSnapshot::ingress_satisfied` and `egress_satisfied` are reference
+compliance-only verdicts. All matching gates apply with AND, exact source expiry
+denies protected traffic, and unmatched traffic remains unconstrained only while
+the global snapshot is valid. Global expiry denies all reference verdicts,
+including for unmatched resources. Identity/SSH checks still apply independently;
+remediation during control loss needs an explicit integration policy, not an
+expired snapshot. A backwards clock sample permanently invalidates that snapshot,
+and moving time forward again cannot restore it.
+
+All timestamps are caller-supplied `Duration` values from one suspend-aware
+elapsed clock with a stable origin. This module reads no wall clock or platform
+clock; `std::time::Instant` does not provide portable suspend accounting. Tests
+inject transit, sleep-sized elapsed jumps, rollback, exact expiry and arithmetic
+overflow, and consume the Go wire vectors. Platform clock integration, live
+requests, capability negotiation, authoritative issuance, cached-flow revocation
+and datapath enforcement remain pending. These tests establish reference behavior,
+not a measured suspend/offline revocation bound on real devices.
 
 ### Proposed authorization and enforcement contract
 

@@ -6,6 +6,11 @@ import { UserManager, InMemoryWebStorage, WebStorageStateStore, type User } from
 export type AuthConfig = { oidcAuthority: string; oidcClientId: string };
 export type AuthState = "authenticated" | "anonymous" | "disabled";
 
+/** Thrown by `authenticatedFetch` when it has already redirected to login --
+ *  callers can tell this apart from an ordinary request failure (a 403, a
+ *  500, a network blip) rather than treating every rejection the same way. */
+export class SessionExpiredError extends Error {}
+
 export function createAuth(basePath = "/") {
 
 
@@ -108,7 +113,7 @@ export function createAuth(basePath = "/") {
     if (!config.oidcAuthority || !config.oidcClientId) return fetch(url, init);
     const expired = () => {
       login(config);
-      return new Error("Your session has expired. Please sign in again.");
+      return new SessionExpiredError("Your session has expired. Please sign in again.");
     };
     if (redirecting) throw expired();
     // A missing token must be renewed before the request, even if the server

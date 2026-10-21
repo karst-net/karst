@@ -1,6 +1,13 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # KARST-CONTROL v1 — Protocol Specification
 
+> **Component model:** [ADR-0056](../docs/adr/0056-four-component-families.md)
+> defines node agent, transport infrastructure, control services and trust
+> tooling. Gateway unifies subnet/exit behavior; Relay unifies Ponor/TURN modes
+> through a managed backend adapter. #404 tracks implementation consolidation.
+> This architecture does not rename this protocol or change its wire fields,
+> signed encodings, cryptography, or current configuration interfaces.
+
 - **Status:** Draft 0.1 — Phase 3 deliverable, modeled but not externally reviewed
 - **Date:** 2026-08-13
 - **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement
@@ -355,6 +362,16 @@ has consented to that route ID. A gateway offer configures forwarding and MUST
 NOT make the gateway install its own advertised prefix into the tunnel. Every
 non-`unchanged` response replaces this list wholesale, including with an empty
 list.
+
+#### Component-model compatibility
+
+Under ADR-0056, `SUBNET` and `EXIT` are behaviors of the node's Gateway
+capability, and the Ponor registry and TURN backend data belong to one Relay
+component. This is a conceptual mapping, not a wire migration. Keep current
+route IDs/kinds, recipient consent, registry fields, credentials and netmap
+version bindings. #404 must introduce additive/versioned projections and
+explicit legacy/new-setting conflict checks before consolidating APIs or
+persistence; see the [migration contract](../docs/COMPONENT-ARCHITECTURE.md#migration-contract-for-404).
 
 ### 5.5 Network-map version
 

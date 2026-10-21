@@ -4,22 +4,19 @@
 # relay dial. karst-control itself is not published to the host at all —
 # only Caddy is, so this file is the actual edge.
 {
-	auto_https off
+	# Keep certificate management enabled; only disable HTTP redirects because
+	# this deployment publishes a single HTTPS port.
+	auto_https disable_redirects
+	# Browsers omit SNI for literal IPs. Select the public identity rather
+	# than falling back to the container's private address.
+	default_sni {$KARST_CONSOLE_HOST}
 }
 
-# A bare port, no hostname: shannon has an IP, not a domain name here. TLS
-# clients never send SNI for a literal IP (SNI is a DNS-name-only extension
-# per RFC 6066), so a real browser's ClientHello carries no server name, and
-# Caddy's cert lookup falls back to matching the *local* (container-internal)
-# address instead. `on_demand` is what makes it issue a cert for that
-# fallback identifier at request time rather than only for hosts named ahead
-# of time — without it every handshake fails closed with a bare "internal
-# error" alert and no request-level log line, which is what plain
-# `tls internal` (no `on_demand`) on a hostless site address did here.
-:33073 {
-	tls internal {
-		on_demand
-	}
+# Issue for the address users actually visit. The local CA and its keys live
+# under /data (./state/caddy on the host), so renewing a leaf keeps the same
+# trust anchor. Import that CA's root.crt once, not the short-lived leaf.
+https://{$KARST_CONSOLE_HOST}:33073 {
+	tls internal
 
 	# Nothing here was compressed before the NOC basemap (public/
 	# noc-world-outline.geojson) grew from ~1.3 KB to ~190 KB; gzip gets
@@ -79,16 +76,25 @@
 
 	# The console reads this once at boot to decide whether OIDC is configured
 	# at all (main.tsx's bootstrap()); an empty vs. real oidcAuthority changes
-	# whether the login gate renders. It carries no Cache-Control of its own,
-	# so with only a Last-Modified header, browsers apply heuristic caching
-	# (RFC 7234 §4.2.2) and can keep serving a stale copy from disk cache for
-	# hours without even revalidating — which is exactly what made a fixed
-	# deployment look broken after this file's mount was repaired underneath
-	# it. Force revalidation so a redeploy is visible on the next load.
+	# whether the login gate renders. Served from /etc/karst, not /srv/console,
+	# deliberately: this deployment's override mounts this deployment's real
+	# config.json over the console build's own placeholder, and a *file*
+	# bind mount nested inside a *directory* bind mount (/srv/console) does
+	# not survive that directory being recreated -- which `vite build` does
+	# on every single console rebuild (its default `emptyOutDir`), silently
+	# reverting this back to the placeholder's empty oidcAuthority/oidcClientId
+	# until Caddy itself is recreated. /etc/karst is its own independent
+	# mount, with nothing else ever mounted inside it, so there is no
+	# directory for it to be nested under in the first place. It also
+	# carries no Cache-Control of its own, so with only a Last-Modified
+	# header, browsers apply heuristic caching (RFC 7234 §4.2.2) and can
+	# keep serving a stale copy from disk cache for hours without even
+	# revalidating -- force revalidation so a redeploy is visible on the
+	# next load.
 	@config path /config.json
 	handle @config {
 		header Cache-Control "no-cache"
-		root * /srv/console
+		root * /etc/karst
 		file_server
 	}
 

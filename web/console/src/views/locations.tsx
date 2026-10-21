@@ -22,13 +22,33 @@ export function Locations() {
   const [connectionId, setConnectionId] = useState("");
   const resources = useResource(() => connectionId ? api.infrastructureConnectionResources(connectionId) : Promise.resolve([] as DiscoveredResource[]), [connectionId]);
   const [resourceCode, setResourceCode] = useState("");
+  // Local zones enabled this session, ahead of resources.reload() catching up --
+  // enabling one should not force the live region/zone list to be re-fetched
+  // just to notice. Keyed by code; outlives a single dialog session like
+  // connectionId/source below, for the same reason.
+  const [enabledOverrides, setEnabledOverrides] = useState<Record<string, true>>({});
+  const [enabling, setEnabling] = useState(false);
 
   if (resource.loading) return <p>Loading authorized locations…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const locations = resource.value ?? [];
   const connectionsAvailable = (infraConnections.value ?? []).length > 0;
+  const selectedConnection = (infraConnections.value ?? []).find((c) => c.id === connectionId);
+  const selectedResource = (resources.value ?? []).find((r) => r.code === resourceCode);
+  // A read_write AWS connection's not-yet-opted-in local zone --
+  // enableInfrastructureConnectionRegion exists for exactly this (ADR-0045
+  // §6's second addendum). Only a Local Zone has an opt-in-zone concept at
+  // all: a region is always enabled, and a Kubernetes namespace's `enabled`
+  // is simply absent (not false), so gating on the resource's own kind
+  // rather than a generic falsy check keeps this from misfiring on either.
+  const needsEnable = Boolean(selectedResource && selectedResource.kind === "local_zone" && !selectedResource.enabled && !enabledOverrides[selectedResource.code]);
 
-  const openDialog = () => { setDraft(blank); setSource("manual"); setConnectionId(""); setResourceCode(""); };
+  // Resets only the manual-entry draft -- source/connectionId/resourceCode
+  // deliberately survive a reopen (cleared only by picking a different
+  // connection, or never, for the life of this view) so that adding several
+  // zones/namespaces from the same connection doesn't mean re-fetching that
+  // connection's live resource list on every single reopen.
+  const openDialog = () => { setDraft(blank); setResourceCode(""); };
 
   const add = async () => {
     if (!draft) return;
@@ -39,9 +59,10 @@ export function Locations() {
     if (await run(() => api.addLocation(entry), `${entry.label || `${lat}, ${lon}`} was added to the authorized locations registry.`)) setDraft(undefined);
   };
   const addFromConnection = async () => {
-    const connection = (infraConnections.value ?? []).find((c) => c.id === connectionId);
-    const item = (resources.value ?? []).find((r) => r.code === resourceCode);
+    const connection = selectedConnection;
+    const item = selectedResource;
     if (!connection || !item) { setMessage("Choose an infrastructure connection and a region or namespace."); return; }
+    if (needsEnable) { setMessage(`${item.name || item.code} is not enabled yet — enable it first.`); return; }
     // A namespace has no coordinates of its own -- fall back to the
     // connection's own operator-declared location, if any (see Settings).
     const lat = item.lat ?? connection.lat;
@@ -53,7 +74,27 @@ export function Locations() {
     }
     const label = item.name ? `${item.name} (${item.code})` : item.code;
     const entry = { lat, lon, label, kind: `${connection.type}-${item.kind}` };
-    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setDraft(undefined);
+    // Stay open and keep the already-fetched resource list -- adding
+    // several zones/namespaces from the same connection used to mean
+    // re-fetching that list live from the provider for every single one.
+    if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setResourceCode("");
+  };
+  const enableZone = async () => {
+    const connection = selectedConnection;
+    const item = selectedResource;
+    if (!connection || !item) return;
+    if (!confirm(`Enable ${item.name || item.code} for use on this AWS account?\n\nThis opts the zone into use (AWS's ModifyAvailabilityZoneGroup) and cannot be undone through the API -- AWS Support must be contacted to opt back out. It does not itself create any resource or incur any charge; it only makes launching one there possible going forward.`)) return;
+    if (!item.parent_region) { setMessage(`${item.name || item.code} has no known parent region to enable it against.`); return; }
+    setEnabling(true);
+    try {
+      await api.enableInfrastructureConnectionRegion(connection.id, item.code, item.parent_region);
+      setEnabledOverrides((current) => ({ ...current, [item.code]: true }));
+      setMessage(`${item.name || item.code} is now enabled.`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setEnabling(false);
+    }
   };
   const remove = (location: Location) => {
     if (!confirm(`Remove ${location.label || `${location.lat}, ${location.lon}`} from the authorized locations registry?`)) return;
@@ -105,9 +146,21 @@ export function Locations() {
               ? <Failure message={resources.error} retry={resources.reload} />
               : <label>Region, zone, or namespace<select aria-label="Region, zone, or namespace" value={resourceCode} onChange={(event) => setResourceCode(event.target.value)}>
                 <option value="">Choose one…</option>
-                {(resources.value ?? []).map((r) => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.lat === undefined ? " — no coordinates yet" : ""}</option>)}
+                {(resources.value ?? []).map((r) => <option key={r.code} value={r.code}>
+                  {r.name ? `${r.name} (${r.code})` : r.code}
+                  {r.lat === undefined ? " — no coordinates yet" : ""}
+                  {r.kind === "local_zone" && !r.enabled && !enabledOverrides[r.code] ? " — not enabled yet" : ""}
+                </option>)}
               </select></label>)}
-          <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!connectionId || !resourceCode}>Add location</button></div>
+          {needsEnable && selectedResource && <p className="lede">
+            {selectedResource.name || selectedResource.code} exists on this account but is not opted into use yet. Enabling it is a one-way AWS change (no opt-out API) that makes the zone launchable — it does not by itself create anything or incur a charge.
+          </p>}
+          <div className="actions">
+            <button type="button" onClick={() => setDraft(undefined)}>Cancel</button>
+            {needsEnable
+              ? <button className="primary" type="button" disabled={!connectionId || !resourceCode || enabling} onClick={() => void enableZone()}>{enabling ? "Enabling…" : "Enable this zone"}</button>
+              : <button className="primary" type="submit" disabled={!connectionId || !resourceCode}>Add location</button>}
+          </div>
         </form>}
     </Dialog>
   </section>;

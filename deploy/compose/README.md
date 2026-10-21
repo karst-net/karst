@@ -126,6 +126,17 @@ PLAN.md §4.3.
 | `KARST_REGION` | `default` | Relay region (§8, §9) |
 | `KARST_TURN_PORT` | `3478` | coturn's listening port, only relevant with `--turn` |
 
+## Component model
+
+[ADR-0056](../../docs/adr/0056-four-component-families.md) defines four families:
+node agent, transport infrastructure, control services and trust tooling.
+The Relay component combines Ponor and TURN modes through a managed adapter to
+coturn or an external provider; that unified lifecycle/configuration is pending
+#404. Today's Compose deployment still uses `karst-relay` and optional coturn
+as separate processes with separate registries. The commands below are current,
+not a new embedded TURN feature. Gateway subnet/exit forwarding is a capability
+of an enrolled node, not a capability enabled by starting this Relay stack.
+
 ## TURN fallback (optional)
 
 The relay above is the always-on path and works for the great majority of

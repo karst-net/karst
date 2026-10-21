@@ -7,46 +7,45 @@
 Karst is a self-hosted, post-quantum mesh VPN. This analysis describes the
 intended operating model and calls out features that are presently planned or
 partially implemented. It is not a claim that every use case is production
-ready; the project is pre-alpha ([README](../README.md)).
+ready; the project is beta ([README](../README.md)).
 
-An **exit node** is not a relay. A relay carries encrypted overlay frames when
-two peers cannot establish a direct path. An exit node is an enrolled client
-that is deliberately permitted to forward a client's default-route traffic to
-another network. The same host could run both roles, but their privileges,
-configuration, and risks should be managed separately.
+A **Gateway** is an enrolled node agent with forwarding enabled for approved
+prefixes. Specific-prefix routing provides subnet access; default-route
+routing provides exit behavior with local recipient consent. A **Relay**
+forwards encrypted overlay frames using Ponor or TURN; it does not terminate
+the peer tunnel. A host can run both, with separate privileges and keys.
 
 ## System boundary and components
 
-| Component | Runs where | Primary responsibility | Principal interactions |
-| --- | --- | --- | --- |
-| Linux client (`karstd` and `karst`) | Linux endpoint or gateway | Creates the overlay interface, enforces local policy, establishes peer paths, and integrates DNS. Linux is the currently documented deployment target. | Enrolls with control; receives the netmap, policy, DNS, routes, and relay registry; talks directly to peers or through a relay. |
-| macOS client | macOS endpoint | Intended client role equivalent to the Linux client, using macOS networking, DNS, secure storage, and installer conventions. | Enrollment and use are the same logical flow; platform integration and release packaging are a delivery requirement. |
-| Windows client | Windows endpoint | Intended client role equivalent to the Linux client, using Windows networking, DNS, secure storage, and installer conventions. | Enrollment and use are the same logical flow; installer/service operation must be suitable for a managed Windows endpoint. |
-| `karst-control` | Operator-controlled coordination host | Control plane: enrollment, authenticated netmap distribution, policy, user/SSO integration, relay registry, posture, and audit. | Authenticates users and nodes; distributes configuration; records administrative activity. |
-| Admin console | Browser | Administrative user interface for users, groups, policy, nodes, DNS, routes, relays, Bedrock, posture, and audit. | Calls the authenticated administrative API. |
-| User portal | Browser | Self-service interface for a user’s devices, device enrollment, reachability explanation, and sessions. | Calls the authenticated portal API as the current user. |
-| `karst-relay` (Ponor) | Publicly reachable relay host | Authenticated fallback forwarding, presence, rate limiting, and AVEN reflection. It carries ciphertext, not plaintext overlay traffic. | Receives its admission roster from control and accepts only registered/published clients. |
-| AVEN discovery | Clients and relay reflector | NAT discovery, candidate exchange, and direct-path selection. | Starts relayed when necessary, then upgrades to a direct path when available. |
-| KarstDNS | Node-local client service | Resolves mesh names and applies group-scoped global or split-DNS upstream configuration. | Receives DNS configuration in the netmap; safely applies and reverts host DNS settings. |
-| Bedrock and `karst-bedrock` | Offline signer plus control plane | Network-membership lock: an offline quorum signs membership/authority state which clients verify. | Admin exports requests; offline authority operator inspects and signs; control imports the signed bundle; clients enforce their local floor. |
-| IdP / SCIM provider | Organization identity system | Authenticates people and, where configured, synchronizes users and groups. | Supplies user identity to console and portal; control maps that identity to an account role and groups. |
-| Exit node / subnet router | Enrolled, specially configured client | Forwards traffic between the overlay and a LAN, VPC, or Internet default route. | Is selected by route configuration and constrained by routing and access policy. |
-| Audit log and audit sink | Control plane and optional external SIEM | Provides tamper-evident administrative history and export. | Records relevant administrative events; auditors inspect, verify, export, or receive events. |
+[ADR-0056](adr/0056-four-component-families.md) defines four families:
+
+| Family | Runs where | Primary responsibility | Principal interactions |
+|---|---|---|---|
+| Node agent | Linux, macOS or Windows endpoint; supported forwarding host for Gateway | Identity, sessions, local policy, AVEN path selection, KarstDNS, routing and optional Gateway forwarding | Receives control netmaps, independently verifies Bedrock, uses direct or relayed peer paths |
+| Transport infrastructure | Publicly reachable Relay host and optional TURN backend | One Relay with Ponor presence/bootstrap, reflector and forwarding, plus TURN allocation-based transit | Control publishes endpoints/admission/credentials; clients exchange ciphertext |
+| Control services | Coordination hosts and browser console/portal | Enrollment, users/groups, policy, route/DNS and transport distribution, administration/audit | Integrates IdP/SCIM and SIEM; distributes configuration and signed Bedrock state |
+| Trust tooling | Offline authority devices, optional online anchor host, verifiers in consumers | Bedrock membership signatures, revocation, chain verification and audit anchors | Authorities sign reviewed requests; control transports state; enforcing clients verify |
+
+The family model is accepted; combined Relay/Gateway configuration and UI are
+pending [#404](https://github.com/karst-net/karst/issues/404). Current Ponor and
+TURN registries remain separate. TURN will use a managed coturn/external-provider
+adapter, not an embedded server. Endpoint support does not imply forwarding
+host support; see [architecture and platform limits](COMPONENT-ARCHITECTURE.md).
 
 ### Connectivity and control-plane relationship
 
 ```mermaid
 flowchart TD
-    Human[Human identity] --> IdP --> Portal[Portal / console] --> Control[karst-control] --> Audit[Audit log / sink]
-    Control --> Roster[Signed relay roster]
-    Portal -->|policy, groups, routes, DNS, relays| Clients[Linux / macOS / Windows clients]
-    Control -->|authenticated netmap| Clients
-    Clients -->|fallback| Relay[Ponor relay]
-    Clients <-->|direct encrypted peer path| Clients
-    Clients --> Routing[KarstDNS / exit or subnet route]
-    Bedrock[Offline Bedrock authority] -->|signs reviewed requests| Control
-    Control --> Clients
+    Trust["Trust tooling: Bedrock authorities"] -->|signed chain| Control["Control services: server, console, portal"]
+    Control -->|netmap: policy, peers, routes, DNS| Clients["Node agents with local verification"]
+    Control -->|admission and backend configuration| Relay["Transport infrastructure: Relay"]
+    Clients <-->|Ponor or TURN ciphertext| Relay
+    Clients <-->|direct encrypted peer path| Peers["Other node agents"]
+    Clients -->|Gateway forwards inner packets| Network["Approved LAN, VPC or Internet"]
 ```
+
+KarstDNS and Gateway are node capabilities, not extra families. Trust tooling
+verification executes locally; the control server cannot substitute for it.
 
 ## Actors and identities
 
@@ -139,9 +138,11 @@ fallback relay.
    the configured TLS server name.
 3. The administrator records the relay’s numeric `IP:port`, TLS server name,
    public identity key, and region in the relay registry.
-4. Control publishes the relay to clients in their next netmap and refreshes
-   the relay admission roster. The operator monitors roster freshness and
-   relay admission health.
+4. Control publishes the Relay to clients and refreshes Ponor admission rosters.
+   If TURN mode is enabled, configure the coturn/external backend, bounded
+   credentials and allocation/port limits; monitor each mode's readiness,
+   credential renewal, capacity and admission separately. The unified service
+   adapter is pending #404; current deployment steps remain in the Compose guide.
 
 **Success:** a newly enrolled node learns the relay and can authenticate it;
 the relay admits it using the current roster.  
@@ -257,7 +258,9 @@ query; a failed split route is SERVFAIL, not fallback to a global resolver.
 Forwarded DNS is not inherently encrypted, so resolver placement and transport
 are a separate privacy decision.
 
-### UC-07 — Configure a subnet router or exit node
+<a id="uc-07--configure-a-subnet-router-or-exit-node"></a>
+
+### UC-07 — Configure a Gateway for subnet access or exit egress
 
 **Primary actor:** administrator.  
 **Supporting actors:** gateway client operator, client users.
@@ -273,24 +276,28 @@ one or more enrolled gateway clients.
 2. The administrator places gateway nodes in a routing group, defines the
    target CIDR and route metric, and distributes that route only to authorized
    recipient groups.
-3. For an exit-node use case, the configured default-route prefixes
-   (`0.0.0.0/0` and/or `::/0`) are distributed only after an explicit user or
-   client-selection experience exists; it must not silently become the default
-   path for every client.
+3. Specific-prefix and default-route offers use the same Gateway capability;
+   one node may serve both. For default routes (`0.0.0.0/0` and/or `::/0`),
+   control may distribute an offer, but only the recipient's durable local
+   selection/consent activates it. Preserve more-specific routes and underlay
+   escape paths; review mesh/split and Internet DNS configuration explicitly.
 4. The gateway forwards traffic; masquerading is enabled unless the target
    network has return routes to the overlay. Access policy still governs which
    mesh clients may reach the gateway and destination.
 
 **Success:** only selected clients can reach the selected destination through
 the gateway, with a usable return path.  
-**Control:** an exit node sees destination metadata and carries user traffic;
-it deserves stronger operations and monitoring than an ordinary endpoint. A
-relay must never be mistaken for an exit node.
+**Control:** a Gateway terminates the overlay session for forwarded traffic
+and sees destination metadata and any unencrypted payload. Relay carries
+ciphertext. Control distributes approved route candidates; local agents
+select/enforce them. Current HA, NAT/return-route requirements and platform
+limits are in [Gateway operations](subnet-routers-and-exit-nodes.md); a family
+rename does not imply new forwarding support or faster failover.
 
 ### UC-08 — Establish and maintain peer connectivity
 
 **Primary actors:** two enrolled clients.  
-**Supporting actors:** control, AVEN, relay.
+**Supporting actors:** control services, client AVEN discovery, combined Relay.
 
 **Goal:** carry policy-authorized traffic over the best viable encrypted path.
 
@@ -300,9 +307,12 @@ relay must never be mistaken for an exit node.
    route/policy information, pairwise material, and relay options in its
    encrypted netmap.
 2. The clients attempt AVEN discovery and a direct PHREATIC path.
-3. If direct connectivity is not available, they use an authenticated Ponor
-   relay path. They continue probing and upgrade to direct connectivity when a
-   safe candidate succeeds.
+3. If direct connectivity is not available, clients use the Relay's supported
+   Ponor or TURN mode, with protocol-specific admission and credentials. Ponor
+   retains presence/bootstrap when TURN supplies fallback transit. They keep
+   probing and upgrade to direct connectivity when a safe candidate succeeds.
+   Unified mode discovery/health is pending #404; current registry and worker
+   paths remain separate.
 4. Clients report bounded, authenticated last-known path observations to
    control; control exposes them as telemetry, not as proof of current state.
 
@@ -337,14 +347,16 @@ held offline authority when the network lock is enforcing.
 **Success:** enforcing clients reject peers not covered by the required signed
 chain, even if an online control server is compromised.  
 **Control:** root/authority key custody is separate from console admin access;
-the console does not hold or use Bedrock private keys. Bedrock does not replace
-ordinary user authorization or packet policy.
+the console does not hold or use Bedrock private keys. Trust tooling owns the
+signing rules; clients and control verify the signed state. A scoped online
+anchor key may fix audit history but cannot admit or revoke members. Bedrock
+does not replace ordinary user authorization or packet policy.
 
 ### UC-10 — Monitor, investigate, and prove administrative activity
 
 **Primary actors:** auditor, security administrator.  
-**Supporting systems:** audit log, optional SIEM/audit sink, posture and path
-telemetry.
+**Supporting systems:** control-service audit log, trust-tooling anchors,
+optional SIEM/audit sink, and node/Relay posture and path telemetry.
 
 **Goal:** answer who changed what, assess mesh health and cryptographic
 posture, and detect or investigate abnormal activity without turning observers
@@ -356,7 +368,9 @@ into administrators.
    action, verifies its chain, and exports it or forwards events to an approved
    sink.
 2. The auditor examines policy history, Bedrock-log verification, node posture,
-   session posture, relay admission freshness, and last-known path observations.
+   session posture, Gateway route readiness, Relay mode/admission freshness,
+   TURN expiry/allocation health, and last-known path observations. Unified
+   mode health presentation is a #404 target, not an existing endpoint.
 3. A security administrator uses that evidence to block a user, deprovision a
    node, remove a relay, or roll back a policy under the appropriate change
    process.

@@ -12,6 +12,13 @@ and is meant to be stable: new scenarios should be added here first, then
 traced into UC entries, ADRs, and outward-facing copy, rather than invented
 independently in marketing text.
 
+Architecture terminology follows [ADR-0056](adr/0056-four-component-families.md):
+node agent, transport infrastructure, control services and trust tooling.
+“Subnet router” and “exit node” below describe the specific-prefix and
+default-route behaviors of one **Gateway** node capability. **Relay** combines
+Ponor and TURN modes; TURN uses a coturn/external-provider adapter. Existing
+CLI examples remain current; unified service configuration/UI is pending #404.
+
 Each entry states the scenario in plain language, the Karst mechanism that
 actually provides it (with a cross-reference), a minimal configuration sketch
 where one clarifies, and — matching this project's [stated
@@ -99,8 +106,8 @@ wants their traffic to appear to originate near their home ZIP code.
 **Goal:** route web traffic through a device on their home network so the
 destination sees a residential IP address from their normal region.
 
-**Mechanism:** an **exit node** at home — a Karst client running on a home
-router or always-on machine, advertising a consented default route
+**Mechanism:** a **Gateway providing exit egress** at home — a Karst client
+running on a home router or always-on machine, advertising a consented default route
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node);
 [docs/subnet-routers-and-exit-nodes.md](subnet-routers-and-exit-nodes.md)).
 The traveling client explicitly consents to the `0.0.0.0/0`/`::/0` route,
@@ -158,8 +165,8 @@ LAN.
 vendor web UI) from outside the home network, without exposing the rest of
 the home LAN.
 
-**Mechanism:** a **subnet router** advertising the printer's `/32` (or a
-narrow CIDR containing just the printer) rather than the whole home LAN
+**Mechanism:** a **Gateway providing subnet access** advertising the printer's
+`/32` (or a narrow CIDR containing just the printer) rather than the whole home LAN
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node)),
 scoped further by an access-policy rule limiting the flow to the printer's
 port (typically IPP/631) and to the traveler's own node
@@ -554,7 +561,7 @@ OpenVPN server or AWS VPN Gateway is conceptually replaced by
 `karst-control` plus a `karst-relay`
 ([UC-02](USE-CASE-ANALYSIS.md#uc-02--bootstrap-the-control-plane-and-relay)),
 and reachability into resources the old VPN gave access to (a VPC, an
-on-prem subnet) is replaced by an **exit node or subnet router**
+on-prem subnet) is replaced by a **Gateway with exit or subnet routes**
 ([UC-07](USE-CASE-ANALYSIS.md#uc-07--configure-a-subnet-router-or-exit-node))
 placed inside that network, gated by the same default-deny access-policy
 model as every other scenario in this document
@@ -633,4 +640,4 @@ one is real:**
 | SC-06 Web filtering + time-of-day | KarstDNS group-scoped global upstream, pointed at a filtering resolver | UC-06 | Recipe covers the scenario — see [ADR-0025](adr/0025-dns-scoped-filtering-resolves-sc-06.md); general ACL time-of-day primitive still not built |
 | SC-07 Coworker dev-server review | Peer connectivity, narrow ACL | UC-08, UC-05 | Supported |
 | SC-08 Geo sizing of relays | Relay `region` field, path telemetry, metrics | UC-02, UC-08, UC-10 | Supported, with caveats |
-| SC-09 Replace OpenVPN/AWS VPN | Control plane + relay + exit node, migration procedure | UC-02, UC-05, UC-07 | Supported (needs a dedicated migration guide); protocol-level facade not possible |
+| SC-09 Replace OpenVPN/AWS VPN | Control services + Relay + node-agent Gateway, migration procedure | UC-02, UC-05, UC-07 | Supported (needs a dedicated migration guide); protocol-level facade not possible |

@@ -60,7 +60,7 @@ func discoverGCP(ctx context.Context, rawSecret string) ([]DiscoveredRegion, err
 		if region.GetName() == "" {
 			continue
 		}
-		out = append(out, enrich(TypeGCP, region.GetName(), region.GetName(), cloudcatalog.KindRegion))
+		out = append(out, enrich(TypeGCP, region.GetName(), region.GetName(), cloudcatalog.KindRegion, true))
 	}
 	return out, nil
 }

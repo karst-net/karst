@@ -990,6 +990,27 @@ func (e ListPostureSessionsParamsPosture) Valid() bool {
 	}
 }
 
+// Defines values for SoftwareVersions200JSONResponseBodyDeploymentStatus.
+const (
+	SoftwareVersions200JSONResponseBodyDeploymentStatusAvailable     SoftwareVersions200JSONResponseBodyDeploymentStatus = "available"
+	SoftwareVersions200JSONResponseBodyDeploymentStatusNotConfigured SoftwareVersions200JSONResponseBodyDeploymentStatus = "not_configured"
+	SoftwareVersions200JSONResponseBodyDeploymentStatusUnavailable   SoftwareVersions200JSONResponseBodyDeploymentStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the SoftwareVersions200JSONResponseBodyDeploymentStatus enum.
+func (e SoftwareVersions200JSONResponseBodyDeploymentStatus) Valid() bool {
+	switch e {
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusAvailable:
+		return true
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusNotConfigured:
+		return true
+	case SoftwareVersions200JSONResponseBodyDeploymentStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessExplanation defines model for AccessExplanation.
 type AccessExplanation struct {
 	ChangedAt   time.Time `json:"changed_at"`
@@ -1287,11 +1308,17 @@ type DiagnosticSeverity string
 
 // DiscoveredRegion defines model for DiscoveredRegion.
 type DiscoveredRegion struct {
-	Code string               `json:"code"`
-	Kind DiscoveredRegionKind `json:"kind"`
-	Lat  *float32             `json:"lat,omitempty"`
-	Lon  *float32             `json:"lon,omitempty"`
-	Name *string              `json:"name,omitempty"`
+	Code string `json:"code"`
+
+	// Enabled True for a region and an already opted-in local zone. False only for a read_write credential's not-yet-opted-in local zone, offered for enableCloudAccountRegion.
+	Enabled bool                 `json:"enabled"`
+	Kind    DiscoveredRegionKind `json:"kind"`
+	Lat     *float32             `json:"lat,omitempty"`
+	Lon     *float32             `json:"lon,omitempty"`
+	Name    *string              `json:"name,omitempty"`
+
+	// ParentRegion Set for a kind other than region -- the region to call the enable endpoint against.
+	ParentRegion *string `json:"parent_region,omitempty"`
 }
 
 // DiscoveredRegionKind defines model for DiscoveredRegion.Kind.
@@ -1299,11 +1326,17 @@ type DiscoveredRegionKind string
 
 // DiscoveredResource defines model for DiscoveredResource.
 type DiscoveredResource struct {
-	Code string                 `json:"code"`
-	Kind DiscoveredResourceKind `json:"kind"`
-	Lat  *float32               `json:"lat,omitempty"`
-	Lon  *float32               `json:"lon,omitempty"`
-	Name *string                `json:"name,omitempty"`
+	Code string `json:"code"`
+
+	// Enabled True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.
+	Enabled *bool                  `json:"enabled,omitempty"`
+	Kind    DiscoveredResourceKind `json:"kind"`
+	Lat     *float32               `json:"lat,omitempty"`
+	Lon     *float32               `json:"lon,omitempty"`
+	Name    *string                `json:"name,omitempty"`
+
+	// ParentRegion Set for a kind other than region/namespace -- the region to call the enable endpoint against.
+	ParentRegion *string `json:"parent_region,omitempty"`
 }
 
 // DiscoveredResourceKind defines model for DiscoveredResource.Kind.
@@ -2083,6 +2116,12 @@ type GetRelaySpendingCapParams struct {
 	Period string `form:"period" json:"period"`
 }
 
+// EnableCloudAccountRegionJSONBody defines parameters for EnableCloudAccountRegion.
+type EnableCloudAccountRegionJSONBody struct {
+	// ParentRegion The DiscoveredRegion's own parent_region -- which regional EC2 endpoint to call against.
+	ParentRegion string `json:"parent_region"`
+}
+
 // CommitRootRenameJSONBody defines parameters for CommitRootRename.
 type CommitRootRenameJSONBody struct {
 	ConfirmNoAliases CommitRootRenameJSONBodyConfirmNoAliases `json:"confirm_no_aliases"`
@@ -2164,6 +2203,9 @@ type GetRelayUsageParams struct {
 	End   time.Time `form:"end" json:"end"`
 }
 
+// SoftwareVersions200JSONResponseBodyDeploymentStatus defines parameters for SoftwareVersions.
+type SoftwareVersions200JSONResponseBodyDeploymentStatus string
+
 // CreateAuditSinkJSONRequestBody defines body for CreateAuditSink for application/json ContentType.
 type CreateAuditSinkJSONRequestBody = AuditSinkWrite
 
@@ -2190,6 +2232,9 @@ type SurrenderRelayCreditsJSONRequestBody = RelayCreditSurrender
 
 // CreateCloudAccountJSONRequestBody defines body for CreateCloudAccount for application/json ContentType.
 type CreateCloudAccountJSONRequestBody = CloudAccountCreate
+
+// EnableCloudAccountRegionJSONRequestBody defines body for EnableCloudAccountRegion for application/json ContentType.
+type EnableCloudAccountRegionJSONRequestBody EnableCloudAccountRegionJSONBody
 
 // SetControlPlaneLocationJSONRequestBody defines body for SetControlPlaneLocation for application/json ContentType.
 type SetControlPlaneLocationJSONRequestBody = RelayLocation
