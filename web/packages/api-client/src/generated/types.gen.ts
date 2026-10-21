@@ -457,6 +457,37 @@ export type PolicyTestResult = {
     }>;
 };
 
+export type RelayService = {
+    id: string;
+    /**
+     * Existing account-local Ponor registry ID.
+     */
+    ponor_id: string;
+    /**
+     * Optional existing account-local TURN registry ID.
+     */
+    turn_id?: string;
+    /**
+     * Required with turn_id; omitted without it. Deployment ownership only.
+     */
+    backend_kind?: 'external' | 'coturn-companion';
+    /**
+     * Required with turn_id; identifies who operates the backend.
+     */
+    backend_operator?: string;
+};
+
+export type RelayServiceView = RelayService & {
+    /**
+     * Referenced Ponor registry entry exists in this account; not a health result.
+     */
+    ponor_present: boolean;
+    /**
+     * Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.
+     */
+    turn_present: boolean;
+};
+
 export type RelayCreate = {
     address: string;
     identity_key: string;
@@ -2074,6 +2105,87 @@ export type TestPolicyResponses = {
 };
 
 export type TestPolicyResponse = TestPolicyResponses[keyof TestPolicyResponses];
+
+export type ListRelayServicesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/relay-services';
+};
+
+export type ListRelayServicesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListRelayServicesError = ListRelayServicesErrors[keyof ListRelayServicesErrors];
+
+export type ListRelayServicesResponses = {
+    /**
+     * Relay services
+     */
+    200: Array<RelayServiceView>;
+};
+
+export type ListRelayServicesResponse = ListRelayServicesResponses[keyof ListRelayServicesResponses];
+
+export type CreateRelayServiceData = {
+    body: RelayService;
+    path?: never;
+    query?: never;
+    url: '/relay-services';
+};
+
+export type CreateRelayServiceErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateRelayServiceError = CreateRelayServiceErrors[keyof CreateRelayServiceErrors];
+
+export type CreateRelayServiceResponses = {
+    /**
+     * Association created
+     */
+    201: RelayService;
+};
+
+export type CreateRelayServiceResponse = CreateRelayServiceResponses[keyof CreateRelayServiceResponses];
+
+export type DeleteRelayServiceData = {
+    body?: never;
+    path: {
+        serviceId: string;
+    };
+    query?: never;
+    url: '/relay-services/{serviceId}';
+};
+
+export type DeleteRelayServiceErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteRelayServiceError = DeleteRelayServiceErrors[keyof DeleteRelayServiceErrors];
+
+export type DeleteRelayServiceResponses = {
+    /**
+     * Association removed
+     */
+    204: void;
+};
+
+export type DeleteRelayServiceResponse = DeleteRelayServiceResponses[keyof DeleteRelayServiceResponses];
 
 export type ListRelaysData = {
     body?: never;
