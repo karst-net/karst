@@ -3,8 +3,25 @@
 
 ADR-0056 combines Ponor and TURN under one Relay service model. The first
 control implementation adds explicit, account-scoped service associations;
-runtime backend management, consolidated health probes, UI, and service-driven
+runtime backend management, consolidated health probes, and service-driven
 netmap publication remain tracked in #404.
+
+## Console
+
+Open **Relays → Services** to inspect or create associations. Choose an existing
+Ponor endpoint explicitly, then optionally select a TURN backend, its deployment
+type, and its operator. No backend is selected based on region or address.
+
+The service table shows Ponor admission observations separately from TURN
+registration. TURN runtime health is reported as unavailable until a backend
+health adapter supplies evidence. A missing registration remains visible even
+when the other mode is present.
+
+Use **Ponor endpoints** and **TURN backends** within Relays for existing backend
+administration. The legacy `#/turns` link remains supported. If an older control
+server lacks the service API, the Services view reports that error while the
+backend views remain accessible. Upgrade control before using associations.
+Removing an association does not remove either backend.
 
 ## Administrative API
 

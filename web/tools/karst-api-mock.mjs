@@ -85,6 +85,7 @@ let allowedRegions = [
 // ADR-0008 §4's TURN registry. Seeded with one declared-location entry so
 // the Turns view and the "turn" NOC-map marker kind both have something to
 // show without the "empty" fixture path, matching every other resource here.
+let relayServices = [];
 let turns = [
   { id: "turn-fixture-1", uri: "turn:turn.example.test:3478", region: "default", location: { lat: 48.8566, lon: 2.3522, label: "Paris" } },
 ];
@@ -559,6 +560,17 @@ const server = http.createServer((request, response) => {
   if (method === "POST" && karst === "/policy/preview") return json(response, 200, { added: [{ source: "group:sre", destination: "tag:prod", protocol: "tcp", ports: "22" }], removed: [{ source: "group:contractors", destination: "tag:prod", protocol: "tcp", ports: "22" }], ssh_added: [{ principal: "group:sre", target: "tag:prod" }], ssh_removed: [{ principal: "group:contractors", target: "tag:prod" }] });
   if ((method === "PUT" && karst === "/policy") || (method === "POST" && /^\/policy\/rollback\/\d+$/.test(karst))) return json(response, 200, fixture.policy);
   if (method === "POST" && karst === "/policy/test") return json(response, 200, { passed: false, results: [{ name: "SRE SSH access", passed: true, message: "allowed" }, { name: "contractor production SSH", passed: false, message: "expected deny, got allow" }] });
+
+  if (method === "GET" && karst === "/relay-services") return json(response, 200, relayServices.map((service) => ({ ...service, ponor_present: fixture.relays.some((entry) => entry.id === service.ponor_id), turn_present: turns.some((entry) => entry.id === service.turn_id) })));
+  if (method === "POST" && karst === "/relay-services") return readBody(request).then((service) => {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(service.id ?? "") || !fixture.relays.some((entry) => entry.id === service.ponor_id)) return error(response, 422, "invalid_argument", "valid service name and registered Ponor endpoint required");
+    if (service.turn_id && (!turns.some((entry) => entry.id === service.turn_id) || !["external", "coturn-companion"].includes(service.backend_kind) || !service.backend_operator?.trim())) return error(response, 422, "invalid_argument", "registered TURN backend, deployment type and operator required");
+    if (relayServices.some((entry) => entry.id === service.id)) return error(response, 409, "already_exists", "service already exists");
+    relayServices.push(service);
+    return json(response, 201, service);
+  });
+  const serviceMatch = karst.match(/^\/relay-services\/([^/]+)$/);
+  if (serviceMatch && method === "DELETE") return remove(relayServices, serviceMatch[1], response);
 
   if (method === "GET" && karst === "/relays") return json(response, 200, fixture.relays);
   if (method === "POST" && karst === "/relays") {
