@@ -21,7 +21,7 @@ import { Posture } from "./views/posture";
 import { Dns } from "./views/dns";
 import { Routes } from "./views/routes";
 import { Audit } from "./views/audit";
-import { Relays } from "./views/relays";
+import { RelayServices } from "./views/relay-services";
 import { Turns } from "./views/turns";
 import { Locations } from "./views/locations";
 import { Settings } from "./views/settings";
@@ -34,10 +34,10 @@ type Route = "enroll" | "domains" | "machines" | "access" | "keys" | "users" | "
 const nav: Array<[Route, string]> = [
   ["domains", "Domains"], ["machines", "Machines"], ["enroll", "Add device"], ["access", "Access controls"], ["keys", "Auth keys"],
   ["users", "Users"], ["groups", "Groups"], ["bedrock", "Network lock"], ["posture", "Crypto posture"],
-  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["turns", "TURN servers"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
+  ["dns", "DNS"], ["routes", "Network routes"], ["audit", "Audit log"], ["relays", "Relays"], ["locations", "Authorized locations"], ["noc", "NOC view"], ["scaler", "Scaler Advisor"], ["billing", "Billing"], ["settings", "Settings"],
 ];
 
-const routeFromHash = (): Route => (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
+const routeFromHash = (): Route => location.hash === "#/turns" ? "turns" : (nav.find(([route]) => `#/${route}` === location.hash)?.[0] ?? "domains");
 
 /** True once GET /firstrun reports completed=true; undefined while that
  *  fetch is in flight. A deployment that fails to reach the endpoint (e.g.
@@ -102,7 +102,7 @@ function App({ auth, config }: { auth: AuthState; config: AuthConfig }) {
       {route === "dns" && <Dns />}
       {route === "routes" && <Routes />}
       {route === "audit" && <Audit />}
-      {route === "relays" && <Relays />}
+      {route === "relays" && <RelayServices />}
       {route === "turns" && <Turns />}
       {route === "locations" && <Locations />}
       {route === "noc" && <Noc />}

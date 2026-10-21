@@ -115,7 +115,8 @@ The additive [Relay service association API](relay-services.md) stores explicit
 account-local Ponor/TURN links and backend operator declarations. Its per-mode
 presence fields describe registry availability, not runtime health. Legacy
 registries, credential minting and wire projections remain in use while the
-managed adapter, service lifecycle and UI integration are implemented.
+managed adapter and service lifecycle are implemented. The Relay console groups
+service associations and existing Ponor/TURN backend controls in one view.
 
 ### Current transport limits
 
