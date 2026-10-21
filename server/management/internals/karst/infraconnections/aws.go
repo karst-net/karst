@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-package cloudaccounts
+package infraconnections
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 )
 
-// awsSecret is the admin-entered credential shape for Provider "aws".
+// awsSecret is the admin-entered credential shape for Type "aws".
 // SessionToken is optional, for a temporary/STS-issued credential.
 type awsSecret struct {
 	AccessKeyID     string `json:"access_key_id"`
@@ -70,7 +70,7 @@ func discoverAWS(ctx context.Context, rawSecret string, mode Mode) ([]Discovered
 		if code == "" {
 			continue
 		}
-		out = append(out, enrich(ProviderAWS, code, code, cloudcatalog.KindRegion, true))
+		out = append(out, enrich(TypeAWS, code, code, cloudcatalog.KindRegion, true))
 
 		// Local zones are a per-region resource -- each enabled region needs
 		// its own AZ client to list its local zones.
@@ -145,7 +145,7 @@ func localZonesFromAWS(zones []ec2types.AvailabilityZone) []DiscoveredRegion {
 	}
 	out := make([]DiscoveredRegion, 0, len(order))
 	for _, group := range order {
-		out = append(out, enrich(ProviderAWS, group, group, cloudcatalog.KindLocalZone, enabledByGroup[group]))
+		out = append(out, enrich(TypeAWS, group, group, cloudcatalog.KindLocalZone, enabledByGroup[group]))
 	}
 	return out
 }

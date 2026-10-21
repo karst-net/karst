@@ -4,37 +4,40 @@
 import { SoftwareVersions } from "./software-versions";
 import { useState } from "react";
 import { Dialog, EmptyState, Observed } from "@karst-net/ui";
-import type { CloudAccount } from "@karst-net/api-client";
+import type { InfrastructureConnection } from "@karst-net/api-client";
 import { api, type Token } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 
 const expiries = [["30 days", 30], ["90 days", 90], ["365 days", 365]] as const;
 
-type CloudProvider = CloudAccount["provider"];
-type CloudMode = CloudAccount["mode"];
+type ConnectionType = InfrastructureConnection["type"];
+type ConnectionMode = InfrastructureConnection["mode"];
 
-type CloudDraft = {
-  provider: CloudProvider;
-  mode: CloudMode;
+type ConnectionDraft = {
+  type: ConnectionType;
+  mode: ConnectionMode;
   label: string;
   awsAccessKeyId: string; awsSecretAccessKey: string; awsSessionToken: string;
   azureTenantId: string; azureClientId: string; azureClientSecret: string; azureSubscriptionId: string;
   gcpProjectId: string; gcpServiceAccountKey: string;
+  kubeconfig: string; lat: string; lon: string; locationLabel: string;
 };
-const blankCloudDraft: CloudDraft = {
-  provider: "aws", mode: "read_only", label: "",
+const blankConnectionDraft: ConnectionDraft = {
+  type: "aws", mode: "read_only", label: "",
   awsAccessKeyId: "", awsSecretAccessKey: "", awsSessionToken: "",
   azureTenantId: "", azureClientId: "", azureClientSecret: "", azureSubscriptionId: "",
   gcpProjectId: "", gcpServiceAccountKey: "",
+  kubeconfig: "", lat: "", lon: "", locationLabel: "",
 };
 
-/** Builds the provider-shaped secret object cloudaccounts.CreateRequest
- *  expects -- see server/management/internals/karst/cloudaccounts/{aws,azure,gcp}.go
- *  for the exact field names each provider's validator requires. Throws a
- *  plain Error with user-facing text on a malformed GCP key, since that is
- *  the one field a paste error is likely in. */
-function cloudSecretFor(draft: CloudDraft): Record<string, unknown> {
-  switch (draft.provider) {
+/** Builds the type-shaped secret object infraconnections.CreateRequest
+ *  expects -- see server/management/internals/karst/infraconnections/
+ *  {aws,azure,gcp,kubernetes}.go for the exact field names each type's
+ *  validator requires. Throws a plain Error with user-facing text on a
+ *  malformed GCP key, since that is the one field a paste error is likely
+ *  in. */
+function connectionSecretFor(draft: ConnectionDraft): Record<string, unknown> {
+  switch (draft.type) {
     case "aws":
       return { access_key_id: draft.awsAccessKeyId.trim(), secret_access_key: draft.awsSecretAccessKey.trim(), session_token: draft.awsSessionToken.trim() || undefined };
     case "azure":
@@ -42,8 +45,10 @@ function cloudSecretFor(draft: CloudDraft): Record<string, unknown> {
     case "gcp":
       try { return { project_id: draft.gcpProjectId.trim(), service_account_key: JSON.parse(draft.gcpServiceAccountKey) }; }
       catch { throw new Error("The service account key must be the exact JSON contents of the downloaded key file."); }
+    case "kubernetes":
+      return { kubeconfig: draft.kubeconfig };
     default:
-      throw new Error(`Unknown provider ${draft.provider}`);
+      throw new Error(`Unknown connection type ${draft.type}`);
   }
 }
 
@@ -65,9 +70,9 @@ export function Settings() {
   const [tutorialOverride, setTutorialOverride] = useState<boolean>();
   const tutorialEnabled = tutorialOverride ?? tutorialMode.value?.enabled ?? true;
   const [tutorialSaving, setTutorialSaving] = useState(false);
-  const cloudAccounts = useResource(api.cloudAccounts);
-  const { message: cloudMessage, setMessage: setCloudMessage, run: runCloud } = useMutation(cloudAccounts.reload);
-  const [cloudDraft, setCloudDraft] = useState<CloudDraft>();
+  const infraConnections = useResource(api.infrastructureConnections);
+  const { message: connectionMessage, setMessage: setConnectionMessage, run: runConnection } = useMutation(infraConnections.reload);
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>();
 
   if (me.loading) return <p>Loading settings…</p>;
   if (me.error) return <Failure message={me.error} retry={me.reload} />;
@@ -105,17 +110,26 @@ export function Settings() {
     catch { setTutorialOverride(!enabled); }
     finally { setTutorialSaving(false); }
   };
-  const addCloudAccount = async () => {
-    if (!cloudDraft) return;
+  const addConnection = async () => {
+    if (!connectionDraft) return;
     let secret: Record<string, unknown>;
-    try { secret = cloudSecretFor(cloudDraft); }
-    catch (e) { setCloudMessage(e instanceof Error ? e.message : "Invalid credential."); return; }
-    const entry = { provider: cloudDraft.provider, mode: cloudDraft.mode, label: cloudDraft.label.trim() || undefined, secret };
-    if (await runCloud(() => api.createCloudAccount(entry), `${cloudDraft.label || cloudDraft.provider} was added.`)) setCloudDraft(undefined);
+    try { secret = connectionSecretFor(connectionDraft); }
+    catch (e) { setConnectionMessage(e instanceof Error ? e.message : "Invalid credential."); return; }
+    let lat: number | undefined, lon: number | undefined;
+    if (connectionDraft.type === "kubernetes" && (connectionDraft.lat.trim() || connectionDraft.lon.trim())) {
+      lat = Number(connectionDraft.lat); lon = Number(connectionDraft.lon);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) { setConnectionMessage("Latitude must be a number between -90 and 90."); return; }
+      if (!Number.isFinite(lon) || lon < -180 || lon > 180) { setConnectionMessage("Longitude must be a number between -180 and 180."); return; }
+    }
+    const entry = {
+      type: connectionDraft.type, mode: connectionDraft.mode, label: connectionDraft.label.trim() || undefined, secret,
+      lat, lon, location_label: connectionDraft.locationLabel.trim() || undefined,
+    };
+    if (await runConnection(() => api.createInfrastructureConnection(entry), `${connectionDraft.label || connectionDraft.type} was added.`)) setConnectionDraft(undefined);
   };
-  const removeCloudAccount = (cloud: CloudAccount) => {
-    if (!confirm(`Remove ${cloud.label || cloud.provider}? Any Authorized Locations entries already added from it stay as plain declared points.`)) return;
-    void runCloud(() => api.deleteCloudAccount(cloud.id), `${cloud.label || cloud.provider} was removed.`);
+  const removeConnection = (connection: InfrastructureConnection) => {
+    if (!confirm(`Remove ${connection.label || connection.type}? Any Authorized Locations entries already added from it stay as plain declared points.`)) return;
+    void runConnection(() => api.deleteInfrastructureConnection(connection.id), `${connection.label || connection.type} was removed.`);
   };
 
   return <section>
@@ -168,54 +182,63 @@ export function Settings() {
       ? <Failure message={tutorialMode.error} retry={tutorialMode.reload} />
       : <label><input type="checkbox" checked={tutorialEnabled} disabled={tutorialSaving} onChange={(event) => void toggleTutorialMode(event.target.checked)} /> Show guidance text on each page</label>}
 
-    <h3>Cloud provider credentials</h3>
-    <p className="lede">Lets Authorized Locations offer real regions and local zones from AWS, Azure, and GCP instead of typing coordinates by hand. "Read-only" credentials can only ever list an account's regions — they cannot place an order or spend money. "Read-write" credentials are accepted and stored for a future provisioning feature; nothing in Karst uses them to create or change cloud resources yet. Secrets are encrypted at rest and never shown again once saved.</p>
-    <div className="actions"><button className="primary" onClick={() => setCloudDraft(blankCloudDraft)}>Add cloud credential</button></div>
-    <Notice message={cloudMessage} />
-    {cloudAccounts.loading ? <p>Loading cloud credentials…</p> : cloudAccounts.error
-      ? <Failure message={cloudAccounts.error} retry={cloudAccounts.reload} />
-      : (cloudAccounts.value ?? []).length === 0
-        ? <EmptyState title="No cloud credentials configured">Add one to pick real regions in Authorized Locations.</EmptyState>
-        : <Rows head={<><th>Provider</th><th>Mode</th><th>Label</th><th>Added</th><th>Actions</th></>}>
-          {(cloudAccounts.value ?? []).map((cloud) => <tr key={cloud.id}>
-            <td>{cloud.provider.toUpperCase()}</td>
-            <td>{cloud.mode === "read_write" ? "Read-write (may make live changes and incur costs)" : "Read-only"}</td>
-            <td>{cloud.label || <span className="lede">—</span>}</td>
-            <td><Observed at={cloud.created_at} /></td>
-            <td><button className="danger" onClick={() => removeCloudAccount(cloud)}>Remove</button></td>
+    <h3>Infrastructure Connections</h3>
+    <p className="lede">Lets Authorized Locations offer real regions, local zones, and Kubernetes namespaces instead of typing coordinates by hand. "Read-only" connections can only ever discover (list regions/namespaces) — they cannot place an order or create a workload. "Read-write" connections may make one further live change — enabling an AWS Local Zone that exists but isn't opted into use yet — and can incur costs; nothing else in Karst uses them to create or change infrastructure yet. Secrets are encrypted at rest and never shown again once saved. Status shows whether the last discovery call succeeded.</p>
+    <div className="actions"><button className="primary" onClick={() => setConnectionDraft(blankConnectionDraft)}>Add infrastructure connection</button></div>
+    <Notice message={connectionMessage} />
+    {infraConnections.loading ? <p>Loading infrastructure connections…</p> : infraConnections.error
+      ? <Failure message={infraConnections.error} retry={infraConnections.reload} />
+      : (infraConnections.value ?? []).length === 0
+        ? <EmptyState title="No infrastructure connections configured">Add one to pick real regions or namespaces in Authorized Locations.</EmptyState>
+        : <Rows head={<><th>Type</th><th>Mode</th><th>Label</th><th>Status</th><th>Added</th><th>Actions</th></>}>
+          {(infraConnections.value ?? []).map((connection) => <tr key={connection.id}>
+            <td>{connection.type.toUpperCase()}</td>
+            <td>{connection.mode === "read_write" ? "Read-write (may make live changes and incur costs)" : "Read-only"}</td>
+            <td>{connection.label || <span className="lede">—</span>}</td>
+            <td>{connection.status === "error" ? connection.last_error : connection.status === "ok" ? "OK" : <span className="lede">Not yet validated</span>}</td>
+            <td><Observed at={connection.created_at} /></td>
+            <td><button className="danger" onClick={() => removeConnection(connection)}>Remove</button></td>
           </tr>)}
         </Rows>}
 
-    <Dialog open={Boolean(cloudDraft)} title="Add cloud credential" onClose={() => setCloudDraft(undefined)}>
-      <form onSubmit={(event) => { event.preventDefault(); void addCloudAccount(); }}>
-        <label>Provider<select aria-label="Cloud provider" value={cloudDraft?.provider ?? "aws"} onChange={(event) => setCloudDraft((current) => current && { ...current, provider: event.target.value as CloudProvider })}>
+    <Dialog open={Boolean(connectionDraft)} title="Add infrastructure connection" onClose={() => setConnectionDraft(undefined)}>
+      <form onSubmit={(event) => { event.preventDefault(); void addConnection(); }}>
+        <label>Connection type<select aria-label="Connection type" value={connectionDraft?.type ?? "aws"} onChange={(event) => setConnectionDraft((current) => current && { ...current, type: event.target.value as ConnectionType })}>
           <option value="aws">AWS</option>
           <option value="azure">Azure</option>
           <option value="gcp">GCP</option>
+          <option value="kubernetes">Kubernetes</option>
         </select></label>
-        <label>Mode<select aria-label="Credential mode" value={cloudDraft?.mode ?? "read_only"} onChange={(event) => setCloudDraft((current) => current && { ...current, mode: event.target.value as CloudMode })}>
+        <label>Mode<select aria-label="Connection mode" value={connectionDraft?.mode ?? "read_only"} onChange={(event) => setConnectionDraft((current) => current && { ...current, mode: event.target.value as ConnectionMode })}>
           <option value="read_only">Read-only (status/discovery only)</option>
           <option value="read_write">Read-write (may make live changes — e.g. enabling an AWS local zone — and can incur costs)</option>
         </select></label>
-        <label>Label<input aria-label="Cloud credential label" placeholder="prod-aws" value={cloudDraft?.label ?? ""} onChange={(event) => setCloudDraft((current) => current && { ...current, label: event.target.value })} /></label>
+        <label>Label<input aria-label="Connection label" placeholder="prod-aws" value={connectionDraft?.label ?? ""} onChange={(event) => setConnectionDraft((current) => current && { ...current, label: event.target.value })} /></label>
 
-        {cloudDraft?.provider === "aws" && <>
-          <label>Access key ID<input aria-label="AWS access key ID" value={cloudDraft.awsAccessKeyId} onChange={(event) => setCloudDraft((current) => current && { ...current, awsAccessKeyId: event.target.value })} /></label>
-          <label>Secret access key<input aria-label="AWS secret access key" type="password" value={cloudDraft.awsSecretAccessKey} onChange={(event) => setCloudDraft((current) => current && { ...current, awsSecretAccessKey: event.target.value })} /></label>
-          <label>Session token (optional)<input aria-label="AWS session token" type="password" value={cloudDraft.awsSessionToken} onChange={(event) => setCloudDraft((current) => current && { ...current, awsSessionToken: event.target.value })} /></label>
+        {connectionDraft?.type === "aws" && <>
+          <label>Access key ID<input aria-label="AWS access key ID" value={connectionDraft.awsAccessKeyId} onChange={(event) => setConnectionDraft((current) => current && { ...current, awsAccessKeyId: event.target.value })} /></label>
+          <label>Secret access key<input aria-label="AWS secret access key" type="password" value={connectionDraft.awsSecretAccessKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, awsSecretAccessKey: event.target.value })} /></label>
+          <label>Session token (optional)<input aria-label="AWS session token" type="password" value={connectionDraft.awsSessionToken} onChange={(event) => setConnectionDraft((current) => current && { ...current, awsSessionToken: event.target.value })} /></label>
         </>}
-        {cloudDraft?.provider === "azure" && <>
-          <label>Tenant ID<input aria-label="Azure tenant ID" value={cloudDraft.azureTenantId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureTenantId: event.target.value })} /></label>
-          <label>Client ID<input aria-label="Azure client ID" value={cloudDraft.azureClientId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureClientId: event.target.value })} /></label>
-          <label>Client secret<input aria-label="Azure client secret" type="password" value={cloudDraft.azureClientSecret} onChange={(event) => setCloudDraft((current) => current && { ...current, azureClientSecret: event.target.value })} /></label>
-          <label>Subscription ID<input aria-label="Azure subscription ID" value={cloudDraft.azureSubscriptionId} onChange={(event) => setCloudDraft((current) => current && { ...current, azureSubscriptionId: event.target.value })} /></label>
+        {connectionDraft?.type === "azure" && <>
+          <label>Tenant ID<input aria-label="Azure tenant ID" value={connectionDraft.azureTenantId} onChange={(event) => setConnectionDraft((current) => current && { ...current, azureTenantId: event.target.value })} /></label>
+          <label>Client ID<input aria-label="Azure client ID" value={connectionDraft.azureClientId} onChange={(event) => setConnectionDraft((current) => current && { ...current, azureClientId: event.target.value })} /></label>
+          <label>Client secret<input aria-label="Azure client secret" type="password" value={connectionDraft.azureClientSecret} onChange={(event) => setConnectionDraft((current) => current && { ...current, azureClientSecret: event.target.value })} /></label>
+          <label>Subscription ID<input aria-label="Azure subscription ID" value={connectionDraft.azureSubscriptionId} onChange={(event) => setConnectionDraft((current) => current && { ...current, azureSubscriptionId: event.target.value })} /></label>
         </>}
-        {cloudDraft?.provider === "gcp" && <>
-          <label>Project ID<input aria-label="GCP project ID" value={cloudDraft.gcpProjectId} onChange={(event) => setCloudDraft((current) => current && { ...current, gcpProjectId: event.target.value })} /></label>
-          <label>Service account key (JSON)<textarea aria-label="GCP service account key JSON" rows={6} value={cloudDraft.gcpServiceAccountKey} onChange={(event) => setCloudDraft((current) => current && { ...current, gcpServiceAccountKey: event.target.value })} placeholder='{"type": "service_account", ...}' /></label>
+        {connectionDraft?.type === "gcp" && <>
+          <label>Project ID<input aria-label="GCP project ID" value={connectionDraft.gcpProjectId} onChange={(event) => setConnectionDraft((current) => current && { ...current, gcpProjectId: event.target.value })} /></label>
+          <label>Service account key (JSON)<textarea aria-label="GCP service account key JSON" rows={6} value={connectionDraft.gcpServiceAccountKey} onChange={(event) => setConnectionDraft((current) => current && { ...current, gcpServiceAccountKey: event.target.value })} placeholder='{"type": "service_account", ...}' /></label>
+        </>}
+        {connectionDraft?.type === "kubernetes" && <>
+          <label>Kubeconfig<textarea aria-label="Kubeconfig" rows={6} value={connectionDraft.kubeconfig} onChange={(event) => setConnectionDraft((current) => current && { ...current, kubeconfig: event.target.value })} placeholder={"apiVersion: v1\nkind: Config\n..."} /></label>
+          <p className="lede">Only the kubeconfig's current-context cluster is used. A private cluster has no provider-supplied location — declare one below if you'd like it to appear on the NOC map and feed Authorized Locations.</p>
+          <label>Latitude (optional)<input aria-label="Connection latitude" placeholder="37.7749" value={connectionDraft.lat} onChange={(event) => setConnectionDraft((current) => current && { ...current, lat: event.target.value })} /></label>
+          <label>Longitude (optional)<input aria-label="Connection longitude" placeholder="-122.4194" value={connectionDraft.lon} onChange={(event) => setConnectionDraft((current) => current && { ...current, lon: event.target.value })} /></label>
+          <label>Location label (optional)<input aria-label="Connection location label" placeholder="homelab" value={connectionDraft.locationLabel} onChange={(event) => setConnectionDraft((current) => current && { ...current, locationLabel: event.target.value })} /></label>
         </>}
 
-        <div className="actions"><button type="button" onClick={() => setCloudDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add credential</button></div>
+        <div className="actions"><button type="button" onClick={() => setConnectionDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add connection</button></div>
       </form>
     </Dialog>
 

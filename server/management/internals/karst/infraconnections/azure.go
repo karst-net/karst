@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-package cloudaccounts
+package infraconnections
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 )
 
-// azureSecret is the admin-entered credential shape for Provider "azure" --
+// azureSecret is the admin-entered credential shape for Type "azure" --
 // an app registration (service principal) scoped to one subscription.
 type azureSecret struct {
 	TenantID       string `json:"tenant_id"`
@@ -82,5 +82,5 @@ func azureRegion(loc armsubscriptions.Location) DiscoveredRegion {
 			}
 		}
 	}
-	return enrich(ProviderAzure, code, name, cloudcatalog.KindRegion, true)
+	return enrich(TypeAzure, code, name, cloudcatalog.KindRegion, true)
 }

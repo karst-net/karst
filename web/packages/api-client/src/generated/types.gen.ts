@@ -580,6 +580,9 @@ export type TutorialMode = {
     enabled: boolean;
 };
 
+/**
+ * @deprecated
+ */
 export type CloudAccountCreate = {
     provider: 'aws' | 'azure' | 'gcp';
     mode: 'read_only' | 'read_write';
@@ -592,6 +595,9 @@ export type CloudAccountCreate = {
     };
 };
 
+/**
+ * @deprecated
+ */
 export type CloudAccount = {
     readonly id: string;
     provider: 'aws' | 'azure' | 'gcp';
@@ -600,6 +606,9 @@ export type CloudAccount = {
     readonly created_at: string;
 };
 
+/**
+ * @deprecated
+ */
 export type DiscoveredRegion = {
     code: string;
     name?: string;
@@ -614,6 +623,54 @@ export type DiscoveredRegion = {
      * True for a region and an already opted-in local zone. False only for a read_write credential's not-yet-opted-in local zone, offered for enableCloudAccountRegion.
      */
     enabled: boolean;
+};
+
+export type InfrastructureConnectionCreate = {
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    mode: 'read_only' | 'read_write';
+    label?: string;
+    /**
+     * Type-shaped credential object. AWS: {access_key_id, secret_access_key, session_token?}. Azure: {tenant_id, client_id, client_secret, subscription_id}. GCP: {project_id, service_account_key: <the downloaded JSON key, as an object>}. Kubernetes: {kubeconfig: <full kubeconfig file contents, as a string -- only the current-context cluster is used>}.
+     */
+    secret: {
+        [key: string]: unknown;
+    };
+    lat?: number;
+    lon?: number;
+    location_label?: string;
+};
+
+export type InfrastructureConnection = {
+    readonly id: string;
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    mode: 'read_only' | 'read_write';
+    label?: string;
+    readonly created_at: string;
+    lat?: number;
+    lon?: number;
+    location_label?: string;
+    /**
+     * Empty until the first resources (Discover) call completes.
+     */
+    status?: 'ok' | 'error';
+    readonly last_validated_at?: string;
+    readonly last_error?: string;
+};
+
+export type DiscoveredResource = {
+    code: string;
+    name?: string;
+    kind: 'region' | 'local_zone' | 'zone' | 'namespace';
+    lat?: number;
+    lon?: number;
+    /**
+     * Set for a kind other than region/namespace -- the region to call the enable endpoint against.
+     */
+    parent_region?: string;
+    /**
+     * True for a region and an already opted-in local zone. False only for a read_write AWS connection's not-yet-opted-in local zone. Absent for a Kubernetes namespace, which has no opt-in concept.
+     */
+    enabled?: boolean;
 };
 
 export type TurnServerCreate = {
@@ -836,10 +893,26 @@ export type RelayWritable = RelayCreate & {
     health: RelayHealth;
 };
 
+/**
+ * @deprecated
+ */
 export type CloudAccountWritable = {
     provider: 'aws' | 'azure' | 'gcp';
     mode: 'read_only' | 'read_write';
     label?: string;
+};
+
+export type InfrastructureConnectionWritable = {
+    type: 'aws' | 'azure' | 'gcp' | 'kubernetes';
+    mode: 'read_only' | 'read_write';
+    label?: string;
+    lat?: number;
+    lon?: number;
+    location_label?: string;
+    /**
+     * Empty until the first resources (Discover) call completes.
+     */
+    status?: 'ok' | 'error';
 };
 
 export type TurnServerWritable = TurnServerCreate;
@@ -2892,6 +2965,114 @@ export type EnableCloudAccountRegionResponses = {
 };
 
 export type EnableCloudAccountRegionResponse = EnableCloudAccountRegionResponses[keyof EnableCloudAccountRegionResponses];
+
+export type ListInfrastructureConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/infrastructure-connections';
+};
+
+export type ListInfrastructureConnectionsErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListInfrastructureConnectionsError = ListInfrastructureConnectionsErrors[keyof ListInfrastructureConnectionsErrors];
+
+export type ListInfrastructureConnectionsResponses = {
+    /**
+     * Configured infrastructure connections
+     */
+    200: Array<InfrastructureConnection>;
+};
+
+export type ListInfrastructureConnectionsResponse = ListInfrastructureConnectionsResponses[keyof ListInfrastructureConnectionsResponses];
+
+export type CreateInfrastructureConnectionData = {
+    body: InfrastructureConnectionCreate;
+    path?: never;
+    query?: never;
+    url: '/infrastructure-connections';
+};
+
+export type CreateInfrastructureConnectionErrors = {
+    /**
+     * Validation error
+     */
+    422: Error;
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type CreateInfrastructureConnectionError = CreateInfrastructureConnectionErrors[keyof CreateInfrastructureConnectionErrors];
+
+export type CreateInfrastructureConnectionResponses = {
+    /**
+     * Stored connection (secret omitted)
+     */
+    201: InfrastructureConnection;
+};
+
+export type CreateInfrastructureConnectionResponse = CreateInfrastructureConnectionResponses[keyof CreateInfrastructureConnectionResponses];
+
+export type DeleteInfrastructureConnectionData = {
+    body?: never;
+    path: {
+        connectionId: string;
+    };
+    query?: never;
+    url: '/infrastructure-connections/{connectionId}';
+};
+
+export type DeleteInfrastructureConnectionErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type DeleteInfrastructureConnectionError = DeleteInfrastructureConnectionErrors[keyof DeleteInfrastructureConnectionErrors];
+
+export type DeleteInfrastructureConnectionResponses = {
+    /**
+     * Connection removed
+     */
+    204: void;
+};
+
+export type DeleteInfrastructureConnectionResponse = DeleteInfrastructureConnectionResponses[keyof DeleteInfrastructureConnectionResponses];
+
+export type ListInfrastructureConnectionResourcesData = {
+    body?: never;
+    path: {
+        connectionId: string;
+    };
+    query?: never;
+    url: '/infrastructure-connections/{connectionId}/resources';
+};
+
+export type ListInfrastructureConnectionResourcesErrors = {
+    /**
+     * Error response
+     */
+    default: Error;
+};
+
+export type ListInfrastructureConnectionResourcesError = ListInfrastructureConnectionResourcesErrors[keyof ListInfrastructureConnectionResourcesErrors];
+
+export type ListInfrastructureConnectionResourcesResponses = {
+    /**
+     * Discovered resources
+     */
+    200: Array<DiscoveredResource>;
+};
+
+export type ListInfrastructureConnectionResourcesResponse = ListInfrastructureConnectionResourcesResponses[keyof ListInfrastructureConnectionResourcesResponses];
 
 export type ListTurnServersData = {
     body?: never;

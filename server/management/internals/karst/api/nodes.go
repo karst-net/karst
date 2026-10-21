@@ -32,12 +32,12 @@ import (
 
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
-	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/geo"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
@@ -183,13 +183,16 @@ type handler struct {
 	// guidance text -- nil in a deployment that has not configured one,
 	// see tutorialModeGet/tutorialModeSet.
 	tutorialMode tutorialModeReadWriter
-	// cloudAccounts is the console's admin-entered AWS/Azure/GCP credential
-	// store (ADR-0045 §6 addendum) -- nil in a deployment that has not
-	// configured a data-store encryption key, see cloudAccountsList/
-	// cloudAccountsCreate/cloudAccountsDelete/cloudAccountRegions. See
-	// package cloudaccounts's own doc comment for the trust-boundary
-	// reasoning and why Mode is stored but never actuated here.
-	cloudAccounts cloudAccountReadWriter
+	// infraConnections is the console's admin-entered AWS/Azure/GCP/
+	// Kubernetes connection store (ADR-0045 §6 addenda) -- nil in a
+	// deployment that has not configured a data-store encryption key, see
+	// cloudAccountsList/cloudAccountsCreate/cloudAccountsDelete/
+	// cloudAccountRegions (the preserved legacy surface) and
+	// infraConnectionsList/infraConnectionsCreate/infraConnectionsDelete/
+	// infraConnectionResources (the generalized one). See package
+	// infraconnections's own doc comment for the trust-boundary reasoning
+	// and why Mode is stored but never actuated here.
+	infraConnections infraConnectionReadWriter
 }
 
 // locationReader is the admin-authorized-locations registry's read/write
@@ -253,14 +256,18 @@ type tutorialModeReadWriter interface {
 	Set(ctx context.Context, enabled bool) error
 }
 
-// cloudAccountReadWriter is the console's admin-entered cloud-credential
-// store -- see package cloudaccounts.
-type cloudAccountReadWriter interface {
-	Create(ctx context.Context, req cloudaccounts.CreateRequest) (*cloudaccounts.Account, error)
-	List(ctx context.Context) ([]cloudaccounts.Account, error)
+// infraConnectionReadWriter is the console's admin-entered infrastructure-
+// connection store -- see package infraconnections. CreateLegacy/
+// DiscoverLegacy back the preserved /cloud-accounts surface; Create/List/
+// Delete/Discover back /infrastructure-connections.
+type infraConnectionReadWriter interface {
+	Create(ctx context.Context, req infraconnections.CreateRequest) (*infraconnections.Account, error)
+	CreateLegacy(ctx context.Context, req infraconnections.LegacyCreateRequest) (*infraconnections.Account, error)
+	List(ctx context.Context) ([]infraconnections.Account, error)
 	Delete(ctx context.Context, id string) error
-	Discover(ctx context.Context, id string) ([]cloudaccounts.DiscoveredRegion, error)
-	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (cloudaccounts.DiscoveredRegion, error)
+	Discover(ctx context.Context, id string) ([]infraconnections.DiscoveredResource, error)
+	DiscoverLegacy(ctx context.Context, id string) ([]infraconnections.DiscoveredRegion, error)
+	EnableLocalZone(ctx context.Context, id, code, parentRegion string) (infraconnections.DiscoveredRegion, error)
 }
 
 // tenancyReader is ADR-0037's read side: which other accounts the
@@ -576,8 +583,8 @@ const maxRequestBodyBytes = 1 << 20
 // demand data. Empty means scalerRecommendations below answers
 // precondition-failed, not a 404 -- the same "optional capability, not a
 // missing route" posture h.relays/h.anchors being nil already has.
-func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, cloudAccounts cloudAccountReadWriter, router *mux.Router) {
-	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, cloudAccounts: cloudAccounts}
+func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter, log auditReader, policies policyReader, relays relayReader, turns turnReader, bedrockStore bedrockReader, bedrockLog bedrockLogReader, accounts accountUpdater, permissionsManager permissions.Manager, domains domainManager, tenancyStore tenancyReader, anchors demandReader, scalerAdvisorURL string, knownEventsStore knownEventReader, locations locationReader, groupLocations groupLocationReader, controlPlaneLocation cpLocationReader, routes routeLister, regions regionAllowReadWriter, ephemeralAnchors ephemeralAnchorReadWriter, routeTelemetry routeTelemetryReader, scalingMode scalingModeReadWriter, firstRun firstRunReadWriter, tutorialMode tutorialModeReadWriter, infraConnections infraConnectionReadWriter, router *mux.Router) {
+	h := &handler{nodes: nodes, peers: peers, peerWriter: peerWriter, audit: log, policy: policies, relays: relays, turns: turns, bedrock: bedrockStore, chain: bedrockLog, accounts: accounts, domainMgr: domains, tenancy: tenancyStore, anchors: anchors, scalerAdvisorURL: scalerAdvisorURL, knownEvents: knownEventsStore, locations: locations, groupLocations: groupLocations, controlPlaneLocation: controlPlaneLocation, routes: routes, regions: regions, ephemeralAnchors: ephemeralAnchors, routeTelemetry: routeTelemetry, scalingMode: scalingMode, firstRun: firstRun, tutorialMode: tutorialMode, infraConnections: infraConnections}
 	karstRouter := router.PathPrefix("/karst/v1").Subrouter()
 	karstRouter.UseEncodedPath()
 	karstRouter.Use(limitRequestBody)
@@ -658,6 +665,10 @@ func RegisterEndpoints(nodes nodeReader, peers peerReader, peerWriter peerWriter
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}", h.cloudAccountsDelete).Methods(http.MethodDelete, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions", h.cloudAccountRegions).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/cloud-accounts/{cloudAccountId}/regions/{code}/enable", h.cloudAccountEnableRegion).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections", h.infraConnectionsList).Methods(http.MethodGet, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections", h.infraConnectionsCreate).Methods(http.MethodPost, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}", h.infraConnectionsDelete).Methods(http.MethodDelete, http.MethodOptions)
+	karstRouter.HandleFunc("/infrastructure-connections/{connectionId}/resources", h.infraConnectionResources).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsList).Methods(http.MethodGet, http.MethodOptions)
 	karstRouter.HandleFunc("/regions", h.regionsCreate).Methods(http.MethodPost, http.MethodOptions)
 	karstRouter.HandleFunc("/regions/{provider}/{region}", h.regionsDelete).Methods(http.MethodDelete, http.MethodOptions)
@@ -884,7 +895,7 @@ func scopeToAccount(ctx context.Context, accountID string) context.Context {
 	ctx = audit.WithAccount(ctx, accountID)
 	ctx = firstrun.WithAccount(ctx, accountID)
 	ctx = tutorialmode.WithAccount(ctx, accountID)
-	ctx = cloudaccounts.WithAccount(ctx, accountID)
+	ctx = infraconnections.WithAccount(ctx, accountID)
 	return ctx
 }
 
@@ -3292,7 +3303,7 @@ func (h *handler) tutorialModeSet(w http.ResponseWriter, r *http.Request) {
 // most things behind karstAuthorization's blanket module gate, the same
 // reasoning requireAdvisorRole documents for the cross-tenant demand
 // endpoints above. List/Discover carry no extra check: they never expose
-// the secret itself (see cloudaccounts.Response), so any role that can
+// the secret itself (see infraconnections.Response), so any role that can
 // already reach this API can read them.
 func requireCloudAccountAdminRole(ctx context.Context) error {
 	role, ok := nbcontext.RoleFromContext(ctx)
@@ -3306,29 +3317,56 @@ func requireCloudAccountAdminRole(ctx context.Context) error {
 	return nil
 }
 
+// requireInfraConnectionAdminRole is requireCloudAccountAdminRole's sibling
+// for the generalized /infrastructure-connections surface -- same gate,
+// wording updated to match the renamed concept.
+func requireInfraConnectionAdminRole(ctx context.Context) error {
+	role, ok := nbcontext.RoleFromContext(ctx)
+	if !ok {
+		return status.Errorf(status.Internal, "failed to get user role from context")
+	}
+	r := types.UserRole(role)
+	if r != types.UserRoleOwner && r != types.UserRoleAdmin {
+		return status.Errorf(status.PermissionDenied, "managing infrastructure connections requires the admin or owner role")
+	}
+	return nil
+}
+
 // cloudAccountsList/cloudAccountsCreate/cloudAccountsDelete/
-// cloudAccountRegions/cloudAccountEnableRegion back the console's
-// cloud-credentials Settings section and the Authorized Locations
-// cloud-account picker -- see package cloudaccounts's own doc comment for
-// the ADR-0045 §6 addenda this implements, and exactly how far
-// ModeReadWrite actuation goes (cloudAccountEnableRegion, nothing else).
+// cloudAccountRegions/cloudAccountEnableRegion back the deprecated,
+// preserved /cloud-accounts surface -- see package infraconnections's own
+// doc comment for the ADR-0045 §6 addenda this implements, and exactly how
+// far ModeReadWrite actuation goes (cloudAccountEnableRegion, nothing
+// else). infraConnectionsList/infraConnectionsCreate/infraConnectionsDelete/
+// infraConnectionResources below are the generalized
+// /infrastructure-connections surface both the Settings page and the
+// Authorized Locations picker now use; EnableLocalZone itself is not yet
+// generalized (see infraconnections.Store.EnableLocalZone's doc comment).
 func (h *handler) cloudAccountsList(w http.ResponseWriter, r *http.Request) {
 	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.cloudAccounts == nil {
+	if h.infraConnections == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
 		return
 	}
-	rows, err := h.cloudAccounts.List(r.Context())
+	rows, err := h.infraConnections.List(r.Context())
 	if err != nil {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	resp := make([]cloudaccounts.Response, 0, len(rows))
+	resp := make([]infraconnections.LegacyResponse, 0, len(rows))
 	for i := range rows {
-		resp = append(resp, rows[i].ToResponse())
+		// A kubernetes-typed row can only be created through
+		// /infrastructure-connections, but List itself is unfiltered (see
+		// Store.List's own doc comment) -- filter here so an old typed
+		// client polling this route can never see a provider value outside
+		// its known aws/azure/gcp enum.
+		if rows[i].Type == infraconnections.TypeKubernetes {
+			continue
+		}
+		resp = append(resp, rows[i].ToLegacyResponse())
 	}
 	util.WriteJSONObject(r.Context(), w, resp)
 }
@@ -3338,7 +3376,7 @@ func (h *handler) cloudAccountsCreate(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.cloudAccounts == nil {
+	if h.infraConnections == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
 		return
 	}
@@ -3346,13 +3384,13 @@ func (h *handler) cloudAccountsCreate(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	var req cloudaccounts.CreateRequest
+	var req infraconnections.LegacyCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	account, err := h.cloudAccounts.Create(r.Context(), req)
-	if errors.Is(err, cloudaccounts.ErrEncryptionRequired) {
+	account, err := h.infraConnections.CreateLegacy(r.Context(), req)
+	if errors.Is(err, infraconnections.ErrEncryptionRequired) {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "%s", err), w)
 		return
 	}
@@ -3362,7 +3400,7 @@ func (h *handler) cloudAccountsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(account.ToResponse()); err != nil {
+	if err := json.NewEncoder(w).Encode(account.ToLegacyResponse()); err != nil {
 		util.WriteError(r.Context(), err, w)
 	}
 }
@@ -3372,7 +3410,7 @@ func (h *handler) cloudAccountsDelete(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.cloudAccounts == nil {
+	if h.infraConnections == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
 		return
 	}
@@ -3380,7 +3418,7 @@ func (h *handler) cloudAccountsDelete(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if err := h.cloudAccounts.Delete(r.Context(), mux.Vars(r)["cloudAccountId"]); errors.Is(err, cloudaccounts.ErrNotFound) {
+	if err := h.infraConnections.Delete(r.Context(), mux.Vars(r)["cloudAccountId"]); errors.Is(err, infraconnections.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
 		return
 	} else if err != nil {
@@ -3395,12 +3433,12 @@ func (h *handler) cloudAccountRegions(w http.ResponseWriter, r *http.Request) {
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.cloudAccounts == nil {
+	if h.infraConnections == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
 		return
 	}
-	regions, err := h.cloudAccounts.Discover(r.Context(), mux.Vars(r)["cloudAccountId"])
-	if errors.Is(err, cloudaccounts.ErrNotFound) {
+	regions, err := h.infraConnections.DiscoverLegacy(r.Context(), mux.Vars(r)["cloudAccountId"])
+	if errors.Is(err, infraconnections.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
 		return
 	}
@@ -3431,7 +3469,7 @@ func (h *handler) cloudAccountEnableRegion(w http.ResponseWriter, r *http.Reques
 		util.WriteError(r.Context(), err, w)
 		return
 	}
-	if h.cloudAccounts == nil {
+	if h.infraConnections == nil {
 		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "cloud accounts are not configured"), w)
 		return
 	}
@@ -3444,8 +3482,8 @@ func (h *handler) cloudAccountEnableRegion(w http.ResponseWriter, r *http.Reques
 		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
 		return
 	}
-	region, err := h.cloudAccounts.EnableLocalZone(r.Context(), mux.Vars(r)["cloudAccountId"], mux.Vars(r)["code"], req.ParentRegion)
-	if errors.Is(err, cloudaccounts.ErrNotFound) {
+	region, err := h.infraConnections.EnableLocalZone(r.Context(), mux.Vars(r)["cloudAccountId"], mux.Vars(r)["code"], req.ParentRegion)
+	if errors.Is(err, infraconnections.ErrNotFound) {
 		util.WriteError(r.Context(), status.Errorf(status.NotFound, "cloud account not found"), w)
 		return
 	}
@@ -3454,6 +3492,109 @@ func (h *handler) cloudAccountEnableRegion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, region)
+}
+
+// infraConnectionsList/infraConnectionsCreate/infraConnectionsDelete/
+// infraConnectionResources back the console's Infrastructure Connections
+// Settings section and the Authorized Locations picker -- the generalized
+// surface covering AWS/Azure/GCP/Kubernetes, see package infraconnections.
+func (h *handler) infraConnectionsList(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	rows, err := h.infraConnections.List(r.Context())
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	resp := make([]infraconnections.Response, 0, len(rows))
+	for i := range rows {
+		resp = append(resp, rows[i].ToResponse())
+	}
+	util.WriteJSONObject(r.Context(), w, resp)
+}
+
+func (h *handler) infraConnectionsCreate(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	if err := requireInfraConnectionAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	var req infraconnections.CreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		util.WriteErrorResponse("couldn't parse JSON request", http.StatusBadRequest, w)
+		return
+	}
+	connection, err := h.infraConnections.Create(r.Context(), req)
+	if errors.Is(err, infraconnections.ErrEncryptionRequired) {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "%s", err), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "%s", err), w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(connection.ToResponse()); err != nil {
+		util.WriteError(r.Context(), err, w)
+	}
+}
+
+func (h *handler) infraConnectionsDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	if err := requireInfraConnectionAdminRole(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if err := h.infraConnections.Delete(r.Context(), mux.Vars(r)["connectionId"]); errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
+		return
+	} else if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) infraConnectionResources(w http.ResponseWriter, r *http.Request) {
+	if _, err := nbcontext.GetUserAuthFromContext(r.Context()); err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	if h.infraConnections == nil {
+		util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "infrastructure connections are not configured"), w)
+		return
+	}
+	resources, err := h.infraConnections.Discover(r.Context(), mux.Vars(r)["connectionId"])
+	if errors.Is(err, infraconnections.ErrNotFound) {
+		util.WriteError(r.Context(), status.Errorf(status.NotFound, "infrastructure connection not found"), w)
+		return
+	}
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+	util.WriteJSONObject(r.Context(), w, resources)
 }
 
 // groupLocationsList/groupLocationsSet/groupLocationsDelete manage a route

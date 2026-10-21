@@ -45,25 +45,29 @@ test("guidance text can be toggled off and on from Settings", async ({ page }) =
   await page.getByRole("checkbox", { name: "Show guidance text on each page" }).check();
 });
 
-test("a cloud credential feeds the Authorized Locations region picker", async ({ page }) => {
+test("an infrastructure connection feeds the Authorized Locations region picker", async ({ page }) => {
   await page.goto("/#/settings");
-  await page.getByRole("button", { name: "Add cloud credential" }).click();
-  await expect(page.getByRole("heading", { name: "Add cloud credential" })).toBeVisible();
-  await page.getByLabel("Cloud provider").selectOption("aws");
+  await page.getByRole("button", { name: "Add infrastructure connection" }).click();
+  await expect(page.getByRole("heading", { name: "Add infrastructure connection" })).toBeVisible();
+  await page.getByLabel("Connection type").selectOption("aws");
   await page.getByLabel("Access key ID").fill("AKIAEXAMPLE");
   await page.getByLabel("AWS secret access key").fill("shh-it-is-a-secret");
-  await page.getByLabel("Cloud credential label").fill("e2e-aws");
-  await page.getByRole("button", { name: "Add credential" }).click();
+  await page.getByLabel("Connection label").fill("e2e-aws");
+  await page.getByRole("button", { name: "Add connection" }).click();
   await expect(page.getByText("e2e-aws was added.")).toBeVisible();
   await expect(page.getByRole("cell", { name: "e2e-aws" })).toBeVisible();
 
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
-  await page.getByRole("radio", { name: "From a cloud account" }).check();
-  await page.getByRole("combobox", { name: "Cloud account" }).selectOption({ label: "e2e-aws (AWS)" });
-  await page.getByRole("combobox", { name: "Cloud region or zone" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
+  await page.getByRole("radio", { name: "From an infrastructure connection" }).check();
+  await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-aws (AWS)" });
+  await page.getByRole("combobox", { name: "Region, zone, or namespace" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
   await page.getByRole("button", { name: "Add location" }).click();
   await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  // The dialog deliberately stays open after a successful add (so several
+  // zones can be added from the same connection without re-fetching the
+  // live list each time) -- close it explicitly before the cleanup below.
+  await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("cell", { name: "US East (N. Virginia) (us-east-1)" })).toBeVisible();
 
   // Clean up so this fixture-mutating test can be re-run against the shared
@@ -72,4 +76,32 @@ test("a cloud credential feeds the Authorized Locations region picker", async ({
   await page.getByRole("row", { name: /US East \(N\. Virginia\)/ }).getByRole("button", { name: "Remove" }).click();
   await page.goto("/#/settings");
   await page.getByRole("row", { name: /e2e-aws/ }).getByRole("button", { name: "Remove" }).click();
+});
+
+test("a Kubernetes connection's namespaces feed the Authorized Locations picker as resources with no coordinates", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByRole("button", { name: "Add infrastructure connection" }).click();
+  await page.getByLabel("Connection type").selectOption("kubernetes");
+  await page.getByLabel("Kubeconfig").fill("apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters: []\nusers: []\ncontexts: []\n");
+  await page.getByLabel("Connection label").fill("e2e-k8s");
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await expect(page.getByText("e2e-k8s was added.")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "e2e-k8s" })).toBeVisible();
+
+  await page.goto("/#/locations");
+  await page.getByRole("button", { name: "Add authorized location" }).click();
+  await page.getByRole("radio", { name: "From an infrastructure connection" }).check();
+  await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-k8s (KUBERNETES)" });
+  const namespaceSelect = page.getByRole("combobox", { name: "Region, zone, or namespace" });
+  await expect(namespaceSelect.locator("option", { hasText: "default — no coordinates yet" })).toHaveCount(1);
+  await namespaceSelect.selectOption({ label: "default — no coordinates yet" });
+  // No declared location on this connection and no catalog entry for a
+  // namespace -- the "Add location" submit should surface that rather than
+  // silently adding a coordinate-less row.
+  await page.getByRole("button", { name: "Add location" }).click();
+  await expect(page.getByText("no known coordinates yet", { exact: false })).toBeVisible();
+
+  await page.goto("/#/settings");
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("row", { name: /e2e-k8s/ }).getByRole("button", { name: "Remove" }).click();
 });

@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, CloudAccount, CloudAccountCreate, DeviceUsageReport, DiscoveredRegion, FirstRunState, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -348,16 +348,20 @@ export const api = {
   tutorialMode: () => request<TutorialMode>("/tutorial-mode"),
   setTutorialMode: (enabled: boolean) => request<TutorialMode>("/tutorial-mode", { method: "PUT", body: body({ enabled }) }),
 
-  // ── cloud provider credentials (ADR-0045 §6 addenda) ────────────────────────
-  // Secrets are never returned by the server -- see cloudaccounts.Response.
-  cloudAccounts: () => request<CloudAccount[]>("/cloud-accounts"),
-  createCloudAccount: (entry: CloudAccountCreate) => request<CloudAccount>("/cloud-accounts", { method: "POST", body: body(entry) }),
-  deleteCloudAccount: (id: string) => request<void>(`/cloud-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  cloudAccountRegions: (id: string) => request<DiscoveredRegion[]>(`/cloud-accounts/${encodeURIComponent(id)}/regions`),
+  // ── infrastructure connections (ADR-0045 §6 addenda) ────────────────────────
+  // Secrets are never returned by the server -- see infraconnections.Response.
+  infrastructureConnections: () => request<InfrastructureConnection[]>("/infrastructure-connections"),
+  createInfrastructureConnection: (entry: InfrastructureConnectionCreate) => request<InfrastructureConnection>("/infrastructure-connections", { method: "POST", body: body(entry) }),
+  deleteInfrastructureConnection: (id: string) => request<void>(`/infrastructure-connections/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  infrastructureConnectionResources: (id: string) => request<DiscoveredResource[]>(`/infrastructure-connections/${encodeURIComponent(id)}/resources`),
   // ADR-0045 §6's second addendum: the one mutating call this API makes --
   // opts an AWS Local Zone's group into use. A one-way door on AWS's side
   // (no opt-out API), so the caller must have already confirmed this with
   // the operator naming this specific zone; this call does not ask again.
-  enableCloudAccountRegion: (id: string, code: string, parentRegion: string) =>
-    request<DiscoveredRegion>(`/cloud-accounts/${encodeURIComponent(id)}/regions/${encodeURIComponent(code)}/enable`, { method: "POST", body: body({ parent_region: parentRegion }) }),
+  // Still wired only to the legacy /cloud-accounts route server-side (see
+  // infraconnections.Store.EnableLocalZone's doc comment) -- connection IDs
+  // are shared between both surfaces, so this works against an id/resource
+  // obtained from the infrastructureConnections* calls above.
+  enableInfrastructureConnectionRegion: (id: string, code: string, parentRegion: string) =>
+    request<DiscoveredResource>(`/cloud-accounts/${encodeURIComponent(id)}/regions/${encodeURIComponent(code)}/enable`, { method: "POST", body: body({ parent_region: parentRegion }) }),
 };

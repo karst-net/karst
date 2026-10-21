@@ -691,7 +691,8 @@ whatever the operator already trusts.
 
 > **Addendum, 2026-10-19.** The first bullet above is narrowed, not reversed:
 > the control plane (`server/management`) may now hold admin-entered
-> AWS/Azure/GCP credentials, in two distinct modes (package `cloudaccounts`):
+> AWS/Azure/GCP credentials, in two distinct modes (package `cloudaccounts`,
+> renamed `infraconnections` by the 2026-10-21 addendum below):
 >
 > - **`read_only`** credentials are usable for exactly one thing — listing
 >   an account's enabled regions and (for AWS) opted-in local zones, to
@@ -757,6 +758,86 @@ whatever the operator already trusts.
 >   requires Phase 2's safeguards (drivers, signed enrollment, the budget
 >   circuit breaker); this addendum authorizes this one call, not the
 >   pattern of adding calls piecemeal.
+
+> **Addendum, 2026-10-21 — Infrastructure Connections rename and a
+> Kubernetes connection type (issue #406).** "Cloud provider credentials" is
+> renamed **Infrastructure Connections** throughout the console/API/docs,
+> and the model above is generalized rather than replaced:
+>
+> - **Terminology and migration.** Package `cloudaccounts` is renamed
+>   `infraconnections`; its `Provider` enum is renamed `Type` and gains a
+>   fourth member, `kubernetes` (Nomad is deferred to a follow-up issue —
+>   see below). The existing `karst_cloud_accounts` table, its columns, and
+>   every existing row's ID and encrypted secret are preserved exactly: the
+>   new `Type` field keeps the pre-rename `provider` database column via a
+>   `gorm:"column:provider"` tag, so this is a zero-data-migration rename,
+>   not a breaking one. The pre-existing `/cloud-accounts*` API routes and
+>   their `CloudAccount`/`CloudAccountCreate`/`DiscoveredRegion` OpenAPI
+>   schemas — including `DiscoveredRegion.enabled`/`parent_region` from the
+>   previous addendum's `EnableLocalZone` work, and the `enable` endpoint
+>   itself, both unaffected by this rename — are kept working byte-for-byte
+>   (marked `deprecated: true`, not removed, and permanently refuse a
+>   `kubernetes`-typed row) alongside new, generalized
+>   `/infrastructure-connections*` routes and
+>   `InfrastructureConnection`/`InfrastructureConnectionCreate`/
+>   `DiscoveredResource` schemas (also carrying `enabled`/`parent_region`,
+>   for AWS/Azure/GCP connections) that the console now uses. `EnableLocalZone`
+>   itself stays wired only to the legacy route for now — a generalized
+>   equivalent is a reasonable follow-up, not built here. An external API
+>   consumer generated against the old schemas keeps working unchanged.
+> - **Kubernetes's own scoped risk reasoning, parallel to the bullet above.**
+>   `infraconnections` now links `k8s.io/client-go` into the management
+>   binary — the first `k8s.io/*` dependency anywhere in `server/` — to make
+>   exactly two read-only calls against a stored kubeconfig:
+>   `Discovery().ServerVersion()` (a reachability check) and
+>   `CoreV1().Namespaces().List()` (the "permissions" surfaced to the
+>   operator as discovered resources). Nothing in this path creates a
+>   workload, reads a Secret/ConfigMap, or runs a watch/reconcile loop, so
+>   it cannot itself "yield the ability to" alter a cluster — the same harm
+>   the first bullet's `read_only` reasoning already covers, just for a
+>   cluster instead of a cloud account. `read_write` mode carries no
+>   different behavior than `read_only` for a Kubernetes connection either,
+>   same unbuilt-Phase-2 posture. This is a deliberately different tradeoff
+>   from `deploy/kubernetes/operator/main.go`, which avoids `client-go`/
+>   `controller-runtime` to keep a long-running in-cluster image's
+>   dependency surface minimal — that binary runs continuously inside a
+>   customer's cluster; this one makes two one-shot discovery calls from
+>   the management server, on the same trust footing as the AWS/Azure/GCP
+>   SDK calls already linked in above.
+> - **Declared location.** A private Kubernetes cluster has no provider-
+>   supplied region geography the way a cloud account does, so a Kubernetes
+>   connection may optionally carry an operator-declared `lat`/`lon`/
+>   `location_label` (validated the same way `cplocation`'s singleton is),
+>   attached at creation time. A discovered namespace never carries its own
+>   coordinates — the console falls back to the connection's own declared
+>   point instead of inventing per-namespace geography.
+> - **Status, not a capability matrix.** The generalized model adds
+>   `status`/`last_validated_at`/`last_error`, set by every discovery call,
+>   success or failure. This is the narrow, concrete answer to this issue's
+>   "declared and verified capabilities" ask — deliberately **not** a
+>   generic capability bitmask on the connection record. ADR-0016 already
+>   rejected that shape for a credential ("enforces scoping by rule... a
+>   verifier remembered to check a mask"); `Mode` (read_only/read_write,
+>   unchanged) plus this status triplet is the chosen shape instead.
+> - **Consistent with ADR-0056's four component families.** ADR-0056 landed
+>   concurrently with this work (it did not exist when this addendum was
+>   first drafted). Connection management belongs to **control services**
+>   in its terms ("transport discovery/credentials" is explicitly named
+>   there); Kubernetes/Nomad/Compose adapters are integrations, not new
+>   component families, matching issue #406's own framing. ADR-0056's
+>   status notes its *implementation consolidation* is still pending #404 —
+>   that pending work is the Gateway/Relay unification, unrelated to
+>   `infraconnections`, which needed no changes to land within ADR-0056's
+>   boundary as written.
+> - **Docker Compose: deferred, not built.** Evaluated and explicitly
+>   deferred for this round, per the issue's own framing — a Compose
+>   "connection" would be a host/project integration, not a cluster
+>   scheduler, and has no authenticated remote endpoint comparable to a
+>   cloud account or a kubeconfig by default; discovery would mean parsing
+>   a compose file or reaching a local Docker socket, a categorically
+>   different shape than the discovery calls above. No connection type, no
+>   code, and the existing Compose deployment workflow is unchanged. Nomad
+>   is likewise deferred, to its own follow-up issue, with no code here.
 
 ### 7. Phasing
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-package cloudaccounts
+package infraconnections
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/cloudcatalog"
 )
 
-// gcpSecret is the admin-entered credential shape for Provider "gcp" -- a
+// gcpSecret is the admin-entered credential shape for Type "gcp" -- a
 // service account key, in the exact JSON form the GCP console issues it in
 // (so the admin can paste the downloaded key file's contents verbatim).
 type gcpSecret struct {
@@ -60,7 +60,7 @@ func discoverGCP(ctx context.Context, rawSecret string) ([]DiscoveredRegion, err
 		if region.GetName() == "" {
 			continue
 		}
-		out = append(out, enrich(ProviderGCP, region.GetName(), region.GetName(), cloudcatalog.KindRegion, true))
+		out = append(out, enrich(TypeGCP, region.GetName(), region.GetName(), cloudcatalog.KindRegion, true))
 	}
 	return out, nil
 }

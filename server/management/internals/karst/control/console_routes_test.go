@@ -20,11 +20,11 @@ import (
 	karstapi "github.com/netbirdio/netbird/management/internals/karst/api"
 	"github.com/netbirdio/netbird/management/internals/karst/audit"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
-	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
 	"github.com/netbirdio/netbird/management/internals/karst/firstrun"
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
+	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
@@ -429,7 +429,7 @@ func consoleMutations() []consoleCase {
 		{
 			// Same "unknown-*" 404 shape as "delete a node" above: this
 			// route's own CRUD round-trip is covered at the unit level in
-			// cloudaccounts_test.go, so real-server coverage here only
+			// infraconnections_test.go, so real-server coverage here only
 			// needs to prove the route is wired and account-scoped.
 			name: "delete a cloud account credential", method: http.MethodDelete,
 			path: "/karst/v1/cloud-accounts/unknown-cloud-account-id", body: "",
@@ -439,7 +439,7 @@ func consoleMutations() []consoleCase {
 			// Same "unknown-*" 404 shape as "delete a cloud account
 			// credential" above: EnableLocalZone's own mode/provider gating
 			// and the real AWS call it makes are covered at the unit level
-			// (cloudaccounts' aws_test.go), so real-server coverage here
+			// (infraconnections' aws_test.go), so real-server coverage here
 			// only needs to prove the route is wired and account-scoped --
 			// Store.get (ErrNotFound) runs, and this never reaches AWS,
 			// before EnableLocalZone's own gating would.
@@ -447,6 +447,24 @@ func consoleMutations() []consoleCase {
 			path: "/karst/v1/cloud-accounts/unknown-cloud-account-id/regions/us-east-1-bos-1/enable",
 			body: `{"parent_region":"us-east-1"}`,
 			want: []int{http.StatusNotFound}, template: "/karst/v1/cloud-accounts/{cloudAccountId}/regions/{code}/enable",
+		},
+		{
+			// The generalized sibling of "create a cloud account
+			// credential" above -- proves /infrastructure-connections is
+			// wired and accepts a kubernetes-typed connection, which the
+			// legacy /cloud-accounts route refuses. Deep CRUD coverage
+			// (including a real discover call) stays at the unit level in
+			// infraconnections_test.go/kubernetes_test.go.
+			name: "create an infrastructure connection", method: http.MethodPost,
+			path: "/karst/v1/infrastructure-connections",
+			body: `{"type":"kubernetes","mode":"read_only","label":"test","secret":{"kubeconfig":"apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters:\n- name: c\n  cluster:\n    server: https://127.0.0.1:1\nusers:\n- name: u\n  user:\n    token: fake\ncontexts:\n- name: test\n  context:\n    cluster: c\n    user: u\n"}}`,
+			want: []int{http.StatusCreated}, template: "/karst/v1/infrastructure-connections",
+		},
+		{
+			// Same "unknown-*" 404 shape as the legacy delete case above.
+			name: "delete an infrastructure connection", method: http.MethodDelete,
+			path: "/karst/v1/infrastructure-connections/unknown-connection-id", body: "",
+			want: []int{http.StatusNotFound}, template: "/karst/v1/infrastructure-connections/{connectionId}",
 		},
 	}
 }
@@ -571,17 +589,17 @@ func consoleRouter(t *testing.T) *mux.Router {
 	if err != nil {
 		t.Fatalf("tutorial mode store: %v", err)
 	}
-	cloudAccountKey, err := crypt.GenerateKey()
+	infraConnectionKey, err := crypt.GenerateKey()
 	if err != nil {
-		t.Fatalf("cloud account key: %v", err)
+		t.Fatalf("infra connection key: %v", err)
 	}
-	cloudAccountEncrypt, err := crypt.NewFieldEncrypt(cloudAccountKey)
+	infraConnectionEncrypt, err := crypt.NewFieldEncrypt(infraConnectionKey)
 	if err != nil {
-		t.Fatalf("cloud account field encrypt: %v", err)
+		t.Fatalf("infra connection field encrypt: %v", err)
 	}
-	cloudAccountStore, err := cloudaccounts.NewStore(db, cloudAccountEncrypt)
+	infraConnectionStore, err := infraconnections.NewStore(db, infraConnectionEncrypt)
 	if err != nil {
-		t.Fatalf("cloud account store: %v", err)
+		t.Fatalf("infra connection store: %v", err)
 	}
 
 	permissionsManager := permissions.NewManager(s)
@@ -590,7 +608,7 @@ func consoleRouter(t *testing.T) *mux.Router {
 	router := mux.NewRouter()
 	karstapi.RegisterEndpoints(nodes, am, am, auditLog, policyStore, relayStore, turnStore,
 		bedrockStore, bedrockLog, am, permissionsManager, domainManager, nil, nil, "", knownEventsStore,
-		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, cloudAccountStore, router)
+		locationStore, groupLocationStore, controlPlaneLocationStore, am, regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
 	return router
 }
 

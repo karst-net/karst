@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-package cloudaccounts
+package infraconnections
 
 import (
 	"context"
@@ -90,7 +90,7 @@ func TestEnableLocalZoneRequiresAWS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal secret: %v", err)
 	}
-	created, err := s.Create(ctx, CreateRequest{Provider: ProviderGCP, Mode: ModeReadWrite, Secret: secret})
+	created, err := s.Create(ctx, CreateRequest{Type: TypeGCP, Mode: ModeReadWrite, Secret: secret})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

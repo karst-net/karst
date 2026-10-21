@@ -4,8 +4,12 @@
 // Package cloudcatalog is a static, hand-maintained table of approximate
 // coordinates for AWS/Azure/GCP regions and zones. None of the three
 // providers' own "list regions" APIs return a latitude/longitude -- that is
-// the gap this package fills, joined against whatever cloudaccounts.Discover
-// returns live from the provider.
+// the gap this package fills, joined against whatever
+// infraconnections.Discover returns live from the provider. There are no
+// entries for KindNamespace: a Kubernetes namespace has no catalog-knowable
+// coordinates, so infraconnections.Discover never calls this package's
+// Lookup for one -- the console falls back to the connection's own
+// operator-declared location instead.
 //
 // Coordinates are approximate (the metro area the region/zone is marketed
 // as being in, not a facility address) and this table is not claimed to be
@@ -24,6 +28,9 @@ const (
 	KindRegion    Kind = "region"
 	KindLocalZone Kind = "local_zone"
 	KindZone      Kind = "zone"
+	// KindNamespace is a Kubernetes namespace -- see the package doc
+	// comment for why it never has a catalog entry.
+	KindNamespace Kind = "namespace"
 )
 
 // Region is one catalog entry: a region or zone code with its approximate
