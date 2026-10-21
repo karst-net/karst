@@ -96,15 +96,18 @@ let firstRunCompleted = true;
 // Per-page "what is this" guidance text (GET/PUT /tutorial-mode). Defaults
 // to true, matching the real server's own default.
 let tutorialModeEnabled = true;
-// Admin-entered cloud credentials (ADR-0045 §6 addendum). Secrets are
-// accepted but never stored here beyond this request -- the mock has no
+// Admin-entered infrastructure connections (ADR-0045 §6 addenda). Secrets
+// are accepted but never stored here beyond this request -- the mock has no
 // encryption-at-rest story to fake, so it simply never echoes one back,
-// matching the real server's own CloudAccount response shape.
-let cloudAccounts = [];
-// Canned discovery results per provider, standing in for a live describe-
-// regions call -- just enough for the Authorized Locations cloud-account
-// picker to have something to choose from.
-const cloudAccountRegions = {
+// matching the real server's own InfrastructureConnection/CloudAccount
+// response shape. One shared backing array for both the deprecated
+// /cloud-accounts routes and the generalized /infrastructure-connections
+// ones, the same coupling the real server's one table has.
+let infraConnections = [];
+// Canned discovery results per connection type, standing in for a live
+// describe-regions/list-namespaces call -- just enough for the Authorized
+// Locations picker to have something to choose from.
+const discoveryFixtures = {
   aws: [
     { code: "us-east-1", name: "US East (N. Virginia)", kind: "region", lat: 38.9519, lon: -77.4480 },
     { code: "eu-west-1", name: "Europe (Ireland)", kind: "region", lat: 53.3498, lon: -6.2603 },
@@ -117,6 +120,12 @@ const cloudAccountRegions = {
   gcp: [
     { code: "us-central1", name: "Iowa", kind: "region", lat: 41.2619, lon: -95.8608 },
     { code: "europe-west1", name: "Belgium", kind: "region", lat: 50.8503, lon: 4.3517 },
+  ],
+  // Namespaces never carry coordinates -- the console falls back to the
+  // connection's own declared lat/lon (see settings.tsx/locations.tsx).
+  kubernetes: [
+    { code: "default", kind: "namespace" },
+    { code: "kube-system", kind: "namespace" },
   ],
 };
 let tokens = seedTokens();
@@ -709,29 +718,60 @@ const server = http.createServer((request, response) => {
     });
   }
 
-  // Cloud provider credentials (ADR-0045 §6 addendum) and the Authorized
-  // Locations cloud-account region picker they feed.
+  // Deprecated, preserved /cloud-accounts surface (ADR-0045 §6 addendum):
+  // still only ever sees aws/azure/gcp, filtering out any kubernetes-typed
+  // connection -- same compatibility posture as the real server's handlers.
   if (method === "GET" && karst === "/cloud-accounts") {
-    return json(response, 200, cloudAccounts.map(({ secret, ...rest }) => rest));
+    return json(response, 200, infraConnections.filter((item) => item.type !== "kubernetes").map(({ secret, type, ...rest }) => ({ ...rest, provider: type })));
   }
   if (method === "POST" && karst === "/cloud-accounts") {
     return readBody(request).then((entry) => {
       if (!["aws", "azure", "gcp"].includes(entry.provider)) return error(response, 422, "invalid_argument", "provider must be aws, azure, or gcp");
       if (!["read_only", "read_write"].includes(entry.mode)) return error(response, 422, "invalid_argument", "mode must be read_only or read_write");
       if (!entry.secret) return error(response, 422, "invalid_argument", "secret is required");
-      const account = { id: id("cloud-account"), provider: entry.provider, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(), secret: entry.secret };
-      cloudAccounts.push(account);
-      const { secret, ...rest } = account;
-      return json(response, 201, rest);
+      const connection = { id: id("infra-connection"), type: entry.provider, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(), secret: entry.secret };
+      infraConnections.push(connection);
+      const { secret, type, ...rest } = connection;
+      return json(response, 201, { ...rest, provider: type });
     });
   }
   const cloudAccountMatch = karst.match(/^\/cloud-accounts\/([^/]+)$/);
-  if (cloudAccountMatch && method === "DELETE") return remove(cloudAccounts, cloudAccountMatch[1], response);
+  if (cloudAccountMatch && method === "DELETE") return remove(infraConnections, cloudAccountMatch[1], response);
   const cloudAccountRegionsMatch = karst.match(/^\/cloud-accounts\/([^/]+)\/regions$/);
   if (cloudAccountRegionsMatch && method === "GET") {
-    const account = cloudAccounts.find((item) => item.id === cloudAccountRegionsMatch[1]);
-    if (!account) return error(response, 404, "not_found", "cloud account not found");
-    return json(response, 200, cloudAccountRegions[account.provider] ?? []);
+    const connection = infraConnections.find((item) => item.id === cloudAccountRegionsMatch[1] && item.type !== "kubernetes");
+    if (!connection) return error(response, 404, "not_found", "cloud account not found");
+    return json(response, 200, discoveryFixtures[connection.type] ?? []);
+  }
+
+  // Generalized /infrastructure-connections surface (AWS/Azure/GCP/
+  // Kubernetes) backing the console's Infrastructure Connections Settings
+  // section and the Authorized Locations picker.
+  if (method === "GET" && karst === "/infrastructure-connections") {
+    return json(response, 200, infraConnections.map(({ secret, ...rest }) => rest));
+  }
+  if (method === "POST" && karst === "/infrastructure-connections") {
+    return readBody(request).then((entry) => {
+      if (!["aws", "azure", "gcp", "kubernetes"].includes(entry.type)) return error(response, 422, "invalid_argument", "type must be aws, azure, gcp, or kubernetes");
+      if (!["read_only", "read_write"].includes(entry.mode)) return error(response, 422, "invalid_argument", "mode must be read_only or read_write");
+      if (!entry.secret) return error(response, 422, "invalid_argument", "secret is required");
+      if (entry.type === "kubernetes" && !entry.secret.kubeconfig) return error(response, 422, "invalid_argument", "secret.kubeconfig is required");
+      const connection = {
+        id: id("infra-connection"), type: entry.type, mode: entry.mode, label: entry.label ?? undefined, created_at: new Date().toISOString(),
+        secret: entry.secret, lat: entry.lat, lon: entry.lon, location_label: entry.location_label,
+      };
+      infraConnections.push(connection);
+      const { secret, ...rest } = connection;
+      return json(response, 201, rest);
+    });
+  }
+  const infraConnectionMatch = karst.match(/^\/infrastructure-connections\/([^/]+)$/);
+  if (infraConnectionMatch && method === "DELETE") return remove(infraConnections, infraConnectionMatch[1], response);
+  const infraConnectionResourcesMatch = karst.match(/^\/infrastructure-connections\/([^/]+)\/resources$/);
+  if (infraConnectionResourcesMatch && method === "GET") {
+    const connection = infraConnections.find((item) => item.id === infraConnectionResourcesMatch[1]);
+    if (!connection) return error(response, 404, "not_found", "infrastructure connection not found");
+    return json(response, 200, discoveryFixtures[connection.type] ?? []);
   }
 
   if (method === "GET" && karst === "/bedrock") return json(response, 200, bedrock);
