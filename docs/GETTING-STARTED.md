@@ -25,15 +25,23 @@ command. If you only want to see the datapath work,
 
 ## 1. What the pieces are, and where each one runs
 
-| Component | Binary | Language | Runs on | Listens on |
-|---|---|---|---|---|
-| Node agent | `karstd` | Rust | every machine on the network | UDP 51820 |
-| CLI | `karst` | Rust | beside `karstd` | a unix socket |
-| Relay | `karst-relay` | Rust | a host with a public address | TCP 443, UDP 3478 |
-| Coordination server | `karst-control` | Go | a host with a public address | TCP 33073 |
-| Admin console | static files | TypeScript | any web server | your choice |
-| User portal | static files | TypeScript | any web server | your choice |
-| Offline signer | `karst-bedrock` | Rust | a machine that never touches the server | nothing |
+The four conceptual families are defined in
+[ADR-0056](adr/0056-four-component-families.md). These are the programs and
+processes used by the current walkthrough:
+
+| Family | Programs/capabilities | Runs on | Current listeners |
+|---|---|---|---|
+| Node agent | `karstd`, `karst`, platform UI; optional Gateway for subnet/exit routes | Endpoint; supported forwarding host for Gateway | UDP 51820; local CLI socket |
+| Transport infrastructure | Relay: `karst-relay` (Ponor/AVEN reflector), optional coturn or external TURN backend | Public relay host and chosen backend | Ponor TCP 443; configured reflector UDP 3478; TURN backend ports separately configured |
+| Control services | `karst-control`, console and portal static files | Coordination host and web server | Control TCP 33073; web origin as configured |
+| Trust tooling | `karst-bedrock`, verifiers in consumers, optional scoped anchor signer | Authority devices; verifier/anchor hosts | Offline signer has no listener |
+
+Gateway and combined Relay configuration/API/UI consolidation is pending #404.
+TURN will be managed through an adapter, not embedded into `karst-relay`.
+Existing files, ports, flags and profiles below remain valid; enabling Gateway
+does not imply recipient consent to a default route. See
+[component architecture](COMPONENT-ARCHITECTURE.md) for migration and platform
+limits, and [Gateway operations](subnet-routers-and-exit-nodes.md) for forwarding.
 
 The default deployment co-locates the relay and the coordination server on one
 host — PLAN.md §5 — because a self-hoster who relays their own traffic is not
@@ -50,7 +58,7 @@ flowchart TB
     NodeB[karstd] -->|enroll, netmap| Control
     NodeA -->|relayed frames, then a direct path| Relay
     NodeB -->|relayed frames, then a direct path| Relay
-    NodeA <-->|PHREATIC<br/>UDP 51820| NodeB
+    NodeA <-->|PHREATIC UDP 51820| NodeB
 ```
 
 Two files tie the relay and the server together, and having only one of them

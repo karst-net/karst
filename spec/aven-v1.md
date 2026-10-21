@@ -1,6 +1,13 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # AVEN v1 — Path Discovery Protocol
 
+> **Component model:** [ADR-0056](../docs/adr/0056-four-component-families.md)
+> defines node agent, transport infrastructure, control services and trust
+> tooling. Gateway unifies subnet/exit behavior; Relay unifies Ponor/TURN modes
+> through a managed backend adapter. #404 tracks implementation consolidation.
+> This architecture does not rename this protocol or change its wire fields,
+> signed encodings, cryptography, or current configuration interfaces.
+
 - **Status:** Draft 0.1 — Phase 4 deliverable, not yet modeled, not externally reviewed
 - **Date:** 2026-08-14
 - **License:** CC-BY-4.0 with an irrevocable, royalty-free grant to implement

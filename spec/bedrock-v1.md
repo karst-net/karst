@@ -1,5 +1,12 @@
 # BEDROCK v1
 
+> **Component model:** [ADR-0056](../docs/adr/0056-four-component-families.md)
+> defines node agent, transport infrastructure, control services and trust
+> tooling. Gateway unifies subnet/exit behavior; Relay unifies Ponor/TURN modes
+> through a managed backend adapter. #404 tracks implementation consolidation.
+> This architecture does not rename this protocol or change its wire fields,
+> signed encodings, cryptography, or current configuration interfaces.
+
 Bedrock is Karst's network lock. Node identity keys are countersigned by a
 quorum of authority keys whose lineage traces to offline roots, and **nodes
 verify the chain themselves and refuse to peer outside it, regardless of what

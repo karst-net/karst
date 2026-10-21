@@ -1,11 +1,18 @@
 # ADR-0008: Relay infrastructure and funding model
 
-- **Status:** Accepted
+- **Status:** Accepted; component model partially superseded by ADR-0056
 - **Date:** 2026-08-09
 - **Deciders:** TBD
 - **Related:** ADR-0007 (licensing), PLAN.md §5, §6, §13 Q4
 
 ---
+
+> **Partially superseded by [ADR-0056](0056-four-component-families.md).**
+> Relay and TURN now form one conceptual Relay component with Ponor and TURN
+> modes; TURN uses a managed coturn/external-provider adapter. Sections below
+> retain the original decision history. Presence, provider compatibility,
+> co-location defaults, admission, funding and fleet restrictions remain in force.
+> Implementation consolidation is tracked in #404.
 
 ## Context
 

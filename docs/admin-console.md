@@ -10,6 +10,17 @@ Settings, a row's disabled-state explanation in Groups); this page collects
 it in one place an operator can read without hunting through the UI first,
 and is the place to update when a deferral is later picked up.
 
+## Component organization
+
+The target console model follows [ADR-0056](adr/0056-four-component-families.md):
+node agent, transport infrastructure, control services and trust tooling.
+Show subnet and exit routes under one node **Gateway** capability, retaining
+per-route consent/readiness. Show Ponor and TURN backend modes under one
+**Relay** service, retaining per-mode health, admission, capacity and credential
+expiry. Unified API/UI work is pending #404; existing views and endpoint names
+below describe current behavior. Console administration never conveys Bedrock
+membership-signing authority. See [migration contract](COMPONENT-ARCHITECTURE.md#migration-contract-for-404).
+
 ## Access policy
 
 The agreed [mesh domain and access model](mesh-domains.md) defines an explicit,

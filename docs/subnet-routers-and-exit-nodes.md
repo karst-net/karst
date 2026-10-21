@@ -1,6 +1,16 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
-# Subnet routers and exit nodes
+# Gateway operations: subnet access and exit egress
+
+<a id="subnet-routers-and-exit-nodes"></a>
+
+Gateway is one optional node-agent capability, with specific-prefix (subnet)
+and default-route (exit) behaviors. A node can provide both. See
+[ADR-0056](adr/0056-four-component-families.md) and
+[component architecture](COMPONENT-ARCHITECTURE.md) for the four-family model.
+The legacy document path, route kinds, status fields and `karst exit-node`
+commands remain valid. Unified configuration/API/UI work is pending #404;
+this reference describes the current implementation.
 
 Operations reference for the feature `plans/phase-6/06-subnet-routers-and-exit-nodes.md`
 implements: advertising an IPv4 or IPv6 subnet through one or more gateway
@@ -8,6 +18,25 @@ nodes, and offering `0.0.0.0/0`/`::/0` as a client-consented default route.
 For how it fits together end to end, see that plan; this document is what an
 operator needs once it is running — what a gateway host needs, what actually
 crosses the wire, how to recover it, and how to see its effective state.
+
+## Route ownership, DNS and platform scope
+
+Control approves/distributes route offers to authorized recipients; local
+agents enforce policy and select the effective Gateway. Default-route offers
+need durable local consent. A Gateway must not install its own advertised
+prefix back through its tunnel; recipients must preserve more-specific routes
+and control/peer/Relay escape paths. Do not reuse a consented route ID for a
+different destination or trust context during migration.
+
+Choosing an exit route alone does not select a private DNS resolver or promise
+that DNS takes the exit. Review KarstDNS mesh/split/global upstream settings,
+the upstream's reachability, and both address families. Mesh queries must retain
+their local handling; failed split DNS must not leak to a global resolver.
+
+The forwarding prerequisites below are for Linux. macOS recipient consent is
+described in §3. Supported client platforms and userspace networking do not
+imply support for hosting a forwarding Gateway; #404 must validate and publish
+the hosting/recipient platform matrix. Existing recovery timing is in §4.
 
 ## 1. Gateway host prerequisites
 

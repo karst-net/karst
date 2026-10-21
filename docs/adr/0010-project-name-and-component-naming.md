@@ -1,11 +1,18 @@
 # ADR-0010: Project name and component naming
 
-- **Status:** Accepted
+- **Status:** Accepted; component model partially superseded by ADR-0056
 - **Date:** 2026-08-09
 - **Deciders:** TBD
 - **Related:** ADR-0007 (licensing — makes trademark the sole defensive lever), ADR-0009 (prior-art review that surfaced the collision), PLAN.md §13 Q5
 
 ---
+
+> **Component naming partially superseded by [ADR-0056](0056-four-component-families.md).**
+> Ponor names the Karst relay protocol, not the whole combined Relay service.
+> Relay supports Ponor and TURN modes. Gateway names the node capability for
+> subnet and exit behavior. The four families are node agent, transport
+> infrastructure, control services and trust tooling. Historical names below
+> are retained; this does not rename binaries, crates or wire protocols.
 
 ## Context
 
