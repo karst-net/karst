@@ -34,7 +34,6 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	karstbilling "github.com/netbirdio/netbird/management/internals/karst/billing"
 	"github.com/netbirdio/netbird/management/internals/karst/channel"
-	"github.com/netbirdio/netbird/management/internals/karst/cloudaccounts"
 	"github.com/netbirdio/netbird/management/internals/karst/compliance"
 	"github.com/netbirdio/netbird/management/internals/karst/control"
 	"github.com/netbirdio/netbird/management/internals/karst/cplocation"
@@ -43,6 +42,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/karst/grouplocation"
 	"github.com/netbirdio/netbird/management/internals/karst/ha"
 	"github.com/netbirdio/netbird/management/internals/karst/identity"
+	"github.com/netbirdio/netbird/management/internals/karst/infraconnections"
 	"github.com/netbirdio/netbird/management/internals/karst/knownevents"
 	"github.com/netbirdio/netbird/management/internals/karst/locationreg"
 	"github.com/netbirdio/netbird/management/internals/karst/node"
@@ -401,24 +401,24 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	if err != nil {
 		return nil, fmt.Errorf("karst: tutorial mode store: %w", err)
 	}
-	// ADR-0045 §6 addendum: admin-entered AWS/Azure/GCP credentials for the
-	// Authorized Locations cloud-region picker. Requires the same
-	// data-store encryption key boot.go already threads into the main SQL
-	// store (s.Store()) -- cloudaccounts.NewStore refuses to store a
-	// credential unencrypted, so a deployment with no key configured simply
-	// cannot create one (Create returns ErrEncryptionRequired); List/
-	// Discover/Delete still work against anything created while a key was
-	// configured.
-	var cloudAccountEncrypt *crypt.FieldEncrypt
+	// ADR-0045 §6 addenda: admin-entered AWS/Azure/GCP/Kubernetes
+	// infrastructure connections for the Authorized Locations picker.
+	// Requires the same data-store encryption key boot.go already threads
+	// into the main SQL store (s.Store()) -- infraconnections.NewStore
+	// refuses to store a credential unencrypted, so a deployment with no
+	// key configured simply cannot create one (Create returns
+	// ErrEncryptionRequired); List/Discover/Delete still work against
+	// anything created while a key was configured.
+	var infraConnectionEncrypt *crypt.FieldEncrypt
 	if s.Config.DataStoreEncryptionKey != "" {
-		cloudAccountEncrypt, err = crypt.NewFieldEncrypt(s.Config.DataStoreEncryptionKey)
+		infraConnectionEncrypt, err = crypt.NewFieldEncrypt(s.Config.DataStoreEncryptionKey)
 		if err != nil {
-			return nil, fmt.Errorf("karst: cloud account field encryption: %w", err)
+			return nil, fmt.Errorf("karst: infrastructure connection field encryption: %w", err)
 		}
 	}
-	cloudAccountStore, err := cloudaccounts.NewStore(db, cloudAccountEncrypt)
+	infraConnectionStore, err := infraconnections.NewStore(db, infraConnectionEncrypt)
 	if err != nil {
-		return nil, fmt.Errorf("karst: cloud account store: %w", err)
+		return nil, fmt.Errorf("karst: infrastructure connection store: %w", err)
 	}
 	// Static relays remain a fallback for accounts that have not created an
 	// account-scoped registry. They are not copied into a global table at boot.
@@ -444,7 +444,7 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 		karstapi.RegisterRelayCapEndpoints(router, s.PermissionsManager(), billingStore, auditLog)
 		karstapi.RegisterPaymentEndpoints(router, s.PermissionsManager(), db, billingStore, auditLog, paddleClient != nil)
 		domainManager := meshdomainmanager.NewManager(s.Store(), s.AccountManager(), s.PermissionsManager())
-		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, cloudAccountStore, router)
+		karstapi.RegisterEndpoints(nodes, s.AccountManager(), s.AccountManager(), auditLog, policyStore, relayStore, turnStore, bedrockStore, bedrockLog, s.AccountManager(), s.PermissionsManager(), domainManager, tenancyStore, regionAllowStore, scalerAdvisorURL, knownEventsStore, locationStore, groupLocationStore, controlPlaneLocationStore, s.AccountManager(), regionAllowStore, ephemeralAnchorStore, routeTelemetryStore, scalingModeStore, firstRunStore, tutorialModeStore, infraConnectionStore, router)
 		relaytelemetry.RegisterEndpoints(router, relayStore)
 		relayusage.RegisterUploadEndpoint(router, usageRelayStore)
 		karstapi.RegisterRelayCreditEndpoint(router, usageRelayStore, billingStore)
