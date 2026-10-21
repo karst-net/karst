@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright the Karst contributors.
 
-// Package infraconnections stores admin-entered AWS/Azure/GCP/Kubernetes
-// credentials for the console's Settings page, and uses them to discover an
-// account's enabled regions/local-zones/namespaces for the Authorized
-// Locations picker (cloudcatalog supplies the coordinates the cloud
-// providers' own APIs don't return; a Kubernetes connection may instead
-// carry an operator-declared point, since a private cluster has no
-// provider-supplied geography).
+// Package infraconnections stores admin-entered AWS/Azure/GCP/Kubernetes/
+// Nomad credentials for the console's Settings page, and uses them to
+// discover an account's enabled regions/local-zones/namespaces/datacenters
+// for the Authorized Locations picker (cloudcatalog supplies the
+// coordinates the cloud providers' own APIs don't return; a Kubernetes or
+// Nomad connection may instead carry an operator-declared point, since a
+// private cluster/scheduler environment has no provider-supplied
+// geography).
 //
 // This package was, until the "Infrastructure Connections" rename (issue
 // #406), named cloudaccounts and covered only the three cloud providers. The
@@ -22,10 +23,11 @@
 // credentials as a side effect of this feature... A compromise of the
 // control plane must not yield the ability to spend the operator's money."
 // This package is a deliberate, scoped amendment to that boundary -- see
-// docs/adr/0045-cost-aware-geographic-scaling-across-providers.md's two
-// addenda (2026-10-19 for AWS/Azure/GCP, 2026-10-21 for the Infrastructure
-// Connections rename and Kubernetes). Three consequences follow directly
-// from the ADR text:
+// docs/adr/0045-cost-aware-geographic-scaling-across-providers.md's
+// addenda: 2026-10-19 for AWS/Azure/GCP, 2026-10-20 for AWS's
+// EnableLocalZone, 2026-10-21 (two addenda) for the Infrastructure
+// Connections rename plus Kubernetes, then Nomad. Three consequences
+// follow directly from the ADR text:
 //
 //   - Mode exists so an operator can hand over read-only (status/discovery
 //     only, can never place an order or create a workload) credentials and
@@ -78,13 +80,14 @@ var (
 
 // Type identifies what kind of infrastructure a connection authenticates
 // to. The legacy /cloud-accounts surface only ever sees the first three --
-// TypeKubernetes can only be created/listed/discovered through
+// TypeKubernetes/TypeNomad can only be created/listed/discovered through
 // /infrastructure-connections (see LegacyCreateRequest.toCreateRequest and
 // the handler-level filtering in package karstapi).
 //
 // Kept as an explicit case list (here, in Valid, and in every switch over
-// Type in this package) rather than a set, so a future TypeNomad is a
-// small, local diff rather than a design change.
+// Type in this package) rather than a set, so adding a type is a small,
+// local diff rather than a design change -- TypeNomad is the second time
+// this has paid off.
 type Type string
 
 const (
@@ -92,10 +95,11 @@ const (
 	TypeAzure      Type = "azure"
 	TypeGCP        Type = "gcp"
 	TypeKubernetes Type = "kubernetes"
+	TypeNomad      Type = "nomad"
 )
 
 func (t Type) Valid() bool {
-	return t == TypeAWS || t == TypeAzure || t == TypeGCP || t == TypeKubernetes
+	return t == TypeAWS || t == TypeAzure || t == TypeGCP || t == TypeKubernetes || t == TypeNomad
 }
 
 // isLegacy reports whether t is one of the three types the /cloud-accounts
@@ -246,7 +250,7 @@ type CreateRequest struct {
 
 func (r CreateRequest) validate() error {
 	if !r.Type.Valid() {
-		return fmt.Errorf("type must be one of %q, %q, %q, %q", TypeAWS, TypeAzure, TypeGCP, TypeKubernetes)
+		return fmt.Errorf("type must be one of %q, %q, %q, %q, %q", TypeAWS, TypeAzure, TypeGCP, TypeKubernetes, TypeNomad)
 	}
 	if !r.Mode.Valid() {
 		return fmt.Errorf("mode must be %q or %q", ModeReadOnly, ModeReadWrite)

@@ -38,12 +38,12 @@ type DiscoveredRegion struct {
 }
 
 // DiscoveredResource is the generalized /infrastructure-connections/{id}/
-// resources shape -- a region/local zone/zone for a cloud connection, or a
-// namespace for a Kubernetes one. Namespace entries never carry
-// coordinates (no cloudcatalog entry exists for them) or a meaningful
-// Enabled/ParentRegion (Kubernetes has no opt-in-zone concept); the console
-// falls back to the connection's own declared Lat/Lon/LocationLabel
-// instead.
+// resources shape -- a region/local zone/zone for a cloud connection, a
+// namespace for a Kubernetes one, or a datacenter for a Nomad one.
+// Namespace and datacenter entries never carry coordinates (no cloudcatalog
+// entry exists for them) or a meaningful Enabled/ParentRegion (neither
+// Kubernetes nor Nomad has an opt-in-zone concept); the console falls back
+// to the connection's own declared Lat/Lon/LocationLabel instead.
 type DiscoveredResource struct {
 	Code         string            `json:"code"`
 	Name         string            `json:"name,omitempty"`
@@ -86,6 +86,8 @@ func validateSecretShape(typ Type, raw []byte) error {
 		return validateGCPSecret(raw)
 	case TypeKubernetes:
 		return validateKubernetesSecret(raw)
+	case TypeNomad:
+		return validateNomadSecret(raw)
 	default:
 		return fmt.Errorf("unknown type %q", typ)
 	}
@@ -145,6 +147,8 @@ func (s *Store) Discover(ctx context.Context, id string) ([]DiscoveredResource, 
 		out = toResources(regions)
 	case TypeKubernetes:
 		out, discoverErr = discoverKubernetes(ctx, account.Secret)
+	case TypeNomad:
+		out, discoverErr = discoverNomad(ctx, account.Secret)
 	default:
 		discoverErr = fmt.Errorf("infra connections: unknown type %q", account.Type)
 	}

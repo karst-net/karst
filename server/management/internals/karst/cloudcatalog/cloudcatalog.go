@@ -6,10 +6,11 @@
 // providers' own "list regions" APIs return a latitude/longitude -- that is
 // the gap this package fills, joined against whatever
 // infraconnections.Discover returns live from the provider. There are no
-// entries for KindNamespace: a Kubernetes namespace has no catalog-knowable
-// coordinates, so infraconnections.Discover never calls this package's
-// Lookup for one -- the console falls back to the connection's own
-// operator-declared location instead.
+// entries for KindNamespace or KindDatacenter: a Kubernetes namespace or a
+// Nomad datacenter has no catalog-knowable coordinates, so
+// infraconnections.Discover never calls this package's Lookup for either --
+// the console falls back to the connection's own operator-declared
+// location instead.
 //
 // Coordinates are approximate (the metro area the region/zone is marketed
 // as being in, not a facility address) and this table is not claimed to be
@@ -31,6 +32,11 @@ const (
 	// KindNamespace is a Kubernetes namespace -- see the package doc
 	// comment for why it never has a catalog entry.
 	KindNamespace Kind = "namespace"
+	// KindDatacenter is a Nomad datacenter -- see the package doc comment
+	// for why it never has a catalog entry. Distinct from a Nomad region,
+	// which is a scheduler/control concept Nomad connections configure
+	// directly rather than discover a list of.
+	KindDatacenter Kind = "datacenter"
 )
 
 // Region is one catalog entry: a region or zone code with its approximate
