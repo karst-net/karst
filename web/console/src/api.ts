@@ -3,7 +3,7 @@
 
 import type { EnrollmentMetadata, EnrollmentGrant } from "@karst-net/ui";
 
-import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, CloudAccount, CloudAccountCreate, DeviceUsageReport, DiscoveredRegion, FirstRunState, GroupLocation, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
+import type { AllowedRegion, AuditPage, BedrockStatus, BillingPayment, BillingPaymentNoticeFeed, DeviceUsageReport, DiscoveredResource, FirstRunState, GroupLocation, InfrastructureConnection, InfrastructureConnectionCreate, Location as NocLocation, LocationCreate, NocComponent, NodePage, PolicyPreview, PolicyValidation, PolicyVersion, PolicyVersionPage, PostureAggregate, Relay, RelayAlertFeed, RelayCap, RelayCapDraft, RelayLocation, RelayUsageReport, ScalerRecommendations, SessionPage, TurnServer, TutorialMode } from "@karst-net/api-client";
 import { authenticatedFetch } from "./auth";
 
 const base = "/api/karst/v1";
@@ -341,10 +341,10 @@ export const api = {
   tutorialMode: () => request<TutorialMode>("/tutorial-mode"),
   setTutorialMode: (enabled: boolean) => request<TutorialMode>("/tutorial-mode", { method: "PUT", body: body({ enabled }) }),
 
-  // ── cloud provider credentials (ADR-0045 §6 addendum) ───────────────────────
-  // Secrets are never returned by the server -- see cloudaccounts.Response.
-  cloudAccounts: () => request<CloudAccount[]>("/cloud-accounts"),
-  createCloudAccount: (entry: CloudAccountCreate) => request<CloudAccount>("/cloud-accounts", { method: "POST", body: body(entry) }),
-  deleteCloudAccount: (id: string) => request<void>(`/cloud-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  cloudAccountRegions: (id: string) => request<DiscoveredRegion[]>(`/cloud-accounts/${encodeURIComponent(id)}/regions`),
+  // ── infrastructure connections (ADR-0045 §6 addenda) ────────────────────────
+  // Secrets are never returned by the server -- see infraconnections.Response.
+  infrastructureConnections: () => request<InfrastructureConnection[]>("/infrastructure-connections"),
+  createInfrastructureConnection: (entry: InfrastructureConnectionCreate) => request<InfrastructureConnection>("/infrastructure-connections", { method: "POST", body: body(entry) }),
+  deleteInfrastructureConnection: (id: string) => request<void>(`/infrastructure-connections/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  infrastructureConnectionResources: (id: string) => request<DiscoveredResource[]>(`/infrastructure-connections/${encodeURIComponent(id)}/resources`),
 };

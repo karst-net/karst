@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { Dialog, EmptyState } from "@karst-net/ui";
-import type { DiscoveredRegion, Location } from "@karst-net/api-client";
+import type { DiscoveredResource, Location } from "@karst-net/api-client";
 import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 import { TutorialHint } from "../tutorial";
@@ -11,24 +11,24 @@ import { TutorialHint } from "../tutorial";
 type Draft = { lat: string; lon: string; label: string; kind: string };
 const blank: Draft = { lat: "", lon: "", label: "", kind: "" };
 
-type Source = "manual" | "cloud";
+type Source = "manual" | "connection";
 
 export function Locations() {
   const resource = useResource(api.locations);
   const { message, setMessage, run } = useMutation(resource.reload);
   const [draft, setDraft] = useState<Draft>();
   const [source, setSource] = useState<Source>("manual");
-  const cloudAccounts = useResource(api.cloudAccounts);
-  const [cloudAccountId, setCloudAccountId] = useState("");
-  const regions = useResource(() => cloudAccountId ? api.cloudAccountRegions(cloudAccountId) : Promise.resolve([] as DiscoveredRegion[]), [cloudAccountId]);
-  const [regionCode, setRegionCode] = useState("");
+  const infraConnections = useResource(api.infrastructureConnections);
+  const [connectionId, setConnectionId] = useState("");
+  const resources = useResource(() => connectionId ? api.infrastructureConnectionResources(connectionId) : Promise.resolve([] as DiscoveredResource[]), [connectionId]);
+  const [resourceCode, setResourceCode] = useState("");
 
   if (resource.loading) return <p>Loading authorized locations…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const locations = resource.value ?? [];
-  const cloudAccountsAvailable = (cloudAccounts.value ?? []).length > 0;
+  const connectionsAvailable = (infraConnections.value ?? []).length > 0;
 
-  const openDialog = () => { setDraft(blank); setSource("manual"); setCloudAccountId(""); setRegionCode(""); };
+  const openDialog = () => { setDraft(blank); setSource("manual"); setConnectionId(""); setResourceCode(""); };
 
   const add = async () => {
     if (!draft) return;
@@ -38,13 +38,21 @@ export function Locations() {
     const entry = { lat, lon, label: draft.label.trim() || undefined, kind: draft.kind.trim() || undefined };
     if (await run(() => api.addLocation(entry), `${entry.label || `${lat}, ${lon}`} was added to the authorized locations registry.`)) setDraft(undefined);
   };
-  const addFromCloud = async () => {
-    const account = (cloudAccounts.value ?? []).find((a) => a.id === cloudAccountId);
-    const region = (regions.value ?? []).find((r) => r.code === regionCode);
-    if (!account || !region) { setMessage("Choose a cloud account and a region."); return; }
-    if (region.lat === undefined || region.lon === undefined) { setMessage(`${region.name || region.code} has no known coordinates yet — add it to the cloud catalog, or declare it manually.`); return; }
-    const label = region.name ? `${region.name} (${region.code})` : region.code;
-    const entry = { lat: region.lat, lon: region.lon, label, kind: `${account.provider}-${region.kind}` };
+  const addFromConnection = async () => {
+    const connection = (infraConnections.value ?? []).find((c) => c.id === connectionId);
+    const item = (resources.value ?? []).find((r) => r.code === resourceCode);
+    if (!connection || !item) { setMessage("Choose an infrastructure connection and a region or namespace."); return; }
+    // A namespace has no coordinates of its own -- fall back to the
+    // connection's own operator-declared location, if any (see Settings).
+    const lat = item.lat ?? connection.lat;
+    const lon = item.lon ?? connection.lon;
+    if (lat === undefined || lon === undefined) {
+      const subject = item.kind === "namespace" ? "This connection" : (item.name || item.code);
+      setMessage(`${subject} has no known coordinates yet — ${item.kind === "namespace" ? "declare the connection's location in Settings" : "add it to the cloud catalog"}, or declare it manually.`);
+      return;
+    }
+    const label = item.name ? `${item.name} (${item.code})` : item.code;
+    const entry = { lat, lon, label, kind: `${connection.type}-${item.kind}` };
     if (await run(() => api.addLocation(entry), `${label} was added to the authorized locations registry.`)) setDraft(undefined);
   };
   const remove = (location: Location) => {
@@ -72,8 +80,8 @@ export function Locations() {
       <fieldset>
         <label><input type="radio" name="location-source" checked={source === "manual"} onChange={() => setSource("manual")} /> Manual coordinates</label>
         <label>
-          <input type="radio" name="location-source" checked={source === "cloud"} disabled={!cloudAccountsAvailable} onChange={() => setSource("cloud")} /> From a cloud account
-          {!cloudAccountsAvailable && <span className="lede"> (add one in Settings first)</span>}
+          <input type="radio" name="location-source" checked={source === "connection"} disabled={!connectionsAvailable} onChange={() => setSource("connection")} /> From an infrastructure connection
+          {!connectionsAvailable && <span className="lede"> (add one in Settings first)</span>}
         </label>
       </fieldset>
 
@@ -86,20 +94,20 @@ export function Locations() {
           <p className="lede">Kind is a free-text tag for your own reference — "datacenter", "aws-region", "aws-local-zone", or anything else. Not validated against any fixed list.</p>
           <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add location</button></div>
         </form>
-        : <form onSubmit={(event) => { event.preventDefault(); void addFromCloud(); }}>
-          <label>Cloud account<select aria-label="Cloud account" value={cloudAccountId} onChange={(event) => { setCloudAccountId(event.target.value); setRegionCode(""); }}>
+        : <form onSubmit={(event) => { event.preventDefault(); void addFromConnection(); }}>
+          <label>Infrastructure connection<select aria-label="Infrastructure connection" value={connectionId} onChange={(event) => { setConnectionId(event.target.value); setResourceCode(""); }}>
             <option value="">Choose one…</option>
-            {(cloudAccounts.value ?? []).map((a) => <option key={a.id} value={a.id}>{a.label || a.provider} ({a.provider.toUpperCase()})</option>)}
+            {(infraConnections.value ?? []).map((c) => <option key={c.id} value={c.id}>{c.label || c.type} ({c.type.toUpperCase()})</option>)}
           </select></label>
-          {cloudAccountId && (regions.loading
-            ? <p>Loading regions…</p>
-            : regions.error
-              ? <Failure message={regions.error} retry={regions.reload} />
-              : <label>Region / zone<select aria-label="Cloud region or zone" value={regionCode} onChange={(event) => setRegionCode(event.target.value)}>
+          {connectionId && (resources.loading
+            ? <p>Loading regions/namespaces…</p>
+            : resources.error
+              ? <Failure message={resources.error} retry={resources.reload} />
+              : <label>Region, zone, or namespace<select aria-label="Region, zone, or namespace" value={resourceCode} onChange={(event) => setResourceCode(event.target.value)}>
                 <option value="">Choose one…</option>
-                {(regions.value ?? []).map((r) => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.lat === undefined ? " — no coordinates yet" : ""}</option>)}
+                {(resources.value ?? []).map((r) => <option key={r.code} value={r.code}>{r.name ? `${r.name} (${r.code})` : r.code}{r.lat === undefined ? " — no coordinates yet" : ""}</option>)}
               </select></label>)}
-          <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!cloudAccountId || !regionCode}>Add location</button></div>
+          <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!connectionId || !resourceCode}>Add location</button></div>
         </form>}
     </Dialog>
   </section>;

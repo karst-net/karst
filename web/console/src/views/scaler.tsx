@@ -50,7 +50,7 @@ export function Scaler() {
       </Rows>}
 
     <h3>Allowed regions</h3>
-    <TutorialHint>ADR-0045 §4c's deployment-wide region allowlist: what gets projected into every node's netmap, and which §4b anchor-RTT demand reports are recorded rather than dropped. <strong>This is not the same list karst-scaler's own driver reads to decide where it may actually provision capacity</strong> — that list lives in a separate, operator-maintained file on the scaler host, deliberately kept out of the control plane's trust domain. Adding a region here does not by itself authorize any new spend there, and it is unrelated to the read-only cloud credentials configured in Settings for Authorized Locations (ADR-0045 §6 addendum) — those can list regions but never provision anything either.</TutorialHint>
+    <TutorialHint>ADR-0045 §4c's deployment-wide region allowlist: what gets projected into every node's netmap, and which §4b anchor-RTT demand reports are recorded rather than dropped. <strong>This is not the same list karst-scaler's own driver reads to decide where it may actually provision capacity</strong> — that list lives in a separate, operator-maintained file on the scaler host, deliberately kept out of the control plane's trust domain. Adding a region here does not by itself authorize any new spend there, and it is unrelated to the read-only infrastructure connections configured in Settings for Authorized Locations (ADR-0045 §6 addenda) — those can discover regions/namespaces but never provision anything either.</TutorialHint>
     {regions.loading ? <p>Loading allowed regions…</p>
       : regions.error ? <Failure message={regions.error} retry={regions.reload} />
       : <>
