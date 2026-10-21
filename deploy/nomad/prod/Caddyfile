@@ -1,0 +1,64 @@
+# Same content as ../../compose/prod/Caddyfile -- the `karst` Docker network
+# (see karst.nomad.hcl's comments) gives control/keycloak the identical
+# service-name DNS compose's own bridge network does, so this file needed no
+# changes at all beyond living in this directory. Keep the two in sync.
+#
+# Everything this deployment exposes externally shares this one port: the
+# console's static assets, its REST API, and the gRPC control channel node
+# agents and the relay dial. karst-control itself is not published
+# externally at all -- only Caddy is, so this file is the actual edge.
+{
+	auto_https disable_redirects
+	default_sni {$KARST_CONSOLE_HOST}
+}
+
+https://{$KARST_CONSOLE_HOST}:33073 {
+	tls internal
+
+	encode gzip
+
+	@auth path /auth*
+	handle @auth {
+		reverse_proxy keycloak:8080
+	}
+
+	# karst-control multiplexes gRPC and REST on the same plaintext
+	# listener; the backend scheme is h2c, not h2/TLS.
+	@grpc path /management.*
+	handle @grpc {
+		reverse_proxy h2c://control:33073
+	}
+
+	@api path /api* /karst*
+	handle @api {
+		reverse_proxy control:33073
+	}
+
+	@releases path /releases /releases/*
+	handle @releases {
+		uri strip_prefix /releases
+		root * /srv/releases
+		file_server
+	}
+
+	@portal path /portal /portal/*
+	handle @portal {
+		uri strip_prefix /portal
+		root * /srv/portal
+		try_files {path} /index.html
+		file_server
+	}
+
+	@config path /config.json
+	handle @config {
+		header Cache-Control "no-cache"
+		root * /etc/karst
+		file_server
+	}
+
+	handle {
+		root * /srv/console
+		try_files {path} /index.html
+		file_server
+	}
+}
