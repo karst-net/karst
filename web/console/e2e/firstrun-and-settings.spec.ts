@@ -23,6 +23,8 @@ test("a brand-new account sees only the first-run wizard, with no sidebar nav", 
   await page.getByRole("button", { name: "Skip for now" }).first().click();
   await expect(page.getByRole("heading", { name: "2. Initial groups" })).toBeVisible();
   await page.getByRole("button", { name: "Skip for now" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "3. Authorized locations" })).toBeVisible();
   await page.getByRole("button", { name: "Finish setup" }).click();
 
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
@@ -46,7 +48,7 @@ test("guidance text can be toggled off and on from Settings", async ({ page }) =
 });
 
 test("an infrastructure connection feeds the Authorized Locations region picker", async ({ page }) => {
-  await page.goto("/#/settings");
+  await page.goto("/#/connections");
   await page.getByRole("button", { name: "Add infrastructure connection" }).click();
   await expect(page.getByRole("heading", { name: "Add infrastructure connection" })).toBeVisible();
   await page.getByLabel("Connection type").selectOption("aws");
@@ -59,7 +61,6 @@ test("an infrastructure connection feeds the Authorized Locations region picker"
 
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
-  await page.getByRole("radio", { name: "From an infrastructure connection" }).check();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-aws (AWS)" });
   await page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" }).selectOption({ label: "US East (N. Virginia) (us-east-1)" });
   await page.getByRole("button", { name: "Add location" }).click();
@@ -74,12 +75,12 @@ test("an infrastructure connection feeds the Authorized Locations region picker"
   // mock process without accumulating rows across runs.
   page.on("dialog", (dialog) => void dialog.accept());
   await page.getByRole("row", { name: /US East \(N\. Virginia\)/ }).getByRole("button", { name: "Remove" }).click();
-  await page.goto("/#/settings");
+  await page.goto("/#/connections");
   await page.getByRole("row", { name: /e2e-aws/ }).getByRole("button", { name: "Remove" }).click();
 });
 
-test("a Kubernetes connection's namespaces feed the Authorized Locations picker as resources with no coordinates", async ({ page }) => {
-  await page.goto("/#/settings");
+test("a Kubernetes connection's namespaces require inline coordinates in the Authorized Locations picker", async ({ page }) => {
+  await page.goto("/#/connections");
   await page.getByRole("button", { name: "Add infrastructure connection" }).click();
   await page.getByLabel("Connection type").selectOption("kubernetes");
   await page.getByLabel("Kubeconfig").fill("apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters: []\nusers: []\ncontexts: []\n");
@@ -90,24 +91,29 @@ test("a Kubernetes connection's namespaces feed the Authorized Locations picker 
 
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
-  await page.getByRole("radio", { name: "From an infrastructure connection" }).check();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-k8s (KUBERNETES)" });
   const namespaceSelect = page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" });
-  await expect(namespaceSelect.locator("option", { hasText: "default — no coordinates yet" })).toHaveCount(1);
-  await namespaceSelect.selectOption({ label: "default — no coordinates yet" });
-  // No declared location on this connection and no catalog entry for a
-  // namespace -- the "Add location" submit should surface that rather than
-  // silently adding a coordinate-less row.
+  await expect(namespaceSelect.locator("option", { hasText: "default" })).toHaveCount(1);
+  await namespaceSelect.selectOption({ label: "default" });
+  // Kubernetes has no provider-supplied geography and this connection never
+  // declared one in Settings -- the dialog should ask for coordinates
+  // inline rather than blocking the add.
+  await expect(page.getByText("Kubernetes clusters have no provider-supplied geography", { exact: false })).toBeVisible();
+  await page.getByLabel("Location latitude").fill("51.5072");
+  await page.getByLabel("Location longitude").fill("-0.1276");
   await page.getByRole("button", { name: "Add location" }).click();
-  await expect(page.getByText("no known coordinates yet", { exact: false })).toBeVisible();
+  await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("cell", { name: "default" })).toBeVisible();
 
-  await page.goto("/#/settings");
   page.on("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("row", { name: /default/ }).getByRole("button", { name: "Remove" }).click();
+  await page.goto("/#/connections");
   await page.getByRole("row", { name: /e2e-k8s/ }).getByRole("button", { name: "Remove" }).click();
 });
 
-test("a Nomad connection's datacenters feed the Authorized Locations picker as resources with no coordinates", async ({ page }) => {
-  await page.goto("/#/settings");
+test("a Nomad connection's datacenters require inline coordinates in the Authorized Locations picker", async ({ page }) => {
+  await page.goto("/#/connections");
   await page.getByRole("button", { name: "Add infrastructure connection" }).click();
   await page.getByLabel("Connection type").selectOption("nomad");
   await page.getByLabel("Nomad address").fill("https://nomad.internal:4646");
@@ -118,18 +124,23 @@ test("a Nomad connection's datacenters feed the Authorized Locations picker as r
 
   await page.goto("/#/locations");
   await page.getByRole("button", { name: "Add authorized location" }).click();
-  await page.getByRole("radio", { name: "From an infrastructure connection" }).check();
   await page.getByRole("combobox", { name: "Infrastructure connection" }).selectOption({ label: "e2e-nomad (NOMAD)" });
   const datacenterSelect = page.getByRole("combobox", { name: "Region, zone, namespace, or datacenter" });
-  await expect(datacenterSelect.locator("option", { hasText: "dc1 — no coordinates yet" })).toHaveCount(1);
-  await datacenterSelect.selectOption({ label: "dc1 — no coordinates yet" });
-  // No declared location on this connection and no catalog entry for a
-  // datacenter -- the "Add location" submit should surface that rather
-  // than silently adding a coordinate-less row.
+  await expect(datacenterSelect.locator("option", { hasText: "dc1" })).toHaveCount(1);
+  await datacenterSelect.selectOption({ label: "dc1" });
+  // Nomad has no provider-supplied geography and this connection never
+  // declared one in Settings -- the dialog should ask for coordinates
+  // inline rather than blocking the add.
+  await expect(page.getByText("Nomad clusters have no provider-supplied geography", { exact: false })).toBeVisible();
+  await page.getByLabel("Location latitude").fill("40.7128");
+  await page.getByLabel("Location longitude").fill("-74.0060");
   await page.getByRole("button", { name: "Add location" }).click();
-  await expect(page.getByText("no known coordinates yet", { exact: false })).toBeVisible();
+  await expect(page.getByText("was added to the authorized locations registry.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("cell", { name: "dc1" })).toBeVisible();
 
-  await page.goto("/#/settings");
   page.on("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("row", { name: /dc1/ }).getByRole("button", { name: "Remove" }).click();
+  await page.goto("/#/connections");
   await page.getByRole("row", { name: /e2e-nomad/ }).getByRole("button", { name: "Remove" }).click();
 });

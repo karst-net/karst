@@ -5,8 +5,10 @@ import { useState } from "react";
 import { api } from "../api";
 import { Failure } from "../common";
 import { RootRenameDialog } from "./domains";
+import { InfrastructureConnections } from "./infrastructure-connections";
+import { Locations } from "./locations";
 
-type Step = "domain" | "groups";
+type Step = "domain" | "groups" | "locations";
 
 /** The console's actual first-run onboarding gate -- not to be confused
  *  with the "Add device" nav item (the old "setup" route), which is the
@@ -48,10 +50,22 @@ export function FirstRunWizard({ onComplete }: { onComplete: () => void }) {
           {step === "groups" && domainSet && <p role="status">Default domain set.</p>}
         </li>
 
-        {step === "groups" && <li aria-current="step">
+        {(step === "groups" || step === "locations") && <li aria-current={step === "groups" ? "step" : undefined}>
           <h2>2. Initial groups</h2>
           <p className="lede">Groups are how access policy, routes, and DNS settings target a set of devices or users. Create a few to start with — "Admins" and "Engineering" are common choices, but name them however your organization thinks about itself.</p>
-          <InitialGroups />
+          {step === "groups" && <>
+            <InitialGroups />
+            <div className="actions">
+              <button className="primary" onClick={() => setStep("locations")}>Continue</button>
+            </div>
+          </>}
+        </li>}
+
+        {step === "locations" && <li aria-current="step">
+          <h2>3. Authorized locations</h2>
+          <p className="lede">Relays and TURN servers are placed at an authorized location, so little else is useful until at least one exists. Add an infrastructure connection below (an AWS, Azure, or GCP account, a Kubernetes cluster, or a Nomad cluster) and at least one location from it — or finish setup now and do this later from Infrastructure Connections and Authorized Locations in the sidebar.</p>
+          <InfrastructureConnections />
+          <Locations />
           <div className="actions">
             <button className="primary" onClick={() => void finish()} disabled={finishing}>{finishing ? "Finishing…" : "Finish setup"}</button>
           </div>
