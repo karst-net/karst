@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -63,8 +64,9 @@ func (Service) TableName() string { return "karst_relay_services" }
 // diagnosis instead of silently reassigning the service to a different backend.
 type View struct {
 	Service
-	PonorPresent bool `json:"ponor_present"`
-	TurnPresent  bool `json:"turn_present"`
+	PonorPresent bool        `json:"ponor_present"`
+	TurnPresent  bool        `json:"turn_present"`
+	TurnHealth   *TurnHealth `gorm:"-" json:"turn_health,omitempty"`
 }
 
 type Store struct{ db *gorm.DB }
@@ -73,7 +75,7 @@ func NewStore(db *gorm.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("relay service: nil database")
 	}
-	if err := db.AutoMigrate(&Service{}, &Publication{}); err != nil {
+	if err := db.AutoMigrate(&Service{}, &Publication{}, &turnObservation{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -164,7 +166,21 @@ func (s *Store) List(ctx context.Context) ([]View, error) {
 		Joins("LEFT JOIN karst_relays AS ponor ON ponor.account_id = service.account_id AND ponor.id = service.ponor_id").
 		Joins("LEFT JOIN karst_turn_servers AS turn_backend ON turn_backend.account_id = service.account_id AND turn_backend.id = service.turn_id").
 		Where("service.account_id = ?", account).Order("service.id").Scan(&views).Error
-	return views, err
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	for index := range views {
+		if views[index].TurnID == "" {
+			continue
+		}
+		health, err := s.turnHealth(ctx, account, views[index].TurnID, now)
+		if err != nil {
+			return nil, err
+		}
+		views[index].TurnHealth = &health
+	}
+	return views, nil
 }
 
 // Delete removes only the association. In particular it cannot stop an

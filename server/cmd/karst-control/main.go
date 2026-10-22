@@ -36,8 +36,8 @@ import (
 	"github.com/netbirdio/netbird/management/cmd"
 	"github.com/netbirdio/netbird/management/internals/karst/bedrock"
 	"github.com/netbirdio/netbird/management/internals/karst/bootstrap"
-	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/ephemeralanchor"
+	"github.com/netbirdio/netbird/management/internals/karst/policy"
 	"github.com/netbirdio/netbird/management/internals/karst/regionallow"
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/roster"
@@ -294,6 +294,7 @@ func main() {
 			// Karst node, which is harder to diagnose than not starting.
 			log.Fatalf("karst: cannot install the control service: %v", err)
 		}
+		k.RelayServices.StartHealthWorker(ctx, turnMinter)
 		startRosterRefresher(ctx, k)
 		writeBootstrapKey(ctx, s.AccountManager())
 		startBedrockAnchorScheduler(ctx, k)

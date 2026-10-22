@@ -116,7 +116,9 @@ account-local Ponor/TURN links and backend operator declarations. Its per-mode
 presence fields describe registry availability, not runtime health. Legacy
 credential minting and wire projections remain in use. Operators can preview
 and explicitly enable service-based publication, or retain legacy registry
-publication. Runtime backend management and health remain pending. The Relay console groups
+publication. A bounded adapter probes TURN allocation readiness from control and exposes
+fresh/stale results independently of Ponor admission. Runtime backend process
+management and full transport-path verification remain pending. The Relay console groups
 service associations and existing Ponor/TURN backend controls in one view.
 
 ### Current transport limits

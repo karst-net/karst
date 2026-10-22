@@ -1478,6 +1478,18 @@ components:
           properties:
             ponor_present: {type: boolean, description: Referenced Ponor registry entry exists in this account; not a health result.}
             turn_present: {type: boolean, description: Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.}
+            turn_health: {$ref: '#/components/schemas/RelayTurnHealth'}
+    RelayTurnHealth:
+      type: object
+      required: [source, state]
+      additionalProperties: false
+      description: Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
+      properties:
+        source: {type: string, enum: [control_allocation_probe]}
+        state: {type: string, enum: [unknown, ready, denied, unreachable, timeout, canceled, tls_failed, unsupported, credentials_expired, credentials_unavailable, stale]}
+        last_result: {type: string}
+        observed_at: {type: string, format: date-time}
+        duration_ms: {type: integer, format: int64, minimum: 0}
     RelayCreate:
       type: object
       required: [address, identity_key, region]

@@ -121,6 +121,8 @@ type Karst struct {
 	// Store is the account-scoped Bedrock configuration store (mode, quorum)
 	// — Fleet.Reconcile reads which accounts have Bedrock enabled from it.
 	Store *bedrock.Store
+	// RelayServices exposes the observation worker for process-scoped startup.
+	RelayServices *relayservice.Store
 }
 
 // Install registers KarstControlService on the daemon's gRPC server.
@@ -587,14 +589,15 @@ func Install(s *nbserver.BaseServer, pol *policy.Document, relays []*proto.Karst
 	})
 
 	k := &Karst{
-		Service:   svc,
-		StaticKEM: svc.Pins().StaticKEM,
-		VerifyKey: svc.Pins().VerifyKey,
-		Epoch:     epoch,
-		Nodes:     nodes,
-		Chain:     bedrockLog,
-		Audit:     auditLog,
-		Store:     bedrockStore,
+		Service:       svc,
+		StaticKEM:     svc.Pins().StaticKEM,
+		VerifyKey:     svc.Pins().VerifyKey,
+		Epoch:         epoch,
+		Nodes:         nodes,
+		Chain:         bedrockLog,
+		Audit:         auditLog,
+		Store:         bedrockStore,
+		RelayServices: relayServiceStore,
 	}
 
 	// The pins are public and must reach operators; the seeds never appear.

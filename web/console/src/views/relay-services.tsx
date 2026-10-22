@@ -2,10 +2,10 @@
 // Copyright the Karst contributors.
 
 import { useState } from "react";
-import { Dialog, EmptyState, Status } from "@karst-net/ui";
+import { Dialog, EmptyState, Observed, Status } from "@karst-net/ui";
 import type { RelayService } from "@karst-net/api-client";
 import { api } from "../api";
-import { Failure, Notice, Rows, useMutation, useResource } from "../common";
+import { Failure, Notice, Rows, useMutation, usePolledResource } from "../common";
 import { Relays } from "./relays";
 import { Turns } from "./turns";
 
@@ -30,7 +30,7 @@ async function loadServices() {
 }
 
 function Services() {
-  const resource = useResource(loadServices);
+  const resource = usePolledResource(loadServices, 60_000);
   const { message, setMessage, run } = useMutation(resource.reload);
   const [draft, setDraft] = useState<RelayService>();
   const [saving, setSaving] = useState(false);
@@ -86,13 +86,18 @@ function Services() {
                 <><span>Registered</span><br /><Status state={p.health.admission_state === "confirmed" ? "healthy" : p.health.admission_state === "stale" ? "warning" : "unknown"} label={`Ponor admission: ${p.health.admission_state}`} /></>}
             </td>
             <td>{service.turn_id ? <><code>{t?.uri ?? service.turn_id}</code><br />
-              {!service.turn_present || !t ? <Status state="warning" label="TURN registration missing" /> : <span>Registered · runtime health unavailable</span>}
+              {!service.turn_present || !t ? <Status state="warning" label="TURN registration missing" /> : <><span>Registered</span><br />
+                <Status state={service.turn_health?.state === "ready" ? "healthy" : !service.turn_health || service.turn_health.state === "unknown" ? "unknown" : "warning"} label={`TURN allocation: ${service.turn_health?.state.replaceAll("_", " ") ?? "not observed"}`} />
+                {service.turn_health?.observed_at && <><br /><Observed at={service.turn_health.observed_at} />{service.turn_health.duration_ms !== undefined && <span> · {service.turn_health.duration_ms} ms</span>}</>}
+                {service.turn_health?.state === "stale" && <><br /><span>Last result: {service.turn_health.last_result?.replaceAll("_", " ")}</span></>}
+              </>}
             </> : "Not configured"}</td>
             <td>{service.turn_id ? <>{service.backend_operator}<br /><span className="lede">{service.backend_kind === "external" ? "External provider" : "Coturn companion"}</span></> : "—"}</td>
             <td><button onClick={() => remove(service)}>Remove association</button></td>
           </tr>;
         })}
       </Rows>}
+    <p className="lede">TURN allocation readiness is measured from control using a short-lived credential. It tests admission, not encrypted delivery or every client's path. Checks run about once a minute; observations become stale after three minutes.</p>
     <Dialog open={preview !== undefined} title="Preview service publication" onClose={() => { if (!saving) setPreview(undefined); }}>
       {preview !== undefined && <Notice message={message} />}
       <p>These service associations will replace the legacy endpoint selection. Configuration is validated again when applied. This can interrupt connectivity for clients that need an omitted backend.</p>
