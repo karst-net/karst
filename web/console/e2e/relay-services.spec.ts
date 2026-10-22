@@ -66,7 +66,7 @@ test("explicit Relay association preserves backend identity and supports removal
   await page.getByRole("button", { name: "Create service" }).click();
   await expect(page.getByRole("cell", { name: "primary", exact: true })).toBeVisible();
   expect(submitted).toEqual({ id: "primary", ponor_id: ponorID, turn_id: turnID, backend_kind: "external", backend_operator: "Remote provider" });
-  await expect(page.getByText("Registered · runtime health unavailable")).toBeVisible();
+  await expect(page.getByText("TURN allocation: not observed")).toBeVisible();
   await expect(page.getByText("Remote provider")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   page.on("dialog", (dialog) => dialog.accept());
@@ -84,6 +84,21 @@ test("missing TURN remains visible alongside registered Ponor and legacy TURN li
   await expect(page.getByText("TURN registration missing")).toBeVisible();
   await page.goto("/#/turns");
   await expect(page.getByRole("heading", { name: "TURN servers" })).toBeVisible();
+});
+
+test("TURN allocation denial and stale evidence remain independent of Ponor admission", async ({ page }) => {
+  await page.route("**/api/karst/v1/relays", (route) => route.fulfill({ json: [{ id: "ponor", address: "203.0.113.1:443", health: { admission_state: "confirmed" } }] }));
+  let state = "denied";
+  await page.route("**/api/karst/v1/relay-services", (route) => route.fulfill({ json: [{ id: "observed", ponor_id: "ponor", turn_id: "turn-fixture-1", backend_kind: "external", backend_operator: "Remote", ponor_present: true, turn_present: true, turn_health: { source: "control_allocation_probe", state, last_result: "denied", observed_at: "2026-10-21T00:00:00Z", duration_ms: 12 } }] }));
+  await page.goto("/#/relays");
+  await expect(page.getByText("Ponor admission: confirmed")).toBeVisible();
+  await expect(page.getByText("TURN allocation: denied")).toBeVisible();
+  state = "stale";
+  await page.getByRole("button", { name: "Refresh services" }).click();
+  await expect(page.getByText("TURN allocation: stale")).toBeVisible();
+  await expect(page.getByText("Last result: denied")).toBeVisible();
+  await expect(page.getByText("Ponor admission: confirmed")).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
 test("an unavailable service API reports failure instead of an empty healthy view", async ({ page }) => {

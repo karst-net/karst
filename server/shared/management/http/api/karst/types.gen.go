@@ -621,6 +621,66 @@ func (e RelayServiceViewBackendKind) Valid() bool {
 	}
 }
 
+// Defines values for RelayTurnHealthSource.
+const (
+	RelayTurnHealthSourceControlAllocationProbe RelayTurnHealthSource = "control_allocation_probe"
+)
+
+// Valid indicates whether the value is a known member of the RelayTurnHealthSource enum.
+func (e RelayTurnHealthSource) Valid() bool {
+	switch e {
+	case RelayTurnHealthSourceControlAllocationProbe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RelayTurnHealthState.
+const (
+	RelayTurnHealthStateCanceled               RelayTurnHealthState = "canceled"
+	RelayTurnHealthStateCredentialsExpired     RelayTurnHealthState = "credentials_expired"
+	RelayTurnHealthStateCredentialsUnavailable RelayTurnHealthState = "credentials_unavailable"
+	RelayTurnHealthStateDenied                 RelayTurnHealthState = "denied"
+	RelayTurnHealthStateReady                  RelayTurnHealthState = "ready"
+	RelayTurnHealthStateStale                  RelayTurnHealthState = "stale"
+	RelayTurnHealthStateTimeout                RelayTurnHealthState = "timeout"
+	RelayTurnHealthStateTlsFailed              RelayTurnHealthState = "tls_failed"
+	RelayTurnHealthStateUnknown                RelayTurnHealthState = "unknown"
+	RelayTurnHealthStateUnreachable            RelayTurnHealthState = "unreachable"
+	RelayTurnHealthStateUnsupported            RelayTurnHealthState = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the RelayTurnHealthState enum.
+func (e RelayTurnHealthState) Valid() bool {
+	switch e {
+	case RelayTurnHealthStateCanceled:
+		return true
+	case RelayTurnHealthStateCredentialsExpired:
+		return true
+	case RelayTurnHealthStateCredentialsUnavailable:
+		return true
+	case RelayTurnHealthStateDenied:
+		return true
+	case RelayTurnHealthStateReady:
+		return true
+	case RelayTurnHealthStateStale:
+		return true
+	case RelayTurnHealthStateTimeout:
+		return true
+	case RelayTurnHealthStateTlsFailed:
+		return true
+	case RelayTurnHealthStateUnknown:
+		return true
+	case RelayTurnHealthStateUnreachable:
+		return true
+	case RelayTurnHealthStateUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayUsageDayGapReasons.
 const (
 	RelayUsageDayGapReasonsCapacity          RelayUsageDayGapReasons = "capacity"
@@ -1741,6 +1801,9 @@ type RelayServiceView struct {
 	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
 	PonorPresent bool `json:"ponor_present"`
 
+	// TurnHealth Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
+	TurnHealth *RelayTurnHealth `json:"turn_health,omitempty"`
+
 	// TurnId Optional existing account-local TURN registry ID.
 	TurnId *string `json:"turn_id,omitempty"`
 
@@ -1750,6 +1813,21 @@ type RelayServiceView struct {
 
 // RelayServiceViewBackendKind Required with turn_id; omitted without it. Deployment ownership only.
 type RelayServiceViewBackendKind string
+
+// RelayTurnHealth Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
+type RelayTurnHealth struct {
+	DurationMs *int64                `json:"duration_ms,omitempty"`
+	LastResult *string               `json:"last_result,omitempty"`
+	ObservedAt *time.Time            `json:"observed_at,omitempty"`
+	Source     RelayTurnHealthSource `json:"source"`
+	State      RelayTurnHealthState  `json:"state"`
+}
+
+// RelayTurnHealthSource defines model for RelayTurnHealth.Source.
+type RelayTurnHealthSource string
+
+// RelayTurnHealthState defines model for RelayTurnHealth.State.
+type RelayTurnHealthState string
 
 // RelayUsageDay defines model for RelayUsageDay.
 type RelayUsageDay struct {

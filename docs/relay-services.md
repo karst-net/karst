@@ -3,8 +3,9 @@
 
 ADR-0056 combines Ponor and TURN under one Relay service model. The first
 control implementation adds explicit, account-scoped service associations;
-service-driven netmap publication is opt-in. Runtime backend management and
-consolidated health probes remain tracked in #404.
+service-driven netmap publication is opt-in. An allocation adapter checks TURN
+admission and readiness. Companion process management and full transport
+verification remain tracked in #404.
 
 ## Console
 
@@ -13,9 +14,9 @@ Ponor endpoint explicitly, then optionally select a TURN backend, its deployment
 type, and its operator. No backend is selected based on region or address.
 
 The service table shows Ponor admission observations separately from TURN
-registration. TURN runtime health is reported as unavailable until a backend
-health adapter supplies evidence. A missing registration remains visible even
-when the other mode is present.
+registration and allocation readiness. The console refreshes observations once
+a minute. A missing registration remains visible even when the other mode is
+present.
 
 Use **Ponor endpoints** and **TURN backends** within Relays for existing backend
 administration. The legacy `#/turns` link remains supported. If an older control
@@ -24,6 +25,37 @@ backend views remain accessible. Upgrade control before using associations.
 Removing an association does not remove either backend process or registry record.
 In service publication mode, endpoints used only by that association are withdrawn
 from clients. The console makes the active publication mode explicit.
+
+## TURN allocation observations
+
+Control checks each distinct account/backend association about once a minute,
+including staged services. Up to four probes run concurrently, each with a
+five-second limit covering DNS, connection and allocation. Each check mints a
+short-lived credential using the configured TURN credential authority, attempts
+an authenticated allocation, then releases it. Probe logs and stored
+observations contain neither credentials nor the allocation address. Normal
+backend allocation limits apply to these short-lived checks.
+
+The adapter supports UDP and TCP with `turn:` and TLS with `turns:`. TLS
+certificate and hostname verification use the host's system trust roots;
+install an internal provider's CA in that store when needed. TURN over DTLS and
+unknown URI parameters are reported as unsupported. An unsupported probe does
+not alter the backend registry or client wire compatibility.
+
+The `turn_health` field identifies its source as `control_allocation_probe` and
+reports a state, observation time, and elapsed milliseconds. States distinguish
+allocation readiness, rejection, network failure, timeout, TLS verification
+failure, expired/unavailable credentials, and unsupported configuration.
+Observations older than three minutes (or from a future clock) become stale,
+retaining the previous result and timestamp. Before the first observation, the state is `unknown`.
+
+Allocation readiness is evidence from the **control host's network vantage**.
+It does not prove permission/channel establishment to a peer, payload delivery,
+every client's reachability, or overlay encryption. A failed check does not
+automatically withdraw a backend or disable Ponor presence. Configuration and
+publication remain operator decisions; client transport fallback remains local.
+The worker starts with the control process and cancels outstanding checks at
+shutdown. External provider processes are never started or stopped by a probe.
 
 ## Administrative API
 

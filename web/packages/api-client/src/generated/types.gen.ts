@@ -490,6 +490,18 @@ export type RelayServiceView = RelayService & {
      * Referenced TURN registry entry exists in this account; false when TURN is absent; not a health result.
      */
     turn_present: boolean;
+    turn_health?: RelayTurnHealth;
+};
+
+/**
+ * Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
+ */
+export type RelayTurnHealth = {
+    source: 'control_allocation_probe';
+    state: 'unknown' | 'ready' | 'denied' | 'unreachable' | 'timeout' | 'canceled' | 'tls_failed' | 'unsupported' | 'credentials_expired' | 'credentials_unavailable' | 'stale';
+    last_result?: string;
+    observed_at?: string;
+    duration_ms?: number;
 };
 
 export type RelayCreate = {
