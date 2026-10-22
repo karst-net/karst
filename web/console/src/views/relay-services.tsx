@@ -36,6 +36,8 @@ function Services() {
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<RelayService[]>();
   const [acknowledged, setAcknowledged] = useState(false);
+  const [modeDraft, setModeDraft] = useState<{ service: RelayService; ponor: boolean; turn: boolean }>();
+  const [modeAcknowledged, setModeAcknowledged] = useState(false);
   if (resource.loading) return <p>Loading Relay services…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const { services, ponor, turn, publication } = resource.value ?? { services: [], ponor: [], turn: [], publication: { mode: "legacy" } };
@@ -73,7 +75,7 @@ function Services() {
       {publication.mode === "services" && <button disabled={saving} onClick={async () => { if (!confirm("Return to legacy registry publication? Previously unassociated legacy endpoints may become available to clients again.")) return; setSaving(true); await run(() => api.setRelayPublication("legacy"), "Legacy registry publication restored."); setSaving(false); }}>Restore legacy publication</button>}
     </div>
     <div className="actions"><button className="primary" onClick={() => { setMessage(undefined); setDraft({ id: "", ponor_id: "" }); }}>Add service</button><button onClick={resource.reload}>Refresh services</button></div>
-    {!draft && preview === undefined && <Notice message={message} />}
+    {!draft && !modeDraft && preview === undefined && <Notice message={message} />}
     {services.length === 0 ? <EmptyState title="No Relay services configured">Existing endpoints continue operating. Register backends in the Ponor and TURN views, then choose their association here.</EmptyState> :
       <Rows head={<><th>Service</th><th>Ponor</th><th>TURN</th><th>TURN operator</th><th>Actions</th></>}>
         {services.map((service) => {
@@ -82,26 +84,37 @@ function Services() {
           return <tr key={service.id}>
             <td>{service.id}</td>
             <td><code>{p?.address ?? service.ponor_id}</code><br />
-              {!service.ponor_present || !p ? <Status state="warning" label="Ponor registration missing" /> :
+              {service.ponor_disabled ? <Status state="unknown" label="Ponor disabled" /> : !service.ponor_present || !p ? <Status state="warning" label="Ponor registration missing" /> :
                 <><span>Registered</span><br /><Status state={p.health.admission_state === "confirmed" ? "healthy" : p.health.admission_state === "stale" ? "warning" : "unknown"} label={`Ponor admission: ${p.health.admission_state}`} /></>}
             </td>
             <td>{service.turn_id ? <><code>{t?.uri ?? service.turn_id}</code><br />
-              {!service.turn_present || !t ? <Status state="warning" label="TURN registration missing" /> : <><span>Registered</span><br />
+              {service.turn_disabled ? <Status state="unknown" label="TURN disabled" /> : !service.turn_present || !t ? <Status state="warning" label="TURN registration missing" /> : <><span>Registered</span><br />
                 <Status state={service.turn_health?.state === "ready" ? "healthy" : !service.turn_health || service.turn_health.state === "unknown" ? "unknown" : "warning"} label={`TURN allocation: ${service.turn_health?.state.replaceAll("_", " ") ?? "not observed"}`} />
                 {service.turn_health?.observed_at && <><br /><Observed at={service.turn_health.observed_at} />{service.turn_health.duration_ms !== undefined && <span> · {service.turn_health.duration_ms} ms</span>}</>}
                 {service.turn_health?.state === "stale" && <><br /><span>Last result: {service.turn_health.last_result?.replaceAll("_", " ")}</span></>}
               </>}
             </> : "Not configured"}</td>
             <td>{service.turn_id ? <>{service.backend_operator}<br /><span className="lede">{service.backend_kind === "external" ? "External provider" : "Coturn companion"}</span></> : "—"}</td>
-            <td><button onClick={() => remove(service)}>Remove association</button></td>
+            <td><button disabled={saving} onClick={() => { setMessage(undefined); setModeAcknowledged(false); setModeDraft({ service, ponor: !service.ponor_disabled, turn: Boolean(service.turn_id) && !service.turn_disabled }); }}>Change modes</button><button onClick={() => remove(service)}>Remove association</button></td>
           </tr>;
         })}
       </Rows>}
     <p className="lede">TURN allocation readiness is measured from control using a short-lived credential. It tests admission, not encrypted delivery or every client's path. Checks run about once a minute; observations become stale after three minutes.</p>
+    <Dialog open={Boolean(modeDraft)} title="Change Relay modes" onClose={() => { if (!saving) setModeDraft(undefined); }}>
+      {modeDraft && <><Notice message={message} />
+        <p>Service: <strong>{modeDraft.service.id}</strong></p>
+        <p>{publication.mode === "services" ? "Mode changes update endpoints sent to clients. Shared endpoints remain available while another service enables them." : "These modes are staged while legacy registries still publish endpoints. Switch to service publication to apply them to clients."}</p>
+        <p>Disabling TURN pauses subsequent readiness probes for this association. Backend processes remain running. TURN publication requires an enabled Ponor bootstrap endpoint in this account.</p>
+        <label><input type="checkbox" checked={modeDraft.ponor} onChange={(event) => setModeDraft({ ...modeDraft, ponor: event.target.checked })} />Enable Ponor</label>
+        <label><input type="checkbox" checked={modeDraft.turn} disabled={!modeDraft.service.turn_id} onChange={(event) => setModeDraft({ ...modeDraft, turn: event.target.checked })} />Enable TURN</label>
+        <label><input type="checkbox" checked={modeAcknowledged} onChange={(event) => setModeAcknowledged(event.target.checked)} />I understand mode changes may interrupt client connectivity.</label>
+        <div className="actions"><button disabled={saving} onClick={() => setModeDraft(undefined)}>Cancel</button><button disabled={!modeAcknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setRelayServiceModes(modeDraft.service.id, modeDraft.ponor, modeDraft.turn), `Relay modes for ${modeDraft.service.id} were updated.`)) setModeDraft(undefined); setSaving(false); }}>Apply modes</button></div>
+      </>}
+    </Dialog>
     <Dialog open={preview !== undefined} title="Preview service publication" onClose={() => { if (!saving) setPreview(undefined); }}>
       {preview !== undefined && <Notice message={message} />}
       <p>These service associations will replace the legacy endpoint selection. Configuration is validated again when applied. This can interrupt connectivity for clients that need an omitted backend.</p>
-      {preview?.length ? <ul>{preview.map((service) => <li key={service.id}><strong>{service.id}</strong>: Ponor <code>{ponor.find((entry) => entry.id === service.ponor_id)?.address ?? service.ponor_id}</code>; TURN {service.turn_id ? <><code>{turn.find((entry) => entry.id === service.turn_id)?.uri ?? service.turn_id}</code> ({service.backend_operator})</> : "not configured"}</li>)}</ul> : <p>No services: all Relay endpoints will be withdrawn from clients.</p>}
+      {preview?.length ? <ul>{preview.map((service) => <li key={service.id}><strong>{service.id}</strong>: Ponor <code>{ponor.find((entry) => entry.id === service.ponor_id)?.address ?? service.ponor_id}</code>{service.ponor_disabled ? " (disabled)" : ""}; TURN {service.turn_id ? <><code>{turn.find((entry) => entry.id === service.turn_id)?.uri ?? service.turn_id}</code> ({service.turn_disabled ? "disabled; " : ""}{service.backend_operator})</> : "not configured"}</li>)}</ul> : <p>No services: all Relay endpoints will be withdrawn from clients.</p>}
       <label><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />I understand this changes client connectivity.</label>
       <div className="actions"><button disabled={saving} onClick={() => setPreview(undefined)}>Cancel</button><button disabled={!acknowledged || saving} onClick={async () => { setSaving(true); if (await run(() => api.setRelayPublication("services"), "Relay service publication enabled.")) setPreview(undefined); setSaving(false); }}>Publish services</button></div>
     </Dialog>

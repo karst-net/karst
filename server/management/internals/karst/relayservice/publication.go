@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 
 	"github.com/netbirdio/netbird/management/internals/karst/relayreg"
 	"github.com/netbirdio/netbird/management/internals/karst/turncred"
@@ -20,8 +23,9 @@ import (
 // Publication is a durable account-level authority choice. An absent record
 // preserves legacy behavior; an explicitly empty service set never does.
 type Publication struct {
-	AccountID string `gorm:"primaryKey;size:64" json:"-"`
-	Mode      string `gorm:"not null" json:"mode"`
+	AccountID     string `gorm:"primaryKey;size:64" json:"-"`
+	Mode          string `gorm:"not null" json:"mode"`
+	SchemaVersion int    `gorm:"-" json:"schema_version,omitempty"`
 }
 
 func (Publication) TableName() string { return "karst_relay_publication" }
@@ -34,6 +38,10 @@ func publication(tx *gorm.DB, account string) (Publication, error) {
 	}
 	if err != nil {
 		return Publication{}, err
+	}
+	if value.Mode == "legacy-v2" || value.Mode == "services-v2" {
+		value.Mode = strings.TrimSuffix(value.Mode, "-v2")
+		value.SchemaVersion = 2
 	}
 	if value.Mode != "legacy" && value.Mode != "services" {
 		return Publication{}, fmt.Errorf("%w: unknown publication mode", ErrInvalid)
@@ -88,9 +96,36 @@ func (s *Store) SetPublication(ctx context.Context, mode string, turnConfigured 
 				return fmt.Errorf("%w: TURN credential minting is not configured", ErrInvalid)
 			}
 		}
+		var disabled int64
+		if err := tx.Model(&Service{}).Where("account_id = ? AND (ponor_disabled = ? OR turn_disabled = ?)", account, true, true).Count(&disabled).Error; err != nil {
+			return err
+		}
+		if disabled > 0 {
+			value.Mode += "-v2"
+		}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"mode"})}).Create(&value).Error
 	})
+	if strings.HasSuffix(value.Mode, "-v2") {
+		value.Mode = strings.TrimSuffix(value.Mode, "-v2")
+		value.SchemaVersion = 2
+	}
 	return value, err
+}
+
+// Version the authority marker before writing mode semantics that older
+// service-aware control cannot honor. Those versions reject unknown markers
+// instead of silently republishing a disabled endpoint. Explicit publication
+// selection can clear the marker after all mode flags have been reset.
+func protectModeSchema(tx *gorm.DB, account string, current Publication) error {
+	var disabled int64
+	if err := tx.Model(&Service{}).Where("account_id = ? AND (ponor_disabled = ? OR turn_disabled = ?)", account, true, true).Count(&disabled).Error; err != nil {
+		return err
+	}
+	if disabled == 0 || current.SchemaVersion == 2 {
+		return nil
+	}
+	record := Publication{AccountID: account, Mode: current.Mode + "-v2"}
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"mode"})}).Create(&record).Error
 }
 
 // Netmap projects the service model into existing authenticated wire fields.
@@ -127,11 +162,15 @@ func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.Kars
 	turns := make([]turncred.Entry, 0)
 	seenPonor := map[string]bool{}
 	seenTurn := map[string]bool{}
+	configuredPonor := false
 	for _, service := range services {
 		if err := validate(service); err != nil {
 			return nil, nil, nil, err
 		}
-		if !seenPonor[service.PonorID] {
+		if !service.PonorDisabled {
+			configuredPonor = true
+		}
+		if !service.PonorDisabled && !seenPonor[service.PonorID] {
 			var backend relayreg.StoredRelay
 			lookup := tx.Where("account_id = ? AND id = ?", account, service.PonorID).First(&backend).Error
 			if errors.Is(lookup, gorm.ErrRecordNotFound) && !strict {
@@ -154,7 +193,7 @@ func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.Kars
 			}
 			seenPonor[service.PonorID] = true
 		}
-		if service.TurnID != "" && !seenTurn[service.TurnID] {
+		if service.TurnID != "" && !service.TurnDisabled && !seenTurn[service.TurnID] {
 			var backend turncred.StoredTurnServer
 			lookup := tx.Where("account_id = ? AND id = ?", account, service.TurnID).First(&backend).Error
 			if errors.Is(lookup, gorm.ErrRecordNotFound) && !strict {
@@ -169,6 +208,12 @@ func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.Kars
 			}
 			if base64.RawURLEncoding.EncodeToString([]byte(backend.URI)) != service.TurnID {
 				return nil, nil, nil, fmt.Errorf("%w: service %s TURN identity changed", ErrInvalid, service.ID)
+			}
+			target, supported := strings.CutPrefix(backend.URI, "turn:")
+			host, port, addressErr := net.SplitHostPort(target)
+			number, portErr := strconv.Atoi(port)
+			if !supported || addressErr != nil || host == "" || strings.ContainsAny(target, "/?#@ \t\r\n") || portErr != nil || number < 1 || number > 65535 {
+				return nil, nil, nil, fmt.Errorf("%w: service %s requires a UDP turn:host:port endpoint supported by current agents", ErrInvalid, service.ID)
 			}
 			// Reuse the legacy registry validator, including its URI and
 			// default-region rules, without duplicating credential handling.
@@ -185,6 +230,9 @@ func project(tx *gorm.DB, account string, strict bool) ([]Service, []*proto.Kars
 			turns = append(turns, entries...)
 			seenTurn[service.TurnID] = true
 		}
+	}
+	if len(turns) > 0 && !configuredPonor {
+		return nil, nil, nil, fmt.Errorf("%w: TURN publication requires enabled Ponor bootstrap", ErrInvalid)
 	}
 	return services, relays, turns, nil
 }

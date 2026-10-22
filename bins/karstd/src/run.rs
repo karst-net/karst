@@ -721,60 +721,40 @@ fn run_engine(
     let relay_node_id = config.node_id.clone();
     let relay_ca = config.relay_ca_file.clone();
     let relay_prefer_quic = config.prefer_quic_relay;
-    // Present only when a relay is configured. `None` means anything the engine
-    // routes over the relay is dropped where it is produced — which is correct
-    // and already consistent: `Engine::via` returns a relay destination only
-    // when `config.relays` is non-empty, so the two agree by construction.
-    //
-    // Built **before** the first handshakes, because for a peer with no
-    // configured endpoint those handshakes are themselves relayed, and a queue
-    // that did not exist yet would drop the one datagram that starts the
-    // conversation.
+    // Keep bounded queues available before the first handshake, including
+    // when service publication initially has no Ponor endpoint. The workers
+    // wait without opening a connection until authenticated configuration arrives.
     let relay_dropped = Arc::new(AtomicU64::new(0));
-    let (relay_out, relay_in, on_demand_in) = match relay {
-        Some(_) => {
-            let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
-            // §9.1's second rule has its own queue. Sharing the home
-            // connection's would let a peer on a relay this node has yet to
-            // dial — a TLS and ML-DSA-87 handshake away — fill the queue that
-            // every other peer's traffic is waiting in.
-            let (on_demand_tx, on_demand_rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
-            (
-                Some(RelaySender {
-                    queue: tx,
-                    on_demand: on_demand_tx,
-                    dropped: Arc::clone(&relay_dropped),
-                }),
-                Some(rx),
-                Some(on_demand_rx),
-            )
-        }
-        None => (None, None, None),
+    let (relay_out, relay_in, on_demand_in) = {
+        let (tx, rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
+        let (on_demand_tx, on_demand_rx) = tokio::sync::mpsc::channel(RELAY_QUEUE);
+        (
+            Some(RelaySender {
+                queue: tx,
+                on_demand: on_demand_tx,
+                dropped: Arc::clone(&relay_dropped),
+            }),
+            Some(rx),
+            Some(on_demand_rx),
+        )
     };
     let relay_out = relay_out.as_ref();
     // §9.1. The engine routes by it, so it is set from the same value the relay
     // worker connects to rather than recomputed from the registry.
     engine.set_home_relay(relay.as_ref().map(|r| r.relay_id));
 
-    // §7.8. Present only when the netmap this daemon started with already
-    // names a TURN server — the same "first entry, decided once here" rule
-    // `relay` above follows. A netmap that starts offering TURN only after
-    // this daemon is already running is not picked up until the next
-    // restart, which is the identical limitation `relay_out` already has for
-    // a relay registry that starts empty; this feature does not introduce it.
+    // Keep the worker and bounded queue available when a managed netmap
+    // starts with no TURN endpoints, so later enablement needs no restart.
     let turn_dropped = Arc::new(AtomicU64::new(0));
-    let (turn_out, turn_in) = match config.turn_servers.first() {
-        Some(_) => {
-            let (tx, rx) = tokio::sync::mpsc::channel(TURN_QUEUE);
-            (
-                Some(TurnSender {
-                    queue: tx,
-                    dropped: Arc::clone(&turn_dropped),
-                }),
-                Some(rx),
-            )
-        }
-        None => (None, None),
+    let (turn_out, turn_in) = {
+        let (tx, rx) = tokio::sync::mpsc::channel(TURN_QUEUE);
+        (
+            Some(TurnSender {
+                queue: tx,
+                dropped: Arc::clone(&turn_dropped),
+            }),
+            Some(rx),
+        )
     };
     let turn_out = turn_out.as_ref();
 
@@ -993,18 +973,26 @@ fn run_engine(
         // Both protocols and both directions. AVEN's rendezvous made this
         // connection necessary; PHREATIC's fallback is what makes a peer with
         // no direct path reachable rather than merely known about.
-        if let (Some(common), Some(relay), Some(relay_in), Some(on_demand_in)) =
-            (relay_common.as_ref(), relay, relay_in, on_demand_in)
+        if let (Some(common), Some(mut relay_in), Some(on_demand_in)) =
+            (relay_common.as_ref(), relay_in, on_demand_in)
         {
             scope.spawn(move || {
-                relay_worker(
-                    RelayContext {
-                        common,
-                        relay,
-                        role: RelayRole::Home,
-                    },
-                    relay_in,
-                );
+                while !common.shutdown.requested() {
+                    if let Some(relay) = common.engine.relays().first().cloned() {
+                        common.engine.set_home_relay(Some(relay.relay_id));
+                        relay_worker(
+                            RelayContext {
+                                common,
+                                relay,
+                                role: RelayRole::Home,
+                            },
+                            relay_in,
+                        );
+                        return;
+                    }
+                    while relay_in.try_recv().is_ok() {}
+                    std::thread::sleep(TICK);
+                }
             });
             // §9.1's second rule. Its own thread, which dials the relays peers
             // published and closes them again when they fall idle — the home
@@ -2327,6 +2315,15 @@ impl RelayContext<'_> {
     }
 }
 
+/// Whether this connection still has a matching published transport endpoint.
+fn relay_registration_current(context: &RelayContext<'_>) -> bool {
+    context.common.engine.relays().iter().any(|entry| {
+        entry.relay_id == context.relay.relay_id
+            && entry.address == context.relay.address
+            && entry.tls_server_name == context.relay.tls_server_name
+    })
+}
+
 /// The relay this connection should be on now, if that is not the one it is on.
 ///
 /// Only the home connection follows the choice. An on-demand connection was
@@ -2603,6 +2600,46 @@ fn relay_worker(mut context: RelayContext<'_>, outbound: tokio::sync::mpsc::Rece
     // the dead-relay path.
     let mut restart = crate::home::Restart::default();
     while !context.common.shutdown.requested() {
+        let registry = context.common.engine.relays();
+        if registry.is_empty() {
+            if !context.is_home() {
+                return;
+            }
+            context.common.engine.set_home_relay(None);
+            while outbound.try_recv().is_ok() {}
+            backoff = RELAY_BACKOFF_MIN;
+            std::thread::sleep(TICK);
+            continue;
+        }
+        if !relay_registration_current(&context) {
+            if !context.is_home() {
+                return;
+            }
+            if let Some(next) = moved_home(&context)
+                .or_else(|| {
+                    registry
+                        .iter()
+                        .find(|entry| entry.relay_id == context.relay.relay_id)
+                        .cloned()
+                })
+                .or_else(|| registry.first().cloned())
+            {
+                handover(
+                    context.common.engine,
+                    context.common.relayed,
+                    &context.relay,
+                    &next,
+                );
+                context.relay = next;
+            }
+        }
+        if context.is_home() {
+            context
+                .common
+                .engine
+                .set_home_relay(Some(context.relay.relay_id));
+        }
+
         // §9.2's decision, carried out. The home connection follows the
         // selector: this is the point where a choice that moved becomes a
         // connection that moved, and it is here rather than anywhere else
@@ -2763,7 +2800,9 @@ async fn relay_send_loop(
         // off: whatever is still queued is picked up by the next connection,
         // and `handover` keeps this relay reachable for peers that have not
         // yet heard.
-        if move_check.due(now_ms(context.common.started)) && moved_home(context).is_some() {
+        if move_check.due(now_ms(context.common.started))
+            && (!relay_registration_current(context) || moved_home(context).is_some())
+        {
             closing.store(true, Ordering::Relaxed);
             return;
         }
@@ -2777,7 +2816,7 @@ async fn relay_send_loop(
             // the next one — checked on the idle path rather than per datagram,
             // because a relay change is a thing that happens in minutes and a
             // lock taken per packet is a thing that happens in nanoseconds.
-            if moved_home(context).is_some() {
+            if !relay_registration_current(context) || moved_home(context).is_some() {
                 closing.store(true, Ordering::Relaxed);
                 return;
             }
@@ -3340,6 +3379,39 @@ struct TurnCommon<'a> {
 /// is one more connection a node retries with exactly the same patience.
 const TURN_BACKOFF_MIN: Duration = Duration::from_secs(1);
 
+fn turn_now_secs() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|elapsed| elapsed.as_secs())
+}
+
+fn turn_target(
+    registry: &[crate::netmap::TurnServer],
+    now: u64,
+) -> Option<&crate::netmap::TurnServer> {
+    registry.iter().find(|server| server.expires_at > now)
+}
+
+fn turn_allocation_current(
+    current: &crate::netmap::TurnServer,
+    wanted: Option<&crate::netmap::TurnServer>,
+    now: u64,
+) -> bool {
+    let Some(wanted) = wanted else { return false };
+    if current.uri != wanted.uri || current.expires_at <= now {
+        return false;
+    }
+    if current.username == wanted.username && current.password == wanted.password {
+        return true;
+    }
+    // A replaced identity/secret takes effect immediately. Ordinary netmap
+    // renewal is adopted near expiry, avoiding a new allocation on every poll.
+    wanted.expires_at > current.expires_at
+        && current.username != wanted.username
+        && current.expires_at.saturating_sub(now) > 60
+}
+
 /// Hold this node's TURN allocation for the life of the daemon, reconnecting
 /// with backoff, and feed the shared dispatch pipeline from its own read loop
 /// — `spec/aven-v1.md` §7.8.
@@ -3357,16 +3429,29 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
         return;
     };
     let mut backoff = TURN_BACKOFF_MIN;
+    let mut warned_expired = false;
 
     while !common.shutdown.requested() {
         // Read fresh on every (re)connect attempt, never cached separately —
         // `Engine::turn_servers`'s own doc comment is why: a credential is
         // never staler than the netmap already is, because this is the same
         // registry `refresh_netmap` replaces wholesale on every poll.
-        let Some(server) = common.engine.turn_servers().into_iter().next() else {
-            sleep_backoff(common.shutdown, &mut backoff);
+        let registry = common.engine.turn_servers();
+        let Some(server) = turn_now_secs().and_then(|now| turn_target(&registry, now).cloned())
+        else {
+            if !registry.is_empty() && !warned_expired {
+                tracing::warn!(
+                    "karstd: no unexpired TURN credentials; waiting for a refreshed netmap"
+                );
+                warned_expired = true;
+            }
+            while ops.try_recv().is_ok() {}
+            backoff = TURN_BACKOFF_MIN;
+            let mut idle = TURN_BACKOFF_MIN;
+            sleep_backoff(common.shutdown, &mut idle);
             continue;
         };
+        warned_expired = false;
         let connected = runtime.block_on(crate::turn::Allocation::connect(&server));
         let allocation = match connected {
             Ok(a) => a,
@@ -3402,7 +3487,7 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_turn_candidate(Some(relayed_addr));
 
-        runtime.block_on(turn_session(common, &allocation, &mut ops));
+        runtime.block_on(turn_session(common, &allocation, &server, &mut ops));
         runtime.block_on(allocation.close());
 
         // The allocation is gone — withdraw the candidate and the fallback
@@ -3418,10 +3503,11 @@ fn turn_worker(common: &TurnCommon<'_>, mut ops: tokio::sync::mpsc::Receiver<Tur
 }
 
 /// Drive one allocation until it fails, the daemon shuts down, or the netmap
-/// stops naming any TURN server at all.
+/// withdraws/replaces its server, or its credential needs renewal.
 async fn turn_session(
     common: &TurnCommon<'_>,
     allocation: &crate::turn::Allocation,
+    server: &crate::netmap::TurnServer,
     ops: &mut tokio::sync::mpsc::Receiver<TurnOp>,
 ) {
     let mut buf = vec![0u8; MAX_DATAGRAM];
@@ -3433,12 +3519,16 @@ async fn turn_session(
         if common.shutdown.requested() {
             return;
         }
-        // The netmap withdrew every TURN server. Tearing this allocation down
+        // The selected server was withdrawn/replaced, or this allocation needs
+        // fresh credentials. Tearing this allocation down
         // rather than holding it open is what keeps `Engine::turn_servers`
         // meaning "what this node should be doing" rather than merely "what
         // it once was told" — the same reason `moved_home` acts on a relay
         // registry change instead of only a fresh dial.
-        if common.engine.turn_servers().is_empty() {
+        let registry = common.engine.turn_servers();
+        if !turn_now_secs()
+            .is_some_and(|now| turn_allocation_current(server, turn_target(&registry, now), now))
+        {
             return;
         }
         let received = tokio::time::timeout(TICK, async {
@@ -3449,7 +3539,7 @@ async fn turn_session(
         })
         .await;
         // A timeout is normal — it is what lets this loop notice a shutdown
-        // or a withdrawn registry on an otherwise quiet allocation.
+        // or changed TURN configuration on an otherwise quiet allocation.
         let Ok(branch) = received else {
             continue;
         };
@@ -3585,7 +3675,77 @@ fn prime_turn_permissions(disco: &Mutex<disco::Disco>, turn: Option<&TurnSender>
 
 #[cfg(test)]
 mod turn_tests {
+    #![allow(clippy::expect_used)]
     use super::plausibly_reachable_via_turn;
+
+    fn server(uri: &str, expiry: u64, username: &str) -> crate::netmap::TurnServer {
+        crate::netmap::TurnServer {
+            uri: uri.to_owned(),
+            region: "default".to_owned(),
+            username: username.to_owned(),
+            password: crate::netmap::TurnCredential::for_tests("test-password"),
+            expires_at: expiry,
+        }
+    }
+
+    #[test]
+    fn turn_withdrawal_replacement_and_expiry_end_the_old_allocation() {
+        let current = server("turn:first:3478", 200, "first");
+        let replacement = server("turn:second:3478", 300, "second");
+        assert!(!super::turn_allocation_current(&current, None, 100));
+        assert!(!super::turn_allocation_current(
+            &current,
+            Some(&replacement),
+            100
+        ));
+        assert!(!super::turn_allocation_current(
+            &current,
+            Some(&current),
+            200
+        ));
+        assert!(super::turn_target(std::slice::from_ref(&current), 200).is_none());
+        let registry = [current, replacement];
+        assert_eq!(
+            super::turn_target(&registry, 200).map(|entry| entry.uri.as_str()),
+            Some("turn:second:3478")
+        );
+    }
+
+    #[test]
+    fn turn_credentials_renew_before_expiry_without_churn_on_every_netmap() {
+        let current = server("turn:backend:3478", 200, "old-expiry");
+        let fresh = server("turn:backend:3478", 300, "new-expiry");
+        assert!(super::turn_allocation_current(&current, Some(&fresh), 100));
+        assert!(!super::turn_allocation_current(&current, Some(&fresh), 140));
+        assert!(!super::turn_allocation_current(&current, Some(&fresh), 200));
+        let mut rotated = current.clone();
+        rotated.password = crate::netmap::TurnCredential::for_tests("rotated-password");
+        assert!(!super::turn_allocation_current(
+            &current,
+            Some(&rotated),
+            100
+        ));
+    }
+
+    #[test]
+    fn credential_refresh_preserves_the_peer_roster_and_requires_reconciliation_for_endpoints() {
+        let mut config = std::sync::Arc::try_unwrap(super::probe_tests::config(Vec::new()))
+            .expect("unshared fixture");
+        config.turn_servers = vec![server("turn:backend:3478", 200, "first")];
+        let config = std::sync::Arc::new(config);
+        let engine = super::Engine::new(&config);
+        let fresh = server("turn:backend:3478", 300, "renewed");
+        assert!(engine.refresh_turn_credentials(std::slice::from_ref(&fresh)));
+        assert_eq!(
+            engine.turn_servers().first().map(|entry| entry.expires_at),
+            Some(300)
+        );
+        assert!(std::sync::Arc::ptr_eq(&config, &engine.config()));
+        let replacement = server("turn:replacement:3478", 400, "replacement");
+        assert!(!engine.refresh_turn_credentials(&[replacement]));
+        assert!(!engine.refresh_turn_credentials(&[]));
+        assert_eq!(engine.turn_servers(), vec![fresh]);
+    }
 
     fn v4(a: u8, b: u8, c: u8, d: u8) -> std::net::SocketAddr {
         std::net::SocketAddr::from(([a, b, c, d], 51820))
@@ -6164,7 +6324,12 @@ fn refresh_netmap(
                     );
                 }
                 control_backoff = RELAY_BACKOFF_MIN;
-                continue;
+                if engine.refresh_turn_credentials(&client.netmap().turn_servers) {
+                    continue;
+                }
+                // TURN endpoints are deliberately outside the peer-content
+                // hash. Reconcile underlay escapes before applying their change.
+                crate::netmap::Outcome::Unchanged
             }
             Ok(outcome) => {
                 control_backoff = RELAY_BACKOFF_MIN;

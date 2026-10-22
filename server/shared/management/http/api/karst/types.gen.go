@@ -585,6 +585,21 @@ func (e RelayPublicationMode) Valid() bool {
 	}
 }
 
+// Defines values for RelayPublicationSchemaVersion.
+const (
+	RelayPublicationSchemaVersionN2 RelayPublicationSchemaVersion = 2
+)
+
+// Valid indicates whether the value is a known member of the RelayPublicationSchemaVersion enum.
+func (e RelayPublicationSchemaVersion) Valid() bool {
+	switch e {
+	case RelayPublicationSchemaVersionN2:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RelayServiceBackendKind.
 const (
 	RelayServiceBackendKindCoturnCompanion RelayServiceBackendKind = "coturn-companion"
@@ -1005,6 +1020,21 @@ func (e SetRelayPublicationJSONBodyMode) Valid() bool {
 	case SetRelayPublicationJSONBodyModeLegacy:
 		return true
 	case SetRelayPublicationJSONBodyModeServices:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange.
+const (
+	SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange = true
+)
+
+// Valid indicates whether the value is a known member of the SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange enum.
+func (e SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange) Valid() bool {
+	switch e {
+	case SetRelayServiceModesJSONBodyAcknowledgeConnectivityChangeTrue:
 		return true
 	default:
 		return false
@@ -1762,10 +1792,16 @@ type RelayLocation struct {
 // RelayPublication defines model for RelayPublication.
 type RelayPublication struct {
 	Mode RelayPublicationMode `json:"mode"`
+
+	// SchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+	SchemaVersion *RelayPublicationSchemaVersion `json:"schema_version,omitempty"`
 }
 
 // RelayPublicationMode defines model for RelayPublication.Mode.
 type RelayPublicationMode string
+
+// RelayPublicationSchemaVersion Present when mode semantics require a versioned persistence marker. Older service-aware control rejects that marker until rollback is explicitly prepared.
+type RelayPublicationSchemaVersion int
 
 // RelayService defines model for RelayService.
 type RelayService struct {
@@ -1776,8 +1812,14 @@ type RelayService struct {
 	BackendOperator *string `json:"backend_operator,omitempty"`
 	Id              string  `json:"id"`
 
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
 	// PonorId Existing account-local Ponor registry ID.
 	PonorId string `json:"ponor_id"`
+
+	// TurnDisabled Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
+	TurnDisabled *bool `json:"turn_disabled,omitempty"`
 
 	// TurnId Optional existing account-local TURN registry ID.
 	TurnId *string `json:"turn_id,omitempty"`
@@ -1795,11 +1837,17 @@ type RelayServiceView struct {
 	BackendOperator *string `json:"backend_operator,omitempty"`
 	Id              string  `json:"id"`
 
+	// PonorDisabled Withdraw this association's Ponor endpoint in service publication mode. Shared endpoints remain published while another association enables them.
+	PonorDisabled *bool `json:"ponor_disabled,omitempty"`
+
 	// PonorId Existing account-local Ponor registry ID.
 	PonorId string `json:"ponor_id"`
 
 	// PonorPresent Referenced Ponor registry entry exists in this account; not a health result.
 	PonorPresent bool `json:"ponor_present"`
+
+	// TurnDisabled Withdraw this association's TURN endpoint in service publication mode and exclude it from subsequent probes unless another association enables it.
+	TurnDisabled *bool `json:"turn_disabled,omitempty"`
 
 	// TurnHealth Authenticated TURN allocation observation from the control host. Does not prove client reachability or encrypted overlay delivery. Observations older than three minutes are stale.
 	TurnHealth *RelayTurnHealth `json:"turn_health,omitempty"`
@@ -2226,6 +2274,16 @@ type SetRelayPublicationJSONBodyAcknowledgeConnectivityChange bool
 // SetRelayPublicationJSONBodyMode defines parameters for SetRelayPublication.
 type SetRelayPublicationJSONBodyMode string
 
+// SetRelayServiceModesJSONBody defines parameters for SetRelayServiceModes.
+type SetRelayServiceModesJSONBody struct {
+	AcknowledgeConnectivityChange SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange `json:"acknowledge_connectivity_change"`
+	PonorEnabled                  bool                                                      `json:"ponor_enabled"`
+	TurnEnabled                   bool                                                      `json:"turn_enabled"`
+}
+
+// SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange defines parameters for SetRelayServiceModes.
+type SetRelayServiceModesJSONBodyAcknowledgeConnectivityChange bool
+
 // GetDeviceUsageParams defines parameters for GetDeviceUsage.
 type GetDeviceUsageParams struct {
 	Start time.Time `form:"start" json:"start"`
@@ -2320,6 +2378,9 @@ type CreateRelayServiceJSONRequestBody = RelayService
 
 // SetRelayPublicationJSONRequestBody defines body for SetRelayPublication for application/json ContentType.
 type SetRelayPublicationJSONRequestBody SetRelayPublicationJSONBody
+
+// SetRelayServiceModesJSONRequestBody defines body for SetRelayServiceModes for application/json ContentType.
+type SetRelayServiceModesJSONRequestBody SetRelayServiceModesJSONBody
 
 // CreateRelayJSONRequestBody defines body for CreateRelay for application/json ContentType.
 type CreateRelayJSONRequestBody = RelayCreate

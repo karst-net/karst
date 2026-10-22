@@ -31,6 +31,10 @@ type relayServicePublisher interface {
 	SetPublication(context.Context, string, bool) (relayservice.Publication, error)
 }
 
+type relayServiceModes interface {
+	SetModes(context.Context, string, bool, bool, bool) (*relayservice.Service, error)
+}
+
 type RelayServiceOptions struct {
 	Accounts       accountUpdater
 	TurnConfigured bool
@@ -70,6 +74,43 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 			return
 		}
 		ctx := relayservice.WithAccount(r.Context(), user.AccountId)
+		if mux.CurrentRoute(r).GetName() == "relay-modes" {
+			if r.Method == http.MethodOptions {
+				return
+			}
+			modes, ok := store.(relayServiceModes)
+			if !ok {
+				util.WriteError(r.Context(), status.Errorf(status.PreconditionFailed, "Relay mode storage unavailable"), w)
+				return
+			}
+			var request struct {
+				PonorEnabled *bool `json:"ponor_enabled"`
+				TurnEnabled  *bool `json:"turn_enabled"`
+				Acknowledge  bool  `json:"acknowledge_connectivity_change"`
+			}
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&request); err != nil {
+				util.WriteErrorResponse("invalid Relay mode request", http.StatusBadRequest, w)
+				return
+			}
+			if err := decoder.Decode(new(any)); err != io.EOF {
+				util.WriteErrorResponse("expected one Relay mode request", http.StatusBadRequest, w)
+				return
+			}
+			if request.PonorEnabled == nil || request.TurnEnabled == nil || !request.Acknowledge {
+				util.WriteErrorResponse("both mode states and acknowledge_connectivity_change are required", http.StatusBadRequest, w)
+				return
+			}
+			service, err := modes.SetModes(ctx, mux.Vars(r)["serviceId"], *request.PonorEnabled, *request.TurnEnabled, config.TurnConfigured)
+			if err != nil {
+				relayServiceError(w, r, err)
+				return
+			}
+			push(ctx, user.AccountId)
+			util.WriteJSONObject(ctx, w, service)
+			return
+		}
 		if mux.CurrentRoute(r).GetName() == "relay-publication" || mux.CurrentRoute(r).GetName() == "relay-publication-preview" {
 			publisher, ok := store.(relayServicePublisher)
 			if !ok {
@@ -165,6 +206,7 @@ func RegisterRelayServiceEndpoints(router *mux.Router, manager permissions.Manag
 	routes.HandleFunc("", handle).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 	routes.HandleFunc("/publication", handle).Methods(http.MethodGet, http.MethodPut, http.MethodOptions).Name("relay-publication")
 	routes.HandleFunc("/publication/preview", handle).Methods(http.MethodPost, http.MethodOptions).Name("relay-publication-preview")
+	routes.HandleFunc("/{serviceId}/modes", handle).Methods(http.MethodPut, http.MethodOptions).Name("relay-modes")
 	routes.HandleFunc("/{serviceId}", handle).Methods(http.MethodDelete, http.MethodOptions)
 }
 

@@ -65,6 +65,15 @@ func TestRelayServicePublicationPreservesWireIdentityCredentialsAndExplicitRollb
 	require.NoError(t, hmac.NewTimedHMAC("test-secret", time.Hour).Validate(sha1.New, hmac.Token{Payload: credential.Username, Signature: credential.Password}))
 	require.Greater(t, credential.ExpiresAt, uint64(time.Now().Unix()))
 	require.NotEqual(t, "test-secret", credential.Password)
+	_, err = services.SetModes(ctx, "primary", true, false, true)
+	require.NoError(t, err)
+	ponorOnly := requestNetmap(t, f, managed.Version)
+	require.Len(t, ponorOnly.Relays, 1)
+	require.Empty(t, ponorOnly.TurnServers)
+	require.Equal(t, managed.Version, ponorOnly.Version, "TURN is refreshed independently of the peer-content hash")
+	require.True(t, ponorOnly.Unchanged)
+	_, err = services.SetModes(ctx, "primary", true, true, true)
+	require.NoError(t, err)
 	// Removing credential configuration after activation must fail visibly,
 	// not silently produce a service whose TURN mode disappeared.
 	minter := f.handler.TurnMinter

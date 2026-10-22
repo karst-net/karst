@@ -43,6 +43,7 @@ struct LiveRelay {
 /// What a scenario is given once the node is connected to relay 1 and traffic
 /// is flowing.
 struct Rig<'a> {
+    common: &'a RelayCommon<'a>,
     engine: &'a Engine,
     home: &'a Mutex<crate::home::Selector>,
     one: &'a LiveRelay,
@@ -238,6 +239,7 @@ fn with_two_relays<T>(tag: &str, scenario: impl FnOnce(&Rig<'_>) -> T) -> T {
         assert!(busy_before > 0, "the feeder never got going");
 
         scenario(&Rig {
+            common: &common,
             engine: &engine,
             home: &home,
             one: &one,
@@ -301,6 +303,141 @@ fn a_busy_home_connection_leaves_a_relay_the_netmap_withdrew() {
             .all(|r| r.relay_id != one.relay.relay_id));
     });
     assert!(took < MOVE_BOUND, "{took:?}");
+}
+
+#[test]
+fn a_busy_home_worker_withdraws_all_endpoints_and_resumes_without_restart() {
+    with_two_relays("disable-resume", |rig| {
+        rig.engine.reconfigure(&config(Vec::new()));
+        wait_for("all Ponor connections to close", MOVE_BOUND, || {
+            rig.one.ctx.local_clients() == 0
+                && rig.two.ctx.local_clients() == 0
+                && rig.engine.home_relay().is_none()
+        });
+        rig.engine.reconfigure(&config(vec![rig.two.relay.clone()]));
+        wait_for(
+            "Ponor to resume on the re-enabled endpoint",
+            MOVE_BOUND,
+            || {
+                rig.two.ctx.local_clients() == 1
+                    && rig.engine.home_relay() == Some(rig.two.relay.relay_id)
+            },
+        );
+    });
+}
+
+struct CoturnProcess(std::process::Child);
+impl Drop for CoturnProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn isolated_coturn() -> (Dir, std::net::SocketAddr, CoturnProcess) {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve port");
+    let address = socket.local_addr().expect("address");
+    drop(socket);
+    let dir = temp_dir("turn-lifecycle");
+    let child = std::process::Command::new("turnserver")
+        .args([
+            "-n",
+            "--listening-ip=127.0.0.1",
+            "--relay-ip=127.0.0.1",
+            "--no-tcp",
+            "--no-tls",
+            "--no-dtls",
+            "--no-cli",
+            "--realm=lifecycle",
+            "--lt-cred-mech",
+            "--user=lifecycle:test-password",
+            "--relay-threads=1",
+            "--log-file=stdout",
+        ])
+        .arg(format!("--listening-port={}", address.port()))
+        .arg(format!("--pidfile={}", dir.0.join("turn.pid").display()))
+        .current_dir(&dir.0)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("start isolated coturn");
+    let process = CoturnProcess(child);
+    (dir, address, process)
+}
+
+#[test]
+#[ignore = "requires the coturn binary; uses loopback only, no root"]
+fn turn_worker_activates_expires_and_withdraws_without_restart() {
+    let (_dir, address, mut process) = isolated_coturn();
+    with_two_relays("turn-worker", |rig| {
+        let (tx, rx) = tokio::sync::mpsc::channel(super::TURN_QUEUE);
+        let sender = super::TurnSender {
+            queue: tx,
+            dropped: Arc::new(AtomicU64::new(0)),
+        };
+        let health = Mutex::new(HashMap::new());
+        let common = super::TurnCommon {
+            shutdown: rig.common.shutdown,
+            disco: rig.common.disco,
+            engine: rig.engine,
+            socket: rig.common.socket,
+            tun: rig.common.tun,
+            relayed: Some(rig.common.relayed),
+            turned: &sender,
+            started: Instant::now(),
+            turn_health: &health,
+        };
+        std::thread::scope(|scope| {
+            let _stop = StopOnDrop(rig.common.shutdown);
+            scope.spawn(|| super::turn_worker(&common, rx));
+            assert!(rig.engine.turn_relay().is_none());
+            let now = super::turn_now_secs().expect("clock");
+            let server = crate::netmap::TurnServer {
+                uri: format!("turn:{address}"),
+                region: "default".to_owned(),
+                username: "lifecycle".to_owned(),
+                password: crate::netmap::TurnCredential::for_tests("test-password"),
+                expires_at: now + 120,
+            };
+            let mut updated = Arc::try_unwrap(config(rig.engine.relays())).expect("fixture");
+            updated.turn_servers = vec![server.clone()];
+            rig.engine.reconfigure(&Arc::new(updated));
+            wait_for(
+                "TURN to activate after initially absent configuration",
+                Duration::from_secs(10),
+                || rig.engine.turn_relay().is_some(),
+            );
+            let mut expired = server.clone();
+            expired.expires_at = super::turn_now_secs().expect("clock").saturating_sub(1);
+            assert!(rig.engine.refresh_turn_credentials(&[expired]));
+            wait_for("the expired allocation to close", MOVE_BOUND, || {
+                rig.engine.turn_relay().is_none()
+            });
+            assert!(rig
+                .engine
+                .refresh_turn_credentials(std::slice::from_ref(&server)));
+            wait_for(
+                "TURN to reconnect after credential refresh",
+                MOVE_BOUND,
+                || rig.engine.turn_relay().is_some(),
+            );
+            rig.engine.reconfigure(&config(rig.engine.relays()));
+            wait_for(
+                "TURN to close after registry withdrawal",
+                MOVE_BOUND,
+                || rig.engine.turn_relay().is_none(),
+            );
+            assert_eq!(
+                rig.one.ctx.local_clients(),
+                1,
+                "Ponor presence survives TURN withdrawal"
+            );
+            assert!(
+                process.0.try_wait().expect("provider status").is_none(),
+                "withdrawing a mode does not stop the backend process"
+            );
+        });
+    });
 }
 
 /// §7.6 end to end, on the real worker: a relay that announced a restart is

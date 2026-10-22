@@ -243,6 +243,7 @@ export const api = {
   relayPublication: () => request<RelayPublication>("/relay-services/publication"),
   previewRelayPublication: () => request<RelayService[]>("/relay-services/publication/preview", { method: "POST" }),
   setRelayPublication: (mode: RelayPublication["mode"]) => request<RelayPublication>("/relay-services/publication", { method: "PUT", body: body({ mode, acknowledge_connectivity_change: true }) }),
+  setRelayServiceModes: (id: string, ponorEnabled: boolean, turnEnabled: boolean) => request<RelayService>(`/relay-services/${encodeURIComponent(id)}/modes`, { method: "PUT", body: body({ ponor_enabled: ponorEnabled, turn_enabled: turnEnabled, acknowledge_connectivity_change: true }) }),
   relayServices: () => request<RelayServiceView[]>("/relay-services"),
   addRelayService: (service: RelayService) => request<RelayService>("/relay-services", { method: "POST", body: body(service) }),
   removeRelayService: (id: string) => request<void>(`/relay-services/${encodeURIComponent(id)}`, { method: "DELETE" }),

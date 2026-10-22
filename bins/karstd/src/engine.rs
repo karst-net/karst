@@ -429,6 +429,8 @@ struct Roster {
 pub struct Engine {
     /// The peer set, replaceable while the daemon runs.
     roster: RwLock<Arc<Roster>>,
+    /// Ephemeral transport credentials refresh even when peer content is unchanged.
+    turn_servers: RwLock<Vec<crate::netmap::TurnServer>>,
     /// This node's verified Bedrock log, for peer head comparison (§5 layer 3).
     ///
     /// `None` until the control client has verified one. Held here rather than
@@ -495,6 +497,7 @@ impl Engine {
         let roster = build_roster(config, &HashMap::new());
         Self {
             roster: RwLock::new(Arc::new(roster)),
+            turn_servers: RwLock::new(config.turn_servers.clone()),
             bedrock: RwLock::new(None),
             in_mac_key,
             cookie: Mutex::new(None),
@@ -549,7 +552,7 @@ impl Engine {
     /// The TURN fallback registry the netmap currently carries —
     /// `spec/aven-v1.md` §7.8.
     ///
-    /// Read the same way [`Self::relays`] is, for the same reason: a fresh
+    /// Refreshed independently of the peer roster: a fresh
     /// credential arrives with every netmap poll (`crate::netmap::Netmap`'s
     /// own doc comment on `turn_servers`), and `crate::turn`'s worker rereads
     /// this on every (re)connect attempt rather than being separately told to
@@ -557,7 +560,29 @@ impl Engine {
     /// already is.
     #[must_use]
     pub fn turn_servers(&self) -> Vec<crate::netmap::TurnServer> {
-        self.roster().config.turn_servers.clone()
+        self.turn_servers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Apply credential-only updates without clearing peer flows or rebuilding
+    /// the roster. Endpoint changes require full route/escape reconciliation.
+    pub(crate) fn refresh_turn_credentials(&self, servers: &[crate::netmap::TurnServer]) -> bool {
+        let mut current = self
+            .turn_servers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current.len() != servers.len()
+            || current
+                .iter()
+                .zip(servers)
+                .any(|(old, new)| old.uri != new.uri)
+        {
+            return false;
+        }
+        *current = servers.to_vec();
+        true
     }
 
     /// The relay this node holds — §9.1.
@@ -776,6 +801,10 @@ impl Engine {
             .roster
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(next);
+        self.turn_servers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&config.turn_servers);
 
         Reconfigured {
             added,
