@@ -8,8 +8,8 @@ import { api } from "../api";
 import { Failure, Notice, Rows, useMutation, useResource } from "../common";
 import { TutorialHint } from "../tutorial";
 
-type Draft = { address: string; tls_server_name: string; identity_key: string; region: string; lat: string; lon: string; label: string };
-const blank: Draft = { address: "", tls_server_name: "", identity_key: "", region: "default", lat: "", lon: "", label: "" };
+type Draft = { address: string; tls_server_name: string; identity_key: string; region: string; locationId: string };
+const blank: Draft = { address: "", tls_server_name: "", identity_key: "", region: "default", locationId: "" };
 
 // `karstd` parses this with Rust's SocketAddr, which does not resolve names. A
 // DNS name here is not a relay that fails to dial — it is a netmap every node
@@ -21,26 +21,22 @@ const address = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):\d{1,5}$/;
 export function Relays() {
   const resource = useResource(api.relays);
   const { message, setMessage, run } = useMutation(resource.reload);
+  const locationsResource = useResource(api.locations);
   const [draft, setDraft] = useState<Draft>();
 
   if (resource.loading) return <p>Loading relays…</p>;
   if (resource.error) return <Failure message={resource.error} retry={resource.reload} />;
   const relays = resource.value ?? [];
+  const locations = locationsResource.value ?? [];
+  const hasLocations = locations.length > 0;
 
   const add = async () => {
     if (!draft) return;
     const entry = { address: draft.address.trim(), tls_server_name: draft.tls_server_name.trim(), identity_key: draft.identity_key.trim(), region: draft.region.trim() || "default" };
     if (!address.test(entry.address)) { setMessage("The address must be an IP address and port, such as 203.0.113.7:443. A DNS name here is rejected by every node, for the whole netmap — put the name in the TLS server name instead."); return; }
     if (!entry.identity_key) { setMessage("The identity key is what a node authenticates the relay by. Copy it from `karst-relay pubkey`."); return; }
-    const lat = draft.lat.trim(), lon = draft.lon.trim();
-    if (Boolean(lat) !== Boolean(lon)) { setMessage("A declared location needs both latitude and longitude, or neither."); return; }
-    let location: { lat: number; lon: number; label?: string } | undefined;
-    if (lat && lon) {
-      const latNum = Number(lat), lonNum = Number(lon);
-      if (!Number.isFinite(latNum) || latNum < -90 || latNum > 90) { setMessage("Latitude must be a number between -90 and 90."); return; }
-      if (!Number.isFinite(lonNum) || lonNum < -180 || lonNum > 180) { setMessage("Longitude must be a number between -180 and 180."); return; }
-      location = { lat: latNum, lon: lonNum, label: draft.label.trim() || undefined };
-    }
+    const selected = locations.find((l) => l.id === draft.locationId);
+    const location = selected ? { lat: selected.lat, lon: selected.lon, label: selected.label || undefined } : undefined;
     if (await run(() => api.addRelay({ ...entry, location }), `Relay ${entry.address} was added. Nodes pick it up with their next netmap.`)) setDraft(undefined);
   };
   const remove = (relay: Relay) => {
@@ -50,8 +46,9 @@ export function Relays() {
 
   return <section>
     <h2>Relays</h2>
-    <TutorialHint>A relay is a physical or virtual machine running <code>karst-relay</code> that forwards encrypted traffic between two nodes that cannot reach each other directly (both behind restrictive NAT, for example). It sits on the network, not inside this console — this registry just tells every node which relays exist and how to reach them. Every node is told about exactly the relays listed here. A relay that is not in this registry is one no node will ever dial.</TutorialHint>
-    <div className="actions"><button className="primary" onClick={() => setDraft(blank)}>Add relay</button></div>
+    <TutorialHint>A relay is a physical or virtual machine running <code>karst-relay</code> that forwards encrypted traffic between two nodes that cannot reach each other directly (both behind restrictive NAT, for example). It sits on the network, not inside this console — this registry just tells every node which relays exist and how to reach them. Every node is told about exactly the relays listed here. A relay that is not in this registry is one no node will ever dial. A declared location is picked from Authorized Locations, so adding a relay needs at least one there first.</TutorialHint>
+    <div className="actions"><button className="primary" disabled={!hasLocations} onClick={() => setDraft(blank)}>Add relay</button></div>
+    {!hasLocations && <p className="lede">Add an authorized location first — see Authorized Locations. A relay's declared location is picked from that registry.</p>}
     <Notice message={message} />
     {relays.length === 0
       ? <EmptyState title="No relays configured">The coordination server will publish relay health here when a relay is configured.</EmptyState>
@@ -77,9 +74,10 @@ export function Relays() {
         <label>Identity key<input aria-label="Relay identity key" placeholder="base64, from `karst-relay pubkey`" value={draft?.identity_key ?? ""} onChange={(event) => setDraft((current) => current && { ...current, identity_key: event.target.value })} /></label>
         <p className="lede">The ML-DSA-87 public key the relay prints as <code>identity_pk</code>. This — not the certificate — is what proves which relay a node is talking to.</p>
         <label>Region<input aria-label="Relay region" value={draft?.region ?? ""} onChange={(event) => setDraft((current) => current && { ...current, region: event.target.value })} /></label>
-        <label>Latitude<input aria-label="Relay latitude" placeholder="51.5072" value={draft?.lat ?? ""} onChange={(event) => setDraft((current) => current && { ...current, lat: event.target.value })} /></label>
-        <label>Longitude<input aria-label="Relay longitude" placeholder="-0.1276" value={draft?.lon ?? ""} onChange={(event) => setDraft((current) => current && { ...current, lon: event.target.value })} /></label>
-        <label>Location label<input aria-label="Relay location label" placeholder="London" value={draft?.label ?? ""} onChange={(event) => setDraft((current) => current && { ...current, label: event.target.value })} /></label>
+        <label>Location<select aria-label="Relay location" value={draft?.locationId ?? ""} onChange={(event) => setDraft((current) => current && { ...current, locationId: event.target.value })}>
+          <option value="">No location</option>
+          {locations.map((location) => <option key={location.id} value={location.id}>{location.label || `${location.lat}, ${location.lon}`}</option>)}
+        </select></label>
         <p className="lede">Optional. Shown on the NOC map — never inferred from the address, so a relay with no declared location shows there as unplaced rather than a guess.</p>
         <div className="actions"><button type="button" onClick={() => setDraft(undefined)}>Cancel</button><button className="primary" type="submit">Add relay</button></div>
       </form>
